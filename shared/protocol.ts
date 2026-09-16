@@ -1,77 +1,33 @@
 /**
- * The herdr-br contract: shared between the Bun server and the React client.
- * Field shapes mirror the herdr 0.9.0 socket API (protocol 22) verbatim.
+ * herdr-br's own HTTP/WebSocket contract, shared by the Bun server and the React client.
+ *
+ * The herdr WIRE types are NOT hand-written here: they are generated from herdr's
+ * published API schema into ./herdr-api.generated.ts and re-exported below, so a
+ * herdr upgrade shows up as a failing `bun run generate:types --check` instead of
+ * types that quietly disagree with the server.
  */
 
-export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
+export type {
+  AgentInfo,
+  AgentSessionInfo,
+  AgentStatus,
+  PaneInfo,
+  PaneReadResult,
+  PaneScrollInfo,
+  ReadFormat,
+  ReadSource,
+  SessionSnapshot,
+  Subscription as HerdrSubscriptionSpec,
+  TabInfo,
+  WorkspaceInfo,
+} from "./herdr-api.generated.ts";
 
-export interface PaneScroll {
-  offset_from_bottom: number;
-  max_offset_from_bottom: number;
-  viewport_rows: number;
-}
+import type { AgentStatus, PaneInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
 
-export interface HerdrWorkspace {
-  workspace_id: string;
-  number: number;
-  label: string;
-  focused: boolean;
-  pane_count: number;
-  tab_count: number;
-  active_tab_id: string;
-  agent_status?: AgentStatus;
-}
-
-export interface HerdrTab {
-  tab_id: string;
-  workspace_id: string;
-  number: number;
-  label: string;
-  focused: boolean;
-  pane_count: number;
-  agent_status?: AgentStatus;
-}
-
-export interface HerdrPane {
-  pane_id: string;
-  terminal_id: string;
-  workspace_id: string;
-  tab_id: string;
-  focused: boolean;
-  cwd: string;
-  foreground_cwd?: string;
-  agent?: string | null;
-  agent_status?: AgentStatus;
-  terminal_title?: string;
-  terminal_title_stripped?: string;
-  scroll?: PaneScroll;
-  revision: number;
-}
-
-export interface SessionSnapshot {
-  version: string;
-  protocol: number;
-  focused_workspace_id?: string;
-  focused_tab_id?: string;
-  focused_pane_id?: string;
-  workspaces: HerdrWorkspace[];
-  tabs: HerdrTab[];
-  panes: HerdrPane[];
-}
-
-export type ReadSource = "visible" | "recent" | "recent-unwrapped" | "detection";
-export type ReadFormat = "text" | "ansi";
-
-export interface PaneReadResult {
-  pane_id: string;
-  workspace_id?: string;
-  tab_id?: string;
-  source: ReadSource;
-  format: ReadFormat;
-  text: string;
-  revision?: number;
-  truncated?: boolean;
-}
+/** Friendly aliases used across the UI. */
+export type HerdrWorkspace = WorkspaceInfo;
+export type HerdrTab = TabInfo;
+export type HerdrPane = PaneInfo;
 
 /** HTTP API
  *  GET  /api/health                      -> { ok: true, herdr: { version, protocol } }
@@ -87,16 +43,19 @@ export interface ApiError {
 
 /** WebSocket at /ws */
 export type ClientMessage =
-  | { type: "watch"; pane_id: string }
-  | { type: "unwatch"; pane_id: string }
+  | { type: "attach"; pane_id: string; cols: number; rows: number }
+  | { type: "detach"; pane_id: string }
   | { type: "input"; pane_id: string; text: string }
-  | { type: "keys"; pane_id: string; keys: string[] };
+  | { type: "keys"; pane_id: string; keys: string[] }
+  | { type: "resize"; pane_id: string; cols: number; rows: number };
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: SessionSnapshot }
-  | { type: "pane-output"; pane_id: string; text: string; revision: number }
+  /** raw PTY bytes: append to the terminal, never repaint over it */
+  | { type: "pty-data"; pane_id: string; data: string }
+  | { type: "pty-exit"; pane_id: string; code: number | null }
   | { type: "pane-status"; pane_id: string; agent_status: AgentStatus }
   | { type: "error"; code: string; message: string };
 
-export const HERDR_SOCKET_PATH = `${process.env.HOME ?? ""}/.config/herdr/herdr.sock`;
+export const HERDR_SOCKET_PATH = `${process.env["HOME"] ?? ""}/.config/herdr/herdr.sock`;
 export const DEFAULT_PORT = 7317;

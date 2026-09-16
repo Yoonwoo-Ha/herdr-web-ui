@@ -5,7 +5,8 @@ import "@xterm/xterm/css/xterm.css";
 
 import { HerdrSocket } from "../lib/ws.ts";
 
-const FONT_STACK = '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace';
+const FONT_STACK =
+  '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace';
 
 export function PaneTerminal({ paneId }: { paneId: string | null }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -13,8 +14,8 @@ export function PaneTerminal({ paneId }: { paneId: string | null }) {
   const fitRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<HerdrSocket | null>(null);
   const paneRef = useRef<string | null>(paneId);
-  const revisionRef = useRef<number>(-1);
   const [connected, setConnected] = useState(false);
+  const [ended, setEnded] = useState(false);
 
   paneRef.current = paneId;
 
@@ -24,9 +25,9 @@ export function PaneTerminal({ paneId }: { paneId: string | null }) {
     if (!host) return;
 
     const term = new Terminal({
-      convertEol: true,
+      convertEol: false,
       cursorBlink: true,
-      scrollback: 5000,
+      scrollback: 10000,
       allowProposedApi: true,
       fontSize: 13,
       fontFamily: FONT_STACK,
@@ -42,24 +43,16 @@ export function PaneTerminal({ paneId }: { paneId: string | null }) {
     term.open(host);
     termRef.current = term;
     fitRef.current = fit;
-    requestAnimationFrame(() => {
-      try {
-        fit.fit();
-      } catch {
-        /* host not laid out yet */
-      }
-    });
 
     const socket = new HerdrSocket();
     socketRef.current = socket;
     const off = socket.on((message) => {
-      if (message.type === "pane-output") {
+      if (message.type === "pty-data") {
         if (message.pane_id !== paneRef.current) return;
-        if (message.revision <= revisionRef.current) return;
-        revisionRef.current = message.revision;
-        // the server sends the pane's full current screen, so repaint wholesale
-        term.reset();
-        term.write(message.text);
+        // raw pty bytes: append, never repaint, so xterm keeps scrollback and selection
+        term.write(message.data);
+      } else if (message.type === "pty-exit") {
+        if (message.pane_id === paneRef.current) setEnded(true);
       } else if (message.type === "error") {
         term.writeln(`\r\n\u001b[31m[herdr-br] ${message.code}: ${message.message}\u001b[0m`);
       }
@@ -78,8 +71,10 @@ export function PaneTerminal({ paneId }: { paneId: string | null }) {
       try {
         fit.fit();
       } catch {
-        /* ignore transient zero-size */
+        return;
       }
+      const current = paneRef.current;
+      if (current) socket.resize(current, term.cols, term.rows);
     });
     observer.observe(host);
 
@@ -99,20 +94,28 @@ export function PaneTerminal({ paneId }: { paneId: string | null }) {
   useEffect(() => {
     const socket = socketRef.current;
     const term = termRef.current;
+    const fit = fitRef.current;
     if (!socket || !term) return;
-    revisionRef.current = -1;
+    setEnded(false);
     term.reset();
     if (!paneId) return;
-    socket.watch(paneId);
+    try {
+      fit?.fit();
+    } catch {
+      /* not laid out yet; the ResizeObserver will follow up */
+    }
+    socket.attach(paneId, term.cols, term.rows);
+    term.focus();
     return () => {
-      socket.unwatch(paneId);
+      socket.detach(paneId);
     };
   }, [paneId]);
 
   return (
     <>
       {paneId === null && <div className="terminal-placeholder">Select a pane to open its terminal</div>}
-      {paneId !== null && !connected && <div className="terminal-banner">reconnecting to herdr-br…</div>}
+      {paneId !== null && ended && <div className="terminal-banner">terminal ended</div>}
+      {paneId !== null && !ended && !connected && <div className="terminal-banner">reconnecting to herdr-br…</div>}
       <div className="pane-terminal" ref={hostRef} />
     </>
   );

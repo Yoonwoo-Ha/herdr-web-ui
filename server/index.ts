@@ -14,23 +14,31 @@ import {
   subscribeEvents,
   type Subscription,
 } from "./herdr/client.ts";
+import { PtySession } from "./pty/session.ts";
 
 const DIST_DIR = new URL("../dist", import.meta.url).pathname;
+const MAX_REPLAY_BYTES = 256 * 1024;
 
 interface SocketData {
-  watching: Set<string>;
+  attached: Set<string>;
 }
 
 type Client = ServerWebSocket<SocketData>;
 
-/** One herdr subscription per watched pane, fanned out to every client watching it. */
-interface PaneWatch {
-  subscription: Subscription;
+/**
+ * One live PTY per pane, shared by every client watching that pane.
+ *
+ * The terminal is a real `herdr terminal attach` on a PTY rather than repeated
+ * `pane.read` snapshots, so the browser receives an actual byte stream: xterm.js
+ * keeps its own scrollback and selection, and herdr's 1000-line per-read cap
+ * stops being the ceiling on what the user can see.
+ */
+interface PaneAttachment {
+  pty: PtySession;
   clients: Set<Client>;
-  lastRevision: number;
-  reading: boolean;
-  /** drop-to-latest: a busy pane emits far more events than we should re-read for */
-  pendingRevision: number | null;
+  statusSubscription: Subscription;
+  /** bounded tail so a client joining late still sees the current screen */
+  replay: string;
 }
 
 function send(client: Client, message: ServerMessage): void {
@@ -80,94 +88,86 @@ function contentTypeFor(path: string): string {
 }
 
 export function createServer(options: { port?: number } = {}): { port: number; stop: () => void } {
-  const watches = new Map<string, PaneWatch>();
+  const attachments = new Map<string, PaneAttachment>();
 
-  async function pushPaneOutput(paneId: string, revision: number): Promise<void> {
-    const watch = watches.get(paneId);
-    if (!watch) return;
-    if (watch.reading) {
-      watch.pendingRevision = revision;
-      return;
-    }
-    watch.reading = true;
-    try {
-      const read = await paneRead({ paneId, source: "visible", format: "ansi" });
-      const current = watches.get(paneId);
-      if (current) {
-        current.lastRevision = revision;
-        const message: ServerMessage = {
-          type: "pane-output",
-          pane_id: paneId,
-          text: read.text,
-          revision,
-        };
-        for (const client of current.clients) send(client, message);
-      }
-    } catch (error) {
-      const current = watches.get(paneId);
-      const code = error instanceof HerdrError ? error.code : "read_failed";
-      const message = error instanceof Error ? error.message : String(error);
-      if (current) for (const client of current.clients) send(client, { type: "error", code, message });
-    } finally {
-      const current = watches.get(paneId);
-      if (current) {
-        current.reading = false;
-        const pending = current.pendingRevision;
-        current.pendingRevision = null;
-        if (pending !== null && pending > current.lastRevision) void pushPaneOutput(paneId, pending);
-      }
-    }
+  function broadcast(paneId: string, message: ServerMessage): void {
+    const attachment = attachments.get(paneId);
+    if (!attachment) return;
+    for (const client of attachment.clients) send(client, message);
   }
 
-  function ensureWatch(paneId: string): PaneWatch {
-    const existing = watches.get(paneId);
+  async function terminalIdFor(paneId: string): Promise<string> {
+    const snapshot = await sessionSnapshot();
+    const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
+    if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
+    const terminalId = (pane as HerdrPane & { terminal_id?: string }).terminal_id;
+    if (!terminalId) throw new HerdrError("no_terminal", `pane ${paneId} has no terminal`);
+    return terminalId;
+  }
+
+  function closeAttachment(paneId: string): void {
+    const attachment = attachments.get(paneId);
+    if (!attachment) return;
+    attachments.delete(paneId);
+    attachment.statusSubscription.close();
+    attachment.pty.kill();
+  }
+
+  async function ensureAttachment(paneId: string, cols: number, rows: number): Promise<PaneAttachment> {
+    const existing = attachments.get(paneId);
     if (existing) return existing;
 
-    const watch: PaneWatch = {
-      subscription: { close: () => {} },
+    const terminalId = await terminalIdFor(paneId);
+    const attachment: PaneAttachment = {
+      pty: undefined as unknown as PtySession,
       clients: new Set<Client>(),
-      lastRevision: -1,
-      reading: false,
-      pendingRevision: null,
+      statusSubscription: { close: () => {} },
+      replay: "",
     };
-    watches.set(paneId, watch);
+    attachments.set(paneId, attachment);
 
-    watch.subscription = subscribeEvents(
-      [
-        { type: "pane.updated", pane_id: paneId },
-        { type: "pane.agent_status_changed", pane_id: paneId },
-      ],
+    // No --takeover: herdr 0.9.0 lets attaches coexist, so herdr-br never displaces
+    // whoever is already looking at this terminal - including the user's own TUI.
+    attachment.pty = new PtySession({
+      command: "herdr",
+      args: ["terminal", "attach", terminalId],
+      cols,
+      rows,
+      onData: (data) => {
+        const current = attachments.get(paneId);
+        if (!current) return;
+        current.replay = (current.replay + data).slice(-MAX_REPLAY_BYTES);
+        broadcast(paneId, { type: "pty-data", pane_id: paneId, data });
+      },
+      onExit: (code) => {
+        broadcast(paneId, { type: "pty-exit", pane_id: paneId, code });
+        closeAttachment(paneId);
+      },
+    });
+
+    attachment.statusSubscription = subscribeEvents(
+      [{ type: "pane.agent_status_changed", pane_id: paneId }],
       {
         onEvent: (frame) => {
           const pane = (frame.data as { pane?: HerdrPane } | undefined)?.pane;
-          if (!pane || pane.pane_id !== paneId) return;
-          const current = watches.get(paneId);
-          if (!current) return;
-          if (pane.agent_status) {
-            const statusMessage: ServerMessage = {
-              type: "pane-status",
-              pane_id: paneId,
-              agent_status: pane.agent_status as AgentStatus,
-            };
-            for (const client of current.clients) send(client, statusMessage);
-          }
-          if (typeof pane.revision === "number" && pane.revision > current.lastRevision) {
-            void pushPaneOutput(paneId, pane.revision);
-          }
+          if (!pane || pane.pane_id !== paneId || !pane.agent_status) return;
+          broadcast(paneId, {
+            type: "pane-status",
+            pane_id: paneId,
+            agent_status: pane.agent_status as AgentStatus,
+          });
         },
       },
     );
-    return watch;
+
+    return attachment;
   }
 
-  function releaseWatch(paneId: string, client: Client): void {
-    const watch = watches.get(paneId);
-    if (!watch) return;
-    watch.clients.delete(client);
-    if (watch.clients.size === 0) {
-      watch.subscription.close();
-      watches.delete(paneId);
-    }
+  function detach(paneId: string, client: Client): void {
+    const attachment = attachments.get(paneId);
+    if (!attachment) return;
+    attachment.clients.delete(client);
+    if (attachment.clients.size === 0) closeAttachment(paneId);
   }
 
   const envPort = process.env["PORT"];
@@ -179,7 +179,7 @@ export function createServer(options: { port?: number } = {}): { port: number; s
       const { pathname } = url;
 
       if (pathname === "/ws") {
-        const upgraded = bunServer.upgrade(request, { data: { watching: new Set<string>() } });
+        const upgraded = bunServer.upgrade(request, { data: { attached: new Set<string>() } });
         if (upgraded) return undefined as unknown as Response;
         return new Response("websocket upgrade required", { status: 426 });
       }
@@ -288,23 +288,30 @@ export function createServer(options: { port?: number } = {}): { port: number; s
         }
         try {
           switch (message.type) {
-            case "watch": {
-              const watch = ensureWatch(message.pane_id);
-              watch.clients.add(client);
-              client.data.watching.add(message.pane_id);
-              const read = await paneRead({ paneId: message.pane_id, source: "visible", format: "ansi" });
-              const revision = read.revision ?? 0;
-              if (revision > watch.lastRevision) watch.lastRevision = revision;
-              send(client, { type: "pane-output", pane_id: message.pane_id, text: read.text, revision });
+            case "attach": {
+              const attachment = await ensureAttachment(message.pane_id, message.cols, message.rows);
+              attachment.clients.add(client);
+              client.data.attached.add(message.pane_id);
+              // hand the newcomer the current screen it would otherwise have missed
+              if (attachment.replay) {
+                send(client, { type: "pty-data", pane_id: message.pane_id, data: attachment.replay });
+              }
+              attachment.pty.resize(message.cols, message.rows);
               break;
             }
-            case "unwatch": {
-              client.data.watching.delete(message.pane_id);
-              releaseWatch(message.pane_id, client);
+            case "detach": {
+              client.data.attached.delete(message.pane_id);
+              detach(message.pane_id, client);
               break;
             }
             case "input": {
-              await paneSendText(message.pane_id, message.text);
+              const attachment = attachments.get(message.pane_id);
+              if (attachment) attachment.pty.write(message.text);
+              break;
+            }
+            case "resize": {
+              const attachment = attachments.get(message.pane_id);
+              if (attachment) attachment.pty.resize(message.cols, message.rows);
               break;
             }
             case "keys": {
@@ -319,8 +326,8 @@ export function createServer(options: { port?: number } = {}): { port: number; s
       },
 
       close(client) {
-        for (const paneId of client.data.watching) releaseWatch(paneId, client);
-        client.data.watching.clear();
+        for (const paneId of client.data.attached) detach(paneId, client);
+        client.data.attached.clear();
       },
     },
   });
@@ -328,8 +335,7 @@ export function createServer(options: { port?: number } = {}): { port: number; s
   return {
     port: server.port ?? 0,
     stop: () => {
-      for (const [, watch] of watches) watch.subscription.close();
-      watches.clear();
+      for (const paneId of [...attachments.keys()]) closeAttachment(paneId);
       server.stop(true);
     },
   };

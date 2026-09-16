@@ -2,20 +2,26 @@ import type { ClientMessage, ServerMessage } from "../../shared/protocol.ts";
 
 type Handler = (message: ServerMessage) => void;
 
+interface AttachState {
+  cols: number;
+  rows: number;
+}
+
 function defaultUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/ws`;
 }
 
 /**
- * Reconnecting client for /ws. Watches are remembered so a dropped connection
- * restores the live terminal instead of silently going stale.
+ * Reconnecting client for /ws. Attachments are remembered with their geometry so a
+ * dropped connection restores the live terminal at the right size instead of
+ * leaving a stale screen behind.
  */
 export class HerdrSocket {
   private socket: WebSocket | null = null;
   private readonly url: string;
   private readonly handlers = new Set<Handler>();
-  private readonly watched = new Set<string>();
+  private readonly attached = new Map<string, AttachState>();
   private queue: ClientMessage[] = [];
   private retries = 0;
   private reconnectTimer: number | null = null;
@@ -39,11 +45,12 @@ export class HerdrSocket {
 
     socket.addEventListener("open", () => {
       this.retries = 0;
-      for (const paneId of this.watched) this.rawSend({ type: "watch", pane_id: paneId });
+      for (const [paneId, state] of this.attached) {
+        this.rawSend({ type: "attach", pane_id: paneId, cols: state.cols, rows: state.rows });
+      }
       const queued = this.queue;
       this.queue = [];
       for (const message of queued) this.rawSend(message);
-      this.emit({ type: "pane-status", pane_id: "", agent_status: "unknown" });
     });
 
     socket.addEventListener("message", (event) => {
@@ -94,14 +101,24 @@ export class HerdrSocket {
     };
   }
 
-  watch(paneId: string): void {
-    this.watched.add(paneId);
-    this.send({ type: "watch", pane_id: paneId });
+  attach(paneId: string, cols: number, rows: number): void {
+    this.attached.set(paneId, { cols, rows });
+    this.send({ type: "attach", pane_id: paneId, cols, rows });
   }
 
-  unwatch(paneId: string): void {
-    this.watched.delete(paneId);
-    this.send({ type: "unwatch", pane_id: paneId });
+  detach(paneId: string): void {
+    this.attached.delete(paneId);
+    this.send({ type: "detach", pane_id: paneId });
+  }
+
+  resize(paneId: string, cols: number, rows: number): void {
+    const state = this.attached.get(paneId);
+    if (state) {
+      if (state.cols === cols && state.rows === rows) return;
+      state.cols = cols;
+      state.rows = rows;
+    }
+    this.send({ type: "resize", pane_id: paneId, cols, rows });
   }
 
   sendInput(paneId: string, text: string): void {
