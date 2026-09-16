@@ -1,0 +1,386 @@
+:root {
+  --bg: #070910;
+  --bg-panel: #0b0e14;
+  --bg-elevated: #121724;
+  --bg-hover: #1a2132;
+  --border: #1e2637;
+  --text: #c5cdd9;
+  --text-dim: #7a879e;
+  --text-bright: #e6edf7;
+  --accent: #6cb6ff;
+  --status-idle: #7a879e;
+  --status-working: #e2a336;
+  --status-blocked: #f2545b;
+  --status-done: #4ec9a5;
+  --header-h: 46px;
+  --sidebar-w: 300px;
+  font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Noto Sans KR", "Malgun Gothic", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---------- header ---------- */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--header-h);
+  padding: 0 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.brand {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--text-bright);
+}
+
+.brand-accent {
+  color: var(--accent);
+}
+
+.header-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.current-pane {
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.health {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+}
+
+.health::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-done);
+}
+
+.health.down::before {
+  background: var(--status-blocked);
+}
+
+.drawer-toggle {
+  display: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* ---------- layout ---------- */
+
+.app-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.sidebar {
+  width: var(--sidebar-w);
+  flex: 0 0 var(--sidebar-w);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 10px 8px 24px;
+}
+
+.terminal-host {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-panel);
+  padding: 6px 8px;
+}
+
+.pane-terminal {
+  width: 100%;
+  height: 100%;
+}
+
+.terminal-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.terminal-banner {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 5;
+  background: rgba(242, 84, 91, 0.16);
+  border: 1px solid var(--status-blocked);
+  color: #ffd7d9;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+/* ---------- sidebar tree ---------- */
+
+.sidebar-empty,
+.workspace-empty {
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
+.workspace {
+  margin-bottom: 14px;
+}
+
+.workspace-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.workspace-number {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.workspace-label {
+  font-weight: 650;
+  font-size: 13px;
+  color: var(--text-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  padding: 4px 10px 2px;
+}
+
+.pane-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 4px;
+}
+
+.pane-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 7px 8px;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+
+.pane-row:hover {
+  background: var(--bg-hover);
+}
+
+.pane-row.is-selected {
+  background: var(--bg-elevated);
+  border-color: var(--accent);
+}
+
+.pane-id {
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.pane-title {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-name {
+  font-size: 10px;
+  color: var(--accent);
+  background: rgba(108, 182, 255, 0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ---------- badges ---------- */
+
+.badge {
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+.badge-idle {
+  color: var(--status-idle);
+}
+
+.badge-working {
+  color: var(--status-working);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.badge-blocked {
+  color: var(--status-blocked);
+}
+
+.badge-done {
+  color: var(--status-done);
+}
+
+.badge-unknown {
+  color: #4a5468;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge-working {
+    animation: none;
+  }
+}
+
+/* ---------- error ---------- */
+
+.error-state {
+  margin: 10px;
+  padding: 12px;
+  border: 1px solid var(--status-blocked);
+  border-radius: 8px;
+  background: rgba(242, 84, 91, 0.08);
+}
+
+.error-message {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #ffd7d9;
+  word-break: break-word;
+}
+
+.error-state button {
+  background: var(--status-blocked);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.scrim {
+  display: none;
+}
+
+/* ---------- mobile ---------- */
+
+@media (max-width: 768px) {
+  .drawer-toggle {
+    display: block;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: var(--header-h);
+    bottom: 0;
+    left: 0;
+    z-index: 20;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
+  }
+
+  .sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: var(--header-h) 0 0 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 15;
+  }
+}
