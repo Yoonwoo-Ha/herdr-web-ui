@@ -7,6 +7,7 @@ import { badRequest, errorResponse, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import {
   HerdrError,
+  herdrSocketPath,
   paneRead,
   paneSendKeys,
   paneSendText,
@@ -101,6 +102,10 @@ export function createServer(
     attachment.pty = new PtySession({
       command: "herdr",
       args: ["terminal", "attach", terminalId],
+      // herdr's CLI reads HERDR_SOCKET_PATH, not HERDR_SOCKET: the stream must reach
+      // the same session the RPCs talk to, or a named session's terminals are
+      // looked up on the default socket and the attach dies.
+      env: { HERDR_SOCKET_PATH: herdrSocketPath() },
       cols,
       rows,
       onData: (data) => {

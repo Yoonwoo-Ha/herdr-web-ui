@@ -9,6 +9,8 @@ export interface PtySessionOptions {
   rows: number;
   onData: (data: string) => void;
   onExit: (code: number | null) => void;
+  /** Extra environment for the command, on top of this process's own. */
+  env?: Record<string, string>;
 }
 
 /**
@@ -22,7 +24,7 @@ export class PtySession {
   constructor(private readonly options: PtySessionOptions) {
     this.proc = Bun.spawn(
       ["node", HOST_SCRIPT, String(options.cols), String(options.rows), options.command, ...options.args],
-      { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+      { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, ...options.env } },
     );
 
     void this.pump();
