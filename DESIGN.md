@@ -111,7 +111,8 @@ All spacing derives from a base of **4px**.
 | `--header-h` | 46px | Header height (plus `env(safe-area-inset-top)`) |
 | `--sidebar-w` | 300px | Sidebar column and drawer width |
 | `--control-h` | 32px | Icon button, retry button |
-| `--touch-target` | 40px | Pane row min-height on `(pointer: coarse)` |
+| `--touch-target` | 40px | Pane row min-height on `(pointer: coarse)`, key-bar key min-width |
+| `--keybar-h` | 40px | Key bar height (plus `env(safe-area-inset-bottom)`) |
 | `--chip-h` | 18px | Badge, pill, chip, banner height |
 | `--icon-size` | 18px | SVG inside an icon button |
 | `--mark-size` | 22px | Brand mark |
@@ -138,8 +139,16 @@ All spacing derives from a base of **4px**.
 - `.app` is a column: `.app-header` (fixed height) over `.app-body` (flex row, `min-height: 0`).
 - `.app-body` is `.sidebar` (fixed `--sidebar-w`, owns its own vertical scroll) beside
   `.terminal-host` (`flex: 1`, `min-width: 0`, `overflow: hidden`; xterm owns scrolling inside).
-- The app fills `100dvh` with a `100%` fallback; header, drawer and terminal host add
-  `env(safe-area-inset-*)` to their padding so notches and home bars never cover content.
+- The app fills `var(--app-height, 100dvh)` with a `100%` fallback; header, drawer and terminal
+  host add `env(safe-area-inset-*)` to their padding so notches and home bars never cover content.
+  Where the key bar is visible (`(pointer: coarse), (max-width: 768px)`) the terminal host drops
+  its bottom padding and the bar carries `env(safe-area-inset-bottom)` itself, so the inset is
+  applied once.
+- `--app-height` is written on `<html>` by `src/lib/viewport.ts` from `window.visualViewport`
+  (on `resize` and `scroll`, rounded, with the page pinned at `scrollTo(0, 0)`), so on iOS
+  Safari the shell shrinks with the soft keyboard instead of sliding under it and the key bar
+  stays above the keyboard. Chrome already resizes the layout viewport
+  (`interactive-widget=resizes-content`); there the value is the same as `100dvh`.
 - Breakpoints: `<= 768px` the sidebar becomes a left drawer over a scrim (a tablet in portrait
   cannot afford 300px next to an 80-column terminal); `<= 480px` the version pill is hidden so the
   header context keeps room. Both are `max-width` queries in `src/styles.css`.
@@ -219,6 +228,34 @@ All spacing derives from a base of **4px**.
 - **States**: empty (placeholder, `--text-dim`, `--fs-md`), ended (`.terminal-banner`, neutral),
   reconnecting (`.terminal-banner-warning`, `--status-working`). Banners carry `role="status"`.
 - **Layout**: `position: relative` host; banners are absolute overlays so the pty keeps every row.
+
+### Key bar (`.key-bar`)
+- **Structure**: `<div class="key-bar" role="toolbar" aria-label="Terminal keys">` of
+  `<button type="button" class="key" data-key tabindex="-1">`: `Esc`, `Tab`, `Ctrl`
+  (`aria-pressed`), four chevron keys (inline SVG + `aria-label` Up / Down / Left / Right) and
+  `^C` (`aria-label="Control C"`). Rendered by `KeyBar.tsx`; `PaneTerminal` mounts it as the
+  last child of `.terminal-stack`, under the xterm mount. Taps go through `term.input()` so
+  they take the same `onData` → socket path as typed keys.
+- **Variants**: none. `.key.is-armed` is the one-shot Control: the next single printable
+  character is sent as its control code (A-Z and `@ [ \ ] ^ _`), then Control disarms; tapping
+  it again while armed disarms it.
+- **Spacing**: bar `--keybar-h` tall plus `env(safe-area-inset-bottom)` of bottom padding, no
+  side padding (the host's `--space-2` is the inset); keys `--control-h` tall,
+  `min-width: --touch-target`, `0 --space-1` padding, `--space-1` gap, `--radius-sm`,
+  `--font-mono` at `--fs-sm`; chevrons `--icon-size`.
+- **States**: default (transparent, `--border`), hover (`--bg-hover`, only under
+  `(hover: hover)` so a tapped key does not stay lit), active and armed (`--bg-elevated`,
+  `--accent` border, `--text-strong`), focus (`--ring`). The bar is `display: none` on
+  fine-pointer desktops and `display: flex` under `(pointer: coarse), (max-width: 768px)`; it
+  scrolls sideways with a hidden scrollbar when the keys outgrow the viewport.
+- **Accessibility**: `role="toolbar"` + `aria-label`; icon-only keys carry `aria-label`; Control
+  carries `aria-pressed`. Keys are `tabindex="-1"` and cancel `pointerdown` and `mousedown`, so
+  focus never leaves xterm's textarea and the soft keyboard stays open; hardware keyboards
+  already have these keys, so the bar stays out of the tab order. Min touch target 40x32.
+- **Motion**: background/border `--dur-fast`; none under `prefers-reduced-motion`.
+- **Layout**: `flex: none` at the bottom of `.terminal-stack` (column, `height: 100%`) with a
+  `--border` hairline on top; `.pane-terminal` above it is `flex: 1 1 auto; min-height: 0;
+  overflow: hidden`, so the bar takes rows from the pty instead of covering them.
 
 ### Drawer + scrim (`.sidebar.is-open`, `.scrim`)
 - **Structure**: `<= 768px` the `.sidebar` becomes `position: fixed` below the header and slides

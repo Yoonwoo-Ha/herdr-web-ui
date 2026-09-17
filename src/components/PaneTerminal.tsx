@@ -1,13 +1,48 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import "./PaneTerminal.css";
 
 import { HerdrSocket } from "../lib/ws.ts";
+import { KeyBar, type KeyBarKey } from "./KeyBar.tsx";
 
 const FONT_STACK =
   '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace';
+
+/** A single printable character: what the one-shot Control modifier consumes. */
+function isPrintable(data: string): boolean {
+  if (data.length !== 1) return false;
+  const code = data.charCodeAt(0);
+  return code >= 0x20 && code !== 0x7f;
+}
+
+/** The control code for A-Z and @ [ \ ] ^ _ (Ctrl+C = 0x03, Ctrl+[ = ESC, ...), null otherwise. */
+function controlCode(ch: string): string | null {
+  if (!/^[A-Za-z@[\\\]^_]$/.test(ch)) return null;
+  return String.fromCharCode(ch.toUpperCase().charCodeAt(0) & 0x1f);
+}
+
+/** What a key-bar tap feeds xterm; arrows follow the application cursor keys mode like a real keyboard. */
+function keySequence(term: Terminal, key: KeyBarKey): string {
+  const cursor = (final: "A" | "B" | "C" | "D"): string => (term.modes.applicationCursorKeysMode ? "\u001bO" : "\u001b[") + final;
+  switch (key) {
+    case "Escape":
+      return "\u001b";
+    case "Tab":
+      return "\t";
+    case "ctrl-c":
+      return "\u0003";
+    case "ArrowUp":
+      return cursor("A");
+    case "ArrowDown":
+      return cursor("B");
+    case "ArrowRight":
+      return cursor("C");
+    case "ArrowLeft":
+      return cursor("D");
+  }
+}
 
 export interface PaneTerminalProps {
   paneId: string | null;
@@ -24,6 +59,9 @@ export function PaneTerminal({ paneId, onConnectionChange }: PaneTerminalProps) 
   const onConnectionChangeRef = useRef(onConnectionChange);
   const [connected, setConnected] = useState(false);
   const [ended, setEnded] = useState(false);
+  // one-shot Control from the key bar: the ref is what onData reads, the state is what the bar shows
+  const ctrlRef = useRef(false);
+  const [ctrlArmed, setCtrlArmed] = useState(false);
 
   paneRef.current = paneId;
   onConnectionChangeRef.current = onConnectionChange;
@@ -77,7 +115,14 @@ export function PaneTerminal({ paneId, onConnectionChange }: PaneTerminalProps) 
 
     const onData = term.onData((data) => {
       const current = paneRef.current;
-      if (current) socket.sendInput(current, data);
+      if (!current) return;
+      if (ctrlRef.current && isPrintable(data)) {
+        ctrlRef.current = false;
+        setCtrlArmed(false);
+        socket.sendInput(current, controlCode(data) ?? data);
+        return;
+      }
+      socket.sendInput(current, data);
     });
 
     const observer = new ResizeObserver(() => {
@@ -180,8 +225,23 @@ export function PaneTerminal({ paneId, onConnectionChange }: PaneTerminalProps) 
     };
   }, [paneId]);
 
+  // key-bar taps go through xterm so the onData -> socket path above is reused
+  const pressKey = useCallback((key: KeyBarKey) => {
+    const term = termRef.current;
+    if (!term) return;
+    term.input(keySequence(term, key));
+    term.focus();
+  }, []);
+
+  const toggleCtrl = useCallback(() => {
+    const armed = !ctrlRef.current;
+    ctrlRef.current = armed;
+    setCtrlArmed(armed);
+    termRef.current?.focus();
+  }, []);
+
   return (
-    <>
+    <div className="terminal-stack">
       {paneId === null && (
         <div className="terminal-placeholder">
           <div className="terminal-placeholder-inner">
@@ -205,6 +265,7 @@ export function PaneTerminal({ paneId, onConnectionChange }: PaneTerminalProps) 
         </div>
       )}
       <div className="pane-terminal" ref={hostRef} />
-    </>
+      <KeyBar onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl} />
+    </div>
   );
 }

@@ -80,6 +80,7 @@
   --sidebar-w: 300px;
   --control-h: 32px;
   --touch-target: 40px;
+  --keybar-h: 40px;
   --chip-h: 18px;
   --icon-size: 18px;
   --mark-size: 22px;
@@ -151,7 +152,7 @@ button {
   display: flex;
   flex-direction: column;
   height: 100%;
-  height: 100dvh;
+  height: var(--app-height, 100dvh);
 }
 
 .app-header {
@@ -456,6 +457,13 @@ button {
     inset: calc(var(--header-h) + env(safe-area-inset-top, 0px)) 0 0 0;
     z-index: var(--z-scrim);
     background: var(--scrim);
+  }
+}
+
+/* the key bar (KeyBar.css) shows under the same query and carries env(safe-area-inset-bottom) itself */
+@media (pointer: coarse), (max-width: 768px) {
+  .terminal-host {
+    padding-bottom: 0;
   }
 }
 

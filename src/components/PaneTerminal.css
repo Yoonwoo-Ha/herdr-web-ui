@@ -2,12 +2,21 @@
  * Terminal chrome for PaneTerminal.tsx: the xterm mount, the empty placeholder
  * and the status banners. The host background equals --term-bg so the canvas
  * edge is invisible; the banners float over the top-right corner so they never
- * steal rows from the pty.
+ * steal rows from the pty. The stack is a column: the mount takes every row the
+ * key bar (KeyBar.css) leaves, and clips so a pending refit never paints over it.
  */
 
-.pane-terminal {
-  width: 100%;
+.terminal-stack {
+  display: flex;
+  flex-direction: column;
   height: 100%;
+}
+
+.pane-terminal {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
 }
 
 .terminal-placeholder {
