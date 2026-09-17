@@ -1,9 +1,10 @@
-import { existsSync } from "node:fs";
-import { join, normalize } from "node:path";
 import type { ServerWebSocket } from "bun";
 
-import type { AgentStatus, ClientMessage, HerdrPane, ServerMessage } from "../shared/protocol.ts";
+import type { AgentStatus, ClientMessage, HealthAuth, HerdrPane, ServerMessage } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
+import { handleAuthRequest, isAuthenticated, requiresAuth, unauthorizedJson } from "./auth.ts";
+import { badRequest, errorResponse, jsonResponse } from "./http.ts";
+import { serveStatic } from "./static.ts";
 import {
   HerdrError,
   paneRead,
@@ -16,8 +17,10 @@ import {
 } from "./herdr/client.ts";
 import { PtySession } from "./pty/session.ts";
 
-const DIST_DIR = new URL("../dist", import.meta.url).pathname;
 const MAX_REPLAY_BYTES = 256 * 1024;
+
+/** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
+const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
 
 interface SocketData {
   attached: Set<string>;
@@ -49,46 +52,13 @@ function send(client: Client, message: ServerMessage): void {
   }
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-}
-
-function errorResponse(error: unknown): Response {
-  if (error instanceof HerdrError) {
-    const status = error.code === "connect_failed" || error.code === "timeout" ? 502 : 404;
-    return jsonResponse({ error: { code: error.code, message: error.message } }, status);
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return jsonResponse({ error: { code: "internal_error", message } }, 500);
-}
-
-function badRequest(code: string, message: string): Response {
-  return jsonResponse({ error: { code, message } }, 400);
-}
-
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-};
-
-function contentTypeFor(path: string): string {
-  const dot = path.lastIndexOf(".");
-  if (dot === -1) return "application/octet-stream";
-  return MIME[path.slice(dot)] ?? "application/octet-stream";
-}
-
-export function createServer(options: { port?: number } = {}): { port: number; stop: () => void } {
+export function createServer(
+  options: { port?: number; hostname?: string; token?: string } = {},
+): { port: number; hostname: string; stop: () => void } {
   const attachments = new Map<string, PaneAttachment>();
+  const hostname = options.hostname ?? process.env["HOST"] ?? "0.0.0.0";
+  /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
+  const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
 
   function broadcast(paneId: string, message: ServerMessage): void {
     const attachment = attachments.get(paneId);
@@ -173,10 +143,17 @@ export function createServer(options: { port?: number } = {}): { port: number; s
   const envPort = process.env["PORT"];
   const server = Bun.serve<SocketData>({
     port: options.port ?? (envPort ? Number(envPort) : DEFAULT_PORT),
+    hostname,
 
     async fetch(request, bunServer) {
       const url = new URL(request.url);
       const { pathname } = url;
+      const authenticated = isAuthenticated(request, token);
+
+      if (requiresAuth(pathname) && !authenticated) {
+        // The WS client never parses a body, so the upgrade refusal stays plain text.
+        return pathname === "/ws" ? new Response("unauthorized", { status: 401 }) : unauthorizedJson();
+      }
 
       if (pathname === "/ws") {
         const upgraded = bunServer.upgrade(request, { data: { attached: new Set<string>() } });
@@ -184,10 +161,13 @@ export function createServer(options: { port?: number } = {}): { port: number; s
         return new Response("websocket upgrade required", { status: 426 });
       }
 
+      if (pathname === "/api/auth") return handleAuthRequest(request, token);
+
       if (pathname === "/api/health") {
+        const auth: HealthAuth = { required: token !== "", authenticated };
         try {
           const info = await ping();
-          return jsonResponse({ ok: true, herdr: { version: info.version, protocol: info.protocol } });
+          return jsonResponse({ ok: true, herdr: { version: info.version, protocol: info.protocol }, auth });
         } catch (error) {
           return errorResponse(error);
         }
@@ -249,23 +229,8 @@ export function createServer(options: { port?: number } = {}): { port: number; s
         return jsonResponse({ error: { code: "not_found", message: `unknown endpoint ${pathname}` } }, 404);
       }
 
-      // static client
-      const indexPath = join(DIST_DIR, "index.html");
-      if (!existsSync(indexPath)) {
-        return new Response(
-          "herdr-web-ui server is running, but the browser client has not been built yet.\nRun: bun run build\n",
-          { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
-        );
-      }
-      const relative = normalize(pathname).replace(/^(\.\.[/\\])+/, "");
-      const candidate = join(DIST_DIR, relative);
-      if (candidate.startsWith(DIST_DIR) && relative !== "/" && existsSync(candidate)) {
-        const file = Bun.file(candidate);
-        if ((await file.exists()) && !(await file.stat()).isDirectory()) {
-          return new Response(file, { headers: { "content-type": contentTypeFor(candidate) } });
-        }
-      }
-      return new Response(Bun.file(indexPath), { headers: { "content-type": "text/html; charset=utf-8" } });
+      // static client - public even when the API is gated, so the login UI can load
+      return serveStatic(pathname);
     },
 
     websocket: {
@@ -334,6 +299,7 @@ export function createServer(options: { port?: number } = {}): { port: number; s
 
   return {
     port: server.port ?? 0,
+    hostname,
     stop: () => {
       for (const paneId of [...attachments.keys()]) closeAttachment(paneId);
       server.stop(true);
@@ -343,5 +309,10 @@ export function createServer(options: { port?: number } = {}): { port: number; s
 
 if (import.meta.main) {
   const instance = createServer();
-  console.log(`herdr-web-ui listening on http://localhost:${instance.port}`);
+  console.log(`herdr-web-ui listening on http://${instance.hostname}:${instance.port}`);
+  if ((process.env["HERDR_WEB_TOKEN"] ?? "") === "" && !LOOPBACK_HOSTNAMES.has(instance.hostname)) {
+    console.error(
+      `WARNING: listening on all interfaces (${instance.hostname}) without HERDR_WEB_TOKEN - anyone who can reach this port can type into your terminals; set HERDR_WEB_TOKEN=<token> or HOST=127.0.0.1 to stop that.`,
+    );
+  }
 }

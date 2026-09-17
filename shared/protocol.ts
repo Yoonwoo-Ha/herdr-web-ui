@@ -30,15 +30,28 @@ export type HerdrTab = TabInfo;
 export type HerdrPane = PaneInfo;
 
 /** HTTP API
- *  GET  /api/health                      -> { ok: true, herdr: { version, protocol } }
- *  GET  /api/session                     -> { snapshot: SessionSnapshot }
- *  GET  /api/pane/read?pane_id=&source=&format=&lines=  -> { read: PaneReadResult }
- *  POST /api/pane/input  { pane_id, text }   -> { ok: true }
- *  POST /api/pane/keys   { pane_id, keys }   -> { ok: true }
+ *  GET    /api/health                    -> { ok: true, herdr: { version, protocol }, auth: HealthAuth }
+ *  GET    /api/session                   -> { snapshot: SessionSnapshot }
+ *  GET    /api/pane/read?pane_id=&source=&format=&lines=  -> { read: PaneReadResult }
+ *  POST   /api/pane/input  { pane_id, text }   -> { ok: true }
+ *  POST   /api/pane/keys   { pane_id, keys }   -> { ok: true }
+ *  POST   /api/auth        { token }     -> 204 + Set-Cookie herdr_web_token (401 invalid_token on mismatch)
+ *  DELETE /api/auth                      -> 204 + Set-Cookie herdr_web_token=; Max-Age=0
  *  Errors: non-2xx with { error: { code, message } }
+ *
+ *  Auth (only when the server was started with HERDR_WEB_TOKEN / token): every route
+ *  above except /api/health and /api/auth, plus the /ws upgrade, needs the cookie or
+ *  an `Authorization: Bearer <token>` header; without it HTTP answers 401
+ *  `unauthorized` and the upgrade is refused. Static files are always public.
  */
 export interface ApiError {
   error: { code: string; message: string };
+}
+
+/** GET /api/health `auth`: `required` is false when no token is configured, and then `authenticated` is true. */
+export interface HealthAuth {
+  readonly required: boolean;
+  readonly authenticated: boolean;
 }
 
 /** WebSocket at /ws */

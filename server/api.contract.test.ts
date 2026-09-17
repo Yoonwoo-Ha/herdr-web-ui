@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { createServer } from "./index.ts";
-import type { AgentStatus, SessionSnapshot, PaneReadResult } from "../shared/protocol.ts";
+import type { AgentStatus, ApiError, HealthAuth, SessionSnapshot, PaneReadResult } from "../shared/protocol.ts";
 import { herdrRpc } from "./herdr/client.ts";
 
 /**
@@ -143,6 +143,157 @@ describe("WebSocket /ws", () => {
     expect(error.code).toBe("invalid_json");
     ws.close();
   }, 15000);
+});
+
+type CookieWebSocketCtor = new (url: string, options: { headers: { cookie: string } }) => WebSocket;
+
+/**
+ * Bun's WebSocket client sends request headers, but this project compiles with lib.dom,
+ * whose WebSocket type only knows subprotocols (bun-types steps aside via
+ * UseLibDomIfAvailable). Reaching the real capability through a guard keeps the test
+ * honest: if Bun ever stopped sending the header, the server refuses the upgrade and
+ * the test fails instead of silently passing.
+ */
+function takesCookieHeader(value: unknown): value is CookieWebSocketCtor {
+  return typeof value === "function";
+}
+
+function connectWithCookie(url: string, cookie: string): WebSocket {
+  const ctor: unknown = globalThis.WebSocket;
+  if (!takesCookieHeader(ctor)) throw new Error("no WebSocket constructor in this runtime");
+  return new ctor(url, { headers: { cookie } });
+}
+
+describe("token auth", () => {
+  /**
+   * A second server with the gate ON: the default instance above stays open so the
+   * rest of the suite keeps proving that an empty token changes nothing.
+   */
+  const TOKEN = "s3cret";
+  let secured: { port: number; stop: () => void };
+
+  beforeAll(() => {
+    secured = createServer({ port: 0, token: TOKEN });
+  });
+
+  afterAll(() => {
+    secured?.stop();
+  });
+
+  const securedBase = () => `http://127.0.0.1:${secured.port}`;
+  const wsUrl = () => `ws://127.0.0.1:${secured.port}/ws`;
+
+  it("rejects an unauthenticated API call with 401 unauthorized", async () => {
+    const res = await fetch(`${securedBase()}/api/session`);
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as ApiError;
+    expect(body.error.code).toBe("unauthorized");
+  });
+
+  it("keeps /api/health public and advertises the gate state", async () => {
+    const res = await fetch(`${securedBase()}/api/health`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; auth: HealthAuth };
+    expect(body.auth).toEqual({ required: true, authenticated: false });
+  });
+
+  it("refuses a token that does not match", async () => {
+    const res = await fetch(`${securedBase()}/api/auth`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "wrong" }),
+    });
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as ApiError;
+    expect(body.error.code).toBe("invalid_token");
+  });
+
+  it("hands back a hardened session cookie for the right token", async () => {
+    const res = await fetch(`${securedBase()}/api/auth`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+    expect(res.status).toBe(204);
+    const cookie = res.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain(`herdr_web_token=${TOKEN}`);
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Strict");
+    expect(cookie).toContain("Max-Age=31536000");
+  });
+
+  it("accepts the session cookie", async () => {
+    const res = await fetch(`${securedBase()}/api/session`, {
+      headers: { cookie: `herdr_web_token=${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("accepts a bearer token", async () => {
+    const res = await fetch(`${securedBase()}/api/session`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("expires the cookie on logout", async () => {
+    const res = await fetch(`${securedBase()}/api/auth`, { method: "DELETE" });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("set-cookie") ?? "").toContain("Max-Age=0");
+  });
+
+  it("never upgrades a websocket without a token", async () => {
+    const ws = new WebSocket(wsUrl());
+    const outcome = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no error/close within 5000ms")), 5000);
+      const settle = (result: string) => {
+        clearTimeout(timer);
+        resolve(result);
+      };
+      ws.addEventListener("error", () => settle("error"));
+      ws.addEventListener("close", () => settle("close"));
+      ws.addEventListener("open", () => {
+        clearTimeout(timer);
+        ws.close();
+        reject(new Error("the upgrade succeeded without a token"));
+      });
+    });
+    expect(["error", "close"]).toContain(outcome);
+  }, 10000);
+
+  it("upgrades a websocket that carries the cookie", async () => {
+    const ws = connectWithCookie(wsUrl(), `herdr_web_token=${TOKEN}`);
+    const first = await new Promise<{ type: string }>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no message within 5000ms")), 5000);
+      ws.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error("the upgrade was refused despite a valid cookie"));
+      });
+      ws.addEventListener("message", (event) => {
+        clearTimeout(timer);
+        resolve(JSON.parse(String((event as MessageEvent).data)) as { type: string });
+      });
+    });
+    expect(first.type).toBe("snapshot");
+    ws.close();
+  }, 10000);
+});
+
+describe("bind address", () => {
+  let loopback: { port: number; stop: () => void };
+
+  beforeAll(() => {
+    loopback = createServer({ port: 0, hostname: "127.0.0.1" });
+  });
+
+  afterAll(() => {
+    loopback?.stop();
+  });
+
+  it("serves the API on the requested hostname", async () => {
+    const res = await fetch(`http://127.0.0.1:${loopback.port}/api/health`);
+    expect(res.status).toBe(200);
+  });
 });
 
 describe("generated wire types", () => {
