@@ -2,22 +2,35 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import "./PaneTerminal.css";
 
 import { HerdrSocket } from "../lib/ws.ts";
 
 const FONT_STACK =
   '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace';
 
-export function PaneTerminal({ paneId }: { paneId: string | null }) {
+export interface PaneTerminalProps {
+  paneId: string | null;
+  /** Fires on every change of the socket's connected state (the header shows it). */
+  onConnectionChange?: (connected: boolean) => void;
+}
+
+export function PaneTerminal({ paneId, onConnectionChange }: PaneTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const socketRef = useRef<HerdrSocket | null>(null);
   const paneRef = useRef<string | null>(paneId);
+  const onConnectionChangeRef = useRef(onConnectionChange);
   const [connected, setConnected] = useState(false);
   const [ended, setEnded] = useState(false);
 
   paneRef.current = paneId;
+  onConnectionChangeRef.current = onConnectionChange;
+
+  useEffect(() => {
+    onConnectionChangeRef.current?.(connected);
+  }, [connected]);
 
   // one terminal + one socket for the lifetime of the component
   useEffect(() => {
@@ -169,9 +182,28 @@ export function PaneTerminal({ paneId }: { paneId: string | null }) {
 
   return (
     <>
-      {paneId === null && <div className="terminal-placeholder">Select a pane to open its terminal</div>}
-      {paneId !== null && ended && <div className="terminal-banner">terminal ended</div>}
-      {paneId !== null && !ended && !connected && <div className="terminal-banner">reconnecting to herdr-web-ui…</div>}
+      {paneId === null && (
+        <div className="terminal-placeholder">
+          <div className="terminal-placeholder-inner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="2.5" y="4" width="19" height="16" rx="2.5" />
+              <path d="M7 9l3 3-3 3" />
+              <path d="M12.5 15h4.5" />
+            </svg>
+            <span>Select a pane to open its terminal</span>
+          </div>
+        </div>
+      )}
+      {paneId !== null && ended && (
+        <div className="terminal-banner" role="status">
+          terminal ended
+        </div>
+      )}
+      {paneId !== null && !ended && !connected && (
+        <div className="terminal-banner terminal-banner-warning" role="status">
+          reconnecting to herdr web ui…
+        </div>
+      )}
       <div className="pane-terminal" ref={hostRef} />
     </>
   );

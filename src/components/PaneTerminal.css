@@ -1,0 +1,56 @@
+/*
+ * Terminal chrome for PaneTerminal.tsx: the xterm mount, the empty placeholder
+ * and the status banners. The host background equals --term-bg so the canvas
+ * edge is invisible; the banners float over the top-right corner so they never
+ * steal rows from the pty.
+ */
+
+.pane-terminal {
+  width: 100%;
+  height: 100%;
+}
+
+.terminal-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  font-size: var(--fs-md);
+  pointer-events: none;
+}
+
+.terminal-placeholder-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.terminal-placeholder svg {
+  width: var(--space-6);
+  height: var(--space-6);
+}
+
+.terminal-banner {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
+  z-index: var(--z-banner);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--chip-h);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.terminal-banner-warning {
+  border-color: var(--status-working);
+  color: var(--status-working);
+}
