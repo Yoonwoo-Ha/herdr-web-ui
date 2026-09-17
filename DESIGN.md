@@ -69,6 +69,7 @@ object. They are tokens so the chrome can match them (the host background equals
 | Body | `--fs-sm` | 12px | `--fw-regular` 400 / `--fw-medium` 500 | `--lh-base` 1.45 (titles `--lh-tight`) | 0 | Pane title, header context, states, errors |
 | Meta | `--fs-xs` | 11px | `--fw-regular` 400 | `--lh-base` 1.45 | 0 | Connection label, banners, "no panes" |
 | Micro | `--fs-2xs` | 10px | `--fw-medium` 500 | 1 (inside chips) | `--tracking-caps` 0.06em when uppercase | Badges, pills, ids, tab overline, chips |
+| Input | `--fs-input` | 16px | inherits | inherits | 0 | Token gate input only: the one size iOS Safari does not zoom on focus |
 
 ### Font Stack
 - UI: `--font-ui` = `Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif`
@@ -158,7 +159,8 @@ All spacing derives from a base of **4px**.
 
 ### Icon button (`.icon-button`)
 - **Structure**: `<button class="icon-button" aria-label>` wrapping one inline SVG.
-- **Variants**: `.drawer-toggle` (only rendered `<= 768px`).
+- **Variants**: `.drawer-toggle` (only rendered `<= 768px`); `.lock-button` (header, only when
+  `health.auth.required`; calls `DELETE /api/auth` then refetches health so the gate returns).
 - **Spacing**: `--control-h` square, `--icon-size` glyph, `--radius-sm`.
 - **States**: default (transparent, `--border`), hover (`--bg-hover`), active and
   `[aria-expanded="true"]` (`--bg-elevated`, `--accent` border, `--text-strong`), focus (`--ring`).
@@ -266,6 +268,40 @@ All spacing derives from a base of **4px**.
 - **Layout**: drawer top = header height + `env(safe-area-inset-top)`, bottom padding adds
   `env(safe-area-inset-bottom)`.
 
+### Token gate (`.token-gate`)
+- **Structure**: `<main class="token-gate-screen">` (grid, centers on `--bg`, `--space-4` + safe-area
+  padding) → `<form class="token-gate" data-testid="token-gate" aria-labelledby>` card:
+  `.token-gate-mark` (`/icons/icon.svg`, `calc(var(--mark-size) * 2)`), `<h1 class="token-gate-title">`
+  "herdr web ui" (`brand-sub` dim), `.token-gate-copy` "This server requires an access token.",
+  `<label>` + `<input class="token-gate-input" type="password" name="token"
+  autocomplete="current-password" autofocus aria-label="Access token">`, `<button type="submit"
+  class="token-gate-submit">` "Unlock", and `.token-gate-error` (`role="alert"`, referenced by the
+  input's `aria-describedby`) only after a failed attempt. Rendered by `App` instead of the shell
+  while `health.auth.required && !authenticated` or a session poll answers 401; the shell (and its
+  WebSocket) never mounts while locked.
+- **Variants**: none. `.token-gate-submit` is the system's one filled control (`--accent` fill, `--bg` text).
+- **Spacing**: card `min(100%, calc(var(--sidebar-w) + 2 * var(--space-6)))` wide so the content
+  column is exactly `--sidebar-w`; `--space-6` padding, `--radius-md`, `--hairline` `--border` on
+  `--bg-panel`. Mark → title `--space-4`, title → copy `--space-1`, copy → label `--space-5`, label →
+  input `--space-1`, input → button `--space-3`, button → error `--space-3`. Input and button are
+  `--control-h` tall, `--radius-sm`. Type: title `--fs-lg` / `--fw-bold` / `--tracking-tight`; copy
+  `--fs-md` `--text-dim`; label `--fs-sm` `--fw-medium`; input `--fs-input` `--text-strong` on
+  `--bg-elevated`; button `--fs-md` `--fw-semibold`; error `--fs-sm` `--danger-text` on
+  `--danger-tint` with a `--status-blocked` border.
+- **States**: idle (input autofocused, global `--ring`), hover on submit (`color-mix()` of `--accent`
+  with `--text-strong`), active (`--accent` with `--bg`), submitting (button `disabled`, "Unlocking…",
+  opacity 0.6, `cursor: progress`), invalid (`aria-invalid="true"` → `--status-blocked` border, error
+  block "Token does not match." or the network error text; input re-selected), empty submit (no
+  request, input focused). Unlock success unmounts the gate and mounts the shell.
+- **Accessibility**: `<main>` landmark, one `<h1>`, real `<label for>`, `role="alert"` error,
+  `aria-invalid` + `aria-describedby` on the input, Enter submits, 32px controls. The header Lock
+  control is an `.icon-button.lock-button` with `aria-label="Lock"` and an inline SVG padlock,
+  rendered only when `health.auth.required`.
+- **Motion**: border/background/opacity `--dur-fast` `--ease-out` on the input and button only; no
+  entrance animation; none under `prefers-reduced-motion`.
+- **Layout**: full-viewport `min-height: 100dvh` grid; the card shrinks to `100%` of the padded
+  viewport on phones and never scrolls horizontally.
+
 ## 6. Motion & Interaction
 
 ### Timing
@@ -324,4 +360,3 @@ because it floats over the terminal.
 | Terminal theme values duplicated in `PaneTerminal.tsx` | `PaneTerminal.tsx` theme + `--term-*` | xterm.js cannot read CSS custom properties and the component must not read new inputs | Keep in sync by hand; the `--term-*` tokens are the reference |
 | Drawer has no focus trap | `.sidebar.is-open` | Closed drawer leaves the tab order via `visibility: hidden`; trapping focus inside an open drawer needs a small focus utility that another lane owns (key bar / soft keyboard) | Add with the touch toolbar work |
 | Terminal content accessibility relies on xterm defaults | `PaneTerminal.tsx` | xterm's screen-reader mode is off; enabling it changes the terminal's DOM and input behaviour and is a product decision | Decide with the herdr TUI owners |
-| Health is fetched once at load | `App.tsx` | Existing behaviour; a stale "offline" pill after herdr restarts is a data-flow change outside this design pass | Poll with the session in a later change |

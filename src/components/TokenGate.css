@@ -1,0 +1,131 @@
+/*
+ * Token gate for TokenGate.tsx: one card centered on the base surface, shown
+ * instead of the shell while the server wants a token. Only tokens from the
+ * styles.css :root block. The card's content column is exactly one sidebar wide
+ * (--sidebar-w) so the input and button sit at a width the rest of the UI already
+ * uses, and there is no entrance animation: the system only moves on state changes.
+ */
+
+.token-gate-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  min-height: 100dvh;
+  padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) calc(var(--space-4) + env(safe-area-inset-right, 0px))
+    calc(var(--space-4) + env(safe-area-inset-bottom, 0px)) calc(var(--space-4) + env(safe-area-inset-left, 0px));
+  background: var(--bg);
+}
+
+.token-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: min(100%, calc(var(--sidebar-w) + 2 * var(--space-6)));
+  margin: 0;
+  padding: var(--space-6);
+  background: var(--bg-panel);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.token-gate-mark {
+  display: block;
+  width: calc(var(--mark-size) * 2);
+  height: calc(var(--mark-size) * 2);
+  margin-bottom: var(--space-4);
+}
+
+.token-gate-title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-tight);
+  color: var(--text-strong);
+}
+
+.token-gate-copy {
+  margin: 0 0 var(--space-5);
+  font-size: var(--fs-md);
+  color: var(--text-dim);
+}
+
+.token-gate-label {
+  margin-bottom: var(--space-1);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+/* focus is the global --ring rule; the border only changes to name an invalid value */
+.token-gate-input {
+  appearance: none;
+  width: 100%;
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--fs-input);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.token-gate-input[aria-invalid="true"] {
+  border-color: var(--status-blocked);
+}
+
+/*
+ * The system's one filled control. Hover and press are the accent mixed with the
+ * bright and base surface tokens: no new colors, the hue stays the accent's.
+ */
+.token-gate-submit {
+  margin-top: var(--space-3);
+  height: var(--control-h);
+  padding: 0 var(--space-4);
+  background: var(--accent);
+  border: var(--hairline) solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--bg);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+
+.token-gate-submit:hover {
+  background: color-mix(in srgb, var(--accent) 88%, var(--text-strong));
+  border-color: color-mix(in srgb, var(--accent) 88%, var(--text-strong));
+}
+
+.token-gate-submit:active {
+  background: color-mix(in srgb, var(--accent) 80%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 80%, var(--bg));
+}
+
+.token-gate-submit:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.token-gate-error {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--status-blocked);
+  border-radius: var(--radius-sm);
+  background: var(--danger-tint);
+  font-size: var(--fs-sm);
+  color: var(--danger-text);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .token-gate-input,
+  .token-gate-submit {
+    transition: none;
+  }
+}

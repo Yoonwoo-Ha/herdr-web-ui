@@ -53,6 +53,7 @@
   --fs-sm: 12px;
   --fs-md: 13px;
   --fs-lg: 15px;
+  --fs-input: 16px; /* the one size iOS Safari does not zoom on focus (token gate input) */
   --lh-tight: 1.2;
   --lh-base: 1.45;
   --fw-regular: 400;
