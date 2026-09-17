@@ -28,6 +28,17 @@ function DrawerIcon({ open }: { open: boolean }) {
   );
 }
 
+function Brand() {
+  return (
+    <h1 className="brand">
+      <img src="/icons/icon.svg" alt="" width="22" height="22" className="brand-mark" />
+      <span className="brand-name">
+        herdr <span className="brand-sub">web ui</span>
+      </span>
+    </h1>
+  );
+}
+
 function LockIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -121,7 +132,32 @@ export function App() {
     document.title = selectedTitle ? `${selectedTitle} · herdr` : APP_TITLE;
   }, [selectedTitle]);
 
-  if (locked === null) return null;
+  if (locked === null) {
+    // the auth state is unknown until /api/health or /api/session answers (ten seconds when
+    // herdr is down): show the shell without the terminal, and so without a WebSocket,
+    // instead of a blank page
+    return (
+      <div className="app">
+        <header className="app-header">
+          <Brand />
+        </header>
+        <div className="app-body">
+          <aside className="sidebar">
+            <p className="tree-state" role="status">
+              Connecting…
+            </p>
+          </aside>
+          <main className="terminal-host">
+            <div className="terminal-placeholder">
+              <div className="terminal-placeholder-inner">
+                <span>Connecting to herdr web ui…</span>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
   if (locked) return <TokenGate onUnlocked={unlock} />;
 
   return (
@@ -137,12 +173,7 @@ export function App() {
         >
           <DrawerIcon open={drawerOpen} />
         </button>
-        <h1 className="brand">
-          <img src="/icons/icon.svg" alt="" width="22" height="22" className="brand-mark" />
-          <span className="brand-name">
-            herdr <span className="brand-sub">web ui</span>
-          </span>
-        </h1>
+        <Brand />
         {selectedPane && (
           <div className="context" title={`${selectedWorkspace?.label ?? selectedPane.workspace_id} › ${selectedTitle}`}>
             <span className="context-workspace">{selectedWorkspace?.label ?? selectedPane.workspace_id}</span>

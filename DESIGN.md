@@ -137,7 +137,7 @@ All spacing derives from a base of **4px**.
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--z-banner` | 5 | Terminal banners over the xterm canvas |
+| `--z-banner` | 5 | Terminal banners and the empty-state placeholder over the xterm canvas |
 | `--z-scrim` | 15 | Mobile scrim |
 | `--z-drawer` | 20 | Mobile drawer above the scrim |
 
@@ -147,9 +147,10 @@ All spacing derives from a base of **4px**.
   `.terminal-host` (`flex: 1`, `min-width: 0`, `overflow: hidden`; xterm owns scrolling inside).
 - The app fills `var(--app-height, 100dvh)` with a `100%` fallback; header, drawer and terminal
   host add `env(safe-area-inset-*)` to their padding so notches and home bars never cover content.
-  Where the key bar is visible (`(pointer: coarse), (max-width: 768px)`) the terminal host drops
-  its bottom padding and the bar carries `env(safe-area-inset-bottom)` itself, so the inset is
-  applied once.
+  Where the key bar is rendered and visible (`.terminal-host:has(.key-bar)` under
+  `(pointer: coarse), (max-width: 768px)`) the terminal host drops its bottom padding and the bar
+  carries `env(safe-area-inset-bottom)` itself, so the inset is applied once; with no pane selected
+  there is no bar and the host keeps the inset.
 - `--app-height` is written on `<html>` by `src/lib/viewport.ts` from `window.visualViewport`
   (on `resize` and `scroll`, rounded, with the page pinned at `scrollTo(0, 0)`), so on iOS
   Safari the shell shrinks with the soft keyboard instead of sliding under it and the key bar
@@ -219,7 +220,7 @@ All spacing derives from a base of **4px**.
   `--space-2` with a `--space-3` left inset that the rail sits in.
 - **States**: default, hover (`--bg-hover`), selected (`--bg-elevated` + inset `--rail-w` accent
   rail, title `--text-strong`, `aria-current="true"`), focus (`--ring`), loading (`.tree-state`
-  "Loading workspaces…", `role="status"`), empty (`.tree-state-empty` "No workspaces yet — open one
+  "Loading workspaces…", `role="status"`), empty (`.tree-state-empty`, `role="status"`, "No workspaces yet — open one
   in herdr", dashed `--border` box), error (App-owned `.error-state`, `role="alert"`, with `.error-retry`).
 - **Accessibility**: `<nav aria-label>`, real `<button>` rows with `title`, `aria-current` on the
   selected row, `min-height: --touch-target` on coarse pointers.
@@ -232,7 +233,10 @@ All spacing derives from a base of **4px**.
   banner, and the `.pane-terminal` xterm mount.
 - **Spacing**: host padded `--space-2` (+ safe-area insets); banner at `--space-2` / `--space-3`
   from the top-right corner, `--chip-h` tall, `--radius-pill`.
-- **States**: empty (placeholder, `--text-dim`, `--fs-md`), ended (`.terminal-banner`, neutral),
+- **States**: empty (placeholder, `--text-dim`, `--fs-md`, painted at `--z-banner` above the mount,
+  which is `visibility: hidden` while no pane is selected so its cursor never shows through),
+  connecting (App renders this host without `PaneTerminal`, and so without a WebSocket, while the
+  auth state is unknown: "Connecting to herdr web ui…" instead of a blank page), ended (`.terminal-banner`, neutral),
   reconnecting (`.terminal-banner-warning`, `--status-working`). Banners carry `role="status"`.
 - **Layout**: `position: relative` host; banners are absolute overlays so the pty keeps every row.
 - **Scrollback**: xterm keeps none (`scrollback: 0`). The attach stream lives in the alternate
@@ -284,7 +288,7 @@ All spacing derives from a base of **4px**.
   `.token-gate-mark` (`/icons/icon.svg`, `calc(var(--mark-size) * 2)`), `<h1 class="token-gate-title">`
   "herdr web ui" (`brand-sub` dim), `.token-gate-copy` "This server requires an access token.",
   `<label>` + `<input class="token-gate-input" type="password" name="token"
-  autocomplete="current-password" autofocus aria-label="Access token">`, `<button type="submit"
+  autocomplete="current-password" autofocus>` (named by its `<label for>`), `<button type="submit"
   class="token-gate-submit">` "Unlock", and `.token-gate-error` (`role="alert"`, referenced by the
   input's `aria-describedby`) only after a failed attempt. Rendered by `App` instead of the shell
   while `health.auth.required && !authenticated` or a session poll answers 401; the shell (and its

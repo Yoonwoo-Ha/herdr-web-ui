@@ -62,7 +62,6 @@ export function TokenGate({ onUnlocked }: TokenGateProps) {
           name="token"
           autoComplete="current-password"
           autoFocus
-          aria-label="Access token"
           aria-invalid={error !== null}
           aria-describedby={error !== null ? "token-gate-error" : undefined}
           inputMode="text"

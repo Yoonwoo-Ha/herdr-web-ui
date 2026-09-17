@@ -477,8 +477,8 @@ button {
 
 /* the key bar (KeyBar.css) shows under the same query and carries env(safe-area-inset-bottom) itself */
 @media (pointer: coarse), (max-width: 768px) {
-  .terminal-host {
-    padding-bottom: 0;
+  .terminal-host:has(.key-bar) {
+    padding-bottom: 0; /* no pane = no bar, and the host keeps the inset */
   }
 }
 

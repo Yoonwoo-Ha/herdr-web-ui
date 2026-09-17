@@ -235,7 +235,7 @@ export function PaneTerminal({ paneId, onConnectionChange }: PaneTerminalProps) 
           reconnecting to herdr web ui…
         </div>
       )}
-      <div className="pane-terminal" ref={hostRef} />
+      <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
       {paneId !== null && <KeyBar onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl} />}
     </div>
   );

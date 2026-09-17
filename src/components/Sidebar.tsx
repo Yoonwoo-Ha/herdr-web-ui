@@ -40,7 +40,7 @@ export function Sidebar({ snapshot, selectedPaneId, onSelectPane }: SidebarProps
   }
 
   if (snapshot.workspaces.length === 0) {
-    return <p className="tree-state tree-state-empty">No workspaces yet — open one in herdr</p>;
+    return <p className="tree-state tree-state-empty" role="status">No workspaces yet — open one in herdr</p>;
   }
 
   return (

@@ -19,6 +19,12 @@
   overflow: hidden;
 }
 
+/* no pane selected: the mount keeps its size (the fit needs it) but never paints, so its
+   cursor cannot show through the placeholder */
+.pane-terminal.is-idle {
+  visibility: hidden;
+}
+
 /* no scrollback (PaneTerminal.tsx), so the viewport never scrolls: hide the track that would
    otherwise sit over the last columns on platforms with classic scrollbars */
 .pane-terminal .xterm-viewport {
@@ -32,6 +38,7 @@
 .terminal-placeholder {
   position: absolute;
   inset: 0;
+  z-index: var(--z-banner); /* above the xterm mount, like the banners; pointer-events stay off */
   display: grid;
   place-items: center;
   color: var(--text-dim);
