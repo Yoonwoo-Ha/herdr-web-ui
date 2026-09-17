@@ -1,5 +1,5 @@
 /**
- * herdr-br's own HTTP/WebSocket contract, shared by the Bun server and the React client.
+ * herdr-web-ui's own HTTP/WebSocket contract, shared by the Bun server and the React client.
  *
  * The herdr WIRE types are NOT hand-written here: they are generated from herdr's
  * published API schema into ./herdr-api.generated.ts and re-exported below, so a

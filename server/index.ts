@@ -126,7 +126,7 @@ export function createServer(options: { port?: number } = {}): { port: number; s
     };
     attachments.set(paneId, attachment);
 
-    // No --takeover: herdr 0.9.0 lets attaches coexist, so herdr-br never displaces
+    // No --takeover: herdr 0.9.0 lets attaches coexist, so herdr-web-ui never displaces
     // whoever is already looking at this terminal - including the user's own TUI.
     attachment.pty = new PtySession({
       command: "herdr",
@@ -253,7 +253,7 @@ export function createServer(options: { port?: number } = {}): { port: number; s
       const indexPath = join(DIST_DIR, "index.html");
       if (!existsSync(indexPath)) {
         return new Response(
-          "herdr-br server is running, but the browser client has not been built yet.\nRun: bun run build\n",
+          "herdr-web-ui server is running, but the browser client has not been built yet.\nRun: bun run build\n",
           { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
         );
       }
@@ -343,5 +343,5 @@ export function createServer(options: { port?: number } = {}): { port: number; s
 
 if (import.meta.main) {
   const instance = createServer();
-  console.log(`herdr-br listening on http://localhost:${instance.port}`);
+  console.log(`herdr-web-ui listening on http://localhost:${instance.port}`);
 }

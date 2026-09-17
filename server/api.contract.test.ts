@@ -4,7 +4,7 @@ import type { AgentStatus, SessionSnapshot, PaneReadResult } from "../shared/pro
 import { herdrRpc } from "./herdr/client.ts";
 
 /**
- * Contract test for herdr-br's HTTP + WS surface.
+ * Contract test for herdr-web-ui's HTTP + WS surface.
  * Runs against the REAL herdr server on the developer's machine: these are the
  * integration seams the browser UI depends on, so a mock here would prove nothing.
  * READ-ONLY: never creates, closes, or writes to a pane the user owns.
@@ -80,7 +80,7 @@ describe("WebSocket /ws", () => {
   beforeAll(async () => {
     const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
       "workspace.create",
-      { label: "herdrbr-test", cwd: "/tmp", focus: false },
+      { label: "herdr-web-ui-test", cwd: "/tmp", focus: false },
     );
     qaWorkspaceId = created.workspace.workspace_id;
     qaPaneId = created.root_pane.pane_id;

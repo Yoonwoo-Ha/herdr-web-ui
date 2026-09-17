@@ -1,4 +1,4 @@
-# herdr-br
+# herdr-web-ui
 
 A self-hosted **browser version of the [herdr](https://herdr.dev) terminal**: your live herdr
 workspaces, tabs and panes in a web UI, with real terminal output rendered by xterm.js and
@@ -6,7 +6,7 @@ keystrokes routed back into the live pane.
 
 Inspired architecturally by [chatmux](https://github.com/devswha/chatmux), with one decisive
 difference: chatmux spawns its own ptys via `node-pty`, whereas **herdr already owns the pty**.
-herdr-br therefore spawns nothing — it is a pure bridge over herdr's unix-socket API.
+herdr-web-ui therefore spawns nothing — it is a pure bridge over herdr's unix-socket API.
 
 ## Requirements
 
@@ -41,7 +41,7 @@ protocol shape this app:
    frames. That carries agent-status changes.
 
 The terminal itself is not built on that JSON API. herdr ships a real attach client, and
-herdr-br runs it: `herdr terminal attach <terminal_id>` on a PTY, with the raw bytes
+herdr-web-ui runs it: `herdr terminal attach <terminal_id>` on a PTY, with the raw bytes
 forwarded to xterm.js over the WebSocket and the user's keystrokes forwarded back. Reading
 the pane with `pane.read` on a timer was the obvious alternative and is worse — it caps at
 1000 lines per read and can only ever repaint the current viewport, so history and
@@ -50,7 +50,7 @@ selection are gone.
 Three consequences worth knowing:
 
 - **No `--takeover`.** herdr 0.9.0 lets attaches coexist, verified by attaching twice to
-  one terminal, so herdr-br never displaces whoever is already watching that terminal —
+  one terminal, so herdr-web-ui never displaces whoever is already watching that terminal —
   including your own desktop TUI.
 - **Scrollback is herdr's, not xterm's.** The attach stream enters the alternate screen
   (`CSI ?1049h`), where xterm.js disables its own scrollback by design. herdr also enables
@@ -122,4 +122,9 @@ server. Tests never write into a pane they did not create.
 
 ## Licence
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+[herdr](https://github.com/herdrdev/herdr) itself is a separate project under Apache-2.0 and is
+not bundled here; herdr-web-ui only talks to it over its socket and runs its CLI.
+`scripts/herdr-schema.json` is a snapshot of the schema herdr publishes via
+`herdr api schema --json`, kept so the types can be regenerated without a running server.

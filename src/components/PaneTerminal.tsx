@@ -54,7 +54,7 @@ export function PaneTerminal({ paneId }: { paneId: string | null }) {
       } else if (message.type === "pty-exit") {
         if (message.pane_id === paneRef.current) setEnded(true);
       } else if (message.type === "error") {
-        term.writeln(`\r\n\u001b[31m[herdr-br] ${message.code}: ${message.message}\u001b[0m`);
+        term.writeln(`\r\n\u001b[31m[herdr-web-ui] ${message.code}: ${message.message}\u001b[0m`);
       }
       setConnected(socket.connected);
     });
@@ -171,7 +171,7 @@ export function PaneTerminal({ paneId }: { paneId: string | null }) {
     <>
       {paneId === null && <div className="terminal-placeholder">Select a pane to open its terminal</div>}
       {paneId !== null && ended && <div className="terminal-banner">terminal ended</div>}
-      {paneId !== null && !ended && !connected && <div className="terminal-banner">reconnecting to herdr-br…</div>}
+      {paneId !== null && !ended && !connected && <div className="terminal-banner">reconnecting to herdr-web-ui…</div>}
       <div className="pane-terminal" ref={hostRef} />
     </>
   );

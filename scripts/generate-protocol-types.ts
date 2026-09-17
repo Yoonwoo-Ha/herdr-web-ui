@@ -8,7 +8,7 @@
  *
  * Shape decisions, and why:
  *
- * - Only the types herdr-br actually consumes are emitted, plus their transitive
+ * - Only the types herdr-web-ui actually consumes are emitted, plus their transitive
  *   closure. Generating all 170+ definitions would bury the ones under review.
  * - String enums become unions widened with `(string & {})`. herdr gives no
  *   stability guarantee, so a value from a future version must still flow through
