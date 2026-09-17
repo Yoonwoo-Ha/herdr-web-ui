@@ -2,8 +2,9 @@ import type { MouseEvent, PointerEvent, ReactNode } from "react";
 
 import "./KeyBar.css";
 
-/** Keys a soft keyboard has no room for; `ctrl-c` is a chord, the rest are DOM key names. */
-export type KeyBarKey = "Escape" | "Tab" | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight" | "ctrl-c";
+import type { KeyBarKey } from "../lib/keys.ts";
+
+export type { KeyBarKey };
 
 export interface KeyBarProps {
   /** Fires for every key except Control, which toggles the one-shot modifier instead. */

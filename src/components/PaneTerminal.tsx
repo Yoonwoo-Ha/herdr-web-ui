@@ -5,44 +5,11 @@ import "@xterm/xterm/css/xterm.css";
 import "./PaneTerminal.css";
 
 import { HerdrSocket } from "../lib/ws.ts";
-import { KeyBar, type KeyBarKey } from "./KeyBar.tsx";
+import { controlCode, isPrintable, keySequence, type KeyBarKey } from "../lib/keys.ts";
+import { KeyBar } from "./KeyBar.tsx";
 
 const FONT_STACK =
   '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace';
-
-/** A single printable character: what the one-shot Control modifier consumes. */
-function isPrintable(data: string): boolean {
-  if (data.length !== 1) return false;
-  const code = data.charCodeAt(0);
-  return code >= 0x20 && code !== 0x7f;
-}
-
-/** The control code for A-Z and @ [ \ ] ^ _ (Ctrl+C = 0x03, Ctrl+[ = ESC, ...), null otherwise. */
-function controlCode(ch: string): string | null {
-  if (!/^[A-Za-z@[\\\]^_]$/.test(ch)) return null;
-  return String.fromCharCode(ch.toUpperCase().charCodeAt(0) & 0x1f);
-}
-
-/** What a key-bar tap feeds xterm; arrows follow the application cursor keys mode like a real keyboard. */
-function keySequence(term: Terminal, key: KeyBarKey): string {
-  const cursor = (final: "A" | "B" | "C" | "D"): string => (term.modes.applicationCursorKeysMode ? "\u001bO" : "\u001b[") + final;
-  switch (key) {
-    case "Escape":
-      return "\u001b";
-    case "Tab":
-      return "\t";
-    case "ctrl-c":
-      return "\u0003";
-    case "ArrowUp":
-      return cursor("A");
-    case "ArrowDown":
-      return cursor("B");
-    case "ArrowRight":
-      return cursor("C");
-    case "ArrowLeft":
-      return cursor("D");
-  }
-}
 
 export interface PaneTerminalProps {
   paneId: string | null;
@@ -233,7 +200,7 @@ export function PaneTerminal({ paneId, onConnectionChange }: PaneTerminalProps) 
   const pressKey = useCallback((key: KeyBarKey) => {
     const term = termRef.current;
     if (!term) return;
-    term.input(keySequence(term, key));
+    term.input(keySequence(key, term.modes.applicationCursorKeysMode));
     term.focus();
   }, []);
 
