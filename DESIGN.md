@@ -26,11 +26,11 @@ Dark-only (`color-scheme: dark`): there is no light theme, and there will not be
 | Surface/hover | `--bg-hover` | `#1a2132` | Hover on rows and icon buttons |
 | Border | `--border` | `#1e2637` | Hairlines, pill and control outlines |
 | Text/primary | `--text` | `#c5cdd9` | Body, row titles |
-| Text/dim | `--text-dim` | `#7a879e` | Metadata, ids, empty states, idle |
+| Text/dim | `--text-dim` | `#8390a8` | Metadata, ids, empty states, idle |
 | Text/bright | `--text-strong` | `#e6edf7` | Brand, workspace labels, selected title |
 | Accent | `--accent` | `#6cb6ff` | Selection rail, focus ring, agent chip text, cursor |
 | Accent/tint | `--accent-tint` | `rgba(108, 182, 255, 0.12)` | Agent chip background |
-| Status/idle | `--status-idle` | `#7a879e` | Idle badge |
+| Status/idle | `--status-idle` | `#8390a8` | Idle badge |
 | Status/working | `--status-working` | `#e2a336` | Working badge, reconnecting dot and banner |
 | Status/blocked | `--status-blocked` | `#f2545b` | Blocked badge, offline pill, error border |
 | Status/done | `--status-done` | `#4ec9a5` | Done badge, live dot |
@@ -61,7 +61,8 @@ object. They are tokens so the chrome can match them (the host background equals
   property: `theme-color` in `index.html` and `theme_color` / `background_color` in
   `public/manifest.webmanifest` (= `--bg-panel` / `--bg`), and the brand tile in
   `public/icons/icon.svg` (gradient `#171d2e` → `#070910`, stroke `#2a3447`; its dots and chevron
-  are the `--status-*` colours and `--accent`).
+  are the `--status-*` colours and `--accent`), and `public/favicon.svg` fills its tile with the flat
+  `#0f1420`, that gradient's midpoint, because a 16px favicon has no room for a gradient.
 
 ## 3. Typography
 
@@ -324,7 +325,7 @@ All spacing derives from a base of **4px**.
 |------|-------|----------|--------|-------|
 | Micro | `--dur-fast` | 120ms | `--ease-out` | Hover/active background and border on rows and controls |
 | Standard | `--dur-base` | 180ms | `--ease-out` | Drawer slide |
-| Pulse | `--dur-pulse` | 1600ms | `--ease-out`, infinite, opacity 1 → 0.7 | Working badge, reconnecting dot (the 0.7 trough keeps `--status-working` text at 4.8:1 on `--bg-panel`) |
+| Pulse | `--dur-pulse` | 1600ms | `--ease-out`, infinite, opacity 1 → 0.75 | Working badge, reconnecting dot (the 0.75 trough keeps `--status-working` text at 5.3:1 on `--bg-panel` and 4.7:1 on `--bg-hover`) |
 
 `--ease-out` = `cubic-bezier(0.2, 0, 0, 1)`.
 
@@ -354,7 +355,8 @@ because it floats over the terminal.
 ## 8. Accessibility Constraints & Accepted Debt
 
 ### Constraints
-- WCAG 2.2 AA target. Measured contrasts on `--bg-panel`: `--text-dim` 5.4:1, `--accent` 9.0:1,
+- WCAG 2.2 AA target. Measured contrasts on `--bg-panel`: `--text-dim` 6.0:1 (5.0:1 on `--bg-hover`, the
+  darkest surface dim text and idle badges sit on), `--accent` 9.0:1,
   `--status-working` 8.7:1, `--status-blocked` 5.7:1, `--status-done` 9.4:1, `--text` 11+:1.
   The former `#4a5468` unknown-badge grey (2.5:1) was removed for this reason.
 - Visible `--ring` focus on every interactive element via a global `:focus-visible` rule.

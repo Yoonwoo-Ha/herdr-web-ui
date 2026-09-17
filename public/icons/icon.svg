@@ -8,7 +8,7 @@
   <rect width="512" height="512" rx="112" fill="url(#tile)"/>
   <rect x="2" y="2" width="508" height="508" rx="110" fill="none" stroke="#2a3447" stroke-width="4"/>
   <g>
-    <circle cx="88" cy="88" r="12" fill="#7a879e"/>
+    <circle cx="88" cy="88" r="12" fill="#8390a8"/>
     <circle cx="128" cy="88" r="12" fill="#e2a336"/>
     <circle cx="168" cy="88" r="12" fill="#4ec9a5"/>
   </g>

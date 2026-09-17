@@ -22,13 +22,13 @@
 
   /* text */
   --text: #c5cdd9;
-  --text-dim: #7a879e;
+  --text-dim: #8390a8;
   --text-strong: #e6edf7;
 
   /* the only saturated colors: brand blue + the four agent states */
   --accent: #6cb6ff;
   --accent-tint: rgba(108, 182, 255, 0.12);
-  --status-idle: #7a879e;
+  --status-idle: #8390a8;
   --status-working: #e2a336;
   --status-blocked: #f2545b;
   --status-done: #4ec9a5;
@@ -138,14 +138,14 @@ button {
   outline-offset: var(--ring-offset);
 }
 
-/* trough 0.7: --status-working text is still 4.8:1 on --bg-panel at the dimmest frame */
+/* trough 0.75: --status-working text stays 5.3:1 on --bg-panel and 4.7:1 on --bg-hover at the dimmest frame */
 @keyframes pulse {
   0%,
   100% {
     opacity: 1;
   }
   50% {
-    opacity: 0.7;
+    opacity: 0.75;
   }
 }
 
