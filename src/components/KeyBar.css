@@ -31,7 +31,7 @@
   justify-content: center;
   flex: 0 0 auto;
   min-width: var(--touch-target);
-  height: var(--control-h);
+  height: var(--touch-target);
   padding: 0 var(--space-1);
   background: transparent;
   border: var(--hairline) solid var(--border);

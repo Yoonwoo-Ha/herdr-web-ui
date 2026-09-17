@@ -236,7 +236,7 @@ export function PaneTerminal({ paneId, onConnectionChange }: PaneTerminalProps) 
         </div>
       )}
       <div className="pane-terminal" ref={hostRef} />
-      <KeyBar onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl} />
+      {paneId !== null && <KeyBar onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl} />}
     </div>
   );
 }

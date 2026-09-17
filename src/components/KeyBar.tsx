@@ -73,11 +73,12 @@ const ARROWS: ReadonlyArray<{ key: KeyBarKey; label: string; direction: Directio
 
 /**
  * Touch key bar under the terminal. Keys are tabIndex -1 on purpose: they exist
- * for touch, a hardware keyboard already has all of them.
+ * for touch, a hardware keyboard already has all of them. Hence role="group", not
+ * toolbar: a toolbar promises arrow-key navigation between items, which these skip.
  */
 export function KeyBar({ onKey, ctrlArmed, onToggleCtrl }: KeyBarProps) {
   return (
-    <div className="key-bar" role="toolbar" aria-label="Terminal keys">
+    <div className="key-bar" role="group" aria-label="Terminal keys">
       <Key dataKey="Escape" onPress={() => onKey("Escape")}>
         Esc
       </Key>

@@ -57,6 +57,11 @@ object. They are tokens so the chrome can match them (the host background equals
 - The unknown status has no color of its own: it uses `--text-dim` with a dashed border, because a
   darker grey fails 4.5:1 on `--bg-panel`.
 - Tints are the one place `rgba()` appears, and only through `--accent-tint` / `--danger-tint`.
+- Three colours live outside CSS and are synced by hand, because nothing there can read a custom
+  property: `theme-color` in `index.html` and `theme_color` / `background_color` in
+  `public/manifest.webmanifest` (= `--bg-panel` / `--bg`), and the brand tile in
+  `public/icons/icon.svg` (gradient `#171d2e` → `#070910`, stroke `#2a3447`; its dots and chevron
+  are the `--status-*` colours and `--accent`).
 
 ## 3. Typography
 
@@ -66,9 +71,9 @@ object. They are tokens so the chrome can match them (the host background equals
 |-------|-------|------|--------|-------------|----------|-------|
 | Brand | `--fs-lg` | 15px | `--fw-bold` 700 | `--lh-tight` 1.2 | `--tracking-tight` -0.01em | Wordmark |
 | Label | `--fs-md` | 13px | `--fw-semibold` 600 | `--lh-base` 1.45 | 0 | Workspace label, terminal placeholder |
-| Body | `--fs-sm` | 12px | `--fw-regular` 400 / `--fw-medium` 500 | `--lh-base` 1.45 (titles `--lh-tight`) | 0 | Pane title, header context, states, errors |
+| Body | `--fs-sm` | 12px | `--fw-regular` 400 / `--fw-medium` 500 | `--lh-base` 1.45 | 0 | Pane title, header context, states, errors |
 | Meta | `--fs-xs` | 11px | `--fw-regular` 400 | `--lh-base` 1.45 | 0 | Connection label, banners, "no panes" |
-| Micro | `--fs-2xs` | 10px | `--fw-medium` 500 | 1 (inside chips) | `--tracking-caps` 0.06em when uppercase | Badges, pills, ids, tab overline, chips |
+| Micro | `--fs-2xs` | 10px | `--fw-medium` 500 (badges, agent chip, tab overline) / `--fw-regular` 400 (pane ids, pills, workspace number) | `--lh-base` 1.45 (chips are flex-centred at `--chip-h`) | `--tracking-caps` 0.06em when uppercase | Badges, pills, ids, tab overline, chips |
 | Input | `--fs-input` | 16px | inherits | inherits | 0 | Token gate input only: the one size iOS Safari does not zoom on focus |
 
 ### Font Stack
@@ -94,7 +99,7 @@ All spacing derives from a base of **4px**.
 | `--space-2` | 8px | Row padding, header gap, list item gaps |
 | `--space-3` | 12px | Header inset, error padding, row left inset |
 | `--space-4` | 16px | Between workspaces, empty-state padding |
-| `--space-5` | 20px | Reserved step (unused today) |
+| `--space-5` | 20px | Token gate copy → label |
 | `--space-6` | 24px | Sidebar bottom breathing room, placeholder icon |
 
 ### Radii
@@ -111,9 +116,9 @@ All spacing derives from a base of **4px**.
 |-------|-------|-------|
 | `--header-h` | 46px | Header height (plus `env(safe-area-inset-top)`) |
 | `--sidebar-w` | 300px | Sidebar column and drawer width |
-| `--control-h` | 32px | Icon button, retry button |
-| `--touch-target` | 40px | Pane row min-height on `(pointer: coarse)`, key-bar key min-width |
-| `--keybar-h` | 40px | Key bar height (plus `env(safe-area-inset-bottom)`) |
+| `--control-h` | 32px | Icon button, retry button, gate input and button on fine pointers (`--touch-target` on coarse) |
+| `--touch-target` | 40px | On `(pointer: coarse)`: pane row min-height, icon buttons, retry button, gate input and button; key-bar keys always (min-width and height) |
+| `--keybar-h` | 48px | Key bar height (plus `env(safe-area-inset-bottom)`); keys are `--touch-target` tall inside it |
 | `--chip-h` | 18px | Badge, pill, chip, banner height |
 | `--icon-size` | 18px | SVG inside an icon button |
 | `--mark-size` | 22px | Brand mark |
@@ -161,7 +166,7 @@ All spacing derives from a base of **4px**.
 - **Structure**: `<button class="icon-button" aria-label>` wrapping one inline SVG.
 - **Variants**: `.drawer-toggle` (only rendered `<= 768px`); `.lock-button` (header, only when
   `health.auth.required`; calls `DELETE /api/auth` then refetches health so the gate returns).
-- **Spacing**: `--control-h` square, `--icon-size` glyph, `--radius-sm`.
+- **Spacing**: `--control-h` square (`--touch-target` square on `(pointer: coarse)`), `--icon-size` glyph, `--radius-sm`.
 - **States**: default (transparent, `--border`), hover (`--bg-hover`), active and
   `[aria-expanded="true"]` (`--bg-elevated`, `--accent` border, `--text-strong`), focus (`--ring`).
 - **Accessibility**: `aria-label` (icon-only), `aria-expanded` + `aria-controls` on the toggle.
@@ -215,7 +220,7 @@ All spacing derives from a base of **4px**.
 - **States**: default, hover (`--bg-hover`), selected (`--bg-elevated` + inset `--rail-w` accent
   rail, title `--text-strong`, `aria-current="true"`), focus (`--ring`), loading (`.tree-state`
   "Loading workspaces…", `role="status"`), empty (`.tree-state-empty` "No workspaces yet — open one
-  in herdr", dashed `--border` box), error (App-owned `.error-state` with `.error-retry`).
+  in herdr", dashed `--border` box), error (App-owned `.error-state`, `role="alert"`, with `.error-retry`).
 - **Accessibility**: `<nav aria-label>`, real `<button>` rows with `title`, `aria-current` on the
   selected row, `min-height: --touch-target` on coarse pointers.
 - **Motion**: row background `--dur-fast`.
@@ -230,23 +235,23 @@ All spacing derives from a base of **4px**.
 - **States**: empty (placeholder, `--text-dim`, `--fs-md`), ended (`.terminal-banner`, neutral),
   reconnecting (`.terminal-banner-warning`, `--status-working`). Banners carry `role="status"`.
 - **Layout**: `position: relative` host; banners are absolute overlays so the pty keeps every row.
-
-### Key bar (`.key-bar`)
-- **Structure**: `<div class="key-bar" role="toolbar" aria-label="Terminal keys">` of
-  `<button type="button" class="key" data-key tabindex="-1">`: `Esc`, `Tab`, `Ctrl`
-  (`aria-pressed`), four chevron keys (inline SVG + `aria-label` Up / Down / Left / Right) and
 - **Scrollback**: xterm keeps none (`scrollback: 0`). The attach stream lives in the alternate
   screen and herdr owns scrollback (wheel and touch gestures are forwarded to it), so the fit
   addon uses the full host width instead of reserving a phantom 15px scrollbar, and
   `.xterm-viewport` hides its scrollbar.
+
+### Key bar (`.key-bar`)
+- **Structure**: `<div class="key-bar" role="group" aria-label="Terminal keys">` of
+  `<button type="button" class="key" data-key tabindex="-1">`: `Esc`, `Tab`, `Ctrl`
+  (`aria-pressed`), four chevron keys (inline SVG + `aria-label` Up / Down / Left / Right) and
   `^C` (`aria-label="Control C"`). Rendered by `KeyBar.tsx`; `PaneTerminal` mounts it as the
-  last child of `.terminal-stack`, under the xterm mount. Taps go through `term.input()` so
+  last child of `.terminal-stack`, under the xterm mount, only while a pane is selected. Taps go through `term.input()` so
   they take the same `onData` → socket path as typed keys.
 - **Variants**: none. `.key.is-armed` is the one-shot Control: the next single printable
   character is sent as its control code (A-Z and `@ [ \ ] ^ _`), then Control disarms; tapping
   it again while armed disarms it.
 - **Spacing**: bar `--keybar-h` tall plus `env(safe-area-inset-bottom)` of bottom padding, no
-  side padding (the host's `--space-2` is the inset); keys `--control-h` tall,
+  side padding (the host's `--space-2` is the inset); keys `--touch-target` tall,
   `min-width: --touch-target`, `0 --space-1` padding, `--space-1` gap, `--radius-sm`,
   `--font-mono` at `--fs-sm`; chevrons `--icon-size`.
 - **States**: default (transparent, `--border`), hover (`--bg-hover`, only under
@@ -254,10 +259,11 @@ All spacing derives from a base of **4px**.
   `--accent` border, `--text-strong`), focus (`--ring`). The bar is `display: none` on
   fine-pointer desktops and `display: flex` under `(pointer: coarse), (max-width: 768px)`; it
   scrolls sideways with a hidden scrollbar when the keys outgrow the viewport.
-- **Accessibility**: `role="toolbar"` + `aria-label`; icon-only keys carry `aria-label`; Control
+- **Accessibility**: `role="group"` + `aria-label` (not `toolbar`: the keys are out of the tab order, so the
+  toolbar role would promise arrow-key navigation that does not exist); icon-only keys carry `aria-label`; Control
   carries `aria-pressed`. Keys are `tabindex="-1"` and cancel `pointerdown` and `mousedown`, so
   focus never leaves xterm's textarea and the soft keyboard stays open; hardware keyboards
-  already have these keys, so the bar stays out of the tab order. Min touch target 40x32.
+  already have these keys, so the bar stays out of the tab order. Every key is a 40x40 target.
 - **Motion**: background/border `--dur-fast`; none under `prefers-reduced-motion`.
 - **Layout**: `flex: none` at the bottom of `.terminal-stack` (column, `height: 100%`) with a
   `--border` hairline on top; `.pane-terminal` above it is `flex: 1 1 auto; min-height: 0;
@@ -288,7 +294,7 @@ All spacing derives from a base of **4px**.
   column is exactly `--sidebar-w`; `--space-6` padding, `--radius-md`, `--hairline` `--border` on
   `--bg-panel`. Mark → title `--space-4`, title → copy `--space-1`, copy → label `--space-5`, label →
   input `--space-1`, input → button `--space-3`, button → error `--space-3`. Input and button are
-  `--control-h` tall, `--radius-sm`. Type: title `--fs-lg` / `--fw-bold` / `--tracking-tight`; copy
+  `--control-h` tall (`--touch-target` on coarse pointers), `--radius-sm`. Type: title `--fs-lg` / `--fw-bold` / `--tracking-tight`; copy
   `--fs-md` `--text-dim`; label `--fs-sm` `--fw-medium`; input `--fs-input` `--text-strong` on
   `--bg-elevated`; button `--fs-md` `--fw-semibold`; error `--fs-sm` `--danger-text` on
   `--danger-tint` with a `--status-blocked` border.
@@ -298,7 +304,7 @@ All spacing derives from a base of **4px**.
   block "Token does not match." or the network error text; input re-selected), empty submit (no
   request, input focused). Unlock success unmounts the gate and mounts the shell.
 - **Accessibility**: `<main>` landmark, one `<h1>`, real `<label for>`, `role="alert"` error,
-  `aria-invalid` + `aria-describedby` on the input, Enter submits, 32px controls. The header Lock
+  `aria-invalid` + `aria-describedby` on the input, Enter submits, 32px controls (40px on coarse pointers). The header Lock
   control is an `.icon-button.lock-button` with `aria-label="Lock"` and an inline SVG padlock,
   rendered only when `health.auth.required`.
 - **Motion**: border/background/opacity `--dur-fast` `--ease-out` on the input and button only; no
@@ -314,7 +320,7 @@ All spacing derives from a base of **4px**.
 |------|-------|----------|--------|-------|
 | Micro | `--dur-fast` | 120ms | `--ease-out` | Hover/active background and border on rows and controls |
 | Standard | `--dur-base` | 180ms | `--ease-out` | Drawer slide |
-| Pulse | `--dur-pulse` | 1600ms | `--ease-out`, infinite | Working badge, reconnecting dot |
+| Pulse | `--dur-pulse` | 1600ms | `--ease-out`, infinite, opacity 1 → 0.7 | Working badge, reconnecting dot (the 0.7 trough keeps `--status-working` text at 4.8:1 on `--bg-panel`) |
 
 `--ease-out` = `cubic-bezier(0.2, 0, 0, 1)`.
 
@@ -352,8 +358,8 @@ because it floats over the terminal.
   `aria-controls`; the selected pane row carries `aria-current="true"`; status text
   (connection, banners, loading) uses `role="status"`.
 - No emoji anywhere in markup; icons are inline SVG with `aria-hidden="true"`.
-- `prefers-reduced-motion` honored (Section 6). Touch targets: 32px controls, 40px rows on coarse
-  pointers.
+- `prefers-reduced-motion` honored (Section 6). Touch targets on coarse pointers: 40px rows, icon
+  buttons, retry button, key-bar keys and gate controls (`--touch-target`); 32px controls on fine pointers.
 - `document.title` is `<pane title> · herdr` while a pane is selected, else `herdr web ui`.
 
 ### Accepted Debt

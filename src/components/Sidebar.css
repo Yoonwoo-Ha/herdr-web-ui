@@ -117,7 +117,7 @@
 .pane-title {
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
-  line-height: var(--lh-tight);
+  line-height: var(--lh-base); /* headroom for tall Hangul metrics under overflow: hidden */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

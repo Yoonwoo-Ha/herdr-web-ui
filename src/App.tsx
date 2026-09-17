@@ -175,7 +175,7 @@ export function App() {
       <div className="app-body">
         <aside id="workspace-drawer" className={`sidebar${drawerOpen ? " is-open" : ""}`}>
           {error ? (
-            <div className="error-state">
+            <div className="error-state" role="alert">
               <p className="error-message">{error}</p>
               <button type="button" className="error-retry" onClick={() => void load()}>
                 Retry

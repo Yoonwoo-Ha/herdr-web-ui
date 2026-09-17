@@ -123,6 +123,14 @@
   overflow-wrap: anywhere;
 }
 
+/* fingers: the two controls grow to the touch target */
+@media (pointer: coarse) {
+  .token-gate-input,
+  .token-gate-submit {
+    height: var(--touch-target);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .token-gate-input,
   .token-gate-submit {

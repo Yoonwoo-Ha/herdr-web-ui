@@ -81,7 +81,7 @@
   --sidebar-w: 300px;
   --control-h: 32px;
   --touch-target: 40px;
-  --keybar-h: 40px;
+  --keybar-h: 48px;
   --chip-h: 18px;
   --icon-size: 18px;
   --mark-size: 22px;
@@ -123,6 +123,7 @@ body {
   color: var(--text);
   font-family: var(--font-ui);
   font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
   line-height: var(--lh-base);
   -webkit-font-smoothing: antialiased;
 }
@@ -137,13 +138,14 @@ button {
   outline-offset: var(--ring-offset);
 }
 
+/* trough 0.7: --status-working text is still 4.8:1 on --bg-panel at the dimmest frame */
 @keyframes pulse {
   0%,
   100% {
     opacity: 1;
   }
   50% {
-    opacity: 0.45;
+    opacity: 0.7;
   }
 }
 
@@ -332,6 +334,18 @@ button {
 /* after .icon-button on purpose: same specificity, and hidden must win on desktop */
 .drawer-toggle {
   display: none;
+}
+
+/* fingers: the header controls grow to the touch target; the 46px header still fits them */
+@media (pointer: coarse) {
+  .icon-button {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+
+  .error-retry {
+    height: var(--touch-target);
+  }
 }
 
 .pill {
