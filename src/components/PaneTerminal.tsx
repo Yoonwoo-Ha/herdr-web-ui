@@ -78,7 +78,11 @@ export function PaneTerminal({ paneId, onConnectionChange }: PaneTerminalProps) 
     const term = new Terminal({
       convertEol: false,
       cursorBlink: true,
-      scrollback: 10000,
+      // xterm keeps no scrollback: the attach stream lives in the alternate screen and herdr
+      // owns scrollback (wheel and touch go to it). With scrollback on, the fit addon reserves
+      // a scrollbar column - 15px by fallback wherever scrollbars are overlays - and the last
+      // columns of the hero surface go dead.
+      scrollback: 0,
       allowProposedApi: true,
       fontSize: 13,
       fontFamily: FONT_STACK,
@@ -100,7 +104,7 @@ export function PaneTerminal({ paneId, onConnectionChange }: PaneTerminalProps) 
     const off = socket.on((message) => {
       if (message.type === "pty-data") {
         if (message.pane_id !== paneRef.current) return;
-        // raw pty bytes: append, never repaint, so xterm keeps scrollback and selection
+        // raw pty bytes: append, never repaint, so xterm keeps the screen and selection
         term.write(message.data);
       } else if (message.type === "pty-exit") {
         if (message.pane_id === paneRef.current) setEnded(true);

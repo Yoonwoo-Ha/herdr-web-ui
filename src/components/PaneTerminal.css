@@ -19,6 +19,16 @@
   overflow: hidden;
 }
 
+/* no scrollback (PaneTerminal.tsx), so the viewport never scrolls: hide the track that would
+   otherwise sit over the last columns on platforms with classic scrollbars */
+.pane-terminal .xterm-viewport {
+  scrollbar-width: none;
+}
+
+.pane-terminal .xterm-viewport::-webkit-scrollbar {
+  display: none;
+}
+
 .terminal-placeholder {
   position: absolute;
   inset: 0;

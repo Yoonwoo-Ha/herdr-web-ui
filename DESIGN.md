@@ -235,6 +235,10 @@ All spacing derives from a base of **4px**.
 - **Structure**: `<div class="key-bar" role="toolbar" aria-label="Terminal keys">` of
   `<button type="button" class="key" data-key tabindex="-1">`: `Esc`, `Tab`, `Ctrl`
   (`aria-pressed`), four chevron keys (inline SVG + `aria-label` Up / Down / Left / Right) and
+- **Scrollback**: xterm keeps none (`scrollback: 0`). The attach stream lives in the alternate
+  screen and herdr owns scrollback (wheel and touch gestures are forwarded to it), so the fit
+  addon uses the full host width instead of reserving a phantom 15px scrollbar, and
+  `.xterm-viewport` hides its scrollbar.
   `^C` (`aria-label="Control C"`). Rendered by `KeyBar.tsx`; `PaneTerminal` mounts it as the
   last child of `.terminal-stack`, under the xterm mount. Taps go through `term.input()` so
   they take the same `onData` → socket path as typed keys.
