@@ -78,9 +78,65 @@ export function PaneTerminal({ paneId }: { paneId: string | null }) {
     });
     observer.observe(host);
 
+    // Touch screens never emit wheel events and xterm.js has no touch scrolling:
+    // translate a single-finger drag on the terminal into wheel events, so the
+    // normal buffer scrolls its own viewport and the alternate buffer (with mouse
+    // reporting on) forwards the gesture to herdr, exactly like a mouse wheel.
+    let touchY = 0;
+    let tracking = false;
+    const onTouchStart = (event: TouchEvent): void => {
+      tracking = event.touches.length === 1;
+      const first = event.touches[0];
+      if (tracking && first) touchY = first.clientY;
+    };
+    const onTouchMove = (event: TouchEvent): void => {
+      if (!tracking || event.touches.length !== 1) return;
+      event.preventDefault();
+      const first = event.touches[0];
+      const y = first ? first.clientY : touchY;
+      // finger moving up (y < touchY) must scroll up, i.e. a negative wheel deltaY
+      const delta = y - touchY;
+      touchY = y;
+      if (delta !== 0) {
+        const target = term.element ?? host;
+        target.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: delta }));
+      }
+    };
+    const onTouchEnd = (): void => {
+      tracking = false;
+    };
+    host.addEventListener("touchstart", onTouchStart, { passive: true });
+    host.addEventListener("touchmove", onTouchMove, { passive: false });
+    host.addEventListener("touchend", onTouchEnd, { passive: true });
+
+    // The pty is shared per pane: a client on another device (typically a phone)
+    // resizes it to its own geometry, and this tab's viewport never changed, so
+    // the ResizeObserver above stays silent and the pane is left at the other
+    // device's size. Re-assert our geometry whenever this tab comes back.
+    const refit = (): void => {
+      const current = paneRef.current;
+      if (!current) return;
+      try {
+        fit.fit();
+      } catch {
+        return;
+      }
+      socket.resize(current, term.cols, term.rows, true);
+    };
+    const onVisible = (): void => {
+      if (document.visibilityState === "visible") refit();
+    };
+    window.addEventListener("focus", refit);
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       window.clearInterval(poll);
       observer.disconnect();
+      host.removeEventListener("touchstart", onTouchStart);
+      host.removeEventListener("touchmove", onTouchMove);
+      host.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("focus", refit);
+      document.removeEventListener("visibilitychange", onVisible);
       onData.dispose();
       off();
       socket.close();

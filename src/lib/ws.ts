@@ -111,10 +111,12 @@ export class HerdrSocket {
     this.send({ type: "detach", pane_id: paneId });
   }
 
-  resize(paneId: string, cols: number, rows: number): void {
+  resize(paneId: string, cols: number, rows: number, force = false): void {
     const state = this.attached.get(paneId);
     if (state) {
-      if (state.cols === cols && state.rows === rows) return;
+      // skip only redundant resizes of OUR OWN geometry: a force resize re-asserts
+      // it after another client resized the shared pty (see PaneTerminal refit)
+      if (!force && state.cols === cols && state.rows === rows) return;
       state.cols = cols;
       state.rows = rows;
     }
