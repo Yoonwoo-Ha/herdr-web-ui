@@ -1,21 +1,12 @@
 import type { ServerWebSocket } from "bun";
 
-import type { AgentStatus, ClientMessage, HealthAuth, HerdrPane, ServerMessage } from "../shared/protocol.ts";
+import type { ClientMessage, ClientRole, HealthAuth, HerdrPane, ServerMessage } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { handleAuthRequest, isAuthenticated, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { badRequest, errorResponse, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
-import {
-  HerdrError,
-  herdrSocketPath,
-  paneRead,
-  paneSendKeys,
-  paneSendText,
-  ping,
-  sessionSnapshot,
-  subscribeEvents,
-  type Subscription,
-} from "./herdr/client.ts";
+import { startStatusCollector } from "./collector.ts";
+import { HerdrError, herdrSocketPath, paneRead, paneSendKeys, paneSendText, ping, sessionSnapshot } from "./herdr/client.ts";
 import { PtySession } from "./pty/session.ts";
 
 const MAX_REPLAY_BYTES = 256 * 1024;
@@ -25,6 +16,8 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
 
 interface SocketData {
   attached: Set<string>;
+  /** the connection's authority: observe connections cannot type or resize */
+  mode: ClientRole;
 }
 
 type Client = ServerWebSocket<SocketData>;
@@ -40,7 +33,9 @@ type Client = ServerWebSocket<SocketData>;
 interface PaneAttachment {
   pty: PtySession;
   clients: Set<Client>;
-  statusSubscription: Subscription;
+  /** the pty's current grid: interact clients set it, observe clients adopt it */
+  cols: number;
+  rows: number;
   /** bounded tail so a client joining late still sees the current screen */
   replay: string;
 }
@@ -57,6 +52,7 @@ export function createServer(
   options: { port?: number; hostname?: string; token?: string } = {},
 ): { port: number; hostname: string; stop: () => void } {
   const attachments = new Map<string, PaneAttachment>();
+  const clients = new Set<Client>();
   const hostname = options.hostname ?? process.env["HOST"] ?? "0.0.0.0";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
@@ -65,6 +61,10 @@ export function createServer(
     const attachment = attachments.get(paneId);
     if (!attachment) return;
     for (const client of attachment.clients) send(client, message);
+  }
+
+  function broadcastAll(message: ServerMessage): void {
+    for (const client of clients) send(client, message);
   }
 
   async function terminalIdFor(paneId: string): Promise<string> {
@@ -80,8 +80,25 @@ export function createServer(
     const attachment = attachments.get(paneId);
     if (!attachment) return;
     attachments.delete(paneId);
-    attachment.statusSubscription.close();
     attachment.pty.kill();
+  }
+
+  /** Clamp surface for the shared pty, mirroring the sidecar's own limits. */
+  function validGeometry(cols: unknown, rows: unknown): { cols: number; rows: number } | null {
+    if (typeof cols !== "number" || typeof rows !== "number" || !Number.isInteger(cols) || !Number.isInteger(rows)) {
+      return null;
+    }
+    if (cols < 1 || cols > 1000 || rows < 1 || rows > 1000) return null;
+    return { cols, rows };
+  }
+
+  function resizePty(paneId: string, cols: number, rows: number): void {
+    const attachment = attachments.get(paneId);
+    if (!attachment || (attachment.cols === cols && attachment.rows === rows)) return;
+    attachment.cols = cols;
+    attachment.rows = rows;
+    attachment.pty.resize(cols, rows);
+    broadcast(paneId, { type: "pane-geometry", pane_id: paneId, cols, rows });
   }
 
   async function ensureAttachment(paneId: string, cols: number, rows: number): Promise<PaneAttachment> {
@@ -92,7 +109,8 @@ export function createServer(
     const attachment: PaneAttachment = {
       pty: undefined as unknown as PtySession,
       clients: new Set<Client>(),
-      statusSubscription: { close: () => {} },
+      cols,
+      rows,
       replay: "",
     };
     attachments.set(paneId, attachment);
@@ -120,21 +138,6 @@ export function createServer(
       },
     });
 
-    attachment.statusSubscription = subscribeEvents(
-      [{ type: "pane.agent_status_changed", pane_id: paneId }],
-      {
-        onEvent: (frame) => {
-          const pane = (frame.data as { pane?: HerdrPane } | undefined)?.pane;
-          if (!pane || pane.pane_id !== paneId || !pane.agent_status) return;
-          broadcast(paneId, {
-            type: "pane-status",
-            pane_id: paneId,
-            agent_status: pane.agent_status as AgentStatus,
-          });
-        },
-      },
-    );
-
     return attachment;
   }
 
@@ -144,6 +147,13 @@ export function createServer(
     attachment.clients.delete(client);
     if (attachment.clients.size === 0) closeAttachment(paneId);
   }
+
+  /** Status of EVERY pane, attached or not: one collector feeds all connected clients. */
+  const collector = startStatusCollector({
+    onStatus: (paneId, status) => broadcastAll({ type: "pane-status", pane_id: paneId, agent_status: status }),
+    onPaneEnded: (paneId) => broadcastAll({ type: "pane-exited", pane_id: paneId }),
+    onStructureChange: () => broadcastAll({ type: "session-changed" }),
+  });
 
   const envPort = process.env["PORT"];
   const server = Bun.serve<SocketData>({
@@ -161,7 +171,7 @@ export function createServer(
       }
 
       if (pathname === "/ws") {
-        const upgraded = bunServer.upgrade(request, { data: { attached: new Set<string>() } });
+        const upgraded = bunServer.upgrade(request, { data: { attached: new Set<string>(), mode: "interact" } });
         if (upgraded) return undefined as unknown as Response;
         return new Response("websocket upgrade required", { status: 426 });
       }
@@ -240,6 +250,7 @@ export function createServer(
 
     websocket: {
       async open(client) {
+        clients.add(client);
         try {
           send(client, { type: "snapshot", snapshot: await sessionSnapshot() });
         } catch (error) {
@@ -259,14 +270,30 @@ export function createServer(
         try {
           switch (message.type) {
             case "attach": {
-              const attachment = await ensureAttachment(message.pane_id, message.cols, message.rows);
+              const geometry = validGeometry(message.cols, message.rows);
+              if (!geometry) {
+                send(client, { type: "error", code: "invalid_geometry", message: "cols and rows must be integers in 1..1000" });
+                break;
+              }
+              const attachment = await ensureAttachment(message.pane_id, geometry.cols, geometry.rows);
               attachment.clients.add(client);
               client.data.attached.add(message.pane_id);
               // hand the newcomer the current screen it would otherwise have missed
               if (attachment.replay) {
                 send(client, { type: "pty-data", pane_id: message.pane_id, data: attachment.replay });
               }
-              attachment.pty.resize(message.cols, message.rows);
+              if (client.data.mode === "interact") {
+                // an operator's viewport owns the shared grid
+                resizePty(message.pane_id, geometry.cols, geometry.rows);
+              } else {
+                // an observer adopts whatever grid the operators left behind
+                send(client, {
+                  type: "pane-geometry",
+                  pane_id: message.pane_id,
+                  cols: attachment.cols,
+                  rows: attachment.rows,
+                });
+              }
               break;
             }
             case "detach": {
@@ -275,17 +302,51 @@ export function createServer(
               break;
             }
             case "input": {
+              if (client.data.mode === "observe") {
+                send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
+                break;
+              }
               const attachment = attachments.get(message.pane_id);
               if (attachment) attachment.pty.write(message.text);
               break;
             }
             case "resize": {
-              const attachment = attachments.get(message.pane_id);
-              if (attachment) attachment.pty.resize(message.cols, message.rows);
+              if (client.data.mode === "observe") {
+                send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
+                break;
+              }
+              const geometry = validGeometry(message.cols, message.rows);
+              if (!geometry) {
+                send(client, { type: "error", code: "invalid_geometry", message: "cols and rows must be integers in 1..1000" });
+                break;
+              }
+              resizePty(message.pane_id, geometry.cols, geometry.rows);
               break;
             }
             case "keys": {
+              if (client.data.mode === "observe") {
+                send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
+                break;
+              }
               await paneSendKeys(message.pane_id, message.keys);
+              break;
+            }
+            case "role": {
+              if (message.mode !== "interact" && message.mode !== "observe") {
+                send(client, { type: "error", code: "invalid_role", message: "mode must be interact or observe" });
+                break;
+              }
+              client.data.mode = message.mode;
+              send(client, { type: "role-ack", mode: message.mode });
+              if (message.mode === "observe") {
+                // the fresh observer needs the grid it must adopt
+                for (const paneId of client.data.attached) {
+                  const attachment = attachments.get(paneId);
+                  if (attachment) {
+                    send(client, { type: "pane-geometry", pane_id: paneId, cols: attachment.cols, rows: attachment.rows });
+                  }
+                }
+              }
               break;
             }
           }
@@ -296,6 +357,7 @@ export function createServer(
       },
 
       close(client) {
+        clients.delete(client);
         for (const paneId of client.data.attached) detach(paneId, client);
         client.data.attached.clear();
       },
@@ -306,6 +368,7 @@ export function createServer(
     port: server.port ?? 0,
     hostname,
     stop: () => {
+      collector.stop();
       for (const paneId of [...attachments.keys()]) closeAttachment(paneId);
       server.stop(true);
     },

@@ -146,6 +146,183 @@ describe("WebSocket /ws", () => {
 });
 
 type CookieWebSocketCtor = new (url: string, options: { headers: { cookie: string } }) => WebSocket;
+/** A WS frame as tests read it: the discriminator plus whatever fields they assert on. */
+type RecordedFrame = { type: string; [key: string]: unknown };
+
+/** A WS client that records every frame it receives, with a bounded wait for one that matches. */
+class RecordingSocket {
+  readonly seen: RecordedFrame[] = [];
+  private readonly ws: WebSocket;
+
+  constructor(url: string) {
+    this.ws = new WebSocket(url);
+    this.ws.addEventListener("message", (event) => {
+      this.seen.push(JSON.parse(String((event as MessageEvent).data)));
+    });
+  }
+
+  static async connect(url: string): Promise<RecordingSocket> {
+    const socket = new RecordingSocket(url);
+    await new Promise<void>((resolve) => socket.ws.addEventListener("open", () => resolve()));
+    // drain the initial snapshot so callers wait only for what they named
+    await socket.waitFor((message) => message.type === "snapshot", "snapshot", 10_000);
+    return socket;
+  }
+
+  waitFor(predicate: (message: RecordedFrame) => boolean, label: string, ms: number): Promise<RecordedFrame> {
+    const already = this.seen.find(predicate);
+    if (already) return Promise.resolve(already);
+    return new Promise<RecordedFrame>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} not received within ${ms}ms`)), ms);
+      const listener = (event: MessageEvent) => {
+        const message = JSON.parse(String(event.data)) as RecordedFrame;
+        if (!predicate(message)) return;
+        clearTimeout(timer);
+        this.ws.removeEventListener("message", listener as EventListener);
+        resolve(message);
+      };
+      this.ws.addEventListener("message", listener as EventListener);
+    });
+  }
+
+  send(message: unknown): void {
+    this.ws.send(JSON.stringify(message));
+  }
+
+  close(): void {
+    this.ws.close();
+  }
+}
+
+describe("WebSocket roles and status push", () => {
+  /** Own workspace again: the role tests resize a real pty, the exit test kills a real shell. */
+  let qaWorkspaceId: string | null = null;
+  let qaPaneId: string | null = null;
+  let exitWorkspaceId: string | null = null;
+
+  beforeAll(async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
+      "workspace.create",
+      { label: "herdr-web-ui-test-roles", cwd: "/tmp", focus: false },
+    );
+    qaWorkspaceId = created.workspace.workspace_id;
+    qaPaneId = created.root_pane.pane_id;
+  });
+
+  afterAll(async () => {
+    if (exitWorkspaceId) await herdrRpc("workspace.close", { workspace_id: exitWorkspaceId }).catch(() => undefined);
+    if (qaWorkspaceId) await herdrRpc("workspace.close", { workspace_id: qaWorkspaceId }).catch(() => undefined);
+  });
+
+  it("never resizes the shared pty for an observe connection, and read-only frames answer input, keys and resize", async () => {
+    const paneId = qaPaneId!;
+    const operator = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    const observer = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+
+    try {
+      operator.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
+      await operator.waitFor((m) => m.type === "pty-data" && m.pane_id === paneId, "operator pty-data", 15_000);
+
+      observer.send({ type: "role", mode: "observe" });
+      const ack = await observer.waitFor((m) => m.type === "role-ack", "role-ack", 5000);
+      expect(ack.mode).toBe("observe");
+
+      // an observer attaching a smaller screen must NOT resize the shared pty:
+      // the attach answers with the grid to adopt (the operator's 100x30), not its own
+      observer.send({ type: "attach", pane_id: paneId, cols: 40, rows: 20 });
+      const adopted = await observer.waitFor(
+        (m) => m.type === "pane-geometry" && m.pane_id === paneId && m.cols === 100,
+        "observer adopts geometry",
+        5000,
+      );
+      expect(adopted.rows).toBe(30);
+      expect(operator.seen.some((m) => m.type === "pane-geometry")).toBe(false);
+
+      observer.send({ type: "resize", pane_id: paneId, cols: 40, rows: 20 });
+      const resizeError = await observer.waitFor((m) => m.type === "error", "resize read_only error", 5000);
+      expect(resizeError.code).toBe("read_only");
+
+      observer.send({ type: "input", pane_id: paneId, text: "echo nope" });
+      const inputError = await observer.waitFor((m) => m.type === "error", "input read_only error", 5000);
+      expect(inputError.code).toBe("read_only");
+
+      observer.send({ type: "keys", pane_id: paneId, keys: ["Enter"] });
+      const keysError = await observer.waitFor((m) => m.type === "error", "keys read_only error", 5000);
+      expect(keysError.code).toBe("read_only");
+
+      // the operator keeps driving the shared grid, and everyone attached hears it
+      operator.send({ type: "resize", pane_id: paneId, cols: 120, rows: 40 });
+      const geometry = await operator.waitFor((m) => m.type === "pane-geometry" && m.pane_id === paneId, "geometry broadcast", 5000);
+      expect(geometry.cols).toBe(120);
+      expect(geometry.rows).toBe(40);
+      await observer.waitFor((m) => m.type === "pane-geometry" && m.cols === 120, "observer hears geometry", 5000);
+    } finally {
+      operator.close();
+      observer.close();
+    }
+  }, 40_000);
+
+  it("rejects an unknown role mode with an in-band error", async () => {
+    const client = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    try {
+      client.send({ type: "role", mode: "wat" });
+      const error = await client.waitFor((m) => m.type === "error", "invalid_role error", 5000);
+      expect(error.code).toBe("invalid_role");
+    } finally {
+      client.close();
+    }
+  }, 15_000);
+
+  it("pushes pane-status and pane-exited for a pane nobody is attached to", async () => {
+    const paneId = qaPaneId!;
+    const watcher = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    try {
+      // the collector subscribed to this pane when it was created; prove it by
+      // pushing a status change through herdr itself and seeing the frame
+      await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "claude", state: "blocked" });
+      const status = await watcher.waitFor(
+        (m) => m.type === "pane-status" && m.pane_id === paneId && m.agent_status === "blocked",
+        "unattached pane-status",
+        10_000,
+      );
+      expect(status.type).toBe("pane-status");
+
+      // a pane ending while unattached pushes pane-exited
+      const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
+        "workspace.create",
+        { label: "herdr-web-ui-test-exit", cwd: "/tmp", focus: false },
+      );
+      exitWorkspaceId = created.workspace.workspace_id;
+      const exitPaneId = created.root_pane.pane_id;
+      // the collector picks a brand-new pane up via pane.created -> reconcile, which is
+      // debounced: retry the status report (alternating states, so each is a real
+      // change) until the frame proves the subscription is live - no clock-waiting
+      let subscribed = false;
+      for (let attempt = 0; attempt < 8 && !subscribed; attempt += 1) {
+        await herdrRpc("pane.report_agent", {
+          pane_id: exitPaneId,
+          source: "manual",
+          agent: "claude",
+          state: attempt % 2 === 0 ? "blocked" : "working",
+        });
+        subscribed = await watcher
+          .waitFor((m) => m.type === "pane-status" && m.pane_id === exitPaneId, "exit pane subscribed", 1_500)
+          .then(() => true)
+          .catch(() => false);
+      }
+      expect(subscribed).toBeTrue();
+      await herdrRpc("pane.send_text", { pane_id: exitPaneId, text: "exit\r" });
+      const exited = await watcher.waitFor(
+        (m) => m.type === "pane-exited" && m.pane_id === exitPaneId,
+        "unattached pane-exited",
+        10_000,
+      );
+      expect(exited.type).toBe("pane-exited");
+    } finally {
+      watcher.close();
+    }
+  }, 40_000);
+});
 
 /**
  * Bun's WebSocket client sends request headers, but this project compiles with lib.dom,
