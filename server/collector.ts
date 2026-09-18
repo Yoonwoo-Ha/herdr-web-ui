@@ -21,6 +21,8 @@ import { sessionSnapshot, subscribeEvents, type EventFrame, type Subscription } 
 const RECONNECT_DELAY_MS = 5_000;
 const BACKSTOP_INTERVAL_MS = 60_000;
 const RECONCILE_DEBOUNCE_MS = 500;
+/** retry delay when a reconcile's snapshot call fails (herdr busy/restarting) */
+const SNAPSHOT_RETRY_MS = 5_000;
 
 export interface StatusCollectorHandlers {
   onStatus: (paneId: string, status: AgentStatus) => void;
@@ -68,6 +70,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers): StatusC
   let statusSubscription: Subscription | null = null;
   let subscribedPaneIds = new Set<string>();
   let reconciling = false;
+  let reconcilePending = false;
   let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
   let backstopTimer: ReturnType<typeof setInterval> | null = null;
   let lifecycleRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -95,18 +98,26 @@ export function startStatusCollector(handlers: StatusCollectorHandlers): StatusC
           const parsed = parseStatusFrame(frame);
           if (parsed) handlers.onStatus(parsed.paneId, parsed.status);
         },
-        // herdr went away (restart): the whole set must be re-subscribed
+        // herdr answers a bad batch (e.g. a pane that vanished between snapshot and
+        // subscribe) with an error frame and closes the socket: the whole set must be
+        // re-subscribed from a fresh snapshot, now rather than after the debounce
         onClose: () => {
           if (statusSubscription === null || stopped) return;
           closeStatusSubscription();
-          scheduleReconcile();
+          void reconcile();
         },
       },
     );
   }
 
   async function reconcile(): Promise<void> {
-    if (stopped || reconciling) return;
+    if (stopped) return;
+    if (reconciling) {
+      // a reconcile is in flight: remember the request and re-run when it lands,
+      // so an event arriving mid-reconcile can never be lost to the debounce
+      reconcilePending = true;
+      return;
+    }
     reconciling = true;
     try {
       const snapshot = await sessionSnapshot();
@@ -118,9 +129,19 @@ export function startStatusCollector(handlers: StatusCollectorHandlers): StatusC
       closeStatusSubscription();
       openStatusSubscription(paneIds);
     } catch {
-      /* herdr unreachable: the backstop timer retries */
+      /* herdr unreachable or slow: retry shortly instead of waiting for the backstop */
+      if (!stopped && reconcileTimer === null) {
+        reconcileTimer = setTimeout(() => {
+          reconcileTimer = null;
+          void reconcile();
+        }, SNAPSHOT_RETRY_MS);
+      }
     } finally {
       reconciling = false;
+      if (reconcilePending && !stopped) {
+        reconcilePending = false;
+        void reconcile();
+      }
     }
   }
 

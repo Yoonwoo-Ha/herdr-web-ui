@@ -277,15 +277,29 @@ describe("WebSocket roles and status push", () => {
     const paneId = qaPaneId!;
     const watcher = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
     try {
-      // the collector subscribed to this pane when it was created; prove it by
-      // pushing a status change through herdr itself and seeing the frame
-      await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "claude", state: "blocked" });
-      const status = await watcher.waitFor(
-        (m) => m.type === "pane-status" && m.pane_id === paneId && m.agent_status === "blocked",
-        "unattached pane-status",
-        10_000,
-      );
-      expect(status.type).toBe("pane-status");
+      // the collector subscribed to this pane when it was created; prove it by pushing
+      // status changes through herdr itself and seeing the frames. herdr tears down a
+      // subscription batch that references a pane which vanished mid-reconcile, so the
+      // collector may briefly re-subscribe - retry the report (alternating states, so
+      // each is a real change) until the frame arrives instead of trusting the clock
+      let seen = false;
+      for (let attempt = 0; attempt < 8 && !seen; attempt += 1) {
+        await herdrRpc("pane.report_agent", {
+          pane_id: paneId,
+          source: "manual",
+          agent: "claude",
+          state: attempt % 2 === 0 ? "blocked" : "working",
+        });
+        seen = await watcher
+          .waitFor(
+            (m) => m.type === "pane-status" && m.pane_id === paneId && m.agent_status === (attempt % 2 === 0 ? "blocked" : "working"),
+            "unattached pane-status",
+            2_500,
+          )
+          .then(() => true)
+          .catch(() => false);
+      }
+      expect(seen).toBeTrue();
 
       // a pane ending while unattached pushes pane-exited
       const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
