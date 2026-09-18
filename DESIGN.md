@@ -118,7 +118,7 @@ All spacing derives from a base of **4px**.
 | `--header-h` | 46px | Header height (plus `env(safe-area-inset-top)`) |
 | `--sidebar-w` | 300px | Sidebar column and drawer width |
 | `--control-h` | 32px | Icon button, role toggle, retry button, gate input and button on fine pointers (`--touch-target` on coarse) |
-| `--touch-target` | 40px | On `(pointer: coarse)`: pane row min-height, icon buttons, retry button, gate input and button; key-bar keys always (min-width and height) |
+| `--touch-target` | 40px | On `(pointer: coarse)`: pane row min-height, icon buttons, role toggle, retry button, gate input and button; key-bar keys always (min-width and height) |
 | `--keybar-h` | 48px | Key bar height (plus `env(safe-area-inset-bottom)`); keys are `--touch-target` tall inside it |
 | `--chip-h` | 18px | Badge, pill and chip height; banner minimum height (the draft review banner grows to its controls) |
 | `--icon-size` | 18px | SVG inside an icon button |
@@ -160,8 +160,11 @@ All spacing derives from a base of **4px**.
 - Breakpoints: `<= 768px` the sidebar becomes a left drawer over a scrim (a tablet in portrait
   cannot afford 300px next to an 80-column terminal); `<= 480px` the version pill is hidden so the
   header context keeps room. The ≤768px queries live in `src/styles.css`; the ≤480px rules
-  span `src/styles.css` (`.pill-version`, `.conn-text`) and `src/components/PaneTerminal.css`
-  (banner wrapping) — component-scoped breakpoints stay with their component.
+  span `src/styles.css` (`.pill-version`, `.conn-text`, `.brand-name`, `.context-workspace`) and
+  `src/components/PaneTerminal.css` (banner wrapping) — component-scoped breakpoints stay with
+  their component. At ≤480 the header keeps the role pill and the pane title by shedding the
+  version pill, the conn label, the brand word (the 22px mark stays) and the workspace half of
+  the context (the drawer names the workspace); 320px still fits.
 - Browser mechanics stay raw: `calc()` with `env()`, `min-width: 0`, `inset: 0`, percentages.
 
 ## 5. Components
@@ -172,7 +175,8 @@ All spacing derives from a base of **4px**.
   `health.auth.required`; calls `DELETE /api/auth` then refetches health so the gate returns);
   `.bell-button` (header, only when the Web Notification API exists — a secure context — and
   permission is not `denied`; click asks for permission, `.is-on` is the granted state:
-  accent glyph and border, notifications fire for hidden-tab blocked/done transitions and pane ends).
+  accent glyph and border, and `disabled` once granted — re-asking is impossible from JS, so
+  the granted bell carries the shared disabled treatment: opacity 0.7, no hover, default cursor).
 - **Spacing**: `--control-h` square (`--touch-target` square on `(pointer: coarse)`), `--icon-size` glyph, `--radius-sm`.
 - **States**: default (transparent, `--border`), hover (`--bg-hover`), active and
   `[aria-expanded="true"]` (`--bg-elevated`, `--accent` border, `--text-strong`), disabled
@@ -247,7 +251,8 @@ All spacing derives from a base of **4px**.
 - **States**: empty (placeholder, `--text-dim`, `--fs-md`, painted at `--z-banner` above the mount,
   which is `visibility: hidden` while no pane is selected so its cursor never shows through),
   connecting (App renders this host without `PaneTerminal`, and so without a WebSocket, while the
-  auth state is unknown: "Connecting to herdr web ui…" instead of a blank page), ended (`.terminal-banner`, neutral),
+  auth state is unknown: "Connecting to herdr web ui…" instead of a blank page), ended
+  (`.terminal-banner`, neutral; appends `— held input discarded` when a draft existed),
   reconnecting (`.terminal-banner-warning`, `--status-working`; while a draft is held it appends
   `input held: “…”` capped at 32ch so the user sees what did not send), reviewing
   (`.terminal-banner-draft`: after reconnect, the held input waits in the column's slot with the
@@ -280,7 +285,10 @@ All spacing derives from a base of **4px**.
 - **Motion**: color and border `--dur-fast`; none under `prefers-reduced-motion`.
 - **Ownership**: `App.tsx` owns the state; `PaneTerminal` sends changes to the server and
   reports the server's `role-ack` back (the pill shows the confirmed role, and the initial
-  `interact` default is never re-sent).
+  `interact` default is never re-sent — but on every (re)connect the role frame IS sent first,
+  so a role flipped while disconnected converges on the ack instead of getting stuck).
+  The pill renders even with no pane selected: the role is a property of the connection,
+  which exists regardless.
 
 ### Scrollback
 
@@ -395,7 +403,7 @@ because it floats over the terminal.
 | Hairline | `var(--hairline) solid var(--border)` | Header bottom, sidebar right, pills, controls |
 | Dashed hairline | `var(--hairline) dashed var(--border)` | Empty state box, unknown badge |
 | Tonal lift | `--bg-elevated` on `--bg-panel` | Selected row, chips, banners |
-| Tinted lift | `--accent-tint` layered over `--bg-elevated` (`linear-gradient(tint, tint) base`) | Observe banner, observing pill — anything accent-tinted that floats over the live pty canvas needs the opaque base |
+| Tinted lift | `--accent-tint` layered over `--bg-elevated` (`linear-gradient(tint, tint) base`) | Observe banner, observing pill — any accent-tinted surface gets the opaque base, whether it floats over the pty canvas or sits in the header |
 | Drawer shadow | `--shadow-drawer` | Mobile drawer only |
 
 ## 8. Accessibility Constraints & Accepted Debt

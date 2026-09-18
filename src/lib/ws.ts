@@ -54,9 +54,11 @@ export class HerdrSocket {
 
     socket.addEventListener("open", () => {
       this.retries = 0;
-      // the role must land before the attaches: the server skips the attach-time
-      // resize for observe connections, and WS frames are processed in order
-      if (this.mode !== "interact") this.rawSend({ type: "role", mode: this.mode });
+      // always send the role, never only when non-default: a user can flip the role
+      // while disconnected (setMode stores it without sending), so without this frame
+      // the reconnect would leave the server on the stale role and no ack would ever
+      // arrive - the UI would stay stuck in the old role while the header pill lies
+      this.rawSend({ type: "role", mode: this.mode });
       for (const [paneId, state] of this.attached) {
         this.rawSend({ type: "attach", pane_id: paneId, cols: state.cols, rows: state.rows });
       }

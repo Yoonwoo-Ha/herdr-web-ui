@@ -549,9 +549,20 @@ button {
   }
 }
 
-/* phones: the version pill is the least useful header item, the context is not */
+/* phones: the version pill is the least useful header item; below that, the brand word
+   and the workspace half of the context go too - the drawer names the workspace, and the
+   22px mark keeps the identity while the role pill and the pane title keep their room */
 @media (max-width: 480px) {
   .pill-version {
+    display: none;
+  }
+
+  .brand-name {
+    display: none;
+  }
+
+  .context-workspace,
+  .context-sep {
     display: none;
   }
 }
