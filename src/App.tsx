@@ -1,13 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { SessionSnapshot } from "../shared/protocol.ts";
+import type { AgentStatus, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
 import { ApiError, fetchHealth, fetchSession, signOut, type HealthInfo } from "./lib/api.ts";
 import { paneTitle, Sidebar } from "./components/Sidebar.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
 import { TokenGate } from "./components/TokenGate.tsx";
+import { applyPaneStatus } from "./lib/snapshot.ts";
+import {
+  notificationState,
+  requestNotificationPermission,
+  shouldNotifyStatus,
+  showPaneEndedNotification,
+  showPaneStatusNotification,
+  type NotificationState,
+} from "./lib/notifications.ts";
 
 const APP_TITLE = "herdr web ui";
 const POLL_MS = 5000;
+/** trailing debounce for push-triggered refetches: bursts of events become one fetch */
+const REFETCH_DEBOUNCE_MS = 500;
 
 function DrawerIcon({ open }: { open: boolean }) {
   return (
@@ -48,6 +59,15 @@ function LockIcon() {
   );
 }
 
+function BellIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 3.5a4 4 0 0 0-4 4v3l-1.5 3h11L14 10.5v-3a4 4 0 0 0-4-4" />
+      <path d="M8.5 16.5a1.6 1.6 0 0 0 3 0" />
+    </svg>
+  );
+}
+
 export function App() {
   const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
   const [health, setHealth] = useState<HealthInfo | null>(null);
@@ -58,8 +78,14 @@ export function App() {
   const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationState>(() => notificationState());
   const lockedRef = useRef(locked);
   lockedRef.current = locked;
+  // last-seen agent status per pane: the baseline that decides whether a push is news
+  const statusRef = useRef<Map<string, AgentStatus>>(new Map());
+  const refetchTimer = useRef<number | null>(null);
+  const snapshotRef = useRef<SessionSnapshot | null>(null);
+  snapshotRef.current = snapshot;
 
   const loadHealth = useCallback(async () => {
     try {
@@ -101,6 +127,63 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [load, loadHealth]);
 
+  // push-triggered refetches are debounced so an event burst becomes one fetch
+  const scheduleRefetch = useCallback(() => {
+    if (refetchTimer.current !== null) return;
+    refetchTimer.current = window.setTimeout(() => {
+      refetchTimer.current = null;
+      if (lockedRef.current !== true) void load();
+    }, REFETCH_DEBOUNCE_MS);
+  }, [load]);
+
+  useEffect(() => () => {
+    if (refetchTimer.current !== null) window.clearTimeout(refetchTimer.current);
+  }, []);
+
+  // remember the baseline statuses a notification is measured against
+  useEffect(() => {
+    if (!snapshot) return;
+    for (const pane of snapshot.panes) statusRef.current.set(pane.pane_id, pane.agent_status);
+  }, [snapshot]);
+
+  const notifyStatus = useCallback((paneId: string, status: AgentStatus) => {
+    const previous = statusRef.current.get(paneId);
+    statusRef.current.set(paneId, status);
+    if (!shouldNotifyStatus(previous, status)) return;
+    const pane = snapshotRef.current?.panes.find((candidate) => candidate.pane_id === paneId);
+    if (!pane) return;
+    showPaneStatusNotification(paneTitle(pane), status, () => selectPaneRef.current?.(paneId));
+  }, []);
+
+  const handleServerMessage = useCallback(
+    (message: ServerMessage) => {
+      switch (message.type) {
+        case "pane-status":
+          setSnapshot((current) => (current ? applyPaneStatus(current, message.pane_id, message.agent_status) : current));
+          notifyStatus(message.pane_id, message.agent_status);
+          scheduleRefetch(); // derived workspace/tab rollups come from the snapshot
+          break;
+        case "pane-exited": {
+          const pane = snapshotRef.current?.panes.find((candidate) => candidate.pane_id === message.pane_id);
+          if (pane) showPaneEndedNotification(paneTitle(pane), () => selectPaneRef.current?.(message.pane_id));
+          scheduleRefetch();
+          break;
+        }
+        case "session-changed":
+          scheduleRefetch();
+          break;
+        default:
+          break; // terminal-level frames are PaneTerminal's business
+      }
+    },
+    [notifyStatus, scheduleRefetch],
+  );
+
+  const enableNotifications = useCallback(async () => {
+    const next = await requestNotificationPermission();
+    setNotifications(next);
+  }, []);
+
   const unlock = useCallback(() => {
     setLocked(false);
     void loadHealth();
@@ -121,6 +204,8 @@ export function App() {
     setSelectedPaneId(paneId);
     setDrawerOpen(false);
   }, []);
+  const selectPaneRef = useRef(selectPane);
+  selectPaneRef.current = selectPane;
 
   const selectedPane = snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId) ?? null;
   const selectedWorkspace = selectedPane
@@ -200,6 +285,17 @@ export function App() {
               <LockIcon />
             </button>
           )}
+          {notifications !== "unsupported" && notifications !== "denied" && (
+            <button
+              type="button"
+              className={`icon-button bell-button${notifications === "granted" ? " is-on" : ""}`}
+              aria-label={notifications === "granted" ? "Notifications on" : "Enable notifications"}
+              title={notifications === "granted" ? "Notifications on — pane status alerts while the tab is hidden" : "Notify me when a pane needs input or finishes"}
+              onClick={() => void enableNotifications()}
+            >
+              <BellIcon />
+            </button>
+          )}
         </div>
       </header>
 
@@ -220,7 +316,7 @@ export function App() {
         {drawerOpen && <div className="scrim" aria-hidden="true" onClick={() => setDrawerOpen(false)} />}
 
         <main className="terminal-host">
-          <PaneTerminal paneId={selectedPaneId} onConnectionChange={setConnected} />
+          <PaneTerminal paneId={selectedPaneId} onConnectionChange={setConnected} onServerMessage={handleServerMessage} />
         </main>
       </div>
     </div>

@@ -295,6 +295,13 @@ button {
   animation: pulse var(--dur-pulse) var(--ease-out) infinite;
 }
 
+/* the bell while notifications are live: the accent reads as "on"; a plain
+   .icon-button is the idle/asking state */
+.bell-button.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* ---------- primitives ---------- */
 
 .icon-button {

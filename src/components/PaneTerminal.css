@@ -80,3 +80,102 @@
   border-color: var(--status-working);
   color: var(--status-working);
 }
+
+/* view-only state: same pill anatomy as the banners, tinted with the brand blue
+   (NOT an agent-status color - observing is a role, not a pane state) */
+.terminal-banner-observe {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+/* the role toggle mirrors the banner pills on the top-left so the two corners read as one chrome set */
+.role-toggle {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-3);
+  z-index: var(--z-banner);
+  display: inline-flex;
+  align-items: center;
+  height: var(--touch-target);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  font-weight: var(--fw-medium);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+
+.role-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.role-toggle.is-observing {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.role-toggle:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+/* the held-input review banner: wider than a pill because it carries text + actions,
+   but the same elevated surface; the draft text ellipsizes instead of wrapping */
+.terminal-banner-draft {
+  top: calc(var(--space-2) + var(--chip-h) + var(--space-2));
+  max-width: min(64ch, calc(100% - 2 * var(--space-3)));
+}
+
+.terminal-banner-draft .draft-label {
+  color: var(--status-working);
+}
+
+.terminal-banner-draft .draft-text {
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.terminal-banner-draft .draft-dropped {
+  color: var(--text-dim);
+}
+
+.terminal-banner-draft .draft-actions {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.terminal-banner-draft .draft-actions button {
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.terminal-banner-draft .draft-actions button:hover {
+  border-color: var(--accent);
+}
+
+.terminal-banner-draft .draft-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.terminal-banner-draft .draft-actions button:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
