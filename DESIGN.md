@@ -167,7 +167,10 @@ All spacing derives from a base of **4px**.
 ### Icon button (`.icon-button`)
 - **Structure**: `<button class="icon-button" aria-label>` wrapping one inline SVG.
 - **Variants**: `.drawer-toggle` (only rendered `<= 768px`); `.lock-button` (header, only when
-  `health.auth.required`; calls `DELETE /api/auth` then refetches health so the gate returns).
+  `health.auth.required`; calls `DELETE /api/auth` then refetches health so the gate returns);
+  `.bell-button` (header, only when the Web Notification API exists — a secure context — and
+  permission is not `denied`; click asks for permission, `.is-on` is the granted state:
+  accent glyph and border, notifications fire for hidden-tab blocked/done transitions and pane ends).
 - **Spacing**: `--control-h` square (`--touch-target` square on `(pointer: coarse)`), `--icon-size` glyph, `--radius-sm`.
 - **States**: default (transparent, `--border`), hover (`--bg-hover`), active and
   `[aria-expanded="true"]` (`--bg-elevated`, `--accent` border, `--text-strong`), focus (`--ring`).
@@ -238,8 +241,28 @@ All spacing derives from a base of **4px**.
   which is `visibility: hidden` while no pane is selected so its cursor never shows through),
   connecting (App renders this host without `PaneTerminal`, and so without a WebSocket, while the
   auth state is unknown: "Connecting to herdr web ui…" instead of a blank page), ended (`.terminal-banner`, neutral),
-  reconnecting (`.terminal-banner-warning`, `--status-working`). Banners carry `role="status"`.
+  reconnecting (`.terminal-banner-warning`, `--status-working`; while a draft is held it appends
+  `input held: “…”` so the user sees what did not send), reviewing (`.terminal-banner-draft`:
+  after reconnect, the held input waits one row below the top-right corner with the draft text
+  in `--font-mono` ellipsized at 32ch, a dropped-special-keys count, and Send / Discard buttons
+  at `--control-h`, `--radius-sm`), observing (`.terminal-banner-observe`, `--accent` text and
+  border on `--accent-tint`: "view only — the operator’s screen size is untouched"). Banners carry `role="status"`.
 - **Layout**: `position: relative` host; banners are absolute overlays so the pty keeps every row.
+
+### Role toggle (`.role-toggle`)
+- **Structure**: `<button class="role-toggle" aria-pressed>` reading `interactive` / `view only`,
+  rendered by `PaneTerminal` while a pane is selected; the pill mirrors the banner anatomy from
+  the terminal's top-LEFT corner (the banners own the top-right).
+- **Semantics**: the connection's role (`interact` types and resizes, `observe` neither — enforced
+  server-side). The server's `role-ack` applies the local consequences, so the pill only sends
+  the request; returning to interact force-refits and re-asserts the local geometry, and xterm's
+  stdin is gated with `disableStdin` while observing.
+- **Spacing**: `--touch-target` tall, `0 --space-3` padding, `--radius-pill`, `--fs-xs` at
+  `--fw-medium`, absolute at `--space-2` / `--space-3` from the top-left, `--z-banner`.
+- **States**: default (`--bg-elevated`, `--text-dim`), hover (`--text`, `--accent` border),
+  observing (`.is-observing`: `--accent` text and border on `--accent-tint` — accent marks the
+  connection's own state here, not an agent status), focus (`--ring`).
+- **Motion**: color and border `--dur-fast`.
 - **Scrollback**: xterm keeps none (`scrollback: 0`). The attach stream lives in the alternate
   screen and herdr owns scrollback (wheel and touch gestures are forwarded to it), so the fit
   addon uses the full host width instead of reserving a phantom 15px scrollbar, and
@@ -250,7 +273,8 @@ All spacing derives from a base of **4px**.
   `<button type="button" class="key" data-key tabindex="-1">`: `Esc`, `Tab`, `Ctrl`
   (`aria-pressed`), four chevron keys (inline SVG + `aria-label` Up / Down / Left / Right) and
   `^C` (`aria-label="Control C"`). Rendered by `KeyBar.tsx`; `PaneTerminal` mounts it as the
-  last child of `.terminal-stack`, under the xterm mount, only while a pane is selected. Taps go through `term.input()` so
+  last child of `.terminal-stack`, under the xterm mount, only while a pane is selected AND the
+  connection is interactive (observing hides it: an observer has nothing to send). Taps go through `term.input()` so
   they take the same `onData` → socket path as typed keys.
 - **Variants**: none. `.key.is-armed` is the one-shot Control: the next single printable
   character is sent as its control code (A-Z and `@ [ \ ] ^ _`), then Control disarms; tapping
