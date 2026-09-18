@@ -58,15 +58,27 @@
   height: var(--space-6);
 }
 
-.terminal-banner {
+/* the banners stack in one top-right column: any state combination (warning XOR
+   review, observe alongside either) renders without collisions, and the column lets
+   clicks pass through to the pty except where the review banner re-enables them */
+.terminal-banners {
   position: absolute;
   top: var(--space-2);
   right: var(--space-3);
   z-index: var(--z-banner);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  max-width: calc(100% - 2 * var(--space-3));
+  pointer-events: none;
+}
+
+.terminal-banner {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  height: var(--chip-h);
+  min-height: var(--chip-h);
   padding: 0 var(--space-2);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-pill);
@@ -81,15 +93,16 @@
   color: var(--status-working);
 }
 
-/* view-only state: same pill anatomy as the banners, tinted with the brand blue
-   (NOT an agent-status color - observing is a role, not a pane state) */
+/* view-only state: the same pill anatomy as the banners, accent-tint layered OVER the
+   opaque elevated base - a bare tint would let live pty glyphs bleed through */
 .terminal-banner-observe {
   border-color: var(--accent);
   color: var(--accent);
-  background: var(--accent-tint);
+  background: linear-gradient(var(--accent-tint), var(--accent-tint)) var(--bg-elevated);
 }
 
-/* the role toggle mirrors the banner pills on the top-left so the two corners read as one chrome set */
+/* the role toggle mirrors the banner pills on the top-left so the two corners read as one
+   chrome set: --control-h like an icon button on fine pointers, a touch target on coarse */
 .role-toggle {
   position: absolute;
   top: var(--space-2);
@@ -97,7 +110,7 @@
   z-index: var(--z-banner);
   display: inline-flex;
   align-items: center;
-  height: var(--touch-target);
+  height: var(--control-h);
   padding: 0 var(--space-3);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-pill);
@@ -110,6 +123,12 @@
   transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 
+@media (pointer: coarse) {
+  .role-toggle {
+    height: var(--touch-target);
+  }
+}
+
 .role-toggle:hover {
   color: var(--text);
   border-color: var(--accent);
@@ -118,7 +137,8 @@
 .role-toggle.is-observing {
   color: var(--accent);
   border-color: var(--accent);
-  background: var(--accent-tint);
+  /* tint over the opaque base: the pill floats over live pty content */
+  background: linear-gradient(var(--accent-tint), var(--accent-tint)) var(--bg-elevated);
 }
 
 .role-toggle:focus-visible {
@@ -127,10 +147,23 @@
 }
 
 /* the held-input review banner: wider than a pill because it carries text + actions,
-   but the same elevated surface; the draft text ellipsizes instead of wrapping */
+   so it takes --radius-md (a control-bearing box, not a chip) and grows to fit its
+   --control-h buttons. It only renders while CONNECTED (the reconnecting banner owns
+   the disconnected slot), and it is the one banner that accepts pointer events. */
 .terminal-banner-draft {
-  top: calc(var(--space-2) + var(--chip-h) + var(--space-2));
-  max-width: min(64ch, calc(100% - 2 * var(--space-3)));
+  height: auto;
+  min-height: calc(var(--control-h) + 2 * var(--space-1));
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  max-width: 100%;
+  pointer-events: auto;
+}
+
+/* the held-draft echo inside the reconnecting pill is capped like the review text */
+.draft-held {
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .terminal-banner-draft .draft-label {
@@ -178,4 +211,21 @@
 .terminal-banner-draft .draft-actions button:focus-visible {
   outline: var(--ring);
   outline-offset: var(--ring-offset);
+}
+
+/* phones: the observe note may sit beside the role pill, so let it wrap instead of
+   running under the pill */
+@media (max-width: 480px) {
+  .terminal-banner-observe {
+    white-space: normal;
+    max-width: min(36ch, 100%);
+    text-align: right;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .role-toggle,
+  .terminal-banner-draft .draft-actions button {
+    transition: none;
+  }
 }

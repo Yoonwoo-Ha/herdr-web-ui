@@ -271,7 +271,7 @@ export function App() {
         <div className="header-meta">
           <span className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`} role="status">
             <span className="conn-dot" aria-hidden="true" />
-            {connected ? "live" : "reconnecting"}
+            <span className="conn-text">{connected ? "live" : "reconnecting"}</span>
           </span>
           {health ? (
             <span className="pill pill-version" title={`herdr protocol ${health.herdr.protocol}`}>
@@ -291,6 +291,7 @@ export function App() {
               className={`icon-button bell-button${notifications === "granted" ? " is-on" : ""}`}
               aria-label={notifications === "granted" ? "Notifications on" : "Enable notifications"}
               title={notifications === "granted" ? "Notifications on — pane status alerts while the tab is hidden" : "Notify me when a pane needs input or finishes"}
+              disabled={notifications === "granted"}
               onClick={() => void enableNotifications()}
             >
               <BellIcon />

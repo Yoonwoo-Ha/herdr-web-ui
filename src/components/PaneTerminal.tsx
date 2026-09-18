@@ -291,47 +291,46 @@ export function PaneTerminal({ paneId, onConnectionChange, onServerMessage }: Pa
           </div>
         </div>
       )}
-      {paneId !== null && ended && (
-        <div className="terminal-banner" role="status">
-          terminal ended
-        </div>
-      )}
-      {paneId !== null && !ended && !connected && (
-        <div className="terminal-banner terminal-banner-warning" role="status">
-          reconnecting to herdr web ui…
-          {!draftIsEmpty(draft) && (
-            <span className="draft-held"> input held: “{draft.text}”</span>
-          )}
-        </div>
-      )}
-      {paneId !== null && !ended && connected && !draftIsEmpty(draft) && (
-        <div className="terminal-banner terminal-banner-draft" role="status">
-          <span className="draft-label">input held while disconnected:</span>
-          <code className="draft-text">{draft.text.length > 0 ? draft.text : "—"}</code>
-          {draft.droppedSpecial > 0 && (
-            <span className="draft-dropped">{draft.droppedSpecial} special key{draft.droppedSpecial === 1 ? "" : "s"} dropped</span>
-          )}
-          <span className="draft-actions">
-            <button type="button" className="draft-send" disabled={draft.text.length === 0} onClick={sendDraft}>
-              Send
-            </button>
-            <button type="button" className="draft-discard" onClick={discardDraft}>
-              Discard
-            </button>
-          </span>
-        </div>
-      )}
-      {paneId !== null && !ended && observing && (
-        <div className="terminal-banner terminal-banner-observe" role="status">
-          view only — the operator’s screen size is untouched
-        </div>
-      )}
+      <div className="terminal-banners">
+        {paneId !== null && ended && (
+          <div className="terminal-banner" role="status">
+            terminal ended{!draftIsEmpty(draft) ? " — held input discarded" : ""}
+          </div>
+        )}
+        {paneId !== null && !ended && !connected && (
+          <div className="terminal-banner terminal-banner-warning" role="status">
+            reconnecting to herdr web ui…
+            {!draftIsEmpty(draft) && <span className="draft-held"> input held: “{draft.text}”</span>}
+          </div>
+        )}
+        {paneId !== null && !ended && connected && !draftIsEmpty(draft) && (
+          <div className="terminal-banner terminal-banner-draft" role="status">
+            <span className="draft-label">input held while disconnected:</span>
+            <code className="draft-text">{draft.text.length > 0 ? draft.text : "—"}</code>
+            {draft.droppedSpecial > 0 && (
+              <span className="draft-dropped">{draft.droppedSpecial} special key{draft.droppedSpecial === 1 ? "" : "s"} dropped</span>
+            )}
+            <span className="draft-actions">
+              <button type="button" className="draft-send" disabled={draft.text.length === 0} onClick={sendDraft}>
+                Send
+              </button>
+              <button type="button" className="draft-discard" onClick={discardDraft}>
+                Discard
+              </button>
+            </span>
+          </div>
+        )}
+        {paneId !== null && !ended && observing && (
+          <div className="terminal-banner terminal-banner-observe" role="status">
+            view only — the operator’s screen size is untouched
+          </div>
+        )}
+      </div>
       <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
       {paneId !== null && (
         <button
           type="button"
           className={`role-toggle${observing ? " is-observing" : ""}`}
-          aria-pressed={observing}
           title={observing ? "Switch to interactive (type and resize)" : "Switch to view only (never resizes the shared terminal)"}
           onClick={toggleRole}
         >

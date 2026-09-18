@@ -296,10 +296,24 @@ button {
 }
 
 /* the bell while notifications are live: the accent reads as "on"; a plain
-   .icon-button is the idle/asking state */
+   .icon-button is the idle/asking state. The button is disabled once granted:
+   browsers cannot re-ask, and the title explains the state */
 .bell-button.is-on {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* narrow phones: the header keeps the brand, the context and the buttons by dropping
+   the conn label (the dot and the live region still announce the state) */
+@media (max-width: 480px) {
+  .conn-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 /* ---------- primitives ---------- */

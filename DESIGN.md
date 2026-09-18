@@ -29,7 +29,7 @@ Dark-only (`color-scheme: dark`): there is no light theme, and there will not be
 | Text/dim | `--text-dim` | `#8390a8` | Metadata, ids, empty states, idle |
 | Text/bright | `--text-strong` | `#e6edf7` | Brand, workspace labels, selected title |
 | Accent | `--accent` | `#6cb6ff` | Selection rail, focus ring, agent chip text, cursor |
-| Accent/tint | `--accent-tint` | `rgba(108, 182, 255, 0.12)` | Agent chip background |
+| Accent/tint | `--accent-tint` | `rgba(108, 182, 255, 0.12)` | Agent chip background; observe banner and observing pill, layered OVER `--bg-elevated` |
 | Status/idle | `--status-idle` | `#8390a8` | Idle badge |
 | Status/working | `--status-working` | `#e2a336` | Working badge, reconnecting dot and banner |
 | Status/blocked | `--status-blocked` | `#f2545b` | Blocked badge, offline pill, error border |
@@ -117,10 +117,10 @@ All spacing derives from a base of **4px**.
 |-------|-------|-------|
 | `--header-h` | 46px | Header height (plus `env(safe-area-inset-top)`) |
 | `--sidebar-w` | 300px | Sidebar column and drawer width |
-| `--control-h` | 32px | Icon button, retry button, gate input and button on fine pointers (`--touch-target` on coarse) |
+| `--control-h` | 32px | Icon button, role toggle, retry button, gate input and button on fine pointers (`--touch-target` on coarse) |
 | `--touch-target` | 40px | On `(pointer: coarse)`: pane row min-height, icon buttons, retry button, gate input and button; key-bar keys always (min-width and height) |
 | `--keybar-h` | 48px | Key bar height (plus `env(safe-area-inset-bottom)`); keys are `--touch-target` tall inside it |
-| `--chip-h` | 18px | Badge, pill, chip, banner height |
+| `--chip-h` | 18px | Badge, pill and chip height; banner minimum height (the draft review banner grows to its controls) |
 | `--icon-size` | 18px | SVG inside an icon button |
 | `--mark-size` | 22px | Brand mark |
 | `--dot-size` | 7px | Connection dot |
@@ -250,20 +250,27 @@ All spacing derives from a base of **4px**.
 - **Layout**: `position: relative` host; banners are absolute overlays so the pty keeps every row.
 
 ### Role toggle (`.role-toggle`)
-- **Structure**: `<button class="role-toggle" aria-pressed>` reading `interactive` / `view only`,
-  rendered by `PaneTerminal` while a pane is selected; the pill mirrors the banner anatomy from
-  the terminal's top-LEFT corner (the banners own the top-right).
+- **Structure**: `<button class="role-toggle">` whose visible label IS the state — `interactive`
+  / `view only` — rendered by `PaneTerminal` while a pane is selected; the pill mirrors the
+  banner anatomy from the terminal's top-LEFT corner (the banner column owns the top-right).
+  No `aria-pressed`: the label names the state (the play/pause pattern), and the observe
+  banner announces the transition.
 - **Semantics**: the connection's role (`interact` types and resizes, `observe` neither — enforced
   server-side). The server's `role-ack` applies the local consequences, so the pill only sends
   the request; returning to interact force-refits and re-asserts the local geometry, and xterm's
   stdin is gated with `disableStdin` while observing.
-- **Spacing**: `--touch-target` tall, `0 --space-3` padding, `--radius-pill`, `--fs-xs` at
-  `--fw-medium`, absolute at `--space-2` / `--space-3` from the top-left, `--z-banner`.
+- **Spacing**: `--control-h` tall (`--touch-target` on `(pointer: coarse)`), `0 --space-3` padding,
+  `--radius-pill`, `--fs-xs` at `--fw-medium`, absolute at `--space-2` / `--space-3` from the
+  top-left, `--z-banner`.
 - **States**: default (`--bg-elevated`, `--text-dim`), hover (`--text`, `--accent` border),
-  observing (`.is-observing`: `--accent` text and border on `--accent-tint` — accent marks the
-  connection's own state here, not an agent status), focus (`--ring`).
-- **Motion**: color and border `--dur-fast`.
-- **Scrollback**: xterm keeps none (`scrollback: 0`). The attach stream lives in the alternate
+  observing (`.is-observing`: `--accent` text and border on `--accent-tint` layered over
+  `--bg-elevated` — accent marks the connection's own state here, not an agent status),
+  focus (`--ring`).
+- **Motion**: color and border `--dur-fast`; none under `prefers-reduced-motion`.
+
+### Scrollback
+
+- xterm keeps none (`scrollback: 0`). The attach stream lives in the alternate
   screen and herdr owns scrollback (wheel and touch gestures are forwarded to it), so the fit
   addon uses the full host width instead of reserving a phantom 15px scrollbar, and
   `.xterm-viewport` hides its scrollbar.
@@ -374,6 +381,7 @@ because it floats over the terminal.
 | Hairline | `var(--hairline) solid var(--border)` | Header bottom, sidebar right, pills, controls |
 | Dashed hairline | `var(--hairline) dashed var(--border)` | Empty state box, unknown badge |
 | Tonal lift | `--bg-elevated` on `--bg-panel` | Selected row, chips, banners |
+| Tinted lift | `--accent-tint` layered over `--bg-elevated` (`linear-gradient(tint, tint) base`) | Observe banner, observing pill — anything accent-tinted that floats over the live pty canvas needs the opaque base |
 | Drawer shadow | `--shadow-drawer` | Mobile drawer only |
 
 ## 8. Accessibility Constraints & Accepted Debt
