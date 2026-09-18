@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { AgentStatus, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
+import type { AgentStatus, ClientRole, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
 import { ApiError, fetchHealth, fetchSession, signOut, type HealthInfo } from "./lib/api.ts";
 import { paneTitle, Sidebar } from "./components/Sidebar.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
@@ -78,6 +78,8 @@ export function App() {
   const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [connected, setConnected] = useState(false);
+  // the connection's role: the header pill flips it, the server's role-ack confirms it
+  const [role, setRole] = useState<ClientRole>("interact");
   const [notifications, setNotifications] = useState<NotificationState>(() => notificationState());
   const lockedRef = useRef(locked);
   lockedRef.current = locked;
@@ -269,6 +271,14 @@ export function App() {
           </div>
         )}
         <div className="header-meta">
+          <button
+            type="button"
+            className={`role-toggle${role === "observe" ? " is-observing" : ""}`}
+            title={role === "observe" ? "Switch to interactive (type and resize)" : "Switch to view only (never resizes the shared terminal)"}
+            onClick={() => setRole(role === "interact" ? "observe" : "interact")}
+          >
+            {role === "observe" ? "view only" : "interactive"}
+          </button>
           <span className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`} role="status">
             <span className="conn-dot" aria-hidden="true" />
             <span className="conn-text">{connected ? "live" : "reconnecting"}</span>
@@ -317,7 +327,13 @@ export function App() {
         {drawerOpen && <div className="scrim" aria-hidden="true" onClick={() => setDrawerOpen(false)} />}
 
         <main className="terminal-host">
-          <PaneTerminal paneId={selectedPaneId} onConnectionChange={setConnected} onServerMessage={handleServerMessage} />
+          <PaneTerminal
+            paneId={selectedPaneId}
+            role={role}
+            onRoleAck={setRole}
+            onConnectionChange={setConnected}
+            onServerMessage={handleServerMessage}
+          />
         </main>
       </div>
     </div>

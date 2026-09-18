@@ -101,51 +101,6 @@
   background: linear-gradient(var(--accent-tint), var(--accent-tint)) var(--bg-elevated);
 }
 
-/* the role toggle mirrors the banner pills on the top-left so the two corners read as one
-   chrome set: --control-h like an icon button on fine pointers, a touch target on coarse */
-.role-toggle {
-  position: absolute;
-  top: var(--space-2);
-  left: var(--space-3);
-  z-index: var(--z-banner);
-  display: inline-flex;
-  align-items: center;
-  height: var(--control-h);
-  padding: 0 var(--space-3);
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--bg-elevated);
-  font-size: var(--fs-xs);
-  font-family: inherit;
-  font-weight: var(--fw-medium);
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
-}
-
-@media (pointer: coarse) {
-  .role-toggle {
-    height: var(--touch-target);
-  }
-}
-
-.role-toggle:hover {
-  color: var(--text);
-  border-color: var(--accent);
-}
-
-.role-toggle.is-observing {
-  color: var(--accent);
-  border-color: var(--accent);
-  /* tint over the opaque base: the pill floats over live pty content */
-  background: linear-gradient(var(--accent-tint), var(--accent-tint)) var(--bg-elevated);
-}
-
-.role-toggle:focus-visible {
-  outline: var(--ring);
-  outline-offset: var(--ring-offset);
-}
-
 /* the held-input review banner: wider than a pill because it carries text + actions,
    so it takes --radius-md (a control-bearing box, not a chip) and grows to fit its
    --control-h buttons. It only renders while CONNECTED (the reconnecting banner owns
@@ -197,14 +152,21 @@
   font-family: inherit;
   color: var(--text);
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
 }
 
-.terminal-banner-draft .draft-actions button:hover {
+.terminal-banner-draft .draft-actions button:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
+.terminal-banner-draft .draft-actions button:active {
+  background: var(--bg-elevated);
+}
+
 .terminal-banner-draft .draft-actions button:disabled {
-  opacity: 0.5;
+  opacity: 0.7;
   cursor: default;
 }
 
@@ -213,18 +175,23 @@
   outline-offset: var(--ring-offset);
 }
 
-/* phones: the observe note may sit beside the role pill, so let it wrap instead of
-   running under the pill */
+/* phones: banners wrap instead of overflowing - a wrapping box stops being a chip, so it
+   takes padding and --radius-md (the review banner already does) */
 @media (max-width: 480px) {
-  .terminal-banner-observe {
+  .terminal-banner {
     white-space: normal;
+  }
+
+  .terminal-banner-observe,
+  .terminal-banner-warning {
     max-width: min(36ch, 100%);
     text-align: right;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-md);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .role-toggle,
   .terminal-banner-draft .draft-actions button {
     transition: none;
   }

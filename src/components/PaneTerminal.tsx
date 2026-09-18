@@ -15,13 +15,17 @@ const FONT_STACK =
 
 export interface PaneTerminalProps {
   paneId: string | null;
+  /** The connection's desired role; changes are sent to the server, acks come back via onRoleAck. */
+  role?: ClientRole;
+  /** Fires with the server-confirmed role (the header toggle shows it). */
+  onRoleAck?: (mode: ClientRole) => void;
   /** Fires on every change of the socket's connected state (the header shows it). */
   onConnectionChange?: (connected: boolean) => void;
   /** Every server frame also reaches App: it merges pane-status and schedules refetches. */
   onServerMessage?: (message: ServerMessage) => void;
 }
 
-export function PaneTerminal({ paneId, onConnectionChange, onServerMessage }: PaneTerminalProps) {
+export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectionChange, onServerMessage }: PaneTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -29,6 +33,7 @@ export function PaneTerminal({ paneId, onConnectionChange, onServerMessage }: Pa
   const paneRef = useRef<string | null>(paneId);
   const onConnectionChangeRef = useRef(onConnectionChange);
   const onServerMessageRef = useRef(onServerMessage);
+  const onRoleAckRef = useRef(onRoleAck);
   const [connected, setConnected] = useState(false);
   const [ended, setEnded] = useState(false);
   // one-shot Control from the key bar: the ref is what onData reads, the state is what the bar shows
@@ -44,6 +49,7 @@ export function PaneTerminal({ paneId, onConnectionChange, onServerMessage }: Pa
   paneRef.current = paneId;
   onConnectionChangeRef.current = onConnectionChange;
   onServerMessageRef.current = onServerMessage;
+  onRoleAckRef.current = onRoleAck;
 
   useEffect(() => {
     onConnectionChangeRef.current?.(connected);
@@ -95,6 +101,7 @@ export function PaneTerminal({ paneId, onConnectionChange, onServerMessage }: Pa
         observeRef.current = nowObserving;
         setObserving(nowObserving);
         term.options.disableStdin = nowObserving;
+        onRoleAckRef.current?.(message.mode);
         if (!nowObserving) {
           try {
             fit.fit();
@@ -259,11 +266,14 @@ export function PaneTerminal({ paneId, onConnectionChange, onServerMessage }: Pa
   }, []);
 
   // ask the server for the role change; the role-ack handler applies the local
-  // consequences (stdin gate, grid adoption or reclamation) once it is confirmed
-  const toggleRole = useCallback(() => {
-    const next: ClientRole = observeRef.current ? "interact" : "observe";
-    socketRef.current?.setMode(next);
-  }, []);
+  // consequences (stdin gate, grid adoption or reclamation) once it is confirmed.
+  // The initial default is skipped: the server already treats fresh connections as interact.
+  const lastSentRole = useRef<ClientRole>(role);
+  useEffect(() => {
+    if (role === lastSentRole.current) return;
+    lastSentRole.current = role;
+    socketRef.current?.setMode(role);
+  }, [role]);
 
   const sendDraft = useCallback(() => {
     const socket = socketRef.current;
@@ -327,16 +337,6 @@ export function PaneTerminal({ paneId, onConnectionChange, onServerMessage }: Pa
         )}
       </div>
       <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
-      {paneId !== null && (
-        <button
-          type="button"
-          className={`role-toggle${observing ? " is-observing" : ""}`}
-          title={observing ? "Switch to interactive (type and resize)" : "Switch to view only (never resizes the shared terminal)"}
-          onClick={toggleRole}
-        >
-          {observing ? "view only" : "interactive"}
-        </button>
-      )}
       {paneId !== null && !observing && <KeyBar onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl} />}
     </div>
   );

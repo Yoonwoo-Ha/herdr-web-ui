@@ -272,6 +272,41 @@ button {
   font-size: var(--fs-xs);
 }
 
+/* the connection's role pill: header cluster item (never over the pty canvas),
+   --control-h like its neighbours, a touch target on coarse pointers */
+.role-toggle {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  font-weight: var(--fw-medium);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.role-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.role-toggle:active {
+  background: var(--bg-hover);
+}
+
+.role-toggle.is-observing {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: linear-gradient(var(--accent-tint), var(--accent-tint)) var(--bg-elevated);
+}
+
 .conn {
   display: inline-flex;
   align-items: center;
@@ -336,12 +371,19 @@ button {
     border-color var(--dur-fast) var(--ease-out);
 }
 
+/* a disabled control must not read as the strongest control on screen: 0.7 keeps the
+   accent glyph at 4.90:1 on --bg-panel (0.6 would drop it to 3.88:1) */
+.icon-button:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
 .icon-button svg {
   width: var(--icon-size);
   height: var(--icon-size);
 }
 
-.icon-button:hover {
+.icon-button:hover:not(:disabled) {
   background: var(--bg-hover);
 }
 
@@ -361,6 +403,10 @@ button {
 @media (pointer: coarse) {
   .icon-button {
     width: var(--touch-target);
+    height: var(--touch-target);
+  }
+
+  .role-toggle {
     height: var(--touch-target);
   }
 
@@ -513,6 +559,7 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .sidebar,
   .icon-button,
+  .role-toggle,
   .error-retry {
     transition: none;
   }

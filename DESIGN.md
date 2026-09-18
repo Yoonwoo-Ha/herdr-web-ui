@@ -108,7 +108,7 @@ All spacing derives from a base of **4px**.
 | Token | Value | Usage |
 |-------|-------|-------|
 | `--radius-sm` | 6px | Rows, icon buttons, chips, retry button |
-| `--radius-md` | 8px | Error state, empty state |
+| `--radius-md` | 8px | Error state, empty state, the draft review banner and wrapped phone banners |
 | `--radius-pill` | 999px | Badges, pills, banners, the connection dot |
 
 ### Sizes
@@ -159,7 +159,9 @@ All spacing derives from a base of **4px**.
   (`interactive-widget=resizes-content`); there the value is the same as `100dvh`.
 - Breakpoints: `<= 768px` the sidebar becomes a left drawer over a scrim (a tablet in portrait
   cannot afford 300px next to an 80-column terminal); `<= 480px` the version pill is hidden so the
-  header context keeps room. Both are `max-width` queries in `src/styles.css`.
+  header context keeps room. The ≤768px queries live in `src/styles.css`; the ≤480px rules
+  span `src/styles.css` (`.pill-version`, `.conn-text`) and `src/components/PaneTerminal.css`
+  (banner wrapping) — component-scoped breakpoints stay with their component.
 - Browser mechanics stay raw: `calc()` with `env()`, `min-width: 0`, `inset: 0`, percentages.
 
 ## 5. Components
@@ -173,7 +175,9 @@ All spacing derives from a base of **4px**.
   accent glyph and border, notifications fire for hidden-tab blocked/done transitions and pane ends).
 - **Spacing**: `--control-h` square (`--touch-target` square on `(pointer: coarse)`), `--icon-size` glyph, `--radius-sm`.
 - **States**: default (transparent, `--border`), hover (`--bg-hover`), active and
-  `[aria-expanded="true"]` (`--bg-elevated`, `--accent` border, `--text-strong`), focus (`--ring`).
+  `[aria-expanded="true"]` (`--bg-elevated`, `--accent` border, `--text-strong`), disabled
+  (`opacity: 0.7`, `cursor: default`, no hover — 0.7 keeps the accent glyph at 4.90:1 on
+  `--bg-panel`), focus (`--ring`).
 - **Accessibility**: `aria-label` (icon-only), `aria-expanded` + `aria-controls` on the toggle.
 - **Motion**: background/border `--dur-fast`.
 - **Layout**: cluster item in the header.
@@ -211,7 +215,8 @@ All spacing derives from a base of **4px**.
 - **Structure**: `<span class="conn conn-live|conn-reconnecting" role="status"><span class="conn-dot"/>live|reconnecting</span>`.
 - **Spacing**: `--dot-size` dot, `--space-1` gap, `--fs-xs`.
 - **States**: live (`--status-done` dot, dim text), reconnecting (`--status-working` dot + text,
-  dot pulses). Driven by `PaneTerminal`'s `onConnectionChange` prop.
+  dot pulses). Driven by `PaneTerminal`'s `onConnectionChange` prop. ≤480px the label text
+  collapses to the visually-hidden `.conn-text` (the dot stays, the live region still announces).
 - **Accessibility**: `role="status"` announces the change; the dot is `aria-hidden`.
 
 ### Sidebar tree (`.tree`, `.workspace`, `.pane-row`)
@@ -231,42 +236,51 @@ All spacing derives from a base of **4px**.
 - **Motion**: row background `--dur-fast`.
 - **Layout**: stack inside the sidebar, which owns the scroll.
 
-### Terminal host (`.terminal-host`, `.pane-terminal`, `.terminal-placeholder`, `.terminal-banner`)
+### Terminal host (`.terminal-host`, `.pane-terminal`, `.terminal-placeholder`, `.terminal-banners`)
 - **Structure**: `<main class="terminal-host">` (shell, `styles.css`) containing
-  `PaneTerminal`: optional placeholder (icon + "Select a pane to open its terminal"), optional
-  banner, and the `.pane-terminal` xterm mount.
-- **Spacing**: host padded `--space-2` (+ safe-area insets); banner at `--space-2` / `--space-3`
-  from the top-right corner, `--chip-h` tall, `--radius-pill`.
+  `PaneTerminal`: optional placeholder (icon + "Select a pane to open its terminal"), the
+  `.terminal-banners` column, and the `.pane-terminal` xterm mount.
+- **Spacing**: host padded `--space-2` (+ safe-area insets); the banner column anchored at
+  `--space-2` / `--space-3` from the top-right, banners `--chip-h` (minimum) with
+  `0 --space-2` padding, `--radius-pill` — the draft review banner and any banner that
+  wraps on a phone take `--radius-md` and vertical padding instead.
 - **States**: empty (placeholder, `--text-dim`, `--fs-md`, painted at `--z-banner` above the mount,
   which is `visibility: hidden` while no pane is selected so its cursor never shows through),
   connecting (App renders this host without `PaneTerminal`, and so without a WebSocket, while the
   auth state is unknown: "Connecting to herdr web ui…" instead of a blank page), ended (`.terminal-banner`, neutral),
   reconnecting (`.terminal-banner-warning`, `--status-working`; while a draft is held it appends
-  `input held: “…”` so the user sees what did not send), reviewing (`.terminal-banner-draft`:
-  after reconnect, the held input waits one row below the top-right corner with the draft text
-  in `--font-mono` ellipsized at 32ch, a dropped-special-keys count, and Send / Discard buttons
-  at `--control-h`, `--radius-sm`), observing (`.terminal-banner-observe`, `--accent` text and
-  border on `--accent-tint`: "view only — the operator’s screen size is untouched"). Banners carry `role="status"`.
-- **Layout**: `position: relative` host; banners are absolute overlays so the pty keeps every row.
+  `input held: “…”` capped at 32ch so the user sees what did not send), reviewing
+  (`.terminal-banner-draft`: after reconnect, the held input waits in the column's slot with the
+  draft text in `--font-mono` ellipsized at 32ch, a dropped-special-keys count, and Send /
+  Discard buttons at `--control-h`, `--radius-sm`; the one banner that accepts pointer events),
+  observing (`.terminal-banner-observe`, `--accent` text and border on `--accent-tint` layered
+  over `--bg-elevated`: "view only — the operator's screen size is untouched"; wraps to 36ch
+  ≤480px). Banners carry `role="status"`.
+- **Layout**: `position: relative` host; `.terminal-banners` is one absolute top-right column
+  (flex, `--space-2` gap, `max-width: calc(100% - 2 * var(--space-3))`, `pointer-events: none`
+  — the review banner re-enables them) so any state combination stacks without collisions
+  while the pty keeps every row. ≤480px every banner wraps instead of overflowing.
 
 ### Role toggle (`.role-toggle`)
 - **Structure**: `<button class="role-toggle">` whose visible label IS the state — `interactive`
-  / `view only` — rendered by `PaneTerminal` while a pane is selected; the pill mirrors the
-  banner anatomy from the terminal's top-LEFT corner (the banner column owns the top-right).
-  No `aria-pressed`: the label names the state (the play/pause pattern), and the observe
-  banner announces the transition.
+  / `view only` — as the first item of the header's `.header-meta` cluster, next to the
+  connection indicator (the role is a property of the CONNECTION, and the header keeps
+  every control off the pty canvas). No `aria-pressed`: the label names the state
+  (the play/pause pattern), and the observe banner announces the transition.
 - **Semantics**: the connection's role (`interact` types and resizes, `observe` neither — enforced
   server-side). The server's `role-ack` applies the local consequences, so the pill only sends
   the request; returning to interact force-refits and re-asserts the local geometry, and xterm's
   stdin is gated with `disableStdin` while observing.
-- **Spacing**: `--control-h` tall (`--touch-target` on `(pointer: coarse)`), `0 --space-3` padding,
-  `--radius-pill`, `--fs-xs` at `--fw-medium`, absolute at `--space-2` / `--space-3` from the
-  top-left, `--z-banner`.
+- **Spacing**: `--control-h` tall (`--touch-target` on `(pointer: coarse)`, same block as
+  the icon buttons), `0 --space-3` padding, `--radius-pill`, `--fs-xs` at `--fw-medium`.
 - **States**: default (`--bg-elevated`, `--text-dim`), hover (`--text`, `--accent` border),
-  observing (`.is-observing`: `--accent` text and border on `--accent-tint` layered over
-  `--bg-elevated` — accent marks the connection's own state here, not an agent status),
-  focus (`--ring`).
+  active (`--bg-hover`), observing (`.is-observing`: `--accent` text and border on
+  `--accent-tint` layered over `--bg-elevated` — accent marks the connection's own state
+  here, not an agent status), focus (`--ring`).
 - **Motion**: color and border `--dur-fast`; none under `prefers-reduced-motion`.
+- **Ownership**: `App.tsx` owns the state; `PaneTerminal` sends changes to the server and
+  reports the server's `role-ack` back (the pill shows the confirmed role, and the initial
+  `interact` default is never re-sent).
 
 ### Scrollback
 
