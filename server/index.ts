@@ -1,12 +1,14 @@
 import type { ServerWebSocket } from "bun";
 
 import type { ClientMessage, ClientRole, HealthAuth, HerdrPane, ServerMessage } from "../shared/protocol.ts";
+import { paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { handleAuthRequest, isAuthenticated, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { badRequest, errorResponse, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
 import { HerdrError, herdrSocketPath, paneRead, paneSendKeys, paneSendText, ping, sessionSnapshot } from "./herdr/client.ts";
+import { createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
 import { PtySession } from "./pty/session.ts";
 
 const MAX_REPLAY_BYTES = 256 * 1024;
@@ -49,7 +51,13 @@ function send(client: Client, message: ServerMessage): void {
 }
 
 export function createServer(
-  options: { port?: number; hostname?: string; token?: string } = {},
+  options: {
+    port?: number;
+    hostname?: string;
+    token?: string;
+    /** where VAPID keys and push subscriptions persist; tests pass a temp dir */
+    stateDir?: string;
+  } = {},
 ): { port: number; hostname: string; stop: () => void } {
   const attachments = new Map<string, PaneAttachment>();
   /** attachments still resolving their terminal, so concurrent attaches share one pty */
@@ -58,6 +66,13 @@ export function createServer(
   const hostname = options.hostname ?? process.env["HOST"] ?? "0.0.0.0";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
+  const push = createPushService({
+    stateDir: options.stateDir ?? defaultStateDir(),
+    lookupTitle: async (paneId) => {
+      const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
+      return pane ? paneTitle(pane) : undefined;
+    },
+  });
 
   function broadcast(paneId: string, message: ServerMessage): void {
     const attachment = attachments.get(paneId);
@@ -185,10 +200,22 @@ export function createServer(
     closeAttachment(paneId);
   }
 
-  /** Status of EVERY pane, attached or not: one collector feeds all connected clients. */
+  /** A broken state file must cost the alert, never the server (an unhandled rejection would). */
+  const logPushError = (error: unknown): void => {
+    console.error(`web push: ${error instanceof Error ? error.message : String(error)}`);
+  };
+
+  /** Status of EVERY pane, attached or not: one collector feeds all connected clients and web push. */
   const collector = startStatusCollector({
-    onStatus: (paneId, status) => broadcastAll({ type: "pane-status", pane_id: paneId, agent_status: status }),
-    onPaneEnded: (paneId) => broadcastAll({ type: "pane-exited", pane_id: paneId }),
+    onStatus: (paneId, status) => {
+      broadcastAll({ type: "pane-status", pane_id: paneId, agent_status: status });
+      push.onStatus(paneId, status).catch(logPushError);
+    },
+    onBaseline: (panes) => push.seed(panes),
+    onPaneEnded: (paneId) => {
+      broadcastAll({ type: "pane-exited", pane_id: paneId });
+      push.onEnded(paneId).catch(logPushError);
+    },
     onStructureChange: () => broadcastAll({ type: "session-changed" }),
   });
 
@@ -214,6 +241,15 @@ export function createServer(
       }
 
       if (pathname === "/api/auth") return handleAuthRequest(request, token);
+
+      if (pathname === "/api/push" || pathname.startsWith("/api/push/")) {
+        try {
+          const answered = await handlePushRequest(request, pathname, push);
+          if (answered) return answered;
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
 
       if (pathname === "/api/health") {
         const auth: HealthAuth = { required: token !== "", authenticated };
