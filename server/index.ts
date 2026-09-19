@@ -85,6 +85,10 @@ export function createServer(
     const attachment = attachments.get(paneId);
     if (!attachment) return;
     attachments.delete(paneId);
+    // its members hold nothing on this pane any more (a pty that exited leaves them on
+    // the "terminal ended" screen): a stale entry would read as a live claim in
+    // releaseUnclaimed and keep a later, empty pty on this pane running
+    for (const member of attachment.clients) member.data.attached.delete(paneId);
     attachment.pty.kill();
   }
 
@@ -167,6 +171,18 @@ export function createServer(
     if (!attachment) return;
     attachment.clients.delete(client);
     if (attachment.clients.size === 0) closeAttachment(paneId);
+  }
+
+  /**
+   * Closes an attachment whose creating client detached or disconnected before it was
+   * ready, unless a client still wants it: every attach records its pane in
+   * `attached` before awaiting, so a joiner of the same creation that has not resumed
+   * yet still counts and is not left holding a dead record.
+   */
+  function releaseUnclaimed(paneId: string, attachment: PaneAttachment): void {
+    if (attachments.get(paneId) !== attachment || attachment.clients.size > 0) return;
+    for (const other of clients) if (other.data.attached.has(paneId)) return;
+    closeAttachment(paneId);
   }
 
   /** Status of EVERY pane, attached or not: one collector feeds all connected clients. */
@@ -296,9 +312,22 @@ export function createServer(
                 send(client, { type: "error", code: "invalid_geometry", message: "cols and rows must be integers in 1..1000" });
                 break;
               }
-              const attachment = await ensureAttachment(message.pane_id, geometry.cols, geometry.rows, client.data.mode === "observe");
-              attachment.clients.add(client);
+              // record the pane before the await: a detach (switching panes) or a close
+              // that lands while the terminal is looked up must cancel this attach, and
+              // neither can see a client that only joins the attachment afterwards
               client.data.attached.add(message.pane_id);
+              let attachment: PaneAttachment;
+              try {
+                attachment = await ensureAttachment(message.pane_id, geometry.cols, geometry.rows, client.data.mode === "observe");
+              } catch (error) {
+                client.data.attached.delete(message.pane_id);
+                throw error;
+              }
+              if (!client.data.attached.has(message.pane_id)) {
+                releaseUnclaimed(message.pane_id, attachment);
+                break;
+              }
+              attachment.clients.add(client);
               // hand the newcomer the current screen it would otherwise have missed
               if (attachment.replay) {
                 send(client, { type: "pty-data", pane_id: message.pane_id, data: attachment.replay });
