@@ -38,7 +38,9 @@ Attaches coexist. The server never passes `--takeover`, so opening a pane in the
 - A real terminal per pane: `herdr terminal attach` on a PTY, raw bytes streamed to xterm.js over a WebSocket, keystrokes streamed back (`server/index.ts`, `src/components/PaneTerminal.tsx`).
 - Scrollback stays in herdr. The attach stream runs in the alternate screen with mouse reporting on, so wheel and touch gestures scroll the real pane, which also works for full-screen agent TUIs.
 - One PTY per pane shared by every connected client, with a 256 KB replay tail so a late joiner sees the current screen.
-- Resizing the browser refits xterm, which resizes the pty.
+- Resizing the browser refits xterm, which resizes the pty. **View-only mode** flips a connection into an observer: it can neither type nor resize, enforced server-side, so opening a pane on your phone never changes the size your desktop sees — the observer's grid follows the pty instead (`shared/protocol.ts` roles, `server/index.ts`, `src/components/PaneTerminal.tsx`).
+- Held input across disconnects: the WebSocket reconnects on its own, but input typed while it was down is never auto-sent. It waits as a draft you review and send (or discard) after reconnect (`src/lib/draft.ts`, `src/lib/ws.ts`).
+- Agent status for **every** pane is pushed, not just the open one: the server subscribes to all panes' status and broadcasts it, so sidebar badges update instantly, and the bell in the header can notify you (Web Notifications, hidden tabs only) when a pane becomes blocked or finishes — or when an unattached pane's terminal ends (`server/collector.ts`, `src/lib/notifications.ts`).
 - Header shows the workspace > pane context and a live / reconnecting indicator; the WebSocket reconnects with backoff and re-attaches with the right geometry (`src/App.tsx`, `src/lib/ws.ts`).
 - Touch key bar on phones: Esc, Tab, a one-shot Ctrl, arrows and ^C (`src/components/KeyBar.tsx`).
 - Installable PWA with a small service worker (`public/manifest.webmanifest`, `public/sw.js`).
@@ -99,6 +101,7 @@ Then install it:
 What the phone layout does (`src/components/KeyBar.tsx`, `src/lib/viewport.ts`, `src/components/PaneTerminal.tsx`):
 
 - A key bar under the terminal on touch and narrow screens with Esc, Tab, Ctrl, arrows and ^C. Ctrl is one-shot: tap Ctrl, then a letter.
+- View-only mode is the phone story for shared panes: flip the pill in the terminal's top-left corner and the phone watches without ever resizing or typing into the desktop's terminal.
 - The layout follows the soft keyboard (`visualViewport` plus `interactive-widget=resizes-content`) so the prompt stays above it.
 - A single-finger drag scrolls the pane. The drag is turned into wheel events, which xterm forwards to herdr, so this also scrolls full-screen agent TUIs.
 - Safe-area insets are honoured for notches and home bars.
@@ -122,11 +125,11 @@ The token is the whole authorization decision: anyone holding it can type into y
 
 ## How it works
 
-herdr closes the socket after every response, so each RPC opens its own connection (`server/herdr/client.ts`). `events.subscribe` is the one streaming connection; it carries agent status changes, which the server fans out to browsers as WebSocket `pane-status` messages.
+herdr closes the socket after every response, so each RPC opens its own connection (`server/herdr/client.ts`). `events.subscribe` is the one streaming method, and the server holds two long-lived subscriptions: a status collector (`server/collector.ts`) that carries `pane.agent_status_changed` for **every** pane in the session (herdr needs one subscription per pane, but a single connection carries any number of them; the set is reconciled from `session.snapshot` whenever a pane is created or closed), and a lifecycle subscription for `pane.created` / `pane.closed` / `pane.exited`. Status, pane exits and structure changes fan out to every connected browser as `pane-status`, `pane-exited` and `session-changed` WebSocket messages — the 5-second session poll remains only as a backstop.
 
 The terminal is not built on the JSON API. For each attached pane the server runs `herdr terminal attach <terminal_id>` on a PTY inside the Node sidecar (`server/pty/pty-host.mjs`, driven by `server/pty/session.ts`) and forwards the raw bytes to xterm.js over the WebSocket. The attach stream lives in the alternate screen with mouse reporting on, so scrollback is herdr's, and wheel or touch gestures scroll the real pane. xterm keeps no scrollback of its own.
 
-One PTY serves every client watching the same pane. The server keeps a 256 KB replay tail and hands it to a client that joins late. When the browser is resized, xterm is refitted and the pty resized to match.
+One PTY serves every client watching the same pane. The server keeps a 256 KB replay tail and hands it to a client that joins late. When the browser is resized, xterm is refitted and the pty resized to match — for `interact` connections. An `observe` connection never resizes: it adopts the pty's grid (delivered as `pane-geometry` messages; when the observer creates the attachment, the pty spawns at the pane's own layout grid, not the observer's viewport) so a phone in view-only mode cannot disturb the operator's geometry, and its `input`, `keys` and `resize` frames are answered with a `read_only` error instead of reaching the pty. Terminal input typed while the WebSocket is down is dropped at the socket layer (`src/lib/ws.ts`) and kept as a reviewable draft in the UI — nothing fires unannounced on reconnect.
 
 herdr's wire types are generated from its schema into `shared/herdr-api.generated.ts`, not written by hand:
 
@@ -156,7 +159,7 @@ bun run build
 bun test
 ```
 
-The suite runs against the live herdr server; there are no mocks. It's read-only apart from the `herdr-web-ui-test` workspace it creates and deletes. It covers the generator freshness and determinism gate, the HTTP contract, the WS attach stream, token auth, the bind address, the herdr client, the PTY sidecar's env pass-through (`server/pty/session.test.ts`) and the key bar mappings (`src/lib/keys.test.ts`). At the time of writing that's 36 tests across 5 files.
+The suite runs against the live herdr server; there are no mocks. It's read-only apart from the `herdr-web-ui-test` workspaces it creates and deletes. It covers the generator freshness and determinism gate, the HTTP contract, the WS attach stream, roles (an observe connection cannot resize or type, enforced server-side), the status collector's pushed `pane-status` and `pane-exited` for unattached panes, token auth, the bind address, the herdr client, the PTY sidecar's env pass-through (`server/pty/session.test.ts`) and the pure client modules (key bar, draft, notifications, snapshot merge). At the time of writing that's 63 tests across 9 files.
 
 ## API
 
@@ -170,8 +173,9 @@ POST   /api/pane/input  { pane_id, text }
 POST   /api/pane/keys   { pane_id, keys }
 POST   /api/auth        { token }     -> 204 + cookie
 DELETE /api/auth                      -> 204
-WS     /ws   client: attach | detach | input | keys | resize
-             server: snapshot | pty-data | pty-exit | pane-status | error
+WS     /ws   client: attach | detach | input | keys | resize | role
+             server: snapshot | pty-data | pty-exit | pane-geometry | role-ack
+                     | pane-status | pane-exited | session-changed | error
 ```
 
 Errors are non-2xx responses with `{ error: { code, message } }`.
@@ -185,6 +189,7 @@ Errors are non-2xx responses with `{ error: { code, message } }`.
 | `scripts/generate-protocol-types.ts` | The generator and its `--check` freshness gate |
 | `scripts/herdr-schema.json` | Snapshot of `herdr api schema --json` |
 | `server/index.ts` | Bun.serve HTTP API, WebSocket fan-out, static client |
+| `server/collector.ts` | Server-wide agent-status collector: every pane, attached or not |
 | `server/auth.ts` | Shared-token gate and cookie handling |
 | `server/static.ts` | Serves the built client from `dist/` with per-file cache headers |
 | `server/herdr/client.ts` | herdr unix-socket client: RPC and event subscriptions |
@@ -194,7 +199,10 @@ Errors are non-2xx responses with `{ error: { code, message } }`.
 | `src/components/KeyBar.tsx` | Touch key bar |
 | `src/components/Sidebar.tsx` | Workspace/tab/pane tree with agent status badges |
 | `src/components/TokenGate.tsx` | Login screen for the token gate |
-| `src/lib/ws.ts` | Reconnecting WebSocket client |
+| `src/lib/ws.ts` | Reconnecting WebSocket client (role replay; input is never queued) |
+| `src/lib/draft.ts` | Held-input draft for typing during disconnects |
+| `src/lib/notifications.ts` | Web Notifications for status transitions |
+| `src/lib/snapshot.ts` | Pushed-status merge into the session snapshot |
 | `src/lib/keys.ts` | Key bar key mappings |
 | `src/lib/viewport.ts` | Visual viewport tracking for the soft keyboard |
 | `src/pwa.ts` | Service worker registration |

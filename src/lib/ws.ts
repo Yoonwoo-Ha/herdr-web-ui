@@ -1,4 +1,4 @@
-import type { ClientMessage, ServerMessage } from "../../shared/protocol.ts";
+import type { ClientMessage, ClientRole, ServerMessage } from "../../shared/protocol.ts";
 
 type Handler = (message: ServerMessage) => void;
 
@@ -16,6 +16,14 @@ function defaultUrl(): string {
  * Reconnecting client for /ws. Attachments are remembered with their geometry so a
  * dropped connection restores the live terminal at the right size instead of
  * leaving a stale screen behind.
+ *
+ * Two policies live here:
+ * - The connection's role survives reconnects: an observe connection re-sends its
+ *   role before the attach replay, so a reconnecting phone still cannot resize or
+ *   type into the operator's pty.
+ * - Terminal input is NEVER queued while disconnected (a command typed into a dead
+ *   socket must not fire later, unannounced); PaneTerminal keeps it as a draft the
+ *   user reviews instead. Control frames (attach/resize/role) replay as before.
  */
 export class HerdrSocket {
   private socket: WebSocket | null = null;
@@ -26,6 +34,7 @@ export class HerdrSocket {
   private retries = 0;
   private reconnectTimer: number | null = null;
   private disposed = false;
+  private mode: ClientRole = "interact";
 
   constructor(url: string = defaultUrl()) {
     this.url = url;
@@ -45,6 +54,11 @@ export class HerdrSocket {
 
     socket.addEventListener("open", () => {
       this.retries = 0;
+      // always send the role, never only when non-default: a user can flip the role
+      // while disconnected (setMode stores it without sending), so without this frame
+      // the reconnect would leave the server on the stale role and no ack would ever
+      // arrive - the UI would stay stuck in the old role while the header pill lies
+      this.rawSend({ type: "role", mode: this.mode });
       for (const [paneId, state] of this.attached) {
         this.rawSend({ type: "attach", pane_id: paneId, cols: state.cols, rows: state.rows });
       }
@@ -123,12 +137,20 @@ export class HerdrSocket {
     this.send({ type: "resize", pane_id: paneId, cols, rows });
   }
 
+  /** Sets the connection's role. Not queued: the role replays before the attaches on reconnect. */
+  setMode(mode: ClientRole): void {
+    this.mode = mode;
+    if (this.connected) this.rawSend({ type: "role", mode });
+  }
+
   sendInput(paneId: string, text: string): void {
-    this.send({ type: "input", pane_id: paneId, text });
+    if (!this.connected) return;
+    this.rawSend({ type: "input", pane_id: paneId, text });
   }
 
   sendKeys(paneId: string, keys: string[]): void {
-    this.send({ type: "keys", pane_id: paneId, keys });
+    if (!this.connected) return;
+    this.rawSend({ type: "keys", pane_id: paneId, keys });
   }
 
   close(): void {

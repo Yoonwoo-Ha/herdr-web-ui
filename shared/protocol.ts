@@ -54,20 +54,45 @@ export interface HealthAuth {
   readonly authenticated: boolean;
 }
 
-/** WebSocket at /ws */
+/** WebSocket at /ws
+ *
+ *  Client -> server frames: attach {pane_id, cols, rows} | detach {pane_id} | input {pane_id, text}
+ *    | keys {pane_id, keys} | resize {pane_id, cols, rows} | role {mode}
+ *  Server -> client frames: snapshot | pty-data | pty-exit | pane-geometry | role-ack
+ *    | pane-status | pane-exited | session-changed | error
+ *
+ *  Roles: a connection starts as `interact`. `role {mode:"observe"}` demotes it server-side:
+ *  input/keys/resize then answer a `read_only` error frame and attaching never resizes the
+ *  shared pty - the observer instead receives `pane-geometry` and adopts the pty's grid, so
+ *  a phone watching a pane can never change the size the operator's PC sees. The client
+ *  re-sends its role before the attach replay on reconnect.
+ */
+
+/** A connection's authority over the shared ptys: `interact` types and resizes, `observe` only watches. */
+export type ClientRole = "interact" | "observe";
+
 export type ClientMessage =
   | { type: "attach"; pane_id: string; cols: number; rows: number }
   | { type: "detach"; pane_id: string }
   | { type: "input"; pane_id: string; text: string }
   | { type: "keys"; pane_id: string; keys: string[] }
-  | { type: "resize"; pane_id: string; cols: number; rows: number };
+  | { type: "resize"; pane_id: string; cols: number; rows: number }
+  | { type: "role"; mode: ClientRole };
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: SessionSnapshot }
   /** raw PTY bytes: append to the terminal, never repaint over it */
   | { type: "pty-data"; pane_id: string; data: string }
   | { type: "pty-exit"; pane_id: string; code: number | null }
+  /** the shared pty's grid changed: observe clients adopt it, interact clients drive it */
+  | { type: "pane-geometry"; pane_id: string; cols: number; rows: number }
+  | { type: "role-ack"; mode: ClientRole }
+  /** agent-status push for ANY pane, attached or not (server-side status collector) */
   | { type: "pane-status"; pane_id: string; agent_status: AgentStatus }
+  /** a pane's process exited (pushed even when nobody is attached to it) */
+  | { type: "pane-exited"; pane_id: string }
+  /** session structure changed (pane created/closed): refetch /api/session */
+  | { type: "session-changed" }
   | { type: "error"; code: string; message: string };
 
 export const HERDR_SOCKET_PATH = `${process.env["HOME"] ?? ""}/.config/herdr/herdr.sock`;

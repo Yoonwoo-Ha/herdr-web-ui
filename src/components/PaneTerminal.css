@@ -58,15 +58,27 @@
   height: var(--space-6);
 }
 
-.terminal-banner {
+/* the banners stack in one top-right column: any state combination (warning XOR
+   review, observe alongside either) renders without collisions, and the column lets
+   clicks pass through to the pty except where the review banner re-enables them */
+.terminal-banners {
   position: absolute;
   top: var(--space-2);
   right: var(--space-3);
   z-index: var(--z-banner);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  max-width: calc(100% - 2 * var(--space-3));
+  pointer-events: none;
+}
+
+.terminal-banner {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  height: var(--chip-h);
+  min-height: var(--chip-h);
   padding: 0 var(--space-2);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-pill);
@@ -79,4 +91,108 @@
 .terminal-banner-warning {
   border-color: var(--status-working);
   color: var(--status-working);
+}
+
+/* view-only state: the same pill anatomy as the banners, accent-tint layered OVER the
+   opaque elevated base - a bare tint would let live pty glyphs bleed through */
+.terminal-banner-observe {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: linear-gradient(var(--accent-tint), var(--accent-tint)) var(--bg-elevated);
+}
+
+/* the held-input review banner: wider than a pill because it carries text + actions,
+   so it takes --radius-md (a control-bearing box, not a chip) and grows to fit its
+   --control-h buttons. It only renders while CONNECTED (the reconnecting banner owns
+   the disconnected slot), and it is the one banner that accepts pointer events. */
+.terminal-banner-draft {
+  height: auto;
+  min-height: calc(var(--control-h) + 2 * var(--space-1));
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  max-width: 100%;
+  pointer-events: auto;
+}
+
+/* the held-draft echo inside the reconnecting pill is capped like the review text */
+.draft-held {
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-banner-draft .draft-label {
+  color: var(--status-working);
+}
+
+.terminal-banner-draft .draft-text {
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.terminal-banner-draft .draft-dropped {
+  color: var(--text-dim);
+}
+
+.terminal-banner-draft .draft-actions {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.terminal-banner-draft .draft-actions button {
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.terminal-banner-draft .draft-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.terminal-banner-draft .draft-actions button:active {
+  background: var(--bg-elevated);
+}
+
+.terminal-banner-draft .draft-actions button:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.terminal-banner-draft .draft-actions button:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+/* phones: banners wrap instead of overflowing - a wrapping box stops being a chip, so it
+   takes padding and --radius-md (the review banner already does) */
+@media (max-width: 480px) {
+  .terminal-banner {
+    white-space: normal;
+  }
+
+  .terminal-banner-observe,
+  .terminal-banner-warning {
+    max-width: min(36ch, 100%);
+    text-align: right;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-md);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-banner-draft .draft-actions button {
+    transition: none;
+  }
 }
