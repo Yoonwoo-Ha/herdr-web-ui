@@ -40,7 +40,8 @@ Attaches coexist. The server never passes `--takeover`, so opening a pane in the
 - One PTY per pane shared by every connected client, with a 256 KB replay tail so a late joiner sees the current screen.
 - Resizing the browser refits xterm, which resizes the pty. **View-only mode** flips a connection into an observer: it can neither type nor resize, enforced server-side, so opening a pane on your phone never changes the size your desktop sees — the observer's grid follows the pty instead (`shared/protocol.ts` roles, `server/index.ts`, `src/components/PaneTerminal.tsx`).
 - Held input across disconnects: the WebSocket reconnects on its own, but input typed while it was down is never auto-sent. It waits as a draft you review and send (or discard) after reconnect (`src/lib/draft.ts`, `src/lib/ws.ts`).
-- Agent status for **every** pane is pushed, not just the open one: the server subscribes to all panes' status and broadcasts it, so sidebar badges update instantly, and the bell in the header can notify you (Web Notifications, hidden tabs only) when a pane becomes blocked or finishes — or when an unattached pane's terminal ends (`server/collector.ts`, `src/lib/notifications.ts`).
+- Agent status for **every** pane is pushed, not just the open one: the server subscribes to all panes' status and broadcasts it, so sidebar badges update instantly, and the bell in the header alerts you when a pane becomes blocked or finishes — or when an unattached pane's terminal ends (`server/collector.ts`, `src/lib/notifications.ts`).
+- Web Push: on a device served over HTTPS (and on iPhone, the home-screen app) the bell subscribes the device, so those alerts arrive with the app closed. The server sends them itself, keeps the subscriptions across restarts and confirms a new device with a test push (`server/push.ts`, `src/lib/push.ts`, `public/sw.js`). Without HTTPS the bell falls back to alerts while the tab is open.
 - Header shows the workspace > pane context and a live / reconnecting indicator; the WebSocket reconnects with backoff and re-attaches with the right geometry (`src/App.tsx`, `src/lib/ws.ts`).
 - Touch key bar on phones: Esc, Tab, a one-shot Ctrl, arrows and ^C (`src/components/KeyBar.tsx`).
 - Installable PWA with a small service worker (`public/manifest.webmanifest`, `public/sw.js`).
@@ -77,6 +78,8 @@ Environment variables:
 | `HOST` | `0.0.0.0` | Bind address |
 | `HERDR_SOCKET` | `~/.config/herdr/herdr.sock` | herdr socket for both the RPCs and the attach stream |
 | `HERDR_WEB_TOKEN` | unset | Shared token; unset means no auth |
+| `HERDR_WEB_STATE_DIR` | `~/.config/herdr-web-ui` | Where the web push VAPID key (`vapid.json`) and device subscriptions (`push-subscriptions.json`) persist, owner-only |
+| `HERDR_WEB_PUSH_SUBJECT` | `https://github.com/devswha/herdr-web-ui` | VAPID contact (`mailto:` or `https:` URL) sent to push services |
 
 `HERDR_SOCKET` steers both the JSON RPCs and the `herdr terminal attach` stream (the server passes it to the CLI as `HERDR_SOCKET_PATH`), so pointing it at a named session's socket, `~/.config/herdr/sessions/<name>/herdr.sock`, shows that session.
 
@@ -106,7 +109,18 @@ What the phone layout does (`src/components/KeyBar.tsx`, `src/lib/viewport.ts`, 
 - A single-finger drag scrolls the pane. The drag is turned into wheel events, which xterm forwards to herdr, so this also scrolls full-screen agent TUIs.
 - Safe-area insets are honoured for notches and home bars.
 
-The service worker is deliberately small (`public/sw.js`): navigations are network-first with the cached shell as offline fallback, hashed assets and icons are cache-first, and `/api` and `/ws` are never intercepted.
+### Alerts with the app closed (Web Push)
+
+Tap the bell once on the phone. Behind the HTTPS setup above the device subscribes to Web Push, and a test notification ("Alerts are on for this device") confirms the whole path. From then on the server sends an alert when a pane's agent becomes blocked or finishes, or its terminal ends, even when the app is closed.
+
+- iPhone needs iOS 16.4 or newer and the home-screen app: Safari tabs have no Web Push. Open the installed app, then tap the bell.
+- Android Chrome works from the browser tab or the installed app.
+- The server must be running and able to reach the push services (Google, Apple, Mozilla); alerts are end-to-end encrypted to the device.
+- A device that is open and visible still gets the notification, without sound.
+- Locking the app (header lock button) unsubscribes that device. Revoking notification permission in the browser also works; the server drops the subscription on the push service's next 404/410.
+- The VAPID key in `HERDR_WEB_STATE_DIR` is what every subscription is bound to: deleting `vapid.json` makes every device re-subscribe (they do that on their next visit).
+
+The service worker is deliberately small (`public/sw.js`): navigations are network-first with the cached shell as offline fallback, hashed assets and icons are cache-first, and `/api` and `/ws` are never intercepted. It also shows pushed alerts and opens the app on a tapped alert's pane.
 
 ## Security
 
@@ -114,7 +128,7 @@ The default bind is `0.0.0.0`. If `HERDR_WEB_TOKEN` is unset on a non-loopback b
 
 With `HERDR_WEB_TOKEN` set (`server/auth.ts`):
 
-- `/api/session`, `/api/pane/*` and the `/ws` upgrade require the token.
+- `/api/session`, `/api/pane/*`, `/api/push*` and the `/ws` upgrade require the token. A push subscription receives pane titles, so subscribing sits behind the gate. Changing the token does not unsubscribe existing devices; lock them or delete `push-subscriptions.json`.
 - The static client, `GET /api/health` and `/api/auth` stay public so the login screen can load.
 - The browser sends the token once through the token gate (`POST /api/auth`) and gets back an HttpOnly, SameSite=Strict cookie named `herdr_web_token` with a one-year Max-Age. The cookie is marked Secure when the request came over https or through a proxy setting `x-forwarded-proto: https`.
 - Scripts can send `Authorization: Bearer <token>` instead.
@@ -159,7 +173,7 @@ bun run build
 bun test
 ```
 
-The suite runs against the live herdr server; there are no mocks. It's read-only apart from the `herdr-web-ui-test` workspaces it creates and deletes. It covers the generator freshness and determinism gate, the HTTP contract, the WS attach stream, roles (an observe connection cannot resize or type, enforced server-side), concurrent attaches to one pane sharing a single pty, a client that detaches or disconnects mid-attach never keeping the pty alive, the status collector's pushed `pane-status` and `pane-exited` for unattached panes, token auth, the bind address, the herdr client, the PTY sidecar's env pass-through (`server/pty/session.test.ts`) and the pure client modules (key bar, draft, notifications, snapshot merge). At the time of writing that's 65 tests across 9 files.
+The suite runs against the live herdr server; there are no mocks. It's read-only apart from the `herdr-web-ui-test` workspaces it creates and deletes. It covers the generator freshness and determinism gate, the HTTP contract, the WS attach stream, roles (an observe connection cannot resize or type, enforced server-side), concurrent attaches to one pane sharing a single pty, a client that detaches or disconnects mid-attach never keeping the pty alive, the status collector's pushed `pane-status` and `pane-exited` for unattached panes, web push (a fake push service decrypts and verifies every push, including the first alert after a server restart), token auth, the bind address, the herdr client, the PTY sidecar's env pass-through (`server/pty/session.test.ts`) and the pure client modules (key bar, draft, notifications, snapshot merge). At the time of writing that's 82 tests across 10 files. The server under test keeps its push state in a temp dir, never in `~/.config/herdr-web-ui`.
 
 ## API
 
@@ -173,6 +187,10 @@ POST   /api/pane/input  { pane_id, text }
 POST   /api/pane/keys   { pane_id, keys }
 POST   /api/auth        { token }     -> 204 + cookie
 DELETE /api/auth                      -> 204
+GET    /api/push                      -> { public_key }
+POST   /api/push/subscribe { subscription }  -> 204
+DELETE /api/push/subscribe { endpoint }      -> 204
+POST   /api/push/test      { endpoint }      -> 204 (one confirmation push to that device)
 WS     /ws   client: attach | detach | input | keys | resize | role
              server: snapshot | pty-data | pty-exit | pane-geometry | role-ack
                      | pane-status | pane-exited | session-changed | error
@@ -186,11 +204,13 @@ Errors are non-2xx responses with `{ error: { code, message } }`.
 | --- | --- |
 | `shared/protocol.ts` | The HTTP/WS contract shared by server and client |
 | `shared/herdr-api.generated.ts` | herdr wire types, generated from its API schema |
+| `shared/notify-policy.ts` | When a pane is worth an alert and what it says, for the tab and for push |
 | `scripts/generate-protocol-types.ts` | The generator and its `--check` freshness gate |
 | `scripts/herdr-schema.json` | Snapshot of `herdr api schema --json` |
 | `server/index.ts` | Bun.serve HTTP API, WebSocket fan-out, static client |
 | `server/collector.ts` | Server-wide agent-status collector: every pane, attached or not |
 | `server/auth.ts` | Shared-token gate and cookie handling |
+| `server/push.ts` | Web Push: VAPID key, device subscriptions, alert delivery |
 | `server/static.ts` | Serves the built client from `dist/` with per-file cache headers |
 | `server/herdr/client.ts` | herdr unix-socket client: RPC and event subscriptions |
 | `server/pty/` | PTY attach: Node sidecar host and the Bun-side session |
@@ -201,7 +221,8 @@ Errors are non-2xx responses with `{ error: { code, message } }`.
 | `src/components/TokenGate.tsx` | Login screen for the token gate |
 | `src/lib/ws.ts` | Reconnecting WebSocket client (role replay; input is never queued) |
 | `src/lib/draft.ts` | Held-input draft for typing during disconnects |
-| `src/lib/notifications.ts` | Web Notifications for status transitions |
+| `src/lib/notifications.ts` | Tab alerts for status transitions (devices without push) |
+| `src/lib/push.ts` | This device's Web Push subscription |
 | `src/lib/snapshot.ts` | Pushed-status merge into the session snapshot |
 | `src/lib/keys.ts` | Key bar key mappings |
 | `src/lib/viewport.ts` | Visual viewport tracking for the soft keyboard |
