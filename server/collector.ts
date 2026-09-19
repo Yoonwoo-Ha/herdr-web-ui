@@ -1,4 +1,3 @@
-
 import type { AgentStatus } from "../shared/protocol.ts";
 import { sessionSnapshot, subscribeEvents, type EventFrame, type Subscription } from "./herdr/client.ts";
 
