@@ -56,6 +56,11 @@ export async function savePaneImage(options: {
       415,
     );
   }
+  // cheap pre-check: reject the ENCODED length before allocating the decode buffer,
+  // so an oversized body never costs a second copy of itself in memory
+  if (options.dataBase64.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4) {
+    throw new PasteImageError("image_too_large", `image exceeds ${MAX_IMAGE_BYTES} bytes`, 413);
+  }
   const data = Buffer.from(options.dataBase64, "base64");
   if (data.byteLength === 0) {
     throw new PasteImageError("empty_image", "image data is empty", 400);

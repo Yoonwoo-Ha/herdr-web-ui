@@ -145,6 +145,13 @@ describe("POST /api/pane/image", () => {
     expect(body.error.code).toBe("image_too_large");
   });
 
+  it("rejects empty image data with 400", async () => {
+    const res = await post({ pane_id: qaPaneId, content_type: "image/png", data_base64: "" });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("empty_image");
+  });
+
   it("rejects a missing pane_id with 400 and keeps serving", async () => {
     const res = await post({ content_type: "image/png", data_base64: TINY_PNG_BASE64 });
     expect(res.status).toBe(400);
@@ -775,6 +782,17 @@ describe("token auth", () => {
       const res = await fetch(`${securedBase()}${path}`, { method, body: method === "GET" ? undefined : "{}" });
       expect(res.status).toBe(401);
     }
+  });
+
+  it("keeps the image upload behind the gate", async () => {
+    const res = await fetch(`${securedBase()}/api/pane/image`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pane_id: "w1:p1", content_type: "image/png", data_base64: "aaaa" }),
+    });
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as ApiError;
+    expect(body.error.code).toBe("unauthorized");
   });
 
   it("keeps /api/health public and advertises the gate state", async () => {
