@@ -118,7 +118,7 @@ All spacing derives from a base of **4px**.
 | `--header-h` | 46px | Header height (plus `env(safe-area-inset-top)`) |
 | `--sidebar-w` | 300px | Sidebar column and drawer width |
 | `--control-h` | 32px | Icon button, role toggle, retry button, composer buttons, gate input and button on fine pointers (`--touch-target` on coarse; the composer textarea's min-height bumps with them) |
-| `--touch-target` | 40px | On `(pointer: coarse)`: pane row min-height, icon buttons, role toggle, retry button, gate input and button; key-bar keys always (min-width and height) |
+| `--touch-target` | 40px | On `(pointer: coarse)`: pane row min-height, icon buttons, role toggle, retry button, composer buttons, gate input and button; key-bar keys always (min-width and height) |
 | `--keybar-h` | 48px | Key bar height (plus `env(safe-area-inset-bottom)`); keys are `--touch-target` tall inside it |
 | `--chip-h` | 18px | Badge, pill and chip height; banner minimum height (the draft review banner grows to its controls) |
 | `--icon-size` | 18px | SVG inside an icon button |
@@ -444,7 +444,8 @@ because it floats over the terminal.
   (connection, banners, loading) uses `role="status"`.
 - No emoji anywhere in markup; icons are inline SVG with `aria-hidden="true"`.
 - `prefers-reduced-motion` honored (Section 6). Touch targets on coarse pointers: 40px rows, icon
-  buttons, retry button, key-bar keys and gate controls (`--touch-target`); 32px controls on fine pointers.
+  buttons, retry button, composer buttons, key-bar keys and gate controls (`--touch-target`); 32px
+  controls on fine pointers.
 - `document.title` is `<pane title> · herdr` while a pane is selected, else `herdr web ui`.
 
 ### Accepted Debt
