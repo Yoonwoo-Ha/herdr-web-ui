@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
@@ -74,6 +74,82 @@ describe("GET /api/pane/read", () => {
   it("rejects a missing pane_id parameter", async () => {
     const res = await fetch(`${base()}/api/pane/read?source=visible`);
     expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/pane/image", () => {
+  /** Own workspace with its own cwd: the upload writes a real file into it. */
+  let qaWorkspaceId: string | null = null;
+  let qaPaneId: string | null = null;
+  let qaCwd: string | null = null;
+
+  // a real 1x1 png
+  const TINY_PNG_BASE64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+  const post = (body: unknown) =>
+    fetch(`${base()}/api/pane/image`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  beforeAll(async () => {
+    qaCwd = mkdtempSync(join(tmpdir(), "herdr-web-ui-image-"));
+    const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
+      "workspace.create",
+      { label: "herdr-web-ui-test-image", cwd: qaCwd, focus: false },
+    );
+    qaWorkspaceId = created.workspace.workspace_id;
+    qaPaneId = created.root_pane.pane_id;
+  });
+
+  afterAll(async () => {
+    if (qaWorkspaceId) await herdrRpc("workspace.close", { workspace_id: qaWorkspaceId });
+    if (qaCwd) rmSync(qaCwd, { recursive: true, force: true });
+  });
+
+  it("stores a pasted image under the pane cwd and returns its absolute path", async () => {
+    const res = await post({ pane_id: qaPaneId, content_type: "image/png", data_base64: TINY_PNG_BASE64 });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; path: string };
+    expect(body.ok).toBe(true);
+    // the prompt must reference a file the agent can read without leaving its project
+    expect(body.path.startsWith(qaCwd!)).toBe(true);
+    expect(body.path.includes(".herdr-web-ui")).toBe(true);
+    expect(body.path.endsWith(".png")).toBe(true);
+    const stored = statSync(body.path);
+    expect(stored.size).toBeGreaterThan(0);
+    expect(stored.isFile()).toBe(true);
+  });
+
+  it("rejects an unknown pane with the shared error envelope", async () => {
+    const res = await post({ pane_id: "w9999:p9999", content_type: "image/png", data_base64: TINY_PNG_BASE64 });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("pane_not_found");
+  });
+
+  it("rejects a non-image content type with 415", async () => {
+    const res = await post({ pane_id: qaPaneId, content_type: "text/plain", data_base64: TINY_PNG_BASE64 });
+    expect(res.status).toBe(415);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("unsupported_media_type");
+  });
+
+  it("rejects an image above the size ceiling with 413", async () => {
+    const oversized = Buffer.alloc(9 * 1024 * 1024, 1).toString("base64");
+    const res = await post({ pane_id: qaPaneId, content_type: "image/png", data_base64: oversized });
+    expect(res.status).toBe(413);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("image_too_large");
+  });
+
+  it("rejects a missing pane_id with 400 and keeps serving", async () => {
+    const res = await post({ content_type: "image/png", data_base64: TINY_PNG_BASE64 });
+    expect(res.status).toBe(400);
+    const health = await fetch(`${base()}/api/health`);
+    expect(health.status).toBe(200);
   });
 });
 

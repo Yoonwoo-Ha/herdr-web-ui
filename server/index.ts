@@ -9,6 +9,7 @@ import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
 import { HerdrError, herdrSocketPath, paneRead, paneSendKeys, paneSendText, ping, sessionSnapshot } from "./herdr/client.ts";
 import { createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
+import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
 
 const MAX_REPLAY_BYTES = 256 * 1024;
@@ -309,6 +310,30 @@ export function createServer(
           }
           return jsonResponse({ ok: true });
         } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname === "/api/pane/image") {
+        if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+        let payload: { pane_id?: string; content_type?: string; data_base64?: string };
+        try {
+          payload = (await request.json()) as typeof payload;
+        } catch {
+          return badRequest("invalid_json", "request body must be JSON");
+        }
+        if (!payload.pane_id) return badRequest("missing_pane_id", "pane_id is required");
+        try {
+          const path = await savePaneImage({
+            paneId: payload.pane_id,
+            contentType: payload.content_type ?? "",
+            dataBase64: payload.data_base64 ?? "",
+          });
+          return jsonResponse({ ok: true, path });
+        } catch (error) {
+          if (error instanceof PasteImageError) {
+            return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);
+          }
           return errorResponse(error);
         }
       }
