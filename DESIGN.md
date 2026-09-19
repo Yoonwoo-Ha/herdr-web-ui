@@ -306,20 +306,25 @@ All spacing derives from a base of **4px**.
   mount stays attached underneath — the chat view is a lens, not a second connection.
 - **Source**: herdr's own scrollback via `GET /api/pane/read?source=recent` (ANSI-stripped text,
   400 lines), polled every 2s and refreshed at once on a composer send; `src/lib/transcript.ts`
-  splits it (❯ prompt echo → user bubble, full-width rules dropped, TUI chrome lines dimmed as
-  status, everything else groups into agent bubbles).
-- **Spacing**: bubbles `--space-2/3` padding, `--radius-md`, `--font-mono` at `--fs-sm` (the
-  content IS terminal text), max-width `min(72ch, 92%)`, column gap `--space-2`.
-- **States**: agent (`.chat-agent`: `--bg-elevated`, flush left), user (`.chat-user`: accent border
-  on `--accent-tint` over `--bg-elevated`, `--text-strong`, flush right), status (`.chat-status`:
-  `--text-dim` at `--fs-2xs`, no bubble), notes (`.chat-note`: centered dim `--fs-xs`; the error
-  variant takes `--status-blocked`). Auto-follows the bottom unless the reader scrolled up
-  (>48px from the end stops following).
-- **Layout**: absolute `inset: 0` over the mount at `z-index: 1` — above the xterm canvas, below
-  the banner column (`--z-banner`) so ended/reconnecting/held-input pills stay visible and the
-  draft review stays clickable. The choice is remembered per pane in
-  `localStorage["herdr-web-ui:view:<pane_id>"]`; the key bar is hidden while the chat lens is on
-  (terminal keys have no target), the composer is not.
+  splits it conservatively — the agent TUI's ❯ prompt echo becomes a user bubble, full-width rules
+  drop, TUI chrome and turn metadata (✳ Brewed, ※ recap) dim to status lines, agent output splits
+  into paragraph bubbles on blank lines, and everything else degrades to agent instead of guessing
+  a speaker.
+- **Spacing**: bubbles `--space-2/4` padding, `--radius-md`, a hairline `--border` edge,
+  `--font-mono` at `--fs-sm` (the content IS terminal text); the panel pads
+  `calc(--control-h + --space-2)` on top so the first bubble clears the view-toggle pill.
+- **States**: agent (`.chat-agent`: `--bg-hover` fill, hairline edge, flush left, full width —
+  terminal text wraps instead of hiding the right half), user (`.chat-user`: accent border on
+  `--accent-tint` over `--bg-elevated`, `--text-strong`, flush right, prose-width `min(64ch, 92%)`,
+  an uppercase `you` overline in `--accent`), status (`.chat-status`: `--text-dim` at `--fs-2xs`,
+  no bubble), notes (`.chat-note`: centered dim `--fs-xs`; the error variant takes
+  `--status-blocked`). Auto-follows the bottom unless the reader scrolled up (>48px from the end
+  stops following).
+- **Layout**: absolute `inset: 0` over `.terminal-surface` (the mount's own positioned box) at
+  `z-index: 1` — above the xterm canvas, below the banner column (`--z-banner`) so
+  ended/reconnecting/held-input pills stay visible, and never over the composer/key bar rows. The
+  choice is remembered per pane in `localStorage["herdr-web-ui:view:<pane_id>"]`; the key bar is
+  hidden while the chat lens is on (terminal keys have no target), the composer is not.
 
 ### Composer (`.composer`)
 - **Structure**: `<div class="composer" role="group" aria-label="Message composer">` → a hidden

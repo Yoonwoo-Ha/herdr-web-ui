@@ -92,11 +92,10 @@ export function ChatView({ paneId, refreshKey, connected, ended }: ChatViewProps
       {state.truncated && <p className="chat-note">older output trimmed by the read limit</p>}
       {state.messages.map((message, index) => (
         <div key={index} className={`chat-msg chat-${message.role}`}>
+          {message.role === "user" && <span className="chat-role">you</span>}
           {message.text}
         </div>
       ))}
-      {!ended && !connected && <p className="chat-note">reconnecting…</p>}
-      {ended && <p className="chat-note">terminal ended</p>}
       {error !== null && (
         <p className="chat-note chat-note-error" role="alert">
           {errorStatus === 401 ? "locked — the token gate is asking again" : error}

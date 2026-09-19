@@ -22,10 +22,11 @@ const RULE_LINE = /^[─━═]{6,}$/;
 const USER_LINE = /^❯\s?/;
 /**
  * Chrome the TUI repaints every turn — model/cwd line, context meters, mode
- * footers. Dimmed, never bubble-styled, so the transcript reads as messages.
+ * footers, turn metadata (✳ Brewed for…, ※ recap). Dimmed, never bubble-styled,
+ * so the transcript reads as messages.
  */
 const STATUS_LINE =
-  /^(?:\[[^\]]*\]\s*│|⏵|⣾|█|Context\s|Usage\s|[·•]\s*\d+\s*shell)/;
+  /^(?:\[[^\]]*\]\s*│|⏵|⣾|█|Context\s|Usage\s|[·•]\s*\d+\s*shell|✳|※)/;
 
 /** Splits a stripped scrollback read into ordered transcript messages. */
 export function toTranscriptMessages(text: string): TranscriptMessage[] {
@@ -34,8 +35,25 @@ export function toTranscriptMessages(text: string): TranscriptMessage[] {
 
   const flush = (): void => {
     if (pending === null) return;
-    const body = pending.lines.join("\n").replace(/^\n+|\n+$/g, "");
-    if (body.length > 0) messages.push({ role: pending.role, text: body });
+    // agent output is split on blank lines: a conversation tail without ❯
+    // separators would otherwise render as one giant log panel instead of
+    // chat-sized bubbles (chrome stays grouped — it has no blank lines)
+    if (pending.role === "agent") {
+      let chunk: string[] = [];
+      const emit = (): void => {
+        const body = chunk.join("\n").replace(/^\n+|\n+$/g, "");
+        if (body.length > 0) messages.push({ role: "agent", text: body });
+        chunk = [];
+      };
+      for (const line of pending.lines) {
+        if (line.trim().length === 0) emit();
+        else chunk.push(line);
+      }
+      emit();
+    } else {
+      const body = pending.lines.join("\n").replace(/^\n+|\n+$/g, "");
+      if (body.length > 0) messages.push({ role: pending.role, text: body });
+    }
     pending = null;
   };
 

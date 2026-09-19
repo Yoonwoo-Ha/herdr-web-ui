@@ -8,37 +8,44 @@
   position: absolute;
   inset: 0;
   /* z 1: above the static xterm mount, below the banner column (--z-banner) so
-   * the ended/reconnecting/held-input pills stay reachable over the transcript */
+   * the ended/reconnecting/held-input pills stay reachable over the transcript.
+   * Top padding keeps the first bubble clear of the view-toggle pill. */
   z-index: 1;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-2);
   overflow-y: auto;
-  padding: var(--space-3);
+  padding: calc(var(--control-h) + var(--space-2)) var(--space-4) var(--space-3);
   background: var(--term-bg);
 }
 
 .chat-msg {
-  max-width: min(72ch, 92%);
-  padding: var(--space-2) var(--space-3);
+  max-width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border: var(--hairline) solid var(--border);
   border-radius: var(--radius-md);
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
+  line-height: var(--lh-base);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  line-height: var(--lh-base);
 }
 
-/* agent output reads as the stream it is: elevated surface, flush left */
+/* agent output reads as the stream it is: hover-lifted surface with a hairline
+ * edge, flush left, full width — terminal text wraps instead of hiding the right half */
 .chat-msg.chat-agent {
   align-self: flex-start;
-  background: var(--bg-elevated);
+  background: var(--bg-hover);
   color: var(--text);
 }
 
-/* the user's prompts: accent-tinted, flush right, the one voice that is ours */
+/* the user's prompts: accent border on the tint, flush right, prose-width —
+ * the one voice that is ours stays a chat bubble */
 .chat-msg.chat-user {
   align-self: flex-end;
+  max-width: min(64ch, 92%);
   background: linear-gradient(var(--accent-tint), var(--accent-tint)) var(--bg-elevated);
-  border: var(--hairline) solid var(--accent);
+  border-color: var(--accent);
   color: var(--text-strong);
 }
 
@@ -48,10 +55,22 @@
   max-width: none;
   padding: 0 var(--space-1);
   background: transparent;
+  border: 0;
   color: var(--text-dim);
   font-size: var(--fs-2xs);
 }
 
+
+/* the sender line on "you" bubbles: the transcript's only labeled voice */
+.chat-role {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
 .chat-note {
   align-self: center;
   margin: 0;

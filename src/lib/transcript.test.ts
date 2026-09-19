@@ -24,13 +24,22 @@ describe("toTranscriptMessages", () => {
     ]);
   });
 
-  it("groups consecutive agent lines into one message and keeps paragraph breaks inside", () => {
+  it("splits agent output into paragraph bubbles on blank lines", () => {
     const messages = toTranscriptMessages("first line\nsecond line\n\nthird line");
-    expect(messages).toEqual([{ role: "agent", text: "first line\nsecond line\n\nthird line" }]);
+    expect(messages).toEqual([
+      { role: "agent", text: "first line\nsecond line" },
+      { role: "agent", text: "third line" },
+    ]);
   });
-
   it("drops rule separators between turns instead of rendering them", () => {
     expect(toTranscriptMessages("──────\nhello\n──────")).toEqual([{ role: "agent", text: "hello" }]);
+  });
+
+  it("dims turn metadata (✳ Brewed, ※ recap) as status, not bubbles", () => {
+    const brewed = toTranscriptMessages("✳ Brewed for 17s · done");
+    const recap = toTranscriptMessages("※ recap: 3 lines");
+    expect(brewed[0]?.role).toBe("status");
+    expect(recap[0]?.role).toBe("status");
   });
 
   it("keeps an empty prompt as nothing rather than an empty user bubble", () => {

@@ -420,10 +420,12 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
           </div>
         )}
       </div>
-      <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
-      {paneId !== null && chatView && (
-        <ChatView paneId={paneId} refreshKey={chatRefresh} connected={connected} ended={ended} />
-      )}
+      <div className="terminal-surface">
+        <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
+        {paneId !== null && chatView && (
+          <ChatView paneId={paneId} refreshKey={chatRefresh} connected={connected} ended={ended} />
+        )}
+      </div>
       {paneId !== null && !observing && !ended && (
         <Composer key={paneId} connected={connected} onSend={sendComposerText} onUploadImage={uploadImage} />
       )}

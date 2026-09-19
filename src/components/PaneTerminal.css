@@ -19,6 +19,17 @@
   overflow: hidden;
 }
 
+/* the mount's own box: everything that may overlay the pty (the chat lens) is
+   positioned against THIS, never against the stack — the composer and key bar
+   below keep their rows no matter which lens is on */
+.terminal-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* no pane selected: the mount keeps its size (the fit needs it) but never paints, so its
    cursor cannot show through the placeholder */
 .pane-terminal.is-idle {
