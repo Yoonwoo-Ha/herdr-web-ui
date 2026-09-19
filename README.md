@@ -35,6 +35,7 @@ Attaches coexist. The server never passes `--takeover`, so opening a pane in the
 ## Features
 
 - Live workspace, tab and pane tree with agent status badges (idle, working, blocked, done) on workspaces and panes (`src/components/Sidebar.tsx`, `DESIGN.md`).
+- Close a pane from the sidebar: a ✕ on every row, armed by a first click and confirmed by a second (3 s window), closing it in herdr itself (`POST /api/pane/close`, `src/components/Sidebar.tsx`).
 - A real terminal per pane: `herdr terminal attach` on a PTY, raw bytes streamed to xterm.js over a WebSocket, keystrokes streamed back (`server/index.ts`, `src/components/PaneTerminal.tsx`).
 - Scrollback stays in herdr. The attach stream runs in the alternate screen with mouse reporting on, so wheel and touch gestures scroll the real pane, which also works for full-screen agent TUIs.
 - One PTY per pane shared by every connected client, with a 256 KB replay tail so a late joiner sees the current screen.
@@ -187,7 +188,7 @@ GET    /api/health                    -> { ok, herdr: { version, protocol }, aut
 GET    /api/session                   -> { snapshot }
 GET    /api/pane/read?pane_id=&source=&format=&lines=
 POST   /api/pane/input  { pane_id, text }
-POST   /api/pane/keys   { pane_id, keys }
+POST   /api/pane/close { pane_id }   -> { ok: true } (pane.close RPC; every sidebar drops it on session-changed)
 POST   /api/auth        { token }     -> 204 + cookie
 DELETE /api/auth                      -> 204
 GET    /api/push                      -> { public_key }

@@ -7,7 +7,7 @@ import { handleAuthRequest, isAuthenticated, requiresAuth, unauthorizedJson } fr
 import { badRequest, errorResponse, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
-import { HerdrError, herdrSocketPath, paneRead, paneSendKeys, paneSendText, ping, sessionSnapshot } from "./herdr/client.ts";
+import { HerdrError, herdrSocketPath, paneClose, paneRead, paneSendKeys, paneSendText, ping, sessionSnapshot } from "./herdr/client.ts";
 import { createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
@@ -308,6 +308,25 @@ export function createServer(
             if (!Array.isArray(payload.keys)) return badRequest("missing_keys", "keys must be an array");
             await paneSendKeys(payload.pane_id, payload.keys);
           }
+          return jsonResponse({ ok: true });
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname === "/api/pane/close") {
+        if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+        let payload: { pane_id?: string };
+        try {
+          payload = (await request.json()) as typeof payload;
+        } catch {
+          return badRequest("invalid_json", "request body must be JSON");
+        }
+        if (!payload.pane_id) return badRequest("missing_pane_id", "pane_id is required");
+        try {
+          // herdr emits pane.closed -> the collector broadcasts session-changed, so
+          // every client refetches and the pane leaves sidebars on its own
+          await paneClose(payload.pane_id);
           return jsonResponse({ ok: true });
         } catch (error) {
           return errorResponse(error);

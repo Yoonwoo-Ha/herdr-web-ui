@@ -106,6 +106,15 @@ async function sendJson(url: string, method: "POST" | "DELETE", body: unknown): 
   if (!response.ok) throw await errorFrom(url, response);
 }
 
+/**
+ * POST /api/pane/close: closes the pane in herdr itself (the `pane.close` RPC).
+ * The sidebar updates on its own when the server's session-changed broadcast lands;
+ * a failure (e.g. the pane already gone) throws ApiError and the 5s poll reconciles.
+ */
+export async function closePane(paneId: string): Promise<void> {
+  await sendJson("/api/pane/close", "POST", { pane_id: paneId });
+}
+
 /** GET /api/push: the server's VAPID key, the `applicationServerKey` this device subscribes with. */
 export async function fetchPushKey(): Promise<string> {
   return (await getJson<PushKey>("/api/push")).public_key;

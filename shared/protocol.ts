@@ -34,7 +34,8 @@ export type HerdrPane = PaneInfo;
  *  GET    /api/session                   -> { snapshot: SessionSnapshot }
  *  GET    /api/pane/read?pane_id=&source=&format=&lines=  -> { read: PaneReadResult }
  *  POST   /api/pane/input  { pane_id, text }   -> { ok: true }
- *  POST   /api/pane/keys   { pane_id, keys }   -> { ok: true }
+ *  POST   /api/pane/close { pane_id }         -> { ok: true } (pane.close RPC; the collector's
+ *         session-changed broadcast removes it from every client's sidebar)
  *  POST   /api/pane/image  { pane_id, content_type, data_base64 } -> { ok: true, path }
  *         pasted image -> file under <pane cwd>/.herdr-web-ui/, path for the prompt
  *  POST   /api/auth        { token }     -> 204 + Set-Cookie herdr_web_token (401 invalid_token on mismatch)

@@ -169,6 +169,10 @@ export async function paneSendKeys(paneId: string, keys: string[], socketPath?: 
   await herdrRpc("pane.send_keys", { pane_id: paneId, keys }, socketPath);
 }
 
+export async function paneClose(paneId: string, socketPath?: string): Promise<void> {
+  await herdrRpc("pane.close", { pane_id: paneId }, socketPath);
+}
+
 export interface HerdrSubscription {
   type: string;
   pane_id?: string;

@@ -77,6 +77,68 @@ describe("GET /api/pane/read", () => {
   });
 });
 
+describe("POST /api/pane/close", () => {
+  /** Own workspace again: this test really kills its root pane, never a user pane. */
+  let workspaceId: string | null = null;
+  let paneId: string | null = null;
+
+  beforeAll(async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
+      "workspace.create",
+      { label: "herdr-web-ui-test-close", cwd: "/tmp", focus: false },
+    );
+    workspaceId = created.workspace.workspace_id;
+    paneId = created.root_pane.pane_id;
+  });
+
+  afterAll(async () => {
+    if (workspaceId) await herdrRpc("workspace.close", { workspace_id: workspaceId }).catch(() => undefined);
+  });
+
+  it("closes the named pane and it leaves the snapshot", async () => {
+    const res = await fetch(`${base()}/api/pane/close`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pane_id: paneId }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+
+    // real cross-process state: fake timers cannot see herdr's snapshot, so this is
+    // one of the rare genuine-delay polls (same shape as the exit test's retries)
+    let gone = false;
+    for (let attempt = 0; attempt < 10 && !gone; attempt += 1) {
+      const session = (await (await fetch(`${base()}/api/session`)).json()) as { snapshot: SessionSnapshot };
+      gone = !session.snapshot.panes.some((pane) => pane.pane_id === paneId);
+      if (!gone) await Bun.sleep(500);
+    }
+    expect(gone).toBeTrue();
+  }, 20000);
+
+  it("answers the error envelope for an unknown pane", async () => {
+    const res = await fetch(`${base()}/api/pane/close`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pane_id: "no-such-pane" }),
+    });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as ApiError;
+    expect(body.error.code).toBeTruthy();
+    expect(typeof body.error.message).toBe("string");
+  });
+
+  it("rejects a missing pane_id with 400 missing_pane_id", async () => {
+    const res = await fetch(`${base()}/api/pane/close`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as ApiError;
+    expect(body.error.code).toBe("missing_pane_id");
+  });
+});
+
 describe("POST /api/pane/image", () => {
   /** Own workspace with its own cwd: the upload writes a real file into it. */
   let qaWorkspaceId: string | null = null;
