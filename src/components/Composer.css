@@ -138,6 +138,19 @@
   background: linear-gradient(var(--danger-tint), var(--danger-tint)) var(--bg-elevated);
 }
 
+/* touch targets: the same coarse-pointer bump the other controls get, so a thumb
+   hits Send and Attach at 40px like the header buttons and key-bar keys */
+@media (pointer: coarse) {
+  .composer-button {
+    height: var(--touch-target);
+    min-width: var(--touch-target);
+  }
+
+  .composer-text {
+    min-height: var(--touch-target);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .composer-button {
     transition: none;

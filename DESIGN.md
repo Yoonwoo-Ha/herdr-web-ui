@@ -117,7 +117,7 @@ All spacing derives from a base of **4px**.
 |-------|-------|-------|
 | `--header-h` | 46px | Header height (plus `env(safe-area-inset-top)`) |
 | `--sidebar-w` | 300px | Sidebar column and drawer width |
-| `--control-h` | 32px | Icon button, role toggle, retry button, gate input and button on fine pointers (`--touch-target` on coarse) |
+| `--control-h` | 32px | Icon button, role toggle, retry button, composer buttons, gate input and button on fine pointers (`--touch-target` on coarse; the composer textarea's min-height bumps with them) |
 | `--touch-target` | 40px | On `(pointer: coarse)`: pane row min-height, icon buttons, role toggle, retry button, gate input and button; key-bar keys always (min-width and height) |
 | `--keybar-h` | 48px | Key bar height (plus `env(safe-area-inset-bottom)`); keys are `--touch-target` tall inside it |
 | `--chip-h` | 18px | Badge, pill and chip height; banner minimum height (the draft review banner grows to its controls) |

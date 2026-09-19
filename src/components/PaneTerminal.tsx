@@ -250,6 +250,7 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
       document.removeEventListener("visibilitychange", onVisible);
       onData.dispose();
       osc52.dispose();
+      if (clipboardTimerRef.current !== null) window.clearTimeout(clipboardTimerRef.current);
       off();
       socket.close();
       term.dispose();
@@ -321,10 +322,14 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
   // the composer rides the same term.input() -> onData -> socket path as the key
   // bar: one input path, and the never-queue draft policy still governs it on a
   // dead socket. Bracketed-paste wrapping follows the pane program's own mode.
-  const sendComposerText = useCallback((text: string) => {
+  // Returns false (composer keeps the text) when the socket is already dead, so a
+  // send racing a disconnect degrades to "held", never to a silently lost message.
+  const sendComposerText = useCallback((text: string): boolean => {
     const term = termRef.current;
-    if (!term) return;
+    const socket = socketRef.current;
+    if (!term || !socket || !socket.connected) return false;
     term.input(composerPayload(text, term.modes.bracketedPasteMode));
+    return true;
   }, []);
 
   const uploadImage = useCallback((file: File) => uploadPaneImage(paneRef.current ?? "", file), []);
@@ -385,7 +390,7 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
       </div>
       <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
       {paneId !== null && !observing && !ended && (
-        <Composer connected={connected} onSend={sendComposerText} onUploadImage={uploadImage} />
+        <Composer key={paneId} connected={connected} onSend={sendComposerText} onUploadImage={uploadImage} />
       )}
       {paneId !== null && !observing && <KeyBar onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl} />}
     </div>

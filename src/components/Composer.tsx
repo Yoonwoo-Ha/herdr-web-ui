@@ -7,8 +7,10 @@ import { imageMention, MAX_COMPOSER_CHARS } from "../lib/compose.ts";
 export interface ComposerProps {
   /** false while the socket is down: text is kept in the textarea, sending waits */
   connected: boolean;
-  /** One send = one bracketed-paste payload for the pane (PaneTerminal owns the pty path). */
-  onSend: (text: string) => void;
+  /** One send = one bracketed-paste payload for the pane (PaneTerminal owns the pty
+   * path). Returns false when the pane path is dead — the composer then keeps the
+   * text for the user to review, never queueing it itself. */
+  onSend: (text: string) => boolean;
   /** Stores one image next to the pane; resolves to its absolute path. */
   onUploadImage: (file: File) => Promise<string>;
 }
@@ -42,14 +44,17 @@ export function Composer({ connected, onSend, onUploadImage }: ComposerProps) {
   const insertAtCursor = useCallback((snippet: string) => {
     const element = textareaRef.current;
     if (!element) {
-      setText((previous) => previous + snippet);
+      setText((previous) => (previous + snippet).slice(0, MAX_COMPOSER_CHARS));
       return;
     }
     const start = element.selectionStart ?? element.textLength;
     const end = element.selectionEnd ?? start;
-    setText(element.value.slice(0, start) + snippet + element.value.slice(end));
+    // maxLength guards typing, not programmatic insertion: clamp mentions to the cap too
+    const room = Math.max(0, MAX_COMPOSER_CHARS - element.value.length + (end - start));
+    const inserted = snippet.slice(0, room);
+    setText(element.value.slice(0, start) + inserted + element.value.slice(end));
     requestAnimationFrame(() => {
-      element.selectionStart = element.selectionEnd = start + snippet.length;
+      element.selectionStart = element.selectionEnd = start + inserted.length;
       element.focus();
     });
   }, []);
@@ -99,9 +104,10 @@ export function Composer({ connected, onSend, onUploadImage }: ComposerProps) {
   const send = useCallback(() => {
     const current = text;
     if (!connected || uploading || current.trim().length === 0) return;
-    onSend(current);
-    setText("");
-    setNote(null);
+    if (onSend(current)) {
+      setText("");
+      setNote(null);
+    }
   }, [connected, onSend, text, uploading]);
 
   // Enter sends, Shift+Enter breaks the line; an IME composition's Enter (Korean
