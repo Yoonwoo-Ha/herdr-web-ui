@@ -116,7 +116,9 @@ export function Sidebar({ snapshot, selectedPaneId, onSelectPane }: SidebarProps
                 <span className="workspace-label" title={workspace.label}>
                   {workspace.label}
                 </span>
-                <StatusBadge status={workspace.agent_status} />
+                {/* the header badge is the multi-pane rollup: with one pane it would
+                    just repeat the row badge underneath, so it stays off then */}
+                {workspacePanes.length > 1 && <StatusBadge status={workspace.agent_status} />}
               </header>
   
               {workspacePanes.length === 0 && <div className="workspace-empty">no panes</div>}

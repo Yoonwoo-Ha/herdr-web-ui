@@ -225,7 +225,8 @@ All spacing derives from a base of **4px**.
 
 ### Sidebar tree (`.tree`, `.workspace`, `.pane-row`)
 - **Structure**: `<nav class="tree">` → `<section class="workspace">` with
-  `<header class="workspace-header">` (`.workspace-number` chip, `.workspace-label`, badge), an
+  `<header class="workspace-header">` (`.workspace-number` chip, `.workspace-label`, badge — the rollup
+  shown only when the workspace has more than one pane; with one pane the row badge already says it), an
   optional `.tab-label` overline (only when the workspace has more than one tab), and
   `<ul class="pane-list">` of `<button class="pane-row">` with `.pane-title` on line one and
   `.pane-meta` (`.pane-id` mono, `.agent-chip`, badge) on line two.
