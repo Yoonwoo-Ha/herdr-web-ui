@@ -159,7 +159,7 @@ bun run build
 bun test
 ```
 
-The suite runs against the live herdr server; there are no mocks. It's read-only apart from the `herdr-web-ui-test` workspaces it creates and deletes. It covers the generator freshness and determinism gate, the HTTP contract, the WS attach stream, roles (an observe connection cannot resize or type, enforced server-side), the status collector's pushed `pane-status` and `pane-exited` for unattached panes, token auth, the bind address, the herdr client, the PTY sidecar's env pass-through (`server/pty/session.test.ts`) and the pure client modules (key bar, draft, notifications, snapshot merge). At the time of writing that's 63 tests across 9 files.
+The suite runs against the live herdr server; there are no mocks. It's read-only apart from the `herdr-web-ui-test` workspaces it creates and deletes. It covers the generator freshness and determinism gate, the HTTP contract, the WS attach stream, roles (an observe connection cannot resize or type, enforced server-side), concurrent attaches to one pane sharing a single pty, the status collector's pushed `pane-status` and `pane-exited` for unattached panes, token auth, the bind address, the herdr client, the PTY sidecar's env pass-through (`server/pty/session.test.ts`) and the pure client modules (key bar, draft, notifications, snapshot merge). At the time of writing that's 63 tests across 9 files.
 
 ## API
 

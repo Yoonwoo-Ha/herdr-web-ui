@@ -370,6 +370,47 @@ describe("WebSocket roles and status push", () => {
   }, 40_000);
 });
 
+describe("WebSocket concurrent attach", () => {
+  /** A pane nobody holds yet: the race is in CREATING the attachment. */
+  let raceWorkspaceId: string | null = null;
+  let racePaneId: string | null = null;
+
+  beforeAll(async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
+      "workspace.create",
+      { label: "herdr-web-ui-test-race", cwd: "/tmp", focus: false },
+    );
+    raceWorkspaceId = created.workspace.workspace_id;
+    racePaneId = created.root_pane.pane_id;
+  });
+
+  afterAll(async () => {
+    if (raceWorkspaceId) await herdrRpc("workspace.close", { workspace_id: raceWorkspaceId }).catch(() => undefined);
+  });
+
+  it("shares one pty between clients whose attaches to the same pane race", async () => {
+    const paneId = racePaneId!;
+    const first = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    const second = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    try {
+      // same tick: both attaches are in flight before either resolves the terminal
+      first.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
+      second.send({ type: "attach", pane_id: paneId, cols: 120, rows: 40 });
+      await first.waitFor((m) => m.type === "pty-data" && m.pane_id === paneId, "first pty-data", 15_000);
+      await second.waitFor((m) => m.type === "pty-data" && m.pane_id === paneId, "second pty-data", 15_000);
+
+      // one attachment means one client set: a resize reaches both. Two attachments
+      // would leave one client on an orphaned record that never hears it.
+      first.send({ type: "resize", pane_id: paneId, cols: 90, rows: 25 });
+      await first.waitFor((m) => m.type === "pane-geometry" && m.cols === 90 && m.rows === 25, "first hears resize", 5000);
+      await second.waitFor((m) => m.type === "pane-geometry" && m.cols === 90 && m.rows === 25, "second hears resize", 5000);
+    } finally {
+      first.close();
+      second.close();
+    }
+  }, 40_000);
+});
+
 /**
  * Bun's WebSocket client sends request headers, but this project compiles with lib.dom,
  * whose WebSocket type only knows subprotocols (bun-types steps aside via
