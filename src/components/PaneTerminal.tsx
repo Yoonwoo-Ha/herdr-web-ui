@@ -11,6 +11,7 @@ import { composerPayload } from "../lib/compose.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
 import { uploadPaneImage } from "../lib/api.ts";
 import { KeyBar } from "./KeyBar.tsx";
+import { ChatView } from "./ChatView.tsx";
 import { Composer } from "./Composer.tsx";
 import type { ClientRole, ServerMessage } from "../../shared/protocol.ts";
 
@@ -52,6 +53,9 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
   // transient OSC 52 feedback ("copied") — a pill in the banner column
   const [clipboardNote, setClipboardNote] = useState<string | null>(null);
   const clipboardTimerRef = useRef<number | null>(null);
+  // the chat lens over the attached pane (transcript polling), per-pane choice
+  const [chatView, setChatView] = useState(false);
+  const [chatRefresh, setChatRefresh] = useState(0);
 
   paneRef.current = paneId;
   onConnectionChangeRef.current = onConnectionChange;
@@ -269,6 +273,8 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
     setDraft(EMPTY_DRAFT);
     draftPaneRef.current = null;
     term.reset();
+    // the chat lens is remembered per pane; the terminal stays the default
+    setChatView(paneId !== null && window.localStorage.getItem(`herdr-web-ui:view:${paneId}`) === "chat");
     if (!paneId) return;
     try {
       fit?.fit();
@@ -281,6 +287,21 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
       socket.detach(paneId);
     };
   }, [paneId]);
+
+  const toggleChatView = useCallback(() => {
+    setChatView((current) => {
+      const next = !current;
+      const pane = paneRef.current;
+      if (pane !== null) {
+        try {
+          window.localStorage.setItem(`herdr-web-ui:view:${pane}`, next ? "chat" : "terminal");
+        } catch {
+          /* private mode: the lens just stops being remembered */
+        }
+      }
+      return next;
+    });
+  }, []);
 
   // key-bar taps go through xterm so the onData -> socket path above is reused
   const pressKey = useCallback((key: KeyBarKey) => {
@@ -322,13 +343,13 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
   // the composer rides the same term.input() -> onData -> socket path as the key
   // bar: one input path, and the never-queue draft policy still governs it on a
   // dead socket. Bracketed-paste wrapping follows the pane program's own mode.
-  // Returns false (composer keeps the text) when the socket is already dead, so a
-  // send racing a disconnect degrades to "held", never to a silently lost message.
   const sendComposerText = useCallback((text: string): boolean => {
     const term = termRef.current;
     const socket = socketRef.current;
     if (!term || !socket || !socket.connected) return false;
     term.input(composerPayload(text, term.modes.bracketedPasteMode));
+    // the chat lens refetches at once so the sent prompt appears without a poll beat
+    setChatRefresh((current) => current + 1);
     return true;
   }, []);
 
@@ -349,6 +370,17 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
         </div>
       )}
       <div className="terminal-banners">
+        {paneId !== null && (
+          <button
+            type="button"
+            className={`view-toggle${chatView ? " is-chat" : ""}`}
+            aria-pressed={chatView}
+            title={chatView ? "Show the live terminal (xterm)" : "Show the pane as a chat transcript"}
+            onClick={toggleChatView}
+          >
+            {chatView ? "terminal" : "chat"}
+          </button>
+        )}
         {paneId !== null && ended && (
           <div className="terminal-banner" role="status">
             terminal ended{!draftIsEmpty(draft) ? " — held input discarded" : ""}
@@ -389,10 +421,13 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
         )}
       </div>
       <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
+      {paneId !== null && chatView && (
+        <ChatView paneId={paneId} refreshKey={chatRefresh} connected={connected} ended={ended} />
+      )}
       {paneId !== null && !observing && !ended && (
         <Composer key={paneId} connected={connected} onSend={sendComposerText} onUploadImage={uploadImage} />
       )}
-      {paneId !== null && !observing && <KeyBar onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl} />}
+      {paneId !== null && !observing && !chatView && <KeyBar onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl} />}
     </div>
   );
 }

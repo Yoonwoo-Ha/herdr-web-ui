@@ -1,0 +1,64 @@
+/*
+ * Chatmux-style transcript for ChatView.tsx. The content IS terminal output,
+ * so bubbles keep the mono font; only the chrome becomes chat. Tokens from
+ * styles.css :root only (DESIGN.md §5 "Chat view" is the contract).
+ */
+
+.chat-view {
+  position: absolute;
+  inset: 0;
+  /* z 1: above the static xterm mount, below the banner column (--z-banner) so
+   * the ended/reconnecting/held-input pills stay reachable over the transcript */
+  z-index: 1;
+  gap: var(--space-2);
+  overflow-y: auto;
+  padding: var(--space-3);
+  background: var(--term-bg);
+}
+
+.chat-msg {
+  max-width: min(72ch, 92%);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: var(--lh-base);
+}
+
+/* agent output reads as the stream it is: elevated surface, flush left */
+.chat-msg.chat-agent {
+  align-self: flex-start;
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+/* the user's prompts: accent-tinted, flush right, the one voice that is ours */
+.chat-msg.chat-user {
+  align-self: flex-end;
+  background: linear-gradient(var(--accent-tint), var(--accent-tint)) var(--bg-elevated);
+  border: var(--hairline) solid var(--accent);
+  color: var(--text-strong);
+}
+
+/* TUI chrome (model line, context meters, mode footers): present but quiet */
+.chat-msg.chat-status {
+  align-self: stretch;
+  max-width: none;
+  padding: 0 var(--space-1);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+}
+
+.chat-note {
+  align-self: center;
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.chat-note-error {
+  color: var(--status-blocked);
+}

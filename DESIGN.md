@@ -299,6 +299,28 @@ All spacing derives from a base of **4px**.
   addon uses the full host width instead of reserving a phantom 15px scrollbar, and
   `.xterm-viewport` hides its scrollbar.
 
+### Chat view (`.chat-view`, `.chat-msg`, `.view-toggle`)
+- **Structure**: `<div class="chat-view" role="log" aria-live="polite">` of `.chat-msg` bubbles
+  (`.chat-agent`, `.chat-user`, `.chat-status`) and `.chat-note` lines, switched in per pane by the
+  `.view-toggle` pill in the banner column (`aria-pressed`; label names the OTHER view). The xterm
+  mount stays attached underneath — the chat view is a lens, not a second connection.
+- **Source**: herdr's own scrollback via `GET /api/pane/read?source=recent` (ANSI-stripped text,
+  400 lines), polled every 2s and refreshed at once on a composer send; `src/lib/transcript.ts`
+  splits it (❯ prompt echo → user bubble, full-width rules dropped, TUI chrome lines dimmed as
+  status, everything else groups into agent bubbles).
+- **Spacing**: bubbles `--space-2/3` padding, `--radius-md`, `--font-mono` at `--fs-sm` (the
+  content IS terminal text), max-width `min(72ch, 92%)`, column gap `--space-2`.
+- **States**: agent (`.chat-agent`: `--bg-elevated`, flush left), user (`.chat-user`: accent border
+  on `--accent-tint` over `--bg-elevated`, `--text-strong`, flush right), status (`.chat-status`:
+  `--text-dim` at `--fs-2xs`, no bubble), notes (`.chat-note`: centered dim `--fs-xs`; the error
+  variant takes `--status-blocked`). Auto-follows the bottom unless the reader scrolled up
+  (>48px from the end stops following).
+- **Layout**: absolute `inset: 0` over the mount at `z-index: 1` — above the xterm canvas, below
+  the banner column (`--z-banner`) so ended/reconnecting/held-input pills stay visible and the
+  draft review stays clickable. The choice is remembered per pane in
+  `localStorage["herdr-web-ui:view:<pane_id>"]`; the key bar is hidden while the chat lens is on
+  (terminal keys have no target), the composer is not.
+
 ### Composer (`.composer`)
 - **Structure**: `<div class="composer" role="group" aria-label="Message composer">` → a hidden
   `input[type=file]`, `<textarea class="composer-text" rows=1 aria-label="Message">`, an attach

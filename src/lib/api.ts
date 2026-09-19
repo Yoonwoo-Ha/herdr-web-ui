@@ -1,4 +1,4 @@
-import type { HealthAuth, PushKey, SessionSnapshot } from "../../shared/protocol.ts";
+import type { HealthAuth, PaneReadResult, PushKey, SessionSnapshot } from "../../shared/protocol.ts";
 
 /**
  * A non-2xx answer from the herdr-web-ui API. `code` is the server's error-envelope
@@ -39,6 +39,22 @@ async function getJson<T>(url: string): Promise<T> {
 export async function fetchSession(): Promise<SessionSnapshot> {
   const body = await getJson<{ snapshot: SessionSnapshot }>("/api/session");
   return body.snapshot;
+}
+
+/**
+ * GET /api/pane/read as the chat view polls it: herdr's own scrollback (up to
+ * `lines`), ANSI-stripped text. herdr owns scrollback — the attach stream cannot
+ * serve history, so the transcript reads it back instead.
+ */
+export async function fetchPaneTranscript(paneId: string, lines: number): Promise<PaneReadResult> {
+  const query = new URLSearchParams({
+    pane_id: paneId,
+    source: "recent",
+    format: "text",
+    lines: String(lines),
+  });
+  const body = await getJson<{ read: PaneReadResult }>(`/api/pane/read?${query.toString()}`);
+  return body.read;
 }
 
 export interface HealthInfo {

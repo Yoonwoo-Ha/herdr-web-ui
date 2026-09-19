@@ -74,6 +74,31 @@
   pointer-events: none;
 }
 
+/* the chat/terminal lens switch: banner-column anatomy, but always clickable
+   (pointer-events: none on the column skips this one element) */
+.view-toggle {
+  pointer-events: auto;
+  min-height: var(--control-h);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.view-toggle:hover,
+.view-toggle:focus-visible {
+  color: var(--text);
+}
+
+/* while the chat lens is on, the switch names the way back and takes the accent */
+.view-toggle.is-chat {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .terminal-banner {
   display: inline-flex;
   align-items: center;
