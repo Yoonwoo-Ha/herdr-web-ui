@@ -31,23 +31,38 @@ function sameKey(current: ArrayBuffer | null, expected: Uint8Array): boolean {
 
 /** navigator.serviceWorker.ready never settles when registration failed; bound it. */
 async function workerRegistration(): Promise<ServiceWorkerRegistration | null> {
-  let timer = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<null>((resolve) => {
-    timer = window.setTimeout(() => resolve(null), WORKER_READY_TIMEOUT_MS);
+    timer = setTimeout(() => resolve(null), WORKER_READY_TIMEOUT_MS);
   });
   try {
     return await Promise.race([navigator.serviceWorker.ready, timeout]);
   } finally {
-    window.clearTimeout(timer);
+    clearTimeout(timer);
   }
 }
+
+/** The subscription being made right now, shared by every caller that arrives meanwhile. */
+let pending: Promise<string | null> | null = null;
 
 /**
  * Subscribes this device (reusing a live subscription) and registers it with the server.
  * Idempotent, so it also runs on every load: a server that lost its state gets the device
  * back without a click. Resolves the endpoint, or null when push is not available here.
+ *
+ * Single-flight: the bell's first tap grants permission, which also starts App's
+ * load-time registration. Two overlapping `subscribe()` calls make Chrome issue TWO
+ * subscriptions and keep only the later one, so the confirmation push could go to a
+ * dead endpoint. Concurrent callers therefore share one attempt.
  */
-export async function ensurePushSubscription(): Promise<string | null> {
+export function ensurePushSubscription(): Promise<string | null> {
+  pending ??= subscribeDevice().finally(() => {
+    pending = null;
+  });
+  return pending;
+}
+
+async function subscribeDevice(): Promise<string | null> {
   if (!pushSupported() || globalThis.Notification?.permission !== "granted") return null;
   const registration = await workerRegistration();
   if (!registration) return null;
