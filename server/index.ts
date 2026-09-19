@@ -85,6 +85,10 @@ export function createServer(
     const attachment = attachments.get(paneId);
     if (!attachment) return;
     attachments.delete(paneId);
+    // its members hold nothing on this pane any more (a pty that exited leaves them on
+    // the "terminal ended" screen): a stale entry would read as a live claim in
+    // releaseUnclaimed and keep a later, empty pty on this pane running
+    for (const member of attachment.clients) member.data.attached.delete(paneId);
     attachment.pty.kill();
   }
 
