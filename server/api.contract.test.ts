@@ -262,38 +262,6 @@ describe("WebSocket roles and status push", () => {
     }
   }, 40_000);
 
-  it("sizes a PTY an observe connection creates from the pane, never from the observer's grid", async () => {
-    // observer-FIRST attach: nobody holds the attachment, so the observer's connect
-    // spawns the shared pty. The user's named scenario (a phone opens the pane first)
-    // must not seed the pty with the phone's viewport.
-    const paneId = qaPaneId!;
-    const rectOf = async (): Promise<{ width: number; height: number } | null> => {
-      const snapshot = (await herdrRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot;
-      return snapshot.layouts.flatMap((layout) => layout.panes).find((entry) => entry.pane_id === paneId)?.rect ?? null;
-    };
-    const rectBefore = await rectOf();
-    expect(rectBefore).not.toBeNull();
-
-    const observer = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
-    try {
-      observer.send({ type: "role", mode: "observe" });
-      await observer.waitFor((m) => m.type === "role-ack", "role-ack", 5000);
-      observer.send({ type: "attach", pane_id: paneId, cols: 40, rows: 20 });
-      const geometry = await observer.waitFor(
-        (m) => m.type === "pane-geometry" && m.pane_id === paneId,
-        "observer geometry",
-        15_000,
-      );
-      // the spawned pty carries the pane's grid, not the observer's 40x20
-      expect(geometry.cols).toBe(rectBefore!.width);
-      expect(geometry.rows).toBe(rectBefore!.height);
-      // herdr's layout is untouched either way
-      expect(await rectOf()).toEqual(rectBefore);
-    } finally {
-      observer.close();
-    }
-  }, 30_000);
-
   it("rejects an unknown role mode with an in-band error", async () => {
     const client = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
     try {
@@ -370,6 +338,57 @@ describe("WebSocket roles and status push", () => {
   }, 40_000);
 });
 
+describe("WebSocket observer-first attach", () => {
+  /** Own pane: the observer must be the one that creates the attachment. */
+  let observeWorkspaceId: string | null = null;
+  let observePaneId: string | null = null;
+
+  beforeAll(async () => {
+    const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
+      "workspace.create",
+      { label: "herdr-web-ui-test-observe", cwd: "/tmp", focus: false },
+    );
+    observeWorkspaceId = created.workspace.workspace_id;
+    observePaneId = created.root_pane.pane_id;
+  });
+
+  afterAll(async () => {
+    if (observeWorkspaceId) await herdrRpc("workspace.close", { workspace_id: observeWorkspaceId }).catch(() => undefined);
+  });
+
+  it("sizes a PTY an observe connection creates from the pane, never from the observer's grid", async () => {
+    // observer-FIRST attach: nobody holds the attachment, so the observer's connect
+    // spawns the shared pty. The user's named scenario (a phone opens the pane first)
+    // must not seed the pty with the phone's viewport.
+    const paneId = observePaneId!;
+    const rectOf = async (): Promise<{ width: number; height: number } | null> => {
+      const snapshot = (await herdrRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot;
+      return snapshot.layouts.flatMap((layout) => layout.panes).find((entry) => entry.pane_id === paneId)?.rect ?? null;
+    };
+    const rectBefore = await rectOf();
+    expect(rectBefore).not.toBeNull();
+
+    const observer = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    try {
+      observer.send({ type: "role", mode: "observe" });
+      await observer.waitFor((m) => m.type === "role-ack", "role-ack", 5000);
+      observer.send({ type: "attach", pane_id: paneId, cols: 40, rows: 20 });
+      const geometry = await observer.waitFor(
+        (m) => m.type === "pane-geometry" && m.pane_id === paneId,
+        "observer geometry",
+        15_000,
+      );
+      // the spawned pty carries the pane's grid, not the observer's 40x20
+      expect(geometry.cols).toBe(rectBefore!.width);
+      expect(geometry.rows).toBe(rectBefore!.height);
+      // herdr's layout is untouched either way
+      expect(await rectOf()).toEqual(rectBefore);
+    } finally {
+      observer.close();
+    }
+  }, 30_000);
+});
+
 describe("WebSocket concurrent attach", () => {
   /** A pane nobody holds yet: the race is in CREATING the attachment. */
   let raceWorkspaceId: string | null = null;
@@ -407,6 +426,85 @@ describe("WebSocket concurrent attach", () => {
     } finally {
       first.close();
       second.close();
+    }
+  }, 40_000);
+});
+
+describe("WebSocket client leaving mid-attach", () => {
+  /** One pane per trigger, so neither test inherits the other's attachment. */
+  const leaveWorkspaceIds: string[] = [];
+
+  async function createLeavePane(label: string): Promise<{ paneId: string; terminalId: string }> {
+    const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
+      "workspace.create",
+      { label, cwd: "/tmp", focus: false },
+    );
+    leaveWorkspaceIds.push(created.workspace.workspace_id);
+    const paneId = created.root_pane.pane_id;
+    const snapshot = (await herdrRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot;
+    const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId) as { terminal_id?: string } | undefined;
+    expect(pane?.terminal_id).toBeTruthy();
+    return { paneId, terminalId: pane!.terminal_id! };
+  }
+
+  /** The leaked resource itself: a live `herdr terminal attach` (or its sidecar) on this terminal. */
+  function attachProcessCount(terminalId: string): number {
+    const found = Bun.spawnSync(["pgrep", "-f", `terminal attach ${terminalId}`]);
+    return found.stdout.toString().split("\n").filter(Boolean).length;
+  }
+
+  async function waitForAttachGone(terminalId: string, ms: number): Promise<void> {
+    const deadline = Date.now() + ms;
+    while (attachProcessCount(terminalId) > 0) {
+      if (Date.now() > deadline) throw new Error(`attach on ${terminalId} still running ${ms}ms after its last client left`);
+      await Bun.sleep(50);
+    }
+  }
+
+  afterAll(async () => {
+    for (const workspaceId of leaveWorkspaceIds) {
+      await herdrRpc("workspace.close", { workspace_id: workspaceId }).catch(() => undefined);
+    }
+  });
+
+  it("never pins the pty for a client that disconnects before its attach is ready", async () => {
+    const { paneId, terminalId } = await createLeavePane("herdr-web-ui-test-leave-close");
+    expect(attachProcessCount(terminalId)).toBe(0);
+    const leaver = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    const stayer = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    try {
+      // same tick: the close lands while the attach is still looking up the terminal
+      leaver.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
+      leaver.close();
+      stayer.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
+      await stayer.waitFor((m) => m.type === "pty-data" && m.pane_id === paneId, "stayer pty-data", 15_000);
+      expect(attachProcessCount(terminalId)).toBeGreaterThan(0);
+    } finally {
+      stayer.close();
+    }
+    // the last live client left, so nothing may keep the attach running
+    await waitForAttachGone(terminalId, 5000);
+  }, 40_000);
+
+  it("never pins the pty for a client that detaches before its attach is ready", async () => {
+    const { paneId, terminalId } = await createLeavePane("herdr-web-ui-test-leave-detach");
+    expect(attachProcessCount(terminalId)).toBe(0);
+    const switcher = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    const stayer = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    try {
+      // switching panes fast: the detach lands while the attach is still looking up the terminal
+      switcher.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
+      switcher.send({ type: "detach", pane_id: paneId });
+      stayer.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
+      await stayer.waitFor((m) => m.type === "pty-data" && m.pane_id === paneId, "stayer pty-data", 15_000);
+      expect(attachProcessCount(terminalId)).toBeGreaterThan(0);
+      stayer.close();
+      // the switcher is still connected but detached: it must not keep the attach running
+      await waitForAttachGone(terminalId, 5000);
+      expect(switcher.seen.some((m) => m.type === "pty-data" && m.pane_id === paneId)).toBe(false);
+    } finally {
+      switcher.close();
+      stayer.close();
     }
   }, 40_000);
 });
