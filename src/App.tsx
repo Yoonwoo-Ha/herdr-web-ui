@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentStatus, ClientRole, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
-import { ApiError, fetchHealth, fetchSession, signOut, type HealthInfo } from "./lib/api.ts";
+import { ApiError, fetchHealth, fetchSession, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
 import { paneTitle, Sidebar } from "./components/Sidebar.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
 import { TokenGate } from "./components/TokenGate.tsx";
@@ -14,11 +14,17 @@ import {
   showPaneStatusNotification,
   type NotificationState,
 } from "./lib/notifications.ts";
+import { ensurePushSubscription, pushSupported, removePushSubscription } from "./lib/push.ts";
 
 const APP_TITLE = "herdr web ui";
 const POLL_MS = 5000;
 /** trailing debounce for push-triggered refetches: bursts of events become one fetch */
 const REFETCH_DEBOUNCE_MS = 500;
+
+/** A notification tapped while the app was closed opens `/?pane=<id>` (public/sw.js). */
+function paneFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get("pane");
+}
 
 function DrawerIcon({ open }: { open: boolean }) {
   return (
@@ -75,12 +81,16 @@ export function App() {
   // null until the server has said whether it wants a token: the shell, and with it
   // the WebSocket, never mounts before that is known
   const [locked, setLocked] = useState<boolean | null>(null);
-  const [selectedPaneId, setSelectedPaneId] = useState<string | null>(null);
+  const [selectedPaneId, setSelectedPaneId] = useState<string | null>(paneFromUrl);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [connected, setConnected] = useState(false);
   // the connection's role: the header pill flips it, the server's role-ack confirms it
   const [role, setRole] = useState<ClientRole>("interact");
   const [notifications, setNotifications] = useState<NotificationState>(() => notificationState());
+  // this device has a server-side push subscription: alerts come from the server, not the tab
+  const [pushOn, setPushOn] = useState(false);
+  const pushOnRef = useRef(pushOn);
+  pushOnRef.current = pushOn;
   const lockedRef = useRef(locked);
   lockedRef.current = locked;
   // last-seen agent status per pane: the baseline that decides whether a push is news
@@ -151,10 +161,10 @@ export function App() {
   const notifyStatus = useCallback((paneId: string, status: AgentStatus) => {
     const previous = statusRef.current.get(paneId);
     statusRef.current.set(paneId, status);
-    if (!shouldNotifyStatus(previous, status)) return;
+    if (!shouldNotifyStatus(previous, status) || pushOnRef.current) return;
     const pane = snapshotRef.current?.panes.find((candidate) => candidate.pane_id === paneId);
     if (!pane) return;
-    showPaneStatusNotification(paneTitle(pane), status, () => selectPaneRef.current?.(paneId));
+    showPaneStatusNotification(paneId, paneTitle(pane), status, () => selectPaneRef.current?.(paneId));
   }, []);
 
   const handleServerMessage = useCallback(
@@ -167,7 +177,9 @@ export function App() {
           break;
         case "pane-exited": {
           const pane = snapshotRef.current?.panes.find((candidate) => candidate.pane_id === message.pane_id);
-          if (pane) showPaneEndedNotification(paneTitle(pane), () => selectPaneRef.current?.(message.pane_id));
+          if (pane && !pushOnRef.current) {
+            showPaneEndedNotification(message.pane_id, paneTitle(pane), () => selectPaneRef.current?.(message.pane_id));
+          }
           scheduleRefetch();
           break;
         }
@@ -182,9 +194,35 @@ export function App() {
   );
 
   const enableNotifications = useCallback(async () => {
-    const next = await requestNotificationPermission();
+    const next = notificationState() === "granted" ? "granted" : await requestNotificationPermission();
     setNotifications(next);
+    if (next !== "granted") return;
+    try {
+      const endpoint = await ensurePushSubscription();
+      setPushOn(endpoint !== null);
+      // the confirmation push proves the whole path (server -> push service -> this device)
+      if (endpoint) await sendTestPush(endpoint);
+    } catch (err) {
+      console.warn("web push unavailable, alerts stay tab-only", err);
+    }
   }, []);
+
+  // a device that already allowed alerts re-registers on every load: idempotent, and it
+  // brings the device back if the server lost its subscriptions
+  useEffect(() => {
+    if (locked !== false || notifications !== "granted" || !pushSupported()) return;
+    let cancelled = false;
+    ensurePushSubscription()
+      .then((endpoint) => {
+        if (!cancelled) setPushOn(endpoint !== null);
+      })
+      .catch(() => {
+        if (!cancelled) setPushOn(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [locked, notifications]);
 
   const unlock = useCallback(() => {
     setLocked(false);
@@ -194,6 +232,10 @@ export function App() {
 
   const lock = useCallback(async () => {
     setDrawerOpen(false);
+    // before signOut: the unsubscribe call needs the cookie, and a locked device must stop
+    // receiving pane titles
+    await removePushSubscription().catch(() => undefined);
+    setPushOn(false);
     try {
       await signOut();
     } catch {
@@ -209,11 +251,40 @@ export function App() {
   const selectPaneRef = useRef(selectPane);
   selectPaneRef.current = selectPane;
 
+  // a tapped notification focuses this window and names the pane (public/sw.js)
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: unknown; pane_id?: unknown } | null;
+      if (data?.type === "select-pane" && typeof data.pane_id === "string") selectPaneRef.current(data.pane_id);
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, []);
+
+  // the ?pane= a notification opened us with has done its job once it selected the pane
+  useEffect(() => {
+    if (paneFromUrl() !== null) window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+
   const selectedPane = snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId) ?? null;
   const selectedWorkspace = selectedPane
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;
   const selectedTitle = selectedPane ? paneTitle(selectedPane) : null;
+
+  const bell =
+    notifications !== "granted"
+      ? { label: "Enable notifications", title: "Notify me when a pane needs input or finishes", disabled: false }
+      : pushOn
+        ? { label: "Alerts on", title: "Alerts on — pushed to this device, even with the app closed", disabled: true }
+        : pushSupported()
+          ? { label: "Alerts on in this tab", title: "Alerts on while this tab is open — tap to get them with the app closed too", disabled: false }
+          : {
+              label: "Alerts on in this tab",
+              title: "Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app)",
+              disabled: true,
+            };
 
   useEffect(() => {
     document.title = selectedTitle ? `${selectedTitle} · herdr` : APP_TITLE;
@@ -299,9 +370,9 @@ export function App() {
             <button
               type="button"
               className={`icon-button bell-button${notifications === "granted" ? " is-on" : ""}`}
-              aria-label={notifications === "granted" ? "Notifications on" : "Enable notifications"}
-              title={notifications === "granted" ? "Notifications on — pane status alerts while the tab is hidden" : "Notify me when a pane needs input or finishes"}
-              disabled={notifications === "granted"}
+              aria-label={bell.label}
+              title={bell.title}
+              disabled={bell.disabled}
               onClick={() => void enableNotifications()}
             >
               <BellIcon />

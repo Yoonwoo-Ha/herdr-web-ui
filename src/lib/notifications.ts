@@ -1,13 +1,17 @@
 import type { AgentStatus } from "../../shared/protocol.ts";
+import { ENDED_NOTIFICATION_BODY, paneNotificationTag, statusNotificationBody } from "../../shared/notify-policy.ts";
 
 /**
- * Web Notifications for pane status transitions. Guarded for this app's reality:
- * Notification exists only in secure contexts (https or localhost) - a plain-http
- * LAN deployment reports "unsupported" and the UI hides the bell entirely.
+ * Tab alerts: Web Notifications for pane status transitions while this page is open
+ * but hidden. A device with a push subscription (lib/push.ts) gets the same alerts from
+ * the server instead, and App skips these. Notification exists only in secure contexts
+ * (https or localhost) - a plain-http LAN deployment reports "unsupported" and the UI
+ * hides the bell entirely.
  *
- * Pure decision logic lives in shouldNotifyStatus so the transition policy is
- * unit-testable without a browser.
+ * The transition policy is shared with the server (shared/notify-policy.ts).
  */
+
+export { shouldNotifyStatus } from "../../shared/notify-policy.ts";
 
 export type NotificationState = "unsupported" | "default" | "granted" | "denied";
 
@@ -22,40 +26,36 @@ export async function requestNotificationPermission(): Promise<NotificationState
   return permission === "granted" ? "granted" : permission === "denied" ? "denied" : "default";
 }
 
-/** Statuses worth interrupting the user for. `idle`/`working` are the busy baseline. */
-export function shouldNotifyStatus(previous: AgentStatus | undefined, next: AgentStatus): boolean {
-  if (previous === undefined) return false; // first sighting (app open, new pane): not news
-  if (previous === next) return false;
-  return next === "blocked" || next === "done";
-}
-
-interface NotificationOptions {
-  readonly title: string;
-  readonly body: string;
-  readonly onClick?: () => void;
-}
-
-function show({ title, body, onClick }: NotificationOptions): void {
+/**
+ * Shown through the service worker when there is one: Android Chrome has no
+ * `new Notification()`, and the worker's notificationclick (public/sw.js) selects the
+ * pane. The constructor is the fallback for a page without a worker.
+ */
+async function show(paneId: string, title: string, body: string, onClick?: () => void): Promise<void> {
   if (typeof globalThis.Notification === "undefined") return;
   if (globalThis.Notification.permission !== "granted") return;
   if (typeof document !== "undefined" && !document.hidden) return; // visible tab: the UI already shows it
-  const notification = new globalThis.Notification(title, { body, tag: title });
-  notification.addEventListener("click", () => {
-    window.focus();
-    onClick?.();
-  });
+  const options: NotificationOptions = { body, tag: paneNotificationTag(paneId), data: { pane_id: paneId }, icon: "/icons/icon-192.png" };
+  try {
+    const registration = "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
+    if (registration?.active) {
+      await registration.showNotification(title, options);
+      return;
+    }
+    const notification = new globalThis.Notification(title, options);
+    notification.addEventListener("click", () => {
+      window.focus();
+      onClick?.();
+    });
+  } catch {
+    /* no way to show it here: the sidebar badge still carries the change */
+  }
 }
 
-const STATUS_BODY: Readonly<Record<string, string>> = {
-  blocked: "waiting for your input",
-  done: "work finished",
-};
-
-export function showPaneStatusNotification(paneTitle: string, status: AgentStatus, onClick?: () => void): void {
-  const body = STATUS_BODY[status] ?? String(status);
-  show({ title: paneTitle, body, onClick });
+export function showPaneStatusNotification(paneId: string, title: string, status: AgentStatus, onClick?: () => void): void {
+  void show(paneId, title, statusNotificationBody(status), onClick);
 }
 
-export function showPaneEndedNotification(paneTitle: string, onClick?: () => void): void {
-  show({ title: paneTitle, body: "terminal ended", onClick });
+export function showPaneEndedNotification(paneId: string, title: string, onClick?: () => void): void {
+  void show(paneId, title, ENDED_NOTIFICATION_BODY, onClick);
 }
