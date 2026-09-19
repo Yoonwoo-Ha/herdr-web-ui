@@ -1,0 +1,145 @@
+/*
+ * Chat composer under the terminal (Composer.tsx): the one input surface where the
+ * browser, not the pty, owns the keystrokes. One row - textarea, attach, send - that
+ * grows with the text up to ten lines; status notes float as a pill over the seam
+ * with the terminal, speaking the same banner language as PaneTerminal.css.
+ * The bottom safe-area inset is NOT handled here: on coarse pointers the key bar
+ * renders below this row and carries the inset itself (see KeyBar.css and the
+ * :has(.key-bar) host rule in styles.css).
+ */
+
+.composer {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-1);
+  flex: none;
+  padding-top: var(--space-1);
+  border-top: var(--hairline) solid var(--border);
+  background: var(--bg-panel);
+}
+
+.composer-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--control-h);
+  max-height: 10lh;
+  padding: var(--space-1) var(--space-2);
+  resize: none;
+  overflow-y: auto;
+  background: transparent;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-ui);
+  /* the one size iOS Safari does not zoom on focus (see --fs-input in DESIGN.md) */
+  font-size: var(--fs-input);
+  line-height: var(--lh-base);
+}
+
+.composer-text::placeholder {
+  color: var(--text-dim);
+}
+
+.composer-text:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+.composer-text:disabled {
+  opacity: 0.7;
+}
+
+.composer-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: var(--control-h);
+  min-width: var(--control-h);
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.composer-button svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.composer-send {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* hover only where a pointer can hover: a tapped button must not stay lit */
+@media (hover: hover) {
+  .composer-button:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+
+  .composer-button:hover:not(:disabled).composer-send {
+    background: var(--accent-tint);
+  }
+}
+
+.composer-button:active:not(:disabled) {
+  background: var(--bg-elevated);
+}
+
+.composer-button:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.composer-button:focus-visible {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+/* status pill: floats over the terminal/composer seam so it never moves the row */
+.composer-note {
+  position: absolute;
+  right: var(--space-1);
+  bottom: calc(100% + var(--space-1));
+  z-index: var(--z-banner);
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--chip-h);
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+  max-width: calc(100% - 2 * var(--space-2));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.composer-note.is-error {
+  border-color: var(--status-blocked);
+  color: var(--danger-text);
+  background: linear-gradient(var(--danger-tint), var(--danger-tint)) var(--bg-elevated);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-button {
+    transition: none;
+  }
+}

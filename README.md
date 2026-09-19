@@ -44,6 +44,9 @@ Attaches coexist. The server never passes `--takeover`, so opening a pane in the
 - Web Push: on a device served over HTTPS (and on iPhone, the home-screen app) the bell subscribes the device, so those alerts arrive with the app closed. The server sends them itself, keeps the subscriptions across restarts and confirms a new device with a test push (`server/push.ts`, `src/lib/push.ts`, `public/sw.js`). Without HTTPS the bell falls back to alerts while the tab is open.
 - Header shows the workspace > pane context and a live / reconnecting indicator; the WebSocket reconnects with backoff and re-attaches with the right geometry (`src/App.tsx`, `src/lib/ws.ts`).
 - Touch key bar on phones: Esc, Tab, a one-shot Ctrl, arrows and ^C (`src/components/KeyBar.tsx`).
+- Chat-style composer under the terminal: multiline, paste-safe input — Enter sends (Shift+Enter for a newline, IME composition Enter respected), and the send goes out as a bracketed paste + Enter following the pane program's own paste mode (`src/components/Composer.tsx`, `src/lib/compose.ts`).
+- Images into the prompt: paste or pick an image in the composer, it is stored under the pane's working directory (`.herdr-web-ui/`, ≤8MB, png/jpeg/gif/webp) and referenced by an editable `@path` mention the agent reads from the prompt text (`server/paste.ts`, `POST /api/pane/image`).
+- OSC 52 clipboard bridge (`src/lib/osc52.ts`): wired and unit-tested, but dormant on herdr 0.9.x — herdr's attach stream is a screen-diff protocol and consumes OSC 52 in its own parser (verified live), so pane clipboard writes never reach the browser today. The bridge lights up the moment herdr forwards them.
 - Installable PWA with a small service worker (`public/manifest.webmanifest`, `public/sw.js`).
 - Optional shared-token gate with an HttpOnly cookie (`server/auth.ts`).
 - Dark-only UI; `DESIGN.md` is the design contract and its tokens are mirrored in `src/styles.css`.

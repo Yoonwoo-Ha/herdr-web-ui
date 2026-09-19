@@ -7,7 +7,11 @@ import "./PaneTerminal.css";
 import { HerdrSocket } from "../lib/ws.ts";
 import { controlCode, isPrintable, keySequence, type KeyBarKey } from "../lib/keys.ts";
 import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "../lib/draft.ts";
+import { composerPayload } from "../lib/compose.ts";
+import { parseOsc52 } from "../lib/osc52.ts";
+import { uploadPaneImage } from "../lib/api.ts";
 import { KeyBar } from "./KeyBar.tsx";
+import { Composer } from "./Composer.tsx";
 import type { ClientRole, ServerMessage } from "../../shared/protocol.ts";
 
 const FONT_STACK =
@@ -45,6 +49,9 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
   // input typed while disconnected, held for the user to review and send
   const [draft, setDraft] = useState<InputDraft>(EMPTY_DRAFT);
   const draftPaneRef = useRef<string | null>(null);
+  // transient OSC 52 feedback ("copied") — a pill in the banner column
+  const [clipboardNote, setClipboardNote] = useState<string | null>(null);
+  const clipboardTimerRef = useRef<number | null>(null);
 
   paneRef.current = paneId;
   onConnectionChangeRef.current = onConnectionChange;
@@ -54,6 +61,15 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
   useEffect(() => {
     onConnectionChangeRef.current?.(connected);
   }, [connected]);
+
+  const noteClipboard = useCallback((note: string) => {
+    if (clipboardTimerRef.current !== null) window.clearTimeout(clipboardTimerRef.current);
+    setClipboardNote(note);
+    clipboardTimerRef.current = window.setTimeout(() => {
+      clipboardTimerRef.current = null;
+      setClipboardNote(null);
+    }, 2500);
+  }, []);
 
   // one terminal + one socket for the lifetime of the component
   useEffect(() => {
@@ -83,6 +99,20 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
     term.open(host);
     termRef.current = term;
     fitRef.current = fit;
+
+    // OSC 52: the pane program asked the terminal to set the clipboard - the pty
+    // cannot reach the browser clipboard, so xterm hands us the sequence and
+    // navigator.clipboard completes the hop (text only; queries are ignored)
+    const osc52 = term.parser.registerOscHandler(52, (payload) => {
+      const text = parseOsc52(payload);
+      if (text !== null) {
+        void navigator.clipboard?.writeText(text).then(
+          () => noteClipboard("copied to clipboard"),
+          () => noteClipboard("clipboard write blocked by the browser"),
+        );
+      }
+      return true;
+    });
 
     const socket = new HerdrSocket();
     socketRef.current = socket;
@@ -219,6 +249,7 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
       window.removeEventListener("focus", refit);
       document.removeEventListener("visibilitychange", onVisible);
       onData.dispose();
+      osc52.dispose();
       off();
       socket.close();
       term.dispose();
@@ -287,6 +318,17 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
     setDraft(EMPTY_DRAFT);
   }, []);
 
+  // the composer rides the same term.input() -> onData -> socket path as the key
+  // bar: one input path, and the never-queue draft policy still governs it on a
+  // dead socket. Bracketed-paste wrapping follows the pane program's own mode.
+  const sendComposerText = useCallback((text: string) => {
+    const term = termRef.current;
+    if (!term) return;
+    term.input(composerPayload(text, term.modes.bracketedPasteMode));
+  }, []);
+
+  const uploadImage = useCallback((file: File) => uploadPaneImage(paneRef.current ?? "", file), []);
+
   return (
     <div className="terminal-stack">
       {paneId === null && (
@@ -335,8 +377,16 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
             view only — the operator’s screen size is untouched
           </div>
         )}
+        {clipboardNote && (
+          <div className="terminal-banner" role="status">
+            {clipboardNote}
+          </div>
+        )}
       </div>
       <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
+      {paneId !== null && !observing && !ended && (
+        <Composer connected={connected} onSend={sendComposerText} onUploadImage={uploadImage} />
+      )}
       {paneId !== null && !observing && <KeyBar onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl} />}
     </div>
   );

@@ -72,6 +72,31 @@ export async function signOut(): Promise<void> {
   if (!response.ok) throw await errorFrom("/api/auth", response);
 }
 
+/** Chunked btoa: the naive one-liner blows the stack on multi-MB screenshots. */
+function base64FromBytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+/**
+ * POST /api/pane/image: stores one pasted or file-picked image next to the pane and
+ * resolves to the absolute path the prompt should reference (the composer inserts
+ * `@path`). ApiError 413 image_too_large / 415 unsupported_media_type on bad input.
+ */
+export async function uploadPaneImage(paneId: string, image: Blob): Promise<string> {
+  const data_base64 = base64FromBytes(new Uint8Array(await image.arrayBuffer()));
+  const response = await fetch("/api/pane/image", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pane_id: paneId, content_type: image.type, data_base64 }),
+  });
+  if (!response.ok) throw await errorFrom("/api/pane/image", response);
+  return ((await response.json()) as { path: string }).path;
+}
+
 async function sendJson(url: string, method: "POST" | "DELETE", body: unknown): Promise<void> {
   const response = await fetch(url, {
     method,

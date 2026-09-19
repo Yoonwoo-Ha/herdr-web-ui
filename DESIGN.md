@@ -75,7 +75,7 @@ object. They are tokens so the chrome can match them (the host background equals
 | Body | `--fs-sm` | 12px | `--fw-regular` 400 / `--fw-medium` 500 | `--lh-base` 1.45 | 0 | Pane title, header context, states, errors |
 | Meta | `--fs-xs` | 11px | `--fw-regular` 400 | `--lh-base` 1.45 | 0 | Connection label, banners, "no panes" |
 | Micro | `--fs-2xs` | 10px | `--fw-medium` 500 (badges, agent chip, tab overline) / `--fw-regular` 400 (pane ids, pills, workspace number) | `--lh-base` 1.45 (chips are flex-centred at `--chip-h`) | `--tracking-caps` 0.06em when uppercase | Badges, pills, ids, tab overline, chips |
-| Input | `--fs-input` | 16px | inherits | inherits | 0 | Token gate input only: the one size iOS Safari does not zoom on focus |
+| Input | `--fs-input` | 16px | inherits | inherits | 0 | Token gate input and composer textarea: the one size iOS Safari does not zoom on focus |
 
 ### Font Stack
 - UI: `--font-ui` = `Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif`
@@ -260,7 +260,8 @@ All spacing derives from a base of **4px**.
   Discard buttons at `--control-h`, `--radius-sm`; the one banner that accepts pointer events),
   observing (`.terminal-banner-observe`, `--accent` text and border on `--accent-tint` layered
   over `--bg-elevated`: "view only — the operator's screen size is untouched"; wraps to 36ch
-  ≤480px). Banners carry `role="status"`.
+  ≤480px). Banners carry `role="status"`; a transient clipboard note (the pane's OSC 52 copy,
+  "copied to clipboard", auto-clearing) shares the column.
 - **Layout**: `position: relative` host; `.terminal-banners` is one absolute top-right column
   (flex, `--space-2` gap, `max-width: calc(100% - 2 * var(--space-3))`, `pointer-events: none`
   — the review banner re-enables them) so any state combination stacks without collisions
@@ -296,6 +297,30 @@ All spacing derives from a base of **4px**.
   screen and herdr owns scrollback (wheel and touch gestures are forwarded to it), so the fit
   addon uses the full host width instead of reserving a phantom 15px scrollbar, and
   `.xterm-viewport` hides its scrollbar.
+
+### Composer (`.composer`)
+- **Structure**: `<div class="composer" role="group" aria-label="Message composer">` → a hidden
+  `input[type=file]`, `<textarea class="composer-text" rows=1 aria-label="Message">`, an attach
+  icon-button (paperclip glyph, `aria-label="Attach images"`) and a Send button. Rendered by
+  `Composer.tsx`; `PaneTerminal` mounts it between the xterm mount and the key bar, only while a
+  pane is selected AND interactive AND alive (observing or ended hides it, like the key bar).
+- **Variants**: `.composer-send` (accent text + border, accent-tint hover); `.composer-note`
+  status pill floating over the terminal seam (`--z-banner`, `pointer-events: none`),
+  `.is-error` on `--danger-tint`.
+- **Spacing**: one row, `--space-1` gaps and top padding, `--hairline` top border on
+  `--bg-panel`; the textarea is `--fs-input` (the iOS no-zoom size) with `--space-1`/`--space-2`
+  padding, auto-growing to `10lh` then scrolling; buttons are `--control-h`
+  (`--touch-target` on coarse pointers). No safe-area padding of its own: the key bar carries
+  the bottom inset where it shows, the host padding everywhere else.
+- **Behavior**: Enter sends, Shift+Enter breaks the line, and an in-composition Enter (IME) never
+  sends. The send itself is `term.input()` of a bracketed-paste payload following the pane
+  program's own `bracketedPasteMode` — one input path with the key bar (`src/lib/compose.ts`).
+  Pasted or picked images (png/jpeg/gif/webp, ≤8MB each, ≤4 per action) upload to
+  `POST /api/pane/image` and insert an editable `@path` mention; upload errors show as the
+  error pill. While disconnected the textarea disables and holds its text — nothing is queued.
+- **Accessibility**: error pill `role="alert"`, other notes `role="status"`; every icon-only
+  control carries `aria-label`.
+- **Motion**: button background/border `--dur-fast`; none under reduced motion.
 
 ### Key bar (`.key-bar`)
 - **Structure**: `<div class="key-bar" role="group" aria-label="Terminal keys">` of
