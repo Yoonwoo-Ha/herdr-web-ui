@@ -1,22 +1,30 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createServer } from "./index.ts";
-import type { AgentStatus, ApiError, HealthAuth, SessionSnapshot, PaneReadResult } from "../shared/protocol.ts";
+import type { AgentStatus, ApiError, HealthAuth, PushKey, SessionSnapshot, PaneReadResult } from "../shared/protocol.ts";
 import { herdrRpc } from "./herdr/client.ts";
+import { startFakePushService, type FakePushService } from "./push.fake.ts";
 
 /**
  * Contract test for herdr-web-ui's HTTP + WS surface.
  * Runs against the REAL herdr server on the developer's machine: these are the
  * integration seams the browser UI depends on, so a mock here would prove nothing.
  * READ-ONLY: never creates, closes, or writes to a pane the user owns.
+ * Every server here keeps its push state (VAPID key, subscriptions) in a temp dir: the
+ * user's ~/.config/herdr-web-ui holds their real devices, which a test must never page.
  */
 let server: { port: number; stop: () => void };
+const stateDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-contract-"));
 
 beforeAll(() => {
-  server = createServer({ port: 0 });
+  server = createServer({ port: 0, stateDir });
 });
 
 afterAll(() => {
   server?.stop();
+  rmSync(stateDir, { recursive: true, force: true });
 });
 
 const base = () => `http://localhost:${server.port}`;
@@ -526,6 +534,140 @@ function connectWithCookie(url: string, cookie: string): WebSocket {
   return new ctor(url, { headers: { cookie } });
 }
 
+describe("web push", () => {
+  /** A fake push service that decrypts like a device: see push.fake.ts. */
+  let fake: FakePushService;
+  let pushWorkspaceId: string | null = null;
+  let pushPaneId: string | null = null;
+
+  const postJson = (path: string, body: unknown, method = "POST") =>
+    fetch(`${base()}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  beforeAll(async () => {
+    fake = await startFakePushService();
+    const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
+      "workspace.create",
+      { label: "herdr-web-ui-test-push", cwd: "/tmp", focus: false },
+    );
+    pushWorkspaceId = created.workspace.workspace_id;
+    pushPaneId = created.root_pane.pane_id;
+  });
+
+  afterAll(async () => {
+    await postJson("/api/push/subscribe", { endpoint: fake.subscription.endpoint }, "DELETE").catch(() => undefined);
+    fake.stop();
+    if (pushWorkspaceId) await herdrRpc("workspace.close", { workspace_id: pushWorkspaceId }).catch(() => undefined);
+  });
+
+  it("hands out its VAPID key and refuses what is not a subscription", async () => {
+    const key = (await (await fetch(`${base()}/api/push`)).json()) as PushKey;
+    expect(Buffer.from(key.public_key, "base64url").length).toBe(65);
+
+    const malformed = await postJson("/api/push/subscribe", { subscription: { endpoint: fake.subscription.endpoint, keys: {} } });
+    expect(malformed.status).toBe(400);
+    expect(((await malformed.json()) as ApiError).error.code).toBe("invalid_subscription");
+
+    const wrongMethod = await fetch(`${base()}/api/push/subscribe`);
+    expect(wrongMethod.status).toBe(400);
+    expect(((await wrongMethod.json()) as ApiError).error.code).toBe("method_not_allowed");
+  });
+
+  it("confirms a new device with a push it can decrypt, and forgets it on request", async () => {
+    expect((await postJson("/api/push/subscribe", { subscription: fake.subscription })).status).toBe(204);
+    expect((await postJson("/api/push/test", { endpoint: fake.subscription.endpoint })).status).toBe(204);
+    const confirmation = await fake.waitFor((push) => push.payload.tag === "herdr-test", "confirmation push", 5000);
+    expect(confirmation.payload.pane_id).toBeNull();
+    expect(confirmation.vapidValid).toBe(true);
+    const key = (await (await fetch(`${base()}/api/push`)).json()) as PushKey;
+    expect(confirmation.vapidKey).toBe(key.public_key);
+
+    expect((await postJson("/api/push/subscribe", { endpoint: fake.subscription.endpoint }, "DELETE")).status).toBe(204);
+    const gone = await postJson("/api/push/test", { endpoint: fake.subscription.endpoint });
+    expect(gone.status).toBe(404);
+    expect(((await gone.json()) as ApiError).error.code).toBe("subscription_not_found");
+  });
+
+  it("pushes a live pane's status change to a subscribed device", async () => {
+    const paneId = pushPaneId!;
+    expect((await postJson("/api/push/subscribe", { subscription: fake.subscription })).status).toBe(204);
+    // same retry as the pane-status test: the collector may still be re-subscribing to
+    // the new pane, so alternate real changes until one lands as a push
+    let pushed = null;
+    for (let attempt = 0; attempt < 8 && !pushed; attempt += 1) {
+      const state = attempt % 2 === 0 ? "blocked" : "working";
+      await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "claude", state });
+      if (state !== "blocked") continue;
+      pushed = await fake
+        .waitFor((push) => push.payload.pane_id === paneId, "status push", 2_500)
+        .catch(() => null);
+    }
+    expect(pushed).not.toBeNull();
+    expect(pushed!.payload.body).toBe("waiting for your input");
+    expect(pushed!.payload.tag).toBe(`herdr-pane-${paneId}`);
+    expect(pushed!.urgency).toBe("high");
+    expect(pushed!.vapidValid).toBe(true);
+  }, 40_000);
+
+  it("alerts on the very first change after a restart, measured against herdr's snapshot", async () => {
+    // A server restart must not cost the first alert: the collector seeds each pane's
+    // status from its startup snapshot. Pane `watched` is already working when the new
+    // server starts; pane `probe` shares the status subscription and proves it is live
+    // before `watched` changes exactly once.
+    const createPane = async (label: string) =>
+      herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>("workspace.create", {
+        label,
+        cwd: "/tmp",
+        focus: false,
+      });
+    const watched = await createPane("herdr-web-ui-test-push-restart");
+    const probe = await createPane("herdr-web-ui-test-push-probe");
+    const watchedId = watched.root_pane.pane_id;
+    const probeId = probe.root_pane.pane_id;
+    const restartDir = mkdtempSync(join(tmpdir(), "herdr-web-ui-restart-"));
+    const device = await startFakePushService();
+    let restarted: { port: number; stop: () => void } | null = null;
+    let watcher: RecordingSocket | null = null;
+    try {
+      await herdrRpc("pane.report_agent", { pane_id: watchedId, source: "manual", agent: "claude", state: "working" });
+      const before = (await herdrRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot;
+      expect(before.panes.find((pane) => pane.pane_id === watchedId)?.agent_status).toBe("working");
+
+      restarted = createServer({ port: 0, stateDir: restartDir });
+      const subscribe = await fetch(`http://localhost:${restarted.port}/api/push/subscribe`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ subscription: device.subscription }),
+      });
+      expect(subscribe.status).toBe(204);
+      watcher = await RecordingSocket.connect(`ws://localhost:${restarted.port}/ws`);
+
+      let live = false;
+      for (let attempt = 0; attempt < 8 && !live; attempt += 1) {
+        const state = attempt % 2 === 0 ? "working" : "idle";
+        await herdrRpc("pane.report_agent", { pane_id: probeId, source: "manual", agent: "claude", state });
+        live = await watcher
+          .waitFor((m) => m.type === "pane-status" && m.pane_id === probeId && m.agent_status === state, "probe status", 2_500)
+          .then(() => true)
+          .catch(() => false);
+      }
+      expect(live).toBeTrue();
+
+      await herdrRpc("pane.report_agent", { pane_id: watchedId, source: "manual", agent: "claude", state: "blocked" });
+      await watcher.waitFor((m) => m.type === "pane-status" && m.pane_id === watchedId, "watched status", 5_000);
+      const pushed = await device.waitFor((push) => push.payload.pane_id === watchedId, "first push after restart", 5_000);
+      expect(pushed.payload.body).toBe("waiting for your input");
+    } finally {
+      watcher?.close();
+      restarted?.stop();
+      device.stop();
+      rmSync(restartDir, { recursive: true, force: true });
+      for (const created of [watched, probe]) {
+        await herdrRpc("workspace.close", { workspace_id: created.workspace.workspace_id }).catch(() => undefined);
+      }
+    }
+  }, 60_000);
+});
+
 describe("token auth", () => {
   /**
    * A second server with the gate ON: the default instance above stays open so the
@@ -535,7 +677,7 @@ describe("token auth", () => {
   let secured: { port: number; stop: () => void };
 
   beforeAll(() => {
-    secured = createServer({ port: 0, token: TOKEN });
+    secured = createServer({ port: 0, token: TOKEN, stateDir });
   });
 
   afterAll(() => {
@@ -550,6 +692,13 @@ describe("token auth", () => {
     expect(res.status).toBe(401);
     const body = (await res.json()) as ApiError;
     expect(body.error.code).toBe("unauthorized");
+  });
+
+  it("keeps web push behind the gate: a subscription receives pane titles", async () => {
+    for (const [method, path] of [["GET", "/api/push"], ["POST", "/api/push/subscribe"], ["POST", "/api/push/test"]] as const) {
+      const res = await fetch(`${securedBase()}${path}`, { method, body: method === "GET" ? undefined : "{}" });
+      expect(res.status).toBe(401);
+    }
   });
 
   it("keeps /api/health public and advertises the gate state", async () => {
@@ -645,7 +794,7 @@ describe("bind address", () => {
   let loopback: { port: number; stop: () => void };
 
   beforeAll(() => {
-    loopback = createServer({ port: 0, hostname: "127.0.0.1" });
+    loopback = createServer({ port: 0, hostname: "127.0.0.1", stateDir });
   });
 
   afterAll(() => {

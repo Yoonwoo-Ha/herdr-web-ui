@@ -37,6 +37,10 @@ export type HerdrPane = PaneInfo;
  *  POST   /api/pane/keys   { pane_id, keys }   -> { ok: true }
  *  POST   /api/auth        { token }     -> 204 + Set-Cookie herdr_web_token (401 invalid_token on mismatch)
  *  DELETE /api/auth                      -> 204 + Set-Cookie herdr_web_token=; Max-Age=0
+ *  GET    /api/push                      -> PushKey (the VAPID application server key)
+ *  POST   /api/push/subscribe { subscription }  -> 204 (a browser PushSubscription JSON; upsert by endpoint)
+ *  DELETE /api/push/subscribe { endpoint }      -> 204
+ *  POST   /api/push/test      { endpoint }      -> 204 | 404 subscription_not_found | 502 push_failed
  *  Errors: non-2xx with { error: { code, message } }
  *
  *  Auth (only when the server was started with HERDR_WEB_TOKEN / token): every route
@@ -52,6 +56,23 @@ export interface ApiError {
 export interface HealthAuth {
   readonly required: boolean;
   readonly authenticated: boolean;
+}
+
+/** GET /api/push: base64url VAPID public key, the `applicationServerKey` a browser subscribes with. */
+export interface PushKey {
+  readonly public_key: string;
+}
+
+/**
+ * The JSON inside every web push, decrypted by the device's service worker (public/sw.js)
+ * and shown as a notification. `pane_id` is null for the enable-confirmation push; `tag`
+ * is shared with the in-tab notification of the same pane, so one replaces the other.
+ */
+export interface PushPayload {
+  pane_id: string | null;
+  title: string;
+  body: string;
+  tag: string;
 }
 
 /** WebSocket at /ws

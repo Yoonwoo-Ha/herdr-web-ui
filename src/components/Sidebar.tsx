@@ -1,6 +1,7 @@
 import "./Sidebar.css";
 
-import type { AgentStatus, HerdrPane, SessionSnapshot } from "../../shared/protocol.ts";
+import type { AgentStatus, SessionSnapshot } from "../../shared/protocol.ts";
+import { paneTitle } from "../../shared/notify-policy.ts";
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "idle",
@@ -10,10 +11,8 @@ const STATUS_LABEL: Record<string, string> = {
   unknown: "—",
 };
 
-/** The line people scan for: the live terminal title, then the cwd, never blank. */
-export function paneTitle(pane: HerdrPane): string {
-  return pane.terminal_title_stripped ?? pane.terminal_title ?? pane.cwd ?? pane.pane_id;
-}
+/** The line people scan for: the live terminal title, then the cwd, never blank (shared with push). */
+export { paneTitle };
 
 function StatusBadge({ status }: { status?: AgentStatus }) {
   const value = status ?? "unknown";

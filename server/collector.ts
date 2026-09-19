@@ -1,4 +1,4 @@
-import type { AgentStatus } from "../shared/protocol.ts";
+import type { AgentStatus, HerdrPane } from "../shared/protocol.ts";
 import { sessionSnapshot, subscribeEvents, type EventFrame, type Subscription } from "./herdr/client.ts";
 
 /**
@@ -26,6 +26,12 @@ const SNAPSHOT_RETRY_MS = 5_000;
 
 export interface StatusCollectorHandlers {
   onStatus: (paneId: string, status: AgentStatus) => void;
+  /**
+   * Every pane as of each reconcile's snapshot. Status events only report changes, so
+   * this is where a consumer learns the status a later change is measured against -
+   * right after a restart, the first event of a pane would otherwise have no baseline.
+   */
+  onBaseline: (panes: readonly HerdrPane[]) => void;
   onPaneEnded: (paneId: string) => void;
   onStructureChange: () => void;
 }
@@ -117,6 +123,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers): StatusC
     try {
       const snapshot = await sessionSnapshot();
       if (stopped) return;
+      handlers.onBaseline(snapshot.panes);
       const paneIds = snapshot.panes.map((pane) => pane.pane_id);
       const sameSet =
         paneIds.length === subscribedPaneIds.size && paneIds.every((id) => subscribedPaneIds.has(id));

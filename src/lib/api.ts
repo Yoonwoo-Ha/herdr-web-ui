@@ -1,4 +1,4 @@
-import type { HealthAuth, SessionSnapshot } from "../../shared/protocol.ts";
+import type { HealthAuth, PushKey, SessionSnapshot } from "../../shared/protocol.ts";
 
 /**
  * A non-2xx answer from the herdr-web-ui API. `code` is the server's error-envelope
@@ -70,4 +70,31 @@ export async function authenticate(token: string): Promise<void> {
 export async function signOut(): Promise<void> {
   const response = await fetch("/api/auth", { method: "DELETE" });
   if (!response.ok) throw await errorFrom("/api/auth", response);
+}
+
+async function sendJson(url: string, method: "POST" | "DELETE", body: unknown): Promise<void> {
+  const response = await fetch(url, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw await errorFrom(url, response);
+}
+
+/** GET /api/push: the server's VAPID key, the `applicationServerKey` this device subscribes with. */
+export async function fetchPushKey(): Promise<string> {
+  return (await getJson<PushKey>("/api/push")).public_key;
+}
+
+export async function registerPushSubscription(subscription: PushSubscriptionJSON): Promise<void> {
+  await sendJson("/api/push/subscribe", "POST", { subscription });
+}
+
+export async function unregisterPushSubscription(endpoint: string): Promise<void> {
+  await sendJson("/api/push/subscribe", "DELETE", { endpoint });
+}
+
+/** One confirmation push to this device only; ApiError 502 `push_failed` when the push service refused it. */
+export async function sendTestPush(endpoint: string): Promise<void> {
+  await sendJson("/api/push/test", "POST", { endpoint });
 }
