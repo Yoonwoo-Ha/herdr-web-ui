@@ -52,6 +52,8 @@ export function createServer(
   options: { port?: number; hostname?: string; token?: string } = {},
 ): { port: number; hostname: string; stop: () => void } {
   const attachments = new Map<string, PaneAttachment>();
+  /** attachments still resolving their terminal, so concurrent attaches share one pty */
+  const pendingAttachments = new Map<string, Promise<PaneAttachment>>();
   const clients = new Set<Client>();
   const hostname = options.hostname ?? process.env["HOST"] ?? "0.0.0.0";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
@@ -104,10 +106,21 @@ export function createServer(
     broadcast(paneId, { type: "pane-geometry", pane_id: paneId, cols, rows });
   }
 
-  async function ensureAttachment(paneId: string, cols: number, rows: number, forObserver: boolean): Promise<PaneAttachment> {
+  function ensureAttachment(paneId: string, cols: number, rows: number, forObserver: boolean): Promise<PaneAttachment> {
     const existing = attachments.get(paneId);
-    if (existing) return existing;
+    if (existing) return Promise.resolve(existing);
+    // a second attach arriving while the first is still resolving the terminal joins
+    // that creation: two creations would spawn two ptys, and the orphaned one keeps
+    // streaming into the surviving attachment and kills it when it exits
+    const pending = pendingAttachments.get(paneId);
+    if (pending) return pending;
 
+    const created = spawnAttachment(paneId, cols, rows, forObserver).finally(() => pendingAttachments.delete(paneId));
+    pendingAttachments.set(paneId, created);
+    return created;
+  }
+
+  async function spawnAttachment(paneId: string, cols: number, rows: number, forObserver: boolean): Promise<PaneAttachment> {
     const { terminalId, rect } = await terminalInfoFor(paneId);
     // an observer-first attachment spawns at the pane's own grid (fallback 80x24 when
     // the layout has no rect for it): the attach must not seed the shared pty with a
