@@ -34,6 +34,8 @@ export type HerdrPane = PaneInfo;
  *  GET    /api/session                   -> { snapshot: SessionSnapshot }
  *  GET    /api/pane/read?pane_id=&source=&format=&lines=  -> { read: PaneReadResult }
  *  POST   /api/pane/input  { pane_id, text }   -> { ok: true }
+ *  GET    /api/pane/conversation?pane_id=    -> ConversationResponse (structured claude
+ *         transcript turns; source:"scrollback" when the pane has no recognized store)
  *  POST   /api/pane/close { pane_id }         -> { ok: true } (pane.close RPC; the collector's
  *         session-changed broadcast removes it from every client's sidebar)
  *  POST   /api/pane/image  { pane_id, content_type, data_base64 } -> { ok: true, path }
@@ -64,6 +66,23 @@ export interface HealthAuth {
 /** GET /api/push: base64url VAPID public key, the `applicationServerKey` a browser subscribes with. */
 export interface PushKey {
   readonly public_key: string;
+}
+
+/** One turn of a structured agent conversation (the chat lens source). */
+export interface ConversationTurn {
+  role: "user" | "assistant";
+  ts: string | null;
+  parts: ConversationPart[];
+}
+
+export type ConversationPart =
+  | { kind: "text"; text: string }
+  | { kind: "tool"; name: string; summary: string; input: string; output: string };
+
+/** GET /api/pane/conversation: the recognized-transcript conversation, or scrollback fallback. */
+export interface ConversationResponse {
+  source: "claude-transcript" | "scrollback";
+  turns: ConversationTurn[];
 }
 
 /**

@@ -1,4 +1,4 @@
-import type { HealthAuth, PaneReadResult, PushKey, SessionSnapshot } from "../../shared/protocol.ts";
+import type { ConversationResponse, HealthAuth, PaneReadResult, PushKey, SessionSnapshot } from "../../shared/protocol.ts";
 
 /**
  * A non-2xx answer from the herdr-web-ui API. `code` is the server's error-envelope
@@ -55,6 +55,12 @@ export async function fetchPaneTranscript(paneId: string, lines: number): Promis
   });
   const body = await getJson<{ read: PaneReadResult }>(`/api/pane/read?${query.toString()}`);
   return body.read;
+}
+
+/** GET /api/pane/conversation: structured turns, or scrollback fallback. */
+export async function fetchPaneConversation(paneId: string): Promise<ConversationResponse> {
+  const query = new URLSearchParams({ pane_id: paneId });
+  return await getJson<ConversationResponse>(`/api/pane/conversation?${query.toString()}`);
 }
 
 export interface HealthInfo {

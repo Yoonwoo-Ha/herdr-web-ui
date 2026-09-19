@@ -7,6 +7,7 @@ import { handleAuthRequest, isAuthenticated, requiresAuth, unauthorizedJson } fr
 import { badRequest, errorResponse, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
+import { ConversationUnavailable, paneConversation } from "./conversation.ts";
 import { HerdrError, herdrSocketPath, paneClose, paneRead, paneSendKeys, paneSendText, ping, sessionSnapshot } from "./herdr/client.ts";
 import { createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
@@ -287,6 +288,20 @@ export function createServer(
           });
           return jsonResponse({ read });
         } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname === "/api/pane/conversation") {
+        const paneId = url.searchParams.get("pane_id");
+        if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
+        try {
+          const turns = await paneConversation(paneId);
+          return jsonResponse({ source: "claude-transcript", turns });
+        } catch (error) {
+          // an unrecognized pane is not an error: the client falls back to the
+          // scrollback transcript, exactly like chatmux's terminal fallback
+          if (error instanceof ConversationUnavailable) return jsonResponse({ source: "scrollback", turns: [] });
           return errorResponse(error);
         }
       }

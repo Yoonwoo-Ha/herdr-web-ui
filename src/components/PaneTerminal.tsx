@@ -19,7 +19,10 @@ const FONT_STACK =
   '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace';
 
 export interface PaneTerminalProps {
+  /** The pane this terminal attaches to; null renders the placeholder. */
   paneId: string | null;
+  /** the pane's agent name — the chat lens labels the assistant's voice with it */
+  agent?: string | null;
   /** The connection's desired role; changes are sent to the server, acks come back via onRoleAck. */
   role?: ClientRole;
   /** Fires with the server-confirmed role (the header toggle shows it). */
@@ -30,7 +33,7 @@ export interface PaneTerminalProps {
   onServerMessage?: (message: ServerMessage) => void;
 }
 
-export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectionChange, onServerMessage }: PaneTerminalProps) {
+export function PaneTerminal({ paneId, agent = null, role = "interact", onRoleAck, onConnectionChange, onServerMessage }: PaneTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -423,7 +426,7 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
       <div className="terminal-surface">
         <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
         {paneId !== null && chatView && (
-          <ChatView paneId={paneId} refreshKey={chatRefresh} connected={connected} ended={ended} />
+          <ChatView paneId={paneId} refreshKey={chatRefresh} connected={connected} ended={ended} agent={agent} />
         )}
       </div>
       {paneId !== null && !observing && !ended && (

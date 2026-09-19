@@ -46,7 +46,7 @@ Attaches coexist. The server never passes `--takeover`, so opening a pane in the
 - Header shows the workspace > pane context and a live / reconnecting indicator; the WebSocket reconnects with backoff and re-attaches with the right geometry (`src/App.tsx`, `src/lib/ws.ts`).
 - Touch key bar on phones: Esc, Tab, a one-shot Ctrl, arrows and ^C (`src/components/KeyBar.tsx`).
 - Chat-style composer under the terminal: multiline, paste-safe input — Enter sends (Shift+Enter for a newline, IME composition Enter respected), and the send goes out as a bracketed paste + Enter following the pane program's own paste mode (`src/components/Composer.tsx`, `src/lib/compose.ts`).
-- Chat view per pane: a `chat` toggle over the terminal renders the pane as a chat transcript — herdr's own scrollback (`pane.read`, ANSI-stripped) parsed into agent bubbles, your prompts (the agent TUI's `❯` echo) as user bubbles and TUI chrome dimmed (`src/components/ChatView.tsx`, `src/lib/transcript.ts`). The xterm attach stays live underneath; the choice is remembered per pane.
+- Chat view per pane, chatmux-style: panes with a recognized agent session (Claude) render as a real conversation — your prompts and the agent's replies from Claude Code's own transcript store, with markdown prose, bullet lists and collapsed tool-call chips that expand to their input and output (`server/conversation.ts`, `GET /api/pane/conversation`, `src/components/ChatView.tsx`). Panes without one fall back to the ANSI-stripped scrollback as bubbles. The xterm attach stays live underneath; the choice is remembered per pane.
 - Images into the prompt: paste or pick an image in the composer, it is stored under the pane's working directory (`.herdr-web-ui/`, ≤8MB, png/jpeg/gif/webp) and referenced by an editable `@path` mention the agent reads from the prompt text (`server/paste.ts`, `POST /api/pane/image`).
 - OSC 52 clipboard bridge (`src/lib/osc52.ts`): wired and unit-tested, but dormant on herdr 0.9.x — herdr's attach stream is a screen-diff protocol and consumes OSC 52 in its own parser (verified live), so pane clipboard writes never reach the browser today. The bridge lights up the moment herdr forwards them.
 - Installable PWA with a small service worker (`public/manifest.webmanifest`, `public/sw.js`).
@@ -187,9 +187,9 @@ Defined in `shared/protocol.ts`.
 ```
 GET    /api/health                    -> { ok, herdr: { version, protocol }, auth: { required, authenticated } }
 GET    /api/session                   -> { snapshot }
-GET    /api/pane/read?pane_id=&source=&format=&lines=
-POST   /api/pane/input  { pane_id, text }
+GET    /api/pane/conversation?pane_id=   -> { source: "claude-transcript" | "scrollback", turns }
 POST   /api/pane/close { pane_id }   -> { ok: true } (pane.close RPC; every sidebar drops it on session-changed)
+POST   /api/pane/input  { pane_id, text }
 POST   /api/auth        { token }     -> 204 + cookie
 DELETE /api/auth                      -> 204
 GET    /api/push                      -> { public_key }

@@ -400,6 +400,7 @@ export function App() {
         <main className="terminal-host">
           <PaneTerminal
             paneId={selectedPaneId}
+            agent={selectedPane?.agent ?? null}
             role={role}
             onRoleAck={setRole}
             onConnectionChange={setConnected}

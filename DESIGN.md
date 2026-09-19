@@ -299,27 +299,32 @@ All spacing derives from a base of **4px**.
   addon uses the full host width instead of reserving a phantom 15px scrollbar, and
   `.xterm-viewport` hides its scrollbar.
 
-### Chat view (`.chat-view`, `.chat-msg`, `.view-toggle`)
-- **Structure**: `<div class="chat-view" role="log" aria-live="polite">` of `.chat-msg` bubbles
-  (`.chat-agent`, `.chat-user`, `.chat-status`) and `.chat-note` lines, switched in per pane by the
+### Chat view (`.chat-view`, `.chat-msg`, `.chat-view .chat-tool`, `.view-toggle`)
+- **Structure**: `<div class="chat-view" role="log" aria-live="polite">`, switched in per pane by the
   `.view-toggle` pill in the banner column (`aria-pressed`; label names the OTHER view). The xterm
   mount stays attached underneath — the chat view is a lens, not a second connection.
-- **Source**: herdr's own scrollback via `GET /api/pane/read?source=recent` (ANSI-stripped text,
-  400 lines), polled every 2s and refreshed at once on a composer send; `src/lib/transcript.ts`
-  splits it conservatively — the agent TUI's ❯ prompt echo becomes a user bubble, full-width rules
-  drop, TUI chrome and turn metadata (✳ Brewed, ※ recap) dim to status lines, agent output splits
-  into paragraph bubbles on blank lines, and everything else degrades to agent instead of guessing
-  a speaker.
+- **Source**: chatmux's model. `GET /api/pane/conversation` resolves the pane's agent session
+  (herdr `agent.get`) and reads Claude Code's own transcript store
+  (`~/.claude/projects/<cwd-slug>/<session>.jsonl`, same-user, read-only, uuid-checked) into
+  `ConversationTurn`s (`server/conversation.ts`): user prompts, assistant prose with folded
+  `tool_use`/`tool_result` pairs, thinking dropped, command bookkeeping dropped, 4k-char tool
+  outputs, last 100 turns, mtime-cached. Panes without a recognized store answer
+  `source:"scrollback"` and render the ANSI-stripped `pane.read` transcript as bubbles instead
+  (`src/lib/transcript.ts`: ❯ prompt echo → user, rules dropped, chrome dimmed, paragraph split) —
+  the same fallback chatmux ships. Polled every 2s, refreshed at once on a composer send.
 - **Spacing**: bubbles `--space-2/4` padding, `--radius-md`, a hairline `--border` edge,
-  `--font-mono` at `--fs-sm` (the content IS terminal text); the panel pads
+  `--font-mono` at `--fs-sm` for terminal text; the panel pads
   `calc(--control-h + --space-2)` on top so the first bubble clears the view-toggle pill.
-- **States**: agent (`.chat-agent`: `--bg-hover` fill, hairline edge, flush left, full width —
-  terminal text wraps instead of hiding the right half), user (`.chat-user`: accent border on
-  `--accent-tint` over `--bg-elevated`, `--text-strong`, flush right, prose-width `min(64ch, 92%)`,
-  an uppercase `you` overline in `--accent`), status (`.chat-status`: `--text-dim` at `--fs-2xs`,
-  no bubble), notes (`.chat-note`: centered dim `--fs-xs`; the error variant takes
-  `--status-blocked`). Auto-follows the bottom unless the reader scrolled up (>48px from the end
-  stops following).
+- **States**: conversation turns carry markdown-lite — prose in `--font-ui` with `inline code`
+  chips and **bold**, `- ` runs as `.chat-list`, fenced code as `.chat-code`; each `tool_use` is a
+  `.chat-tool-chip` (accent tool name, ellipsized summary, ▸/▾ caret) expanding to `.chat-tool-io`
+  input/output panes. Agent turns (`.chat-agent`: `--bg-hover` fill, hairline edge, flush left,
+  full width) open with the agent's name in the `.chat-role` overline (the prop `PaneTerminal`
+  gets from App's snapshot); user turns (`.chat-user`: accent border on `--accent-tint` over
+  `--bg-elevated`, `--text-strong`, flush right, prose-width `min(64ch, 92%)`) open with `you`.
+  The scrollback fallback keeps its `.chat-status` dimming (TUI chrome, turn metadata) and
+  `.chat-note` lines (centered dim `--fs-xs`; the error variant takes `--status-blocked`).
+  Auto-follows the bottom unless the reader scrolled up (>48px stops following).
 - **Layout**: absolute `inset: 0` over `.terminal-surface` (the mount's own positioned box) at
   `z-index: 1` — above the xterm canvas, below the banner column (`--z-banner`) so
   ended/reconnecting/held-input pills stay visible, and never over the composer/key bar rows. The
