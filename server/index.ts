@@ -67,13 +67,16 @@ export function createServer(
     for (const client of clients) send(client, message);
   }
 
-  async function terminalIdFor(paneId: string): Promise<string> {
+  async function terminalInfoFor(paneId: string): Promise<{ terminalId: string; rect: { width: number; height: number } | null }> {
     const snapshot = await sessionSnapshot();
     const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
     if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
     const terminalId = (pane as HerdrPane & { terminal_id?: string }).terminal_id;
     if (!terminalId) throw new HerdrError("no_terminal", `pane ${paneId} has no terminal`);
-    return terminalId;
+    // the pane's grid as the operator's layout holds it: an observe connection must
+    // create the pty at THIS size, never at the observer's own viewport
+    const rect = snapshot.layouts.flatMap((layout) => layout.panes).find((entry) => entry.pane_id === paneId)?.rect ?? null;
+    return { terminalId, rect: rect ? { width: rect.width, height: rect.height } : null };
   }
 
   function closeAttachment(paneId: string): void {
@@ -101,16 +104,21 @@ export function createServer(
     broadcast(paneId, { type: "pane-geometry", pane_id: paneId, cols, rows });
   }
 
-  async function ensureAttachment(paneId: string, cols: number, rows: number): Promise<PaneAttachment> {
+  async function ensureAttachment(paneId: string, cols: number, rows: number, forObserver: boolean): Promise<PaneAttachment> {
     const existing = attachments.get(paneId);
     if (existing) return existing;
 
-    const terminalId = await terminalIdFor(paneId);
+    const { terminalId, rect } = await terminalInfoFor(paneId);
+    // an observer-first attachment spawns at the pane's own grid (fallback 80x24 when
+    // the layout has no rect for it): the attach must not seed the shared pty with a
+    // watching phone's viewport
+    const spawnCols = forObserver ? (rect?.width ?? 80) : cols;
+    const spawnRows = forObserver ? (rect?.height ?? 24) : rows;
     const attachment: PaneAttachment = {
       pty: undefined as unknown as PtySession,
       clients: new Set<Client>(),
-      cols,
-      rows,
+      cols: spawnCols,
+      rows: spawnRows,
       replay: "",
     };
     attachments.set(paneId, attachment);
@@ -124,8 +132,8 @@ export function createServer(
       // the same session the RPCs talk to, or a named session's terminals are
       // looked up on the default socket and the attach dies.
       env: { HERDR_SOCKET_PATH: herdrSocketPath() },
-      cols,
-      rows,
+      cols: spawnCols,
+      rows: spawnRows,
       onData: (data) => {
         const current = attachments.get(paneId);
         if (!current) return;
@@ -275,7 +283,7 @@ export function createServer(
                 send(client, { type: "error", code: "invalid_geometry", message: "cols and rows must be integers in 1..1000" });
                 break;
               }
-              const attachment = await ensureAttachment(message.pane_id, geometry.cols, geometry.rows);
+              const attachment = await ensureAttachment(message.pane_id, geometry.cols, geometry.rows, client.data.mode === "observe");
               attachment.clients.add(client);
               client.data.attached.add(message.pane_id);
               // hand the newcomer the current screen it would otherwise have missed

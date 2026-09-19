@@ -1,4 +1,5 @@
-import type { AgentStatus, SessionSnapshot } from "../shared/protocol.ts";
+
+import type { AgentStatus } from "../shared/protocol.ts";
 import { sessionSnapshot, subscribeEvents, type EventFrame, type Subscription } from "./herdr/client.ts";
 
 /**
@@ -58,11 +59,6 @@ export function parseStructureFrame(frame: EventFrame): StructureEvent | null {
     default:
       return null;
   }
-}
-
-/** The per-pane subscription set for a snapshot: one status subscription per live pane. */
-export function statusSubscriptionSpecs(snapshot: SessionSnapshot): { type: string; pane_id: string }[] {
-  return snapshot.panes.map((pane) => ({ type: "pane.agent_status_changed", pane_id: pane.pane_id }));
 }
 
 export function startStatusCollector(handlers: StatusCollectorHandlers): StatusCollector {

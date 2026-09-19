@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { EventFrame } from "./herdr/client.ts";
-import { parseStatusFrame, parseStructureFrame, statusSubscriptionSpecs } from "./collector.ts";
-import type { SessionSnapshot } from "../shared/protocol.ts";
+import { parseStatusFrame, parseStructureFrame } from "./collector.ts";
 
 /**
  * Frame shapes are the live wire format observed against herdr protocol 22 (see
@@ -47,16 +46,3 @@ describe("parseStructureFrame", () => {
   });
 });
 
-describe("statusSubscriptionSpecs", () => {
-  it("subscribes to the agent status of every pane in the snapshot", () => {
-    const snapshot = { panes: [{ pane_id: "w1:p1" }, { pane_id: "w1:p2" }] } as unknown as SessionSnapshot;
-    expect(statusSubscriptionSpecs(snapshot)).toEqual([
-      { type: "pane.agent_status_changed", pane_id: "w1:p1" },
-      { type: "pane.agent_status_changed", pane_id: "w1:p2" },
-    ]);
-  });
-
-  it("produces an empty set for a pane-less snapshot", () => {
-    expect(statusSubscriptionSpecs({ panes: [] } as unknown as SessionSnapshot)).toEqual([]);
-  });
-});

@@ -262,6 +262,38 @@ describe("WebSocket roles and status push", () => {
     }
   }, 40_000);
 
+  it("sizes a PTY an observe connection creates from the pane, never from the observer's grid", async () => {
+    // observer-FIRST attach: nobody holds the attachment, so the observer's connect
+    // spawns the shared pty. The user's named scenario (a phone opens the pane first)
+    // must not seed the pty with the phone's viewport.
+    const paneId = qaPaneId!;
+    const rectOf = async (): Promise<{ width: number; height: number } | null> => {
+      const snapshot = (await herdrRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot;
+      return snapshot.layouts.flatMap((layout) => layout.panes).find((entry) => entry.pane_id === paneId)?.rect ?? null;
+    };
+    const rectBefore = await rectOf();
+    expect(rectBefore).not.toBeNull();
+
+    const observer = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
+    try {
+      observer.send({ type: "role", mode: "observe" });
+      await observer.waitFor((m) => m.type === "role-ack", "role-ack", 5000);
+      observer.send({ type: "attach", pane_id: paneId, cols: 40, rows: 20 });
+      const geometry = await observer.waitFor(
+        (m) => m.type === "pane-geometry" && m.pane_id === paneId,
+        "observer geometry",
+        15_000,
+      );
+      // the spawned pty carries the pane's grid, not the observer's 40x20
+      expect(geometry.cols).toBe(rectBefore!.width);
+      expect(geometry.rows).toBe(rectBefore!.height);
+      // herdr's layout is untouched either way
+      expect(await rectOf()).toEqual(rectBefore);
+    } finally {
+      observer.close();
+    }
+  }, 30_000);
+
   it("rejects an unknown role mode with an in-band error", async () => {
     const client = await RecordingSocket.connect(`ws://localhost:${server.port}/ws`);
     try {

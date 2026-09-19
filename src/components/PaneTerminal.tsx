@@ -321,7 +321,7 @@ export function PaneTerminal({ paneId, role = "interact", onRoleAck, onConnectio
               <span className="draft-dropped">{draft.droppedSpecial} special key{draft.droppedSpecial === 1 ? "" : "s"} dropped</span>
             )}
             <span className="draft-actions">
-              <button type="button" className="draft-send" disabled={draft.text.length === 0} onClick={sendDraft}>
+              <button type="button" className="draft-send" disabled={draft.text.length === 0 || observing} onClick={sendDraft}>
                 Send
               </button>
               <button type="button" className="draft-discard" onClick={discardDraft}>
