@@ -7,13 +7,13 @@ import "./PaneTerminal.css";
 import { HerdrSocket } from "../lib/ws.ts";
 import { controlCode, isPrintable, keySequence, type KeyBarKey } from "../lib/keys.ts";
 import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "../lib/draft.ts";
-import { composerPayload } from "../lib/compose.ts";
+import { QUEUE_READY_STATUS, composerPayload } from "../lib/compose.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
 import { uploadPaneImage } from "../lib/api.ts";
 import { KeyBar } from "./KeyBar.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { Composer } from "./Composer.tsx";
-import type { ClientRole, ServerMessage } from "../../shared/protocol.ts";
+import type { AgentStatus, ClientRole, ServerMessage } from "../../shared/protocol.ts";
 
 const FONT_STACK =
   '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace';
@@ -23,6 +23,8 @@ export interface PaneTerminalProps {
   paneId: string | null;
   /** the pane's agent name — the chat lens labels the assistant's voice with it */
   agent?: string | null;
+  /** the pane's live agent status: `working` turns composer sends into the queue */
+  agentStatus?: AgentStatus;
   /** The connection's desired role; changes are sent to the server, acks come back via onRoleAck. */
   role?: ClientRole;
   /** Fires with the server-confirmed role (the header toggle shows it). */
@@ -33,7 +35,7 @@ export interface PaneTerminalProps {
   onServerMessage?: (message: ServerMessage) => void;
 }
 
-export function PaneTerminal({ paneId, agent = null, role = "interact", onRoleAck, onConnectionChange, onServerMessage }: PaneTerminalProps) {
+export function PaneTerminal({ paneId, agent = null, agentStatus, role = "interact", onRoleAck, onConnectionChange, onServerMessage }: PaneTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -59,6 +61,9 @@ export function PaneTerminal({ paneId, agent = null, role = "interact", onRoleAc
   // the chat lens over the attached pane (transcript polling), per-pane choice
   const [chatView, setChatView] = useState(false);
   const [chatRefresh, setChatRefresh] = useState(0);
+  // the next message queued while the agent runs (chatmux's queued draft): held
+  // per pane in localStorage, dispatched the moment the run ends
+  const [queued, setQueued] = useState<string | null>(null);
 
   paneRef.current = paneId;
   onConnectionChangeRef.current = onConnectionChange;
@@ -278,6 +283,8 @@ export function PaneTerminal({ paneId, agent = null, role = "interact", onRoleAc
     term.reset();
     // the chat lens is remembered per pane; the terminal stays the default
     setChatView(paneId !== null && window.localStorage.getItem(`herdr-web-ui:view:${paneId}`) === "chat");
+    // so is a message queued for the next idle moment
+    setQueued(paneId !== null ? window.localStorage.getItem(`herdr-web-ui:queue:${paneId}`) : null);
     if (!paneId) return;
     try {
       fit?.fit();
@@ -356,10 +363,46 @@ export function PaneTerminal({ paneId, agent = null, role = "interact", onRoleAc
     return true;
   }, []);
 
+  // chatmux's queue-next: while the pane's agent runs, a send becomes the ONE
+  // queued message; it leaves the queue when the agent is known to be ready.
+  const busy = agent !== null && agentStatus === "working";
+  const readyForQueue = agentStatus !== undefined && QUEUE_READY_STATUS[agentStatus] === true;
+
+  const composerSend = useCallback(
+    (text: string): boolean => {
+      if (agent !== null && agentStatus === "working") {
+        setQueued(text);
+        return true; // the composer may clear its box: the text lives in the queue card
+      }
+      return sendComposerText(text);
+    },
+    [agent, agentStatus, sendComposerText],
+  );
+
+  // the queue auto-dispatches once the pane reports a ready state (idle, done,
+  // blocked: all of them want the user's next line) and on reconnect. An
+  // unrecognized or `unknown` status holds it: see QUEUE_READY_STATUS.
+  useEffect(() => {
+    if (queued === null || agent === null || !readyForQueue || !connected || ended || observing) return;
+    if (sendComposerText(queued)) setQueued(null);
+  }, [queued, agent, readyForQueue, connected, ended, observing, sendComposerText]);
+
+  // the queue is per-pane durable: a reload while the agent runs still delivers
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (pane === null) return;
+    try {
+      if (queued !== null && queued.trim().length > 0) window.localStorage.setItem(`herdr-web-ui:queue:${pane}`, queued);
+      else window.localStorage.removeItem(`herdr-web-ui:queue:${pane}`);
+    } catch {
+      /* private mode: the queue just stops being remembered */
+    }
+  }, [queued]);
+
   const uploadImage = useCallback((file: File) => uploadPaneImage(paneRef.current ?? "", file), []);
 
   return (
-    <div className="terminal-stack">
+    <div className={`terminal-stack${chatView ? " is-chat" : ""}`}>
       {paneId === null && (
         <div className="terminal-placeholder">
           <div className="terminal-placeholder-inner">
@@ -429,8 +472,49 @@ export function PaneTerminal({ paneId, agent = null, role = "interact", onRoleAc
           <ChatView paneId={paneId} refreshKey={chatRefresh} connected={connected} ended={ended} agent={agent} />
         )}
       </div>
-      {paneId !== null && !observing && !ended && (
-        <Composer key={paneId} connected={connected} onSend={sendComposerText} onUploadImage={uploadImage} />
+      {paneId !== null && !observing && !ended && queued !== null && (
+        <div className="composer-queue" role="group" aria-label="Queued next message">
+          <span className="composer-queue-label">
+            {readyForQueue ? "sending…" : "queued — sends when the agent is ready"}
+          </span>
+          <textarea
+            className="composer-queue-text"
+            value={queued}
+            rows={Math.min(4, queued.split("\n").length)}
+            aria-label="Queued message"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            onChange={(event) => setQueued(event.target.value)}
+          />
+          <span className="composer-queue-actions">
+            <button
+              type="button"
+              className="composer-queue-send"
+              disabled={!connected}
+              onClick={() => {
+                if (sendComposerText(queued)) setQueued(null);
+              }}
+            >
+              Send now
+            </button>
+            <button type="button" className="composer-queue-discard" onClick={() => setQueued(null)}>
+              Discard
+            </button>
+          </span>
+        </div>
+      )}
+      {/* the composer belongs to the chat lens: in terminal mode the grid itself is
+          the input surface (key bar included), so a second box would only duplicate it */}
+      {paneId !== null && chatView && !observing && !ended && (
+        <Composer
+          key={paneId}
+          paneId={paneId}
+          connected={connected}
+          queueMode={busy}
+          onSend={composerSend}
+          onUploadImage={uploadImage}
+        />
       )}
       {paneId !== null && !observing && !chatView && <KeyBar onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl} />}
     </div>

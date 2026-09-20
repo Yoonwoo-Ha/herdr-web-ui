@@ -156,3 +156,81 @@
     transition: none;
   }
 }
+
+/* ---------- queued next message (chatmux's queue-next) ---------- */
+
+/* the one message held while the pane's agent runs: editable, sendable now,
+ * discardable — and auto-dispatched the moment the run ends */
+.composer-queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-top: var(--hairline) solid var(--border);
+  background: var(--accent-tint);
+}
+
+.terminal-stack.is-chat .composer-queue {
+  width: min(100%, calc(768px + 2 * var(--space-4)));
+  margin: 0 auto;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.composer-queue-label {
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.composer-queue-text {
+  resize: none;
+  min-height: 2lh;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  border: var(--hairline) solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-strong);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+}
+
+.composer-queue-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.composer-queue-send,
+.composer-queue-discard {
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+.composer-queue-send {
+  border: var(--hairline) solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.composer-queue-send:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.composer-queue-send:disabled {
+  opacity: 0.7;
+}
+
+.composer-queue-discard {
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+}
+
+.composer-queue-discard:hover {
+  color: var(--status-blocked);
+}

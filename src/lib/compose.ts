@@ -32,3 +32,13 @@ export function composerPayload(text: string, bracketedPaste: boolean): string {
 export function imageMention(path: string): string {
   return `@${path} `;
 }
+
+/**
+ * Agent states that mean "the run is over, the next line is wanted", and so let a
+ * parked message auto-dispatch. Deliberately an allow-list: `unknown` is what a pane
+ * reports before the status collector has seen it (and during a reconnect), and
+ * herdr's AgentStatus is widened with `(string & {})`, so a state a newer herdr
+ * invents must never fire the queue into a still-running agent. Anything unrecognized
+ * keeps the message parked for the user's own `Send now`.
+ */
+export const QUEUE_READY_STATUS: Record<string, true> = { blocked: true, done: true, idle: true };

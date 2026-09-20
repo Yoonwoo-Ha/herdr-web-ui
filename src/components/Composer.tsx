@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 
 import "./Composer.css";
 
@@ -7,6 +7,10 @@ import { imageMention, MAX_COMPOSER_CHARS } from "../lib/compose.ts";
 export interface ComposerProps {
   /** false while the socket is down: text is kept in the textarea, sending waits */
   connected: boolean;
+  /** the pane this box serves: the draft is remembered per pane across switches */
+  paneId: string;
+  /** true while the pane's agent runs: a send queues instead of typing into the run */
+  queueMode?: boolean;
   /** One send = one bracketed-paste payload for the pane (PaneTerminal owns the pty
    * path). Returns false when the pane path is dead — the composer then keeps the
    * text for the user to review, never queueing it itself. */
@@ -26,12 +30,24 @@ const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/web
  * prompt references by path, and nothing is queued while disconnected - Send simply
  * waits, exactly like the terminal's held-input draft policy.
  */
-export function Composer({ connected, onSend, onUploadImage }: ComposerProps) {
+export function Composer({ connected, paneId, queueMode = false, onSend, onUploadImage }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [text, setText] = useState("");
+  const draftKey = `herdr-web-ui:composer-draft:${paneId}`;
+  const [text, setText] = useState<string>(() => window.localStorage.getItem(draftKey) ?? "");
   const [uploading, setUploading] = useState(false);
   const [note, setNote] = useState<{ kind: "info" | "error"; message: string } | null>(null);
+
+  // the draft survives pane switches and reloads, per pane (chatmux's persistent drafts)
+  useEffect(() => {
+    try {
+      if (text.length > 0) window.localStorage.setItem(draftKey, text);
+      else window.localStorage.removeItem(draftKey);
+    } catch {
+      /* private mode: the draft just stops being remembered */
+    }
+  }, [draftKey, text]);
+
 
   // the box grows with its text but stops at 10 lines; beyond that it scrolls
   useLayoutEffect(() => {
@@ -120,7 +136,6 @@ export function Composer({ connected, onSend, onUploadImage }: ComposerProps) {
     },
     [send],
   );
-
   const hint = !connected
     ? "reconnecting… held here, never queued"
     : uploading
@@ -170,10 +185,11 @@ export function Composer({ connected, onSend, onUploadImage }: ComposerProps) {
       <button
         type="button"
         className="composer-button composer-send"
+        title={queueMode ? "The agent is running — this queues as the next message" : undefined}
         disabled={!connected || uploading || text.trim().length === 0}
         onClick={send}
       >
-        Send
+        {queueMode ? "Queue" : "Send"}
       </button>
       {(note || hint) && (
         <div className={`composer-note${note?.kind === "error" ? " is-error" : ""}`} role={note?.kind === "error" ? "alert" : "status"}>

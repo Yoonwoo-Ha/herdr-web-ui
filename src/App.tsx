@@ -430,6 +430,7 @@ export function App() {
           <PaneTerminal
             paneId={selectedPaneId}
             agent={selectedPane?.agent ?? null}
+            agentStatus={selectedPane?.agent_status}
             role={role}
             onRoleAck={setRole}
             onConnectionChange={setConnected}
