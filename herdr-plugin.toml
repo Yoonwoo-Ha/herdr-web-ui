@@ -1,0 +1,34 @@
+id = "devswha.herdr-web-ui"
+name = "herdr web ui"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Browser and phone client for herdr: real xterm.js attach, agent-status badges, view-only mode, web push"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["bun", "install"]
+
+[[build]]
+command = ["bun", "run", "build"]
+
+# One-shot per herdr start: brings the bridge up if it is not already answering.
+[[startup]]
+command = ["bun", "scripts/plugin.ts", "start"]
+
+[[actions]]
+id = "start"
+title = "Start herdr web ui"
+contexts = ["workspace"]
+command = ["bun", "scripts/plugin.ts", "start"]
+
+[[actions]]
+id = "stop"
+title = "Stop herdr web ui"
+contexts = ["workspace"]
+command = ["bun", "scripts/plugin.ts", "stop"]
+
+[[actions]]
+id = "status"
+title = "herdr web ui status"
+contexts = ["workspace"]
+command = ["bun", "scripts/plugin.ts", "status"]

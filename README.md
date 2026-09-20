@@ -30,7 +30,11 @@ herdr web ui is a browser UI and installable PWA for [herdr](https://herdr.dev).
 
 herdr already owns the ptys. The architecture borrows from [chatmux](https://github.com/devswha/chatmux), but where chatmux spawns its own ptys with node-pty, this project spawns none of its own: it is a bridge over herdr's newline-delimited JSON unix-socket API plus the real `herdr terminal attach` byte stream.
 
-Attaches coexist. The server never passes `--takeover`, so opening a pane in the browser doesn't displace whoever is already watching that terminal, your desktop TUI included (`server/index.ts`).
+**The terminal is the attach stream, not a screen poll.** Every pane is a real `herdr terminal attach` on a pty and its raw bytes go to xterm.js, so full-screen agent TUIs, the alternate screen, mouse reporting and herdr's own scrollback all behave. Rebuilding the screen from periodic `pane.read` snapshots is the cheaper design, and it caps at the visible viewport.
+
+**A second device never disturbs the first.** Attaches coexist — the server never passes `--takeover`, so opening a pane in the browser doesn't displace your desktop TUI. View-only mode goes further and is enforced server-side: an observer's input, keys and resize are refused, and its attach adopts the pty's grid instead of imposing a phone's (`server/index.ts`). Your desktop's geometry is not up for negotiation because you opened the pane on a phone.
+
+**It is safe to expose.** A shared-token gate with an HttpOnly cookie guards `/api/session`, `/api/pane/*`, `/api/push*` and the `/ws` upgrade, and the bind address is yours to choose (see [Security](#security)).
 
 ## Features
 
@@ -67,6 +71,31 @@ bun run start
 ```
 
 `bun run start` builds the client and serves it at http://localhost:7317.
+
+### Install it as a herdr plugin
+
+```bash
+herdr plugin install devswha/herdr-web-ui
+```
+
+herdr clones the repo, runs the manifest's build commands (`bun install`, `bun run build`) and registers `devswha.herdr-web-ui`. From then on a `[[startup]]` hook brings the bridge up whenever herdr starts, and three actions drive it by hand (`herdr-plugin.toml`, `scripts/plugin.ts`):
+
+```bash
+herdr plugin action invoke devswha.herdr-web-ui.start
+herdr plugin action invoke devswha.herdr-web-ui.status
+herdr plugin action invoke devswha.herdr-web-ui.stop
+```
+
+`start` is idempotent: a server already answering on the port is left alone, so the startup hook never fights an instance you launched yourself. herdr's startup hooks are one-shot commands rather than supervised daemons, so the script detaches the server and keeps its pid and log in `HERDR_PLUGIN_STATE_DIR`.
+
+Plugin commands inherit herdr's environment, not your shell's, so the token and any overrides are read from an `env` file in the plugin's config dir (`herdr plugin config-dir devswha.herdr-web-ui`):
+
+```bash
+printf 'HERDR_WEB_TOKEN=%s\nHOST=127.0.0.1\n' "$(openssl rand -hex 16)" \
+  > "$(herdr plugin config-dir devswha.herdr-web-ui)/env"
+```
+
+herdr injects `HERDR_SOCKET_PATH`; the script maps it onto `HERDR_SOCKET`, so a plugin running inside a named session talks to that session's socket.
 
 Other ways to run it:
 
@@ -212,6 +241,8 @@ Errors are non-2xx responses with `{ error: { code, message } }`.
 | `shared/notify-policy.ts` | When a pane is worth an alert and what it says, for the tab and for push |
 | `scripts/generate-protocol-types.ts` | The generator and its `--check` freshness gate |
 | `scripts/herdr-schema.json` | Snapshot of `herdr api schema --json` |
+| `herdr-plugin.toml` | Plugin manifest: build commands, the startup hook and the start/stop/status actions |
+| `scripts/plugin.ts` | Plugin lifecycle: detached start (idempotent), stop, status |
 | `server/index.ts` | Bun.serve HTTP API, WebSocket fan-out, static client |
 | `server/collector.ts` | Server-wide agent-status collector: every pane, attached or not |
 | `server/auth.ts` | Shared-token gate and cookie handling |
