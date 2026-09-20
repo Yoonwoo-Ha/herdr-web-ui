@@ -224,12 +224,15 @@ All spacing derives from a base of **4px**.
 - **Accessibility**: `role="status"` announces the change; the dot is `aria-hidden`.
 
 ### Sidebar tree (`.tree`, `.workspace`, `.pane-row`)
-- **Structure**: `<nav class="tree">` → `<section class="workspace">` with
-  `<header class="workspace-header">` (`.workspace-number` chip, `.workspace-label`, badge — the rollup
-  shown only when the workspace has more than one pane; with one pane the row badge already says it), an
-  optional `.tab-label` overline (only when the workspace has more than one tab), and
-  `<ul class="pane-list">` of `<button class="pane-row">` with `.pane-title` on line one and
-  `.pane-meta` (`.pane-id` mono, `.agent-chip`, badge) on line two.
+- **Structure**: `<nav class="tree">` → `<section class="workspace">` whose rows are ONE line each:
+  `<ul class="pane-list">` of `<button class="pane-row">` carrying `.workspace-number` chip,
+  `.pane-name` (the workspace label, semibold `--text-strong`), `.pane-title` (the pane's live
+  title, `--text-dim`, dropped when it only repeats the label), `.agent-mark-holder` and the
+  badge — agent panes only. A workspace with more than one pane keeps a
+  `<header class="workspace-header">` (`.workspace-number`, `.workspace-label`, rollup badge)
+  and its rows drop the number/name pair; an optional `.tab-label` overline shows only when the
+  workspace has more than one tab. Shell prompt titles drop their `user@host:` prefix; the pane
+  id and cwd live in the row tooltip, not the row.
 - **Spacing**: `--space-4` between workspaces, `--space-1` inside a workspace, rows padded
   `--space-2` with a `--space-3` left inset that the rail sits in.
 - **States**: default, hover (`--bg-hover`), selected (`--bg-elevated` + inset `--rail-w` accent
@@ -312,31 +315,43 @@ All spacing derives from a base of **4px**.
   `source:"scrollback"` and render the ANSI-stripped `pane.read` transcript as bubbles instead
   (`src/lib/transcript.ts`: ❯ prompt echo → user, rules dropped, chrome dimmed, paragraph split) —
   the same fallback chatmux ships. Polled every 2s, refreshed at once on a composer send.
-- **Spacing**: bubbles `--space-2/4` padding, `--radius-md`, a hairline `--border` edge,
-  `--font-mono` at `--fs-sm` for terminal text; the panel pads
-  `calc(--control-h + --space-2)` on top so the first bubble clears the view-toggle pill.
-- **States**: conversation turns carry markdown-lite — prose in `--font-ui` with `inline code`
-  chips and **bold**, `- ` runs as `.chat-list`, fenced code as `.chat-code`; each `tool_use` is a
-  `.chat-tool-chip` (accent tool name, ellipsized summary, ▸/▾ caret) expanding to `.chat-tool-io`
-  input/output panes. Agent turns (`.chat-agent`: `--bg-hover` fill, hairline edge, flush left,
-  full width) open with the agent's name in the `.chat-role` overline (the prop `PaneTerminal`
-  gets from App's snapshot); user turns (`.chat-user`: accent border on `--accent-tint` over
-  `--bg-elevated`, `--text-strong`, flush right, prose-width `min(64ch, 92%)`) open with `you`.
-  The scrollback fallback keeps its `.chat-status` dimming (TUI chrome, turn metadata) and
-  `.chat-note` lines (centered dim `--fs-xs`; the error variant takes `--status-blocked`).
+- **Spacing**: the transcript reads as a chat app — `--bg` panel, one centered column
+  `min(100%, 768px)` for both voices, `--space-5` between turns; the panel pads
+  `calc(--control-h + --space-3)` on top so the first bubble clears the view-toggle pill.
+- **States**: conversation turns carry markdown-lite — prose in `--font-ui` at `--fs-md`
+  (1.6) with `inline code` chips and **bold**, `- ` runs as `.chat-list`, fenced code as
+  `.chat-code` (bordered `--bg-panel` panel, `--radius-md`). The assistant is a voice, not a
+  box: agent turns (`.chat-turn-agent`, no fill, no edge) open with the agent's name in the
+  `.chat-role-agent` overline (accent dot + quiet caps; the prop `PaneTerminal` gets from
+  App's snapshot); user turns (`.chat-turn-user`) open with `you` and speak in right-aligned
+  `.chat-bubble`s — `--accent-tint` over `--bg-elevated`, hairline `--border` edge, radius
+  `14/14/--radius-sm/14` (the snubbed corner points at the speaker), `min(52ch, 100%)`,
+  `--text-strong` in `--font-ui`. Each `tool_use` is a `.chat-tool-chip` (pill row,
+  `--bg-panel`, accent mono tool name, ellipsized `--font-ui` summary, ▸/▾ caret) expanding
+  to `.chat-tool-io` input/output panels. Consecutive same-name calls collapse at two or more
+  into one `.chat-tool-run` (`×N`, summaries while closed, indented individual calls while
+  open); prose always breaks a run. Commands render as shell blocks, read/grep/glob calls as
+  file metadata, Claude/OMP edits as line-classed diffs, and todo/task inputs as checklists;
+  unknown tools retain the raw JSON fallback. The scrollback fallback keeps the older boxed
+  bubbles (`.chat-msg`: `--font-mono` `--fs-sm`, `--radius-md`, hairline edge; agent fills
+  `--bg-panel` flush left full width, user accent-bordered flush right `min(64ch, 92%)`,
+  TUI chrome dimmed `.chat-status`, `.chat-note` lines centered dim `--fs-xs` with the
+  error variant in `--status-blocked`).
   Auto-follows the bottom unless the reader scrolled up (>48px stops following).
 - **Layout**: absolute `inset: 0` over `.terminal-surface` (the mount's own positioned box) at
   `z-index: 1` — above the xterm canvas, below the banner column (`--z-banner`) so
   ended/reconnecting/held-input pills stay visible, and never over the composer/key bar rows. The
-  choice is remembered per pane in `localStorage["herdr-web-ui:view:<pane_id>"]`; the key bar is
-  hidden while the chat lens is on (terminal keys have no target), the composer is not.
+  choice is remembered per pane in `localStorage["herdr-web-ui:view:<pane_id>"]`; the key bar
+  belongs to the terminal lens and the composer to the chat lens, so exactly one of them shows.
 
 ### Composer (`.composer`)
 - **Structure**: `<div class="composer" role="group" aria-label="Message composer">` → a hidden
   `input[type=file]`, `<textarea class="composer-text" rows=1 aria-label="Message">`, an attach
   icon-button (paperclip glyph, `aria-label="Attach images"`) and a Send button. Rendered by
-  `Composer.tsx`; `PaneTerminal` mounts it between the xterm mount and the key bar, only while a
-  pane is selected AND interactive AND alive (observing or ended hides it, like the key bar).
+  `Composer.tsx`; `PaneTerminal` mounts it under the xterm mount only while the CHAT lens is on
+  and the pane is selected AND interactive AND alive (terminal mode, observing or ended hide it —
+  in terminal mode the grid itself takes the keystrokes). The queue card is independent: it shows
+  in either lens whenever a message is actually queued.
 - **Variants**: `.composer-send` (accent text + border, accent-tint hover); `.composer-note`
   status pill floating over the terminal seam (`--z-banner`, `pointer-events: none`),
   `.is-error` on `--danger-tint`.
@@ -350,7 +365,12 @@ All spacing derives from a base of **4px**.
   program's own `bracketedPasteMode` — one input path with the key bar (`src/lib/compose.ts`).
   Pasted or picked images (png/jpeg/gif/webp, ≤8MB each, ≤4 per action) upload to
   `POST /api/pane/image` and insert an editable `@path` mention; upload errors show as the
-  error pill. While disconnected the textarea disables and holds its text — nothing is queued.
+  error pill. Every pane's unsent text persists under
+  `localStorage["herdr-web-ui:composer-draft:<pane_id>"]` and restores across pane switches or
+  reloads. While an agent is working, Send becomes Queue and stores one editable per-pane next
+  message; the queue card offers Send now/Discard and auto-dispatches once the agent stops
+  working and the pane is connected, alive, and interactive. While disconnected the textarea
+  disables and holds its text — nothing new is queued.
 - **Accessibility**: error pill `role="alert"`, other notes `role="status"`; every icon-only
   control carries `aria-label`.
 - **Motion**: button background/border `--dur-fast`; none under reduced motion.

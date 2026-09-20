@@ -1,7 +1,8 @@
 /*
  * Workspace > tab > pane tree for Sidebar.tsx. Only tokens from styles.css :root.
- * Rows are two lines on purpose: the terminal title is what people scan for, the
- * pane id / agent / status are metadata and sit under it in a smaller size.
+ * A row is ONE line: workspace name and the pane's live title are the same thought,
+ * so a single-pane workspace drops its header and the row carries number, name,
+ * title and status side by side. The pane id and cwd live in the row tooltip.
  */
 
 .tree {
@@ -92,10 +93,10 @@
 
 .pane-row {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-1);
+  align-items: center;
+  gap: var(--space-2);
   width: 100%;
+  min-width: 0;
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
   background: transparent;
   border: 0;
@@ -115,49 +116,54 @@
   box-shadow: inset var(--rail-w) 0 0 var(--accent);
 }
 
+.pane-row.is-selected .pane-name,
 .pane-row.is-selected .pane-title {
   color: var(--text-strong);
 }
 
-.pane-title {
+/* the name is the row's identity: it keeps its full width (up to half the row) and
+ * the live title, which is the long half, is what ellipsizes */
+.pane-name {
+  flex: 0 0 auto;
+  max-width: 50%;
   font-size: var(--fs-sm);
-  font-weight: var(--fw-medium);
-  line-height: var(--lh-base); /* headroom for tall Hangul metrics under overflow: hidden */
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-base);
+  color: var(--text-strong);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.pane-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.pane-title {
+  flex: 1 1 auto;
   min-width: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-base); /* headroom for tall Hangul metrics under overflow: hidden */
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.pane-meta .badge {
+.pane-row .badge {
   margin-left: auto;
 }
 
-.pane-id {
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-.agent-chip {
+/* the provider mark replaces the old text chip: the icon names the agent,
+ * the title tooltip spells it out */
+.agent-mark-holder {
   display: inline-flex;
   align-items: center;
-  height: var(--chip-h);
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-sm);
-  background: var(--accent-tint);
-  font-size: var(--fs-2xs);
-  font-weight: var(--fw-medium);
-  color: var(--accent);
-  white-space: nowrap;
+  flex: none;
 }
+
+.agent-mark-holder svg {
+  display: block;
+  color: var(--text); /* monochrome marks (codex, cursor) ride currentColor */
+}
+
 
 /* the row's ✕ sits beside the title column (never nested in the row button):
  * desktop reveals it on row hover/focus, coarse pointers keep it always visible */
