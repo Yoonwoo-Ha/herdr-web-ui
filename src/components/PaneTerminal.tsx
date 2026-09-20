@@ -18,6 +18,12 @@ import type { AgentStatus, ClientRole, ServerMessage } from "../../shared/protoc
 const FONT_STACK =
   '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace';
 
+/** The one message parked for a pane, tagged with the pane it belongs to. */
+interface QueuedMessage {
+  pane: string;
+  text: string;
+}
+
 export interface PaneTerminalProps {
   /** The pane this terminal attaches to; null renders the placeholder. */
   paneId: string | null;
@@ -62,8 +68,12 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
   const [chatView, setChatView] = useState(false);
   const [chatRefresh, setChatRefresh] = useState(0);
   // the next message queued while the agent runs (chatmux's queued draft): held
-  // per pane in localStorage, dispatched the moment the run ends
-  const [queued, setQueued] = useState<string | null>(null);
+  // per pane in localStorage, dispatched the moment the run ends. It carries the
+  // pane it was written for, because a pane switch changes `agent`/`agentStatus`
+  // in the same commit that reloads this state: without the tag, the dispatch
+  // effect sees the OLD text beside the NEW pane's ready status and types one
+  // pane's message into another pane's agent.
+  const [queued, setQueued] = useState<QueuedMessage | null>(null);
 
   paneRef.current = paneId;
   onConnectionChangeRef.current = onConnectionChange;
@@ -284,7 +294,11 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
     // the chat lens is remembered per pane; the terminal stays the default
     setChatView(paneId !== null && window.localStorage.getItem(`herdr-web-ui:view:${paneId}`) === "chat");
     // so is a message queued for the next idle moment
-    setQueued(paneId !== null ? window.localStorage.getItem(`herdr-web-ui:queue:${paneId}`) : null);
+    setQueued(() => {
+      if (paneId === null) return null;
+      const text = window.localStorage.getItem(`herdr-web-ui:queue:${paneId}`);
+      return text === null ? null : { pane: paneId, text };
+    });
     if (!paneId) return;
     try {
       fit?.fit();
@@ -370,8 +384,9 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
 
   const composerSend = useCallback(
     (text: string): boolean => {
-      if (agent !== null && agentStatus === "working") {
-        setQueued(text);
+      const pane = paneRef.current;
+      if (pane !== null && agent !== null && agentStatus === "working") {
+        setQueued({ pane, text });
         return true; // the composer may clear its box: the text lives in the queue card
       }
       return sendComposerText(text);
@@ -383,17 +398,19 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
   // blocked: all of them want the user's next line) and on reconnect. An
   // unrecognized or `unknown` status holds it: see QUEUE_READY_STATUS.
   useEffect(() => {
-    if (queued === null || agent === null || !readyForQueue || !connected || ended || observing) return;
-    if (sendComposerText(queued)) setQueued(null);
-  }, [queued, agent, readyForQueue, connected, ended, observing, sendComposerText]);
+    if (queued === null || queued.pane !== paneId) return;
+    if (agent === null || !readyForQueue || !connected || ended || observing) return;
+    if (sendComposerText(queued.text)) setQueued(null);
+  }, [queued, paneId, agent, readyForQueue, connected, ended, observing, sendComposerText]);
 
   // the queue is per-pane durable: a reload while the agent runs still delivers
   useEffect(() => {
     const pane = paneRef.current;
     if (pane === null) return;
     try {
-      if (queued !== null && queued.trim().length > 0) window.localStorage.setItem(`herdr-web-ui:queue:${pane}`, queued);
-      else window.localStorage.removeItem(`herdr-web-ui:queue:${pane}`);
+      if (queued !== null && queued.pane === pane && queued.text.trim().length > 0) {
+        window.localStorage.setItem(`herdr-web-ui:queue:${pane}`, queued.text);
+      } else if (queued === null) window.localStorage.removeItem(`herdr-web-ui:queue:${pane}`);
     } catch {
       /* private mode: the queue just stops being remembered */
     }
@@ -472,20 +489,20 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
           <ChatView paneId={paneId} refreshKey={chatRefresh} connected={connected} ended={ended} agent={agent} />
         )}
       </div>
-      {paneId !== null && !observing && !ended && queued !== null && (
+      {paneId !== null && !observing && !ended && queued !== null && queued.pane === paneId && (
         <div className="composer-queue" role="group" aria-label="Queued next message">
           <span className="composer-queue-label">
             {readyForQueue ? "sending…" : "queued — sends when the agent is ready"}
           </span>
           <textarea
             className="composer-queue-text"
-            value={queued}
-            rows={Math.min(4, queued.split("\n").length)}
+            value={queued.text}
+            rows={Math.min(4, queued.text.split("\n").length)}
             aria-label="Queued message"
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
-            onChange={(event) => setQueued(event.target.value)}
+            onChange={(event) => setQueued({ pane: queued.pane, text: event.target.value })}
           />
           <span className="composer-queue-actions">
             <button
@@ -493,7 +510,7 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
               className="composer-queue-send"
               disabled={!connected}
               onClick={() => {
-                if (sendComposerText(queued)) setQueued(null);
+                if (sendComposerText(queued.text)) setQueued(null);
               }}
             >
               Send now
