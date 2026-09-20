@@ -296,8 +296,7 @@ export function createServer(
         const paneId = url.searchParams.get("pane_id");
         if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
         try {
-          const turns = await paneConversation(paneId);
-          return jsonResponse({ source: "claude-transcript", turns });
+          return jsonResponse(await paneConversation(paneId));
         } catch (error) {
           // an unrecognized pane is not an error: the client falls back to the
           // scrollback transcript, exactly like chatmux's terminal fallback

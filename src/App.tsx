@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentStatus, ClientRole, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
-import { ApiError, fetchHealth, fetchSession, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
+import { ApiError, authenticate, fetchHealth, fetchSession, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
 import { paneTitle, Sidebar } from "./components/Sidebar.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
 import { TokenGate } from "./components/TokenGate.tsx";
 import { applyPaneStatus } from "./lib/snapshot.ts";
+import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import {
   notificationState,
   requestNotificationPermission,
@@ -134,9 +135,22 @@ export function App() {
       // a locked tab only watches health, so a token entered in another tab still unlocks it
       if (lockedRef.current !== true) void load();
     };
-    tick();
-    const timer = window.setInterval(tick, POLL_MS);
-    return () => window.clearInterval(timer);
+    let timer = 0;
+    let disposed = false;
+    void (async (): Promise<void> => {
+      // a bookmarked `#auth=<token>` link unlocks without typing; the fragment is
+      // stripped before anything renders, and a stale token falls through to the
+      // gate the first health check mounts
+      const linkToken = takeAuthTokenFromUrl();
+      if (linkToken !== null) await authenticate(linkToken).catch(() => undefined);
+      if (disposed) return;
+      tick();
+      timer = window.setInterval(tick, POLL_MS);
+    })();
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
   }, [load, loadHealth]);
 
   // push-triggered refetches are debounced so an event burst becomes one fetch
@@ -229,6 +243,21 @@ export function App() {
     void loadHealth();
     void load();
   }, [load, loadHealth]);
+
+  // pasting the auth link into an already-open tab is a fragment-only navigation:
+  // no reload happens, so the boot consumer never re-runs. Watch for the arrival
+  // of the fragment instead; a wrong token just leaves the gate as it is.
+  useEffect(() => {
+    const onHashChange = (): void => {
+      const linkToken = takeAuthTokenFromUrl();
+      if (linkToken === null) return;
+      void authenticate(linkToken)
+        .then(unlock)
+        .catch(() => undefined);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [unlock]);
 
   const lock = useCallback(async () => {
     setDrawerOpen(false);
