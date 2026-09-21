@@ -111,9 +111,12 @@ export function parseClaudeTranscript(text: string): ConversationTurn[] {
       const turn = assistantTurn(entry.timestamp);
       for (const block of content) {
         if (typeof block !== "object" || block === null) continue;
-        const b = block as { type?: string; text?: unknown; name?: unknown; input?: unknown };
+        const b = block as { type?: string; text?: unknown; thinking?: unknown; name?: unknown; input?: unknown };
         if (b.type === "text" && typeof b.text === "string" && b.text.length > 0) {
           turn.parts.push({ kind: "text", text: b.text });
+        } else if (b.type === "thinking") {
+          const thinking = typeof b.thinking === "string" ? b.thinking : typeof b.text === "string" ? b.text : "";
+          if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });
         } else if (b.type === "tool_use" && typeof b.name === "string") {
           const input = (typeof b.input === "object" && b.input !== null ? b.input : {}) as Record<string, unknown>;
           const part: Extract<ConversationPart, { kind: "tool" }> = {
@@ -126,7 +129,7 @@ export function parseClaudeTranscript(text: string): ConversationTurn[] {
           turn.parts.push(part);
           pending.set(String((block as { id?: unknown }).id ?? ""), part);
         }
-        // thinking blocks stay private to the agent
+        // unsupported transcript blocks are intentionally ignored
       }
     }
   }
@@ -207,9 +210,12 @@ export function parseOmpTranscript(text: string): ConversationTurn[] {
       const turn = assistantTurn(entry.timestamp);
       for (const block of message.content) {
         if (typeof block !== "object" || block === null) continue;
-        const b = block as { type?: string; text?: unknown; name?: unknown; id?: unknown; arguments?: unknown; intent?: unknown };
+        const b = block as { type?: string; text?: unknown; thinking?: unknown; name?: unknown; id?: unknown; arguments?: unknown; intent?: unknown };
         if (b.type === "text" && typeof b.text === "string" && b.text.length > 0) {
           turn.parts.push({ kind: "text", text: b.text });
+        } else if (b.type === "thinking") {
+          const thinking = typeof b.thinking === "string" ? b.thinking : typeof b.text === "string" ? b.text : "";
+          if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });
         } else if (b.type === "toolCall" && typeof b.name === "string") {
           const input = (typeof b.arguments === "object" && b.arguments !== null ? b.arguments : {}) as Record<string, unknown>;
           const summary = typeof b.intent === "string" && b.intent.length > 0 ? b.intent : toolSummary(b.name, input);
@@ -223,7 +229,7 @@ export function parseOmpTranscript(text: string): ConversationTurn[] {
           turn.parts.push(part);
           if (typeof b.id === "string") pending.set(b.id, part);
         }
-        // thinking parts stay private to the agent
+        // unsupported transcript parts are intentionally ignored
       }
     }
   }

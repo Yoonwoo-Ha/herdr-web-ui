@@ -14,6 +14,8 @@ import { KeyBar } from "./KeyBar.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { Composer } from "./Composer.tsx";
 import type { AgentStatus, ClientRole, ServerMessage } from "../../shared/protocol.ts";
+import type { PaneView } from "../lib/actions.ts";
+import { terminalTheme, type ResolvedTheme } from "../lib/settings.ts";
 
 const FONT_STACK =
   '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace';
@@ -31,6 +33,12 @@ export interface PaneTerminalProps {
   agent?: string | null;
   /** the pane's live agent status: `working` turns composer sends into the queue */
   agentStatus?: AgentStatus;
+  /** the lens over the pane: the chat transcript, or the live xterm grid (App remembers it per pane) */
+  view: PaneView;
+  /** xterm font size (settings) */
+  terminalFontSize: number;
+  /** the resolved UI theme: the xterm theme object mirrors it */
+  theme: ResolvedTheme;
   /** The connection's desired role; changes are sent to the server, acks come back via onRoleAck. */
   role?: ClientRole;
   /** Fires with the server-confirmed role (the header toggle shows it). */
@@ -41,7 +49,19 @@ export interface PaneTerminalProps {
   onServerMessage?: (message: ServerMessage) => void;
 }
 
-export function PaneTerminal({ paneId, agent = null, agentStatus, role = "interact", onRoleAck, onConnectionChange, onServerMessage }: PaneTerminalProps) {
+export function PaneTerminal({
+  paneId,
+  agent = null,
+  agentStatus,
+  view,
+  terminalFontSize,
+  theme,
+  role = "interact",
+  onRoleAck,
+  onConnectionChange,
+  onServerMessage,
+}: PaneTerminalProps) {
+  const chatView = view === "chat";
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -64,8 +84,7 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
   // transient OSC 52 feedback ("copied") — a pill in the banner column
   const [clipboardNote, setClipboardNote] = useState<string | null>(null);
   const clipboardTimerRef = useRef<number | null>(null);
-  // the chat lens over the attached pane (transcript polling), per-pane choice
-  const [chatView, setChatView] = useState(false);
+  // the composer's send bumps this so the chat lens refetches without waiting a poll beat
   const [chatRefresh, setChatRefresh] = useState(0);
   // the next message queued while the agent runs (chatmux's queued draft): held
   // per pane in localStorage, dispatched the moment the run ends. It carries the
@@ -107,14 +126,9 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
       // columns of the hero surface go dead.
       scrollback: 0,
       allowProposedApi: true,
-      fontSize: 13,
+      fontSize: terminalFontSize,
       fontFamily: FONT_STACK,
-      theme: {
-        background: "#0b0e14",
-        foreground: "#c5cdd9",
-        cursor: "#6cb6ff",
-        selectionBackground: "#2d3f5e",
-      },
+      theme: terminalTheme(theme),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -279,7 +293,41 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
       termRef.current = null;
       socketRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one terminal for the mount; theme/font follow in their own effect
   }, []);
+
+  // theme and font size follow the settings without a remount; a font change moves the grid
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.theme = terminalTheme(theme);
+    if (term.options.fontSize !== terminalFontSize) {
+      term.options.fontSize = terminalFontSize;
+      if (observeRef.current) return;
+      try {
+        fitRef.current?.fit();
+      } catch {
+        return;
+      }
+      const pane = paneRef.current;
+      if (pane) socketRef.current?.resize(pane, term.cols, term.rows, true);
+    }
+  }, [theme, terminalFontSize]);
+
+  // the grid must re-fit when the lens switches back: the chat lens covered it, and a
+  // resize while covered may have been skipped by a zero-size layout
+  useEffect(() => {
+    if (chatView || observeRef.current) return;
+    const term = termRef.current;
+    try {
+      fitRef.current?.fit();
+    } catch {
+      return;
+    }
+    const pane = paneRef.current;
+    if (pane && term) socketRef.current?.resize(pane, term.cols, term.rows, true);
+    term?.focus();
+  }, [chatView]);
 
   // follow the selected pane
   useEffect(() => {
@@ -291,9 +339,7 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
     setDraft(EMPTY_DRAFT);
     draftPaneRef.current = null;
     term.reset();
-    // the chat lens is remembered per pane; the terminal stays the default
-    setChatView(paneId !== null && window.localStorage.getItem(`herdr-web-ui:view:${paneId}`) === "chat");
-    // so is a message queued for the next idle moment
+    // a message queued for the next idle moment is remembered per pane
     setQueued(() => {
       if (paneId === null) return null;
       const text = window.localStorage.getItem(`herdr-web-ui:queue:${paneId}`);
@@ -312,20 +358,6 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
     };
   }, [paneId]);
 
-  const toggleChatView = useCallback(() => {
-    setChatView((current) => {
-      const next = !current;
-      const pane = paneRef.current;
-      if (pane !== null) {
-        try {
-          window.localStorage.setItem(`herdr-web-ui:view:${pane}`, next ? "chat" : "terminal");
-        } catch {
-          /* private mode: the lens just stops being remembered */
-        }
-      }
-      return next;
-    });
-  }, []);
 
   // key-bar taps go through xterm so the onData -> socket path above is reused
   const pressKey = useCallback((key: KeyBarKey) => {
@@ -375,6 +407,15 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
     // the chat lens refetches at once so the sent prompt appears without a poll beat
     setChatRefresh((current) => current + 1);
     return true;
+  }, []);
+
+  // the composer's stop button: Escape interrupts the agent's current turn in every
+  // supported TUI (Claude Code, omp, codex) without killing the process the way ^C would
+  const abortTurn = useCallback(() => {
+    const term = termRef.current;
+    const socket = socketRef.current;
+    if (!term || !socket || !socket.connected) return;
+    term.input("\u001b");
   }, []);
 
   // chatmux's queue-next: while the pane's agent runs, a send becomes the ONE
@@ -433,23 +474,13 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
         </div>
       )}
       <div className="terminal-banners">
-        {paneId !== null && (
-          <button
-            type="button"
-            className={`view-toggle${chatView ? " is-chat" : ""}`}
-            aria-pressed={chatView}
-            title={chatView ? "Show the live terminal (xterm)" : "Show the pane as a chat transcript"}
-            onClick={toggleChatView}
-          >
-            {chatView ? "terminal" : "chat"}
-          </button>
-        )}
-        {paneId !== null && ended && (
+        {/* the chat lens says these itself (ChatView), inline; the pills are the grid's */}
+        {paneId !== null && !chatView && ended && (
           <div className="terminal-banner" role="status">
             terminal ended{!draftIsEmpty(draft) ? " — held input discarded" : ""}
           </div>
         )}
-        {paneId !== null && !ended && !connected && (
+        {paneId !== null && !chatView && !ended && !connected && (
           <div className="terminal-banner terminal-banner-warning" role="status">
             reconnecting to herdr web ui…
             {!draftIsEmpty(draft) && <span className="draft-held"> input held: “{draft.text}”</span>}
@@ -486,7 +517,14 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
       <div className="terminal-surface">
         <div className={`pane-terminal${paneId === null ? " is-idle" : ""}`} ref={hostRef} />
         {paneId !== null && chatView && (
-          <ChatView paneId={paneId} refreshKey={chatRefresh} connected={connected} ended={ended} agent={agent} />
+          <ChatView
+            paneId={paneId}
+            refreshKey={chatRefresh}
+            connected={connected}
+            ended={ended}
+            agent={agent}
+            agentStatus={agentStatus}
+          />
         )}
       </div>
       {paneId !== null && !observing && !ended && queued !== null && queued.pane === paneId && (
@@ -527,9 +565,12 @@ export function PaneTerminal({ paneId, agent = null, agentStatus, role = "intera
         <Composer
           key={paneId}
           paneId={paneId}
+          agent={agent}
+          agentStatus={agentStatus}
           connected={connected}
           queueMode={busy}
           onSend={composerSend}
+          onAbort={abortTurn}
           onUploadImage={uploadImage}
         />
       )}

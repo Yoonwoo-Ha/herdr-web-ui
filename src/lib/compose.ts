@@ -9,6 +9,9 @@
  * Pure logic, DOM-free, so the policy is unit-testable (see compose.test.ts).
  */
 
+import type { AgentStatus, SlashCommand } from "../../shared/protocol.ts";
+import { knownStatus, STATUS_WORD } from "./status.ts";
+
 /** The composer never queues: this cap keeps one send inside a single WS frame. */
 export const MAX_COMPOSER_CHARS = 20_000;
 
@@ -42,3 +45,34 @@ export function imageMention(path: string): string {
  * keeps the message parked for the user's own `Send now`.
  */
 export const QUEUE_READY_STATUS: Record<string, true> = { blocked: true, done: true, idle: true };
+
+/** The composer's status word: the shared vocabulary, with a blank state reading as READY (a shell is always ready). */
+export function composerStatusWord(status?: AgentStatus): string {
+  const known = knownStatus(status);
+  return known === "unknown" ? "READY" : STATUS_WORD[known];
+}
+
+/** Herdr agent ids are machine-friendly; the composer presents a short human label. */
+export function agentDisplayLabel(agent: string | null): string {
+  if (!agent) return "Shell";
+  return agent
+    .split(/[-_]/u)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+/** Filter by command prefix and prefer commands the user has selected most often. */
+export function rankSlashCommands(
+  commands: readonly SlashCommand[],
+  query: string,
+  usage: Readonly<Partial<Record<string, number>>>,
+): SlashCommand[] {
+  const needle = query.toLocaleLowerCase();
+  return commands
+    .filter((command) => command.name.toLocaleLowerCase().startsWith(needle))
+    .sort((left, right) => {
+      const frequency = (usage[right.name] ?? 0) - (usage[left.name] ?? 0);
+      return frequency || left.name.localeCompare(right.name);
+    });
+}

@@ -1,4 +1,15 @@
-import type { ConversationResponse, HealthAuth, PaneReadResult, PushKey, SessionSnapshot } from "../../shared/protocol.ts";
+import type {
+  AgentKind,
+  ConversationResponse,
+  HealthAuth,
+  InteractivePrompt,
+  PaneReadResult,
+  PromptAnswer,
+  PushKey,
+  SessionSnapshot,
+  SlashCommand,
+  WorkspaceCreated,
+} from "../../shared/protocol.ts";
 
 /**
  * A non-2xx answer from the herdr-web-ui API. `code` is the server's error-envelope
@@ -119,13 +130,14 @@ export async function uploadPaneImage(paneId: string, image: Blob): Promise<stri
   return ((await response.json()) as { path: string }).path;
 }
 
-async function sendJson(url: string, method: "POST" | "DELETE", body: unknown): Promise<void> {
+async function sendJson(url: string, method: "POST" | "DELETE", body: unknown): Promise<Response> {
   const response = await fetch(url, {
     method,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw await errorFrom(url, response);
+  return response;
 }
 
 /**
@@ -135,6 +147,66 @@ async function sendJson(url: string, method: "POST" | "DELETE", body: unknown): 
  */
 export async function closePane(paneId: string): Promise<void> {
   await sendJson("/api/pane/close", "POST", { pane_id: paneId });
+}
+
+/** POST /api/pane/rename: sets the pane's label in herdr (an empty label clears it). */
+export async function renamePane(paneId: string, label: string): Promise<void> {
+  await sendJson("/api/pane/rename", "POST", { pane_id: paneId, label });
+}
+
+/** GET /api/agents: the agent kinds herdr can start, for the new-session dialog. */
+export async function fetchAgentKinds(): Promise<AgentKind[]> {
+  return (await getJson<{ agents: AgentKind[] }>("/api/agents")).agents;
+}
+
+export interface CreateWorkspaceRequest {
+  cwd?: string | null;
+  label?: string | null;
+  agent?: { kind: string; name?: string; args?: string[] } | null;
+}
+
+/**
+ * POST /api/workspace/create: a new herdr workspace (and an agent started in its root
+ * pane when `agent` is given). Slow when an agent starts: herdr waits for the agent's
+ * interactive prompt (up to 30s) before answering.
+ */
+export async function createWorkspace(request: CreateWorkspaceRequest): Promise<WorkspaceCreated> {
+  const response = await sendJson("/api/workspace/create", "POST", request);
+  return (await response.json()) as WorkspaceCreated;
+}
+
+export async function renameWorkspace(workspaceId: string, label: string): Promise<void> {
+  await sendJson("/api/workspace/rename", "POST", { workspace_id: workspaceId, label });
+}
+
+/** POST /api/workspace/move: places the workspace at `insertIndex` in herdr's order (the sidebar order). */
+export async function moveWorkspace(workspaceId: string, insertIndex: number): Promise<void> {
+  await sendJson("/api/workspace/move", "POST", { workspace_id: workspaceId, insert_index: insertIndex });
+}
+
+export async function closeWorkspace(workspaceId: string): Promise<void> {
+  await sendJson("/api/workspace/close", "POST", { workspace_id: workspaceId });
+}
+
+/** GET /api/pane/commands: the slash commands the pane's agent understands (built-in + custom). */
+export async function fetchPaneCommands(paneId: string): Promise<SlashCommand[]> {
+  return (await getJson<{ commands: SlashCommand[] }>(`/api/pane/commands?pane_id=${encodeURIComponent(paneId)}`)).commands;
+}
+
+/** GET /api/pane/files: paths under the pane's cwd matching `query`, for @-mentions. */
+export async function fetchPaneFiles(paneId: string, query: string, limit = 20): Promise<string[]> {
+  const params = new URLSearchParams({ pane_id: paneId, q: query, limit: String(limit) });
+  return (await getJson<{ files: string[] }>(`/api/pane/files?${params.toString()}`)).files;
+}
+
+/** GET /api/pane/prompt: the agent's interactive menu currently on screen, or null. */
+export async function fetchPanePrompt(paneId: string): Promise<InteractivePrompt | null> {
+  return (await getJson<{ prompt: InteractivePrompt | null }>(`/api/pane/prompt?pane_id=${encodeURIComponent(paneId)}`)).prompt;
+}
+
+/** POST /api/pane/prompt/answer: ApiError 409 `prompt_changed` when the menu moved on. */
+export async function answerPanePrompt(answer: PromptAnswer): Promise<void> {
+  await sendJson("/api/pane/prompt/answer", "POST", answer);
 }
 
 /** GET /api/push: the server's VAPID key, the `applicationServerKey` this device subscribes with. */

@@ -30,6 +30,7 @@ describe("parseClaudeTranscript", () => {
       { role: "assistant", ts: "2026-09-19T08:00:02.000Z", parts: [
         { kind: "text", text: "먼저 상태를 확인하겠습니다." },
         { kind: "tool", name: "Bash", summary: "git status --short", input: expect.stringContaining("git status"), output: "M src/app.ts" },
+        { kind: "thinking", text: "internal reasoning stays private" },
         { kind: "text", text: "변경된 파일이 하나입니다." },
       ] },
     ]);
@@ -40,8 +41,9 @@ describe("parseClaudeTranscript", () => {
     expect(turns.some((turn) => turn.parts.some((part) => part.kind === "text" && part.text.includes("/clear")))).toBe(false);
   });
 
-  it("keeps thinking blocks out of the conversation", () => {
-    expect(JSON.stringify(parseClaudeTranscript(lines))).not.toContain("internal reasoning");
+  it("keeps thinking blocks in transcript order", () => {
+    const assistant = parseClaudeTranscript(lines)[1];
+    expect(assistant?.parts.map((part) => part.kind)).toEqual(["text", "tool", "thinking", "text"]);
   });
 
   it("survives a torn tail line while Claude is mid-append", () => {
@@ -83,6 +85,7 @@ const ompLines = [
   ] } }),
   JSON.stringify({ type: "message", timestamp: "2026-09-20T08:39:02.000Z", message: { role: "assistant", content: [
     { type: "thinking", text: "internal reasoning stays private" },
+    { type: "thinking", thinking: "alternate thinking field" },
     { type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ss -tlnp", i: "Checking ports" }, intent: "Checking ports" },
   ] } }),
   JSON.stringify({ type: "message", timestamp: "2026-09-20T08:39:03.000Z", message: { role: "toolResult", toolCallId: "call_1", toolName: "bash", isError: false, content: [
@@ -102,15 +105,18 @@ describe("parseOmpTranscript", () => {
     expect(turns).toEqual([
       { role: "user", ts: "2026-09-20T08:39:00.000Z", parts: [{ kind: "text", text: "주소좀 줘봐" }] },
       { role: "assistant", ts: "2026-09-20T08:39:02.000Z", parts: [
+        { kind: "thinking", text: "internal reasoning stays private" },
+        { kind: "thinking", text: "alternate thinking field" },
         { kind: "tool", name: "bash", summary: "Checking ports", input: expect.stringContaining("ss -tlnp"), output: "LISTEN 0 512 100.123.228.51:7317" },
         { kind: "text", text: "http://100.123.228.51:7317" },
       ] },
     ]);
   });
 
-  it("keeps thinking parts and title/session headers out of the conversation", () => {
+  it("keeps thinking parts while ignoring title/session headers", () => {
     const rendered = JSON.stringify(parseOmpTranscript(ompLines));
-    expect(rendered).not.toContain("internal reasoning");
+    expect(rendered).toContain("\"kind\":\"thinking\",\"text\":\"internal reasoning stays private\"");
+    expect(rendered).toContain("\"kind\":\"thinking\",\"text\":\"alternate thinking field\"");
     expect(rendered).not.toContain("프로젝트 불편사항 패치");
   });
 

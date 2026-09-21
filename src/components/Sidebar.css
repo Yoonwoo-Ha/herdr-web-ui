@@ -1,14 +1,33 @@
-/*
- * Workspace > tab > pane tree for Sidebar.tsx. Only tokens from styles.css :root.
- * A row is ONE line: workspace name and the pane's live title are the same thought,
- * so a single-pane workspace drops its header and the row carries number, name,
- * title and status side by side. The pane id and cwd live in the row tooltip.
- */
-
-.tree {
+.sidebar-shell {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-panel);
+}
+
+/* one gutter (--space-3) for the top bar, the list and the footer: the New session button,
+   every row's hover fill and the footer buttons share the same left and right edge */
+.sidebar-topbar {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+}
+
+.sidebar-new-session {
+  width: 100%;
+  border-style: dashed;
+}
+
+.sidebar-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-2) var(--space-3);
 }
 
 .tree-state {
@@ -26,22 +45,31 @@
   text-align: center;
 }
 
-/* a failed close keeps the tree intact: a short-lived note under it, not a modal */
-.tree-close-error {
-  color: var(--status-blocked);
-}
-
 .workspace {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-md);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.workspace.is-dragging {
+  opacity: 0.55;
 }
 
 .workspace-header {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
+  gap: var(--space-1);
+  min-height: var(--control-h);
+  padding: 0 var(--space-1) 0 var(--space-4);
+  border-radius: var(--radius-md);
+}
+
+.workspace-header:hover,
+.workspace-header:focus-within {
+  background: var(--bg-hover);
 }
 
 .workspace-number {
@@ -54,191 +82,318 @@
   padding: 0 var(--space-1);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
+  color: var(--text-dim);
   font-family: var(--font-mono);
   font-size: var(--fs-2xs);
-  color: var(--text-dim);
 }
 
 .workspace-label {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: var(--fs-md);
-  font-weight: var(--fw-semibold);
-  color: var(--text-strong);
+  padding: 0;
   overflow: hidden;
+  background: transparent;
+  border: 0;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: text;
 }
 
-.workspace-empty {
-  padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--chip-h) + var(--space-2));
-  color: var(--text-dim);
-  font-size: var(--fs-xs);
-}
-
-.tab-label {
-  padding: var(--space-1) var(--space-2) 0;
-  font-size: var(--fs-2xs);
-  font-weight: var(--fw-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-.pane-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.pane-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
+.workspace-rename-input {
+  flex: 1 1 auto;
   min-width: 0;
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  height: calc(var(--control-h) - var(--space-1));
+  padding: 0 var(--space-2);
+}
+
+.workspace-header .badge {
+  flex: 0 0 auto;
+}
+
+.workspace-rename {
+  opacity: 0;
+}
+
+.workspace-header:hover .workspace-rename,
+.workspace-header:focus-within .workspace-rename {
+  opacity: 1;
+}
+
+.sidebar-drag-handle,
+.sidebar-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
   background: transparent;
   border: 0;
   border-radius: var(--radius-sm);
-  color: var(--text);
-  text-align: left;
+  color: var(--text-dim);
   cursor: pointer;
+}
+
+/* the reorder grip is an affordance, not a control: it shows on hover / focus, and it
+   sits absolutely in the row's left gutter so the row's content never shifts */
+.sidebar-drag-handle {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: var(--space-4);
+  height: var(--control-h);
+  transform: translateY(-50%);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.pane-item:hover .sidebar-drag-handle,
+.pane-item:focus-within .sidebar-drag-handle,
+.workspace-header:hover .sidebar-drag-handle,
+.workspace-header:focus-within .sidebar-drag-handle {
+  opacity: 1;
+}
+
+.sidebar-drag-handle:active {
+  cursor: grabbing;
+}
+
+.sidebar-drag-handle:hover,
+.sidebar-row-action:hover,
+.sidebar-row-action:focus-visible {
+  color: var(--text-strong);
+}
+
+.sidebar-row-action:hover,
+.sidebar-row-action:focus-visible {
+  background: var(--bg-elevated);
+}
+
+.sidebar-drag-handle svg,
+.sidebar-row-action svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.pane-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pane-item {
+  position: relative;
+  border-radius: var(--radius-md);
+}
+
+.pane-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: var(--row-h);
+  padding-left: var(--space-4);
+  border-radius: var(--radius-md);
   transition: background-color var(--dur-fast) var(--ease-out);
 }
 
-.pane-row:hover {
+.pane-item:hover .pane-row,
+.pane-item:focus-within .pane-row,
+.pane-item.is-selected .pane-row {
   background: var(--bg-hover);
 }
 
-.pane-row.is-selected {
+/* the selected rail: a straight bar outside the rounded box, not an inset shadow that
+   would follow the corners */
+.pane-item.is-selected .pane-row::before {
+  content: "";
+  position: absolute;
+  top: var(--space-3);
+  bottom: var(--space-3);
+  left: calc(-1 * var(--space-3) + 2px);
+  width: var(--rail-w);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.pane-select {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  padding: var(--space-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+
+.agent-mark-holder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--avatar-size);
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  border-radius: var(--radius-md);
+  background: var(--accent-tint);
+  color: var(--text-strong);
+}
+
+.agent-mark-holder.is-shell {
   background: var(--bg-elevated);
-  box-shadow: inset var(--rail-w) 0 0 var(--accent);
+  color: var(--text-dim);
 }
 
-.pane-row.is-selected .pane-name,
-.pane-row.is-selected .pane-title {
-  color: var(--text-strong);
+.agent-mark-holder svg {
+  display: block;
+  width: var(--mark-size);
+  height: var(--mark-size);
 }
 
-/* the name is the row's identity: it keeps its full width (up to half the row) and
- * the live title, which is the long half, is what ellipsizes */
-.pane-name {
-  flex: 0 0 auto;
-  max-width: 50%;
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-semibold);
-  line-height: var(--lh-base);
-  color: var(--text-strong);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.pane-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.pane-primary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .pane-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: var(--fs-sm);
-  font-weight: var(--fw-regular);
-  line-height: var(--lh-base); /* headroom for tall Hangul metrics under overflow: hidden */
-  color: var(--text-dim);
   overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.pane-row .badge {
-  margin-left: auto;
+.pane-primary .badge {
+  flex: 0 0 auto;
 }
 
-/* the provider mark replaces the old text chip: the icon names the agent,
- * the title tooltip spells it out */
-.agent-mark-holder {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
+.pane-subtitle {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.agent-mark-holder svg {
-  display: block;
-  color: var(--text); /* monochrome marks (codex, cursor) ride currentColor */
+.pane-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--chip-h);
+  padding: 0 var(--space-1);
+  font-size: var(--fs-sm);
 }
 
-
-/* the row's ✕ sits beside the title column (never nested in the row button):
- * desktop reveals it on row hover/focus, coarse pointers keep it always visible */
-.pane-item {
+.pane-actions {
   display: flex;
   align-items: center;
-}
-
-.pane-item .pane-row {
-  flex: 1;
-  min-width: 0;
-}
-
-.pane-close {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-h);
-  height: var(--control-h);
-  margin-right: var(--space-1);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
-  line-height: 1;
-  cursor: pointer;
+  flex: 0 0 auto;
+  padding-right: var(--space-1);
   opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 
-/* focusable despite being invisible at rest: focus and arm always show it */
-.pane-item:hover .pane-close,
-.pane-close:focus-visible,
-.pane-close.is-armed {
+.pane-item:hover .pane-actions,
+.pane-item:focus-within .pane-actions,
+.pane-actions:has(.is-armed) {
   opacity: 1;
 }
 
-.pane-close:hover,
-.pane-close:focus-visible {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-/* the second click kills a live pane: the armed pill carries that weight in red */
 .pane-close.is-armed {
+  width: auto;
+  min-width: var(--control-h);
+  padding: 0 var(--space-2);
   background: var(--danger-tint);
   color: var(--status-blocked);
-  font-weight: var(--fw-medium);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+}
+
+.sidebar-inline-error {
+  margin: 0;
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  color: var(--status-blocked);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.sidebar-footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  border-top: var(--hairline) solid var(--border);
+}
+
+.sidebar-footer-action {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.sidebar-brandline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-1) 0;
+}
+
+.sidebar-app-name {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (pointer: coarse) {
-  .pane-close {
+  .sidebar-row-action {
     width: var(--touch-target);
     height: var(--touch-target);
+  }
+
+  /* no hover on touch: the grip stays, quiet, and the row actions are always there */
+  .sidebar-drag-handle,
+  .pane-actions,
+  .workspace-rename {
     opacity: 1;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pane-close {
-    transition: none;
-  }
-}
-
-@media (pointer: coarse) {
-  .pane-row {
-    min-height: var(--touch-target);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pane-row {
+  .workspace,
+  .pane-row,
+  .pane-actions {
     transition: none;
   }
 }

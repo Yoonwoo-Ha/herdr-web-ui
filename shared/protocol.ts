@@ -32,6 +32,8 @@ export type HerdrPane = PaneInfo;
 /** HTTP API
  *  GET    /api/health                    -> { ok: true, herdr: { version, protocol }, auth: HealthAuth }
  *  GET    /api/session                   -> { snapshot: SessionSnapshot }
+ *  GET    /api/agents                    -> { agents: AgentKind[] } (herdr's agent manifests: the
+ *         kinds `agent.start` accepts, for the new-session dialog)
  *  GET    /api/pane/read?pane_id=&source=&format=&lines=  -> { read: PaneReadResult }
  *  POST   /api/pane/input  { pane_id, text }   -> { ok: true }
  *  GET    /api/pane/conversation?pane_id=    -> ConversationResponse (structured agent
@@ -39,8 +41,22 @@ export type HerdrPane = PaneInfo;
  *         recognized store)
  *  POST   /api/pane/close { pane_id }         -> { ok: true } (pane.close RPC; the collector's
  *         session-changed broadcast removes it from every client's sidebar)
+ *  POST   /api/pane/rename { pane_id, label } -> { ok: true } (pane.rename; empty label clears it)
  *  POST   /api/pane/image  { pane_id, content_type, data_base64 } -> { ok: true, path }
  *         pasted image -> file under <pane cwd>/.herdr-web-ui/, path for the prompt
+ *  GET    /api/pane/commands?pane_id=   -> { commands: SlashCommand[] } (the agent's slash
+ *         commands: built-ins per agent kind + the user's and the project's custom commands)
+ *  GET    /api/pane/files?pane_id=&q=&limit=  -> { files: string[] } (paths relative to the pane
+ *         cwd matching q, for @-mentions; git ls-files when the cwd is a repo, bounded walk otherwise)
+ *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null } (the agent's TUI
+ *         question/approval menu currently on screen, parsed from the visible pane text)
+ *  POST   /api/pane/prompt/answer { pane_id, prompt_id, option_index?, option_indices?, custom_text? }
+ *         -> { ok: true } | 409 prompt_changed (the screen no longer shows that prompt)
+ *  POST   /api/workspace/create { cwd?, label?, agent?: { kind, name?, args? } }
+ *         -> WorkspaceCreated (workspace.create, then agent.start in the root pane when `agent` is given)
+ *  POST   /api/workspace/rename { workspace_id, label } -> { ok: true }
+ *  POST   /api/workspace/move   { workspace_id, insert_index } -> { ok: true } (sidebar reorder)
+ *  POST   /api/workspace/close  { workspace_id } -> { ok: true }
  *  POST   /api/auth        { token }     -> 204 + Set-Cookie herdr_web_token (401 invalid_token on mismatch)
  *  DELETE /api/auth                      -> 204 + Set-Cookie herdr_web_token=; Max-Age=0
  *  GET    /api/push                      -> PushKey (the VAPID application server key)
@@ -78,12 +94,69 @@ export interface ConversationTurn {
 
 export type ConversationPart =
   | { kind: "text"; text: string }
+  /** the agent's reasoning block; the client folds it and shows it only on request */
+  | { kind: "thinking"; text: string }
   | { kind: "tool"; name: string; summary: string; input: string; output: string };
 
 /** GET /api/pane/conversation: the recognized-transcript conversation, or scrollback fallback. */
 export interface ConversationResponse {
   source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "scrollback";
   turns: ConversationTurn[];
+}
+
+/** GET /api/agents: one agent kind herdr can start (`agent.start` kind), with a display label. */
+export interface AgentKind {
+  kind: string;
+  label: string;
+}
+
+/** POST /api/workspace/create: the workspace herdr made and the pane the agent (if any) runs in. */
+export interface WorkspaceCreated {
+  workspace_id: string;
+  pane_id: string;
+  /** true when `agent` was requested and herdr reported it ready in the root pane */
+  agent_started: boolean;
+}
+
+/** GET /api/pane/commands: one slash command the pane's agent understands. */
+export interface SlashCommand {
+  /** without the leading slash */
+  name: string;
+  description: string;
+  source: "builtin" | "user" | "project";
+}
+
+/**
+ * GET /api/pane/prompt: an agent's interactive TUI menu currently on the pane's screen
+ * (Claude/omp/codex question, approval or plan prompts), parsed server-side from the
+ * visible text. `id` is a content hash: an answer names it, so a prompt that changed
+ * between the read and the click is refused (409 prompt_changed) instead of misfired.
+ */
+export interface InteractivePrompt {
+  id: string;
+  agent: string;
+  kind: "question" | "approval" | "plan" | "menu";
+  title: string;
+  question: string;
+  body: string | null;
+  options: InteractivePromptOption[];
+  multi_select: boolean;
+  /** index of the "type your own answer" option, when the menu has one */
+  custom_option_index: number | null;
+}
+
+export interface InteractivePromptOption {
+  label: string;
+  description: string | null;
+}
+
+/** POST /api/pane/prompt/answer body. Exactly one of option_index / option_indices / custom_text. */
+export interface PromptAnswer {
+  pane_id: string;
+  prompt_id: string;
+  option_index?: number;
+  option_indices?: number[];
+  custom_text?: string;
 }
 
 /**

@@ -1,9 +1,9 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
-import type { AgentStatus, ApiError, HealthAuth, PushKey, SessionSnapshot, PaneReadResult } from "../shared/protocol.ts";
+import type { AgentKind, AgentStatus, ApiError, HealthAuth, PushKey, SessionSnapshot, PaneReadResult, WorkspaceCreated } from "../shared/protocol.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import { startFakePushService, type FakePushService } from "./push.fake.ts";
 
@@ -11,7 +11,7 @@ import { startFakePushService, type FakePushService } from "./push.fake.ts";
  * Contract test for herdr-web-ui's HTTP + WS surface.
  * Runs against the REAL herdr server on the developer's machine: these are the
  * integration seams the browser UI depends on, so a mock here would prove nothing.
- * READ-ONLY: never creates, closes, or writes to a pane the user owns.
+ * Tests never mutate a user's pane; mutation cases create labeled workspaces and close them in afterAll.
  * Every server here keeps its push state (VAPID key, subscriptions) in a temp dir: the
  * user's ~/.config/herdr-web-ui holds their real devices, which a test must never page.
  */
@@ -28,6 +28,105 @@ afterAll(() => {
 });
 
 const base = () => `http://localhost:${server.port}`;
+
+describe("workspace and discovery endpoints", () => {
+  let workspaceId: string | null = null;
+  let paneId: string | null = null;
+  const label = `herdr-web-ui-test-${Math.random().toString(36).slice(2)}`;
+  const fileName = `${label}-mention.txt`;
+  const filePath = join(tmpdir(), fileName);
+
+  afterAll(async () => {
+    if (workspaceId) await herdrRpc("workspace.close", { workspace_id: workspaceId }).catch(() => undefined);
+    rmSync(filePath, { force: true });
+  });
+
+  it("lists agent kinds with required fallbacks sorted by display label", async () => {
+    const res = await fetch(`${base()}/api/agents`);
+    expect(res.status).toBe(200);
+    const { agents } = (await res.json()) as { agents: AgentKind[] };
+    expect(agents.some((agent) => agent.kind === "claude")).toBeTrue();
+    expect(agents.some((agent) => agent.kind === "omp")).toBeTrue();
+    expect(agents.map((agent) => agent.label)).toEqual([...agents.map((agent) => agent.label)].sort((a, b) => a.localeCompare(b)));
+  });
+
+  it("rejects a workspace cwd that is not an existing directory", async () => {
+    const res = await fetch(`${base()}/api/workspace/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cwd: join(tmpdir(), `does-not-exist-${crypto.randomUUID()}`) }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as ApiError).error.code).toBe("invalid_cwd");
+  });
+
+  it("creates, edits, searches, inspects, and closes an owned workspace", async () => {
+    writeFileSync(filePath, "mention fixture");
+    // the dialog sends null for "not given" (agent: null = shell only): nulls must read as absent
+    const create = await fetch(`${base()}/api/workspace/create`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cwd: tmpdir(), label, agent: null }),
+    });
+    expect(create.status).toBe(200);
+    const created = (await create.json()) as WorkspaceCreated;
+    workspaceId = created.workspace_id;
+    paneId = created.pane_id;
+    expect(created.agent_started).toBeFalse();
+
+    const commands = await fetch(`${base()}/api/pane/commands?pane_id=${encodeURIComponent(paneId)}`);
+    expect(commands.status).toBe(200);
+    expect(await commands.json()).toEqual({ commands: [] });
+
+    const files = await fetch(`${base()}/api/pane/files?pane_id=${encodeURIComponent(paneId)}&q=${encodeURIComponent(fileName)}&limit=5`);
+    expect(files.status).toBe(200);
+    expect(((await files.json()) as { files: string[] }).files).toContain(fileName);
+
+    const prompt = await fetch(`${base()}/api/pane/prompt?pane_id=${encodeURIComponent(paneId)}`);
+    expect(prompt.status).toBe(200);
+    expect(await prompt.json()).toEqual({ prompt: null });
+
+    for (const [path, body] of [
+      ["/api/workspace/rename", { workspace_id: workspaceId, label: `${label}-renamed` }],
+      ["/api/workspace/move", { workspace_id: workspaceId, insert_index: 0 }],
+      ["/api/pane/rename", { pane_id: paneId, label: "renamed pane" }],
+    ] as const) {
+      const changed = await fetch(`${base()}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(changed.status).toBe(200);
+      expect(await changed.json()).toEqual({ ok: true });
+    }
+
+    const close = await fetch(`${base()}/api/workspace/close`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace_id: workspaceId }),
+    });
+    expect(close.status).toBe(200);
+    expect(await close.json()).toEqual({ ok: true });
+    workspaceId = null;
+  }, 20_000);
+
+  it("uses the shared error envelope for malformed mutation bodies", async () => {
+    for (const [path, body, code] of [
+      ["/api/workspace/rename", {}, "missing_workspace_id"],
+      ["/api/workspace/move", { workspace_id: "x", insert_index: -1 }, "invalid_index"],
+      ["/api/workspace/close", {}, "missing_workspace_id"],
+      ["/api/pane/rename", {}, "missing_pane_id"],
+    ] as const) {
+      const res = await fetch(`${base()}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiError).error.code).toBe(code);
+    }
+  });
+});
 
 describe("GET /api/session", () => {
   it("returns the live herdr snapshot with at least one real workspace", async () => {

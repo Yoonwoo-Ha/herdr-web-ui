@@ -1,6 +1,13 @@
 import { describe, expect, it } from "bun:test";
 
-import { composerPayload, imageMention, MAX_COMPOSER_CHARS } from "./compose.ts";
+import {
+  agentDisplayLabel,
+  composerPayload,
+  composerStatusWord,
+  imageMention,
+  MAX_COMPOSER_CHARS,
+  rankSlashCommands,
+} from "./compose.ts";
 
 describe("composerPayload", () => {
   it("bracketed mode wraps the text as one paste and submits with a bare CR", () => {
@@ -44,5 +51,34 @@ describe("imageMention", () => {
     expect(imageMention("/tmp/proj/.herdr-web-ui/paste-1.png")).toBe(
       "@/tmp/proj/.herdr-web-ui/paste-1.png ",
     );
+  });
+});
+
+describe("composer presentation helpers", () => {
+  it("maps agent states to compact status words", () => {
+    expect(composerStatusWord("idle")).toBe("READY");
+    expect(composerStatusWord("working")).toBe("RUN");
+    expect(composerStatusWord("blocked")).toBe("INPUT");
+    expect(composerStatusWord("done")).toBe("DONE");
+    expect(composerStatusWord("paused")).toBe("READY");
+  });
+
+  it("turns machine agent ids into labels", () => {
+    expect(agentDisplayLabel("claude")).toBe("Claude");
+    expect(agentDisplayLabel("open_code")).toBe("Open Code");
+    expect(agentDisplayLabel(null)).toBe("Shell");
+  });
+
+  it("filters slash commands by prefix and ranks frequent selections first", () => {
+    const commands = [
+      { name: "status", description: "Show status", source: "builtin" as const },
+      { name: "start", description: "Start work", source: "project" as const },
+      { name: "stop", description: "Stop work", source: "user" as const },
+    ];
+    expect(rankSlashCommands(commands, "st", { stop: 4, status: 2 })).toEqual([
+      commands[2]!,
+      commands[0]!,
+      commands[1]!,
+    ]);
   });
 });

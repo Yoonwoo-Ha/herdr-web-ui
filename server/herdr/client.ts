@@ -143,6 +143,66 @@ export async function sessionSnapshot(socketPath?: string): Promise<SessionSnaps
   return result.snapshot;
 }
 
+export interface AgentManifest {
+  agent: string;
+  [key: string]: unknown;
+}
+
+export async function agentManifests(socketPath?: string): Promise<{ manifests: AgentManifest[] }> {
+  return herdrRpc("server.agent_manifests", {}, socketPath);
+}
+
+export interface WorkspaceCreateResult {
+  type: "workspace_created";
+  workspace: { workspace_id: string; [key: string]: unknown };
+  tab: { tab_id: string; [key: string]: unknown };
+  root_pane: { pane_id: string; [key: string]: unknown };
+}
+
+export async function workspaceCreate(
+  options: { cwd?: string; label?: string },
+  socketPath?: string,
+): Promise<WorkspaceCreateResult> {
+  return herdrRpc(
+    "workspace.create",
+    { ...(options.cwd === undefined ? {} : { cwd: options.cwd }), ...(options.label === undefined ? {} : { label: options.label }), focus: false },
+    socketPath,
+  );
+}
+
+export async function agentStart(
+  options: { name: string; kind: string; paneId: string; timeoutMs?: number },
+  socketPath?: string,
+): Promise<unknown> {
+  return herdrRpc(
+    "agent.start",
+    {
+      name: options.name,
+      kind: options.kind,
+      pane_id: options.paneId,
+      ...(options.timeoutMs === undefined ? {} : { timeout_ms: options.timeoutMs }),
+    },
+    socketPath,
+    options.timeoutMs,
+  );
+}
+
+export async function paneRename(paneId: string, label: string | null, socketPath?: string): Promise<void> {
+  await herdrRpc("pane.rename", { pane_id: paneId, label }, socketPath);
+}
+
+export async function workspaceRename(workspaceId: string, label: string, socketPath?: string): Promise<void> {
+  await herdrRpc("workspace.rename", { workspace_id: workspaceId, label }, socketPath);
+}
+
+export async function workspaceMove(workspaceId: string, insertIndex: number, socketPath?: string): Promise<void> {
+  await herdrRpc("workspace.move", { workspace_id: workspaceId, insert_index: insertIndex }, socketPath);
+}
+
+export async function workspaceClose(workspaceId: string, socketPath?: string): Promise<void> {
+  await herdrRpc("workspace.close", { workspace_id: workspaceId }, socketPath);
+}
+
 export interface PaneReadOptions {
   paneId: string;
   source?: ReadSource;

@@ -4,3 +4,5 @@ dist/
 .env
 evidence/
 .omo/
+.gjc/
+.herdr-web-ui/

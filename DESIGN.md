@@ -1,496 +1,377 @@
 # herdr web ui Design System
 
-Extracted from the shipped client (`src/styles.css`, `src/components/*`), not invented: this file
-codifies what the UI already is, plus the consolidation applied while extracting it. The machine
-copy of every token is the `:root` block in `src/styles.css`; the tables below must equal it
-value for value. When a component needs a value that is not here, add it to both first.
+Extracted from the shipped client (`src/styles.css`, `src/components/*`), not invented. The machine
+copy of every token is the `:root` block in `src/styles.css`; every table below mirrors it value for
+value. When a component needs a value that is not here, add it to both first.
 
 ## 1. Atmosphere & Identity
 
-A quiet dark console where the terminal is the hero and the chrome stays out of the way. Surfaces
-are near-black tonal steps separated by hairlines, text is cool grey, and the only saturated colors
-are the brand blue and the four agent states, so a working or blocked agent is the loudest thing on
-screen. The signature is the status rail: a 3px accent bar on the selected pane row and the same
-blue on the terminal cursor, tying "what I am looking at" in the sidebar to "where I am typing".
-Dark-only (`color-scheme: dark`): there is no light theme, and there will not be one.
+A quiet terminal-first console with chat-app clarity. Tonal surfaces and hairlines keep the chrome
+out of the way; blue distinguishes selection from the user's own primary actions, and agent states
+carry the remaining saturated color. Dark is the default, light follows the same hierarchy, and
+comfortable or compact density changes scale without changing information architecture.
+
+The signature remains the status rail: a 3px accent bar on the selected pane row and the same accent
+on focus and the terminal cursor, tying “what I am looking at” to “where I am typing.”
 
 ## 2. Color
 
-### Palette (dark-only; the Light column does not exist by design)
+### Palette
 
-| Role | Token | Value | Usage |
-|------|-------|-------|-------|
-| Surface/base | `--bg` | `#070910` | `<body>`, area behind the shell |
-| Surface/panel | `--bg-panel` | `#0b0e14` | Header, sidebar, terminal host |
-| Surface/elevated | `--bg-elevated` | `#121724` | Selected row, chips, banners, pressed controls |
-| Surface/hover | `--bg-hover` | `#1a2132` | Hover on rows and icon buttons |
-| Border | `--border` | `#1e2637` | Hairlines, pill and control outlines |
-| Text/primary | `--text` | `#c5cdd9` | Body, row titles |
-| Text/dim | `--text-dim` | `#8390a8` | Metadata, ids, empty states, idle |
-| Text/bright | `--text-strong` | `#e6edf7` | Brand, workspace labels, selected title |
-| Accent | `--accent` | `#6cb6ff` | Selection rail, focus ring, agent chip text, cursor |
-| Accent/tint | `--accent-tint` | `rgba(108, 182, 255, 0.12)` | Agent chip background; observe banner, layered OVER `--bg-elevated` |
-| Status/idle | `--status-idle` | `#8390a8` | Idle badge |
-| Status/working | `--status-working` | `#e2a336` | Working badge, reconnecting dot and banner |
-| Status/blocked | `--status-blocked` | `#f2545b` | Blocked badge, offline pill, error border |
-| Status/done | `--status-done` | `#4ec9a5` | Done badge, live dot |
-| Danger/tint | `--danger-tint` | `rgba(242, 84, 91, 0.12)` | Error state and offline pill background |
-| Danger/text | `--danger-text` | `#ffd7d9` | Error message text, retry button |
-| Overlay/scrim | `--scrim` | `rgba(0, 0, 0, 0.5)` | Behind the mobile drawer |
-| Overlay/shadow | `--shadow-drawer` | `0 0 40px rgba(0, 0, 0, 0.6)` | The mobile drawer, nothing else |
+Only tokens overridden by `[data-theme="light"]` have a light value. Both columns are literal CSS.
+
+| Role | Token | Dark | Light |
+|------|-------|------|-------|
+| Surface/base | `--bg` | `#070910` | `#eef1f6` |
+| Surface/panel | `--bg-panel` | `#0b0e14` | `#ffffff` |
+| Surface/elevated | `--bg-elevated` | `#121724` | `#f4f6fa` |
+| Surface/hover | `--bg-hover` | `#1a2132` | `#e8ecf3` |
+| Surface/input | `--bg-input` | `#0e121b` | `#ffffff` |
+| Border | `--border` | `#1e2637` | `#d9dfe9` |
+| Border/strong | `--border-strong` | `#2b3550` | `#c3cbd9` |
+| Text/primary | `--text` | `#c5cdd9` | `#1f2937` |
+| Text/dim | `--text-dim` | `#8390a8` | `#5b6676` |
+| Text/strong | `--text-strong` | `#e6edf7` | `#0b1220` |
+| Accent | `--accent` | `#6cb6ff` | `#2563eb` |
+| Accent/tint | `--accent-tint` | `rgba(108, 182, 255, 0.12)` | `rgba(37, 99, 235, 0.1)` |
+| Primary | `--primary` | `#3b6cf5` | `#2563eb` |
+| Primary/hover | `--primary-hover` | `#4f7cf7` | `#1d4ed8` |
+| Primary/text | `--primary-text` | `#ffffff` | `#ffffff` |
+| Primary/tint | `--primary-tint` | `rgba(59, 108, 245, 0.16)` | `rgba(37, 99, 235, 0.12)` |
+| Status/idle | `--status-idle` | `#8390a8` | `#5b6676` |
+| Status/working | `--status-working` | `#e2a336` | `#b45309` |
+| Status/blocked | `--status-blocked` | `#f2545b` | `#dc2626` |
+| Status/done | `--status-done` | `#4ec9a5` | `#047857` |
+| Working/tint | `--status-working-tint` | `rgba(226, 163, 54, 0.14)` | `rgba(180, 83, 9, 0.12)` |
+| Blocked/tint | `--status-blocked-tint` | `rgba(242, 84, 91, 0.14)` | `rgba(220, 38, 38, 0.12)` |
+| Done/tint | `--status-done-tint` | `rgba(78, 201, 165, 0.14)` | `rgba(4, 120, 87, 0.12)` |
+| Danger/tint | `--danger-tint` | `rgba(242, 84, 91, 0.12)` | `rgba(220, 38, 38, 0.1)` |
+| Danger/text | `--danger-text` | `#ffd7d9` | `#991b1b` |
+| Overlay/scrim | `--scrim` | `rgba(0, 0, 0, 0.5)` | `rgba(15, 23, 42, 0.35)` |
+| Drawer shadow | `--shadow-drawer` | `0 0 40px rgba(0, 0, 0, 0.6)` | `0 0 40px rgba(15, 23, 42, 0.25)` |
+| Popover shadow | `--shadow-pop` | `0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border)` | `0 16px 48px rgba(15, 23, 42, 0.18), 0 0 0 1px var(--border)` |
+| Card shadow | `--shadow-card` | `0 4px 16px rgba(0, 0, 0, 0.35)` | `0 4px 16px rgba(15, 23, 42, 0.08)` |
 
 ### Terminal theme
 
-xterm.js reads no CSS, so `PaneTerminal.tsx` carries these four values verbatim in its `theme`
-object. They are tokens so the chrome can match them (the host background equals `--term-bg`).
+xterm.js reads a JavaScript theme, so `src/lib/settings.ts` `terminalTheme()` mirrors these four
+CSS tokens verbatim for each resolved theme.
 
-| Role | Token | Value | xterm key |
-|------|-------|-------|-----------|
-| Terminal background | `--term-bg` | `#0b0e14` | `background` (= `--bg-panel`) |
-| Terminal foreground | `--term-fg` | `#c5cdd9` | `foreground` (= `--text`) |
-| Cursor | `--term-cursor` | `#6cb6ff` | `cursor` (= `--accent`) |
-| Selection | `--term-selection` | `#2d3f5e` | `selectionBackground` |
+| Role | Token | Dark | Light | xterm key |
+|------|-------|------|-------|-----------|
+| Background | `--term-bg` | `#0b0e14` | `#ffffff` | `background` |
+| Foreground | `--term-fg` | `#c5cdd9` | `#1f2937` | `foreground` |
+| Cursor | `--term-cursor` | `#6cb6ff` | `#2563eb` | `cursor` |
+| Selection | `--term-selection` | `#2d3f5e` | `#bfdbfe` | `selectionBackground` |
 
 ### Rules
-- Accent and the four status colors are the only saturated colors. Everything else is a grey step.
-- Accent means "interactive or selected": rail, ring, cursor, agent chip. Never decorative.
-- The unknown status has no color of its own: it uses `--text-dim` with a dashed border, because a
-  darker grey fails 4.5:1 on `--bg-panel`.
-- Tints are the one place `rgba()` appears, and only through `--accent-tint` / `--danger-tint`.
-- Three colours live outside CSS and are synced by hand, because nothing there can read a custom
-  property: `theme-color` in `index.html` and `theme_color` / `background_color` in
-  `public/manifest.webmanifest` (= `--bg-panel` / `--bg`), and the brand tile in
-  `public/icons/icon.svg` (gradient `#171d2e` → `#070910`, stroke `#2a3447`; its dots and chevron
-  are the `--status-*` colours and `--accent`), and `public/favicon.svg` fills its tile with the flat
-  `#0f1420`, that gradient's midpoint, because a 16px favicon has no room for a gradient.
+- Accent means selected, focused or informational; primary means the user's action or voice.
+- Agent state is always written as a label as well as colored. Unknown uses dim text and a dashed
+  edge rather than inventing a fifth state color.
+- Tints are named tokens; components do not introduce ad hoc translucent state colors.
+- `theme: "system"` follows `prefers-color-scheme`; `src/lib/settings.ts` writes the resolved
+  `data-theme`, `color-scheme`, and matching PWA `<meta name="theme-color">`.
 
 ## 3. Typography
 
 ### Scale
 
-| Level | Token | Size | Weight | Line height | Tracking | Usage |
-|-------|-------|------|--------|-------------|----------|-------|
-| Brand | `--fs-lg` | 15px | `--fw-bold` 700 | `--lh-tight` 1.2 | `--tracking-tight` -0.01em | Wordmark |
-| Label | `--fs-md` | 13px | `--fw-semibold` 600 | `--lh-base` 1.45 | 0 | Workspace label, terminal placeholder |
-| Body | `--fs-sm` | 12px | `--fw-regular` 400 / `--fw-medium` 500 | `--lh-base` 1.45 | 0 | Pane title, header context, states, errors |
-| Meta | `--fs-xs` | 11px | `--fw-regular` 400 | `--lh-base` 1.45 | 0 | Connection label, banners, "no panes" |
-| Micro | `--fs-2xs` | 10px | `--fw-medium` 500 (badges, agent chip, tab overline) / `--fw-regular` 400 (pane ids, pills, workspace number) | `--lh-base` 1.45 (chips are flex-centred at `--chip-h`) | `--tracking-caps` 0.06em when uppercase | Badges, pills, ids, tab overline, chips |
-| Input | `--fs-input` | 16px | inherits | inherits | 0 | Token gate input and composer textarea: the one size iOS Safari does not zoom on focus |
-
-### Font Stack
-- UI: `--font-ui` = `Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif`
-- Mono (ids, versions, codes): `--font-mono` = `ui-monospace, "SF Mono", Menlo, Consolas, monospace`
-- Terminal (xterm only, hardcoded as `FONT_STACK` in `PaneTerminal.tsx`, 13px):
-  `"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace`
-
-### Rules
-- Two families in the chrome (UI + mono); the terminal font is the pty's, not the chrome's.
-- Body floor is 12px because this is a dense operational surface, not reading copy; 10px is only
-  for uppercase chips and monospace ids that sit next to a larger primary line.
-- Uppercase text always carries `--tracking-caps`; the wordmark always carries `--tracking-tight`.
-
-## 4. Spacing & Layout
-
-### Base Unit
-All spacing derives from a base of **4px**.
+| Level | Token | Comfortable | Compact | Typical use |
+|-------|-------|-------------|---------|-------------|
+| Micro | `--fs-2xs` | `11px` | `10px` | Badges, hints, kbd |
+| Meta | `--fs-xs` | `12px` | `11px` | Subtitles, field labels |
+| Small | `--fs-sm` | `13px` | `12px` | Controls, row titles |
+| Body | `--fs-md` | `14px` | `13px` | Body and dialog copy |
+| Large | `--fs-lg` | `16px` | `15px` | Header title, modal title |
+| Display | `--fs-xl` | `18px` | `17px` | Markdown h1 |
+| Input | `--fs-input` | `16px` | `16px` | Mobile-safe text input |
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--space-1` | 4px | Icon-to-label, chip padding, row inner gap |
-| `--space-2` | 8px | Row padding, header gap, list item gaps |
-| `--space-3` | 12px | Header inset, error padding, row left inset |
-| `--space-4` | 16px | Between workspaces, empty-state padding |
-| `--space-5` | 20px | Token gate copy → label |
-| `--space-6` | 24px | Sidebar bottom breathing room, placeholder icon |
+| `--font-ui` | `"Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif` | Chrome and chat prose |
+| `--font-mono` | `ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "D2Coding", monospace` | Paths, keys, terminal-adjacent metadata |
+| `--lh-tight` | `1.2` | Titles |
+| `--lh-base` | `1.5` comfortable / `1.45` compact | Body copy |
+| `--fw-regular` | `400` | Body |
+| `--fw-medium` | `500` | Controls |
+| `--fw-semibold` | `600` | Labels and titles |
+| `--fw-bold` | `700` | Brand |
+| `--tracking-tight` | `-0.01em` | Brand and primary titles |
+| `--tracking-caps` | `0.06em` | Uppercase operational labels |
+
+### Settings
+- `theme`: `dark`, `light`, or `system`; default `dark`.
+- `density`: `comfortable` or `compact`; default `comfortable`.
+- Terminal font size is independent: default `13px`, clamped to `10–22px`.
+- Composer Enter behavior and folded thinking visibility are preferences, not typography tokens.
+- All settings share one sanitized `localStorage["herdr-web-ui:settings"]` record.
+
+## 4. Spacing & Layout
+
+### Base unit
+
+All spacing derives from a 4px base.
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--space-1` | `4px` | Tight icon and control gaps |
+| `--space-2` | `8px` | Row and menu gaps |
+| `--space-3` | `12px` | Control padding |
+| `--space-4` | `16px` | Section and modal padding |
+| `--space-5` | `20px` | Wide modal padding |
+| `--space-6` | `24px` | Card breathing room |
+| `--space-8` | `32px` | Large separation |
 
 ### Radii
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--radius-sm` | 6px | Rows, icon buttons, chips, retry button |
-| `--radius-md` | 8px | Error state, empty state, the draft review banner and wrapped phone banners |
-| `--radius-pill` | 999px | Badges, pills, banners, the connection dot |
+| `--radius-sm` | `6px` | Chips and inner controls |
+| `--radius-md` | `8px` | Buttons, inputs, selected rows |
+| `--radius-lg` | `12px` | Menus and chat surfaces |
+| `--radius-xl` | `16px` | Modals and composer |
+| `--radius-pill` | `999px` | Pills and dots |
 
 ### Sizes
 
+Comfortable values are `:root`; the final column is the complete compact override set.
+
+| Token | Comfortable | Compact | Usage |
+|-------|-------------|---------|-------|
+| `--header-h` | `52px` | `46px` | App header |
+| `--sidebar-w` | `320px` | `300px` | Sidebar/drawer |
+| `--control-h` | `34px` | `32px` | Buttons and fields |
+| `--touch-target` | `40px` | — | Coarse-pointer minimum |
+| `--keybar-h` | `48px` | — | Terminal key bar |
+| `--row-h` | `56px` | `44px` | Roster and palette rows |
+| `--chip-h` | `20px` | `18px` | Badge/pill height |
+| `--icon-size` | `18px` | — | Standard icon |
+| `--mark-size` | `22px` | — | Brand mark |
+| `--avatar-size` | `32px` | `26px` | Roster mark box |
+| `--dot-size` | `7px` | — | Connection dot |
+| `--rail-w` | `3px` | — | Selected-row rail |
+| `--hairline` | `1px` | — | Borders |
+| `--content-w` | `820px` | — | Chat/settings content |
+| `--palette-w` | `640px` | — | Command palette |
+| `--palette-top` | `12vh` | — | Palette top offset |
+
+### Focus and layers
+
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--header-h` | 46px | Header height (plus `env(safe-area-inset-top)`) |
-| `--sidebar-w` | 300px | Sidebar column and drawer width |
-| `--control-h` | 32px | Icon button, retry button, composer buttons, gate input and button on fine pointers (`--touch-target` on coarse; the composer textarea's min-height bumps with them) |
-| `--touch-target` | 40px | On `(pointer: coarse)`: pane row min-height, icon buttons, retry button, composer buttons, gate input and button; key-bar keys always (min-width and height) |
-| `--keybar-h` | 48px | Key bar height (plus `env(safe-area-inset-bottom)`); keys are `--touch-target` tall inside it |
-| `--chip-h` | 18px | Badge, pill and chip height; banner minimum height (the draft review banner grows to its controls) |
-| `--icon-size` | 18px | SVG inside an icon button |
-| `--mark-size` | 22px | Brand mark |
-| `--dot-size` | 7px | Connection dot |
-| `--rail-w` | 3px | Selected-row accent rail |
-| `--hairline` | 1px | Every border |
-
-### Focus
-
-| Token | Value | Usage |
-|-------|-------|-------|
-| `--ring` | `2px solid var(--accent)` | `:focus-visible` outline on every interactive element |
-| `--ring-offset` | 2px | Outline offset |
-
-### Layers
-
-| Token | Value | Usage |
-|-------|-------|-------|
-| `--z-banner` | 5 | Terminal banners and the empty-state placeholder over the xterm canvas |
-| `--z-scrim` | 15 | Mobile scrim |
-| `--z-drawer` | 20 | Mobile drawer above the scrim |
+| `--ring` | `2px solid var(--accent)` | Global `:focus-visible` outline |
+| `--ring-offset` | `2px` | Outline offset |
+| `--z-banner` | `5` | Terminal banners |
+| `--z-popover` | `10` | Composer completions |
+| `--z-scrim` | `15` | Mobile drawer scrim |
+| `--z-drawer` | `20` | Mobile drawer |
+| `--z-modal` | `30` | Dialog and palette scrims |
 
 ### Shell
-- `.app` is a column: `.app-header` (fixed height) over `.app-body` (flex row, `min-height: 0`).
-- `.app-body` is `.sidebar` (fixed `--sidebar-w`, owns its own vertical scroll) beside
-  `.terminal-host` (`flex: 1`, `min-width: 0`, `overflow: hidden`; xterm owns scrolling inside).
-- The app fills `var(--app-height, 100dvh)` with a `100%` fallback; header, drawer and terminal
-  host add `env(safe-area-inset-*)` to their padding so notches and home bars never cover content.
-  Where the key bar is rendered and visible (`.terminal-host:has(.key-bar)` under
-  `(pointer: coarse), (max-width: 768px)`) the terminal host drops its bottom padding and the bar
-  carries `env(safe-area-inset-bottom)` itself, so the inset is applied once; with no pane selected
-  there is no bar and the host keeps the inset.
-- `--app-height` is written on `<html>` by `src/lib/viewport.ts` from `window.visualViewport`
-  (on `resize` and `scroll`, rounded, with the page pinned at `scrollTo(0, 0)`), so on iOS
-  Safari the shell shrinks with the soft keyboard instead of sliding under it and the key bar
-  stays above the keyboard. Chrome already resizes the layout viewport
-  (`interactive-widget=resizes-content`); there the value is the same as `100dvh`.
-- Breakpoints: `<= 768px` the sidebar becomes a left drawer over a scrim (a tablet in portrait
-  cannot afford 300px next to an 80-column terminal); `<= 480px` the version pill is hidden so the
-  header context keeps room. The ≤768px queries live in `src/styles.css`; the ≤480px rules
-  span `src/styles.css` (`.pill-version`, `.conn-text`, `.brand-name`, `.context-workspace`) and
-  `src/components/PaneTerminal.css` (banner wrapping) — component-scoped breakpoints stay with
-  their component. At ≤480 the header keeps the pane title by shedding the
-  version pill, the conn label, the brand word (the 22px mark stays) and the workspace half of
-  the context (the drawer names the workspace); 320px still fits.
-- Browser mechanics stay raw: `calc()` with `env()`, `min-width: 0`, `inset: 0`, percentages.
+- `.app` is a full-viewport column: `.app-header` over `.app-body`; the body is sidebar plus
+  `.terminal-host`. `--app-height` follows `visualViewport` so the soft keyboard does not cover input.
+- Header anatomy, left to right: mobile drawer toggle / desktop sidebar toggle; flexible context
+  title plus workspace/cwd subtitle; segmented Chat/Terminal switch; connection/version and meta
+  actions for palette, notifications, theme, settings and lock.
+- The sidebar is fixed-width on desktop and a `<=768px` drawer. The desktop collapse removes its
+  column; the drawer uses a scrim and keeps safe-area insets.
+- The terminal stack contains a positioned terminal surface, then composer or key bar. The xterm
+  mount stays alive under the chat lens; changing views never creates a second connection.
+- At `<=480px`, labels shed in priority order: version, brand name, context subtitle, connection
+  text and desktop-only control labels. Icons and selected context remain.
 
 ## 5. Components
 
-### Icon button (`.icon-button`)
-- **Structure**: `<button class="icon-button" aria-label>` wrapping one inline SVG.
-- **Variants**: `.drawer-toggle` (only rendered `<= 768px`); `.lock-button` (header, only when
-  `health.auth.required`; calls `DELETE /api/auth` then refetches health so the gate returns);
-  `.bell-button` (header, only when the Web Notification API exists — a secure context — and
-  permission is not `denied`; click asks for permission, `.is-on` is the granted state:
-  accent glyph and border, and `disabled` once granted — re-asking is impossible from JS, so
-  the granted bell carries the shared disabled treatment: opacity 0.7, no hover, default cursor).
-- **Spacing**: `--control-h` square (`--touch-target` square on `(pointer: coarse)`), `--icon-size` glyph, `--radius-sm`.
-- **States**: default (transparent, `--border`), hover (`--bg-hover`), active and
-  `[aria-expanded="true"]` (`--bg-elevated`, `--accent` border, `--text-strong`), disabled
-  (`opacity: 0.7`, `cursor: default`, no hover — 0.7 keeps the accent glyph at 4.90:1 on
-  `--bg-panel`), focus (`--ring`).
-- **Accessibility**: `aria-label` (icon-only), `aria-expanded` + `aria-controls` on the toggle.
-- **Motion**: background/border `--dur-fast`.
-- **Layout**: cluster item in the header.
+### Button (`.btn`, `.icon-button`)
+- `.btn` is a medium text control. Variants: neutral, `.btn-primary`, `.btn-danger`, `.btn-ghost`.
+  Primary uses `--primary`; danger uses danger tint plus blocked border; ghost removes fill/edge.
+- `.icon-button` is a square unlabeled visual control with mandatory `aria-label`; `.is-outlined`
+  adds the border. Both families use `--control-h`, `--radius-md`, focus ring, hover and disabled.
+- Coarse pointers grow controls to `--touch-target`.
+
+### Segmented control (`.segmented`)
+- One `aria-pressed="true"` option receives hover fill and strong text; the group itself is an
+  elevated, bordered `--radius-md` track.
+- Used for Chat/Terminal, theme and density. It is not a generic tab list.
+
+### Keyboard hint (`.kbd`)
+- An inline mono keycap: `18px` high, strong bottom edge, `--radius-sm`, `--fs-2xs`.
+- `Mod` resolves to `⌘` on Apple platforms and `Ctrl` elsewhere.
+
+### Modal (`.modal*`)
+- `.modal-scrim` centers an `aria-modal` dialog at `--z-modal`; `.modal` is a capped scrollable
+  column with header, body and footer and `--shadow-pop`.
+- At `<=640px`, it becomes a bottom sheet with top `--radius-xl` corners and safe-area padding.
+- Escape, explicit close and scrim click close dialogs; first meaningful control receives focus.
+
+### Field (`.field`, `.input`, `.select`)
+- Stacked uppercase label, optional hint and `--bg-input` field. Desktop fields use `--fs-sm`;
+  small-screen fields retain `--fs-input` to avoid focus zoom.
+- Focus names the edge with accent; errors use blocked/danger tokens and `role="alert"`.
+
+### Menu / popover (`.menu*`)
+- Bordered `--radius-lg` surface with `--shadow-pop`; rows use `--control-h`, `--radius-md`, icon,
+  ellipsized main label and optional hint.
+- Hover or `aria-selected` uses `--bg-hover`. Headings are dim uppercase micro labels.
 
 ### Badge (`.badge`)
-- **Structure**: `<span class="badge badge-{status}" data-status title="agent {status}">`.
-- **Variants**: `badge-idle`, `badge-working`, `badge-blocked`, `badge-done`, `badge-unknown`
-  (dim + dashed).
-- **Spacing**: `--chip-h` tall, `0 --space-2` padding, `--radius-pill`, `--fs-2xs` uppercase.
-- **States**: static; `badge-working` pulses (`--dur-pulse`) because working is a live state.
-- **Accessibility**: `title` names the state; color is never the only signal (text + dash).
-- **Layout**: last item of the workspace header and of the pane meta cluster.
+- Agent states read **READY**, **RUN**, **INPUT**, **DONE**; unknown reads **—**.
+- Idle is elevated/dim; working, blocked and done use their own tint and text. RUN pulses.
+- The written label and unknown dashed edge keep color from being the only signal.
 
 ### Pill (`.pill`)
-- **Structure**: `<span class="pill">` mono text.
-- **Variants**: `.pill-version` (`herdr 0.9.0`, hidden `<= 480px`), `.pill-offline` (danger).
-- **Spacing**: `--chip-h`, `0 --space-2`, `--radius-pill`, `--font-mono` at `--fs-2xs`.
-- **States**: static.
-- **Layout**: header meta cluster, right edge.
+- Mono metadata at `--chip-h`; version and offline are header variants. Offline uses danger tokens.
 
-### Brand (`.brand`)
-- **Structure**: `<h1 class="brand"><img class="brand-mark" src="/icons/icon.svg" alt="" width="22" height="22">
-  <span class="brand-name">herdr <span class="brand-sub">web ui</span></span></h1>`. Visible text is
-  exactly `herdr web ui`.
-- **Spacing**: `--mark-size` mark, `--space-2` gap, `--fs-lg` / `--fw-bold` / `--tracking-tight`.
-- **States**: static; `brand-sub` is `--text-dim` at `--fw-medium`.
+### Sidebar roster row and footer
+- Top bar: **New session** only. Search lives in the command palette, not the roster.
+- A workspace header shows drag handle, number, editable label, roll-up status and rename action.
+  Drag/drop reorders; `Alt+↑/↓` on the handle is the keyboard equivalent.
+- Every pane row is two lines: agent/shell mark, editable title plus compact status chip, then
+  workspace and cwd. Selected gets the accent rail; row actions rename or arm a 3-second,
+  second-click close. Inline server failures stay beside their row.
+- Single-pane workspaces merge their workspace handle into the pane row.
+- Footer holds the contextual **Install app** action, Settings, product name and herdr version.
 
-### Header context (`.context`)
-- **Structure**: `<div class="context" title>` → `.context-workspace` › `.context-pane`.
-- **Spacing**: `--space-1` gaps, `--fs-sm`; both segments ellipsize, the separator never shrinks.
-- **States**: rendered only while a pane is selected.
-- **Layout**: the single flexible header item (`flex: 1 1 auto; min-width: 0`).
+### New session dialog
+- Agent select comes from `GET /api/agents`; shell-only is always available. Directory defaults to
+  the selected pane cwd and name is an optional workspace label.
+- Submit calls `POST /api/workspace/create`; the server performs `workspace.create` and, when an
+  agent was chosen, `agent.start` in its root pane. Pending and partial agent-start failure are
+  explicit before the created pane opens.
 
-### Connection indicator (`.conn`)
-- **Structure**: `<span class="conn conn-live|conn-reconnecting" role="status"><span class="conn-dot"/>live|reconnecting</span>`.
-- **Spacing**: `--dot-size` dot, `--space-1` gap, `--fs-xs`.
-- **States**: live (`--status-done` dot, dim text), reconnecting (`--status-working` dot + text,
-  dot pulses). Driven by `PaneTerminal`'s `onConnectionChange` prop. ≤480px the label text
-  collapses to the visually-hidden `.conn-text` (the dot stays, the live region still announces).
-- **Accessibility**: `role="status"` announces the change; the dot is `aria-hidden`.
+### Header context and connection
+- A selected pane shows agent mark + title over workspace + cwd. With no selection, the brand fills
+  the context slot.
+- The segmented Chat/Terminal view switch lives in the header. There is no floating view-toggle pill.
+- Connection is a written live/reconnecting status with a dot; reconnecting pulses.
 
-### Sidebar tree (`.tree`, `.workspace`, `.pane-row`)
-- **Structure**: `<nav class="tree">` → `<section class="workspace">` whose rows are ONE line each:
-  `<ul class="pane-list">` of `<button class="pane-row">` carrying `.workspace-number` chip,
-  `.pane-name` (the workspace label, semibold `--text-strong`), `.pane-title` (the pane's live
-  title, `--text-dim`, dropped when it only repeats the label), `.agent-mark-holder` and the
-  badge — agent panes only. A workspace with more than one pane keeps a
-  `<header class="workspace-header">` (`.workspace-number`, `.workspace-label`, rollup badge)
-  and its rows drop the number/name pair; an optional `.tab-label` overline shows only when the
-  workspace has more than one tab. Shell prompt titles drop their `user@host:` prefix; the pane
-  id and cwd live in the row tooltip, not the row.
-- **Spacing**: `--space-4` between workspaces, `--space-1` inside a workspace, rows padded
-  `--space-2` with a `--space-3` left inset that the rail sits in.
-- **States**: default, hover (`--bg-hover`), selected (`--bg-elevated` + inset `--rail-w` accent
-  rail, title `--text-strong`, `aria-current="true"`), focus (`--ring`), loading (`.tree-state`
-  "Loading workspaces…", `role="status"`), empty (`.tree-state-empty`, `role="status"`, "No workspaces yet — open one
-  in herdr", dashed `--border` box), error (App-owned `.error-state`, `role="alert"`, with `.error-retry`).
-- **Accessibility**: `<nav aria-label>`, real `<button>` rows with `title`, `aria-current` on the
-  selected row, `min-height: --touch-target` on coarse pointers.
-- **Motion**: row background `--dur-fast`.
-- **Layout**: stack inside the sidebar, which owns the scroll.
+### Chat turn (`.chat-turn`)
+- The chat lens is a centered `--content-w` transcript over the still-attached terminal surface.
+  Structured Claude/omp transcripts fall back to ANSI-stripped pane scrollback when unavailable.
+- The register is Codex / gajae-code-app: a quiet document. User turns are right-aligned solid
+  `--primary` blocks (`--radius-lg`, ≤80% wide, no avatar or name) and open a new exchange with a
+  hairline above. Assistant turns have no header: the answer is plain prose; a meta row (MD / TXT
+  copy, time) fades in on hover (always visible on coarse pointers).
+- Markdown supports headings, lists, links, quotes, tables, inline/fenced code and code-copy actions.
+  Thinking renders as a folded block only when **Show thinking** is enabled.
+- Auto-follow stops when the reader scrolls up; later output raises a **New messages** pill.
 
-### Terminal host (`.terminal-host`, `.pane-terminal`, `.terminal-placeholder`, `.terminal-banners`)
-- **Structure**: `<main class="terminal-host">` (shell, `styles.css`) containing
-  `PaneTerminal`: optional placeholder (icon + "Select a pane to open its terminal"), the
-  `.terminal-banners` column, and the `.pane-terminal` xterm mount.
-- **Spacing**: host padded `--space-2` (+ safe-area insets); the banner column anchored at
-  `--space-2` / `--space-3` from the top-right, banners `--chip-h` (minimum) with
-  `0 --space-2` padding, `--radius-pill` — the draft review banner and any banner that
-  wraps on a phone take `--radius-md` and vertical padding instead.
-- **States**: empty (placeholder, `--text-dim`, `--fs-md`, painted at `--z-banner` above the mount,
-  which is `visibility: hidden` while no pane is selected so its cursor never shows through),
-  connecting (App renders this host without `PaneTerminal`, and so without a WebSocket, while the
-  auth state is unknown: "Connecting to herdr web ui…" instead of a blank page), ended
-  (`.terminal-banner`, neutral; appends `— held input discarded` when a draft existed),
-  reconnecting (`.terminal-banner-warning`, `--status-working`; while a draft is held it appends
-  `input held: “…”` capped at 32ch so the user sees what did not send), reviewing
-  (`.terminal-banner-draft`: after reconnect, the held input waits in the column's slot with the
-  draft text in `--font-mono` ellipsized at 32ch, a dropped-special-keys count, and Send /
-  Discard buttons at `--control-h`, `--radius-sm`; the one banner that accepts pointer events),
-  observing (`.terminal-banner-observe`, `--accent` text and border on `--accent-tint` layered
-  over `--bg-elevated`: "view only — the operator's screen size is untouched"; wraps to 36ch
-  ≤480px). Banners carry `role="status"`; a transient clipboard note (the pane's OSC 52 copy,
-  "copied to clipboard", auto-clearing) shares the column.
-- **Layout**: `position: relative` host; `.terminal-banners` is one absolute top-right column
-  (flex, `--space-2` gap, `max-width: calc(100% - 2 * var(--space-3))`, `pointer-events: none`
-  — the review banner re-enables them) so any state combination stacks without collisions
-  while the pty keeps every row. ≤480px every banner wraps instead of overflowing.
+### Work block (`.work-block`, `.work-row`)
+- One per assistant turn: a `▸ Worked for 7s · 1 edit · 2 commands` header (duration = next turn's
+  timestamp minus this one's; "Working…" pulsing in `--status-working` while the agent runs) over
+  one-line rows `▸ [icon] name / summary` in mono, indented under the header; mid-work narration
+  sits between rows as dim, one-step-smaller prose. The newest turn opens by default, older ones
+  fold. A row expands to the typed input (command, diff, file, checklist, raw) and an Output pane.
 
-### Role (no control surface)
-- The connection's role (`interact` types and resizes, `observe` neither) is enforced
-  server-side and carried by the WS `role` / `role-ack` frames. There is no header control
-  for it: the app connects as `interact` and never asks for anything else.
-- When a `role-ack` does say `observe` (another client of the same protocol, a future
-  surface), the local consequences still apply — xterm's stdin is gated with `disableStdin`,
-  the grid is adopted from `pane-geometry`, and the observe banner renders over the pty
-  canvas. Returning to interact force-refits and re-asserts the local geometry.
-
-### Scrollback
-
-- xterm keeps none (`scrollback: 0`). The attach stream lives in the alternate
-  screen and herdr owns scrollback (wheel and touch gestures are forwarded to it), so the fit
-  addon uses the full host width instead of reserving a phantom 15px scrollbar, and
-  `.xterm-viewport` hides its scrollbar.
-
-### Chat view (`.chat-view`, `.chat-msg`, `.chat-view .chat-tool`, `.view-toggle`)
-- **Structure**: `<div class="chat-view" role="log" aria-live="polite">`, switched in per pane by the
-  `.view-toggle` pill in the banner column (`aria-pressed`; label names the OTHER view). The xterm
-  mount stays attached underneath — the chat view is a lens, not a second connection.
-- **Source**: chatmux's model. `GET /api/pane/conversation` resolves the pane's agent session
-  (herdr `agent.get`) and reads Claude Code's own transcript store
-  (`~/.claude/projects/<cwd-slug>/<session>.jsonl`, same-user, read-only, uuid-checked) into
-  `ConversationTurn`s (`server/conversation.ts`): user prompts, assistant prose with folded
-  `tool_use`/`tool_result` pairs, thinking dropped, command bookkeeping dropped, 4k-char tool
-  outputs, last 100 turns, mtime-cached. Panes without a recognized store answer
-  `source:"scrollback"` and render the ANSI-stripped `pane.read` transcript as bubbles instead
-  (`src/lib/transcript.ts`: ❯ prompt echo → user, rules dropped, chrome dimmed, paragraph split) —
-  the same fallback chatmux ships. Polled every 2s, refreshed at once on a composer send.
-- **Spacing**: the transcript reads as a chat app — `--bg` panel, one centered column
-  `min(100%, 768px)` for both voices, `--space-5` between turns; the panel pads
-  `calc(--control-h + --space-3)` on top so the first bubble clears the view-toggle pill.
-- **States**: conversation turns carry markdown-lite — prose in `--font-ui` at `--fs-md`
-  (1.6) with `inline code` chips and **bold**, `- ` runs as `.chat-list`, fenced code as
-  `.chat-code` (bordered `--bg-panel` panel, `--radius-md`). The assistant is a voice, not a
-  box: agent turns (`.chat-turn-agent`, no fill, no edge) open with the agent's name in the
-  `.chat-role-agent` overline (accent dot + quiet caps; the prop `PaneTerminal` gets from
-  App's snapshot); user turns (`.chat-turn-user`) open with `you` and speak in right-aligned
-  `.chat-bubble`s — `--accent-tint` over `--bg-elevated`, hairline `--border` edge, radius
-  `14/14/--radius-sm/14` (the snubbed corner points at the speaker), `min(52ch, 100%)`,
-  `--text-strong` in `--font-ui`. Each `tool_use` is a `.chat-tool-chip` (pill row,
-  `--bg-panel`, accent mono tool name, ellipsized `--font-ui` summary, ▸/▾ caret) expanding
-  to `.chat-tool-io` input/output panels. Consecutive same-name calls collapse at two or more
-  into one `.chat-tool-run` (`×N`, summaries while closed, indented individual calls while
-  open); prose always breaks a run. Commands render as shell blocks, read/grep/glob calls as
-  file metadata, Claude/OMP edits as line-classed diffs, and todo/task inputs as checklists;
-  unknown tools retain the raw JSON fallback. The scrollback fallback keeps the older boxed
-  bubbles (`.chat-msg`: `--font-mono` `--fs-sm`, `--radius-md`, hairline edge; agent fills
-  `--bg-panel` flush left full width, user accent-bordered flush right `min(64ch, 92%)`,
-  TUI chrome dimmed `.chat-status`, `.chat-note` lines centered dim `--fs-xs` with the
-  error variant in `--status-blocked`).
-  Auto-follows the bottom unless the reader scrolled up (>48px stops following).
-- **Layout**: absolute `inset: 0` over `.terminal-surface` (the mount's own positioned box) at
-  `z-index: 1` — above the xterm canvas, below the banner column (`--z-banner`) so
-  ended/reconnecting/held-input pills stay visible, and never over the composer/key bar rows. The
-  choice is remembered per pane in `localStorage["herdr-web-ui:view:<pane_id>"]`; the key bar
-  belongs to the terminal lens and the composer to the chat lens, so exactly one of them shows.
+### Prompt card (`.prompt-card`)
+- Appears in chat while the agent is blocked and the visible pane contains a supported Claude, omp
+  or codex question, approval or plan menu.
+- Single options submit immediately; multi-select exposes checks plus Submit; supported custom input
+  has its own field. The prompt content hash rejects a stale answer with `prompt_changed`.
+- `POST /api/pane/prompt/answer` translates the chosen answer into the agent's navigation keys and
+  sends them through herdr `pane.send_keys` / text input. The card never fabricates a chat reply.
 
 ### Composer (`.composer`)
-- **Structure**: `<div class="composer" role="group" aria-label="Message composer">` → a hidden
-  `input[type=file]`, `<textarea class="composer-text" rows=1 aria-label="Message">`, an attach
-  icon-button (paperclip glyph, `aria-label="Attach images"`) and a Send button. Rendered by
-  `Composer.tsx`; `PaneTerminal` mounts it under the xterm mount only while the CHAT lens is on
-  and the pane is selected AND interactive AND alive (terminal mode, observing or ended hide it —
-  in terminal mode the grid itself takes the keystrokes). The queue card is independent: it shows
-  in either lens whenever a message is actually queued.
-- **Variants**: `.composer-send` (accent text + border, accent-tint hover); `.composer-note`
-  status pill floating over the terminal seam (`--z-banner`, `pointer-events: none`),
-  `.is-error` on `--danger-tint`.
-- **Spacing**: one row, `--space-1` gaps and top padding, `--hairline` top border on
-  `--bg-panel`; the textarea is `--fs-input` (the iOS no-zoom size) with `--space-1`/`--space-2`
-  padding, auto-growing to `10lh` then scrolling; buttons are `--control-h`
-  (`--touch-target` on coarse pointers). No safe-area padding of its own: the key bar carries
-  the bottom inset where it shows, the host padding everywhere else.
-- **Behavior**: Enter sends, Shift+Enter breaks the line, and an in-composition Enter (IME) never
-  sends. The send itself is `term.input()` of a bracketed-paste payload following the pane
-  program's own `bracketedPasteMode` — one input path with the key bar (`src/lib/compose.ts`).
-  Pasted or picked images (png/jpeg/gif/webp, ≤8MB each, ≤4 per action) upload to
-  `POST /api/pane/image` and insert an editable `@path` mention; upload errors show as the
-  error pill. Every pane's unsent text persists under
-  `localStorage["herdr-web-ui:composer-draft:<pane_id>"]` and restores across pane switches or
-  reloads. While an agent is working, Send becomes Queue and stores one editable per-pane next
-  message; the queue card offers Send now/Discard and auto-dispatches once the agent stops
-  working and the pane is connected, alive, and interactive. While disconnected the textarea
-  disables and holds its text — nothing new is queued.
-- **Accessibility**: error pill `role="alert"`, other notes `role="status"`; every icon-only
-  control carries `aria-label`.
-- **Motion**: button background/border `--dur-fast`; none under reduced motion.
+- Chat mode is ONE surface: the stack, the transcript and the composer region all sit on `--bg`,
+  and the composer column equals the transcript column (`--content-w`, same `--space-4` gutter).
+  The only card is the input box: `--bg-elevated`, hairline border, `--radius-xl`, `--shadow-card`;
+  focus turns its border `--accent` (no inner outline). Above it the agent/status line and the
+  completion popover; inside, ONE row — attach control | auto-growing textarea | Send / Queue /
+  Stop — with the controls bottom-aligned so they stay beside the last line as the box grows;
+  the image strip is its own row above that line.
+- `/` completions come from `GET /api/pane/commands` and group built-in, user and project commands;
+  `@` completions query `GET /api/pane/files`. Arrow keys navigate, Enter/Tab accepts, Escape closes.
+- Paste, picker or drag/drop accepts up to four png/jpeg/gif/webp files per action. Each gets a local
+  preview, uploads through `POST /api/pane/image`, and inserts a removable editable `@path` mention.
+- Enter sends and Shift+Enter breaks by default; with **Enter sends** off, Mod+Enter sends. IME Enter
+  is ignored. While working, Stop sends Escape and Queue stores the next message.
 
-### Key bar (`.key-bar`)
-- **Structure**: `<div class="key-bar" role="group" aria-label="Terminal keys">` of
-  `<button type="button" class="key" data-key tabindex="-1">`: `Esc`, `Tab`, `Ctrl`
-  (`aria-pressed`), four chevron keys (inline SVG + `aria-label` Up / Down / Left / Right) and
-  `^C` (`aria-label="Control C"`). Rendered by `KeyBar.tsx`; `PaneTerminal` mounts it as the
-  last child of `.terminal-stack`, under the xterm mount, only while a pane is selected AND the
-  connection is interactive (observing hides it: an observer has nothing to send). Taps go through `term.input()` so
-  they take the same `onData` → socket path as typed keys.
-- **Variants**: none. `.key.is-armed` is the one-shot Control: the next single printable
-  character is sent as its control code (A-Z and `@ [ \ ] ^ _`), then Control disarms; tapping
-  it again while armed disarms it.
-- **Spacing**: bar `--keybar-h` tall plus `env(safe-area-inset-bottom)` of bottom padding, no
-  side padding (the host's `--space-2` is the inset); keys `--touch-target` tall,
-  `min-width: --touch-target`, `0 --space-1` padding, `--space-1` gap, `--radius-sm`,
-  `--font-mono` at `--fs-sm`; chevrons `--icon-size`.
-- **States**: default (transparent, `--border`), hover (`--bg-hover`, only under
-  `(hover: hover)` so a tapped key does not stay lit), active and armed (`--bg-elevated`,
-  `--accent` border, `--text-strong`), focus (`--ring`). The bar is `display: none` on
-  fine-pointer desktops and `display: flex` under `(pointer: coarse), (max-width: 768px)`; it
-  scrolls sideways with a hidden scrollbar when the keys outgrow the viewport.
-- **Accessibility**: `role="group"` + `aria-label` (not `toolbar`: the keys are out of the tab order, so the
-  toolbar role would promise arrow-key navigation that does not exist); icon-only keys carry `aria-label`; Control
-  carries `aria-pressed`. Keys are `tabindex="-1"` and cancel `pointerdown` and `mousedown`, so
-  focus never leaves xterm's textarea and the soft keyboard stays open; hardware keyboards
-  already have these keys, so the bar stays out of the tab order. Every key is a 40x40 target.
-- **Motion**: background/border `--dur-fast`; none under `prefers-reduced-motion`.
-- **Layout**: `flex: none` at the bottom of `.terminal-stack` (column, `height: 100%`) with a
-  `--border` hairline on top; `.pane-terminal` above it is `flex: 1 1 auto; min-height: 0;
-  overflow: hidden`, so the bar takes rows from the pty instead of covering them.
+### Command palette
+- `Mod+Shift+K` opens a top-offset `--palette-w` dialog searching panes and actions. Recent panes
+  lead an empty query; arrows cycle, Enter activates and Escape closes.
+- Actions cover new session, lens/sidebar/theme, settings, notifications, lock and refresh, with
+  `.kbd` hints where a global shortcut exists.
 
-### Drawer + scrim (`.sidebar.is-open`, `.scrim`)
-- **Structure**: `<= 768px` the `.sidebar` becomes `position: fixed` below the header and slides
-  in from the left; `.scrim` is rendered while open and closes the drawer on click.
-- **States**: closed (`translateX(-100%)`, `visibility: hidden` so rows leave the tab order),
-  open (`translateX(0)`, `--shadow-drawer`). Toggle carries `aria-expanded`.
-- **Motion**: `transform --dur-base --ease-out`; visibility flips after the slide-out.
-- **Layout**: drawer top = header height + `env(safe-area-inset-top)`, bottom padding adds
-  `env(safe-area-inset-bottom)`.
+### Settings dialog
+- Appearance: Dark / Light / System, Comfortable / Compact, terminal font `10–22px`.
+- Composer: Enter sends. Chat: Show thinking. Shortcuts: the complete platform-resolved table.
+- Install reflects installed, promptable or browser-instructions state; About links the repository.
 
-### Token gate (`.token-gate`)
-- **Structure**: `<main class="token-gate-screen">` (grid, centers on `--bg`, `--space-4` + safe-area
-  padding) → `<form class="token-gate" data-testid="token-gate" aria-labelledby>` card:
-  `.token-gate-mark` (`/icons/icon.svg`, `calc(var(--mark-size) * 2)`), `<h1 class="token-gate-title">`
-  "herdr web ui" (`brand-sub` dim), `.token-gate-copy` "This server requires an access token.",
-  `<label>` + `<input class="token-gate-input" type="password" name="token"
-  autocomplete="current-password" autofocus>` (named by its `<label for>`), `<button type="submit"
-  class="token-gate-submit">` "Unlock", and `.token-gate-error` (`role="alert"`, referenced by the
-  input's `aria-describedby`) only after a failed attempt. Rendered by `App` instead of the shell
-  while `health.auth.required && !authenticated` or a session poll answers 401; the shell (and its
-  WebSocket) never mounts while locked.
-- **Variants**: none. `.token-gate-submit` is the system's one filled control (`--accent` fill, `--bg` text).
-- **Spacing**: card `min(100%, calc(var(--sidebar-w) + 2 * var(--space-6)))` wide so the content
-  column is exactly `--sidebar-w`; `--space-6` padding, `--radius-md`, `--hairline` `--border` on
-  `--bg-panel`. Mark → title `--space-4`, title → copy `--space-1`, copy → label `--space-5`, label →
-  input `--space-1`, input → button `--space-3`, button → error `--space-3`. Input and button are
-  `--control-h` tall (`--touch-target` on coarse pointers), `--radius-sm`. Type: title `--fs-lg` / `--fw-bold` / `--tracking-tight`; copy
-  `--fs-md` `--text-dim`; label `--fs-sm` `--fw-medium`; input `--fs-input` `--text-strong` on
-  `--bg-elevated`; button `--fs-md` `--fw-semibold`; error `--fs-sm` `--danger-text` on
-  `--danger-tint` with a `--status-blocked` border.
-- **States**: idle (input autofocused, global `--ring`), hover on submit (`color-mix()` of `--accent`
-  with `--text-strong`), active (`--accent` with `--bg`), submitting (button `disabled`, "Unlocking…",
-  opacity 0.6, `cursor: progress`), invalid (`aria-invalid="true"` → `--status-blocked` border, error
-  block "Token does not match." or the network error text; input re-selected), empty submit (no
-  request, input focused). Unlock success unmounts the gate and mounts the shell.
-- **Accessibility**: `<main>` landmark, one `<h1>`, real `<label for>`, `role="alert"` error,
-  `aria-invalid` + `aria-describedby` on the input, Enter submits, 32px controls (40px on coarse pointers). The header Lock
-  control is an `.icon-button.lock-button` with `aria-label="Lock"` and an inline SVG padlock,
-  rendered only when `health.auth.required`.
-- **Motion**: border/background/opacity `--dur-fast` `--ease-out` on the input and button only; no
-  entrance animation; none under `prefers-reduced-motion`.
-- **Layout**: full-viewport `min-height: 100dvh` grid; the card shrinks to `100%` of the padded
-  viewport on phones and never scrolls horizontally.
+### Terminal host, key bar and drawer
+- xterm has `scrollback: 0`; wheel/touch gestures reach herdr's alternate-screen scrollback. The
+  mount clips its own gutter and hides the unused xterm scrollbar.
+- Terminal banners stack top-right for ended, reconnecting, observe and held-draft review states.
+- The mobile key bar is Esc, Tab, one-shot Ctrl, arrows and `^C`; it never steals xterm focus.
+- The mobile drawer slides over a scrim. Closed visibility removes its controls from the tab order.
+
+### Token gate
+- A centered password card replaces the entire shell while authentication is required. It has a real
+  label, autofocused field, primary Unlock button and linked alert text.
+- Success mounts the shell; Lock unsubscribes push, deletes auth and returns to the gate.
+
+### Role (no control surface)
+- `interact` types and resizes; `observe` does neither. The server enforces both and the WS protocol
+  carries `role` / `role-ack`.
+- The app connects as `interact` and exposes no role switch. An observe acknowledgement still gates
+  local input, adopts server geometry and displays the view-only banner.
 
 ## 6. Motion & Interaction
 
 ### Timing
 
-| Type | Token | Duration | Easing | Usage |
-|------|-------|----------|--------|-------|
-| Micro | `--dur-fast` | 120ms | `--ease-out` | Hover/active background and border on rows and controls |
-| Standard | `--dur-base` | 180ms | `--ease-out` | Drawer slide |
-| Pulse | `--dur-pulse` | 1600ms | `--ease-out`, infinite, opacity 1 → 0.75 | Working badge, reconnecting dot (the 0.75 trough keeps `--status-working` text at 5.3:1 on `--bg-panel` and 4.7:1 on `--bg-hover`) |
-
-`--ease-out` = `cubic-bezier(0.2, 0, 0, 1)`.
+| Type | Token | Value | Usage |
+|------|-------|-------|-------|
+| Micro | `--dur-fast` | `120ms` | Hover, active, toggle and control state |
+| Standard | `--dur-base` | `180ms` | Drawer slide; reserved dialog timing token |
+| Pulse | `--dur-pulse` | `1600ms` | Working and reconnecting |
+| Easing | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | All tokenized motion |
 
 ### Rules
-- Only real state changes move: the drawer opening, an agent that is working, a socket that is
-  reconnecting. Nothing else animates; there is no hero moment and no entrance animation.
-- Only `transform` and `opacity` (and background/border color on hover) are animated.
-- `prefers-reduced-motion: reduce` removes the pulse and the drawer transition; states still
-  render, they just snap.
-- Every interactive element has hover, active and `:focus-visible` states from the tokens above.
+- Only state changes move: hover/press, the drawer, settings switches, working and reconnecting.
+- Dialogs and their scrims snap open and closed; they have no entrance or exit animation. On mobile,
+  their static layout changes to a bottom sheet.
+- `prefers-reduced-motion: reduce` removes pulses, drawer/control transitions, smooth chat scrolling
+  and settings toggle motion. State remains legible without animation.
 
 ## 7. Depth & Surface
 
 ### Strategy
-**Mixed: tonal-shift + hairlines.** Depth is four tonal steps (`--bg` → `--bg-panel` →
-`--bg-elevated` → `--bg-hover`) separated by `--hairline` `--border` lines. There are no shadows
-on resting surfaces; the one shadow in the system is `--shadow-drawer`, on the mobile drawer,
-because it floats over the terminal.
+
+**Tonal shift + hairline, with shadow reserved for overlays.** Resting shell surfaces have no shadow.
 
 | Type | Value | Usage |
 |------|-------|-------|
-| Hairline | `var(--hairline) solid var(--border)` | Header bottom, sidebar right, pills, controls |
-| Dashed hairline | `var(--hairline) dashed var(--border)` | Empty state box, unknown badge |
-| Tonal lift | `--bg-elevated` on `--bg-panel` | Selected row, chips, banners |
-| Tinted lift | `--accent-tint` layered over `--bg-elevated` (`linear-gradient(tint, tint) base`) | Observe banner, user chat bubble — any accent-tinted surface gets the opaque base rather than tinting whatever is behind it |
-| Drawer shadow | `--shadow-drawer` | Mobile drawer only |
+| Hairline | `var(--hairline) solid var(--border)` | Shell, fields, controls |
+| Strong edge | `var(--border-strong)` | Hover/focus separation |
+| Dashed edge | `var(--hairline) dashed var(--border)` | Unknown/empty states |
+| Tonal lift | `--bg-elevated` on `--bg-panel` | Selection, chips, tracks |
+| Tinted lift | Named tint over an opaque surface | Primary and agent states |
+| Drawer shadow | `--shadow-drawer` | Mobile drawer |
+| Overlay shadow | `--shadow-pop` | Menus, palette and modal cards |
+| Card shadow | `--shadow-card` | The composer's input box — the one resting card in chat mode |
 
 ## 8. Accessibility Constraints & Accepted Debt
 
 ### Constraints
-- WCAG 2.2 AA target. Measured contrasts on `--bg-panel`: `--text-dim` 6.0:1 (5.0:1 on `--bg-hover`, the
-  darkest surface dim text and idle badges sit on), `--accent` 9.0:1,
-  `--status-working` 8.7:1, `--status-blocked` 5.7:1, `--status-done` 9.4:1, `--text` 11+:1.
-  The former `#4a5468` unknown-badge grey (2.5:1) was removed for this reason.
-- Visible `--ring` focus on every interactive element via a global `:focus-visible` rule.
-- Icon-only controls carry `aria-label`; the drawer toggle carries `aria-expanded` +
-  `aria-controls`; the selected pane row carries `aria-current="true"`; status text
-  (connection, banners, loading) uses `role="status"`.
-- No emoji anywhere in markup; icons are inline SVG with `aria-hidden="true"`.
-- `prefers-reduced-motion` honored (Section 6). Touch targets on coarse pointers: 40px rows, icon
-  buttons, retry button, composer buttons, key-bar keys and gate controls (`--touch-target`); 32px
-  controls on fine pointers.
-- `document.title` is `<pane title> · herdr` while a pane is selected, else `herdr web ui`.
+- WCAG 2.2 AA is the target; do not document numeric contrast without measuring both shipped themes
+  and every actual backing surface.
+- Global `:focus-visible` uses `--ring`; interactive controls remain keyboard reachable except the
+  touch key bar, which intentionally preserves terminal focus and has hardware-key equivalents.
+- Icon-only controls carry `aria-label`; toggles expose `aria-pressed` or `role="switch"`; selected
+  pane exposes `aria-current`; dialogs expose `role="dialog"` and `aria-modal`.
+- Status, loading and composer progress use `role="status"`; failures use `role="alert"`. Agent state
+  is text plus color, and unknown adds a dashed edge.
+- Touch targets grow to `--touch-target`; fields stay `--fs-input` where mobile zoom is a risk.
+- `prefers-reduced-motion` is honored. Lucide/inline SVG decoration is hidden from assistive tech.
+- Global shortcuts use the convention **Mod+Shift+key**: Mod is Command on Apple platforms and Ctrl
+  elsewhere. The settings table is the discoverable source of the complete mapping.
+- `document.title` is `<pane title> · herdr` while selected, otherwise `herdr web ui`.
 
-### Accepted Debt
-| Item | Location | Why accepted | Owner / Exit |
-|------|----------|--------------|--------------|
-| react-grab / react-scan / react-doctor not installed | `src/main.tsx`, `package.json` | Lead decision: no new dependencies in this pass (React Dev Tooling Gate skipped) | Revisit when a perf pass is scheduled |
-| No real-browser Lighthouse run in this pass | whole app | `playwright-lighthouse` is not a dependency and adding one is out of scope; verification was typecheck, build, tests and screenshots at 375/768/1280 | Add when the dependency freeze lifts |
-| Terminal theme values duplicated in `PaneTerminal.tsx` | `PaneTerminal.tsx` theme + `--term-*` | xterm.js cannot read CSS custom properties and the component must not read new inputs | Keep in sync by hand; the `--term-*` tokens are the reference |
-| Drawer has no focus trap | `.sidebar.is-open` | Closed drawer leaves the tab order via `visibility: hidden`; trapping focus inside an open drawer needs a small focus utility that another lane owns (key bar / soft keyboard) | Add with the touch toolbar work |
-| Terminal content accessibility relies on xterm defaults | `PaneTerminal.tsx` | xterm's screen-reader mode is off; enabling it changes the terminal's DOM and input behaviour and is a product decision | Decide with the herdr TUI owners |
+### Accepted debt
+
+| Item | Location | Why accepted | Exit |
+|------|----------|--------------|------|
+| Terminal content accessibility relies on xterm defaults | `PaneTerminal.tsx` | Screen-reader mode changes terminal DOM and input behavior | Decide with herdr TUI owners |
+| Drawer has no focus trap | `.sidebar.is-open` | Closed state leaves the tab order, but open-state trapping is not implemented | Add a shared focus utility |
+| Modal focus is initialized, not fully trapped | Dialog components | Escape/scrim/close work; tab containment is not shared | Add the same focus utility |
+| Terminal colors exist in CSS and JavaScript | `styles.css`, `settings.ts` | xterm consumes a JS theme | Keep `terminalTheme()` verbatim with `--term-*` |

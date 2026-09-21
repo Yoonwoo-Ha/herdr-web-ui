@@ -1,166 +1,353 @@
-/*
- * Chat composer under the terminal (Composer.tsx): the one input surface where the
- * browser, not the pty, owns the keystrokes. One row - textarea, attach, send - that
- * grows with the text up to ten lines; status notes float as a pill over the seam
- * with the terminal, speaking the same banner language as PaneTerminal.css.
- * The bottom safe-area inset is NOT handled here: on coarse pointers the key bar
- * renders below this row and carries the inset itself (see KeyBar.css and the
- * :has(.key-bar) host rule in styles.css).
- */
-
+/* The composer is a centered chat surface; PaneTerminal owns its placement above the mobile
+   keyboard. Its horizontal padding equals .chat-view's, so the status line, the box and the
+   transcript share one column edge. */
 .composer {
   position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-1);
   flex: none;
-  padding-top: var(--space-1);
-  border-top: var(--hairline) solid var(--border);
+  width: 100%;
+  padding: 0 var(--space-4) var(--space-4);
   background: var(--bg-panel);
 }
 
+.composer-status,
+.composer-surface,
+.composer-note {
+  width: min(100%, var(--content-w));
+  margin-inline: auto;
+}
+
+.composer-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--chip-h);
+  padding: 0 var(--space-2) var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.composer-status .agent-mark {
+  display: inline-flex;
+  flex: none;
+}
+
+.composer-status strong {
+  flex: none;
+  color: var(--text-strong);
+  font-size: var(--fs-2xs);
+  letter-spacing: var(--tracking-caps);
+}
+
+.composer-status[data-status="working"] strong {
+  color: var(--status-working);
+}
+
+.composer-status[data-status="blocked"] strong {
+  color: var(--status-blocked);
+}
+
+.composer-status[data-status="done"] strong {
+  color: var(--status-done);
+}
+
+.composer-status-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* one row: attach | textarea | actions. The controls sit at the bottom of their cells so a
+   grown textarea keeps them beside its last line, like a chat app; the attachment strip is
+   its own row above */
+.composer-surface {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "attachments attachments attachments"
+    "left text right";
+  align-items: end;
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+/* focus is the surface's: the accent border on the rounded box, not a rectangle on the
+   textarea inside it (the global :focus-visible ring is suppressed below) */
+.composer-surface:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-card), 0 0 0 var(--hairline) var(--accent-tint);
+}
+
+.composer-surface.is-dragging {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 var(--hairline) var(--accent);
+}
+
 .composer-text {
-  flex: 1 1 auto;
+  grid-area: text;
+  width: 100%;
   min-width: 0;
   min-height: var(--control-h);
   max-height: 10lh;
-  padding: var(--space-1) var(--space-2);
+  padding: calc((var(--control-h) - 1lh) / 2) var(--space-1);
   resize: none;
   overflow-y: auto;
   background: transparent;
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
+  border: 0;
+  outline: 0;
+  color: var(--text-strong);
   font-family: var(--font-ui);
-  /* the one size iOS Safari does not zoom on focus (see --fs-input in DESIGN.md) */
   font-size: var(--fs-input);
   line-height: var(--lh-base);
+}
+
+.composer-text:focus-visible {
+  outline: 0;
 }
 
 .composer-text::placeholder {
   color: var(--text-dim);
 }
 
-.composer-text:focus-visible {
-  outline: var(--ring);
-  outline-offset: var(--ring-offset);
-}
-
 .composer-text:disabled {
   opacity: 0.7;
+  cursor: not-allowed;
 }
 
-.composer-button {
+.composer-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-h);
+}
+
+.composer-controls-left {
+  grid-area: left;
+  padding: var(--space-1) 0 var(--space-1) var(--space-2);
+}
+
+.composer-controls-right {
+  grid-area: right;
+  padding: var(--space-1) var(--space-2) var(--space-1) 0;
+}
+
+.composer-controls .icon-button,
+.composer-action,
+.composer-attachment button {
+  flex: none;
+  cursor: pointer;
+}
+
+.composer-controls .icon-button {
+  color: var(--text-dim);
+  border-radius: var(--radius-pill);
+}
+
+.composer-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: none;
+  width: var(--control-h);
   height: var(--control-h);
-  min-width: var(--control-h);
-  padding: 0 var(--space-2);
-  background: transparent;
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  font-family: inherit;
-  font-size: var(--fs-xs);
-  font-weight: var(--fw-medium);
-  white-space: nowrap;
-  cursor: pointer;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out);
+  padding: 0;
+  border: var(--hairline) solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--primary-text);
 }
 
-.composer-button svg {
+.composer-action svg,
+.composer-queue-button svg,
+.composer-attachment button svg {
   width: var(--icon-size);
   height: var(--icon-size);
 }
 
 .composer-send {
-  color: var(--accent);
-  border-color: var(--accent);
+  background: var(--primary);
+  border-color: var(--primary);
 }
 
-/* hover only where a pointer can hover: a tapped button must not stay lit */
-@media (hover: hover) {
-  .composer-button:hover:not(:disabled) {
-    background: var(--bg-hover);
-  }
-
-  .composer-button:hover:not(:disabled).composer-send {
-    background: var(--accent-tint);
-  }
+.composer-stop {
+  background: var(--status-blocked-tint);
+  border-color: var(--status-blocked);
+  color: var(--status-blocked);
 }
 
-.composer-button:active:not(:disabled) {
-  background: var(--bg-elevated);
+.composer-queue-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--control-h);
+  padding: 0 var(--space-2);
+  background: var(--primary-tint);
+  border: var(--hairline) solid var(--primary);
+  border-radius: var(--radius-pill);
+  color: var(--primary);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
 }
 
-.composer-button:disabled {
+.composer-action:disabled,
+.composer-queue-button:disabled,
+.composer-controls .icon-button:disabled {
   opacity: 0.7;
   cursor: default;
 }
 
-.composer-button:focus-visible {
-  outline: var(--ring);
-  outline-offset: var(--ring-offset);
-}
-
-/* status pill: floats over the terminal/composer seam so it never moves the row */
-.composer-note {
-  position: absolute;
-  right: var(--space-1);
-  bottom: calc(100% + var(--space-1));
-  z-index: var(--z-banner);
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--chip-h);
-  padding: 0 var(--space-2);
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--bg-elevated);
-  font-size: var(--fs-xs);
-  color: var(--text-dim);
-  white-space: nowrap;
-  max-width: calc(100% - 2 * var(--space-2));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  pointer-events: none;
-}
-
-.composer-note.is-error {
-  border-color: var(--status-blocked);
-  color: var(--danger-text);
-  background: linear-gradient(var(--danger-tint), var(--danger-tint)) var(--bg-elevated);
-}
-
-/* touch targets: the same coarse-pointer bump the other controls get, so a thumb
-   hits Send and Attach at 40px like the header buttons and key-bar keys */
-@media (pointer: coarse) {
-  .composer-button {
-    height: var(--touch-target);
-    min-width: var(--touch-target);
+@media (hover: hover) {
+  .composer-send:hover:not(:disabled) {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
   }
 
-  .composer-text {
+  .composer-stop:hover:not(:disabled) {
+    background: var(--danger-tint);
+  }
+
+  .composer-queue-button:hover:not(:disabled),
+  .composer-controls .icon-button:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+}
+
+.composer-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+  left: 0;
+  z-index: var(--z-popover);
+  max-height: calc(var(--row-h) * 5);
+  overflow-y: auto;
+}
+
+.composer-menu-group {
+  display: contents;
+}
+
+.composer-menu .menu-item {
+  width: 100%;
+  text-align: left;
+}
+
+.composer-menu .menu-item-main {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-menu .menu-item-hint {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachments {
+  grid-area: attachments;
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) 0;
+  overflow-x: auto;
+}
+
+.composer-attachment {
+  position: relative;
+  flex: 0 0 auto;
+  width: calc(var(--control-h) * 2);
+  height: calc(var(--control-h) * 2);
+  overflow: visible;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+.composer-attachment img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.composer-attachment-state {
+  position: absolute;
+  inset: auto var(--space-1) var(--space-1);
+  padding: var(--hairline) var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--bg-panel);
+  color: var(--text-strong);
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-tight);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment.is-error {
+  border-color: var(--status-blocked);
+}
+
+.composer-attachment button {
+  position: absolute;
+  top: calc(-1 * var(--space-2));
+  right: calc(-1 * var(--space-2));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--chip-h);
+  height: var(--chip-h);
+  padding: 0;
+  background: var(--bg-panel);
+  border: var(--hairline) solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-strong);
+}
+
+.composer-note {
+  margin-top: var(--space-1);
+  padding: 0 var(--space-2);
+  color: var(--danger-text);
+  font-size: var(--fs-xs);
+}
+
+@media (max-width: 480px) {
+  .composer {
+    padding-inline: var(--space-2);
+  }
+
+  .composer-agent-label,
+  .composer-status-separator,
+  .composer-status-hint {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .composer-controls .icon-button,
+  .composer-action,
+  .composer-queue-button,
+  .composer-attachment button {
+    min-width: var(--touch-target);
     min-height: var(--touch-target);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .composer-button {
+  .composer-surface {
     transition: none;
   }
 }
 
-/* ---------- queued next message (chatmux's queue-next) ---------- */
-
-/* the one message held while the pane's agent runs: editable, sendable now,
- * discardable — and auto-dispatched the moment the run ends */
+/* PaneTerminal's existing parked-message card remains visually compatible. */
 .composer-queue {
   display: flex;
   flex-direction: column;
@@ -171,7 +358,7 @@
 }
 
 .terminal-stack.is-chat .composer-queue {
-  width: min(100%, calc(768px + 2 * var(--space-4)));
+  width: min(100%, var(--content-w));
   margin: 0 auto;
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-md);
@@ -185,16 +372,20 @@
 }
 
 .composer-queue-text {
-  resize: none;
   min-height: 2lh;
   padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
+  resize: none;
   border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
   background: var(--bg-panel);
   color: var(--text-strong);
-  font-family: var(--font-ui);
+  font: inherit;
   font-size: var(--fs-sm);
-  line-height: var(--lh-base);
+}
+
+.composer-queue-text:focus-visible {
+  border-color: var(--accent);
+  outline: none;
 }
 
 .composer-queue-actions {
@@ -207,6 +398,7 @@
   min-height: var(--control-h);
   padding: 0 var(--space-3);
   border-radius: var(--radius-sm);
+  font: inherit;
   font-size: var(--fs-xs);
   font-weight: var(--fw-medium);
 }
@@ -217,20 +409,8 @@
   color: var(--text);
 }
 
-.composer-queue-send:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-
-.composer-queue-send:disabled {
-  opacity: 0.7;
-}
-
 .composer-queue-discard {
   background: transparent;
   border: 0;
   color: var(--text-dim);
-}
-
-.composer-queue-discard:hover {
-  color: var(--status-blocked);
 }

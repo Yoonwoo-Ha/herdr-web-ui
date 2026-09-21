@@ -1,0 +1,29 @@
+.new-session-modal {
+  width: min(100%, calc(var(--sidebar-w) + var(--content-w) / 4));
+}
+
+.new-session-modal .modal-body {
+  padding-bottom: var(--space-2);
+}
+
+.new-session-note,
+.new-session-error {
+  margin: 0 0 var(--space-3);
+}
+
+.new-session-note {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.new-session-error {
+  color: var(--status-blocked);
+  overflow-wrap: anywhere;
+}
+
+@media (pointer: coarse) {
+  .new-session-modal .input,
+  .new-session-modal .select {
+    height: var(--touch-target);
+  }
+}

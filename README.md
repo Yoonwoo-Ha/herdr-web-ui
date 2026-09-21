@@ -24,6 +24,8 @@
   </tr>
 </table>
 
+> The screenshots above predate the current redesign.
+
 herdr web ui is a browser UI and installable PWA for [herdr](https://herdr.dev). It shows the workspaces, tabs and panes of a running herdr server, renders real terminal output with xterm.js, and routes your keystrokes back into the live pane. herdr itself is a separate project and is not bundled here.
 
 ## Why
@@ -34,28 +36,32 @@ herdr already owns the ptys. The architecture borrows from [chatmux](https://git
 
 **A second device never disturbs the first.** Attaches coexist — the server never passes `--takeover`, so opening a pane in the browser doesn't displace your desktop TUI. The `observe` role goes further and is enforced server-side: an observer's input, keys and resize are refused, and its attach adopts the pty's grid instead of imposing a phone's (`server/index.ts`). The app connects as `interact` and has no toggle for it; the role is part of the WS contract for clients that want a read-only connection.
 
-**It is safe to expose.** A shared-token gate with an HttpOnly cookie guards `/api/session`, `/api/pane/*`, `/api/push*` and the `/ws` upgrade, and the bind address is yours to choose (see [Security](#security)).
+**It is safe to expose.** A shared-token gate with an HttpOnly cookie guards every private API route and the `/ws` upgrade, and the bind address is yours to choose (see [Security](#security)).
 
 ## Features
 
-- Live workspace, tab and pane tree with agent status badges (idle, working, blocked, done) on workspaces and panes (`src/components/Sidebar.tsx`, `DESIGN.md`).
-- Close a pane from the sidebar: a ✕ on every row, armed by a first click and confirmed by a second (3 s window), closing it in herdr itself (`POST /api/pane/close`, `src/components/Sidebar.tsx`).
+- Light, dark and system-following themes plus comfortable and compact density. Settings also keep terminal font size, Enter/Mod+Enter behavior and thinking visibility in one sanitized local record (`src/lib/settings.ts`, `src/components/SettingsDialog.tsx`).
+- A chat-style sidebar roster with two-line agent rows, inline workspace/pane rename, two-step pane close, and workspace drag or `Alt+↑/↓` reorder (`src/components/Sidebar.tsx`, `POST /api/pane/rename`, `POST /api/workspace/rename`, `POST /api/workspace/move`). Pane search is the command palette's job (`Mod+Shift+K`).
+- **New session** chooses a herdr agent, directory and optional label. `POST /api/workspace/create` runs `workspace.create`, then `agent.start` in the root pane when an agent was chosen (`src/components/NewSessionDialog.tsx`, `server/index.ts`).
 - A real terminal per pane: `herdr terminal attach` on a PTY, raw bytes streamed to xterm.js over a WebSocket, keystrokes streamed back (`server/index.ts`, `src/components/PaneTerminal.tsx`).
 - Scrollback stays in herdr. The attach stream runs in the alternate screen with mouse reporting on, so wheel and touch gestures scroll the real pane, which also works for full-screen agent TUIs.
 - One PTY per pane shared by every connected client, with a 256 KB replay tail so a late joiner sees the current screen.
-- Resizing the browser refits xterm, which resizes the pty. The `observe` role flips a connection into a read-only one — it can neither type nor resize, enforced server-side, and its grid follows the pty instead of imposing its own (`shared/protocol.ts` roles, `server/index.ts`, `src/components/PaneTerminal.tsx`). The app always connects as `interact`; the role belongs to the protocol, not to a button.
+- Resizing the browser refits xterm, which resizes the pty. The `observe` role flips a connection into a read-only one — it can neither type nor resize, enforced server-side, and its grid follows the pty instead of imposing its own (`shared/protocol.ts`, `server/index.ts`, `src/components/PaneTerminal.tsx`). The app always connects as `interact`; the role belongs to the protocol, not to a button.
 - Held input across disconnects: the WebSocket reconnects on its own, but input typed while it was down is never auto-sent. It waits as a draft you review and send (or discard) after reconnect (`src/lib/draft.ts`, `src/lib/ws.ts`).
-- Agent status for **every** pane is pushed, not just the open one: the server subscribes to all panes' status and broadcasts it, so sidebar badges update instantly, and the bell in the header alerts you when a pane becomes blocked or finishes — or when an unattached pane's terminal ends (`server/collector.ts`, `src/lib/notifications.ts`).
-- Web Push: on a device served over HTTPS (and on iPhone, the home-screen app) the bell subscribes the device, so those alerts arrive with the app closed. The server sends them itself, keeps the subscriptions across restarts and confirms a new device with a test push (`server/push.ts`, `src/lib/push.ts`, `public/sw.js`). Without HTTPS the bell falls back to alerts while the tab is open.
-- Header shows the workspace > pane context and a live / reconnecting indicator; the WebSocket reconnects with backoff and re-attaches with the right geometry (`src/App.tsx`, `src/lib/ws.ts`).
-- Touch key bar on phones: Esc, Tab, a one-shot Ctrl, arrows and ^C (`src/components/KeyBar.tsx`).
-- Chat-style composer under the terminal: multiline, paste-safe input — Enter sends (Shift+Enter for a newline, IME composition Enter respected), and the send goes out as a bracketed paste + Enter following the pane program's own paste mode (`src/components/Composer.tsx`, `src/lib/compose.ts`).
-- Chat view per pane, chatmux-style: panes with a recognized agent session (Claude) render as a real conversation — your prompts and the agent's replies from Claude Code's own transcript store, with markdown prose, bullet lists and collapsed tool-call chips that expand to their input and output (`server/conversation.ts`, `GET /api/pane/conversation`, `src/components/ChatView.tsx`). Panes without one fall back to the ANSI-stripped scrollback as bubbles. The xterm attach stays live underneath; the choice is remembered per pane.
-- Images into the prompt: paste or pick an image in the composer, it is stored under the pane's working directory (`.herdr-web-ui/`, ≤8MB, png/jpeg/gif/webp) and referenced by an editable `@path` mention the agent reads from the prompt text (`server/paste.ts`, `POST /api/pane/image`).
-- OSC 52 clipboard bridge (`src/lib/osc52.ts`): wired and unit-tested, but dormant on herdr 0.9.x — herdr's attach stream is a screen-diff protocol and consumes OSC 52 in its own parser (verified live), so pane clipboard writes never reach the browser today. The bridge lights up the moment herdr forwards them.
+- Agent status for **every** pane is pushed, not just the open one: sidebar chips read READY, RUN, INPUT and DONE, and alerts fire when a pane needs input, finishes or ends (`server/collector.ts`, `src/lib/notifications.ts`).
+- Web Push: on HTTPS (and on iPhone, in the home-screen app) the bell subscribes the device, so alerts arrive with the app closed. The server persists subscriptions and confirms a new device with a test push (`server/push.ts`, `src/lib/push.ts`, `public/sw.js`).
+- The header carries the selected pane title and workspace/cwd subtitle, the segmented Chat/Terminal lens switch, connection state, palette, notification, theme, settings and lock actions (`src/App.tsx`).
+- Chat is a lens over the live terminal, not a second connection. It reads like Codex: your prompts as solid blocks, the agent's answer as plain markdown, and everything it did in between folded into one `Worked for 7s · 1 edit · 2 commands` line whose rows expand to the call's input and output (`src/lib/workBlocks.ts`). Copy as MD/TXT, timestamps, optional folded thinking and a **New messages** pill; unrecognized sessions fall back to ANSI-stripped scrollback (`server/conversation.ts`, `GET /api/pane/conversation`, `src/components/ChatView.tsx`).
+- When a blocked Claude, omp or codex TUI shows a supported question, approval or plan menu, the chat lens presents an interactive prompt card parsed from the visible pane screen. Answers go through `POST /api/pane/prompt/answer`, which rechecks the prompt and drives the real menu with herdr `pane.send_keys` semantics (`server/prompt.ts`, `src/components/PromptCard.tsx`).
+- The composer has an agent/status line, pane-local drafts, and `/` completion from `GET /api/pane/commands`: built-ins plus `~/.claude/commands` and the pane project's `.claude/commands`. `@` completion searches cwd-relative files through `GET /api/pane/files` (`server/commands.ts`, `server/files.ts`, `src/components/Composer.tsx`).
+- Paste, pick or drag-and-drop png/jpeg/gif/webp images into the composer. Preview cards track upload state; successful `POST /api/pane/image` uploads under the pane cwd and insert an editable `@path` mention (≤8 MB each, up to four per action; `server/paste.ts`).
+- While an agent is running, **Stop** sends Escape and **Queue** holds the next message. Sending is configurable: Enter with Shift+Enter for a newline, or Mod+Enter (`src/components/Composer.tsx`, `src/components/PaneTerminal.tsx`, `src/lib/settings.ts`).
+- `Mod+Shift+K` opens a keyboard-navigable command palette for panes and app actions. The same `Mod+Shift+key` family switches lens/sidebar, creates a session, moves between panes and opens settings (`src/components/CommandPalette.tsx`, `src/lib/shortcuts.ts`).
+- Settings exposes appearance, terminal font size, composer behavior, thinking visibility, shortcuts and PWA install state. An **Install app** button also appears in the sidebar when the browser exposes its install prompt (`src/components/SettingsDialog.tsx`, `src/lib/install.ts`).
+- Touch key bar on phones: Esc, Tab, a one-shot Ctrl, arrows and `^C` (`src/components/KeyBar.tsx`).
+- OSC 52 clipboard bridge (`src/lib/osc52.ts`): wired but dormant on herdr 0.9.x because the attach screen-diff parser consumes OSC 52 before it reaches the browser.
 - Installable PWA with a small service worker (`public/manifest.webmanifest`, `public/sw.js`).
 - Optional shared-token gate with an HttpOnly cookie (`server/auth.ts`).
-- Dark-only UI; `DESIGN.md` is the design contract and its tokens are mirrored in `src/styles.css`.
 
 ## Requirements
 
@@ -161,7 +167,7 @@ The default bind is `0.0.0.0`. If `HERDR_WEB_TOKEN` is unset on a non-loopback b
 
 With `HERDR_WEB_TOKEN` set (`server/auth.ts`):
 
-- `/api/session`, `/api/pane/*`, `/api/push*` and the `/ws` upgrade require the token. A push subscription receives pane titles, so subscribing sits behind the gate. Changing the token does not unsubscribe existing devices; lock them or delete `push-subscriptions.json`.
+- Every `/api/*` route except `GET /api/health` and `/api/auth`, plus the `/ws` upgrade, requires the token. A push subscription receives pane titles, so subscribing sits behind the gate. Changing the token does not unsubscribe existing devices; lock them or delete `push-subscriptions.json`.
 - The static client, `GET /api/health` and `/api/auth` stay public so the login screen can load.
 - The browser sends the token once through the token gate (`POST /api/auth`) and gets back an HttpOnly, SameSite=Strict cookie named `herdr_web_token` with a one-year Max-Age. The cookie is marked Secure when the request came over https or through a proxy setting `x-forwarded-proto: https`.
 - Scripts can send `Authorization: Bearer <token>` instead.
@@ -213,17 +219,30 @@ The suite runs against the live herdr server; there are no mocks. It's read-only
 Defined in `shared/protocol.ts`.
 
 ```
-GET    /api/health                    -> { ok, herdr: { version, protocol }, auth: { required, authenticated } }
-GET    /api/session                   -> { snapshot }
-GET    /api/pane/conversation?pane_id=   -> { source: "claude-transcript" | "scrollback", turns }
-POST   /api/pane/close { pane_id }   -> { ok: true } (pane.close RPC; every sidebar drops it on session-changed)
-POST   /api/pane/input  { pane_id, text }
-POST   /api/auth        { token }     -> 204 + cookie
-DELETE /api/auth                      -> 204
-GET    /api/push                      -> { public_key }
-POST   /api/push/subscribe { subscription }  -> 204
-DELETE /api/push/subscribe { endpoint }      -> 204
-POST   /api/push/test      { endpoint }      -> 204 (one confirmation push to that device)
+GET    /api/health                              -> { ok, herdr: { version, protocol }, auth }
+GET    /api/session                             -> { snapshot }
+GET    /api/agents                              -> { agents }
+GET    /api/pane/read?pane_id=&source=&format=&lines= -> { read }
+GET    /api/pane/conversation?pane_id=           -> { source, turns }
+POST   /api/pane/input  { pane_id, text }        -> { ok: true }
+POST   /api/pane/close  { pane_id }              -> { ok: true }
+POST   /api/pane/rename { pane_id, label }       -> { ok: true }
+POST   /api/pane/image  { pane_id, content_type, data_base64 } -> { ok: true, path }
+GET    /api/pane/commands?pane_id=               -> { commands }
+GET    /api/pane/files?pane_id=&q=&limit=        -> { files }
+GET    /api/pane/prompt?pane_id=                 -> { prompt }
+POST   /api/pane/prompt/answer { pane_id, prompt_id, option_index? | option_indices? | custom_text? }
+                                                   -> { ok: true } | 409 prompt_changed
+POST   /api/workspace/create { cwd?, label?, agent? } -> { workspace_id, pane_id, agent_started, error? }
+POST   /api/workspace/rename { workspace_id, label }  -> { ok: true }
+POST   /api/workspace/move { workspace_id, insert_index } -> { ok: true }
+POST   /api/workspace/close { workspace_id }     -> { ok: true }
+POST   /api/auth        { token }                -> 204 + cookie
+DELETE /api/auth                                 -> 204
+GET    /api/push                                 -> { public_key }
+POST   /api/push/subscribe { subscription }      -> 204
+DELETE /api/push/subscribe { endpoint }          -> 204
+POST   /api/push/test { endpoint }               -> 204
 WS     /ws   client: attach | detach | input | keys | resize | role
              server: snapshot | pty-data | pty-exit | pane-geometry | role-ack
                      | pane-status | pane-exited | session-changed | error

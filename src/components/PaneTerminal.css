@@ -12,11 +12,19 @@
   height: 100%;
 }
 
+/* the grid keeps a small gutter of its own: the host (styles.css) has none, because the
+   chat lens and the composer want the full width. The gutter sits on .xterm itself, not
+   on the mount: the fit addon subtracts the terminal element's padding but reads the
+   parent's border-box width, so padding on the mount would overflow the last columns */
 .pane-terminal {
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
   overflow: hidden;
+}
+
+.pane-terminal .xterm {
+  padding: var(--space-2) var(--space-2) 0;
 }
 
 /* the mount's own box: everything that may overlay the pty (the chat lens) is
@@ -83,31 +91,6 @@
   gap: var(--space-2);
   max-width: calc(100% - 2 * var(--space-3));
   pointer-events: none;
-}
-
-/* the chat/terminal lens switch: banner-column anatomy, but always clickable
-   (pointer-events: none on the column skips this one element) */
-.view-toggle {
-  pointer-events: auto;
-  min-height: var(--control-h);
-  padding: 0 var(--space-2);
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--bg-elevated);
-  font-size: var(--fs-xs);
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
-.view-toggle:hover,
-.view-toggle:focus-visible {
-  color: var(--text);
-}
-
-/* while the chat lens is on, the switch names the way back and takes the accent */
-.view-toggle.is-chat {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 .terminal-banner {

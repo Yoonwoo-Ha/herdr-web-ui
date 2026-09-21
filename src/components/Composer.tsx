@@ -1,55 +1,179 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+  type KeyboardEvent,
+} from "react";
+import { Clock, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 
 import "./Composer.css";
 
-import { imageMention, MAX_COMPOSER_CHARS } from "../lib/compose.ts";
+import type { AgentStatus, SlashCommand } from "../../shared/protocol.ts";
+import { fetchPaneCommands, fetchPaneFiles } from "../lib/api.ts";
+import {
+  agentDisplayLabel,
+  composerStatusWord,
+  imageMention,
+  MAX_COMPOSER_CHARS,
+  rankSlashCommands,
+} from "../lib/compose.ts";
+import { activeTrigger, applyCompletion, type ActiveTrigger } from "../lib/mentions.ts";
+import { useSettings } from "../lib/settings.ts";
+import { AgentMark } from "./AgentMark.tsx";
 
 export interface ComposerProps {
-  /** false while the socket is down: text is kept in the textarea, sending waits */
   connected: boolean;
-  /** the pane this box serves: the draft is remembered per pane across switches */
   paneId: string;
-  /** true while the pane's agent runs: a send queues instead of typing into the run */
+  agent: string | null;
+  agentStatus?: AgentStatus;
   queueMode?: boolean;
-  /** One send = one bracketed-paste payload for the pane (PaneTerminal owns the pty
-   * path). Returns false when the pane path is dead — the composer then keeps the
-   * text for the user to review, never queueing it itself. */
   onSend: (text: string) => boolean;
-  /** Stores one image next to the pane; resolves to its absolute path. */
+  onAbort: () => void;
   onUploadImage: (file: File) => Promise<string>;
 }
 
-/** A pick or paste uploads at most this many images in one go. */
 const MAX_IMAGES_PER_ACTION = 4;
-
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+const COMMAND_CACHE_MS = 60_000;
+const SLASH_USAGE_KEY = "herdr-web-ui:slash-usage";
+const COMMAND_SOURCES = ["builtin", "user", "project"] as const;
+const SOURCE_LABEL: Record<SlashCommand["source"], string> = {
+  builtin: "Built in",
+  user: "User",
+  project: "Project",
+};
 
-/**
- * Chat-style composer under the terminal. A textarea, not the pty, receives the
- * keystrokes: multiline paste stays literal, images become server-side files the
- * prompt references by path, and nothing is queued while disconnected - Send simply
- * waits, exactly like the terminal's held-input draft policy.
- */
-export function Composer({ connected, paneId, queueMode = false, onSend, onUploadImage }: ComposerProps) {
+type CommandCacheEntry = { loadedAt: number; commands: SlashCommand[] };
+const commandCache = new Map<string, CommandCacheEntry>();
+let attachmentSequence = 0;
+
+type Attachment = {
+  id: number;
+  file: File;
+  previewUrl: string;
+  path: string | null;
+  state: "uploading" | "ready" | "error";
+};
+
+function readSlashUsage(): Record<string, number> {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(SLASH_USAGE_KEY) ?? "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, number] => typeof entry[1] === "number"),
+    );
+  } catch {
+    return {};
+  }
+}
+
+async function cachedPaneCommands(paneId: string): Promise<SlashCommand[]> {
+  const cached = commandCache.get(paneId);
+  if (cached && Date.now() - cached.loadedAt < COMMAND_CACHE_MS) return cached.commands;
+  const commands = await fetchPaneCommands(paneId);
+  commandCache.set(paneId, { loadedAt: Date.now(), commands });
+  return commands;
+}
+
+/** Chat-style input surface with pane-local drafts, command/file completion, and image mentions. */
+export function Composer({
+  connected,
+  paneId,
+  agent,
+  agentStatus,
+  queueMode = false,
+  onSend,
+  onAbort,
+  onUploadImage,
+}: ComposerProps) {
+  const { settings } = useSettings();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentsRef = useRef<Attachment[]>([]);
+  const removedAttachments = useRef(new Set<number>());
+  const fileRequest = useRef(0);
   const draftKey = `herdr-web-ui:composer-draft:${paneId}`;
-  const [text, setText] = useState<string>(() => window.localStorage.getItem(draftKey) ?? "");
-  const [uploading, setUploading] = useState(false);
-  const [note, setNote] = useState<{ kind: "info" | "error"; message: string } | null>(null);
+  const [text, setText] = useState(() => window.localStorage.getItem(draftKey) ?? "");
+  const [caret, setCaret] = useState(text.length);
+  const textRef = useRef(text);
+  const caretRef = useRef(caret);
+  const [commands, setCommands] = useState<SlashCommand[]>([]);
+  const [files, setFiles] = useState<string[]>([]);
+  const [slashUsage, setSlashUsage] = useState<Record<string, number>>(readSlashUsage);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [menuDismissed, setMenuDismissed] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
 
-  // the draft survives pane switches and reloads, per pane (chatmux's persistent drafts)
+  attachmentsRef.current = attachments;
+  textRef.current = text;
+  caretRef.current = caret;
+  const trigger = useMemo(() => activeTrigger(text, caret), [caret, text]);
+  const uploading = attachments.some((attachment) => attachment.state === "uploading");
+  const agentLabel = agentDisplayLabel(agent);
+  const sendKeys = settings.enterSends ? "Enter to send, Shift+Enter for newline" : "Mod+Enter to send, Enter for newline";
+  const placeholder = connected
+    ? `Message ${agentLabel}… (/ commands, @ files, ${sendKeys})`
+    : "Reconnecting… message held here, never queued";
+
   useEffect(() => {
     try {
       if (text.length > 0) window.localStorage.setItem(draftKey, text);
       else window.localStorage.removeItem(draftKey);
     } catch {
-      /* private mode: the draft just stops being remembered */
+      // Private browsing can reject persistence; the in-memory draft still works.
     }
   }, [draftKey, text]);
 
+  useEffect(() => {
+    let live = true;
+    void cachedPaneCommands(paneId)
+      .then((next) => {
+        if (live) setCommands(next);
+      })
+      .catch(() => {
+        if (live) setCommands([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [paneId]);
 
-  // the box grows with its text but stops at 10 lines; beyond that it scrolls
+  useEffect(() => {
+    const request = ++fileRequest.current;
+    if (trigger?.kind !== "file") {
+      setFiles([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void fetchPaneFiles(paneId, trigger.query, 20)
+        .then((next) => {
+          if (request === fileRequest.current) setFiles(next);
+        })
+        .catch(() => {
+          if (request === fileRequest.current) setFiles([]);
+        });
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [paneId, trigger?.kind, trigger?.query]);
+
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [trigger?.kind, trigger?.query]);
+
+  useEffect(
+    () => () => {
+      for (const attachment of attachmentsRef.current) URL.revokeObjectURL(attachment.previewUrl);
+    },
+    [],
+  );
+
   useLayoutEffect(() => {
     const element = textareaRef.current;
     if (!element) return;
@@ -57,145 +181,388 @@ export function Composer({ connected, paneId, queueMode = false, onSend, onUploa
     element.style.height = `${element.scrollHeight}px`;
   }, [text]);
 
-  const insertAtCursor = useCallback((snippet: string) => {
-    const element = textareaRef.current;
-    if (!element) {
-      setText((previous) => (previous + snippet).slice(0, MAX_COMPOSER_CHARS));
-      return;
-    }
-    const start = element.selectionStart ?? element.textLength;
-    const end = element.selectionEnd ?? start;
-    // maxLength guards typing, not programmatic insertion: clamp mentions to the cap too
-    const room = Math.max(0, MAX_COMPOSER_CHARS - element.value.length + (end - start));
-    const inserted = snippet.slice(0, room);
-    setText(element.value.slice(0, start) + inserted + element.value.slice(end));
+  const filteredCommands = useMemo(
+    () => (trigger?.kind === "slash" ? rankSlashCommands(commands, trigger.query, slashUsage) : []),
+    [commands, slashUsage, trigger],
+  );
+  const orderedCommands = useMemo(
+    () => COMMAND_SOURCES.flatMap((source) => filteredCommands.filter((command) => command.source === source)),
+    [filteredCommands],
+  );
+  const choices: readonly (SlashCommand | string)[] = trigger?.kind === "slash" ? orderedCommands : files;
+  const menuOpen = !menuDismissed && trigger !== null && choices.length > 0;
+
+  useEffect(() => {
+    if (selectedIndex >= choices.length) setSelectedIndex(Math.max(0, choices.length - 1));
+  }, [choices.length, selectedIndex]);
+
+  const setTextAndCaret = useCallback((nextText: string, nextCaret: number) => {
+    const limitedText = nextText.slice(0, MAX_COMPOSER_CHARS);
+    const clampedCaret = Math.min(nextCaret, MAX_COMPOSER_CHARS);
+    textRef.current = limitedText;
+    caretRef.current = clampedCaret;
+    setText(limitedText);
+    setCaret(clampedCaret);
+    setMenuDismissed(false);
     requestAnimationFrame(() => {
-      element.selectionStart = element.selectionEnd = start + inserted.length;
+      const element = textareaRef.current;
+      if (!element) return;
+      element.selectionStart = element.selectionEnd = clampedCaret;
       element.focus();
     });
   }, []);
 
+  const insertAtCursor = useCallback(
+    (snippet: string) => {
+      const element = textareaRef.current;
+      const currentText = textRef.current;
+      const selectionIsCurrent = element?.value === currentText;
+      const start = selectionIsCurrent ? (element.selectionStart ?? caretRef.current) : caretRef.current;
+      const end = selectionIsCurrent ? (element.selectionEnd ?? start) : start;
+      const room = Math.max(0, MAX_COMPOSER_CHARS - currentText.length + end - start);
+      const inserted = snippet.slice(0, room);
+      setTextAndCaret(currentText.slice(0, start) + inserted + currentText.slice(end), start + inserted.length);
+    },
+    [setTextAndCaret],
+  );
+
+  const selectCompletion = useCallback(
+    (choice: SlashCommand | string, currentTrigger: ActiveTrigger) => {
+      const replacement = currentTrigger.kind === "slash" ? `/${(choice as SlashCommand).name} ` : `@${choice as string} `;
+      const completed = applyCompletion(text, currentTrigger, replacement);
+      setTextAndCaret(completed.text, completed.caret);
+      setMenuDismissed(true);
+      if (currentTrigger.kind === "slash") {
+        const name = (choice as SlashCommand).name;
+        setSlashUsage((current) => {
+          const next = { ...current, [name]: (current[name] ?? 0) + 1 };
+          try {
+            window.localStorage.setItem(SLASH_USAGE_KEY, JSON.stringify(next));
+          } catch {
+            // Completion still works when storage is unavailable.
+          }
+          return next;
+        });
+      }
+    },
+    [setTextAndCaret, text],
+  );
+
   const uploadImages = useCallback(
-    async (files: readonly File[]) => {
-      const images = files.filter((file) => (ACCEPTED_IMAGE_TYPES as readonly string[]).includes(file.type));
+    async (incoming: readonly File[]) => {
+      const images = incoming
+        .filter((file) => (ACCEPTED_IMAGE_TYPES as readonly string[]).includes(file.type))
+        .slice(0, MAX_IMAGES_PER_ACTION);
       if (images.length === 0) return;
-      setUploading(true);
+
+      const added = images.map<Attachment>((file) => ({
+        id: ++attachmentSequence,
+        file,
+        previewUrl: URL.createObjectURL(file),
+        path: null,
+        state: "uploading",
+      }));
+      setAttachments((current) => [...current, ...added]);
       setNote(null);
-      try {
-        for (const image of images.slice(0, MAX_IMAGES_PER_ACTION)) {
-          const path = await onUploadImage(image);
+
+      for (const attachment of added) {
+        try {
+          const path = await onUploadImage(attachment.file);
+          if (removedAttachments.current.has(attachment.id)) continue;
+          setAttachments((current) =>
+            current.map((item) => (item.id === attachment.id ? { ...item, path, state: "ready" } : item)),
+          );
           insertAtCursor(imageMention(path));
+        } catch (error) {
+          if (removedAttachments.current.has(attachment.id)) continue;
+          setAttachments((current) =>
+            current.map((item) => (item.id === attachment.id ? { ...item, state: "error" } : item)),
+          );
+          setNote(error instanceof Error ? error.message : String(error));
         }
-      } catch (error) {
-        setNote({ kind: "error", message: error instanceof Error ? error.message : String(error) });
-      } finally {
-        setUploading(false);
       }
     },
     [insertAtCursor, onUploadImage],
   );
 
-  // images pasted into the box go to the server, never into the text
+  const removeAttachment = useCallback((attachment: Attachment) => {
+    removedAttachments.current.add(attachment.id);
+    URL.revokeObjectURL(attachment.previewUrl);
+    setAttachments((current) => current.filter((item) => item.id !== attachment.id));
+    if (attachment.path) {
+      const mention = imageMention(attachment.path);
+      setText((current) => {
+        const next = current.replace(mention, "");
+        textRef.current = next;
+        caretRef.current = Math.min(caretRef.current, next.length);
+        return next;
+      });
+    }
+  }, []);
+
+  const send = useCallback(() => {
+    if (!connected || uploading || text.trim().length === 0) return;
+    if (onSend(text)) {
+      setText("");
+      setCaret(0);
+      textRef.current = "";
+      caretRef.current = 0;
+      setNote(null);
+      for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl);
+      setAttachments([]);
+    }
+  }, [attachments, connected, onSend, text, uploading]);
+
+  const onKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.nativeEvent.isComposing) return;
+      if (menuOpen && trigger) {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const direction = event.key === "ArrowDown" ? 1 : -1;
+          setSelectedIndex((current) => (current + direction + choices.length) % choices.length);
+          return;
+        }
+        if (event.key === "Enter" || event.key === "Tab") {
+          event.preventDefault();
+          const choice = choices[selectedIndex];
+          if (choice !== undefined) selectCompletion(choice, trigger);
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setMenuDismissed(true);
+          return;
+        }
+      }
+      if (event.key === "Escape" && trigger) {
+        setMenuDismissed(true);
+        return;
+      }
+      if (event.key !== "Enter") return;
+      const shouldSend = settings.enterSends
+        ? !event.shiftKey && !event.metaKey && !event.ctrlKey
+        : (event.metaKey || event.ctrlKey) && !event.shiftKey;
+      if (!shouldSend) return;
+      event.preventDefault();
+      send();
+    },
+    [choices, menuOpen, selectCompletion, selectedIndex, send, settings.enterSends, trigger],
+  );
+
   const onPaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
       const images = Array.from(event.clipboardData.items)
         .filter((item) => item.kind === "file" && (ACCEPTED_IMAGE_TYPES as readonly string[]).includes(item.type))
         .map((item) => item.getAsFile())
         .filter((file): file is File => file !== null);
-      if (images.length === 0) return; // plain text paste: the textarea handles it
+      if (images.length === 0) return;
       event.preventDefault();
       void uploadImages(images);
     },
     [uploadImages],
   );
 
-  const onPick = useCallback(() => {
-    const input = fileInputRef.current;
-    if (!input || !input.files || input.files.length === 0) return;
-    const picked = Array.from(input.files);
-    input.value = ""; // let the same file be picked again next time
-    void uploadImages(picked);
-  }, [uploadImages]);
-
-  const send = useCallback(() => {
-    const current = text;
-    if (!connected || uploading || current.trim().length === 0) return;
-    if (onSend(current)) {
-      setText("");
-      setNote(null);
-    }
-  }, [connected, onSend, text, uploading]);
-
-  // Enter sends, Shift+Enter breaks the line; an IME composition's Enter (Korean
-  // input) confirms the composition instead - never a premature send
-  const onKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+  const onDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
       event.preventDefault();
-      send();
+      setDragging(false);
+      void uploadImages(Array.from(event.dataTransfer.files));
     },
-    [send],
+    [uploadImages],
   );
-  const hint = !connected
-    ? "reconnecting… held here, never queued"
-    : uploading
-      ? "uploading image…"
-      : null;
+
+  const isWorking = agentStatus === "working";
+  const menuId = `composer-menu-${paneId}`;
 
   return (
     <div className="composer" role="group" aria-label="Message composer">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept={ACCEPTED_IMAGE_TYPES.join(",")}
-        multiple
-        hidden
-        onChange={onPick}
-      />
-      <textarea
-        ref={textareaRef}
-        className="composer-text"
-        rows={1}
-        maxLength={MAX_COMPOSER_CHARS}
-        value={text}
-        placeholder={connected ? "Message — paste an image or type @/path" : "reconnecting…"}
-        aria-label="Message"
-        spellCheck={false}
-        autoCapitalize="off"
-        autoCorrect="off"
-        disabled={!connected}
-        onPaste={onPaste}
-        onKeyDown={onKeyDown}
-        onChange={(event) => {
-          setText(event.target.value);
-          if (note?.kind === "error") setNote(null);
+      <div className="composer-status" role="status" data-status={agentStatus ?? "unknown"}>
+        {agent && <AgentMark agent={agent} size={14} />}
+        <span className="composer-agent-label">{agentLabel}</span>
+        <span className="composer-status-separator" aria-hidden="true">·</span>
+        <strong>{composerStatusWord(agentStatus)}</strong>
+        {(uploading || !connected) && (
+          <span className="composer-status-hint">
+            <span aria-hidden="true">·</span> {uploading ? "Uploading image…" : "Reconnecting… message held here, never queued"}
+          </span>
+        )}
+      </div>
+
+      <div
+        className={`composer-surface${dragging ? " is-dragging" : ""}`}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          setDragging(true);
         }}
-      />
-      <button
-        type="button"
-        className="composer-button composer-attach"
-        aria-label="Attach images"
-        disabled={!connected || uploading}
-        onClick={() => fileInputRef.current?.click()}
+        onDragOver={(event) => event.preventDefault()}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+        }}
+        onDrop={onDrop}
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M21.4 11.05l-8.49 8.49a5 5 0 01-7.07-7.07l8.49-8.49a3 3 0 014.24 4.24l-8.49 8.49a1 1 0 01-1.41-1.41l7.78-7.78" />
-        </svg>
-      </button>
-      <button
-        type="button"
-        className="composer-button composer-send"
-        title={queueMode ? "The agent is running — this queues as the next message" : undefined}
-        disabled={!connected || uploading || text.trim().length === 0}
-        onClick={send}
-      >
-        {queueMode ? "Queue" : "Send"}
-      </button>
-      {(note || hint) && (
-        <div className={`composer-note${note?.kind === "error" ? " is-error" : ""}`} role={note?.kind === "error" ? "alert" : "status"}>
-          {note ? note.message : hint}
+        {menuOpen && trigger && (
+          <div id={menuId} className="menu composer-menu" role="listbox" aria-label={trigger.kind === "slash" ? "Slash commands" : "Files"}>
+            {trigger.kind === "slash" ? (
+              COMMAND_SOURCES.map((source) => {
+                const group = filteredCommands.filter((command) => command.source === source);
+                if (group.length === 0) return null;
+                return (
+                  <div className="composer-menu-group" key={source}>
+                    <div className="menu-heading">{SOURCE_LABEL[source]}</div>
+                    {group.map((command) => {
+                      const index = orderedCommands.indexOf(command);
+                      return (
+                        <button
+                          id={`${menuId}-${index}`}
+                          key={`${command.source}:${command.name}`}
+                          type="button"
+                          className="menu-item"
+                          role="option"
+                          aria-selected={index === selectedIndex}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => selectCompletion(command, trigger)}
+                        >
+                          <span className="menu-item-main">/{command.name}</span>
+                          <span className="menu-item-hint">{command.description}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="composer-menu-group">
+                <div className="menu-heading">Files</div>
+                {files.map((file, index) => (
+                  <button
+                    id={`${menuId}-${index}`}
+                    key={file}
+                    type="button"
+                    className="menu-item"
+                    role="option"
+                    aria-selected={index === selectedIndex}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => selectCompletion(file, trigger)}
+                  >
+                    <span className="menu-item-main">{file}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {attachments.length > 0 && (
+          <div className="composer-attachments" aria-label="Attached images">
+            {attachments.map((attachment) => (
+              <div className={`composer-attachment is-${attachment.state}`} key={attachment.id}>
+                <img src={attachment.previewUrl} alt={attachment.file.name} />
+                <span className="composer-attachment-state">
+                  {attachment.state === "uploading" ? "Uploading" : attachment.state === "error" ? "Failed" : "Attached"}
+                </span>
+                <button type="button" aria-label={`Remove ${attachment.file.name}`} onClick={() => removeAttachment(attachment)}>
+                  <X aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <textarea
+          ref={textareaRef}
+          className="composer-text"
+          rows={1}
+          maxLength={MAX_COMPOSER_CHARS}
+          value={text}
+          placeholder={placeholder}
+          aria-label="Message"
+          aria-controls={menuOpen ? menuId : undefined}
+          aria-expanded={menuOpen}
+          aria-activedescendant={menuOpen ? `${menuId}-${selectedIndex}` : undefined}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          disabled={!connected}
+          onPaste={onPaste}
+          onKeyDown={onKeyDown}
+          onClick={(event) => {
+            setCaret(event.currentTarget.selectionStart);
+            setMenuDismissed(false);
+          }}
+          onKeyUp={(event) => setCaret(event.currentTarget.selectionStart)}
+          onChange={(event) => {
+            setText(event.target.value);
+            setCaret(event.target.selectionStart);
+            setMenuDismissed(false);
+            setNote(null);
+          }}
+        />
+
+        <div className="composer-controls composer-controls-left">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={ACCEPTED_IMAGE_TYPES.join(",")}
+            multiple
+            hidden
+            onChange={(event) => {
+              const picked = Array.from(event.currentTarget.files ?? []);
+              event.currentTarget.value = "";
+              void uploadImages(picked);
+            }}
+          />
+          <button
+            type="button"
+            className="icon-button composer-attach"
+            aria-label="Attach images"
+            title="Attach images"
+            disabled={!connected || uploading}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Paperclip aria-hidden="true" />
+          </button>
         </div>
-      )}
+        <div className="composer-controls composer-controls-right">
+          {queueMode && (
+            <button
+              type="button"
+              className="composer-queue-button"
+              aria-label="Queue message"
+              title="Queue as the next message"
+              disabled={!connected || uploading || text.trim().length === 0}
+              onClick={send}
+            >
+              <Clock aria-hidden="true" />
+              Queue
+            </button>
+          )}
+          {isWorking ? (
+            <button
+              type="button"
+              className="composer-action composer-stop"
+              aria-label="Stop agent"
+              title="Stop agent"
+              disabled={!connected}
+              onClick={onAbort}
+            >
+              <Square aria-hidden="true" />
+            </button>
+          ) : !queueMode ? (
+            <button
+              type="button"
+              className="composer-action composer-send"
+              aria-label="Send message"
+              title="Send message"
+              disabled={!connected || uploading || text.trim().length === 0}
+              onClick={send}
+            >
+              <SendHorizontal aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {note && <div className="composer-note" role="alert">{note}</div>}
     </div>
   );
 }

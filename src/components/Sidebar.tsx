@@ -1,32 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import { Download, GripVertical, Pencil, Plus, Settings, Terminal, X } from "lucide-react";
 
 import "./Sidebar.css";
 
-import { closePane } from "../lib/api.ts";
-import type { AgentStatus, SessionSnapshot } from "../../shared/protocol.ts";
+import type { AgentStatus, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import { paneTitle } from "../../shared/notify-policy.ts";
+import { closePane, moveWorkspace, renamePane, renameWorkspace } from "../lib/api.ts";
+import type { AppActions } from "../lib/actions.ts";
+import { useInstallPrompt } from "../lib/install.ts";
+import { knownStatus, STATUS_WORD } from "../lib/status.ts";
 import { AgentMark } from "./AgentMark.tsx";
 
-/** How long a first close click stays armed before it disarms itself. */
 const CLOSE_ARM_MS = 3000;
-/** How long a failed close keeps its note under the tree. */
-const CLOSE_ERROR_MS = 5000;
-
-const STATUS_LABEL: Record<string, string> = {
-  idle: "idle",
-  working: "working",
-  blocked: "blocked",
-  done: "done",
-  unknown: "—",
-};
+const ERROR_NOTE_MS = 5000;
 
 /** shell prompt titles: `user@host:` is chrome, the path after it is the information */
 const SHELL_PREFIX = /^[^:@\s]+@[^:@\s]+:/;
-/**
- * herdr writes its own chrome in front of an agent pane's title: the agent glyph and a
- * state mark (`π > `, `π ⠴ ` — a braille spinner that would make the row twitch). The row
- * already carries both as the agent mark and the status badge, so the text drops them.
- */
+/** Herdr's agent glyph and spinner are already represented by the row mark and badge. */
 const AGENT_CHROME = /^\u03c0\s*[^\p{L}\p{N}\s]?\s*/u;
 
 function stripPaneChrome(title: string, agent: string | null | undefined): string {
@@ -34,61 +24,82 @@ function stripPaneChrome(title: string, agent: string | null | undefined): strin
   return agent ? shellStripped.replace(AGENT_CHROME, "") : shellStripped;
 }
 
-/** The line people scan for: the live terminal title, then the cwd, never blank (shared with push). */
 export { paneTitle };
 
-function StatusBadge({ status }: { status?: AgentStatus }) {
-  const value = status ?? "unknown";
+/** The title a row or the header shows: the user's label, else the live title minus its chrome. */
+export function displayPaneTitle(pane: PaneInfo): string {
+  return pane.label?.trim() || stripPaneChrome(paneTitle(pane), pane.agent) || pane.pane_id;
+}
+
+export function StatusBadge({ status }: { status?: AgentStatus }) {
+  const value = knownStatus(status);
   return (
-    <span className={`badge badge-${value}`} data-status={value} title={`agent ${value}`}>
-      {STATUS_LABEL[value] ?? value}
+    <span className={`badge badge-${value}`} data-status={value} title={`Agent ${value}`}>
+      {STATUS_WORD[value]}
     </span>
   );
 }
 
-/**
- * The row's ✕. Click one to arm (the label says so), click again within CLOSE_ARM_MS
- * to actually close; the arm state lives in the Sidebar so only one row is armed at a time.
- */
-function PaneCloseButton({ paneId, armed, onConfirm }: { paneId: string; armed: boolean; onConfirm: (paneId: string) => void }) {
-  return (
-    <button
-      type="button"
-      className={`pane-close${armed ? " is-armed" : ""}`}
-      aria-label={armed ? `confirm close ${paneId}` : `close ${paneId}`}
-      title={armed ? "click again to close" : "close pane"}
-      onClick={() => onConfirm(paneId)}
-    >
-      {armed ? "sure?" : "✕"}
-    </button>
-  );
+function cwdBasename(cwd: string | null | undefined): string {
+  if (!cwd) return "unknown directory";
+  const trimmed = cwd.replace(/\/+$/, "");
+  return trimmed.split("/").pop() || cwd;
+}
+
+interface InlineError {
+  paneId?: string;
+  message: string;
 }
 
 export interface SidebarProps {
   snapshot: SessionSnapshot | null;
   selectedPaneId: string | null;
-  onSelectPane: (paneId: string) => void;
+  actions: AppActions;
+  version: string | null;
 }
 
-export function Sidebar({ snapshot, selectedPaneId, onSelectPane }: SidebarProps) {
-  // two-step close: the first click arms (a mis-tap on a live pane must not kill it),
-  // the second within CLOSE_ARM_MS fires; a failure notes itself under the tree
+export function Sidebar({ snapshot, selectedPaneId, actions, version }: SidebarProps) {
   const [armedId, setArmedId] = useState<string | null>(null);
-  const [closeError, setCloseError] = useState<string | null>(null);
+  const [editingPaneId, setEditingPaneId] = useState<string | null>(null);
+  const [paneLabel, setPaneLabel] = useState("");
+  const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(null);
+  const [workspaceLabel, setWorkspaceLabel] = useState("");
+  const [workspaceOrder, setWorkspaceOrder] = useState<string[]>([]);
+  const [dragWorkspaceId, setDragWorkspaceId] = useState<string | null>(null);
+  const [inlineError, setInlineError] = useState<InlineError | null>(null);
   const armTimer = useRef<number | null>(null);
+  const { canInstall, install } = useInstallPrompt();
 
   useEffect(() => () => {
     if (armTimer.current !== null) window.clearTimeout(armTimer.current);
   }, []);
 
   useEffect(() => {
-    if (closeError === null) return;
-    const timer = window.setTimeout(() => setCloseError(null), CLOSE_ERROR_MS);
+    if (inlineError === null) return;
+    const timer = window.setTimeout(() => setInlineError(null), ERROR_NOTE_MS);
     return () => window.clearTimeout(timer);
-  }, [closeError]);
+  }, [inlineError]);
+
+  useEffect(() => {
+    if (!snapshot) {
+      setWorkspaceOrder([]);
+      return;
+    }
+    const serverOrder = snapshot.workspaces.map((workspace) => workspace.workspace_id);
+    setWorkspaceOrder((current) => current.join("\u0000") === serverOrder.join("\u0000") ? current : serverOrder);
+  }, [snapshot]);
+
+  const panes = snapshot?.panes ?? [];
+  const orderedWorkspaces = useMemo(() => {
+    if (!snapshot) return [];
+    const byId = new Map(snapshot.workspaces.map((workspace) => [workspace.workspace_id, workspace]));
+    return workspaceOrder.map((id) => byId.get(id)).filter((workspace): workspace is WorkspaceInfo => workspace !== undefined);
+  }, [snapshot, workspaceOrder]);
+
+  const noteError = (message: string, paneId?: string): void => setInlineError({ message, paneId });
 
   const closePaneClick = (paneId: string): void => {
-    setCloseError(null);
+    setInlineError(null);
     if (armedId !== paneId) {
       setArmedId(paneId);
       if (armTimer.current !== null) window.clearTimeout(armTimer.current);
@@ -101,98 +112,245 @@ export function Sidebar({ snapshot, selectedPaneId, onSelectPane }: SidebarProps
     if (armTimer.current !== null) window.clearTimeout(armTimer.current);
     armTimer.current = null;
     setArmedId(null);
-    closePane(paneId).catch((err: unknown) => {
-      // either herdr refused or the pane was already gone; the poll reconciles
-      setCloseError(err instanceof Error ? err.message : String(err));
+    void closePane(paneId).catch((reason: unknown) => {
+      noteError(`Close failed: ${reason instanceof Error ? reason.message : String(reason)}`, paneId);
     });
   };
-  if (!snapshot) {
-    return (
-      <p className="tree-state" role="status">
-        Loading workspaces…
-      </p>
-    );
-  }
 
-  if (snapshot.workspaces.length === 0) {
-    return <p className="tree-state tree-state-empty" role="status">No workspaces yet — open one in herdr</p>;
-  }
+  const beginPaneRename = (pane: PaneInfo): void => {
+    setEditingPaneId(pane.pane_id);
+    setPaneLabel(pane.label ?? "");
+  };
+
+  const savePaneRename = (paneId: string): void => {
+    const label = paneLabel.trim();
+    setEditingPaneId(null);
+    void renamePane(paneId, label).catch((reason: unknown) => {
+      noteError(`Rename failed: ${reason instanceof Error ? reason.message : String(reason)}`, paneId);
+    });
+  };
+
+  const beginWorkspaceRename = (workspace: WorkspaceInfo): void => {
+    setEditingWorkspaceId(workspace.workspace_id);
+    setWorkspaceLabel(workspace.label);
+  };
+
+  const saveWorkspaceRename = (workspaceId: string): void => {
+    const label = workspaceLabel.trim();
+    setEditingWorkspaceId(null);
+    void renameWorkspace(workspaceId, label).catch((reason: unknown) => {
+      noteError(`Rename failed: ${reason instanceof Error ? reason.message : String(reason)}`);
+    });
+  };
+
+  const reorderWorkspace = (workspaceId: string, insertIndex: number): void => {
+    const sourceIndex = workspaceOrder.indexOf(workspaceId);
+    if (sourceIndex < 0) return;
+    const boundedIndex = Math.max(0, Math.min(workspaceOrder.length - 1, insertIndex));
+    if (sourceIndex === boundedIndex) return;
+    const previous = workspaceOrder;
+    const next = [...workspaceOrder];
+    next.splice(sourceIndex, 1);
+    next.splice(boundedIndex, 0, workspaceId);
+    setWorkspaceOrder(next);
+    void moveWorkspace(workspaceId, boundedIndex).catch((reason: unknown) => {
+      setWorkspaceOrder(previous);
+      noteError(`Reorder failed: ${reason instanceof Error ? reason.message : String(reason)}`);
+    });
+  };
+
+  const onDragStart = (event: DragEvent<HTMLElement>, workspaceId: string): void => {
+    setDragWorkspaceId(workspaceId);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", workspaceId);
+  };
+
+  const onDrop = (event: DragEvent<HTMLElement>, targetWorkspaceId: string): void => {
+    event.preventDefault();
+    const sourceId = dragWorkspaceId ?? event.dataTransfer.getData("text/plain");
+    setDragWorkspaceId(null);
+    reorderWorkspace(sourceId, workspaceOrder.indexOf(targetWorkspaceId));
+  };
+
+  const onHandleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, workspaceId: string): void => {
+    if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+    event.preventDefault();
+    const current = workspaceOrder.indexOf(workspaceId);
+    reorderWorkspace(workspaceId, current + (event.key === "ArrowUp" ? -1 : 1));
+  };
+
+  const dragHandle = (workspace: WorkspaceInfo, draggable: boolean) => (
+    <button
+      type="button"
+      className="sidebar-drag-handle"
+      aria-label={`Reorder workspace ${workspace.label}`}
+      title="Drag to reorder · Alt+↑/↓"
+      draggable={draggable}
+      onDragStart={(event) => onDragStart(event, workspace.workspace_id)}
+      onDragEnd={() => setDragWorkspaceId(null)}
+      onKeyDown={(event) => onHandleKeyDown(event, workspace.workspace_id)}
+    >
+      <GripVertical aria-hidden="true" />
+    </button>
+  );
 
   return (
-    <>
-      <nav className="tree" aria-label="herdr workspaces">
-        {snapshot.workspaces.map((workspace) => {
-          const tabs = snapshot.tabs.filter((tab) => tab.workspace_id === workspace.workspace_id);
-          const workspacePanes = snapshot.panes.filter((pane) => pane.workspace_id === workspace.workspace_id);
-          // one pane means the workspace name and that pane's title are the same thought:
-          // the row carries both on one line and the header would only repeat it
-          const merged = workspacePanes.length === 1;
+    <div className="sidebar-shell">
+      <div className="sidebar-topbar">
+        <button type="button" className="btn sidebar-new-session" onClick={actions.openNewSession}>
+          <Plus aria-hidden="true" />
+          New session
+        </button>
+      </div>
+
+      <nav className="sidebar-list" aria-label="Herdr workspaces">
+        {!snapshot && <p className="tree-state" role="status">Loading workspaces…</p>}
+        {snapshot && snapshot.workspaces.length === 0 && (
+          <p className="tree-state tree-state-empty" role="status">No workspaces yet</p>
+        )}
+        {orderedWorkspaces.map((workspace) => {
+          const visiblePanes = panes.filter((pane) => pane.workspace_id === workspace.workspace_id);
+          if (visiblePanes.length === 0) return null;
+          const merged = visiblePanes.length === 1;
           return (
-            <section className="workspace" key={workspace.workspace_id}>
+            <section
+              className={`workspace${dragWorkspaceId === workspace.workspace_id ? " is-dragging" : ""}`}
+              key={workspace.workspace_id}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event) => onDrop(event, workspace.workspace_id)}
+            >
               {!merged && (
-                <header className="workspace-header">
+                <header
+                  className="workspace-header"
+                  draggable
+                  onDragStart={(event) => onDragStart(event, workspace.workspace_id)}
+                  onDragEnd={() => setDragWorkspaceId(null)}
+                >
+                  {dragHandle(workspace, false)}
                   <span className="workspace-number">{workspace.number}</span>
-                  <span className="workspace-label" title={workspace.label}>
-                    {workspace.label}
-                  </span>
+                  {editingWorkspaceId === workspace.workspace_id ? (
+                    <input
+                      className="input workspace-rename-input"
+                      aria-label="Workspace name"
+                      autoFocus
+                      value={workspaceLabel}
+                      onChange={(event) => setWorkspaceLabel(event.target.value)}
+                      onBlur={() => setEditingWorkspaceId(null)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") saveWorkspaceRename(workspace.workspace_id);
+                        if (event.key === "Escape") setEditingWorkspaceId(null);
+                      }}
+                    />
+                  ) : (
+                    <span className="workspace-label" title={workspace.label} onDoubleClick={() => beginWorkspaceRename(workspace)}>
+                      {workspace.label}
+                    </span>
+                  )}
                   <StatusBadge status={workspace.agent_status} />
+                  <button type="button" className="sidebar-row-action workspace-rename" aria-label={`Rename workspace ${workspace.label}`} onClick={() => beginWorkspaceRename(workspace)}>
+                    <Pencil aria-hidden="true" />
+                  </button>
                 </header>
               )}
 
-              {workspacePanes.length === 0 && (
-                <div className="workspace-empty">no panes</div>
-              )}
-
-              {tabs.map((tab) => {
-                const panes = snapshot.panes.filter((pane) => pane.tab_id === tab.tab_id);
-                return (
-                  <div className="tab-group" key={tab.tab_id}>
-                    {tabs.length > 1 && <div className="tab-label">tab {tab.label}</div>}
-                    <ul className="pane-list">
-                      {panes.map((pane) => {
-                        const title = paneTitle(pane);
-                        // shell titles are the prompt line: keep the path, drop user@host
-                        // (the full title, pane id and cwd stay in the tooltip)
-                        const displayTitle = stripPaneChrome(title, pane.agent);
-                        // a merged row already names the workspace: don't say it twice
-                        const summary = merged && displayTitle === workspace.label ? null : displayTitle;
-                        const selected = pane.pane_id === selectedPaneId;
-                        return (
-                          <li key={pane.pane_id} className="pane-item">
-                            <button
-                              type="button"
-                              className={`pane-row${selected ? " is-selected" : ""}`}
-                              aria-current={selected ? "true" : undefined}
-                              onClick={() => onSelectPane(pane.pane_id)}
-                              title={`${pane.pane_id} — ${title}${pane.cwd ? ` — ${pane.cwd}` : ""}`}
-                            >
-                              {merged && <span className="workspace-number">{workspace.number}</span>}
-                              {merged && <span className="pane-name">{workspace.label}</span>}
-                              {summary !== null && <span className="pane-title">{summary}</span>}
-                              {pane.agent && (
-                                <span className="agent-mark-holder" title={pane.agent}>
-                                  <AgentMark agent={pane.agent} size={14} />
-                                </span>
+              <ul className="pane-list">
+                {visiblePanes.map((pane) => {
+                  const fullTitle = paneTitle(pane);
+                  const displayTitle = displayPaneTitle(pane);
+                  const selected = pane.pane_id === selectedPaneId;
+                  const editing = editingPaneId === pane.pane_id;
+                  return (
+                    <li className={`pane-item${selected ? " is-selected" : ""}`} key={pane.pane_id}>
+                      <div className="pane-row">
+                        {merged && dragHandle(workspace, true)}
+                        <div
+                          className="pane-select"
+                          role="button"
+                          tabIndex={0}
+                          aria-current={selected ? "true" : undefined}
+                          title={`${pane.pane_id} — ${fullTitle}${pane.cwd ? ` — ${pane.cwd}` : ""}`}
+                          onClick={() => actions.selectPane(pane.pane_id)}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" && event.key !== " ") return;
+                            event.preventDefault();
+                            actions.selectPane(pane.pane_id);
+                          }}
+                        >
+                          <span className={`agent-mark-holder${pane.agent ? "" : " is-shell"}`} title={pane.agent ?? "Shell"}>
+                            {pane.agent ? <AgentMark agent={pane.agent} size={22} /> : <Terminal aria-hidden="true" />}
+                          </span>
+                          <span className="pane-copy">
+                            <span className="pane-primary">
+                              {editing ? (
+                                <input
+                                  className="input pane-rename-input"
+                                  aria-label="Pane name"
+                                  autoFocus
+                                  value={paneLabel}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onChange={(event) => setPaneLabel(event.target.value)}
+                                  onBlur={() => setEditingPaneId(null)}
+                                  onKeyDown={(event) => {
+                                    event.stopPropagation();
+                                    if (event.key === "Enter") savePaneRename(pane.pane_id);
+                                    if (event.key === "Escape") setEditingPaneId(null);
+                                  }}
+                                />
+                              ) : (
+                                <span className="pane-title">{displayTitle}</span>
                               )}
-                              {pane.agent && <StatusBadge status={pane.agent_status} />}
-                            </button>
-                            <PaneCloseButton paneId={pane.pane_id} armed={armedId === pane.pane_id} onConfirm={closePaneClick} />
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                );
-              })}
+                              <StatusBadge status={pane.agent_status} />
+                            </span>
+                            <span className="pane-subtitle">{workspace.label} · {cwdBasename(pane.cwd)}</span>
+                          </span>
+                        </div>
+                        <div className="pane-actions">
+                          <button type="button" className="sidebar-row-action" aria-label={`Rename ${displayTitle}`} title="Rename pane" onClick={() => beginPaneRename(pane)}>
+                            <Pencil aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            className={`sidebar-row-action pane-close${armedId === pane.pane_id ? " is-armed" : ""}`}
+                            aria-label={armedId === pane.pane_id ? `Confirm close ${displayTitle}` : `Close ${displayTitle}`}
+                            title={armedId === pane.pane_id ? "Click again to close" : "Close pane"}
+                            onClick={() => closePaneClick(pane.pane_id)}
+                          >
+                            {armedId === pane.pane_id ? <span>sure?</span> : <X aria-hidden="true" />}
+                          </button>
+                        </div>
+                      </div>
+                      {inlineError?.paneId === pane.pane_id && <p className="sidebar-inline-error" role="alert">{inlineError.message}</p>}
+                    </li>
+                  );
+                })}
+              </ul>
             </section>
           );
-      })}
+        })}
+        {inlineError && inlineError.paneId === undefined && (
+          <p className="sidebar-inline-error" role="alert">{inlineError.message}</p>
+        )}
       </nav>
-      {closeError !== null && (
-        <p className="tree-state tree-close-error" role="alert">
-          close failed: {closeError}
-        </p>
-      )}
-    </>
+
+      <footer className="sidebar-footer">
+        {canInstall && (
+          <button type="button" className="btn btn-ghost sidebar-footer-action" onClick={() => void install().catch((reason: unknown) => noteError(reason instanceof Error ? reason.message : String(reason)))}>
+            <Download aria-hidden="true" />
+            Install app
+          </button>
+        )}
+        <button type="button" className="btn btn-ghost sidebar-footer-action" onClick={actions.openSettings}>
+          <Settings aria-hidden="true" />
+          Settings
+        </button>
+        <div className="sidebar-brandline">
+          <span className="sidebar-app-name">herdr web ui</span>
+          <span className="pill">herdr {version ?? "offline"}</span>
+        </div>
+      </footer>
+    </div>
   );
 }

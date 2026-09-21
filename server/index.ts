@@ -1,15 +1,37 @@
+import { statSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import type { ServerWebSocket } from "bun";
 
-import type { ClientMessage, ClientRole, HealthAuth, HerdrPane, ServerMessage } from "../shared/protocol.ts";
+import type { AgentKind, ClientMessage, ClientRole, HealthAuth, HerdrPane, ServerMessage } from "../shared/protocol.ts";
 import { paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { handleAuthRequest, isAuthenticated, requiresAuth, unauthorizedJson } from "./auth.ts";
+import { paneCommands } from "./commands.ts";
+import { paneFiles } from "./files.ts";
 import { badRequest, errorResponse, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
 import { ConversationUnavailable, paneConversation } from "./conversation.ts";
-import { HerdrError, herdrSocketPath, paneClose, paneRead, paneSendKeys, paneSendText, ping, sessionSnapshot } from "./herdr/client.ts";
+import {
+  agentManifests,
+  agentStart,
+  HerdrError,
+  herdrSocketPath,
+  paneClose,
+  paneRead,
+  paneRename,
+  paneSendKeys,
+  paneSendText,
+  ping,
+  sessionSnapshot,
+  workspaceClose,
+  workspaceCreate,
+  workspaceMove,
+  workspaceRename,
+} from "./herdr/client.ts";
 import { createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
+import { handlePromptRequest } from "./prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
 
@@ -17,6 +39,36 @@ const MAX_REPLAY_BYTES = 256 * 1024;
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
+
+const AGENT_LABELS: Record<string, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  omp: "Oh My Pi",
+  pi: "pi",
+  gemini: "Gemini CLI",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+  copilot: "GitHub Copilot",
+  kimi: "Kimi",
+  amp: "Amp",
+};
+
+function expandedDirectory(value: string): string | null {
+  const expanded = value === "~" ? homedir() : value.startsWith("~/") ? resolve(homedir(), value.slice(2)) : resolve(value);
+  try {
+    return statSync(expanded).isDirectory() ? expanded : null;
+  } catch {
+    return null;
+  }
+}
+
+async function paneContext(paneId: string): Promise<{ agent: string | null; cwd: string }> {
+  const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
+  if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
+  const cwd = pane.foreground_cwd ?? pane.cwd;
+  if (!cwd) throw new HerdrError("cwd_not_found", `pane ${paneId} has no working directory`);
+  return { agent: pane.agent ?? pane.agent_session?.agent ?? null, cwd };
+}
 
 interface SocketData {
   attached: Set<string>;
@@ -271,6 +323,133 @@ export function createServer(
         }
       }
 
+      if (pathname === "/api/agents") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        try {
+          const kinds = new Set((await agentManifests()).manifests.map((manifest) => manifest.agent));
+          kinds.add("omp");
+          kinds.add("claude");
+          const agents: AgentKind[] = [...kinds]
+            .map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind }))
+            .sort((left, right) => left.label.localeCompare(right.label) || left.kind.localeCompare(right.kind));
+          return jsonResponse({ agents });
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname === "/api/workspace/create") {
+        if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+        let payload: { cwd?: unknown; label?: unknown; agent?: { kind?: unknown; name?: unknown; args?: unknown } | null };
+        try {
+          payload = (await request.json()) as typeof payload;
+        } catch {
+          return badRequest("invalid_json", "request body must be JSON");
+        }
+        // the client sends null for "not given": treat it exactly like an absent field
+        if (payload.cwd === null) delete payload.cwd;
+        if (payload.label === null) delete payload.label;
+        if (payload.agent === null) delete payload.agent;
+        if (payload.cwd !== undefined && typeof payload.cwd !== "string") return badRequest("invalid_cwd", "cwd must be an existing directory");
+        const cwd = payload.cwd === undefined ? undefined : expandedDirectory(payload.cwd);
+        if (payload.cwd !== undefined && cwd === null) return badRequest("invalid_cwd", "cwd must be an existing directory");
+        if (payload.label !== undefined && typeof payload.label !== "string") return badRequest("missing_label", "label must be a string");
+        if (payload.agent !== undefined && (typeof payload.agent !== "object" || typeof payload.agent.kind !== "string" || payload.agent.kind.length === 0)) {
+          return badRequest("invalid_agent", "agent.kind is required");
+        }
+        try {
+          const created = await workspaceCreate({
+            ...(cwd === undefined || cwd === null ? {} : { cwd }),
+            ...(typeof payload.label === "string" ? { label: payload.label } : {}),
+          });
+          if (!payload.agent) {
+            return jsonResponse({ workspace_id: created.workspace.workspace_id, pane_id: created.root_pane.pane_id, agent_started: false });
+          }
+          try {
+            await agentStart({
+              name: typeof payload.agent.name === "string" && payload.agent.name.length > 0 ? payload.agent.name : payload.agent.kind as string,
+              kind: payload.agent.kind as string,
+              paneId: created.root_pane.pane_id,
+              timeoutMs: 60_000,
+            });
+            return jsonResponse({ workspace_id: created.workspace.workspace_id, pane_id: created.root_pane.pane_id, agent_started: true });
+          } catch (error) {
+            return jsonResponse({
+              workspace_id: created.workspace.workspace_id,
+              pane_id: created.root_pane.pane_id,
+              agent_started: false,
+              error: {
+                code: error instanceof HerdrError ? error.code : "agent_start_failed",
+                message: error instanceof Error ? error.message : String(error),
+              },
+            });
+          }
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname === "/api/workspace/rename" || pathname === "/api/workspace/move" || pathname === "/api/workspace/close") {
+        if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+        let payload: { workspace_id?: unknown; label?: unknown; insert_index?: unknown };
+        try {
+          payload = (await request.json()) as typeof payload;
+        } catch {
+          return badRequest("invalid_json", "request body must be JSON");
+        }
+        if (typeof payload.workspace_id !== "string" || payload.workspace_id.length === 0) {
+          return badRequest("missing_workspace_id", "workspace_id is required");
+        }
+        if (pathname === "/api/workspace/rename" && typeof payload.label !== "string") {
+          return badRequest("missing_label", "label is required");
+        }
+        if (pathname === "/api/workspace/move" && (typeof payload.insert_index !== "number" || !Number.isInteger(payload.insert_index) || payload.insert_index < 0)) {
+          return badRequest("invalid_index", "insert_index must be a non-negative integer");
+        }
+        try {
+          if (pathname === "/api/workspace/rename") await workspaceRename(payload.workspace_id, payload.label as string);
+          else if (pathname === "/api/workspace/move") await workspaceMove(payload.workspace_id, payload.insert_index as number);
+          else await workspaceClose(payload.workspace_id);
+          return jsonResponse({ ok: true });
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname === "/api/pane/rename") {
+        if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+        let payload: { pane_id?: unknown; label?: unknown };
+        try {
+          payload = (await request.json()) as typeof payload;
+        } catch {
+          return badRequest("invalid_json", "request body must be JSON");
+        }
+        if (typeof payload.pane_id !== "string" || payload.pane_id.length === 0) return badRequest("missing_pane_id", "pane_id is required");
+        if (typeof payload.label !== "string") return badRequest("missing_label", "label is required");
+        try {
+          await paneRename(payload.pane_id, payload.label.length === 0 ? null : payload.label);
+          return jsonResponse({ ok: true });
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname === "/api/pane/commands" || pathname === "/api/pane/files") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        const paneId = url.searchParams.get("pane_id");
+        if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
+        try {
+          const context = await paneContext(paneId);
+          if (pathname === "/api/pane/commands") return jsonResponse({ commands: paneCommands(context.agent, context.cwd) });
+          const limitRaw = url.searchParams.get("limit");
+          const limit = limitRaw === null ? 20 : Number(limitRaw);
+          if (!Number.isInteger(limit) || limit < 1) return badRequest("invalid_limit", "limit must be a positive integer");
+          return jsonResponse({ files: await paneFiles(context.cwd, url.searchParams.get("q") ?? "", Math.min(limit, 100)) });
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
       if (pathname === "/api/pane/read") {
         const paneId = url.searchParams.get("pane_id");
         if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
@@ -367,6 +546,15 @@ export function createServer(
           if (error instanceof PasteImageError) {
             return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);
           }
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname.startsWith("/api/pane/prompt")) {
+        try {
+          const response = await handlePromptRequest(request, url);
+          if (response) return response;
+        } catch (error) {
           return errorResponse(error);
         }
       }
