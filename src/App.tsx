@@ -371,14 +371,6 @@ export function App() {
           </div>
         )}
         <div className="header-meta">
-          <button
-            type="button"
-            className={`role-toggle${role === "observe" ? " is-observing" : ""}`}
-            title={role === "observe" ? "Switch to interactive (type and resize)" : "Switch to view only (never resizes the shared terminal)"}
-            onClick={() => setRole(role === "interact" ? "observe" : "interact")}
-          >
-            {role === "observe" ? "view only" : "interactive"}
-          </button>
           <span className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`} role="status">
             <span className="conn-dot" aria-hidden="true" />
             <span className="conn-text">{connected ? "live" : "reconnecting"}</span>

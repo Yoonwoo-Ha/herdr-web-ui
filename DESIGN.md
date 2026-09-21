@@ -29,7 +29,7 @@ Dark-only (`color-scheme: dark`): there is no light theme, and there will not be
 | Text/dim | `--text-dim` | `#8390a8` | Metadata, ids, empty states, idle |
 | Text/bright | `--text-strong` | `#e6edf7` | Brand, workspace labels, selected title |
 | Accent | `--accent` | `#6cb6ff` | Selection rail, focus ring, agent chip text, cursor |
-| Accent/tint | `--accent-tint` | `rgba(108, 182, 255, 0.12)` | Agent chip background; observe banner and observing pill, layered OVER `--bg-elevated` |
+| Accent/tint | `--accent-tint` | `rgba(108, 182, 255, 0.12)` | Agent chip background; observe banner, layered OVER `--bg-elevated` |
 | Status/idle | `--status-idle` | `#8390a8` | Idle badge |
 | Status/working | `--status-working` | `#e2a336` | Working badge, reconnecting dot and banner |
 | Status/blocked | `--status-blocked` | `#f2545b` | Blocked badge, offline pill, error border |
@@ -117,8 +117,8 @@ All spacing derives from a base of **4px**.
 |-------|-------|-------|
 | `--header-h` | 46px | Header height (plus `env(safe-area-inset-top)`) |
 | `--sidebar-w` | 300px | Sidebar column and drawer width |
-| `--control-h` | 32px | Icon button, role toggle, retry button, composer buttons, gate input and button on fine pointers (`--touch-target` on coarse; the composer textarea's min-height bumps with them) |
-| `--touch-target` | 40px | On `(pointer: coarse)`: pane row min-height, icon buttons, role toggle, retry button, composer buttons, gate input and button; key-bar keys always (min-width and height) |
+| `--control-h` | 32px | Icon button, retry button, composer buttons, gate input and button on fine pointers (`--touch-target` on coarse; the composer textarea's min-height bumps with them) |
+| `--touch-target` | 40px | On `(pointer: coarse)`: pane row min-height, icon buttons, retry button, composer buttons, gate input and button; key-bar keys always (min-width and height) |
 | `--keybar-h` | 48px | Key bar height (plus `env(safe-area-inset-bottom)`); keys are `--touch-target` tall inside it |
 | `--chip-h` | 18px | Badge, pill and chip height; banner minimum height (the draft review banner grows to its controls) |
 | `--icon-size` | 18px | SVG inside an icon button |
@@ -162,7 +162,7 @@ All spacing derives from a base of **4px**.
   header context keeps room. The ≤768px queries live in `src/styles.css`; the ≤480px rules
   span `src/styles.css` (`.pill-version`, `.conn-text`, `.brand-name`, `.context-workspace`) and
   `src/components/PaneTerminal.css` (banner wrapping) — component-scoped breakpoints stay with
-  their component. At ≤480 the header keeps the role pill and the pane title by shedding the
+  their component. At ≤480 the header keeps the pane title by shedding the
   version pill, the conn label, the brand word (the 22px mark stays) and the workspace half of
   the context (the drawer names the workspace); 320px still fits.
 - Browser mechanics stay raw: `calc()` with `env()`, `min-width: 0`, `inset: 0`, percentages.
@@ -271,29 +271,14 @@ All spacing derives from a base of **4px**.
   — the review banner re-enables them) so any state combination stacks without collisions
   while the pty keeps every row. ≤480px every banner wraps instead of overflowing.
 
-### Role toggle (`.role-toggle`)
-- **Structure**: `<button class="role-toggle">` whose visible label IS the state — `interactive`
-  / `view only` — as the first item of the header's `.header-meta` cluster, next to the
-  connection indicator (the role is a property of the CONNECTION, and the header keeps
-  every control off the pty canvas). No `aria-pressed`: the label names the state
-  (the play/pause pattern), and the observe banner announces the transition.
-- **Semantics**: the connection's role (`interact` types and resizes, `observe` neither — enforced
-  server-side). The server's `role-ack` applies the local consequences, so the pill only sends
-  the request; returning to interact force-refits and re-asserts the local geometry, and xterm's
-  stdin is gated with `disableStdin` while observing.
-- **Spacing**: `--control-h` tall (`--touch-target` on `(pointer: coarse)`, same block as
-  the icon buttons), `0 --space-3` padding, `--radius-pill`, `--fs-xs` at `--fw-medium`.
-- **States**: default (`--bg-elevated`, `--text-dim`), hover (`--text`, `--accent` border),
-  active (`--bg-hover`), observing (`.is-observing`: `--accent` text and border on
-  `--accent-tint` layered over `--bg-elevated` — accent marks the connection's own state
-  here, not an agent status), focus (`--ring`).
-- **Motion**: color and border `--dur-fast`; none under `prefers-reduced-motion`.
-- **Ownership**: `App.tsx` owns the state; `PaneTerminal` sends changes to the server and
-  reports the server's `role-ack` back (the pill shows the confirmed role, and the initial
-  `interact` default is never re-sent — but on every (re)connect the role frame IS sent first,
-  so a role flipped while disconnected converges on the ack instead of getting stuck).
-  The pill renders even with no pane selected: the role is a property of the connection,
-  which exists regardless.
+### Role (no control surface)
+- The connection's role (`interact` types and resizes, `observe` neither) is enforced
+  server-side and carried by the WS `role` / `role-ack` frames. There is no header control
+  for it: the app connects as `interact` and never asks for anything else.
+- When a `role-ack` does say `observe` (another client of the same protocol, a future
+  surface), the local consequences still apply — xterm's stdin is gated with `disableStdin`,
+  the grid is adopted from `pane-geometry`, and the observe banner renders over the pty
+  canvas. Returning to interact force-refits and re-asserts the local geometry.
 
 ### Scrollback
 
@@ -481,7 +466,7 @@ because it floats over the terminal.
 | Hairline | `var(--hairline) solid var(--border)` | Header bottom, sidebar right, pills, controls |
 | Dashed hairline | `var(--hairline) dashed var(--border)` | Empty state box, unknown badge |
 | Tonal lift | `--bg-elevated` on `--bg-panel` | Selected row, chips, banners |
-| Tinted lift | `--accent-tint` layered over `--bg-elevated` (`linear-gradient(tint, tint) base`) | Observe banner, observing pill — any accent-tinted surface gets the opaque base, whether it floats over the pty canvas or sits in the header |
+| Tinted lift | `--accent-tint` layered over `--bg-elevated` (`linear-gradient(tint, tint) base`) | Observe banner, user chat bubble — any accent-tinted surface gets the opaque base rather than tinting whatever is behind it |
 | Drawer shadow | `--shadow-drawer` | Mobile drawer only |
 
 ## 8. Accessibility Constraints & Accepted Debt

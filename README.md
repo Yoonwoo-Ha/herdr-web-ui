@@ -32,7 +32,7 @@ herdr already owns the ptys. The architecture borrows from [chatmux](https://git
 
 **The terminal is the attach stream, not a screen poll.** Every pane is a real `herdr terminal attach` on a pty and its raw bytes go to xterm.js, so full-screen agent TUIs, the alternate screen, mouse reporting and herdr's own scrollback all behave. Rebuilding the screen from periodic `pane.read` snapshots is the cheaper design, and it caps at the visible viewport.
 
-**A second device never disturbs the first.** Attaches coexist — the server never passes `--takeover`, so opening a pane in the browser doesn't displace your desktop TUI. View-only mode goes further and is enforced server-side: an observer's input, keys and resize are refused, and its attach adopts the pty's grid instead of imposing a phone's (`server/index.ts`). Your desktop's geometry is not up for negotiation because you opened the pane on a phone.
+**A second device never disturbs the first.** Attaches coexist — the server never passes `--takeover`, so opening a pane in the browser doesn't displace your desktop TUI. The `observe` role goes further and is enforced server-side: an observer's input, keys and resize are refused, and its attach adopts the pty's grid instead of imposing a phone's (`server/index.ts`). The app connects as `interact` and has no toggle for it; the role is part of the WS contract for clients that want a read-only connection.
 
 **It is safe to expose.** A shared-token gate with an HttpOnly cookie guards `/api/session`, `/api/pane/*`, `/api/push*` and the `/ws` upgrade, and the bind address is yours to choose (see [Security](#security)).
 
@@ -43,7 +43,7 @@ herdr already owns the ptys. The architecture borrows from [chatmux](https://git
 - A real terminal per pane: `herdr terminal attach` on a PTY, raw bytes streamed to xterm.js over a WebSocket, keystrokes streamed back (`server/index.ts`, `src/components/PaneTerminal.tsx`).
 - Scrollback stays in herdr. The attach stream runs in the alternate screen with mouse reporting on, so wheel and touch gestures scroll the real pane, which also works for full-screen agent TUIs.
 - One PTY per pane shared by every connected client, with a 256 KB replay tail so a late joiner sees the current screen.
-- Resizing the browser refits xterm, which resizes the pty. **View-only mode** flips a connection into an observer: it can neither type nor resize, enforced server-side, so opening a pane on your phone never changes the size your desktop sees — the observer's grid follows the pty instead (`shared/protocol.ts` roles, `server/index.ts`, `src/components/PaneTerminal.tsx`).
+- Resizing the browser refits xterm, which resizes the pty. The `observe` role flips a connection into a read-only one — it can neither type nor resize, enforced server-side, and its grid follows the pty instead of imposing its own (`shared/protocol.ts` roles, `server/index.ts`, `src/components/PaneTerminal.tsx`). The app always connects as `interact`; the role belongs to the protocol, not to a button.
 - Held input across disconnects: the WebSocket reconnects on its own, but input typed while it was down is never auto-sent. It waits as a draft you review and send (or discard) after reconnect (`src/lib/draft.ts`, `src/lib/ws.ts`).
 - Agent status for **every** pane is pushed, not just the open one: the server subscribes to all panes' status and broadcasts it, so sidebar badges update instantly, and the bell in the header alerts you when a pane becomes blocked or finishes — or when an unattached pane's terminal ends (`server/collector.ts`, `src/lib/notifications.ts`).
 - Web Push: on a device served over HTTPS (and on iPhone, the home-screen app) the bell subscribes the device, so those alerts arrive with the app closed. The server sends them itself, keeps the subscriptions across restarts and confirms a new device with a test push (`server/push.ts`, `src/lib/push.ts`, `public/sw.js`). Without HTTPS the bell falls back to alerts while the tab is open.
@@ -138,7 +138,6 @@ Then install it:
 What the phone layout does (`src/components/KeyBar.tsx`, `src/lib/viewport.ts`, `src/components/PaneTerminal.tsx`):
 
 - A key bar under the terminal on touch and narrow screens with Esc, Tab, Ctrl, arrows and ^C. Ctrl is one-shot: tap Ctrl, then a letter.
-- View-only mode is the phone story for shared panes: flip the pill in the terminal's top-left corner and the phone watches without ever resizing or typing into the desktop's terminal.
 - The layout follows the soft keyboard (`visualViewport` plus `interactive-widget=resizes-content`) so the prompt stays above it.
 - A single-finger drag scrolls the pane. The drag is turned into wheel events, which xterm forwards to herdr, so this also scrolls full-screen agent TUIs.
 - Safe-area insets are honoured for notches and home bars.
