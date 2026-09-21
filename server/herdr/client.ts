@@ -4,6 +4,7 @@ import type {
   ReadSource,
   SessionSnapshot,
 } from "../../shared/protocol.ts";
+import type { AgentManifestInfo, AgentStartParams, PaneInfo, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
 
 const DEFAULT_SOCKET = `${process.env.HOME ?? ""}/.config/herdr/herdr.sock`;
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -143,20 +144,15 @@ export async function sessionSnapshot(socketPath?: string): Promise<SessionSnaps
   return result.snapshot;
 }
 
-export interface AgentManifest {
-  agent: string;
-  [key: string]: unknown;
-}
-
-export async function agentManifests(socketPath?: string): Promise<{ manifests: AgentManifest[] }> {
+export async function agentManifests(socketPath?: string): Promise<{ manifests: AgentManifestInfo[] }> {
   return herdrRpc("server.agent_manifests", {}, socketPath);
 }
 
 export interface WorkspaceCreateResult {
   type: "workspace_created";
-  workspace: { workspace_id: string; [key: string]: unknown };
-  tab: { tab_id: string; [key: string]: unknown };
-  root_pane: { pane_id: string; [key: string]: unknown };
+  workspace: WorkspaceInfo;
+  tab: TabInfo;
+  root_pane: PaneInfo;
 }
 
 export async function workspaceCreate(
@@ -171,7 +167,7 @@ export async function workspaceCreate(
 }
 
 export async function agentStart(
-  options: { name: string; kind: string; paneId: string; timeoutMs?: number },
+  options: { name: string; kind: string; paneId: string; args?: string[]; timeoutMs?: number },
   socketPath?: string,
 ): Promise<unknown> {
   return herdrRpc(
@@ -180,8 +176,9 @@ export async function agentStart(
       name: options.name,
       kind: options.kind,
       pane_id: options.paneId,
+      ...(options.args === undefined ? {} : { args: options.args }),
       ...(options.timeoutMs === undefined ? {} : { timeout_ms: options.timeoutMs }),
-    },
+    } satisfies AgentStartParams,
     socketPath,
     options.timeoutMs,
   );

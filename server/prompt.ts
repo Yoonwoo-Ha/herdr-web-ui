@@ -143,12 +143,13 @@ function finishPrompt(
   input: Omit<InteractivePrompt, "id" | "agent">,
   internal: Omit<ParsedPrompt, keyof InteractivePrompt>,
 ): ParsedPrompt {
-  const labels = input.options.map((option) => option.label);
   const id = createHash("sha256")
-    .update(`${agent}|${input.kind}|${input.question}|${labels.join("\u0001")}`)
+    .update(JSON.stringify({ agent, ...input }))
     .digest("hex")
     .slice(0, 12);
-  return { id, agent, ...input, ...internal };
+  // Hash all approval details before applying the display cap. Cursor movement
+  // is excluded, but a different command, plan or option description is stale.
+  return { id, agent, ...input, body: input.body?.slice(0, 12_000) ?? null, ...internal };
 }
 
 function publicPrompt(parsed: ParsedPrompt): InteractivePrompt {
@@ -199,7 +200,7 @@ function parseCodexContinueMenu(screen: string): ParsedPrompt | null {
   const rows = parseNumberedRows(lines, Math.max(0, hintIndex - 64), hintIndex);
   if (!sequentialRows(rows) || rows.length < 2 || rows.filter((row) => row.selected).length !== 1) return null;
   const body = lines.slice(Math.max(0, rows[0]!.lineIndex - 16), rows[0]!.lineIndex)
-    .map(cleanLine).filter((line) => line && !isDivider(line)).join("\n").slice(0, 12_000);
+    .map(cleanLine).filter((line) => line && !isDivider(line)).join("\n");
   return finishPrompt("codex", {
     kind: "menu", title: "Codex", question: "Choose how to continue", body: body || null,
     options: rows.map((row) => ({ label: row.label, description: row.description ?? null })),
@@ -287,7 +288,7 @@ function parseCodexApproval(screen: string): ParsedPrompt | null {
   if (headerIndex < 0) return null;
   const rows = parseNumberedRows(lines, headerIndex + 1, lines.length);
   if (!sequentialRows(rows) || rows.length < 2 || rows.filter((row) => row.selected).length !== 1) return null;
-  const body = lines.slice(headerIndex + 1, rows[0]!.lineIndex).map(cleanLine).filter(Boolean).join("\n").slice(0, 12_000);
+  const body = lines.slice(headerIndex + 1, rows[0]!.lineIndex).map(cleanLine).filter(Boolean).join("\n");
   return finishPrompt("codex", {
     kind: "approval", title: cleanLine(lines[headerIndex]!), question: cleanLine(lines[headerIndex]!), body: body || null,
     options: rows.map((row) => ({ label: row.label, description: null })), multi_select: false, custom_option_index: null,
@@ -329,7 +330,7 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     const bodyStart = Math.max(0, findLastIndex(lines.slice(0, planIndex), (line) => /Ready to code\?/i.test(cleanLine(line))));
     return finishPrompt("claude", {
       kind: "plan", title: "Ready to code?", question: cleanLine(lines[planIndex]!),
-      body: lines.slice(bodyStart, planIndex).map(cleanLine).filter((line) => !isDivider(line)).join("\n").slice(0, 12_000) || null,
+      body: lines.slice(bodyStart, planIndex).map(cleanLine).filter((line) => !isDivider(line)).join("\n") || null,
       options: rows.map((row) => ({ label: row.label, description: null })), multi_select: false,
       custom_option_index: customIndex >= 0 ? customIndex : null,
     }, {
@@ -349,7 +350,7 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
   const bodyEnd = dangerousRmIndex > requiredIndex ? questionIndex : approvalIndex;
   return finishPrompt("claude", {
     kind: "approval", title, question: cleanLine(lines[questionIndex]!),
-    body: lines.slice(Math.max(0, approvalIndex - 8), bodyEnd).map(cleanLine).filter((line) => line && !isDivider(line)).join("\n").slice(0, 12_000) || null,
+    body: lines.slice(Math.max(0, approvalIndex - 8), bodyEnd).map(cleanLine).filter((line) => line && !isDivider(line)).join("\n") || null,
     options: rows.map((row) => ({ label: row.label, description: null })), multi_select: false, custom_option_index: null,
   }, {
     responder: "claude-approval", menuLabels: rows.map((row) => row.label), selectedIndex: rows.findIndex((row) => row.selected),
@@ -404,6 +405,7 @@ export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer,
   if (supplied !== 1) throw new InvalidAnswer("Exactly one answer is required.");
 
   if (answer.custom_text !== undefined) {
+    if (typeof answer.custom_text !== "string") throw new InvalidAnswer("Custom text must be a string.");
     const text = answer.custom_text.trim();
     if (!text || parsed.customMenuIndex === null || parsed.multi_select) throw new InvalidAnswer("This prompt does not accept a custom answer.");
     const navigation = navigationKeys(parsed.customMenuIndex - parsed.selectedIndex);
@@ -417,6 +419,7 @@ export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer,
   }
 
   if (answer.option_indices !== undefined) {
+    if (!Array.isArray(answer.option_indices)) throw new InvalidAnswer("Option indices must be an array.");
     if (!parsed.multi_select || answer.option_indices.length === 0) throw new InvalidAnswer("This prompt requires one or more selections.");
     const choices = [...new Set(answer.option_indices)];
     if (choices.some((choice) => !Number.isInteger(choice) || choice < 0 || choice >= parsed.options.length)) {

@@ -6,6 +6,7 @@ import {
   composerStatusWord,
   imageMention,
   MAX_COMPOSER_CHARS,
+  QUEUE_READY_STATUS,
   rankSlashCommands,
 } from "./compose.ts";
 
@@ -55,6 +56,13 @@ describe("imageMention", () => {
 });
 
 describe("composer presentation helpers", () => {
+  it("holds queued messages while the agent needs an approval or answer", () => {
+    expect(QUEUE_READY_STATUS.blocked).not.toBe(true);
+    expect(QUEUE_READY_STATUS.working).not.toBe(true);
+    expect(QUEUE_READY_STATUS.unknown).not.toBe(true);
+    expect(QUEUE_READY_STATUS.done).toBe(true);
+    expect(QUEUE_READY_STATUS.idle).toBe(true);
+  });
   it("maps agent states to compact status words", () => {
     expect(composerStatusWord("idle")).toBe("READY");
     expect(composerStatusWord("working")).toBe("RUN");

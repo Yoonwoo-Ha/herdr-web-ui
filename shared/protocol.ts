@@ -116,6 +116,8 @@ export interface WorkspaceCreated {
   pane_id: string;
   /** true when `agent` was requested and herdr reported it ready in the root pane */
   agent_started: boolean;
+  /** The workspace still exists when its requested agent could not start. */
+  error?: { code: string; message: string };
 }
 
 /** GET /api/pane/commands: one slash command the pane's agent understands. */

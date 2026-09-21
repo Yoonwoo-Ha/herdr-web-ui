@@ -32,8 +32,9 @@ const OUTPUT_PATH = join(ROOT, "shared", "herdr-api.generated.ts");
 
 /** Roots per schema section; their transitive closure is what gets emitted. */
 const ROOTS: Record<string, string[]> = {
-  success_response: ["SessionSnapshot", "PaneReadResult"],
+  success_response: ["SessionSnapshot", "PaneReadResult", "AgentManifestInfo"],
   request: [
+    "AgentStartParams",
     "PaneReadParams",
     "PaneSendTextParams",
     "PaneSendKeysParams",

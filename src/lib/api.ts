@@ -168,7 +168,7 @@ export interface CreateWorkspaceRequest {
 /**
  * POST /api/workspace/create: a new herdr workspace (and an agent started in its root
  * pane when `agent` is given). Slow when an agent starts: herdr waits for the agent's
- * interactive prompt (up to 30s) before answering.
+ * interactive prompt (up to 60s) before answering.
  */
 export async function createWorkspace(request: CreateWorkspaceRequest): Promise<WorkspaceCreated> {
   const response = await sendJson("/api/workspace/create", "POST", request);

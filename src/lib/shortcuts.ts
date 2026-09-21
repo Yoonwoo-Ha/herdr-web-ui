@@ -16,6 +16,7 @@ export type ShortcutId = (typeof SHORTCUTS)[number]["id"];
 
 export interface ShortcutEventLike {
   key: string;
+  code?: string;
   ctrlKey: boolean;
   metaKey: boolean;
   shiftKey: boolean;
@@ -35,6 +36,8 @@ const KEY_TO_ID: Readonly<Record<string, ShortcutId>> = {
 export function matchShortcut(event: ShortcutEventLike, platformIsMac: boolean): ShortcutId | null {
   const hasMod = platformIsMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   if (!hasMod || !event.shiftKey || event.altKey) return null;
+  // Shift+Comma produces "<" on common keyboard layouts.
+  if (event.code === "Comma") return "settings";
   return KEY_TO_ID[event.key.length === 1 ? event.key.toLowerCase() : event.key] ?? null;
 }
 

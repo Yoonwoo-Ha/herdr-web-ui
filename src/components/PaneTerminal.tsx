@@ -342,8 +342,10 @@ export function PaneTerminal({
     // a message queued for the next idle moment is remembered per pane
     setQueued(() => {
       if (paneId === null) return null;
-      const text = window.localStorage.getItem(`herdr-web-ui:queue:${paneId}`);
-      return text === null ? null : { pane: paneId, text };
+      try {
+        const text = window.localStorage.getItem(`herdr-web-ui:queue:${paneId}`);
+        return text === null ? null : { pane: paneId, text };
+      } catch { return null; }
     });
     if (!paneId) return;
     try {
@@ -435,8 +437,8 @@ export function PaneTerminal({
     [agent, agentStatus, sendComposerText],
   );
 
-  // the queue auto-dispatches once the pane reports a ready state (idle, done,
-  // blocked: all of them want the user's next line) and on reconnect. An
+  // the queue auto-dispatches once the pane reports a ready state (idle or done)
+  // and on reconnect. Approval/question menus (`blocked`) and an
   // unrecognized or `unknown` status holds it: see QUEUE_READY_STATUS.
   useEffect(() => {
     if (queued === null || queued.pane !== paneId) return;
@@ -457,7 +459,8 @@ export function PaneTerminal({
     }
   }, [queued]);
 
-  const uploadImage = useCallback((file: File) => uploadPaneImage(paneRef.current ?? "", file), []);
+  // Capture the owner's pane for the entire upload batch, even across a pane switch.
+  const uploadImage = useCallback((file: File) => uploadPaneImage(paneId ?? "", file), [paneId]);
 
   return (
     <div className={`terminal-stack${chatView ? " is-chat" : ""}`}>

@@ -9,7 +9,7 @@ import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { handleAuthRequest, isAuthenticated, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { paneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
-import { badRequest, errorResponse, jsonResponse } from "./http.ts";
+import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
 import { ConversationUnavailable, paneConversation } from "./conversation.ts";
@@ -346,6 +346,7 @@ export function createServer(
         } catch {
           return badRequest("invalid_json", "request body must be JSON");
         }
+        if (!isJsonObject(payload)) return badRequest("invalid_body", "request body must be a JSON object");
         // the client sends null for "not given": treat it exactly like an absent field
         if (payload.cwd === null) delete payload.cwd;
         if (payload.label === null) delete payload.label;
@@ -357,6 +358,12 @@ export function createServer(
         if (payload.agent !== undefined && (typeof payload.agent !== "object" || typeof payload.agent.kind !== "string" || payload.agent.kind.length === 0)) {
           return badRequest("invalid_agent", "agent.kind is required");
         }
+        if (payload.agent && ((payload.agent.name !== undefined && typeof payload.agent.name !== "string")
+          || (payload.agent.args !== undefined && (!Array.isArray(payload.agent.args) || !payload.agent.args.every((arg) => typeof arg === "string"))))) {
+          return badRequest("invalid_agent", "agent.name must be a string and agent.args must be an array of strings");
+        }
+        // agent.start can legitimately take a minute; Bun's default idle timeout is shorter.
+        if (payload.agent) bunServer.timeout(request, 75);
         try {
           const created = await workspaceCreate({
             ...(cwd === undefined || cwd === null ? {} : { cwd }),
@@ -370,6 +377,7 @@ export function createServer(
               name: typeof payload.agent.name === "string" && payload.agent.name.length > 0 ? payload.agent.name : payload.agent.kind as string,
               kind: payload.agent.kind as string,
               paneId: created.root_pane.pane_id,
+              ...(payload.agent.args === undefined ? {} : { args: payload.agent.args as string[] }),
               timeoutMs: 60_000,
             });
             return jsonResponse({ workspace_id: created.workspace.workspace_id, pane_id: created.root_pane.pane_id, agent_started: true });
@@ -397,6 +405,7 @@ export function createServer(
         } catch {
           return badRequest("invalid_json", "request body must be JSON");
         }
+        if (!isJsonObject(payload)) return badRequest("invalid_body", "request body must be a JSON object");
         if (typeof payload.workspace_id !== "string" || payload.workspace_id.length === 0) {
           return badRequest("missing_workspace_id", "workspace_id is required");
         }
@@ -424,6 +433,7 @@ export function createServer(
         } catch {
           return badRequest("invalid_json", "request body must be JSON");
         }
+        if (!isJsonObject(payload)) return badRequest("invalid_body", "request body must be a JSON object");
         if (typeof payload.pane_id !== "string" || payload.pane_id.length === 0) return badRequest("missing_pane_id", "pane_id is required");
         if (typeof payload.label !== "string") return badRequest("missing_label", "label is required");
         try {
@@ -492,13 +502,14 @@ export function createServer(
         } catch {
           return badRequest("invalid_json", "request body must be JSON");
         }
-        if (!payload.pane_id) return badRequest("missing_pane_id", "pane_id is required");
+        if (!isJsonObject(payload)) return badRequest("invalid_body", "request body must be a JSON object");
+        if (typeof payload.pane_id !== "string" || !payload.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required");
         try {
           if (pathname === "/api/pane/input") {
             if (typeof payload.text !== "string") return badRequest("missing_text", "text is required");
             await paneSendText(payload.pane_id, payload.text);
           } else {
-            if (!Array.isArray(payload.keys)) return badRequest("missing_keys", "keys must be an array");
+            if (!Array.isArray(payload.keys) || !payload.keys.every((key) => typeof key === "string")) return badRequest("missing_keys", "keys must be an array");
             await paneSendKeys(payload.pane_id, payload.keys);
           }
           return jsonResponse({ ok: true });
@@ -515,7 +526,8 @@ export function createServer(
         } catch {
           return badRequest("invalid_json", "request body must be JSON");
         }
-        if (!payload.pane_id) return badRequest("missing_pane_id", "pane_id is required");
+        if (!isJsonObject(payload)) return badRequest("invalid_body", "request body must be a JSON object");
+        if (typeof payload.pane_id !== "string" || !payload.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required");
         try {
           // herdr emits pane.closed -> the collector broadcasts session-changed, so
           // every client refetches and the pane leaves sidebars on its own
@@ -534,7 +546,12 @@ export function createServer(
         } catch {
           return badRequest("invalid_json", "request body must be JSON");
         }
-        if (!payload.pane_id) return badRequest("missing_pane_id", "pane_id is required");
+        if (!isJsonObject(payload)) return badRequest("invalid_body", "request body must be a JSON object");
+        if (typeof payload.pane_id !== "string" || !payload.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required");
+        if ((payload.content_type !== undefined && typeof payload.content_type !== "string")
+          || (payload.data_base64 !== undefined && typeof payload.data_base64 !== "string")) {
+          return badRequest("invalid_image", "content_type and data_base64 must be strings");
+        }
         try {
           const path = await savePaneImage({
             paneId: payload.pane_id,

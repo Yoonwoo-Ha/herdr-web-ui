@@ -16,6 +16,7 @@
     "start": "bun run build && bun run server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "test:ui": "bun run build && bun scripts/ui-regression.ts",
     "generate:types": "bun run scripts/generate-protocol-types.ts"
   },
   "dependencies": {

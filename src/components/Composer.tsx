@@ -98,7 +98,11 @@ export function Composer({
   const removedAttachments = useRef(new Set<number>());
   const fileRequest = useRef(0);
   const draftKey = `herdr-web-ui:composer-draft:${paneId}`;
-  const [text, setText] = useState(() => window.localStorage.getItem(draftKey) ?? "");
+  const [text, setText] = useState(() => {
+    try { return window.localStorage.getItem(draftKey) ?? ""; }
+    catch { return ""; }
+  });
+  const mounted = useRef(true);
   const [caret, setCaret] = useState(text.length);
   const textRef = useRef(text);
   const caretRef = useRef(caret);
@@ -167,12 +171,13 @@ export function Composer({
     setSelectedIndex(0);
   }, [trigger?.kind, trigger?.query]);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
       for (const attachment of attachmentsRef.current) URL.revokeObjectURL(attachment.previewUrl);
-    },
-    [],
-  );
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const element = textareaRef.current;
@@ -266,14 +271,17 @@ export function Composer({
       setNote(null);
 
       for (const attachment of added) {
+        if (!mounted.current) break;
         try {
           const path = await onUploadImage(attachment.file);
+          if (!mounted.current) break;
           if (removedAttachments.current.has(attachment.id)) continue;
           setAttachments((current) =>
             current.map((item) => (item.id === attachment.id ? { ...item, path, state: "ready" } : item)),
           );
           insertAtCursor(imageMention(path));
         } catch (error) {
+          if (!mounted.current) break;
           if (removedAttachments.current.has(attachment.id)) continue;
           setAttachments((current) =>
             current.map((item) => (item.id === attachment.id ? { ...item, state: "error" } : item)),

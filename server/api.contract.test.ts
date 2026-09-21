@@ -29,6 +29,39 @@ afterAll(() => {
 
 const base = () => `http://localhost:${server.port}`;
 
+describe("mutation body validation", () => {
+  it("rejects non-object JSON without touching herdr or losing the error envelope", async () => {
+    for (const path of [
+      "/api/workspace/create", "/api/workspace/rename", "/api/workspace/move", "/api/workspace/close",
+      "/api/pane/rename", "/api/pane/input", "/api/pane/keys", "/api/pane/close", "/api/pane/image",
+    ]) {
+      for (const body of [null, [], "text", 42, true]) {
+        const response = await fetch(`${base()}${path}`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+        expect(response.status).toBe(400);
+        expect(((await response.json()) as ApiError).error.code).toBe("invalid_body");
+      }
+    }
+  });
+
+  it("rejects invalid pane identifiers and key/image fields before RPCs", async () => {
+    for (const [path, body, code] of [
+      ["/api/pane/input", { pane_id: true, text: "echo bad" }, "missing_pane_id"],
+      ["/api/pane/close", { pane_id: 5 }, "missing_pane_id"],
+      ["/api/pane/keys", { pane_id: "unknown", keys: [null] }, "missing_keys"],
+      ["/api/pane/image", { pane_id: "unknown", content_type: "image/png", data_base64: {} }, "invalid_image"],
+      ["/api/workspace/create", { agent: { kind: "claude", args: "--help" } }, "invalid_agent"],
+    ] as const) {
+      const response = await fetch(`${base()}${path}`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as ApiError).error.code).toBe(code);
+    }
+  });
+});
+
 describe("workspace and discovery endpoints", () => {
   let workspaceId: string | null = null;
   let paneId: string | null = null;

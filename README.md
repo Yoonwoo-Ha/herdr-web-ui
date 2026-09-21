@@ -53,6 +53,7 @@ herdr already owns the ptys. The architecture borrows from [chatmux](https://git
 - The header carries the selected pane title and workspace/cwd subtitle, the segmented Chat/Terminal lens switch, connection state, palette, notification, theme, settings and lock actions (`src/App.tsx`).
 - Chat is a lens over the live terminal, not a second connection. It reads like Codex: your prompts as solid blocks, the agent's answer as plain markdown, and everything it did in between folded into one `Worked for 7s · 1 edit · 2 commands` line whose rows expand to the call's input and output (`src/lib/workBlocks.ts`). Copy as MD/TXT, timestamps, optional folded thinking and a **New messages** pill; unrecognized sessions fall back to ANSI-stripped scrollback (`server/conversation.ts`, `GET /api/pane/conversation`, `src/components/ChatView.tsx`).
 - When a blocked Claude, omp or codex TUI shows a supported question, approval or plan menu, the chat lens presents an interactive prompt card parsed from the visible pane screen. Answers go through `POST /api/pane/prompt/answer`, which rechecks the prompt and drives the real menu with herdr `pane.send_keys` semantics (`server/prompt.ts`, `src/components/PromptCard.tsx`).
+- Queued messages wait through approval and question menus (`blocked`) and send automatically only when the agent returns to `idle` or `done`.
 - The composer has an agent/status line, pane-local drafts, and `/` completion from `GET /api/pane/commands`: built-ins plus `~/.claude/commands` and the pane project's `.claude/commands`. `@` completion searches cwd-relative files through `GET /api/pane/files` (`server/commands.ts`, `server/files.ts`, `src/components/Composer.tsx`).
 - Paste, pick or drag-and-drop png/jpeg/gif/webp images into the composer. Preview cards track upload state; successful `POST /api/pane/image` uploads under the pane cwd and insert an editable `@path` mention (≤8 MB each, up to four per action; `server/paste.ts`).
 - While an agent is running, **Stop** sends Escape and **Queue** holds the next message. Sending is configurable: Enter with Shift+Enter for a newline, or Mod+Enter (`src/components/Composer.tsx`, `src/components/PaneTerminal.tsx`, `src/lib/settings.ts`).
@@ -212,7 +213,17 @@ bun run build
 bun test
 ```
 
-The suite runs against the live herdr server; there are no mocks. It's read-only apart from the `herdr-web-ui-test` workspaces it creates and deletes. It covers the generator freshness and determinism gate, the HTTP contract, the WS attach stream, roles (an observe connection cannot resize or type, enforced server-side), concurrent attaches to one pane sharing a single pty, a client that detaches or disconnects mid-attach never keeping the pty alive, the status collector's pushed `pane-status` and `pane-exited` for unattached panes, web push (a fake push service decrypts and verifies every push, including the first alert after a server restart), token auth, the bind address, the herdr client, the PTY sidecar's env pass-through (`server/pty/session.test.ts`) and the pure client modules (key bar, draft, notifications, snapshot merge, push subscription). At the time of writing that's 86 tests across 11 files. The server under test keeps its push state in a temp dir, never in `~/.config/herdr-web-ui`.
+The suite runs against the live herdr server; there are no mocks. It's read-only apart from the `herdr-web-ui-test` workspaces it creates and deletes. It covers the generator freshness and determinism gate, the HTTP contract, the WS attach stream, roles (an observe connection cannot resize or type, enforced server-side), concurrent attaches to one pane sharing a single pty, a client that detaches or disconnects mid-attach never keeping the pty alive, the status collector's pushed `pane-status` and `pane-exited` for unattached panes, web push (a fake push service decrypts and verifies every push, including the first alert after a server restart), token auth, the bind address, the herdr client, the PTY sidecar's env pass-through (`server/pty/session.test.ts`) and the pure client modules (key bar, draft, notifications, snapshot merge, push subscription). The server under test keeps its push state in a temp dir, never in `~/.config/herdr-web-ui`.
+
+Browser regressions use an isolated test server and owned herdr workspaces:
+
+```bash
+bun run test:ui
+# Override the default /opt/google/chrome/chrome when needed:
+CHROME_PATH=/path/to/chrome bun run test:ui
+```
+
+They cover settings shortcuts, queued-message approval waits, pane-local drafts, image uploads during pane switches, session creation, and the mobile composer when browser storage is unavailable. Every test server uses temporary push state.
 
 ## API
 

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 const CACHE_MS = 5_000;
@@ -8,13 +8,12 @@ const SKIP: Record<string, true> = { ".git": true, node_modules: true, dist: tru
 const cache = new Map<string, { expires: number; files: string[] }>();
 
 async function gitFiles(cwd: string): Promise<string[] | null> {
-  if (!existsSync(join(cwd, ".git"))) return null;
-  const proc = Bun.spawn(["git", "-C", cwd, "ls-files", "-co", "--exclude-standard"], { stdout: "pipe", stderr: "ignore" });
+  const proc = Bun.spawn(["git", "-C", cwd, "ls-files", "-z", "-co", "--exclude-standard"], { stdout: "pipe", stderr: "ignore" });
   const timer = setTimeout(() => proc.kill(), 3_000);
   try {
     const [output, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
     if (exitCode !== 0) return null;
-    return output.split("\n").filter(Boolean).slice(0, MAX_ENTRIES);
+    return [...new Set(output.split("\0").filter(Boolean))].slice(0, MAX_ENTRIES);
   } finally {
     clearTimeout(timer);
   }

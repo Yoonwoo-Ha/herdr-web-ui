@@ -31,6 +31,19 @@ export interface AgentInfo {
   workspace_id: string;
 }
 
+export interface AgentManifestInfo {
+  active_version?: string | null;
+  agent: string;
+  cached_remote_version?: string | null;
+  local_override_shadowing_remote: boolean;
+  remote_last_checked_unix?: number | null;
+  remote_update_error?: string | null;
+  remote_update_result?: string | null;
+  source: string;
+  source_kind: string;
+  warning?: string | null;
+}
+
 export interface AgentSessionInfo {
   agent: string;
   kind: AgentSessionRefKind;
@@ -39,6 +52,14 @@ export interface AgentSessionInfo {
 }
 
 export type AgentSessionRefKind = "id" | "path" | (string & {});
+
+export interface AgentStartParams {
+  args?: string[];
+  kind: string;
+  name: string;
+  pane_id: string;
+  timeout_ms?: number | null;
+}
 
 export type AgentStatus = "blocked" | "done" | "idle" | "unknown" | "working" | (string & {});
 

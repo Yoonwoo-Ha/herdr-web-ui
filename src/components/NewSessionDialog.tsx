@@ -3,13 +3,10 @@ import { X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 
-import type { AgentKind, WorkspaceCreated } from "../../shared/protocol.ts";
+import type { AgentKind } from "../../shared/protocol.ts";
 import { ApiError, createWorkspace, fetchAgentKinds } from "../lib/api.ts";
 
 const LAST_AGENT_KEY = "herdr-web-ui:new-session-agent";
-const AGENT_ERROR_NOTE_MS = 4000;
-
-type WorkspaceResult = WorkspaceCreated & { error?: { code?: string; message?: string } };
 
 export interface NewSessionDialogProps {
   open: boolean;
@@ -38,19 +35,18 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated }: NewSe
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createdPaneId, setCreatedPaneId] = useState<string | null>(null);
   const firstFieldRef = useRef<HTMLSelectElement>(null);
-  const completionTimer = useRef<number | null>(null);
-
-  useEffect(() => () => {
-    if (completionTimer.current !== null) window.clearTimeout(completionTimer.current);
-  }, []);
+  const defaultCwdRef = useRef(defaultCwd);
+  defaultCwdRef.current = defaultCwd;
 
   useEffect(() => {
     if (!open) return;
-    setCwd(defaultCwd ?? "");
+    setCwd(defaultCwdRef.current ?? "");
     setName("");
     setError(null);
     setPending(false);
+    setCreatedPaneId(null);
     const stored = rememberedAgent();
     setAgentKind(stored);
     let cancelled = false;
@@ -67,27 +63,29 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated }: NewSe
     return () => {
       cancelled = true;
     };
-  }, [open, defaultCwd]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      onClose();
+      if (!pending) onClose();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  }, [open, onClose, pending]);
 
   if (!open) return null;
 
   const selectedAgent = agents.find((agent) => agent.kind === agentKind);
-  const pendingLabel = selectedAgent ? `Starting ${selectedAgent.label}… up to 30s` : "Starting shell…";
+  const pendingLabel = selectedAgent ? `Starting ${selectedAgent.label}… up to 60s` : "Starting shell…";
+  const fieldsDisabled = pending || createdPaneId !== null;
 
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (pending) return;
+    if (createdPaneId !== null) { onCreated(createdPaneId); return; }
     setPending(true);
     setError(null);
     try {
@@ -96,18 +94,15 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated }: NewSe
       } catch {
         /* private mode: the choice simply is not remembered */
       }
-      const result = (await createWorkspace({
+      const result = await createWorkspace({
         cwd: cwd.trim() || null,
         label: name.trim() || null,
         agent: agentKind ? { kind: agentKind } : null,
-      })) as WorkspaceResult;
+      });
       if (agentKind && !result.agent_started && result.error?.message) {
         setPending(false);
         setError(result.error.message);
-        completionTimer.current = window.setTimeout(() => {
-          completionTimer.current = null;
-          onCreated(result.pane_id);
-        }, AGENT_ERROR_NOTE_MS);
+        setCreatedPaneId(result.pane_id);
         return;
       }
       onCreated(result.pane_id);
@@ -119,7 +114,7 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated }: NewSe
   };
 
   const closeFromScrim = (event: MouseEvent<HTMLDivElement>): void => {
-    if (event.target === event.currentTarget) onClose();
+    if (!pending && event.target === event.currentTarget) onClose();
   };
 
   return (
@@ -127,21 +122,21 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated }: NewSe
       <form className="modal new-session-modal" role="dialog" aria-modal="true" aria-labelledby="new-session-title" onSubmit={(event) => void submit(event)}>
         <header className="modal-header">
           <h2 className="modal-title" id="new-session-title">New session</h2>
-          <button type="button" className="icon-button" aria-label="Close new session dialog" onClick={onClose}>
+          <button type="button" className="icon-button" aria-label="Close new session dialog" disabled={pending} onClick={onClose}>
             <X aria-hidden="true" />
           </button>
         </header>
         <div className="modal-body">
           <label className="field">
             <span className="field-label">Agent</span>
-            <select ref={firstFieldRef} className="select" value={agentKind} disabled={pending} onChange={(event) => setAgentKind(event.target.value)}>
+            <select ref={firstFieldRef} className="select" value={agentKind} disabled={fieldsDisabled} onChange={(event) => setAgentKind(event.target.value)}>
               <option value="">Shell only</option>
               {agents.map((agent) => <option key={agent.kind} value={agent.kind}>{agent.label}</option>)}
             </select>
           </label>
           <label className="field">
             <span className="field-label">Directory</span>
-            <input className="input" value={cwd} disabled={pending} autoComplete="off" onChange={(event) => setCwd(event.target.value)} />
+            <input className="input" value={cwd} disabled={fieldsDisabled} autoComplete="off" onChange={(event) => setCwd(event.target.value)} />
             <span className="field-hint">absolute path or ~/…</span>
           </label>
           <label className="field">
@@ -149,7 +144,7 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated }: NewSe
             <input
               className="input"
               value={name}
-              disabled={pending}
+              disabled={fieldsDisabled}
               autoComplete="off"
               placeholder={directoryBasename(cwd)}
               onChange={(event) => setName(event.target.value)}
@@ -161,7 +156,7 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated }: NewSe
         </div>
         <footer className="modal-footer">
           <button type="button" className="btn btn-ghost" disabled={pending} onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={pending}>{pending ? "Starting…" : "Start session"}</button>
+          <button type="submit" className="btn btn-primary" disabled={pending}>{pending ? "Starting…" : createdPaneId !== null ? "Open session" : "Start session"}</button>
         </footer>
       </form>
     </div>

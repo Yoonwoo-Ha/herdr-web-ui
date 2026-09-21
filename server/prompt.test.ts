@@ -6,6 +6,23 @@ import { answerKeys, parseInteractivePrompt } from "./prompt.ts";
 const labels = (prompt: InteractivePrompt | null) => prompt?.options.map((option) => option.label);
 
 describe("interactive prompt parsing", () => {
+  test("invalidates approvals when their command changes, including text beyond the display cap", () => {
+    const screen = (command: string, secondSelected = false) => `
+Would you like to run the following command?
+${command}
+${secondSelected ? " " : "›"} 1. Yes, proceed
+${secondSelected ? "›" : " "} 2. No, cancel
+Press enter to confirm or esc to cancel
+`;
+    const first = parseInteractivePrompt("codex", screen("echo first"))!;
+    expect(first).not.toBeNull();
+    expect(parseInteractivePrompt("codex", screen("echo second"))!.id).not.toBe(first.id);
+    expect(parseInteractivePrompt("codex", screen("echo first", true))!.id).toBe(first.id);
+    const prefix = "x".repeat(12_010);
+    expect(parseInteractivePrompt("codex", screen(prefix + "a"))!.id)
+      .not.toBe(parseInteractivePrompt("codex", screen(prefix + "b"))!.id);
+  });
+
   test("parses Claude questions, approvals, and plans", () => {
     const questionScreen = `
 ☐ Dataset
@@ -253,5 +270,7 @@ tab to add notes | enter to submit answer | esc to interrupt
     expect(() => answerKeys(claudeQuestion(), { option_index: 0, custom_text: "also" })).toThrow("Exactly one answer");
     expect(() => answerKeys(claudeQuestion(), { option_indices: [0] })).toThrow("requires one or more selections");
     expect(() => answerKeys(claudeQuestion(), { option_index: 99 })).toThrow("valid option index");
+    expect(() => answerKeys(claudeQuestion(), { custom_text: 42 } as never)).toThrow("must be a string");
+    expect(() => answerKeys(claudeQuestion(), { option_indices: null } as never)).toThrow("must be an array");
   });
 });

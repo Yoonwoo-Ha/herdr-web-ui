@@ -46,4 +46,21 @@ describe("paneFiles", () => {
     expect(await paneFiles(root, "", 0)).toHaveLength(3);
     expect(await paneFiles(root, "", 1)).toHaveLength(1);
   });
+
+  it("preserves Unicode and newline filenames returned by git", async () => {
+    const root = fixture();
+    expect(Bun.spawnSync(["git", "init", "-q", root]).exitCode).toBe(0);
+    for (const name of ["설계 문서.md", "line\nbreak.txt"]) writeFileSync(join(root, name), "fixture");
+    const files = await paneFiles(root, "", 100);
+    expect(files).toContain("설계 문서.md");
+    expect(files).toContain("line\nbreak.txt");
+  });
+
+  it("honors git ignores from a nested working directory", async () => {
+    const root = fixture();
+    expect(Bun.spawnSync(["git", "init", "-q", root]).exitCode).toBe(0);
+    writeFileSync(join(root, ".gitignore"), "src/secret.txt\n");
+    writeFileSync(join(root, "src", "secret.txt"), "private");
+    expect(await paneFiles(join(root, "src"), "", 100)).toEqual(["api.ts", "components/PromptCard.tsx"]);
+  });
 });

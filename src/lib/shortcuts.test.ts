@@ -21,6 +21,7 @@ describe("matchShortcut", () => {
     expect(matchShortcut(keyEvent("ArrowUp", { ctrlKey: true }), false)).toBe("previous-pane");
     expect(matchShortcut(keyEvent("ArrowDown", { ctrlKey: true }), false)).toBe("next-pane");
     expect(matchShortcut(keyEvent(",", { ctrlKey: true }), false)).toBe("settings");
+    expect(matchShortcut(keyEvent("<", { ctrlKey: true, code: "Comma" }), false)).toBe("settings");
   });
 
   it("requires Shift and rejects extra or competing modifiers", () => {

@@ -42,9 +42,10 @@ export function imageMention(path: string): string {
  * reports before the status collector has seen it (and during a reconnect), and
  * herdr's AgentStatus is widened with `(string & {})`, so a state a newer herdr
  * invents must never fire the queue into a still-running agent. Anything unrecognized
- * keeps the message parked for the user's own `Send now`.
+ * keeps the message parked for the user's own `Send now`. `blocked` may be an
+ * approval or question menu, so it must never receive an automatic submission.
  */
-export const QUEUE_READY_STATUS: Record<string, true> = { blocked: true, done: true, idle: true };
+export const QUEUE_READY_STATUS: Readonly<Partial<Record<string, true>>> = { done: true, idle: true };
 
 /** The composer's status word: the shared vocabulary, with a blank state reading as READY (a shell is always ready). */
 export function composerStatusWord(status?: AgentStatus): string {
