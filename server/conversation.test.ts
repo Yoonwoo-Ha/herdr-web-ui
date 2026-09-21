@@ -1,6 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { MAX_TURNS, parseClaudeTranscript, parseOmpTranscript } from "./conversation.ts";
+import { ConversationUnavailable, isOmoProcess, MAX_TURNS, omoTranscriptPath, parseClaudeTranscript, parseOmpTranscript } from "./conversation.ts";
 
 /** Minimal but shape-true slices of a Claude Code session jsonl. */
 const lines = [
@@ -146,5 +149,55 @@ describe("parseOmpTranscript", () => {
       JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: `m${i}` }] } }),
     ).join("\n");
     expect(parseOmpTranscript(many).length).toBe(MAX_TURNS);
+  });
+});
+
+describe("omo transcript resolution", () => {
+  const homes: string[] = [];
+  afterEach(() => {
+    for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  });
+
+  /** A temp HOME holding one omo session store for `slug`, each transcript stamped with its own mtime. */
+  function omoHome(slug: string, files: { name: string; cwd: string; mtime: string }[]): string {
+    const home = mkdtempSync(join(tmpdir(), "omo-home-"));
+    homes.push(home);
+    const dir = join(home, ".omo", "agent", "sessions", slug);
+    mkdirSync(dir, { recursive: true });
+    for (const file of files) {
+      const path = join(dir, file.name);
+      writeFileSync(path, `${JSON.stringify({ type: "session", version: 3, id: file.name, cwd: file.cwd })}\n`);
+      utimesSync(path, new Date(file.mtime), new Date(file.mtime));
+    }
+    return home;
+  }
+
+  it("picks the newest transcript whose session header names the pane cwd", () => {
+    const home = omoHome("--home-u-project--", [
+      { name: "older.jsonl", cwd: "/home/u/project", mtime: "2026-09-19T00:00:00.000Z" },
+      { name: "live.jsonl", cwd: "/home/u/project", mtime: "2026-09-21T00:00:00.000Z" },
+      // a newer file the store keeps for another cwd under the same slug must not win
+      { name: "foreign.jsonl", cwd: "/home/u/elsewhere", mtime: "2026-09-21T12:00:00.000Z" },
+    ]);
+    expect(omoTranscriptPath("/home/u/project", home)).toBe(join(home, ".omo", "agent", "sessions", "--home-u-project--", "live.jsonl"));
+  });
+
+  it("recognizes omo from a pane's foreground processes, not from herdr's label", () => {
+    // argv exactly as herdr's pane.process_info reported them for an omo pane
+    expect(isOmoProcess(["node", "/home/u/.nvm/versions/node/v24.18.0/bin/omo"])).toBeTrue();
+    expect(isOmoProcess(["bun", "/home/u/lib/node_modules/omo-ai/bin/omo.js"])).toBeTrue();
+    expect(isOmoProcess(["bun", "/home/u/lib/node_modules/omo-ai/node_modules/@code-yeongyu/senpi/dist/bundle/cli.js", "--extension", "/home/u/lib/node_modules/omo-ai/plugin"])).toBeTrue();
+    // the pane herdr labels `claude` because of omo's child still names omo
+    expect(isOmoProcess(["/home/u/lib/node_modules/omo-ai/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude", "--output-format", "stream-json"])).toBeTrue();
+
+    expect(isOmoProcess(["/home/u/.local/bin/claude"])).toBeFalse();
+    expect(isOmoProcess(["omp"])).toBeFalse();
+    expect(isOmoProcess(["node", "/home/u/omo-tools/watch.js"])).toBeFalse();
+  });
+
+  it("reports no session rather than guessing when the store holds nothing for the cwd", () => {
+    const home = omoHome("--home-u-project--", [{ name: "foreign.jsonl", cwd: "/home/u/elsewhere", mtime: "2026-09-21T00:00:00.000Z" }]);
+    expect(() => omoTranscriptPath("/home/u/project", home)).toThrow(ConversationUnavailable);
+    expect(() => omoTranscriptPath("/home/u/never-opened", home)).toThrow(ConversationUnavailable);
   });
 });

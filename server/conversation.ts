@@ -1,11 +1,16 @@
 /**
  * Agent session transcripts -> structured conversation turns.
  *
- * Two stores are recognized, both provider-native and read-only:
+ * Three stores are recognized, all provider-native and read-only:
  * - Claude Code: herdr's agent.get names the session id, the transcript lives
  *   at ~/.claude/projects/<cwd-slug>/<session>.jsonl (the store chatmux reads).
  * - omp: herdr's agent.get hands us the session jsonl path outright under
  *   ~/.omp/agent/sessions/<cwd-slug>/ — same shape of truth, one less hop.
+ * - omo: herdr knows nothing about its store and its label for the pane flips
+ *   between `pi` and `claude` as omo spawns model CLIs, so the pane's process
+ *   tree routes it and the transcript is resolved from the store's own layout
+ *   under ~/.omo/agent/sessions/<cwd-slug>/. It writes omp's session shape, so
+ *   parseOmpTranscript reads it.
  *
  * This module turns those files into the conversation the chat lens renders;
  * the pty stays the input path. Pure parsing lives in parseClaudeTranscript /
@@ -13,7 +18,7 @@
  * integration and lives in paneConversation.
  */
 
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ConversationPart, ConversationTurn } from "../shared/protocol.ts";
@@ -237,13 +242,138 @@ export class ConversationUnavailable extends Error {
 }
 
 /** What paneConversation resolved: which store the turns came from. */
-export type RecognizedConversation = { source: "claude-transcript" | "omp-transcript"; turns: ConversationTurn[] };
+export type RecognizedConversation = { source: "claude-transcript" | "omp-transcript" | "omo-transcript"; turns: ConversationTurn[] };
+
+/** omo's per-cwd session dir: `/home/u/p` -> `--home-u-p--` (verified against every dir on disk). */
+function omoSlug(cwd: string): string {
+  return `-${cwd.replaceAll("/", "-")}--`;
+}
+
+/**
+ * The cwd an omo transcript names in its first line (`{"type":"session",...}`),
+ * or null when the file is not one. Read bounded: only the header decides, and
+ * a rejected candidate can be megabytes.
+ */
+function transcriptCwd(path: string): string | null {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return null; // the file vanished between the listing and this read
+  }
+  try {
+    const buffer = Buffer.alloc(4096);
+    const size = readSync(fd, buffer, 0, buffer.length, 0);
+    const header = JSON.parse(buffer.subarray(0, size).toString("utf8").split("\n")[0] ?? "") as { type?: string; cwd?: unknown };
+    return header.type === "session" && typeof header.cwd === "string" ? header.cwd : null;
+  } catch {
+    return null; // not an omo transcript, or a header longer than the read
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * The live omo transcript for a pane's cwd. omo is invisible to herdr's session
+ * discovery — the `pi` manifest only detects status and agent.get carries no
+ * agent_session — and, unlike omp, omo does not keep the file open while it
+ * runs, so chatmux's /proc/<pid>/fd oracle has nothing to read here (measured
+ * 2026-09-21). What is left is the store's own layout: the newest transcript
+ * under the cwd slug whose session header names that same cwd. Two omo panes
+ * sharing one cwd therefore read the same, newer, transcript.
+ */
+export function omoTranscriptPath(cwd: string, home = process.env["HOME"] ?? ""): string {
+  const dir = join(home, ".omo", "agent", "sessions", omoSlug(cwd));
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    throw new ConversationUnavailable("no_session_path");
+  }
+
+  const candidates: { path: string; mtimeMs: number }[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".jsonl")) continue;
+    const path = join(dir, entry);
+    const stat = statSync(path, { throwIfNoEntry: false });
+    if (stat !== undefined) candidates.push({ path, mtimeMs: stat.mtimeMs });
+  }
+  candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
+
+  const live = candidates.find((candidate) => transcriptCwd(candidate.path) === cwd);
+  if (live === undefined) throw new ConversationUnavailable("no_session_path");
+  return live.path;
+}
+
+/** argv words only an omo process carries: its launcher, its entry, or anything under its install root. */
+const OMO_PROCESS = /(^|\/)omo(\.js)?$|\/omo-ai\//;
+
+export function isOmoProcess(argv: readonly string[]): boolean {
+  return argv.some((word) => OMO_PROCESS.test(word));
+}
+
+/**
+ * Is omo the agent in this pane, whatever herdr currently labels it? A probe
+ * failure answers "no": the caller then reports why the labelled store failed,
+ * which is the more useful error.
+ */
+async function paneRunsOmo(paneId: string): Promise<boolean> {
+  // pane.process_info wants `pane_id`; given `target` herdr answers for the
+  // FOCUSED pane instead of erroring (live-verified 2026-09-21).
+  const info = await herdrRpc<{ process_info?: { foreground_processes?: { argv?: unknown }[] } }>(
+    "pane.process_info",
+    { pane_id: paneId },
+  ).catch(() => null);
+  return (info?.process_info?.foreground_processes ?? []).some((process) =>
+    isOmoProcess(Array.isArray(process.argv) ? process.argv.map(String) : []),
+  );
+}
+
+/** Claude's transcript for a pane: herdr names the session id, the store is addressed by cwd slug. */
+async function claudeTranscriptPath(paneId: string, cwd: string): Promise<string> {
+  const info = await herdrRpc<{ agent: { agent_session?: { value?: unknown } } }>("agent.get", { target: paneId });
+  const session = info.agent.agent_session?.value;
+  if (typeof session !== "string" || !SESSION_ID.test(session)) throw new ConversationUnavailable("no_session_id");
+  return join(process.env["HOME"] ?? "", ".claude", "projects", projectSlug(cwd), `${session}.jsonl`);
+}
+
+/** omp's transcript: herdr hands over the absolute path, accepted only inside the user's own store. */
+async function ompTranscriptPath(paneId: string): Promise<string> {
+  const info = await herdrRpc<{ agent: { agent_session?: { kind?: unknown; value?: unknown } } }>("agent.get", { target: paneId });
+  const session = info.agent.agent_session;
+  const value = session?.kind === "path" ? session.value : undefined;
+  const sessionsDir = join(process.env["HOME"] ?? "", ".omp", "agent", "sessions") + "/";
+  if (typeof value !== "string" || !value.startsWith(sessionsDir) || !value.endsWith(".jsonl")) {
+    throw new ConversationUnavailable("no_session_path");
+  }
+  return value;
+}
+
+/**
+ * The store a pane's transcript lives in. herdr's agent label follows the
+ * pane's foreground processes, so an omo pane reads as `pi` while it waits and
+ * as `claude` while its claude-sdk child runs (live-verified 2026-09-21) — the
+ * label alone cannot route omo. Whenever the labelled store yields nothing, the
+ * process tree decides: omo's own store is read only when omo is really running
+ * in that pane, never on a matching cwd alone.
+ */
+async function resolveTranscript(paneId: string, agent: string, cwd: string): Promise<{ source: RecognizedConversation["source"]; path: string }> {
+  try {
+    if (agent === "claude") return { source: "claude-transcript", path: await claudeTranscriptPath(paneId, cwd) };
+    if (agent === "omp") return { source: "omp-transcript", path: await ompTranscriptPath(paneId) };
+    throw new ConversationUnavailable("no_recognized_transcript");
+  } catch (error) {
+    if (!(error instanceof ConversationUnavailable) || !(await paneRunsOmo(paneId))) throw error;
+    return { source: "omo-transcript", path: omoTranscriptPath(cwd) };
+  }
+}
 
 /**
  * pane -> agent session -> transcript turns. Read-only, same-user files only.
  * Claude sessions are looked up by id under ~/.claude/projects; omp sessions
  * come as an absolute path from herdr, accepted only under the user's own
- * ~/.omp/agent/sessions dir. Throws ConversationUnavailable when the pane has
+ * ~/.omp/agent/sessions dir; omo sessions are resolved from its own store by
+ * cwd (omoTranscriptPath). Throws ConversationUnavailable when the pane has
  * no recognized agent store (the caller falls back to the scrollback
  * transcript view, like chatmux).
  */
@@ -253,27 +383,7 @@ export async function paneConversation(paneId: string): Promise<RecognizedConver
   if (pane === undefined) throw new ConversationUnavailable("pane_not_found");
   if (typeof pane.cwd !== "string" || pane.cwd.length === 0) throw new ConversationUnavailable("no_recognized_transcript");
 
-  let path: string;
-  let source: RecognizedConversation["source"];
-  if (pane.agent === "claude") {
-    source = "claude-transcript";
-    const info = await herdrRpc<{ agent: { agent_session?: { value?: unknown } } }>("agent.get", { target: paneId });
-    const session = info.agent.agent_session?.value;
-    if (typeof session !== "string" || !SESSION_ID.test(session)) throw new ConversationUnavailable("no_session_id");
-    path = join(process.env["HOME"] ?? "", ".claude", "projects", projectSlug(pane.cwd), `${session}.jsonl`);
-  } else if (pane.agent === "omp") {
-    source = "omp-transcript";
-    const info = await herdrRpc<{ agent: { agent_session?: { kind?: unknown; value?: unknown } } }>("agent.get", { target: paneId });
-    const session = info.agent.agent_session;
-    const value = session?.kind === "path" ? session.value : undefined;
-    const sessionsDir = join(process.env["HOME"] ?? "", ".omp", "agent", "sessions") + "/";
-    if (typeof value !== "string" || !value.startsWith(sessionsDir) || !value.endsWith(".jsonl")) {
-      throw new ConversationUnavailable("no_session_path");
-    }
-    path = value;
-  } else {
-    throw new ConversationUnavailable("no_recognized_transcript");
-  }
+  const { source, path } = await resolveTranscript(paneId, pane.agent ?? "", pane.cwd);
 
   let text: string;
   try {
@@ -285,7 +395,9 @@ export async function paneConversation(paneId: string): Promise<RecognizedConver
     throw new ConversationUnavailable("transcript_missing");
   }
 
-  const turns = pane.agent === "omp" ? parseOmpTranscript(text) : parseClaudeTranscript(text);
+  // the store decides the parser, not the pane's label: omo writes omp's
+  // session shape while herdr may be calling that same pane `claude`.
+  const turns = source === "claude-transcript" ? parseClaudeTranscript(text) : parseOmpTranscript(text);
   cache.set(path, { size: statSync(path).size, turns });
   return { source, turns };
 }

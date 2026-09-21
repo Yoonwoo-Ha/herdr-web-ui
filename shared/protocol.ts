@@ -35,7 +35,8 @@ export type HerdrPane = PaneInfo;
  *  GET    /api/pane/read?pane_id=&source=&format=&lines=  -> { read: PaneReadResult }
  *  POST   /api/pane/input  { pane_id, text }   -> { ok: true }
  *  GET    /api/pane/conversation?pane_id=    -> ConversationResponse (structured agent
- *         transcript turns - claude or omp; source:"scrollback" when the pane has no recognized store)
+ *         transcript turns - claude, omp or omo; source:"scrollback" when the pane has no
+ *         recognized store)
  *  POST   /api/pane/close { pane_id }         -> { ok: true } (pane.close RPC; the collector's
  *         session-changed broadcast removes it from every client's sidebar)
  *  POST   /api/pane/image  { pane_id, content_type, data_base64 } -> { ok: true, path }
@@ -81,7 +82,7 @@ export type ConversationPart =
 
 /** GET /api/pane/conversation: the recognized-transcript conversation, or scrollback fallback. */
 export interface ConversationResponse {
-  source: "claude-transcript" | "omp-transcript" | "scrollback";
+  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "scrollback";
   turns: ConversationTurn[];
 }
 
