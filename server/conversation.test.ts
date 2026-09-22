@@ -27,7 +27,7 @@ describe("parseClaudeTranscript", () => {
     const turns = parseClaudeTranscript(lines);
     expect(turns).toEqual([
       { role: "user", ts: "2026-09-19T08:00:00.000Z", parts: [{ kind: "text", text: "리팩터링 시작해줘" }] },
-      { role: "assistant", ts: "2026-09-19T08:00:02.000Z", parts: [
+      { role: "assistant", ts: "2026-09-19T08:00:02.000Z", end_ts: "2026-09-19T08:00:05.000Z", parts: [
         { kind: "text", text: "먼저 상태를 확인하겠습니다." },
         { kind: "tool", name: "Bash", summary: "git status --short", input: expect.stringContaining("git status"), output: "M src/app.ts" },
         { kind: "thinking", text: "internal reasoning stays private" },
@@ -74,6 +74,21 @@ describe("parseClaudeTranscript", () => {
   it("returns nothing for an empty transcript", () => {
     expect(parseClaudeTranscript("")).toEqual([]);
   });
+
+  it("preserves array user text, including mixed tool results, without exposing bookkeeping", () => {
+    const transcript = [
+      { type: "assistant", message: { content: [{ type: "tool_use", id: "t", name: "Read", input: {} }] } },
+      { type: "user", message: { content: [null, { type: "tool_result", tool_use_id: "t", content: "result" }, { type: "text", text: "Actual request" }] } },
+      { type: "user", message: { content: [{ type: "text", text: "<command-name>/clear</command-name>" }] } },
+      { type: "user", isMeta: true, message: { content: "internal reminder" } },
+      { type: "user", isCompactSummary: true, message: { content: "compacted context" } },
+      null,
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    const turns = parseClaudeTranscript(transcript);
+    expect(turns).toHaveLength(2);
+    expect(turns[0]?.parts[0]).toMatchObject({ kind: "tool", output: "result" });
+    expect(turns[1]?.parts).toEqual([{ kind: "text", text: "Actual request" }]);
+  });
 });
 
 /** Minimal but shape-true slices of an omp session jsonl. */
@@ -104,7 +119,7 @@ describe("parseOmpTranscript", () => {
     const turns = parseOmpTranscript(ompLines);
     expect(turns).toEqual([
       { role: "user", ts: "2026-09-20T08:39:00.000Z", parts: [{ kind: "text", text: "주소좀 줘봐" }] },
-      { role: "assistant", ts: "2026-09-20T08:39:02.000Z", parts: [
+      { role: "assistant", ts: "2026-09-20T08:39:02.000Z", end_ts: "2026-09-20T08:39:05.000Z", parts: [
         { kind: "thinking", text: "internal reasoning stays private" },
         { kind: "thinking", text: "alternate thinking field" },
         { kind: "tool", name: "bash", summary: "Checking ports", input: expect.stringContaining("ss -tlnp"), output: "LISTEN 0 512 100.123.228.51:7317" },

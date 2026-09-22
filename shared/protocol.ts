@@ -37,7 +37,7 @@ export type HerdrPane = PaneInfo;
  *  GET    /api/pane/read?pane_id=&source=&format=&lines=  -> { read: PaneReadResult }
  *  POST   /api/pane/input  { pane_id, text }   -> { ok: true }
  *  GET    /api/pane/conversation?pane_id=    -> ConversationResponse (structured agent
- *         transcript turns - claude, omp or omo; source:"scrollback" when the pane has no
+ *         transcript turns - claude, codex, omp or omo; source:"scrollback" when the pane has no
  *         recognized store)
  *  POST   /api/pane/close { pane_id }         -> { ok: true } (pane.close RPC; the collector's
  *         session-changed broadcast removes it from every client's sidebar)
@@ -89,19 +89,29 @@ export interface PushKey {
 export interface ConversationTurn {
   role: "user" | "assistant";
   ts: string | null;
+  /** Last recorded assistant activity, never the next user's timestamp. */
+  end_ts?: string;
   parts: ConversationPart[];
 }
 
 export type ConversationPart =
-  | { kind: "text"; text: string }
+  | { kind: "text"; text: string; phase?: "commentary" | "final_answer" }
   /** the agent's reasoning block; the client folds it and shows it only on request */
   | { kind: "thinking"; text: string }
   | { kind: "tool"; name: string; summary: string; input: string; output: string };
 
-/** GET /api/pane/conversation: the recognized-transcript conversation, or scrollback fallback. */
+/** Latest model settings actually recorded by this agent. */
+export interface ConversationMetadata {
+  model: string | null;
+  /** Recorded reasoning effort / thinking level; null means not reported. */
+  reasoning_effort: string | null;
+}
+
+/** GET /api/pane/conversation: native conversation with settings, or scrollback fallback. */
 export interface ConversationResponse {
-  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "scrollback";
+  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "codex-transcript" | "scrollback";
   turns: ConversationTurn[];
+  metadata?: ConversationMetadata;
 }
 
 /** GET /api/agents: one agent kind herdr can start (`agent.start` kind), with a display label. */
@@ -177,8 +187,14 @@ export interface PushPayload {
  *
  *  Client -> server frames: attach {pane_id, cols, rows} | detach {pane_id} | input {pane_id, text}
  *    | keys {pane_id, keys} | resize {pane_id, cols, rows} | role {mode}
+ *    | pty-ack {pane_id, stream_id, offset}
  *  Server -> client frames: snapshot | pty-data | pty-exit | pane-geometry | role-ack
  *    | pane-status | pane-exited | session-changed | error
+ *
+ *  attach {flow_control:"ack"} opts into per-subscription output credit.
+ *  pty-data.flow carries a stream_id and cumulative UTF-8 payload offset;
+ *  pty-ack is sent AFTER xterm's write callback, never on receipt or reconnect.
+ *  Slow consumers close with code 4008; the UI requires an explicit pane reopen.
  *
  *  Roles: a connection starts as `interact`. `role {mode:"observe"}` demotes it server-side:
  *  input/keys/resize then answer a `read_only` error frame and attaching never resizes the
@@ -191,17 +207,19 @@ export interface PushPayload {
 export type ClientRole = "interact" | "observe";
 
 export type ClientMessage =
-  | { type: "attach"; pane_id: string; cols: number; rows: number }
+  | { type: "attach"; pane_id: string; cols: number; rows: number; flow_control?: "ack" }
   | { type: "detach"; pane_id: string }
   | { type: "input"; pane_id: string; text: string }
   | { type: "keys"; pane_id: string; keys: string[] }
   | { type: "resize"; pane_id: string; cols: number; rows: number }
+  /** Cumulative UTF-8 payload bytes processed by xterm, only for this subscription. */
+  | { type: "pty-ack"; pane_id: string; stream_id: string; offset: number }
   | { type: "role"; mode: ClientRole };
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: SessionSnapshot }
   /** raw PTY bytes: append to the terminal, never repaint over it */
-  | { type: "pty-data"; pane_id: string; data: string }
+  | { type: "pty-data"; pane_id: string; data: string; flow?: { stream_id: string; offset: number } }
   | { type: "pty-exit"; pane_id: string; code: number | null }
   /** the shared pty's grid changed: observe clients adopt it, interact clients drive it */
   | { type: "pane-geometry"; pane_id: string; cols: number; rows: number }

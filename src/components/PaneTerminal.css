@@ -112,6 +112,14 @@
   color: var(--status-working);
 }
 
+.terminal-banner-output-error {
+  max-width: 100%;
+  white-space: normal;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  pointer-events: auto;
+}
+
 /* view-only state: the same pill anatomy as the banners, accent-tint layered OVER the
    opaque elevated base - a bare tint would let live pty glyphs bleed through */
 .terminal-banner-observe {

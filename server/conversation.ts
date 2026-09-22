@@ -1,7 +1,9 @@
 /**
  * Agent session transcripts -> structured conversation turns.
  *
- * Three stores are recognized, all provider-native and read-only:
+ * Four stores are recognized, all provider-native and read-only:
+ * - Codex: native rollout JSONL, resolved by session metadata/open descriptors
+ *   or a unique pane-text match for shared app-server TUIs (codex.ts).
  * - Claude Code: herdr's agent.get names the session id, the transcript lives
  *   at ~/.claude/projects/<cwd-slug>/<session>.jsonl (the store chatmux reads).
  * - omp: herdr's agent.get hands us the session jsonl path outright under
@@ -21,8 +23,10 @@
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ConversationPart, ConversationTurn } from "../shared/protocol.ts";
+import type { ConversationMetadata, ConversationPart, ConversationTurn } from "../shared/protocol.ts";
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
+import { codexTranscriptPath, parseCodexTranscript } from "./codex.ts";
+import { parseConversationMetadata } from "./conversation-metadata.ts";
 
 /** Enough turns for a conversation; a 6MB transcript is not read whole into the UI. */
 export const MAX_TURNS = 100;
@@ -50,6 +54,8 @@ function toolSummary(name: string, input: Record<string, unknown>): string {
 interface TranscriptEntry {
   type?: string;
   timestamp?: string;
+  isMeta?: boolean;
+  isCompactSummary?: boolean;
   message?: { role?: string; content?: unknown };
 }
 
@@ -79,6 +85,7 @@ export function parseClaudeTranscript(text: string): ConversationTurn[] {
     } catch {
       continue; // a torn tail line while Claude is mid-append
     }
+    if (entry === null || typeof entry !== "object" || entry.isMeta || entry.isCompactSummary) continue;
     const content = entry.message?.content;
 
     if (entry.type === "user" && typeof content === "string") {
@@ -88,6 +95,11 @@ export function parseClaudeTranscript(text: string): ConversationTurn[] {
     }
 
     if (entry.type === "user" && Array.isArray(content)) {
+      const prompt = content.flatMap((block: unknown) => {
+        if (block === null || typeof block !== "object") return [];
+        const part = block as { type?: string; text?: unknown };
+        return part.type === "text" && typeof part.text === "string" && !isCommandEntry(part.text.trim()) ? [part.text] : [];
+      }).join("\n");
       for (const block of content) {
         if (typeof block !== "object" || block === null) continue;
         const result = block as { type?: string; tool_use_id?: string; content?: unknown };
@@ -104,11 +116,13 @@ export function parseClaudeTranscript(text: string): ConversationTurn[] {
               : "";
         if (tool.output.length > 4000) tool.output = `${tool.output.slice(0, 4000)}\n… trimmed`;
       }
+      if (prompt.trim()) turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: prompt }] });
       continue;
     }
 
     if (entry.type === "assistant" && Array.isArray(content)) {
       const turn = assistantTurn(entry.timestamp);
+      if (entry.timestamp) turn.end_ts = entry.timestamp;
       for (const block of content) {
         if (typeof block !== "object" || block === null) continue;
         const b = block as { type?: string; text?: unknown; thinking?: unknown; name?: unknown; input?: unknown };
@@ -134,7 +148,7 @@ export function parseClaudeTranscript(text: string): ConversationTurn[] {
     }
   }
 
-  return turns.slice(-MAX_TURNS);
+  return turns.filter((turn) => turn.parts.length > 0).slice(-MAX_TURNS);
 }
 
 /** An omp session line's message shape (only the fields we read). */
@@ -168,7 +182,7 @@ export function parseOmpTranscript(text: string): ConversationTurn[] {
   };
 
   const contentParts = (content: unknown): { type?: string; text?: unknown }[] =>
-    Array.isArray(content) ? (content as { type?: string; text?: unknown }[]) : [];
+    Array.isArray(content) ? content.filter((part) => typeof part === "object" && part !== null) : [];
 
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
@@ -178,7 +192,8 @@ export function parseOmpTranscript(text: string): ConversationTurn[] {
     } catch {
       continue; // a torn tail line while omp is mid-append
     }
-    if (entry.type !== "message" || entry.message === undefined) continue; // title/session headers
+    if (entry === null || typeof entry !== "object") continue;
+    if (entry.type !== "message" || entry.message == null) continue; // title/session headers
     const message = entry.message;
 
     if (message.role === "user") {
@@ -208,6 +223,7 @@ export function parseOmpTranscript(text: string): ConversationTurn[] {
 
     if (message.role === "assistant" && Array.isArray(message.content)) {
       const turn = assistantTurn(entry.timestamp);
+      if (entry.timestamp) turn.end_ts = entry.timestamp;
       for (const block of message.content) {
         if (typeof block !== "object" || block === null) continue;
         const b = block as { type?: string; text?: unknown; thinking?: unknown; name?: unknown; id?: unknown; arguments?: unknown; intent?: unknown };
@@ -234,11 +250,11 @@ export function parseOmpTranscript(text: string): ConversationTurn[] {
     }
   }
 
-  return turns.slice(-MAX_TURNS);
+  return turns.filter((turn) => turn.parts.length > 0).slice(-MAX_TURNS);
 }
 
-/** Re-parse only when the file actually grew; one viewer polls every 2s. */
-const cache = new Map<string, { size: number; turns: ConversationTurn[] }>();
+/** Re-parse on file changes, including replacement and same-size rewrites. */
+const cache = new Map<string, { signature: string; turns: ConversationTurn[]; metadata: ConversationMetadata }>();
 
 export class ConversationUnavailable extends Error {
   constructor(reason: string) {
@@ -248,7 +264,7 @@ export class ConversationUnavailable extends Error {
 }
 
 /** What paneConversation resolved: which store the turns came from. */
-export type RecognizedConversation = { source: "claude-transcript" | "omp-transcript" | "omo-transcript"; turns: ConversationTurn[] };
+export type RecognizedConversation = { source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "codex-transcript"; turns: ConversationTurn[]; metadata: ConversationMetadata };
 
 /** omo's per-cwd session dir: `/home/u/p` -> `--home-u-p--` (verified against every dir on disk). */
 function omoSlug(cwd: string): string {
@@ -363,8 +379,13 @@ async function ompTranscriptPath(paneId: string): Promise<string> {
  * process tree decides: omo's own store is read only when omo is really running
  * in that pane, never on a matching cwd alone.
  */
-async function resolveTranscript(paneId: string, agent: string, cwd: string): Promise<{ source: RecognizedConversation["source"]; path: string }> {
+async function resolveTranscript(paneId: string, agent: string, cwd: string, codexHome?: string): Promise<{ source: RecognizedConversation["source"]; path: string }> {
   try {
+    if (agent === "codex") {
+      const path = await codexTranscriptPath(paneId, cwd, codexHome);
+      if (!path) throw new ConversationUnavailable("no_session_path");
+      return { source: "codex-transcript", path };
+    }
     if (agent === "claude") return { source: "claude-transcript", path: await claudeTranscriptPath(paneId, cwd) };
     if (agent === "omp") return { source: "omp-transcript", path: await ompTranscriptPath(paneId) };
     throw new ConversationUnavailable("no_recognized_transcript");
@@ -383,19 +404,21 @@ async function resolveTranscript(paneId: string, agent: string, cwd: string): Pr
  * no recognized agent store (the caller falls back to the scrollback
  * transcript view, like chatmux).
  */
-export async function paneConversation(paneId: string): Promise<RecognizedConversation> {
+export async function paneConversation(paneId: string, codexHome?: string): Promise<RecognizedConversation> {
   const snapshot = await sessionSnapshot();
   const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined) throw new ConversationUnavailable("pane_not_found");
   if (typeof pane.cwd !== "string" || pane.cwd.length === 0) throw new ConversationUnavailable("no_recognized_transcript");
 
-  const { source, path } = await resolveTranscript(paneId, pane.agent ?? "", pane.cwd);
+  const { source, path } = await resolveTranscript(paneId, pane.agent ?? pane.agent_session?.agent ?? "", pane.cwd, codexHome);
 
   let text: string;
+  let signature: string;
   try {
     const stat = statSync(path);
+    signature = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
     const cached = cache.get(path);
-    if (cached !== undefined && cached.size === stat.size) return { source, turns: cached.turns };
+    if (cached?.signature === signature) return { source, turns: cached.turns, metadata: cached.metadata };
     text = readFileSync(path, "utf8");
   } catch {
     throw new ConversationUnavailable("transcript_missing");
@@ -403,7 +426,13 @@ export async function paneConversation(paneId: string): Promise<RecognizedConver
 
   // the store decides the parser, not the pane's label: omo writes omp's
   // session shape while herdr may be calling that same pane `claude`.
-  const turns = source === "claude-transcript" ? parseClaudeTranscript(text) : parseOmpTranscript(text);
-  cache.set(path, { size: statSync(path).size, turns });
-  return { source, turns };
+  const turns = source === "codex-transcript" ? parseCodexTranscript(text, MAX_TURNS)
+    : source === "claude-transcript" ? parseClaudeTranscript(text) : parseOmpTranscript(text);
+  const metadata = parseConversationMetadata(text, source);
+  // Record the stat from BEFORE the read: an append during parsing must cause
+  // another read on the next poll, not permanently cache a torn tail.
+  cache.delete(path);
+  cache.set(path, { signature, turns, metadata });
+  if (cache.size > 32) cache.delete(cache.keys().next().value!);
+  return { source, turns, metadata };
 }

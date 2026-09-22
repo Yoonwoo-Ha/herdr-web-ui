@@ -2,17 +2,16 @@
 /**
  * PTY host: runs ONE command on a real pseudo-terminal and bridges it to its parent.
  *
- * This exists as a separate Node process on purpose. herdr's terminal attach only
- * behaves like a terminal when it owns a TTY, but Bun 1.4 has no PTY API
- * (Bun.spawn ignores `pty`, Bun.PTY is undefined) and loading node-pty inside Bun
- * panics the runtime (oven-sh/bun#18546). Node runs node-pty correctly, so the
- * Bun server spawns this host and speaks a tiny protocol to it.
+ * Bun.Terminal exists, but Bun 1.4.2 has no public output pause/resume API.
+ * node-pty supplies that control so browser acknowledgements can stop PTY reads.
+ * Keep it in Node: loading node-pty in Bun has panicked (oven-sh/bun#18546).
  *
  * Protocol
  *   argv:   <cols> <rows> <command> [args...]
  *   stdin:  newline-delimited JSON control frames
  *             {"t":"i","d":"<text>"}          write text into the pty
  *             {"t":"r","c":<cols>,"r":<rows>} resize the pty
+ *             {"t":"p","paused":true|false} pause/resume output (input stays live)
  *   stdout: raw pty bytes, unmodified
  *   stderr: diagnostics only
  *   exit:   mirrors the child's exit code
@@ -37,15 +36,30 @@ const term = pty.spawn(command, args, {
   env: { ...process.env, TERM: "xterm-256color" },
 });
 
+let parentPaused = false;
+let stdoutBlocked = false;
+function updateReading() {
+  if (parentPaused || stdoutBlocked) term.pause();
+  else term.resume();
+}
 term.onData((chunk) => {
-  process.stdout.write(chunk);
+  if (!process.stdout.write(chunk)) {
+    stdoutBlocked = true;
+    updateReading();
+  }
+});
+process.stdout.on("drain", () => {
+  stdoutBlocked = false;
+  updateReading();
 });
 
 let exited = false;
 term.onExit(({ exitCode }) => {
   exited = true;
-  // let stdout drain before the process disappears
-  process.stdout.write("", () => process.exit(exitCode ?? 0));
+  // Let the native exit callback unwind and stdout drain before Node exits.
+  process.exitCode = exitCode ?? 0;
+  process.stdin.destroy();
+  process.stdout.end();
 });
 
 let pending = "";
@@ -72,6 +86,10 @@ function handle(line) {
   try {
     if (frame.t === "i" && typeof frame.d === "string") term.write(frame.d);
     else if (frame.t === "r") term.resize(clamp(frame.c), clamp(frame.r));
+    else if (frame.t === "p" && typeof frame.paused === "boolean") {
+      parentPaused = frame.paused;
+      updateReading();
+    }
   } catch (error) {
     process.stderr.write(`pty-host: ${error?.message ?? error}\n`);
   }
@@ -83,15 +101,31 @@ function clamp(value) {
   return Math.min(parsed, 1000);
 }
 
+let stopping = false;
 const stop = () => {
-  if (!exited) {
+  if (!exited && !stopping) {
+    stopping = true;
     try {
       term.kill();
+      // A paused reader still needs to observe EOF after the parent leaves.
+      term.resume();
     } catch {
       /* already gone */
     }
+    // A child can ignore SIGHUP, and a blocked pipe must not pin the sidecar.
+    setTimeout(() => {
+      if (!exited) { try { term.kill("SIGKILL"); } catch { /* already gone */ } }
+      process.exit(0);
+    }, 2000).unref();
   }
 };
-process.on("SIGTERM", () => { stop(); process.exit(0); });
-process.on("SIGINT", () => { stop(); process.exit(0); });
+process.on("SIGTERM", () => { stop(); process.stdin.destroy(); });
+process.on("SIGINT", () => { stop(); process.stdin.destroy(); });
 process.stdin.on("close", stop);
+// The parent can disappear while output is in flight. Close the owned attach
+// instead of turning the expected broken pipe into an uncaught Node exception.
+process.stdout.on("error", (error) => {
+  if (error.code !== "EPIPE") process.stderr.write(`pty-host: ${error.message}\n`);
+  stop();
+  process.stdin.destroy();
+});

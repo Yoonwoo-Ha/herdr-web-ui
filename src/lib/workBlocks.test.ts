@@ -21,6 +21,17 @@ describe("splitTurn", () => {
   it("is all work when the turn ends on an action (still running)", () => {
     expect(splitTurn([text("on it"), tool("bash")])).toEqual({ work: [text("on it"), tool("bash")], answer: [] });
   });
+
+  it("keeps Codex commentary inside work even after the last tool or with no tools", () => {
+    const narration = { ...text("Still investigating"), phase: "commentary" as const };
+    expect(splitTurn([tool("exec_command"), narration]).answer).toEqual([]);
+    expect(splitTurn([narration])).toEqual({ work: [narration], answer: [] });
+  });
+
+  it("honors an explicit final answer even if a later record contains an action", () => {
+    const final = { ...text("Done"), phase: "final_answer" as const };
+    expect(splitTurn([tool("exec_command"), final, tool("cleanup")])).toEqual({ work: [tool("exec_command"), tool("cleanup")], answer: [final] });
+  });
 });
 
 describe("workSummary", () => {

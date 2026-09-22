@@ -30,6 +30,14 @@
   width: 100%;
 }
 
+.chat-terminal-fallback {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.chat-terminal-fallback summary { cursor: pointer; }
+.chat-terminal-fallback pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* a user turn opens a new exchange: a hairline separates it from the answer above */
 .chat-turn-user {
   display: flex;

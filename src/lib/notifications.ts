@@ -35,7 +35,7 @@ async function show(paneId: string, title: string, body: string, onClick?: () =>
   if (typeof globalThis.Notification === "undefined") return;
   if (globalThis.Notification.permission !== "granted") return;
   if (typeof document !== "undefined" && !document.hidden) return; // visible tab: the UI already shows it
-  const options: NotificationOptions = { body, tag: paneNotificationTag(paneId), data: { pane_id: paneId }, icon: "/icons/icon-192.png" };
+  const options: NotificationOptions = { body, tag: paneNotificationTag(paneId), data: { pane_id: paneId }, icon: "/icons/icon-192.png?v=ram1" };
   try {
     const registration = "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration() : undefined;
     if (registration?.active) {

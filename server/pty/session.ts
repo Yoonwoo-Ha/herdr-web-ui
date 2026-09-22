@@ -15,20 +15,23 @@ export interface PtySessionOptions {
 
 /**
  * A command running on a real PTY, hosted by a Node sidecar (see pty-host.mjs for
- * why it cannot run in-process under Bun).
+ * why output flow control currently needs node-pty).
  */
 export class PtySession {
+  readonly exited: Promise<void>;
   private readonly proc: ReturnType<typeof Bun.spawn>;
   private closed = false;
+  private paused = false;
 
   constructor(private readonly options: PtySessionOptions) {
     this.proc = Bun.spawn(
       ["node", HOST_SCRIPT, String(options.cols), String(options.rows), options.command, ...options.args],
-      { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, ...options.env } },
+      { stdin: "pipe", stdout: "pipe", stderr: "inherit", env: { ...process.env, ...options.env } },
     );
 
-    void this.pump();
-    void this.proc.exited.then((code) => {
+    // Process exit can precede the final stdout read. Deliver every byte before
+    // onExit lets the server remove the attachment.
+    this.exited = Promise.all([this.proc.exited, this.pump()]).then(([code]) => {
       if (this.closed) return;
       this.closed = true;
       options.onExit(code ?? null);
@@ -49,6 +52,8 @@ export class PtySession {
         const text = decoder.decode(value, { stream: true });
         if (text) this.options.onData(text);
       }
+      const tail = decoder.decode();
+      if (tail) this.options.onData(tail);
     } catch {
       /* the pty closed underneath us; onExit reports it */
     } finally {
@@ -74,6 +79,18 @@ export class PtySession {
 
   resize(cols: number, rows: number): void {
     this.send({ t: "r", c: cols, r: rows });
+  }
+
+  pause(): void {
+    if (this.paused || this.closed) return;
+    this.paused = true;
+    this.send({ t: "p", paused: true });
+  }
+
+  resume(): void {
+    if (!this.paused || this.closed) return;
+    this.paused = false;
+    this.send({ t: "p", paused: false });
   }
 
   kill(): void {

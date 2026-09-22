@@ -13,7 +13,7 @@ import { Clock, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 
 import "./Composer.css";
 
-import type { AgentStatus, SlashCommand } from "../../shared/protocol.ts";
+import type { AgentStatus, ConversationMetadata, SlashCommand } from "../../shared/protocol.ts";
 import { fetchPaneCommands, fetchPaneFiles } from "../lib/api.ts";
 import {
   agentDisplayLabel,
@@ -31,6 +31,7 @@ export interface ComposerProps {
   paneId: string;
   agent: string | null;
   agentStatus?: AgentStatus;
+  metadata?: ConversationMetadata | null;
   queueMode?: boolean;
   onSend: (text: string) => boolean;
   onAbort: () => void;
@@ -86,6 +87,7 @@ export function Composer({
   paneId,
   agent,
   agentStatus,
+  metadata,
   queueMode = false,
   onSend,
   onAbort,
@@ -390,6 +392,12 @@ export function Composer({
         <span className="composer-agent-label">{agentLabel}</span>
         <span className="composer-status-separator" aria-hidden="true">·</span>
         <strong>{composerStatusWord(agentStatus)}</strong>
+        {(metadata?.model || metadata?.reasoning_effort) && <span className="composer-model-info" aria-label="Model and reasoning">
+          <span className="composer-model" title={metadata.model ?? "Model not available"}>{metadata.model ?? "Model —"}</span>
+          <span className="composer-reasoning" title={metadata.reasoning_effort ? `Reasoning effort: ${metadata.reasoning_effort}` : "Reasoning effort not available"}>
+            Reasoning {metadata.reasoning_effort ?? "—"}
+          </span>
+        </span>}
         {(uploading || !connected) && (
           <span className="composer-status-hint">
             <span aria-hidden="true">·</span> {uploading ? "Uploading image…" : "Reconnecting… message held here, never queued"}

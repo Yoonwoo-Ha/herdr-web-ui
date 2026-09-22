@@ -34,6 +34,8 @@ import { createPushService, defaultStateDir, handlePushRequest } from "./push.ts
 import { handlePromptRequest } from "./prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
+import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, replayTail } from "./output-window.ts";
+import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 
 const MAX_REPLAY_BYTES = 256 * 1024;
 
@@ -72,6 +74,8 @@ async function paneContext(paneId: string): Promise<{ agent: string | null; cwd:
 
 interface SocketData {
   attached: Set<string>;
+  output: Map<string, OutputWindow>;
+  closing: boolean;
   /** the connection's authority: observe connections cannot type or resize */
   mode: ClientRole;
 }
@@ -83,8 +87,7 @@ type Client = ServerWebSocket<SocketData>;
  *
  * The terminal is a real `herdr terminal attach` on a PTY rather than repeated
  * `pane.read` snapshots, so the browser receives an actual byte stream: xterm.js
- * keeps its own scrollback and selection, and herdr's 1000-line per-read cap
- * stops being the ceiling on what the user can see.
+ * keeps screen state and selection, while herdr owns scrollback.
  */
 interface PaneAttachment {
   pty: PtySession;
@@ -94,13 +97,26 @@ interface PaneAttachment {
   rows: number;
   /** bounded tail so a client joining late still sees the current screen */
   replay: string;
+  stalled: Map<Client, number>;
 }
 
-function send(client: Client, message: ServerMessage): void {
+function send(client: Client, message: ServerMessage): number {
+  if (client.data.closing) return 0;
   try {
-    client.send(JSON.stringify(message));
+    const encoded = JSON.stringify(message);
+    // Include JSON escaping in the transport budget, before Bun could drop a
+    // frame at its own cap. An overload close is explicit and never auto-replayed.
+    if (client.getBufferedAmount() + Buffer.byteLength(encoded) > OUTPUT_HARD_BYTES) {
+      client.close(OUTPUT_STALLED_CLOSE_CODE, "terminal output transport stalled");
+      return 0;
+    }
+    // -1 means ALREADY queued. Never retry that frame, or terminal bytes repeat.
+    const result = client.send(encoded);
+    if (result === 0) client.close(OUTPUT_STALLED_CLOSE_CODE, "output delivery failed");
+    return result;
   } catch {
     /* client vanished mid-send */
+    return 0;
   }
 }
 
@@ -111,15 +127,67 @@ export function createServer(
     token?: string;
     /** where VAPID keys and push subscriptions persist; tests pass a temp dir */
     stateDir?: string;
+    /** Native Codex store; defaults to CODEX_HOME. Tests use an isolated store. */
+    codexHome?: string;
   } = {},
 ): { port: number; hostname: string; stop: () => void } {
   const attachments = new Map<string, PaneAttachment>();
   /** attachments still resolving their terminal, so concurrent attaches share one pty */
   const pendingAttachments = new Map<string, Promise<PaneAttachment>>();
+  // herdr releases its exclusive attach slot only after the old process exits.
+  const retiringAttachments = new Map<string, Promise<void>>();
   const clients = new Set<Client>();
   const hostname = options.hostname ?? process.env["HOST"] ?? "0.0.0.0";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
+
+  function stopSlowClient(client: Client): void {
+    if (client.data.closing) return;
+    client.data.closing = true;
+    clients.delete(client);
+    for (const paneId of client.data.attached) detach(paneId, client);
+    client.data.attached.clear();
+    client.data.output.clear();
+    client.close(OUTPUT_STALLED_CLOSE_CODE, "terminal output consumer stalled");
+  }
+
+  function reconcileOutput(paneId: string): void {
+    const attachment = attachments.get(paneId);
+    if (!attachment?.pty) return;
+    let paused = false;
+    for (const client of attachment.clients) {
+      const window = client.data.output.get(paneId);
+      const buffered = client.getBufferedAmount();
+      const blocked = window?.blocked || buffered >= OUTPUT_HIGH_BYTES;
+      if (!blocked) {
+        attachment.stalled.delete(client);
+        continue;
+      }
+      const since = attachment.stalled.get(client) ?? Date.now();
+      attachment.stalled.set(client, since);
+      if (Date.now() - since >= OUTPUT_STALL_MS || buffered >= OUTPUT_HARD_BYTES) {
+        stopSlowClient(client);
+      } else {
+        paused = true;
+      }
+    }
+    if (attachments.get(paneId) !== attachment) return;
+    if (paused) attachment.pty.pause();
+    else attachment.pty.resume();
+  }
+
+  function sendOutput(client: Client, paneId: string, data: string): void {
+    const window = client.data.output.get(paneId);
+    const bytes = Buffer.byteLength(data);
+    if ((window && window.pending + bytes > OUTPUT_HARD_BYTES) || client.getBufferedAmount() >= OUTPUT_HARD_BYTES) {
+      stopSlowClient(client);
+      return;
+    }
+    send(client, {
+      type: "pty-data", pane_id: paneId, data,
+      ...(window ? { flow: { stream_id: window.id, offset: window.write(bytes) } } : {}),
+    });
+  }
   const push = createPushService({
     stateDir: options.stateDir ?? defaultStateDir(),
     lookupTitle: async (paneId) => {
@@ -158,6 +226,11 @@ export function createServer(
     // the "terminal ended" screen): a stale entry would read as a live claim in
     // releaseUnclaimed and keep a later, empty pty on this pane running
     for (const member of attachment.clients) member.data.attached.delete(paneId);
+    for (const member of attachment.clients) member.data.output.delete(paneId);
+    const retired = attachment.pty.exited.finally(() => {
+      if (retiringAttachments.get(paneId) === retired) retiringAttachments.delete(paneId);
+    });
+    retiringAttachments.set(paneId, retired);
     attachment.pty.kill();
   }
 
@@ -194,6 +267,7 @@ export function createServer(
   }
 
   async function spawnAttachment(paneId: string, cols: number, rows: number, forObserver: boolean): Promise<PaneAttachment> {
+    await retiringAttachments.get(paneId);
     const { terminalId, rect } = await terminalInfoFor(paneId);
     // an observer-first attachment spawns at the pane's own grid (fallback 80x24 when
     // the layout has no rect for it): the attach must not seed the shared pty with a
@@ -206,6 +280,7 @@ export function createServer(
       cols: spawnCols,
       rows: spawnRows,
       replay: "",
+      stalled: new Map(),
     };
     attachments.set(paneId, attachment);
 
@@ -222,11 +297,13 @@ export function createServer(
       rows: spawnRows,
       onData: (data) => {
         const current = attachments.get(paneId);
-        if (!current) return;
-        current.replay = (current.replay + data).slice(-MAX_REPLAY_BYTES);
-        broadcast(paneId, { type: "pty-data", pane_id: paneId, data });
+        if (current !== attachment) return;
+        current.replay = replayTail(current.replay, data, MAX_REPLAY_BYTES);
+        for (const client of current.clients) sendOutput(client, paneId, data);
+        reconcileOutput(paneId);
       },
       onExit: (code) => {
+        if (attachments.get(paneId) !== attachment) return;
         broadcast(paneId, { type: "pty-exit", pane_id: paneId, code });
         closeAttachment(paneId);
       },
@@ -236,10 +313,13 @@ export function createServer(
   }
 
   function detach(paneId: string, client: Client): void {
+    client.data.output.delete(paneId);
     const attachment = attachments.get(paneId);
     if (!attachment) return;
     attachment.clients.delete(client);
+    attachment.stalled.delete(client);
     if (attachment.clients.size === 0) closeAttachment(paneId);
+    else reconcileOutput(paneId);
   }
 
   /**
@@ -289,7 +369,7 @@ export function createServer(
       }
 
       if (pathname === "/ws") {
-        const upgraded = bunServer.upgrade(request, { data: { attached: new Set<string>(), mode: "interact" } });
+        const upgraded = bunServer.upgrade(request, { data: { attached: new Set<string>(), mode: "interact", output: new Map(), closing: false } });
         if (upgraded) return undefined as unknown as Response;
         return new Response("websocket upgrade required", { status: 426 });
       }
@@ -485,7 +565,7 @@ export function createServer(
         const paneId = url.searchParams.get("pane_id");
         if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
         try {
-          return jsonResponse(await paneConversation(paneId));
+          return jsonResponse(await paneConversation(paneId, options.codexHome));
         } catch (error) {
           // an unrecognized pane is not an error: the client falls back to the
           // scrollback transcript, exactly like chatmux's terminal fallback
@@ -585,6 +665,12 @@ export function createServer(
     },
 
     websocket: {
+      // This transport cap also covers clients that predate application ACKs.
+      backpressureLimit: OUTPUT_HARD_BYTES,
+      closeOnBackpressureLimit: true,
+      drain(client) {
+        for (const paneId of client.data.attached) reconcileOutput(paneId);
+      },
       async open(client) {
         clients.add(client);
         try {
@@ -596,6 +682,7 @@ export function createServer(
       },
 
       async message(client, raw) {
+        if (client.data.closing) return;
         let message: ClientMessage;
         try {
           message = JSON.parse(String(raw)) as ClientMessage;
@@ -606,6 +693,10 @@ export function createServer(
         try {
           switch (message.type) {
             case "attach": {
+              if (message.flow_control !== undefined && message.flow_control !== "ack") {
+                send(client, { type: "error", code: "invalid_flow_control", message: "flow_control must be ack" });
+                break;
+              }
               const geometry = validGeometry(message.cols, message.rows);
               if (!geometry) {
                 send(client, { type: "error", code: "invalid_geometry", message: "cols and rows must be integers in 1..1000" });
@@ -626,11 +717,16 @@ export function createServer(
                 releaseUnclaimed(message.pane_id, attachment);
                 break;
               }
+              // An idempotent attach must not replay terminal bytes a second time.
+              const alreadyAttached = attachment.clients.has(client);
               attachment.clients.add(client);
+              if (!alreadyAttached && message.flow_control === "ack") client.data.output.set(message.pane_id, new OutputWindow());
               // hand the newcomer the current screen it would otherwise have missed
-              if (attachment.replay) {
-                send(client, { type: "pty-data", pane_id: message.pane_id, data: attachment.replay });
+              if (!alreadyAttached && attachment.replay) {
+                sendOutput(client, message.pane_id, attachment.replay);
               }
+              reconcileOutput(message.pane_id);
+              if (client.data.closing) break;
               if (client.data.mode === "interact") {
                 // an operator's viewport owns the shared grid
                 resizePty(message.pane_id, geometry.cols, geometry.rows);
@@ -648,6 +744,16 @@ export function createServer(
             case "detach": {
               client.data.attached.delete(message.pane_id);
               detach(message.pane_id, client);
+              break;
+            }
+            case "pty-ack": {
+              // Observers may acknowledge output, but never input or resize it.
+              const window = client.data.output.get(message.pane_id);
+              if (window && window.id === message.stream_id && !window.acknowledge(message.stream_id, message.offset)) {
+                send(client, { type: "error", code: "invalid_ack", message: "offset must acknowledge bytes already sent" });
+                break;
+              }
+              reconcileOutput(message.pane_id);
               break;
             }
             case "input": {
@@ -709,14 +815,22 @@ export function createServer(
         clients.delete(client);
         for (const paneId of client.data.attached) detach(paneId, client);
         client.data.attached.clear();
+        client.data.output.clear();
       },
     },
   });
+
+  // ACKs can stop arriving entirely (a suspended tab). Bound the pause even then.
+  const outputTimer = setInterval(() => {
+    for (const paneId of attachments.keys()) reconcileOutput(paneId);
+  }, 100);
+  outputTimer.unref();
 
   return {
     port: server.port ?? 0,
     hostname,
     stop: () => {
+      clearInterval(outputTimer);
       collector.stop();
       for (const paneId of [...attachments.keys()]) closeAttachment(paneId);
       server.stop(true);

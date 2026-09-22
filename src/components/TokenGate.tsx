@@ -46,7 +46,7 @@ export function TokenGate({ onUnlocked }: TokenGateProps) {
   return (
     <main className="token-gate-screen">
       <form className="token-gate" data-testid="token-gate" aria-labelledby="token-gate-title" onSubmit={(event) => void submit(event)}>
-        <img src="/icons/icon.svg" alt="" width="44" height="44" className="token-gate-mark" />
+        <img src="/icons/icon-192.png?v=ram1" alt="" width="44" height="44" className="token-gate-mark" />
         <h1 id="token-gate-title" className="token-gate-title">
           herdr <span className="brand-sub">web ui</span>
         </h1>

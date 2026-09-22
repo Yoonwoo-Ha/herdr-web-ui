@@ -14,7 +14,7 @@ import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.
 import { formatWorkDuration, splitTurn, workSummary, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
 import { phaseRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
 import { useSettings } from "../lib/settings.ts";
-import type { AgentStatus, ConversationPart, ConversationTurn, InteractivePrompt } from "../../shared/protocol.ts";
+import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationTurn, InteractivePrompt } from "../../shared/protocol.ts";
 
 const TRANSCRIPT_LINES = 400;
 const POLL_MS = 2000;
@@ -26,6 +26,7 @@ export interface ChatViewProps {
   ended: boolean;
   agent: string | null;
   agentStatus?: AgentStatus;
+  onMetadata?: (paneId: string, metadata: ConversationMetadata | null) => void;
 }
 
 interface ChatState {
@@ -88,8 +89,9 @@ function ToolInputView({ part }: { part: ToolPartType }) {
   let parsed: Record<string, unknown>;
   try { parsed = JSON.parse(part.input) as Record<string, unknown>; }
   catch { return <pre className="chat-tool-io">{part.input}</pre>; }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return <pre className="chat-tool-io">{part.input}</pre>;
   const str = (key: string): string | undefined => typeof parsed[key] === "string" ? parsed[key] : undefined;
-  const command = str("command");
+  const command = str("command") ?? str("cmd");
   if (command !== undefined) return <div className="chat-tool-io"><pre>{command}</pre>{(str("cwd") ?? str("description")) !== undefined && <p className="chat-tool-io-meta">{str("cwd") ?? str("description")}</p>}</div>;
   const oldString = str("old_string");
   const newString = str("new_string");
@@ -154,7 +156,8 @@ function ThinkingRow({ text }: { text: string }) {
  * each until opened; the narration reads as dim prose between them.
  */
 function WorkBlockView({ parts, duration, live, defaultOpen, showThinking }: { parts: ConversationPart[]; duration: string | null; live: boolean; defaultOpen: boolean; showThinking: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [chosenOpen, setOpen] = useState<boolean | null>(null);
+  const open = chosenOpen ?? defaultOpen;
   const visible = showThinking ? parts : parts.filter((part) => part.kind !== "thinking");
   if (visible.length === 0) return null;
   const summary = workSummary(visible);
@@ -174,8 +177,6 @@ function WorkBlockView({ parts, duration, live, defaultOpen, showThinking }: { p
 
 interface TurnProps {
   turn: ConversationTurn;
-  /** the next turn's timestamp: how long this one's work took */
-  nextTs: string | null;
   /** the last turn while the agent runs: its work block reads "Working…" */
   live: boolean;
   /** the newest assistant turn opens its work; older ones start folded */
@@ -183,7 +184,7 @@ interface TurnProps {
   showThinking: boolean;
 }
 
-function Turn({ turn, nextTs, live, last, showThinking }: TurnProps) {
+function Turn({ turn, live, last, showThinking }: TurnProps) {
   const time = formatTime(turn.ts);
   if (turn.role === "user") {
     const text = turn.parts.filter((part): part is Extract<ConversationPart, { kind: "text" }> => part.kind === "text").map((part) => part.text).join("\n\n");
@@ -195,7 +196,7 @@ function Turn({ turn, nextTs, live, last, showThinking }: TurnProps) {
   const { work, answer } = splitTurn(turn.parts);
   const answerText = answer.map((part) => part.text).join("\n\n");
   return <article className="chat-turn chat-turn-agent">
-    {work.length > 0 && <WorkBlockView parts={work} duration={formatWorkDuration(turn.ts, nextTs)} live={live} defaultOpen={last} showThinking={showThinking} />}
+    {work.length > 0 && <WorkBlockView parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} defaultOpen={last} showThinking={showThinking} />}
     {answer.map((part, index) => <Markdown key={index}>{part.text}</Markdown>)}
     {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
       <CopyButton className="chat-meta-btn" text={answerText} label="Copy as markdown">MD</CopyButton>
@@ -206,11 +207,12 @@ function Turn({ turn, nextTs, live, last, showThinking }: TurnProps) {
 }
 
 function FallbackTurn({ message }: { message: TranscriptMessage }) {
+  if (message.role === "status") return null;
   const turn: ConversationTurn = { role: message.role === "user" ? "user" : "assistant", ts: null, parts: [{ kind: "text", text: message.text }] };
-  return <Turn turn={turn} nextTs={null} live={false} last={false} showThinking={false} />;
+  return <Turn turn={turn} live={false} last={false} showThinking={false} />;
 }
 
-export function ChatView({ paneId, refreshKey, connected, ended, agent, agentStatus }: ChatViewProps) {
+export function ChatView({ paneId, refreshKey, connected, ended, agent, agentStatus, onMetadata }: ChatViewProps) {
   const { settings } = useSettings();
   const [state, setState] = useState<ChatState>(EMPTY_STATE);
   const [error, setError] = useState<string | null>(null);
@@ -223,17 +225,23 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
   const signature = useRef("");
 
   useEffect(() => {
+    stickToBottom.current = true; signature.current = ""; setState(EMPTY_STATE); setNewMessages(false); setError(null); setErrorStatus(null); setPrompt(null);
+  }, [paneId]);
+
+  useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
     const read = async (): Promise<void> => {
       try {
         const conversation = await fetchPaneConversation(paneId);
         if (cancelled) return;
+        onMetadata?.(paneId, conversation.source === "scrollback" ? null : conversation.metadata ?? null);
         let next: ChatState;
         if (conversation.source !== "scrollback") next = { source: "conversation", turns: conversation.turns, messages: [], truncated: false };
         else {
           const result = await fetchPaneTranscript(paneId, TRANSCRIPT_LINES);
           if (cancelled) return;
-          next = { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text), truncated: result.truncated === true };
+          next = { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text).filter((message) => message.role !== "status"), truncated: result.truncated === true };
         }
         const nextSignature = JSON.stringify(next);
         if (nextSignature !== signature.current) {
@@ -246,13 +254,13 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
         if (cancelled) return;
         setError(cause instanceof Error ? cause.message : String(cause));
         setErrorStatus(cause instanceof ApiError ? cause.status : null);
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => void read(), POLL_MS);
       }
     };
-    stickToBottom.current = true; signature.current = ""; setState(EMPTY_STATE); setNewMessages(false); setError(null); setErrorStatus(null);
     void read();
-    const timer = window.setInterval(() => void read(), POLL_MS);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [paneId, refreshKey]);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [paneId, refreshKey, onMetadata]);
 
   useEffect(() => {
     if (agentStatus !== "blocked") { setPrompt(null); return; }
@@ -290,9 +298,11 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
       {state.source === "conversation"
         ? state.turns.map((turn, index) => {
             const last = index === state.turns.length - 1;
-            return <Turn key={index} turn={turn} nextTs={state.turns[index + 1]?.ts ?? null} live={last && turn.role === "assistant" && agentStatus === "working"} last={last} showThinking={settings.showThinking} />;
+            return <Turn key={`${turn.role}:${turn.ts ?? index}`} turn={turn} live={last && turn.role === "assistant" && agentStatus === "working"} last={last} showThinking={settings.showThinking} />;
           })
-        : state.messages.map((message, index) => <FallbackTurn key={index} message={message} />)}
+        : agent === "codex"
+          ? <details className="chat-terminal-fallback"><summary>Conversation unavailable — show terminal output</summary><pre>{state.messages.map((message) => message.text).join("\n\n")}</pre></details>
+          : state.messages.map((message, index) => <FallbackTurn key={index} message={message} />)}
       {!ended && !connected && <p className="chat-inline-state">reconnecting…</p>}
       {error !== null && <p className="chat-inline-state chat-inline-error" role="alert">{errorStatus === 401 ? "locked — the token gate is asking again" : error}</p>}
       {empty && error === null && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>No conversation yet — say something below</p></div>}

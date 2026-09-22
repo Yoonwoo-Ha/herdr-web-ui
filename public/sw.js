@@ -3,11 +3,11 @@
 // offline; static assets (hashed bundles, icons, manifest, favicons) are
 // cache-first since they are content-addressed or rarely change. API and
 // websocket traffic is never intercepted so live workspace data is always fresh.
-const CACHE_NAME = "herdr-web-ui-v1";
+const CACHE_NAME = "herdr-web-ui-v2-ram";
 
 const CACHE_FIRST_PATHS = new Set([
   "/manifest.webmanifest",
-  "/favicon.svg",
+  "/favicon.png",
   "/favicon.ico",
   "/apple-touch-icon.png",
 ]);
@@ -95,7 +95,7 @@ self.addEventListener("push", (event) => {
         renotify: !watching,
         silent: watching,
         data: { pane_id: payload.pane_id || null },
-        icon: "/icons/icon-192.png",
+        icon: "/icons/icon-192.png?v=ram1",
       });
     })(),
   );

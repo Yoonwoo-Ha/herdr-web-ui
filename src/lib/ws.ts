@@ -1,4 +1,5 @@
 import type { ClientMessage, ClientRole, ServerMessage } from "../../shared/protocol.ts";
+import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 
 type Handler = (message: ServerMessage) => void;
 
@@ -30,11 +31,11 @@ export class HerdrSocket {
   private readonly url: string;
   private readonly handlers = new Set<Handler>();
   private readonly attached = new Map<string, AttachState>();
-  private queue: ClientMessage[] = [];
   private retries = 0;
   private reconnectTimer: number | null = null;
   private disposed = false;
   private mode: ClientRole = "interact";
+  private outputStopped = false;
 
   constructor(url: string = defaultUrl()) {
     this.url = url;
@@ -60,23 +61,31 @@ export class HerdrSocket {
       // arrive - the UI would stay stuck in the old role while the header pill lies
       this.rawSend({ type: "role", mode: this.mode });
       for (const [paneId, state] of this.attached) {
-        this.rawSend({ type: "attach", pane_id: paneId, cols: state.cols, rows: state.rows });
+        this.rawSend({ type: "attach", pane_id: paneId, cols: state.cols, rows: state.rows, flow_control: "ack" });
       }
-      const queued = this.queue;
-      this.queue = [];
-      for (const message of queued) this.rawSend(message);
     });
 
     socket.addEventListener("message", (event) => {
+      if (this.socket !== socket) return;
+      let message: ServerMessage;
       try {
-        this.emit(JSON.parse(String(event.data)) as ServerMessage);
+        message = JSON.parse(String(event.data)) as ServerMessage;
       } catch {
         /* ignore malformed frame */
+        return;
       }
+      // A terminal/parser failure is not malformed JSON and must not disappear.
+      this.emit(message);
     });
 
-    socket.addEventListener("close", () => {
+    socket.addEventListener("close", (event) => {
+      if (this.socket !== socket) return;
       this.socket = null;
+      if (event.code === OUTPUT_STALLED_CLOSE_CODE) {
+        this.outputStopped = true;
+        this.emit({ type: "error", code: "output_stalled", message: "Terminal output stopped because this device could not keep up." });
+        return;
+      }
       this.scheduleReconnect();
     });
 
@@ -101,7 +110,8 @@ export class HerdrSocket {
 
   private send(message: ClientMessage): void {
     if (this.connected) this.rawSend(message);
-    else this.queue.push(message);
+    // Role/attach/geometry already live in state. Replaying both that state and
+    // a queue used to attach twice and duplicate the initial terminal replay.
   }
 
   private emit(message: ServerMessage): void {
@@ -117,7 +127,24 @@ export class HerdrSocket {
 
   attach(paneId: string, cols: number, rows: number): void {
     this.attached.set(paneId, { cols, rows });
-    this.send({ type: "attach", pane_id: paneId, cols, rows });
+    this.send({ type: "attach", pane_id: paneId, cols, rows, flow_control: "ack" });
+    if (this.outputStopped) {
+      this.outputStopped = false;
+      this.connect();
+    }
+  }
+
+  /** Capture connection AND subscription before xterm's asynchronous write. Never queue ACKs. */
+  outputAcknowledgement(message: Extract<ServerMessage, { type: "pty-data" }>): (() => void) | undefined {
+    const flow = message.flow;
+    if (!flow) return undefined;
+    const connection = this.socket;
+    const subscription = this.attached.get(message.pane_id);
+    return () => {
+      if (!connection || this.socket !== connection || !this.connected || !subscription
+        || this.attached.get(message.pane_id) !== subscription) return;
+      this.rawSend({ type: "pty-ack", pane_id: message.pane_id, stream_id: flow.stream_id, offset: flow.offset });
+    };
   }
 
   detach(paneId: string): void {

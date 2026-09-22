@@ -49,7 +49,7 @@ function storedView(paneId: string, hasAgent: boolean): PaneView {
 function Brand() {
   return (
     <h1 className="brand">
-      <img src="/icons/icon.svg" alt="" width="22" height="22" className="brand-mark" />
+      <img src="/icons/icon-192.png?v=ram1" alt="" width="22" height="22" className="brand-mark" />
       <span className="brand-name">
         herdr <span className="brand-sub">web ui</span>
       </span>
@@ -73,6 +73,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [outputStopped, setOutputStopped] = useState(false);
   // the connection's role: the server's role-ack confirms it (no UI control today)
   const [role, setRole] = useState<ClientRole>("interact");
   const [notifications, setNotifications] = useState<NotificationState>(() => notificationState());
@@ -177,6 +178,9 @@ export function App() {
   const handleServerMessage = useCallback(
     (message: ServerMessage) => {
       switch (message.type) {
+        case "error":
+          if (message.code === "output_stalled") setOutputStopped(true);
+          break;
         case "pane-status":
           setSnapshot((current) => (current ? applyPaneStatus(current, message.pane_id, message.agent_status) : current));
           notifyStatus(message.pane_id, message.agent_status);
@@ -455,7 +459,7 @@ export function App() {
         <div className="header-meta">
           <span className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`} role="status">
             <span className="conn-dot" aria-hidden="true" />
-            <span className="conn-text">{connected ? "live" : "reconnecting"}</span>
+            <span className="conn-text">{connected ? "live" : outputStopped ? "disconnected" : "reconnecting"}</span>
           </span>
           {health ? (
             <span className="pill pill-version" title={`herdr protocol ${health.herdr.protocol}`}>
@@ -525,7 +529,7 @@ export function App() {
             theme={resolvedTheme}
             role={role}
             onRoleAck={setRole}
-            onConnectionChange={setConnected}
+            onConnectionChange={(next) => { setConnected(next); if (next) setOutputStopped(false); }}
             onServerMessage={handleServerMessage}
           />
         </main>

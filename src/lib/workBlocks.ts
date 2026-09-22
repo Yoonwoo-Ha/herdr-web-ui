@@ -16,11 +16,14 @@ export interface SplitTurn {
 
 export function splitTurn(parts: ConversationPart[]): SplitTurn {
   let lastAction = -1;
-  for (let index = 0; index < parts.length; index += 1) if (parts[index]?.kind !== "text") lastAction = index;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part?.kind !== "text" || part.phase === "commentary") lastAction = index;
+  }
   const isProse = (part: ConversationPart): part is TextPart => part.kind === "text" && part.text.trim().length > 0;
   return {
-    work: parts.slice(0, lastAction + 1).filter((part) => part.kind !== "text" || isProse(part)),
-    answer: parts.slice(lastAction + 1).filter(isProse),
+    work: parts.filter((part, index) => part.kind !== "text" || (isProse(part) && part.phase !== "final_answer" && index <= lastAction)),
+    answer: parts.filter((part, index): part is TextPart => isProse(part) && (part.phase === "final_answer" || index > lastAction)),
   };
 }
 

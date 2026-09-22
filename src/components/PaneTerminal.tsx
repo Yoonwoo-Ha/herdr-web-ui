@@ -13,7 +13,7 @@ import { uploadPaneImage } from "../lib/api.ts";
 import { KeyBar } from "./KeyBar.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { Composer } from "./Composer.tsx";
-import type { AgentStatus, ClientRole, ServerMessage } from "../../shared/protocol.ts";
+import type { AgentStatus, ClientRole, ConversationMetadata, ServerMessage } from "../../shared/protocol.ts";
 import type { PaneView } from "../lib/actions.ts";
 import { terminalTheme, type ResolvedTheme } from "../lib/settings.ts";
 
@@ -72,6 +72,7 @@ export function PaneTerminal({
   const onRoleAckRef = useRef(onRoleAck);
   const [connected, setConnected] = useState(false);
   const [ended, setEnded] = useState(false);
+  const [outputError, setOutputError] = useState<string | null>(null);
   // one-shot Control from the key bar: the ref is what onData reads, the state is what the bar shows
   const ctrlRef = useRef(false);
   const [ctrlArmed, setCtrlArmed] = useState(false);
@@ -86,6 +87,11 @@ export function PaneTerminal({
   const clipboardTimerRef = useRef<number | null>(null);
   // the composer's send bumps this so the chat lens refetches without waiting a poll beat
   const [chatRefresh, setChatRefresh] = useState(0);
+  const [chatMetadata, setChatMetadata] = useState<{ pane: string; value: ConversationMetadata | null } | null>(null);
+  const onChatMetadata = useCallback((pane: string, value: ConversationMetadata | null) => {
+    setChatMetadata((previous) => previous?.pane === pane && previous.value?.model === value?.model
+      && previous.value?.reasoning_effort === value?.reasoning_effort ? previous : { pane, value });
+  }, []);
   // the next message queued while the agent runs (chatmux's queued draft): held
   // per pane in localStorage, dispatched the moment the run ends. It carries the
   // pane it was written for, because a pane switch changes `agent`/`agentStatus`
@@ -157,7 +163,7 @@ export function PaneTerminal({
       if (message.type === "pty-data") {
         if (message.pane_id !== paneRef.current) return;
         // raw pty bytes: append, never repaint, so xterm keeps the screen and selection
-        term.write(message.data);
+        term.write(message.data, socket.outputAcknowledgement(message));
       } else if (message.type === "pty-exit") {
         if (message.pane_id === paneRef.current) setEnded(true);
       } else if (message.type === "role-ack") {
@@ -182,6 +188,13 @@ export function PaneTerminal({
         if (!observeRef.current || message.pane_id !== paneRef.current) return;
         if (term.cols !== message.cols || term.rows !== message.rows) term.resize(message.cols, message.rows);
       } else if (message.type === "error") {
+        if (message.code === "output_stalled") {
+          setOutputError(message.message);
+          setEnded(true);
+          setConnected(false);
+          term.options.disableStdin = true;
+          return;
+        }
         term.writeln(`\r\n\u001b[31m[herdr-web-ui] ${message.code}: ${message.message}\u001b[0m`);
       }
       setConnected(socket.connected);
@@ -336,6 +349,8 @@ export function PaneTerminal({
     const fit = fitRef.current;
     if (!socket || !term) return;
     setEnded(false);
+    setOutputError(null);
+    term.options.disableStdin = observeRef.current;
     setDraft(EMPTY_DRAFT);
     draftPaneRef.current = null;
     term.reset();
@@ -477,8 +492,14 @@ export function PaneTerminal({
         </div>
       )}
       <div className="terminal-banners">
+        {paneId !== null && outputError && (
+          <div className="terminal-banner terminal-banner-warning terminal-banner-output-error" role="status">
+            <span>{outputError}</span>
+            <a className="btn" href={`?pane=${encodeURIComponent(paneId)}`}>Reconnect</a>
+          </div>
+        )}
         {/* the chat lens says these itself (ChatView), inline; the pills are the grid's */}
-        {paneId !== null && !chatView && ended && (
+        {paneId !== null && !chatView && ended && !outputError && (
           <div className="terminal-banner" role="status">
             terminal ended{!draftIsEmpty(draft) ? " — held input discarded" : ""}
           </div>
@@ -527,6 +548,7 @@ export function PaneTerminal({
             ended={ended}
             agent={agent}
             agentStatus={agentStatus}
+            onMetadata={onChatMetadata}
           />
         )}
       </div>
@@ -570,6 +592,7 @@ export function PaneTerminal({
           paneId={paneId}
           agent={agent}
           agentStatus={agentStatus}
+          metadata={chatMetadata?.pane === paneId ? chatMetadata.value : null}
           connected={connected}
           queueMode={busy}
           onSend={composerSend}
