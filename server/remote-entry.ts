@@ -40,7 +40,8 @@ try {
     const args = session ? ["--session", session, "server"] : ["server"];
     Bun.spawn([herdr, ...args], { stdin: "ignore", stdout: Bun.file(join(dirname(descriptor), "herdr.log")), stderr: Bun.file(join(dirname(descriptor), "herdr.log")) }).unref();
     let ready = false;
-    for (let i = 0; i < 100; i++) { try { await bridgeIdentity(); ready = true; break; } catch { await Bun.sleep(100); } }
+    // a cold first start (fresh HOME, slow disk or CI runner) can take well over ten seconds
+    for (let i = 0; i < 300; i++) { try { await bridgeIdentity(); ready = true; break; } catch { await Bun.sleep(100); } }
     if (!ready) throw new Error("herdr did not start; inspect ~/.config/herdr-web-ui/bridges/herdr.log");
   }
   const info = await bridgeIdentity();

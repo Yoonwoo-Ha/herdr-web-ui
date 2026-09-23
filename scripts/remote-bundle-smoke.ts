@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-bundle-smoke-")));
+// macOS's per-user TMPDIR is long enough to push herdr's socket names past the 104-byte sun_path limit
+const root = realpathSync(mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "herdr-bundle-smoke-")));
 const bundle = join(root, "runtime");
 const home = join(root, "home");
 mkdirSync(bundle); mkdirSync(home);
@@ -15,7 +16,12 @@ try {
   const socket = join(home, ".config/herdr/sessions/smoke/herdr.sock");
   const path = join(home, ".config/herdr-web-ui/bridges", createHash("sha256").update(socket).digest("hex") + ".json");
   let descriptor: { port: number; token: string } | undefined;
-  for (let i = 0; i < 150; i++) { try { descriptor = JSON.parse(readFileSync(path, "utf8")); break; } catch { await Bun.sleep(100); } }
+  for (let i = 0; i < 400; i++) { try { descriptor = JSON.parse(readFileSync(path, "utf8")); break; } catch { await Bun.sleep(100); } }
+  if (!descriptor) {
+    for (const log of [join(home, ".config/herdr-web-ui/bridges/herdr.log"), join(home, ".config/herdr/sessions/smoke/herdr-server.log")]) {
+      console.error(`--- ${log}\n${existsSync(log) ? readFileSync(log, "utf8").slice(-4000) : "(missing)"}`);
+    }
+  }
   assert.ok(descriptor, "bundle starts a private daemon and bridge without system runtimes");
   const response = await fetch(`http://127.0.0.1:${descriptor.port}/api/bridge`, { headers: { authorization: `Bearer ${descriptor.token}` } });
   assert.equal(response.status, 200);
