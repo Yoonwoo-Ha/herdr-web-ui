@@ -80,9 +80,11 @@ export async function fetchPaneTranscript(paneId: string, lines: number, machine
   return body.read;
 }
 
-/** GET /api/pane/conversation: structured turns, or scrollback fallback. */
-export async function fetchPaneConversation(paneId: string, machineId = "local"): Promise<ConversationResponse> {
+/** GET /api/pane/conversation: structured turns, or scrollback fallback; `page` as ConversationResponse.cursor describes. */
+export async function fetchPaneConversation(paneId: string, machineId = "local", page: { before?: string; from?: string } = {}): Promise<ConversationResponse> {
   const query = new URLSearchParams({ pane_id: paneId });
+  if (page.before !== undefined) query.set("before", page.before);
+  if (page.from !== undefined) query.set("from", page.from);
   return await getJson<ConversationResponse>(machinePath(machineId, `pane/conversation?${query.toString()}`));
 }
 

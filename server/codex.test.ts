@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexRolloutPath, matchCodexTranscript, parseCodexTranscript } from "./codex.ts";
+import { codexHistoryTail, codexRolloutPath, matchCodexTranscript, parseCodexTranscript } from "./codex.ts";
 import { splitTurn } from "../src/lib/workBlocks.ts";
 
 const ts = "2026-09-22T01:00:00.000Z";
@@ -121,6 +121,37 @@ describe("Codex rollout resolution", () => {
     expect(codexRolloutPath(path, home)).toBeNull();
     writeFileSync(path, JSON.stringify({ type: "session_meta", payload: { source: "cli", thread_source: "subagent" } }));
     expect(codexRolloutPath(path, home)).toBeNull();
+  });
+
+  it("reads a paginated rollout through the history it continues, without the turns a backtrack discarded", () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-codex-chain-")); roots.push(root);
+    const home = join(root, "codex");
+    const parent = "01a09a35-5c5f-7830-94f7-4a1854613531";
+    const thread = "01a0a337-19e8-7712-92f5-aa0883392afd";
+    const write = (day: string, name: string, meta: Record<string, unknown>, ...records: unknown[]): { path: string; size: number } => {
+      mkdirSync(join(home, "sessions", "2026", "09", day), { recursive: true });
+      const path = join(home, "sessions", "2026", "09", day, name);
+      const text = `${jsonl({ type: "session_meta", payload: { source: "cli", thread_source: "user", ...meta } }, ...records)}\n`;
+      writeFileSync(path, text);
+      return { path, size: Buffer.byteLength(text) };
+    };
+    const forked = write("13", `rollout-2026-09-13T18-59-43-${parent}.jsonl`, {}, message("user", "parent question"), message("assistant", "parent answer"));
+    const kept = jsonl({ type: "session_meta", payload: { source: "cli", thread_source: "user", history_base: { thread_id: parent, end_byte_offset: forked.size } } },
+      message("user", "첫 질문"), message("assistant", "첫 답"));
+    const original = join(home, "sessions", "2026", "09", "15", `rollout-2026-09-15T12-58-12-${thread}.jsonl`);
+    mkdirSync(join(home, "sessions", "2026", "09", "15"), { recursive: true });
+    writeFileSync(original, `${kept}\n${jsonl(message("user", "discarded"), message("assistant", "discarded answer"))}\n`);
+    // an unrelated later rollout of the same thread must not be taken for the base
+    write("24", `rollout-2026-09-24T09-00-00-${thread}_01a0cc00-0000-7000-8000-000000000000.jsonl`, {}, message("user", "future"));
+    const segment = write("23", `rollout-2026-09-23T10-46-43-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`,
+      { history_base: { thread_id: thread, end_byte_offset: Buffer.byteLength(kept) + 1 } }, message("user", "다시 묻기"), message("assistant", "새 답"));
+
+    const texts = (budget: number) => parseCodexTranscript(codexHistoryTail(segment.path, budget, home))
+      .map((turn) => turn.parts.map((part) => part.kind === "text" ? part.text : "").join(""));
+    expect(texts(1024 * 1024)).toEqual(["parent question", "parent answer", "첫 질문", "첫 답", "다시 묻기", "새 답"]);
+    // a small budget reads only the newest bytes and never reaches the parent; the cut line is dropped
+    const answerLine = Buffer.byteLength(JSON.stringify(message("assistant", "첫 답"))) + 1;
+    expect(texts(segment.size + answerLine + 10)).toEqual(["첫 답", "다시 묻기", "새 답"]);
   });
 
   const answer = "The chat parser now reads native session records, removes internal context, and keeps assistant commentary inside the expandable work section.";

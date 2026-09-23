@@ -7,7 +7,7 @@ export function useMachineApi() {
   const id = useMachineId();
   return useMemo(() => ({
     fetchPaneTranscript: (pane: string, lines: number) => api.fetchPaneTranscript(pane, lines, id),
-    fetchPaneConversation: (pane: string) => api.fetchPaneConversation(pane, id),
+    fetchPaneConversation: (pane: string, page?: { before?: string; from?: string }) => api.fetchPaneConversation(pane, id, page),
     fetchPanePrompt: (pane: string) => api.fetchPanePrompt(pane, id),
     answerPanePrompt: (answer: Parameters<typeof api.answerPanePrompt>[0]) => api.answerPanePrompt(answer, id),
     uploadPaneImage: (pane: string, image: Blob) => api.uploadPaneImage(pane, image, id),
