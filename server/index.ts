@@ -624,7 +624,11 @@ export function createServer(
       if (pathname === "/api/pane/conversation") {
         const paneId = url.searchParams.get("pane_id");
         if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
-        const page = { before: url.searchParams.get("before") ?? undefined, from: url.searchParams.get("from") ?? undefined };
+        const page = {
+          before: url.searchParams.get("before") ?? undefined,
+          since: url.searchParams.get("since") ?? undefined,
+          from: url.searchParams.get("from") ?? undefined,
+        };
         try {
           return jsonResponse(await paneConversation(paneId, options.codexHome, page));
         } catch (error) {

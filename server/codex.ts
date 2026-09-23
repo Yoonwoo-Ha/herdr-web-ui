@@ -3,7 +3,7 @@
 import { Database } from "bun:sqlite";
 import { closeSync, openSync, readdirSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import type { ConversationPart, ConversationTurn } from "../shared/protocol.ts";
 import { herdrRpc, paneRead } from "./herdr/client.ts";
 
@@ -170,45 +170,108 @@ const readdir = (path: string): string[] => { try { return readdirSync(path); } 
 /** A byte range of rollout history: the file's first `end` bytes. */
 export interface HistorySegment { path: string; end: number }
 
-/** Earlier segments per rollout, newest first. A header never changes, so neither does its chain. */
+/** Complete chains per rollout, newest first: a header never changes, so neither does its chain. */
 const historyChains = new Map<string, HistorySegment[]>();
+
+/** Lines before a cut, per file identity and cut: the bytes before a cut never change. */
+const linesBeforeCut = new Map<string, number>();
+
+function countLines(path: string, end: number): number {
+  const stat = statSync(path);
+  const key = `${stat.dev}:${stat.ino}:${end}`;
+  const known = linesBeforeCut.get(key);
+  if (known !== undefined) return known;
+  const fd = openSync(path, "r");
+  let lines = 0;
+  try {
+    const buffer = Buffer.alloc(16 * 1024 * 1024);
+    for (let offset = 0; offset < end;) {
+      const length = readSync(fd, buffer, 0, Math.min(buffer.length, end - offset), offset);
+      if (length === 0) break;
+      for (let index = buffer.indexOf(0x0a, 0); index !== -1 && index < length; index = buffer.indexOf(0x0a, index + 1)) lines += 1;
+      offset += length;
+    }
+  } finally { closeSync(fd); }
+  linesBeforeCut.set(key, lines);
+  if (linesBeforeCut.size > 256) linesBeforeCut.delete(linesBeforeCut.keys().next().value!);
+  return lines;
+}
+
+function byteAt(path: string, offset: number): number | null {
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.alloc(1);
+    return readSync(fd, buffer, 0, 1, offset) === 1 ? buffer[0]! : null;
+  } finally { closeSync(fd); }
+}
+
+/** A rollout's first ordinal: where the history it continues ends, 0 for a whole history. */
+function firstOrdinal(header: RecordValue): number {
+  const ordinal = record(header.history_base).end_ordinal_exclusive;
+  return typeof ordinal === "number" && Number.isSafeInteger(ordinal) && ordinal > 0 ? ordinal : 0;
+}
+
+/**
+ * Does `path` hold a cut at (ordinal, byte)? Every record is one line and a rollout's
+ * ordinals start at its own first ordinal, so the cut must end a line with exactly
+ * `ordinal - first` lines before it (checked on a three-rollout Codex 0.156 chain
+ * against the turn offsets in its thread_history_1.sqlite).
+ */
+function holdsCut(path: string, ordinal: number, end: number): boolean {
+  let header: RecordValue | null;
+  try { header = rolloutHeader(path); } catch { return false; }
+  if (header === null) return false;
+  const lines = ordinal - firstOrdinal(header);
+  if (lines <= 0 || (statSync(path, { throwIfNoEntry: false })?.size ?? 0) < end || byteAt(path, end - 1) !== 0x0a) return false;
+  return countLines(path, end) === lines;
+}
+
+/** Every rollout of a thread: rollout-<time>-<thread>.jsonl and its rollout-<time>-<thread>_<segment>.jsonl. */
+function threadRollouts(home: string, threadId: string): string[] {
+  const sessions = join(home, "sessions");
+  return readdir(sessions).flatMap((year) => readdir(join(sessions, year)).flatMap((month) =>
+    readdir(join(sessions, year, month)).flatMap((day) => readdir(join(sessions, year, month, day))
+      .filter((name) => name.endsWith(`-${threadId}.jsonl`) || name.includes(`-${threadId}_`))
+      .map((name) => join(sessions, year, month, day, name)))));
+}
 
 /**
  * Paginated rollouts (Codex 0.156) do not copy history. A backtrack or fork starts
- * a new file whose session_meta.history_base names what it continues: the first
- * `end_byte_offset` bytes of an earlier rollout of `thread_id` - the same thread
- * before a backtrack, the parent after a fork. The bytes past that offset are the
- * turns the backtrack discarded. state_5.sqlite only keeps a thread's newest file,
- * so the earlier one is found by name: the latest rollout of that thread written
- * before this one.
+ * a new file whose session_meta.history_base names what it continues by thread,
+ * ordinal and byte: the same thread before a backtrack, the parent after a fork.
+ * The bytes past that cut are the turns the backtrack discarded. A thread can have
+ * several rollouts (one per backtrack) and a later backtrack can cut into any of
+ * them, so the one that continues is the one that holds the cut (holdsCut), never
+ * guessed from names or sizes. A chain that stops at a cut no file holds shows
+ * less history rather than the wrong one, and is looked up again next time.
  */
 function historyChain(path: string, home: string): HistorySegment[] {
   const cached = historyChains.get(path);
   if (cached) return cached;
   const chain: HistorySegment[] = [];
   let current = path;
-  for (let depth = 0; depth < 16; depth++) {
+  for (let depth = 0; depth < 32; depth++) {
     let base: RecordValue;
-    try { base = record(rolloutHeader(current)?.history_base); } catch { break; }
+    try { base = record(rolloutHeader(current)?.history_base); } catch { return chain; }
     const threadId = string(base.thread_id);
+    const ordinal = base.end_ordinal_exclusive;
     const end = base.end_byte_offset;
-    if (!UUID.test(threadId) || typeof end !== "number" || !Number.isSafeInteger(end) || end <= 0) break;
-    // rollout-<local time>-<thread>[_<segment>].jsonl: names sort by when they were written
-    const later = basename(current);
-    const sessions = join(home, "sessions");
-    const earlier = readdir(sessions).flatMap((year) => readdir(join(sessions, year)).flatMap((month) =>
-      readdir(join(sessions, year, month)).flatMap((day) => readdir(join(sessions, year, month, day))
-        .filter((name) => (name.endsWith(`-${threadId}.jsonl`) || name.includes(`-${threadId}_`)) && name < later)
-        .map((name) => join(sessions, year, month, day, name)))))
-      .sort((left, right) => basename(right).localeCompare(basename(left)));
-    const previous = earlier.find((candidate) => (statSync(candidate, { throwIfNoEntry: false })?.size ?? 0) >= end);
-    const resolved = previous ? codexRolloutPath(previous, home) : null;
-    if (!resolved) break;
-    chain.push({ path: resolved, end });
-    current = resolved;
+    if (Object.keys(base).length === 0) {
+      historyChains.set(path, chain);
+      if (historyChains.size > 64) historyChains.delete(historyChains.keys().next().value!);
+      return chain;
+    }
+    if (!UUID.test(threadId) || typeof ordinal !== "number" || !Number.isSafeInteger(ordinal)
+      || typeof end !== "number" || !Number.isSafeInteger(end) || end <= 0) return chain;
+    const holders = threadRollouts(home, threadId).flatMap((candidate) => {
+      const resolved = codexRolloutPath(candidate, home);
+      return resolved !== null && resolved !== current && !chain.some((segment) => segment.path === resolved)
+        && holdsCut(resolved, ordinal, end) ? [resolved] : [];
+    });
+    if (holders.length !== 1) return chain;
+    chain.push({ path: holders[0]!, end });
+    current = holders[0]!;
   }
-  historyChains.set(path, chain);
-  if (historyChains.size > 64) historyChains.delete(historyChains.keys().next().value!);
   return chain;
 }
 

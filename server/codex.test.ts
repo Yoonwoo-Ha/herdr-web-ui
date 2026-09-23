@@ -123,35 +123,77 @@ describe("Codex rollout resolution", () => {
     expect(codexRolloutPath(path, home)).toBeNull();
   });
 
-  it("reads a paginated rollout through the history it continues, without the turns a backtrack discarded", () => {
+  /** Rollouts as Codex 0.156 writes them: one record per line, ordinals running on from the cut a rollout starts at. */
+  type Cut = { thread: string; ordinal: number; byte: number };
+  const store = () => {
     const root = mkdtempSync(join(tmpdir(), "herdr-codex-chain-")); roots.push(root);
     const home = join(root, "codex");
-    const parent = "01a09a35-5c5f-7830-94f7-4a1854613531";
-    const thread = "01a0a337-19e8-7712-92f5-aa0883392afd";
-    const write = (day: string, name: string, meta: Record<string, unknown>, ...records: unknown[]): { path: string; size: number } => {
+    const rollout = (day: string, name: string, thread: string, records: unknown[], base?: Cut) => {
+      const header = { type: "session_meta", payload: { source: "cli", thread_source: "user",
+        ...(base ? { history_base: { thread_id: base.thread, end_ordinal_exclusive: base.ordinal, end_byte_offset: base.byte } } : {}) } };
+      const lines = [header, ...records].map((record) => `${JSON.stringify(record)}\n`);
       mkdirSync(join(home, "sessions", "2026", "09", day), { recursive: true });
       const path = join(home, "sessions", "2026", "09", day, name);
-      const text = `${jsonl({ type: "session_meta", payload: { source: "cli", thread_source: "user", ...meta } }, ...records)}\n`;
-      writeFileSync(path, text);
-      return { path, size: Buffer.byteLength(text) };
+      writeFileSync(path, lines.join(""));
+      const first = base?.ordinal ?? 0;
+      return {
+        path, size: Buffer.byteLength(lines.join("")),
+        /** the cut a backtrack to just before records[index] names */
+        cutBefore: (index: number): Cut => ({ thread, ordinal: first + 1 + index, byte: Buffer.byteLength(lines.slice(0, index + 1).join("")) }),
+      };
     };
-    const forked = write("13", `rollout-2026-09-13T18-59-43-${parent}.jsonl`, {}, message("user", "parent question"), message("assistant", "parent answer"));
-    const kept = jsonl({ type: "session_meta", payload: { source: "cli", thread_source: "user", history_base: { thread_id: parent, end_byte_offset: forked.size } } },
-      message("user", "첫 질문"), message("assistant", "첫 답"));
-    const original = join(home, "sessions", "2026", "09", "15", `rollout-2026-09-15T12-58-12-${thread}.jsonl`);
-    mkdirSync(join(home, "sessions", "2026", "09", "15"), { recursive: true });
-    writeFileSync(original, `${kept}\n${jsonl(message("user", "discarded"), message("assistant", "discarded answer"))}\n`);
-    // an unrelated later rollout of the same thread must not be taken for the base
-    write("24", `rollout-2026-09-24T09-00-00-${thread}_01a0cc00-0000-7000-8000-000000000000.jsonl`, {}, message("user", "future"));
-    const segment = write("23", `rollout-2026-09-23T10-46-43-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`,
-      { history_base: { thread_id: thread, end_byte_offset: Buffer.byteLength(kept) + 1 } }, message("user", "다시 묻기"), message("assistant", "새 답"));
-
-    const texts = (budget: number) => parseCodexTranscript(codexHistoryTail(segment.path, budget, home))
+    const texts = (path: string, budget = 1024 * 1024) => parseCodexTranscript(codexHistoryTail(path, budget, home))
       .map((turn) => turn.parts.map((part) => part.kind === "text" ? part.text : "").join(""));
-    expect(texts(1024 * 1024)).toEqual(["parent question", "parent answer", "첫 질문", "첫 답", "다시 묻기", "새 답"]);
+    return { rollout, texts };
+  };
+  const parent = "01a09a35-5c5f-7830-94f7-4a1854613531";
+  const thread = "01a0a337-19e8-7712-92f5-aa0883392afd";
+
+  it("reads a paginated rollout through the history it continues, without the turns a backtrack discarded", () => {
+    const { rollout, texts } = store();
+    const forked = rollout("13", `rollout-2026-09-13T18-59-43-${parent}.jsonl`, parent, [message("user", "parent question"), message("assistant", "parent answer")]);
+    const original = rollout("15", `rollout-2026-09-15T12-58-12-${thread}.jsonl`, thread,
+      [message("user", "첫 질문"), message("assistant", "첫 답"), message("user", "discarded"), message("assistant", "discarded answer")], forked.cutBefore(2));
+    // an unrelated later rollout of the same thread must not be taken for the base
+    rollout("24", `rollout-2026-09-24T09-00-00-${thread}_01a0cc00-0000-7000-8000-000000000000.jsonl`, thread, [message("user", "future")]);
+    const segment = rollout("23", `rollout-2026-09-23T10-46-43-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`, thread,
+      [message("user", "다시 묻기"), message("assistant", "새 답")], original.cutBefore(2));
+
+    expect(texts(segment.path)).toEqual(["parent question", "parent answer", "첫 질문", "첫 답", "다시 묻기", "새 답"]);
     // a small budget reads only the newest bytes and never reaches the parent; the cut line is dropped
     const answerLine = Buffer.byteLength(JSON.stringify(message("assistant", "첫 답"))) + 1;
-    expect(texts(segment.size + answerLine + 10)).toEqual(["첫 답", "다시 묻기", "새 답"]);
+    expect(texts(segment.path, segment.size + answerLine + 10)).toEqual(["첫 답", "다시 묻기", "새 답"]);
+  });
+
+  it("follows each backtrack to the rollout that holds its cut, however many there were", () => {
+    const { rollout, texts } = store();
+    const turns = (prefix: string, count: number) => Array.from({ length: count }, (_, index) => [
+      message("user", `${prefix}${index}? ${"x".repeat(200)}`), message("assistant", `${prefix}${index}.`),
+    ]).flat();
+    const first = rollout("15", `rollout-2026-09-15T12-00-00-${thread}.jsonl`, thread, turns("a", 6));
+    // backtrack 1 to before a4, backtrack 2 further back to before a2, backtrack 3 into the second rollout
+    const second = rollout("20", `rollout-2026-09-20T12-00-00-${thread}_01a0c000-0000-7000-8000-000000000001.jsonl`, thread, turns("b", 2), first.cutBefore(8));
+    const third = rollout("21", `rollout-2026-09-21T12-00-00-${thread}_01a0c000-0000-7000-8000-000000000002.jsonl`, thread, turns("c", 1), first.cutBefore(4));
+    const fourth = rollout("22", `rollout-2026-09-22T12-00-00-${thread}_01a0c000-0000-7000-8000-000000000003.jsonl`, thread, turns("d", 1), second.cutBefore(2));
+    // the second rollout is newer and larger than the third one's cut: a name-and-size guess would take it
+    expect(second.size).toBeGreaterThan(first.cutBefore(4).byte);
+    const answers = (path: string) => texts(path).filter((text) => text.endsWith("."));
+    expect(answers(second.path)).toEqual(["a0.", "a1.", "a2.", "a3.", "b0.", "b1."]);
+    expect(answers(third.path)).toEqual(["a0.", "a1.", "c0."]);
+    expect(answers(fourth.path)).toEqual(["a0.", "a1.", "a2.", "a3.", "b0.", "d0."]);
+  });
+
+  it("shows less history, never the wrong one, when no rollout holds a cut, and finds it once one does", () => {
+    const { rollout, texts } = store();
+    const other = "01a0d000-0000-7000-8000-00000000000a";
+    const cut = { thread: other, ordinal: 3, byte: 0 };
+    const pending = [message("user", "earlier question"), message("assistant", "earlier answer")];
+    const lines = [{ type: "session_meta", payload: { source: "cli", thread_source: "user" } }, ...pending].map((record) => `${JSON.stringify(record)}\n`);
+    cut.byte = Buffer.byteLength(lines.join(""));
+    const segment = rollout("23", `rollout-2026-09-23T12-00-00-${thread}.jsonl`, thread, [message("user", "later question"), message("assistant", "later answer")], cut);
+    expect(texts(segment.path)).toEqual(["later question", "later answer"]);
+    rollout("22", `rollout-2026-09-22T12-00-00-${other}.jsonl`, other, pending);
+    expect(texts(segment.path)).toEqual(["earlier question", "earlier answer", "later question", "later answer"]);
   });
 
   const answer = "The chat parser now reads native session records, removes internal context, and keeps assistant commentary inside the expandable work section.";

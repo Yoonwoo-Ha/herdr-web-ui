@@ -235,11 +235,14 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
   const [olderState, setOlderState] = useState<"idle" | "loading" | "failed">("idle");
   const heldFrom = useRef<string | null>(null);
   const loadingOlder = useRef(false);
+  /** bumped whenever the older pages are dropped: a load still in flight for them is ignored */
+  const olderGeneration = useRef(0);
   const shownPane = useRef(paneId);
   const prepended = useRef<{ top: number; height: number } | null>(null);
   const [pollKey, setPollKey] = useState(0);
 
   const dropOlder = (): void => {
+    olderGeneration.current += 1; loadingOlder.current = false;
     heldFrom.current = null; prepended.current = null; setOlder([]); setOlderCursor(undefined); setOlderState("idle");
   };
 
@@ -252,6 +255,22 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    /** The turns between the held start and where the newest page now starts, a page at a time; null when they cannot be joined. */
+    const turnsBetween = async (held: string, start: string): Promise<ConversationTurn[] | null> => {
+      const pages: ConversationTurn[][] = [];
+      let before = start;
+      try {
+        for (let step = 0; step < 32 && before !== held; step++) {
+          const page = await fetchPaneConversation(paneId, { before, since: held });
+          if (typeof page.cursor !== "string") return null;
+          pages.unshift(page.turns);
+          before = page.cursor;
+        }
+      } catch {
+        return null;
+      }
+      return before === held ? pages.flat() : null;
+    };
     const read = async (): Promise<void> => {
       try {
         let conversation;
@@ -264,6 +283,17 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
           conversation = await fetchPaneConversation(paneId);
         }
         if (cancelled) return;
+        // The newest page moved past the held start: the turns in between join the older
+        // pages and the newest page is held from its new start, so no poll reads more than a page.
+        const held = heldFrom.current;
+        let moved: ConversationTurn[] = [];
+        if (held !== null && conversation.source !== "scrollback" && typeof conversation.cursor === "string" && conversation.cursor !== held) {
+          const between = await turnsBetween(held, conversation.cursor);
+          if (cancelled) return;
+          if (between === null) dropOlder();
+          else { moved = between; heldFrom.current = conversation.cursor; }
+        }
+        if (moved.length > 0) setOlder((turns) => [...turns, ...moved]);
         if (heldFrom.current === null) setOlderCursor(conversation.source === "scrollback" ? undefined : conversation.cursor);
         onMetadata?.(paneId, conversation.source === "scrollback" ? null : conversation.metadata ?? null);
         let next: ChatState;
@@ -296,11 +326,12 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
     const node = scroller.current;
     if (node === null || loadingOlder.current || typeof olderCursor !== "string") return;
     const before = olderCursor;
+    const generation = olderGeneration.current;
     loadingOlder.current = true;
     setOlderState("loading");
     try {
       const page = await fetchPaneConversation(paneId, { before });
-      if (shownPane.current !== paneId) return;
+      if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
       // a bridge without pages answers with its newest turns: nothing older to add
       if (page.source === "scrollback" || page.cursor === undefined) { setOlderCursor(undefined); setOlderState("idle"); return; }
       const first = heldFrom.current === null;
@@ -312,11 +343,11 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
       // the newest page may have slid since it was read: poll it from the held start now
       if (first) setPollKey((key) => key + 1);
     } catch (cause) {
-      if (shownPane.current !== paneId) return;
+      if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
       if (cause instanceof ApiError && cause.status === 409) dropOlder();
       else setOlderState("failed");
     } finally {
-      loadingOlder.current = false;
+      if (olderGeneration.current === generation) loadingOlder.current = false;
     }
   }, [fetchPaneConversation, olderCursor, paneId]);
 
@@ -352,18 +383,6 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
     if (node !== null && stickToBottom.current) node.scrollTop = node.scrollHeight;
   }, [state, prompt]);
 
-  // A resized composer, a raised keyboard or a narrower window shrinks the view
-  // without a scroll event; a reader at the end stays at the end.
-  useEffect(() => {
-    const node = scroller.current;
-    if (node === null) return;
-    const observer = new ResizeObserver(() => {
-      if (stickToBottom.current) node.scrollTop = node.scrollHeight;
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-
   const onScroll = (): void => {
     const node = scroller.current;
     if (node === null) return;
@@ -382,11 +401,12 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
 
   return <div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={`conversation of ${paneId}`}>
     <div className="chat-transcript">
-      {state.source === "conversation" && typeof olderCursor === "string" && (olderState === "loading"
-        ? <p className="chat-inline-state">Loading earlier messages…</p>
-        : <button type="button" className="btn btn-ghost chat-older" onClick={() => void loadOlder()}>
-            {olderState === "failed" ? "Couldn't load earlier messages — retry" : "Earlier messages"}
-          </button>)}
+      {/* one button in every state: swapping it for a status line of another height would shift the reader */}
+      {state.source === "conversation" && typeof olderCursor === "string" && (
+        <button type="button" className="btn btn-ghost chat-older" disabled={olderState === "loading"} onClick={() => void loadOlder()}>
+          {olderState === "loading" ? "Loading earlier messages…" : olderState === "failed" ? "Couldn't load earlier messages — retry" : "Earlier messages"}
+        </button>
+      )}
       {state.source === "conversation" && olderCursor === null && older.length > 0 && <p className="chat-endcap">beginning of conversation</p>}
       {state.source === "conversation"
         ? turns.map((turn, index) => {

@@ -307,8 +307,12 @@ export type RecognizedConversation = {
   cursor: string | null;
 };
 
-/** Which of the older turns, or the newest ones kept from a fixed start. */
-export type ConversationPage = { before?: string; from?: string };
+/**
+ * Which turns: without `before`, the newest page (with `from`, from that held start
+ * while it is still inside the newest page); with `before`, the page ending there,
+ * never reaching back past `since`.
+ */
+export type ConversationPage = { before?: string; since?: string; from?: string };
 
 /**
  * A transcript as one byte stream: for a paginated Codex rollout the history it
@@ -378,29 +382,40 @@ function opensTurn(source: RecognizedConversation["source"], line: string): bool
     block?.type === "text" && typeof block.text === "string" && !isCommandEntry(block.text.trim()));
 }
 
+function turnStarts(bytes: Buffer, source: RecognizedConversation["source"]): number[] {
+  const starts: number[] = [];
+  for (let offset = 0; offset < bytes.length;) {
+    const newline = bytes.indexOf(0x0a, offset);
+    const end = newline === -1 ? bytes.length : newline;
+    const line = bytes.subarray(offset, end);
+    if (line.includes(TURN_MARK[source]) && opensTurn(source, line.toString("utf8"))) starts.push(offset);
+    offset = end + 1;
+  }
+  return starts;
+}
+
 /**
- * The page of turns ending at `to`: at most MAX_PAGE_PROMPTS prompts, starting on
- * a line that opens a turn (or at the very beginning). A turn longer than the
- * window widens the read; one longer than MAX_PAGE_BYTES starts mid-turn.
+ * The page of turns ending at `to`: at most MAX_PAGE_PROMPTS prompts, starting on a
+ * line that opens a turn, at `floor` (a held start) or at the very beginning. An
+ * older page is read once, so for a turn longer than a window it reaches further
+ * back, a new chunk at a time, up to MAX_PAGE_BYTES. The newest page is read on
+ * every append, so it never does: with no turn start in its window it starts
+ * mid-turn, at a whole line.
  */
-function pageBefore(stream: TranscriptStream, source: RecognizedConversation["source"], to: number): { start: number; text: string } {
-  for (let budget = TRANSCRIPT_WINDOW_BYTES; ; budget *= 2) {
-    const from = Math.max(0, to - budget);
-    const bytes = readStream(stream, from, to);
-    const starts: number[] = [];
-    for (let offset = 0; offset < bytes.length;) {
-      const newline = bytes.indexOf(0x0a, offset);
-      const end = newline === -1 ? bytes.length : newline;
-      const line = bytes.subarray(offset, end);
-      if (line.includes(TURN_MARK[source]) && opensTurn(source, line.toString("utf8"))) starts.push(offset);
-      offset = end + 1;
-    }
-    const keep = starts.length > MAX_PAGE_PROMPTS ? starts[starts.length - MAX_PAGE_PROMPTS] : from === 0 ? 0 : starts[0];
-    if (keep !== undefined) return { start: from + keep, text: bytes.toString("utf8", keep) };
-    if (budget >= MAX_PAGE_BYTES) {
+function pageBefore(stream: TranscriptStream, source: RecognizedConversation["source"], to: number, { floor = 0, widen }: { floor?: number; widen: boolean }): { start: number; bytes: Buffer } {
+  let from = Math.max(floor, to - TRANSCRIPT_WINDOW_BYTES);
+  let bytes = readStream(stream, from, to);
+  for (;;) {
+    const starts = turnStarts(bytes, source);
+    const keep = starts.length > MAX_PAGE_PROMPTS ? starts[starts.length - MAX_PAGE_PROMPTS] : from === floor ? 0 : starts[0];
+    if (keep !== undefined) return { start: from + keep, bytes: bytes.subarray(keep) };
+    if (!widen || to - from >= MAX_PAGE_BYTES) {
       const firstLine = bytes.indexOf(0x0a) + 1;
-      return { start: from + firstLine, text: bytes.toString("utf8", firstLine) };
+      return { start: from + firstLine, bytes: bytes.subarray(firstLine) };
     }
+    const next = Math.max(floor, from - TRANSCRIPT_WINDOW_BYTES);
+    bytes = Buffer.concat([readStream(stream, next, from), bytes]);
+    from = next;
   }
 }
 
@@ -578,7 +593,7 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
     throw new ConversationUnavailable("transcript_missing");
   }
   // an older page never changes while its file lives; the newest one changes with every append
-  const key = page.before !== undefined ? `${path}\0before:${page.before}` : `${path}\0from:${page.from ?? ""}`;
+  const key = page.before !== undefined ? `${path}\0before:${page.before}:${page.since ?? ""}` : `${path}\0from:${page.from ?? ""}`;
   const signature = page.before !== undefined ? `${stat.dev}:${stat.ino}` : `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
   const cached = cache.get(key);
   if (cached?.signature === signature) return { source, turns: cached.turns, metadata: cached.metadata, cursor: cached.cursor };
@@ -591,14 +606,20 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
     const stream = transcriptStream(source, path, stat, codexHome ?? defaultCodexHome());
     if (page.before !== undefined) {
       const before = parseCursor(stream, page.before);
-      ({ start, text } = before === 0 ? { start: 0, text: "" } : pageBefore(stream, source, before));
-    } else if (page.from !== undefined) {
-      // the chat holds older pages from here: keep every turn after it, or none would join them
-      start = parseCursor(stream, page.from);
-      if (stream.length - start > MAX_PAGE_BYTES) throw new HistoryChanged();
-      text = readStream(stream, start, stream.length).toString("utf8");
+      const floor = page.since === undefined ? 0 : parseCursor(stream, page.since);
+      if (floor > before) throw new HistoryChanged();
+      const older = before === floor ? { start: floor, bytes: Buffer.alloc(0) } : pageBefore(stream, source, before, { floor, widen: true });
+      start = older.start;
+      text = older.bytes.toString("utf8");
     } else {
-      ({ start, text } = pageBefore(stream, source, stream.length));
+      const newest = pageBefore(stream, source, stream.length, { widen: false });
+      const held = page.from === undefined ? null : parseCursor(stream, page.from);
+      // A chat that shows older pages holds the start of its newest turns and keeps
+      // every turn after it while they are inside the newest page. Once the newest
+      // page has moved past it, the chat gets the newest page and fetches the turns
+      // in between with `before` + `since`: no poll reads more than a page.
+      start = held !== null && held >= newest.start ? held : newest.start;
+      text = newest.bytes.subarray(start - newest.start).toString("utf8");
     }
     if (page.before === undefined && start > 0) head = readRange(path, 0, METADATA_HEAD_BYTES);
     cursor = formatCursor(stream, start);

@@ -268,20 +268,45 @@ describe("transcript pages", () => {
     expect(texts(middle.turns).at(-1)).toBe("[out 69] answer 69");
   });
 
-  it("keeps every turn after a held start as the transcript grows, and refuses a cursor from another file", () => {
+  it("keeps a held start while it is inside the newest page, then fills the turns it moved past a page at a time", () => {
     const path = join(temp(), "session.jsonl");
     writeFileSync(path, `${Array.from({ length: 60 }, (_, n) => claudeTurn(n)).join("\n")}\n`);
     const held = transcriptPage("claude-transcript", path).cursor!;
+    // while the last turn grows, the held start (prompt 10) is still inside the newest page
+    const more = JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "still working" }] } });
+    writeFileSync(path, `${Array.from({ length: 60 }, (_, n) => claudeTurn(n)).join("\n")}\n${more}\n`);
+    const growing = transcriptPage("claude-transcript", path, { from: held });
+    expect(growing.cursor).toBe(held);
+    expect(texts(growing.turns).at(-1)).toBe("[out 59] answer 59 still working");
     writeFileSync(path, `${Array.from({ length: 70 }, (_, n) => claudeTurn(n)).join("\n")}\n`);
-    // the newest page slid forward; a chat holding older pages keeps all 60 prompts from its start
-    expect(texts(transcriptPage("claude-transcript", path).turns)[0]).toBe("prompt 20");
-    const kept = transcriptPage("claude-transcript", path, { from: held });
-    expect(texts(kept.turns)[0]).toBe("prompt 10");
-    expect(texts(kept.turns).at(-1)).toBe("[out 69] answer 69");
-    expect(kept.cursor).toBe(held);
+    // the newest page slid past it: the answer is the newest page, never more than a page
+    const newest = transcriptPage("claude-transcript", path, { from: held });
+    expect(newest.cursor).not.toBe(held);
+    expect(texts(newest.turns)[0]).toBe("prompt 20");
+    // the turns in between come from `before` the newest page, `since` the held start
+    const gap = transcriptPage("claude-transcript", path, { before: newest.cursor!, since: held });
+    expect(gap.cursor).toBe(held);
+    expect(texts(gap.turns)[0]).toBe("prompt 10");
+    expect(texts(gap.turns).at(-1)).toBe("[out 19] answer 19");
     for (const cursor of ["another-file:10", `${held.split(":")[0]}:999999999`, "garbage"]) {
       expect(() => transcriptPage("claude-transcript", path, { before: cursor })).toThrow(HistoryChanged);
     }
+    expect(() => transcriptPage("claude-transcript", path, { before: held, since: newest.cursor! })).toThrow(HistoryChanged);
+  });
+
+  it("reads one window for the newest page even when no turn starts in it; an older page reaches the turn's start", () => {
+    const path = join(temp(), "session.jsonl");
+    const prompt = JSON.stringify({ type: "user", message: { role: "user", content: "run the long job" } });
+    // one turn of 20MB of tool output: no turn starts in the newest window
+    const output = JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "y".repeat(1024 * 1024) }] } });
+    writeFileSync(path, `${claudeTurn(0)}\n${prompt}\n${Array.from({ length: 20 }, () => output).join("\n")}\n`);
+    const size = Buffer.byteLength(`${claudeTurn(0)}\n${prompt}\n`) + 20 * (Buffer.byteLength(output) + 1);
+    const newest = transcriptPage("claude-transcript", path);
+    const start = Number(newest.cursor!.split(":").at(-1));
+    expect(size - start).toBeLessThanOrEqual(16 * 1024 * 1024);
+    expect(newest.turns.every((turn) => turn.role === "assistant")).toBe(true);
+    const older = transcriptPage("claude-transcript", path, { before: newest.cursor! });
+    expect(texts(older.turns).slice(0, 3)).toEqual(["prompt 0", "[out 0] answer 0", "run the long job"]);
   });
 
   it("pages across the rollouts a backtracked Codex conversation continues", () => {
@@ -296,9 +321,10 @@ describe("transcript pages", () => {
     mkdirSync(join(home, "sessions", "2026", "09", "15"), { recursive: true });
     mkdirSync(join(home, "sessions", "2026", "09", "23"), { recursive: true });
     const kept = `${meta()}\n${Array.from({ length: 60 }, (_, n) => task(n)).join("\n")}\n`;
+    const keptLines = kept.split("\n").length - 1;
     writeFileSync(join(home, "sessions", "2026", "09", "15", `rollout-2026-09-15T12-58-12-${thread}.jsonl`), `${kept}${task(999)}\n`);
     const segment = join(home, "sessions", "2026", "09", "23", `rollout-2026-09-23T10-46-43-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`);
-    writeFileSync(segment, `${meta({ history_base: { thread_id: thread, end_byte_offset: Buffer.byteLength(kept) } })}\n${Array.from({ length: 10 }, (_, n) => task(60 + n)).join("\n")}\n`);
+    writeFileSync(segment, `${meta({ history_base: { thread_id: thread, end_ordinal_exclusive: keptLines, end_byte_offset: Buffer.byteLength(kept) } })}\n${Array.from({ length: 10 }, (_, n) => task(60 + n)).join("\n")}\n`);
 
     const newest = transcriptPage("codex-transcript", segment, {}, home);
     expect(texts(newest.turns)[0]).toBe("prompt 20");
