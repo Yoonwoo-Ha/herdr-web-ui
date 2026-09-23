@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Updater, runCommand, type Release } from "./updater.ts";
+import { HERDR_SOCKET_PATH } from "../shared/protocol.ts";
 
 let directory: string, upstream: string, root: string, stateDir: string;
 let updater: Updater;
@@ -212,7 +213,8 @@ describe("managed source updates with real Git repositories and builds", () => {
     resumed.stop();
   });
 
-  it("restarts the real bridge over IPC, rolls back a failed boot, and resumes the saved release", async () => {
+  // the supervisor's health check pings herdr, so this one needs a live herdr (CI has none)
+  it.skipIf(!existsSync(process.env["HERDR_SOCKET"] || HERDR_SOCKET_PATH))("restarts the real bridge over IPC, rolls back a failed boot, and resumes the saved release", async () => {
     updater.stop();
     mkdirSync(join(upstream, "server"));
     const entry = `
