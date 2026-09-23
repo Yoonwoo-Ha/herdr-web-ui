@@ -48,6 +48,11 @@ describe("recorded conversation model settings", () => {
       { type: "assistant", message: { role: "assistant", model: "claude-test", content: [{ type: "thinking", thinking: "text" }] } },
       { type: "assistant", message: { role: "assistant", model: "<synthetic>" } },
     ), "claude-transcript")).toEqual({ model: "claude-test", reasoning_effort: null });
+    expect(parseConversationMetadata(jsonl(
+      { type: "assistant", effort: "high", message: { role: "assistant", model: "claude-test" } },
+      { type: "assistant", effort: "xhigh", message: { role: "assistant", model: "claude-test" } },
+      { type: "assistant", message: { role: "assistant", model: "<synthetic>" } },
+    ), "claude-transcript")).toEqual({ model: "claude-test", reasoning_effort: "xhigh" });
   });
 
   it("tolerates absent metadata, unexpected types and a torn append without losing valid settings", () => {
