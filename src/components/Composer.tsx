@@ -25,6 +25,7 @@ import {
 } from "../lib/compose.ts";
 import { activeTrigger, applyCompletion, type ActiveTrigger } from "../lib/mentions.ts";
 import { useSettings } from "../lib/settings.ts";
+import { modKeyLabel } from "../lib/shortcuts.ts";
 import { AgentMark } from "./AgentMark.tsx";
 
 export interface ComposerProps {
@@ -126,9 +127,8 @@ export function Composer({
   const trigger = useMemo(() => activeTrigger(text, caret), [caret, text]);
   const uploading = attachments.some((attachment) => attachment.state === "uploading");
   const agentLabel = agentDisplayLabel(agent);
-  const sendKeys = settings.enterSends ? "Enter to send, Shift+Enter for newline" : "Mod+Enter to send, Enter for newline";
   const placeholder = connected
-    ? `Message ${agentLabel}… (/ commands, @ files, ${sendKeys})`
+    ? `Message ${agentLabel}…`
     : "Reconnecting… message held here, never queued";
 
   useEffect(() => {
@@ -406,6 +406,11 @@ export function Composer({
             <span aria-hidden="true">·</span> {uploading ? "Uploading image…" : "Reconnecting… message held here, never queued"}
           </span>
         )}
+        {/* what the placeholder used to cram in; Enter-sends is the chat convention and goes unsaid */}
+        <span className="composer-keys-hint" aria-hidden="true">
+          <kbd className="kbd">/</kbd> commands <kbd className="kbd">@</kbd> files
+          {!settings.enterSends && <> <kbd className="kbd">{modKeyLabel()}+Enter</kbd> sends</>}
+        </span>
       </div>
 
       <div

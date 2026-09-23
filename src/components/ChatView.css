@@ -1,6 +1,6 @@
 /*
  * The chat lens, in the Codex / gajae-code-app register: the transcript is a quiet
- * document. The user's words are the only colored block, right-aligned; the agent
+ * document. The user's words are the only raised block, right-aligned; the agent
  * answers as plain prose with no avatar or name (the composer's status line already
  * names it), and everything it did in between folds under one "Worked for 7s · 1 edit"
  * line whose rows stay one line each until opened. Meta (time, copy) is low-emphasis
@@ -53,12 +53,15 @@
   border-top: 0;
 }
 
+/* the user's turn is a raised neutral card, not a colored one: amber stays reserved for
+   selection and the send action, so a long thread does not turn into a wall of color */
 .chat-bubble {
   max-width: 80%;
   padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-lg);
-  background: var(--primary);
-  color: var(--primary-text);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text-strong);
   overflow-wrap: anywhere;
 }
 
@@ -180,8 +183,7 @@
 }
 
 .chat-bubble .markdown :not(pre) > code {
-  background: var(--primary-hover);
-  color: var(--primary-text);
+  background: var(--bg-hover);
 }
 
 .markdown a {
@@ -190,8 +192,9 @@
   text-underline-offset: var(--space-1);
 }
 
-.chat-bubble .markdown a {
-  color: var(--primary-text);
+.chat-bubble .markdown pre,
+.chat-bubble .markdown-code {
+  background: var(--bg-panel);
 }
 
 .markdown hr {
@@ -309,7 +312,19 @@
 }
 
 .work-block.is-live .work-block-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--status-working);
+}
+
+/* the dot breathes, the words hold still (same rule as the RUN badge) */
+.work-block.is-live .work-block-title::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
   animation: pulse var(--dur-pulse) var(--ease-out) infinite;
 }
 
@@ -531,5 +546,5 @@
 @media (prefers-reduced-motion: reduce) {
   .chat-view { scroll-behavior: auto; }
   .chat-turn-meta { transition: none; }
-  .work-block.is-live .work-block-title { animation: none; }
+  .work-block.is-live .work-block-title::before { animation: none; }
 }

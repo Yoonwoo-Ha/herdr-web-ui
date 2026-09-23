@@ -80,7 +80,9 @@ try {
   await page.screenshot({ path: join(evidence, "desktop-add-pc-dark.png") });
   await dialog.getByRole("button", { name: "Close PC setup" }).click();
   await page.screenshot({ path: join(evidence, "desktop-dark.png") });
-  await page.getByRole("button", { name: "Switch to light theme", exact: true }).click();
+  await page.locator(".app-header").getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Light", exact: true }).click();
+  await page.getByRole("button", { name: "Close settings", exact: true }).click();
   await page.screenshot({ path: join(evidence, "desktop-light.png") });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Open workspace list", exact: true }).click();

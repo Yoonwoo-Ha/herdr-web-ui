@@ -135,10 +135,15 @@
   text-align: left;
 }
 
+/* the cell stays a table cell (a flex td drops out of the row and splits its rule); the
+   keycaps sit inline, right-aligned */
 .settings-shortcuts td {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-1);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.settings-shortcuts td .kbd + .kbd {
+  margin-left: var(--space-1);
 }
 
 .settings-about a {

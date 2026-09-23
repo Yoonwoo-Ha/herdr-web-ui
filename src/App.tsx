@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Lock, Menu, MessageSquare, Moon, PanelLeft, Search, Settings, SquareTerminal, Sun, X } from "lucide-react";
+import { Bell, Lock, Menu, MessageSquare, PanelLeft, Search, Settings, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ClientRole, ServerMessage } from "../shared/protocol.ts";
 import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
@@ -465,17 +465,15 @@ export function App() {
           </div>
         )}
         <div className="header-meta">
-          <span className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`} role="status">
+          <span
+            className={`conn ${connected ? "conn-live" : "conn-reconnecting"}`}
+            role="status"
+            title={targetHerdr ? `herdr ${targetHerdr.version} · protocol ${targetHerdr.protocol}` : undefined}
+          >
             <span className="conn-dot" aria-hidden="true" />
             <span className="conn-text">{connected ? "live" : outputStopped ? "disconnected" : "reconnecting"}</span>
           </span>
-          {targetHerdr ? (
-            <span className="pill pill-version" title={`herdr protocol ${targetHerdr.protocol}`}>
-              herdr {targetHerdr.version}
-            </span>
-          ) : (
-            <span className="pill pill-offline">herdr offline</span>
-          )}
+          {!targetHerdr && <span className="pill pill-offline">herdr offline</span>}
           <button type="button" className="icon-button" aria-label="Command palette" title="Command palette (⌘⇧K)" onClick={() => setPaletteOpen(true)}>
             <Search />
           </button>
@@ -491,15 +489,6 @@ export function App() {
               <Bell />
             </button>
           )}
-          <button
-            type="button"
-            className="icon-button header-desktop-only"
-            aria-label={resolvedTheme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-            title={resolvedTheme === "dark" ? "Light theme" : "Dark theme"}
-            onClick={actions.toggleTheme}
-          >
-            {resolvedTheme === "dark" ? <Sun /> : <Moon />}
-          </button>
           <button type="button" className="icon-button" aria-label="Settings" title="Settings (⌘⇧,)" onClick={() => setSettingsOpen(true)}>
             <Settings />
           </button>
@@ -515,7 +504,7 @@ export function App() {
       <div className="app-body">
         <aside id="workspace-drawer" className={`sidebar${drawerOpen ? " is-open" : ""}`}>
           {error && <div className="error-state" role="alert"><p>{error}</p><button className="btn" onClick={() => void load()}>Retry</button></div>}
-          <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} onAdd={() => { setUpdateRemote(false); setMachineDialog("new"); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewSessionOpen(true); setDrawerOpen(false); }} />
+          <MachineSidebar version={health?.herdr?.version ?? null} machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} onAdd={() => { setUpdateRemote(false); setMachineDialog("new"); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewSessionOpen(true); setDrawerOpen(false); }} />
         </aside>
 
         {drawerOpen && <div className="scrim" aria-hidden="true" onClick={() => setDrawerOpen(false)} />}

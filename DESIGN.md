@@ -6,13 +6,17 @@ value. When a component needs a value that is not here, add it to both first.
 
 ## 1. Atmosphere & Identity
 
-A quiet terminal-first console with chat-app clarity. Tonal surfaces and hairlines keep the chrome
-out of the way; blue distinguishes selection from the user's own primary actions, and agent states
-carry the remaining saturated color. Dark is the default, light follows the same hierarchy, and
-comfortable or compact density changes scale without changing information architecture.
+A warm terminal: an amber-phosphor console on lamp-lit graphite (dark) or ledger paper (light),
+with chat-app clarity. Tonal surfaces and hairlines keep the chrome out of the way. There is ONE
+chrome color, amber: selection, focus, the terminal cursor and the user's own action (Send, primary
+buttons). Agent states carry the remaining saturated colors and none of them is amber. The user's
+chat turns are neutral raised cards, so a long thread never turns into a wall of color. Dark is the
+default, light follows the same hierarchy, and comfortable or compact density changes scale without
+changing information architecture.
 
-The signature remains the status rail: a 3px accent bar on the selected pane row and the same accent
-on focus and the terminal cursor, tying “what I am looking at” to “where I am typing.”
+The signature is the amber status rail: a 3px bar on the selected pane row (whose mark box also
+takes an amber edge), the same amber on focus, the chosen lens glyph and the terminal cursor, tying
+“what I am looking at” to “where I am typing.”
 
 ## 2. Color
 
@@ -22,35 +26,35 @@ Only tokens overridden by `[data-theme="light"]` have a light value. Both column
 
 | Role | Token | Dark | Light |
 |------|-------|------|-------|
-| Surface/base | `--bg` | `#070910` | `#eef1f6` |
-| Surface/panel | `--bg-panel` | `#0b0e14` | `#ffffff` |
-| Surface/elevated | `--bg-elevated` | `#121724` | `#f4f6fa` |
-| Surface/hover | `--bg-hover` | `#1a2132` | `#e8ecf3` |
-| Surface/input | `--bg-input` | `#0e121b` | `#ffffff` |
-| Border | `--border` | `#1e2637` | `#d9dfe9` |
-| Border/strong | `--border-strong` | `#2b3550` | `#c3cbd9` |
-| Text/primary | `--text` | `#c5cdd9` | `#1f2937` |
-| Text/dim | `--text-dim` | `#8390a8` | `#5b6676` |
-| Text/strong | `--text-strong` | `#e6edf7` | `#0b1220` |
-| Accent | `--accent` | `#6cb6ff` | `#2563eb` |
-| Accent/tint | `--accent-tint` | `rgba(108, 182, 255, 0.12)` | `rgba(37, 99, 235, 0.1)` |
-| Primary | `--primary` | `#3b6cf5` | `#2563eb` |
-| Primary/hover | `--primary-hover` | `#4f7cf7` | `#1d4ed8` |
-| Primary/text | `--primary-text` | `#ffffff` | `#ffffff` |
-| Primary/tint | `--primary-tint` | `rgba(59, 108, 245, 0.16)` | `rgba(37, 99, 235, 0.12)` |
-| Status/idle | `--status-idle` | `#8390a8` | `#5b6676` |
-| Status/working | `--status-working` | `#e2a336` | `#b45309` |
-| Status/blocked | `--status-blocked` | `#f2545b` | `#dc2626` |
-| Status/done | `--status-done` | `#4ec9a5` | `#047857` |
-| Working/tint | `--status-working-tint` | `rgba(226, 163, 54, 0.14)` | `rgba(180, 83, 9, 0.12)` |
-| Blocked/tint | `--status-blocked-tint` | `rgba(242, 84, 91, 0.14)` | `rgba(220, 38, 38, 0.12)` |
-| Done/tint | `--status-done-tint` | `rgba(78, 201, 165, 0.14)` | `rgba(4, 120, 87, 0.12)` |
-| Danger/tint | `--danger-tint` | `rgba(242, 84, 91, 0.12)` | `rgba(220, 38, 38, 0.1)` |
-| Danger/text | `--danger-text` | `#ffd7d9` | `#991b1b` |
-| Overlay/scrim | `--scrim` | `rgba(0, 0, 0, 0.5)` | `rgba(15, 23, 42, 0.35)` |
-| Drawer shadow | `--shadow-drawer` | `0 0 40px rgba(0, 0, 0, 0.6)` | `0 0 40px rgba(15, 23, 42, 0.25)` |
-| Popover shadow | `--shadow-pop` | `0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border)` | `0 16px 48px rgba(15, 23, 42, 0.18), 0 0 0 1px var(--border)` |
-| Card shadow | `--shadow-card` | `0 4px 16px rgba(0, 0, 0, 0.35)` | `0 4px 16px rgba(15, 23, 42, 0.08)` |
+| Surface/base | `--bg` | `#12100e` | `#eeeae2` |
+| Surface/panel | `--bg-panel` | `#181613` | `#faf8f3` |
+| Surface/elevated | `--bg-elevated` | `#211e1a` | `#f2eee6` |
+| Surface/hover | `--bg-hover` | `#2a2621` | `#e8e2d6` |
+| Surface/input | `--bg-input` | `#1c1916` | `#fffdf9` |
+| Border | `--border` | `#2d2924` | `#dcd4c6` |
+| Border/strong | `--border-strong` | `#3e3830` | `#c5baa8` |
+| Text/primary | `--text` | `#d8d0c3` | `#2a251f` |
+| Text/dim | `--text-dim` | `#9b9183` | `#685e52` |
+| Text/strong | `--text-strong` | `#f2ebdf` | `#16120d` |
+| Accent | `--accent` | `#f0a830` | `#8c5000` |
+| Accent/tint | `--accent-tint` | `rgba(240, 168, 48, 0.13)` | `rgba(140, 80, 0, 0.1)` |
+| Primary | `--primary` | `#f0a830` | `#c57d12` |
+| Primary/hover | `--primary-hover` | `#f6bb55` | `#d48c1f` |
+| Primary/text | `--primary-text` | `#1b1407` | `#1b1407` |
+| Primary/tint | `--primary-tint` | `rgba(240, 168, 48, 0.16)` | `rgba(197, 125, 18, 0.14)` |
+| Status/idle | `--status-idle` | `#9b9183` | `#685e52` |
+| Status/working | `--status-working` | `#6cb8d6` | `#155a72` |
+| Status/blocked | `--status-blocked` | `#ff7b70` | `#a82323` |
+| Status/done | `--status-done` | `#93c36b` | `#2f6317` |
+| Working/tint | `--status-working-tint` | `rgba(108, 184, 214, 0.14)` | `rgba(21, 90, 114, 0.12)` |
+| Blocked/tint | `--status-blocked-tint` | `rgba(255, 123, 112, 0.14)` | `rgba(168, 35, 35, 0.12)` |
+| Done/tint | `--status-done-tint` | `rgba(147, 195, 107, 0.14)` | `rgba(47, 99, 23, 0.12)` |
+| Danger/tint | `--danger-tint` | `rgba(255, 123, 112, 0.12)` | `rgba(168, 35, 35, 0.1)` |
+| Danger/text | `--danger-text` | `#ffd9d4` | `#8f1d1d` |
+| Overlay/scrim | `--scrim` | `rgba(8, 6, 4, 0.55)` | `rgba(40, 32, 22, 0.35)` |
+| Drawer shadow | `--shadow-drawer` | `0 0 40px rgba(0, 0, 0, 0.6)` | `0 0 40px rgba(40, 32, 22, 0.22)` |
+| Popover shadow | `--shadow-pop` | `0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border)` | `0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border)` |
+| Card shadow | `--shadow-card` | `0 4px 16px rgba(0, 0, 0, 0.35)` | `0 4px 16px rgba(40, 32, 22, 0.07)` |
 
 ### Terminal theme
 
@@ -59,13 +63,15 @@ CSS tokens verbatim for each resolved theme.
 
 | Role | Token | Dark | Light | xterm key |
 |------|-------|------|-------|-----------|
-| Background | `--term-bg` | `#0b0e14` | `#ffffff` | `background` |
-| Foreground | `--term-fg` | `#c5cdd9` | `#1f2937` | `foreground` |
-| Cursor | `--term-cursor` | `#6cb6ff` | `#2563eb` | `cursor` |
-| Selection | `--term-selection` | `#2d3f5e` | `#bfdbfe` | `selectionBackground` |
+| Background | `--term-bg` | `#181613` | `#faf8f3` | `background` |
+| Foreground | `--term-fg` | `#d8d0c3` | `#2a251f` | `foreground` |
+| Cursor | `--term-cursor` | `#f0a830` | `#8c5000` | `cursor` |
+| Selection | `--term-selection` | `#4a3d26` | `#f0d9ae` | `selectionBackground` |
 
 ### Rules
-- Accent means selected, focused or informational; primary means the user's action or voice.
+- Amber is the one chrome color. Accent (selected, focused, informational) and primary (the user's
+  action: Send, primary buttons) are both amber; in light, accent is the darker text-safe ochre and
+  primary the brighter fill carrying ink text. Agent states never use amber.
 - Agent state is always written as a label as well as colored. Unknown uses dim text and a dashed
   edge rather than inventing a fifth state color.
 - Tints are named tokens; components do not introduce ad hoc translucent state colors.
@@ -171,8 +177,9 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 - `.app` is a full-viewport column: `.app-header` over `.app-body`; the body is sidebar plus
   `.terminal-host`. `--app-height` follows `visualViewport` so the soft keyboard does not cover input.
 - Header anatomy, left to right: mobile drawer toggle / desktop sidebar toggle; flexible context
-  title plus workspace/cwd subtitle; segmented Chat/Terminal switch; connection/version and meta
-  actions for palette, notifications, theme, settings and lock.
+  title plus PC/workspace/cwd subtitle; segmented Chat/Terminal switch; the connection chip (herdr
+  version in its tooltip) and meta actions for palette, notifications, settings and lock. Theme
+  lives in Settings and the palette; the herdr version also sits in the sidebar footer.
 - The sidebar is fixed-width on desktop and a `<=768px` drawer. The desktop collapse removes its
   column; the drawer uses a scrim and keeps safe-area insets.
 - The terminal stack contains a positioned terminal surface, then composer or key bar. The xterm
@@ -216,19 +223,25 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 
 ### Badge (`.badge`)
 - Agent states read **READY**, **RUN**, **INPUT**, **DONE**; unknown reads **—**.
-- Idle is elevated/dim; working, blocked and done use their own tint and text. RUN pulses.
+- Idle is elevated/dim; working, blocked and done use their own tint and text. RUN carries a small
+  breathing dot before the word; the word itself never fades.
 - The written label and unknown dashed edge keep color from being the only signal.
 
 ### Pill (`.pill`)
-- Mono metadata at `--chip-h`; version and offline are header variants. Offline uses danger tokens.
+- Mono metadata at `--chip-h`. The herdr version is a sidebar-footer pill; offline is the one header pill and uses danger tokens.
 
 ### Sidebar roster row and footer
 - Top bar: **New session** only. Search lives in the command palette, not the roster.
 - A workspace header shows drag handle, number, editable label, roll-up status and rename action.
   Drag/drop reorders; `Alt+↑/↓` on the handle is the keyboard equivalent.
-- Every pane row is two lines: agent/shell mark, editable title plus compact status chip, then
-  workspace and cwd. Selected gets the accent rail; row actions rename or arm a 3-second,
-  second-click close. Inline server failures stay beside their row.
+- Every pane row is two lines: agent/shell mark, then the editable title alone on line one (full
+  width), and the status chip followed by workspace and cwd on line two. Mark boxes are neutral;
+  the selected row gets the amber rail and an amber-edged mark box. Row actions rename or arm a
+  3-second, second-click close. Inline server failures stay beside their row.
+- A PC group header is caret, monitor, name, “This PC” for the local machine and a state dot
+  (done = connected, working pulse = connecting/reconnecting, blocked = error). Connected says
+  nothing more; every other state is written under the name, with the server's error clamped to
+  two lines and complete in the tooltip.
 - Single-pane workspaces merge their workspace handle into the pane row.
 - Footer holds the contextual **Install app** action, Settings, product name and herdr version.
 
@@ -243,14 +256,15 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 - A selected pane shows agent mark + title over workspace + cwd. With no selection, the brand fills
   the context slot.
 - The segmented Chat/Terminal view switch lives in the header. There is no floating view-toggle pill.
-- Connection is a written live/reconnecting status with a dot; reconnecting pulses.
+- Connection is one quiet chip: a dot plus the written live/reconnecting/disconnected state;
+  reconnecting pulses the dot. On phones the chip keeps only its dot.
 
 ### Chat turn (`.chat-turn`)
 - The chat lens is a centered `--content-w` transcript over the still-attached terminal surface.
   Structured Claude/omp transcripts fall back to ANSI-stripped pane scrollback when unavailable.
-- The register is Codex / gajae-code-app: a quiet document. User turns are right-aligned solid
-  `--primary` blocks (`--radius-lg`, ≤80% wide, no avatar or name) and open a new exchange with a
-  hairline above. Assistant turns have no header: the answer is plain prose; a meta row (MD / TXT
+- The register is Codex / gajae-code-app: a quiet document. User turns are right-aligned neutral
+  cards (`--bg-elevated`, hairline edge, `--radius-lg` with a `--radius-sm` tail corner, ≤80% wide,
+  no avatar or name) and open a new exchange with a hairline above. Assistant turns have no header: the answer is plain prose; a meta row (MD / TXT
   copy, time) fades in on hover (always visible on coarse pointers).
 - Markdown supports headings, lists, links, quotes, tables, inline/fenced code and code-copy actions.
   Thinking renders as a folded block only when **Show thinking** is enabled.
@@ -258,7 +272,7 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 
 ### Work block (`.work-block`, `.work-row`)
 - One per assistant turn: a `▸ Worked for 7s · 1 edit · 2 commands` header (duration = next turn's
-  timestamp minus this one's; "Working…" pulsing in `--status-working` while the agent runs) over
+  timestamp minus this one's; "Working…" in `--status-working` behind a breathing dot while the agent runs) over
   one-line rows `▸ [icon] name / summary` in mono, indented under the header; mid-work narration
   sits between rows as dim, one-step-smaller prose. The newest turn opens by default, older ones
   fold. A row expands to the typed input (command, diff, file, checklist, raw) and an Output pane.
@@ -279,6 +293,8 @@ Comfortable values are `:root`; the final column is the complete compact overrid
   completion popover; inside, ONE row — attach control | auto-growing textarea | Send / Queue /
   Stop — with the controls bottom-aligned so they stay beside the last line as the box grows;
   the image strip is its own row above that line.
+- The status line ends, on fine pointers, with `/` commands and `@` files keycaps (plus `Mod+Enter`
+  sends when **Enter sends** is off); the placeholder is just `Message <agent>…`.
 - `/` completions come from `GET /api/pane/commands` and group built-in, user and project commands;
   `@` completions query `GET /api/pane/files`. Arrow keys navigate, Enter/Tab accepts, Escape closes.
 - Paste, picker or drag/drop accepts up to four png/jpeg/gif/webp files per action. Each gets a local
@@ -323,7 +339,7 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 |------|-------|-------|-------|
 | Micro | `--dur-fast` | `120ms` | Hover, active, toggle and control state |
 | Standard | `--dur-base` | `180ms` | Drawer slide; reserved dialog timing token |
-| Pulse | `--dur-pulse` | `1600ms` | Working and reconnecting |
+| Pulse | `--dur-pulse` | `1600ms` | Working and reconnecting dots (trough opacity 0.35; text never pulses) |
 | Easing | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | All tokenized motion |
 
 ### Rules

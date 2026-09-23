@@ -310,9 +310,11 @@ export function Sidebar({ snapshot, selectedPaneId, actions, version, embedded =
                               ) : (
                                 <span className="pane-title">{displayTitle}</span>
                               )}
-                              <StatusBadge status={pane.agent_status} />
                             </span>
-                            <span className="pane-subtitle">{workspace.label} · {cwdBasename(pane.cwd)}</span>
+                            <span className="pane-meta">
+                              <StatusBadge status={pane.agent_status} />
+                              <span className="pane-subtitle">{workspace.label} · {cwdBasename(pane.cwd)}</span>
+                            </span>
                           </span>
                         </div>
                         <div className="pane-actions">

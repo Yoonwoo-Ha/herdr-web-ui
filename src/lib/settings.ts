@@ -80,12 +80,12 @@ export function resolveTheme(setting: ThemeSetting): ResolvedTheme {
 /** The xterm theme for a resolved theme: the `--term-*` tokens of src/styles.css, verbatim. */
 export function terminalTheme(theme: ResolvedTheme): { background: string; foreground: string; cursor: string; selectionBackground: string } {
   return theme === "light"
-    ? { background: "#ffffff", foreground: "#1f2937", cursor: "#2563eb", selectionBackground: "#bfdbfe" }
-    : { background: "#0b0e14", foreground: "#c5cdd9", cursor: "#6cb6ff", selectionBackground: "#2d3f5e" };
+    ? { background: "#faf8f3", foreground: "#2a251f", cursor: "#8c5000", selectionBackground: "#f0d9ae" }
+    : { background: "#181613", foreground: "#d8d0c3", cursor: "#f0a830", selectionBackground: "#4a3d26" };
 }
 
 /** `<meta name="theme-color">` follows the panel surface so the PWA title bar matches. */
-const THEME_COLOR: Record<ResolvedTheme, string> = { dark: "#0b0e14", light: "#ffffff" };
+const THEME_COLOR: Record<ResolvedTheme, string> = { dark: "#181613", light: "#faf8f3" };
 
 function applyToDocument(settings: Settings, resolved: ResolvedTheme): void {
   const root = document.documentElement;

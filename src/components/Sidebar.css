@@ -239,6 +239,7 @@
 }
 
 
+/* the mark box is neutral; amber is spent only on the selected row (rail + box edge) */
 .agent-mark-holder {
   display: inline-flex;
   align-items: center;
@@ -246,9 +247,15 @@
   flex: 0 0 var(--avatar-size);
   width: var(--avatar-size);
   height: var(--avatar-size);
+  border: var(--hairline) solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--accent-tint);
+  background: var(--bg-elevated);
   color: var(--text-strong);
+}
+
+.pane-item.is-selected .agent-mark-holder {
+  border-color: var(--accent);
+  background: var(--accent-tint);
 }
 
 .agent-mark-holder.is-shell {
@@ -290,11 +297,22 @@
   white-space: nowrap;
 }
 
-.pane-primary .badge {
+/* line two: the state word first (it is what a glance looks for), then where the pane lives */
+.pane-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.pane-meta .badge {
   flex: 0 0 auto;
+  height: calc(var(--chip-h) - 2px);
+  padding: 0 var(--space-1);
 }
 
 .pane-subtitle {
+  min-width: 0;
   overflow: hidden;
   color: var(--text-dim);
   font-size: var(--fs-xs);

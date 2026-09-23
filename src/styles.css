@@ -16,49 +16,49 @@
 :root {
   color-scheme: dark;
 
-  /* surfaces (tonal steps, darkest to lightest) */
-  --bg: #070910;
-  --bg-panel: #0b0e14;
-  --bg-elevated: #121724;
-  --bg-hover: #1a2132;
-  --bg-input: #0e121b;
-  --border: #1e2637;
-  --border-strong: #2b3550;
+  /* surfaces (tonal steps, darkest to lightest): lamp-lit graphite, warm not tinted */
+  --bg: #12100e;
+  --bg-panel: #181613;
+  --bg-elevated: #211e1a;
+  --bg-hover: #2a2621;
+  --bg-input: #1c1916;
+  --border: #2d2924;
+  --border-strong: #3e3830;
 
   /* text */
-  --text: #c5cdd9;
-  --text-dim: #8390a8;
-  --text-strong: #e6edf7;
+  --text: #d8d0c3;
+  --text-dim: #9b9183;
+  --text-strong: #f2ebdf;
 
-  /* the saturated colors: accent (selection/focus), primary (the user's own
-     actions and voice) and the four agent states */
-  --accent: #6cb6ff;
-  --accent-tint: rgba(108, 182, 255, 0.12);
-  --primary: #3b6cf5;
-  --primary-hover: #4f7cf7;
-  --primary-text: #ffffff;
-  --primary-tint: rgba(59, 108, 245, 0.16);
-  --status-idle: #8390a8;
-  --status-working: #e2a336;
-  --status-blocked: #f2545b;
-  --status-done: #4ec9a5;
-  --status-working-tint: rgba(226, 163, 54, 0.14);
-  --status-blocked-tint: rgba(242, 84, 91, 0.14);
-  --status-done-tint: rgba(78, 201, 165, 0.14);
-  --danger-tint: rgba(242, 84, 91, 0.12);
-  --danger-text: #ffd7d9;
+  /* the saturated colors: ONE amber (selection, focus, cursor and the user's own
+     action - an amber-phosphor terminal) and the four agent states, none of them amber */
+  --accent: #f0a830;
+  --accent-tint: rgba(240, 168, 48, 0.13);
+  --primary: #f0a830;
+  --primary-hover: #f6bb55;
+  --primary-text: #1b1407;
+  --primary-tint: rgba(240, 168, 48, 0.16);
+  --status-idle: #9b9183;
+  --status-working: #6cb8d6;
+  --status-blocked: #ff7b70;
+  --status-done: #93c36b;
+  --status-working-tint: rgba(108, 184, 214, 0.14);
+  --status-blocked-tint: rgba(255, 123, 112, 0.14);
+  --status-done-tint: rgba(147, 195, 107, 0.14);
+  --danger-tint: rgba(255, 123, 112, 0.12);
+  --danger-text: #ffd9d4;
 
   /* overlays */
-  --scrim: rgba(0, 0, 0, 0.5);
+  --scrim: rgba(8, 6, 4, 0.55);
   --shadow-drawer: 0 0 40px rgba(0, 0, 0, 0.6);
   --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--border);
   --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
 
   /* terminal theme: mirrored verbatim in src/lib/settings.ts terminalTheme() */
-  --term-bg: #0b0e14;
-  --term-fg: #c5cdd9;
-  --term-cursor: #6cb6ff;
-  --term-selection: #2d3f5e;
+  --term-bg: #181613;
+  --term-fg: #d8d0c3;
+  --term-cursor: #f0a830;
+  --term-selection: #4a3d26;
 
   /* type (comfortable density; compact overrides below) */
   --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif;
@@ -133,39 +133,39 @@
 
 [data-theme="light"] {
   color-scheme: light;
-  --bg: #eef1f6;
-  --bg-panel: #ffffff;
-  --bg-elevated: #f4f6fa;
-  --bg-hover: #e8ecf3;
-  --bg-input: #ffffff;
-  --border: #d9dfe9;
-  --border-strong: #c3cbd9;
-  --text: #1f2937;
-  --text-dim: #5b6676;
-  --text-strong: #0b1220;
-  --accent: #2563eb;
-  --accent-tint: rgba(37, 99, 235, 0.1);
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --primary-text: #ffffff;
-  --primary-tint: rgba(37, 99, 235, 0.12);
-  --status-idle: #5b6676;
-  --status-working: #b45309;
-  --status-blocked: #dc2626;
-  --status-done: #047857;
-  --status-working-tint: rgba(180, 83, 9, 0.12);
-  --status-blocked-tint: rgba(220, 38, 38, 0.12);
-  --status-done-tint: rgba(4, 120, 87, 0.12);
-  --danger-tint: rgba(220, 38, 38, 0.1);
-  --danger-text: #991b1b;
-  --scrim: rgba(15, 23, 42, 0.35);
-  --shadow-drawer: 0 0 40px rgba(15, 23, 42, 0.25);
-  --shadow-pop: 0 16px 48px rgba(15, 23, 42, 0.18), 0 0 0 1px var(--border);
-  --shadow-card: 0 4px 16px rgba(15, 23, 42, 0.08);
-  --term-bg: #ffffff;
-  --term-fg: #1f2937;
-  --term-cursor: #2563eb;
-  --term-selection: #bfdbfe;
+  --bg: #eeeae2;
+  --bg-panel: #faf8f3;
+  --bg-elevated: #f2eee6;
+  --bg-hover: #e8e2d6;
+  --bg-input: #fffdf9;
+  --border: #dcd4c6;
+  --border-strong: #c5baa8;
+  --text: #2a251f;
+  --text-dim: #685e52;
+  --text-strong: #16120d;
+  --accent: #8c5000;
+  --accent-tint: rgba(140, 80, 0, 0.1);
+  --primary: #c57d12;
+  --primary-hover: #d48c1f;
+  --primary-text: #1b1407;
+  --primary-tint: rgba(197, 125, 18, 0.14);
+  --status-idle: #685e52;
+  --status-working: #155a72;
+  --status-blocked: #a82323;
+  --status-done: #2f6317;
+  --status-working-tint: rgba(21, 90, 114, 0.12);
+  --status-blocked-tint: rgba(168, 35, 35, 0.12);
+  --status-done-tint: rgba(47, 99, 23, 0.12);
+  --danger-tint: rgba(168, 35, 35, 0.1);
+  --danger-text: #8f1d1d;
+  --scrim: rgba(40, 32, 22, 0.35);
+  --shadow-drawer: 0 0 40px rgba(40, 32, 22, 0.22);
+  --shadow-pop: 0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(40, 32, 22, 0.07);
+  --term-bg: #faf8f3;
+  --term-fg: #2a251f;
+  --term-cursor: #8c5000;
+  --term-selection: #f0d9ae;
 }
 
 [data-density="compact"] {
@@ -217,15 +217,29 @@ button {
   outline-offset: var(--ring-offset);
 }
 
-/* trough 0.75: --status-working text stays 5.3:1 on --bg-panel and 4.7:1 on --bg-hover at the dimmest frame */
+/* only dots pulse (connection, RUN, "Working…"): state words stay at full contrast, so the
+   trough can go deep enough to read as motion */
 @keyframes pulse {
   0%,
   100% {
     opacity: 1;
   }
   50% {
-    opacity: 0.75;
+    opacity: 0.35;
   }
+}
+
+/* read by assistive tech, not drawn: a live status that would repeat what a dot shows */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ---------- shell ---------- */
@@ -369,10 +383,15 @@ button {
   font-size: var(--fs-xs);
 }
 
+/* one chip for the connection; the herdr version lives in its tooltip and the sidebar footer */
 .conn {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  height: var(--chip-h);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
   color: var(--text-dim);
 }
 
@@ -424,8 +443,8 @@ button {
   border-color: var(--border);
 }
 
-/* a disabled control must not read as the strongest control on screen: 0.7 keeps the
-   accent glyph at 4.90:1 on --bg-panel (0.6 would drop it to 3.88:1) */
+/* a disabled control must not read as the strongest control on screen: 0.7 keeps the dark
+   accent glyph at 4.93:1 on --bg-panel (disabled controls are exempt from the AA minimum) */
 .icon-button:disabled {
   opacity: 0.7;
   cursor: default;
@@ -572,6 +591,15 @@ button {
 .badge-working {
   color: var(--status-working);
   background: var(--status-working-tint);
+}
+
+/* RUN is the one state that moves: a dot breathes before the word, the word holds still */
+.badge-working::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
   animation: pulse var(--dur-pulse) var(--ease-out) infinite;
 }
 
@@ -629,6 +657,11 @@ button {
 .segmented > button[aria-pressed="true"] {
   background: var(--bg-hover);
   color: var(--text-strong);
+}
+
+/* the chosen lens carries the selection color on its glyph, like the rail does in the list */
+.segmented > button[aria-pressed="true"] svg {
+  color: var(--accent);
 }
 
 /* keyboard key hint */
@@ -916,6 +949,11 @@ button {
 /* phones: the version pill is the least useful header item; below that, the brand word
    and the subtitle go too - the drawer names the workspace, and the mark keeps the identity */
 @media (max-width: 480px) {
+  .conn {
+    padding: 0 var(--space-1);
+    background: transparent;
+  }
+
   .pill-version,
   .pill-offline,
   .brand-name,
@@ -937,7 +975,7 @@ button {
     transition: none;
   }
 
-  .badge-working,
+  .badge-working::before,
   .conn-reconnecting .conn-dot {
     animation: none;
   }
