@@ -107,6 +107,18 @@ describe("push delivery", () => {
     expect(received!.vapidClaims.sub).toBe("https://github.com/devswha/herdr-web-ui");
   });
 
+  it("keeps equal pane IDs, titles, status baselines and push links separated by PC", async () => {
+    const push = subscribed();
+    push.seed([pane("w1:p1", "working", "alpha")], "pc-a", "Work PC");
+    push.seed([pane("w1:p1", "working", "beta")], "pc-b", "Home PC");
+    await push.onStatus("w1:p1", "blocked", "pc-a");
+    await push.onStatus("w1:p1", "done", "pc-b");
+    expect(fake.received.map((r) => r.payload.machine_id)).toEqual(["pc-a", "pc-b"]);
+    expect(fake.received.map((r) => r.payload.title)).toEqual(["Work PC · alpha", "Home PC · beta"]);
+    expect(fake.received[0]!.payload.tag).not.toBe(fake.received[1]!.payload.tag);
+    expect(fake.received.every((r) => r.vapidValid)).toBe(true);
+  });
+
   it("measures the first change after a restart against the seeded baseline", async () => {
     const push = subscribed();
     // never seeded: the first report is a first sighting, not news (same rule as the tab)

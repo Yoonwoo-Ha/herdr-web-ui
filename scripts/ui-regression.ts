@@ -85,10 +85,13 @@ try {
   assert.equal(inputs.length, inputCount, "approval state must hold the queue");
   assert.equal(await page.locator(".composer-queue-text").count(), 1);
   await report("idle");
-  await until(() => inputs.length > inputCount, "queue dispatch on idle");
+  await Bun.sleep(300);
+  assert.equal(inputs.length, inputCount, "a status change must not dispatch held input");
+  await page.getByRole("button", { name: "Send now", exact: true }).click();
+  await until(() => inputs.length > inputCount, "explicit queue send");
   assert.equal(inputs.at(-1)?.pane_id, paneA);
   await page.locator(".composer-queue-text").waitFor({ state: "hidden" });
-  console.log("PASS queue held at approval and dispatched on idle to its owner");
+  console.log("PASS queue held through status changes and explicitly sent to its owner");
 
   const selectPane = async (paneId: string) => {
     await page.locator(`.pane-select[title^="${paneId} —"]`).click();
@@ -135,8 +138,8 @@ try {
     await createGate;
     await route.continue();
   });
-  await page.getByRole("button", { name: "New session", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "New session", exact: true });
+  await page.getByRole("button", { name: /^New session/ }).click();
+  const dialog = page.getByRole("dialog", { name: /^New session/ });
   await dialog.getByLabel(/^Directory/).fill(root);
   await dialog.getByLabel(/^Name/).fill("herdr-web-ui-test-browser-created");
   await dialog.getByRole("button", { name: "Start session", exact: true }).click();
@@ -152,6 +155,30 @@ try {
   await until(async () => (await page.locator(`.pane-select[title^="${created.pane_id} —"]`).getAttribute("aria-current")) === "true", "created pane selected");
   assert.equal(createRequests, 1);
   console.log("PASS session creation stays pending and opens one owned workspace");
+
+  // herdr 0.9.0 reports Codex's first directory-trust menu as idle. Exercise a
+  // live, owned PTY menu so the chat controls cannot depend on a blocked badge.
+  await selectPane(paneB);
+  await herdrRpc("pane.send_text", {
+    pane_id: paneB,
+    text: "printf '\\033[2J\\033[HDo you trust the contents of this directory?\\n\\n› 1. Yes, continue\\n  2. No, quit\\n\\n  Press enter to continue\\n'; read -r qa_answer",
+  });
+  await herdrRpc("pane.send_keys", { pane_id: paneB, keys: ["Enter"] });
+  await until(async () => {
+    const result = await herdrRpc<{ read: { text: string } }>("pane.read", {
+      pane_id: paneB, source: "visible", format: "text",
+    });
+    return result.read.text.includes("Press enter to continue");
+  }, "startup menu painted");
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "codex", state: "idle" });
+  await page.locator('.composer-status[data-status="idle"]').waitFor();
+  const startupPrompt = page.locator(".prompt-card");
+  await startupPrompt.getByRole("button", { name: "Yes, continue", exact: true }).waitFor();
+  assert.equal(await page.locator('.composer-status[data-status="idle"]').count(), 1);
+  assert.equal(await page.locator(".chat-empty").count(), 0);
+  await startupPrompt.getByRole("button", { name: "Yes, continue", exact: true }).click();
+  await startupPrompt.waitFor({ state: "hidden" });
+  console.log("PASS startup prompt appears and accepts an answer while the agent status is idle");
 
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await mobile.addInitScript(() => {

@@ -4,12 +4,14 @@ import { X } from "lucide-react";
 import "./NewSessionDialog.css";
 
 import type { AgentKind } from "../../shared/protocol.ts";
-import { ApiError, createWorkspace, fetchAgentKinds } from "../lib/api.ts";
+import { ApiError } from "../lib/api.ts";
+import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 
 const LAST_AGENT_KEY = "herdr-web-ui:new-session-agent";
 
 export interface NewSessionDialogProps {
   open: boolean;
+  machineName?: string;
   defaultCwd: string | null;
   onClose: () => void;
   onCreated: (paneId: string) => void;
@@ -28,7 +30,9 @@ function directoryBasename(value: string): string {
   return trimmed.split("/").pop() ?? "";
 }
 
-export function NewSessionDialog({ open, defaultCwd, onClose, onCreated }: NewSessionDialogProps) {
+export function NewSessionDialog({ open, defaultCwd, onClose, onCreated, machineName }: NewSessionDialogProps) {
+  const machineId = useMachineId();
+  const { createWorkspace, fetchAgentKinds } = useMachineApi();
   const [agents, setAgents] = useState<AgentKind[]>([]);
   const [agentKind, setAgentKind] = useState(rememberedAgent);
   const [cwd, setCwd] = useState(defaultCwd ?? "");
@@ -121,7 +125,7 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated }: NewSe
     <div className="modal-scrim new-session-scrim" onMouseDown={closeFromScrim}>
       <form className="modal new-session-modal" role="dialog" aria-modal="true" aria-labelledby="new-session-title" onSubmit={(event) => void submit(event)}>
         <header className="modal-header">
-          <h2 className="modal-title" id="new-session-title">New session</h2>
+          <h2 className="modal-title" id="new-session-title">New session · {machineName ?? machineId}</h2>
           <button type="button" className="icon-button" aria-label="Close new session dialog" disabled={pending} onClick={onClose}>
             <X aria-hidden="true" />
           </button>

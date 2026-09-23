@@ -1,8 +1,13 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { execFileSync } from "node:child_process";
+
+let revision: string | null = null;
+try { revision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { /* non-Git build */ }
 
 export default defineConfig({
   plugins: [react()],
+  define: { __APP_REVISION__: JSON.stringify(revision) },
   server: {
     port: 5173,
     proxy: {

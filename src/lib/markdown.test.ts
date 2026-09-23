@@ -43,4 +43,16 @@ describe("inline markdown", () => {
       "code", "text", "strong", "text", "em", "text", "del",
     ]);
   });
+
+  it("preserves underscores in identifiers while retaining standalone emphasis", () => {
+    for (const value of ["MAC_QA_CHAT_OK", "api_key_name", "foo__bar__baz", "한글_세션_이름"]) {
+      expect(parseInline(value)).toEqual([{ type: "text", value }]);
+    }
+    expect(parseInline("_italic_ (__bold__) `api_key_name`").map((node) => node.type)).toEqual([
+      "em", "text", "strong", "text", "code",
+    ]);
+    expect(parseInline("__MAC_QA_CHAT_OK__")).toEqual([
+      { type: "strong", children: [{ type: "text", value: "MAC_QA_CHAT_OK" }] },
+    ]);
+  });
 });

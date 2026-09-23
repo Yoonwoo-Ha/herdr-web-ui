@@ -1,0 +1,201 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Updater, runCommand, type Release } from "./updater.ts";
+
+let directory: string, upstream: string, root: string, stateDir: string;
+let updater: Updater;
+const git = (cwd: string, ...args: string[]) => runCommand(cwd, ["git", ...args]);
+async function commit(contents: string, failBuild = false) {
+  writeFileSync(join(upstream, "build-fixture.ts"), failBuild ? "throw new Error('fixture build failure');" :
+    `await Bun.write('dist/index.html', ${JSON.stringify(contents)});`);
+  await git(upstream, "add", ".");
+  await git(upstream, "commit", "-qm", contents);
+  return git(upstream, "rev-parse", "HEAD");
+}
+
+beforeEach(async () => {
+  directory = mkdtempSync(join(tmpdir(), "herdr-updater-"));
+  upstream = join(directory, "upstream"); root = join(directory, "checkout"); stateDir = join(directory, "state");
+  mkdirSync(upstream);
+  await git(upstream, "init", "-q", "-b", "main");
+  await git(upstream, "config", "user.email", "test@example.invalid");
+  await git(upstream, "config", "user.name", "Updater test");
+  writeFileSync(join(upstream, "package.json"), JSON.stringify({ name: "updater-fixture", scripts: {
+    typecheck: "bun --eval 'process.exit(0)'", build: "bun build-fixture.ts",
+  } }));
+  writeFileSync(join(upstream, ".gitignore"), "node_modules/\ndist/\n");
+  await runCommand(upstream, [process.execPath, "install"]);
+  await commit("first");
+  await git(directory, "clone", "-q", upstream, root);
+  updater = new Updater({ root, stateDir, autoUpdate: false, publish() {}, activate: async (_next, persist) => persist() });
+  await updater.initialize();
+});
+
+afterEach(() => {
+  updater?.stop();
+  rmSync(directory, { recursive: true, force: true });
+});
+
+describe("managed source updates with real Git repositories and builds", () => {
+  it("checks without installing, then builds an exact revision without changing the source", async () => {
+    const original = await git(root, "rev-parse", "HEAD");
+    const target = await commit("second");
+    await updater.request("check");
+    expect(updater.status.available).toBe(true);
+    expect(updater.status.current_revision).toBe(original);
+    expect(readdirSync(stateDir).filter(name => name.startsWith("release-"))).toHaveLength(0);
+    await updater.request("install");
+    expect(updater.status.error).toBeNull();
+    expect(updater.status.current_revision).toBe(target);
+    expect(readFileSync(join(updater.release!.directory, "dist/index.html"), "utf8")).toBe("second");
+    expect(await git(root, "rev-parse", "HEAD")).toBe(original);
+    expect(await git(root, "status", "--porcelain")).toBe("");
+    const resumed = new Updater(updater.options);
+    expect((await resumed.initialize())?.revision).toBe(target);
+    resumed.stop();
+  });
+
+  it("refuses local changes, detached branches, and an ahead/diverged history", async () => {
+    await commit("second");
+    writeFileSync(join(root, "user-draft.txt"), "preserve");
+    await updater.request("install");
+    expect(updater.status.blocked_reason).toContain("local changes");
+    expect(readFileSync(join(root, "user-draft.txt"), "utf8")).toBe("preserve");
+    rmSync(join(root, "user-draft.txt"));
+    await git(root, "checkout", "--detach", "--quiet");
+    await updater.request("install");
+    expect(updater.status.blocked_reason).toContain("main");
+    await git(root, "checkout", "main", "--quiet");
+    await git(upstream, "checkout", "--orphan", "replacement", "--quiet");
+    await commit("unrelated");
+    await git(upstream, "branch", "-M", "main");
+    await updater.request("install");
+    expect(updater.status.available).toBe(false);
+    expect(updater.status.blocked_reason).toContain("diverges");
+  });
+
+  it("leaves the current release intact on build failure and cleans the failed stage", async () => {
+    const original = updater.release;
+    await commit("broken build", true);
+    await updater.request("install");
+    expect(updater.status.phase).toBe("error");
+    expect(updater.status.error).toContain("fixture build failure");
+    expect(updater.release).toBe(original);
+    expect(readdirSync(stateDir).filter(name => name.startsWith("release-"))).toHaveLength(0);
+  });
+
+  it("does not persist a candidate that failed startup", async () => {
+    updater.options.activate = async () => { throw new Error("health check failed; previous restored"); };
+    const original = updater.release;
+    await commit("bad startup");
+    await updater.request("install");
+    expect(updater.release).toBe(original);
+    expect(updater.status.error).toContain("health check failed");
+    expect(readdirSync(stateDir)).not.toContain("current.json");
+  });
+
+  it("automatically installs when enabled and coalesces overlapping requests", async () => {
+    let activations = 0;
+    updater.options.autoUpdate = true;
+    updater.options.activate = async (_release: Release, persist) => { activations++; persist(); };
+    const target = await commit("automatic");
+    await Promise.all([updater.request("check"), updater.request("install"), updater.request("check")]);
+    expect(activations).toBe(1);
+    expect(updater.status.current_revision).toBe(target);
+  });
+
+  it("cancels an update command with a deadline", async () => {
+    const start = Date.now();
+    await expect(runCommand(root, [process.execPath, "--eval", "setInterval(() => {}, 1000)"], undefined, 100)).rejects.toThrow("timed out");
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
+
+  it("does not repeatedly restart into the same failed automatic update, including after restart", async () => {
+    updater.options.autoUpdate = true;
+    let attempts = 0;
+    updater.options.activate = async () => { attempts++; throw new Error("startup failed"); };
+    await commit("bad automatic startup");
+    await updater.request("check");
+    await updater.request("check");
+    expect(attempts).toBe(1);
+    expect(updater.status.error).toContain("previously failed");
+    const resumed = new Updater(updater.options);
+    await resumed.initialize();
+    await resumed.request("check");
+    expect(attempts).toBe(1);
+    await resumed.request("install");
+    expect(attempts).toBe(2);
+    resumed.stop();
+  });
+
+  it("restarts the real bridge over IPC, rolls back a failed boot, and resumes the saved release", async () => {
+    updater.stop();
+    mkdirSync(join(upstream, "server"));
+    const entry = `
+      import { createServer } from ${JSON.stringify(join(import.meta.dir, "index.ts"))};
+      import { connectUpdater } from ${JSON.stringify(join(import.meta.dir, "update-api.ts"))};
+      const server = createServer({ updates: connectUpdater() });
+      process.on('SIGTERM', () => { server.stop(); setTimeout(() => process.exit(0), 50); });
+      process.on('disconnect', () => { server.stop(); process.exit(0); });
+    `;
+    writeFileSync(join(upstream, "server/index.ts"), entry);
+    await commit("managed initial");
+    await git(root, "pull", "--ff-only", "--quiet");
+    const reservation = Bun.serve({ port: 0, fetch: () => new Response() });
+    const port = reservation.port!; reservation.stop(true);
+    const origin = `http://127.0.0.1:${port}`;
+    const headers = { authorization: "Bearer test-managed-token", "x-herdr-update": "1" };
+    const launch = () => Bun.spawn([process.execPath, "--eval",
+      `import {runManaged} from ${JSON.stringify(join(import.meta.dir, "managed.ts"))}; await runManaged(${JSON.stringify(root)});`], {
+      env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", HERDR_WEB_STATE_DIR: stateDir,
+        HERDR_WEB_TOKEN: "test-managed-token", HERDR_WEB_AUTO_UPDATE: "0" },
+      stdout: "ignore", stderr: "ignore",
+    });
+    let processHandle = launch();
+    const readStatus = async () => {
+      try { return await (await fetch(`${origin}/api/updates`, { headers })).json() as typeof updater.status; }
+      catch { return null; }
+    };
+    const until = async (check: () => Promise<boolean>) => {
+      const deadline = Date.now() + 12_000;
+      while (!await check()) {
+        if (Date.now() > deadline) throw new Error(`Managed update timeout: ${JSON.stringify(await readStatus())}`);
+        await Bun.sleep(50);
+      }
+    };
+    const request = async (command: string) => {
+      const response = await fetch(`${origin}/api/updates/${command}`, { method: "POST", headers });
+      expect(response.status).toBe(202);
+    };
+    try {
+      await until(async () => (await readStatus())?.managed === true);
+      const target = await commit("managed second");
+      await request("check");
+      await until(async () => (await readStatus())?.available === true);
+      await request("install");
+      await until(async () => (await readStatus())?.current_revision === target);
+      expect((await readStatus())?.error).toBeNull();
+      const health = await (await fetch(`${origin}/api/health`)).json() as { web_ui: { revision: string } };
+      expect(health.web_ui.revision).toBe(target);
+
+      writeFileSync(join(upstream, "server/index.ts"), "throw new Error('fixture startup failure');");
+      await commit("broken startup");
+      await request("check");
+      await until(async () => (await readStatus())?.available === true);
+      await request("install");
+      await until(async () => (await readStatus())?.phase === "error");
+      expect((await readStatus())?.current_revision).toBe(target);
+      expect((await readStatus())?.error).toContain("Previous version restored");
+
+      processHandle.kill("SIGTERM"); await processHandle.exited;
+      processHandle = launch();
+      await until(async () => (await readStatus())?.current_revision === target);
+      expect((await readStatus())?.phase).toBe("idle");
+    } finally {
+      processHandle.kill("SIGTERM");
+      await processHandle.exited;
+    }
+  }, 30_000);
+});

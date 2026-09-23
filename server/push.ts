@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import webpush from "web-push";
 
+import { paneStorageId } from "../shared/machines.ts";
 import type { AgentStatus, HerdrPane, PushPayload } from "../shared/protocol.ts";
 import {
   ENDED_NOTIFICATION_BODY,
@@ -49,10 +50,10 @@ export interface PushService {
   /** One confirmation push to one device, so enabling alerts proves the whole path works. */
   sendTest(endpoint: string): Promise<PushDelivery | null>;
   /** The collector's view of every pane: status baselines and the titles notifications use. */
-  seed(panes: readonly HerdrPane[]): void;
+  seed(panes: readonly HerdrPane[], machineId?: string, machineName?: string): void;
   /** Resolves once every device has answered (the server fires and forgets; tests wait). */
-  onStatus(paneId: string, status: AgentStatus): Promise<void>;
-  onEnded(paneId: string): Promise<void>;
+  onStatus(paneId: string, status: AgentStatus, machineId?: string): Promise<void>;
+  onEnded(paneId: string, machineId?: string): Promise<void>;
 }
 
 export interface PushServiceOptions {
@@ -122,7 +123,7 @@ export function createPushService(options: PushServiceOptions): PushService {
   let vapid: { publicKey: string; privateKey: string } | null = null;
   let subscriptions: Map<string, PushSubscriptionRecord> | null = null;
   const lastStatus = new Map<string, AgentStatus>();
-  let titles = new Map<string, string>();
+  const titles = new Map<string, string>();
 
   /** Created on first need: a server nobody subscribes to never writes a key. */
   function keys(): { publicKey: string; privateKey: string } {
@@ -227,26 +228,28 @@ export function createPushService(options: PushServiceOptions): PushService {
       return deliver(subscription, { pane_id: null, title: "herdr", body: "Alerts are on for this device", tag: "herdr-test" }, "normal");
     },
 
-    seed(panes) {
-      titles = new Map(panes.map((pane) => [pane.pane_id, paneTitle(pane)]));
+    seed(panes, machineId = "local", machineName) {
       for (const pane of panes) {
         // only fill gaps: an event already seen is newer than any snapshot
-        if (!lastStatus.has(pane.pane_id)) lastStatus.set(pane.pane_id, pane.agent_status);
+        const key = paneStorageId(machineId, pane.pane_id);
+        titles.set(key, `${machineName ? machineName + " · " : ""}${paneTitle(pane)}`);
+        if (!lastStatus.has(key)) lastStatus.set(key, pane.agent_status);
       }
     },
 
-    async onStatus(paneId, status) {
-      const previous = lastStatus.get(paneId);
-      lastStatus.set(paneId, status);
+    async onStatus(paneId, status, machineId = "local") {
+      const key = paneStorageId(machineId, paneId);
+      const previous = lastStatus.get(key);
+      lastStatus.set(key, status);
       if (!shouldNotifyStatus(previous, status) || store().size === 0) return;
-      const title = await titleOf(paneId);
-      await broadcast(statusMessage(paneId, title, status), status === "blocked" ? "high" : "normal");
+      const title = machineId === "local" ? await titleOf(paneId) : titles.get(key) ?? paneId;
+      await broadcast({ ...statusMessage(paneId, title, status), ...(machineId === "local" ? {} : { machine_id: machineId }), tag: paneNotificationTag(paneId, machineId) }, status === "blocked" ? "high" : "normal");
     },
 
-    async onEnded(paneId) {
+    async onEnded(paneId, machineId = "local") {
       if (store().size === 0) return;
       // the pane may already be gone from herdr: the seeded title is what is left
-      await broadcast(endedMessage(paneId, titles.get(paneId) ?? paneId), "normal");
+      await broadcast({ ...endedMessage(paneId, titles.get(paneStorageId(machineId, paneId)) ?? paneId), ...(machineId === "local" ? {} : { machine_id: machineId }), tag: paneNotificationTag(paneId, machineId) }, "normal");
     },
   };
 }

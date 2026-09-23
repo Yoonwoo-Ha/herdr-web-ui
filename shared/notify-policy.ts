@@ -30,6 +30,6 @@ export function statusNotificationBody(status: AgentStatus): string {
 export const ENDED_NOTIFICATION_BODY = "terminal ended";
 
 /** One notification slot per pane: a newer one replaces the older, whichever path showed it. */
-export function paneNotificationTag(paneId: string): string {
-  return `herdr-pane-${paneId}`;
+export function paneNotificationTag(paneId: string, machineId = "local"): string {
+  return machineId === "local" ? `herdr-pane-${paneId}` : `herdr-remote-${encodeURIComponent(machineId)}-${encodeURIComponent(paneId)}`;
 }

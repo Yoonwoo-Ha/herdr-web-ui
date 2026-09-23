@@ -32,7 +32,9 @@ export function safeMarkdownHref(href: string): string | null {
 /** Dependency-free inline markdown scanner. Unknown or malformed markup remains text. */
 export function parseInline(source: string): InlineNode[] {
   const nodes: InlineNode[] = [];
-  const marker = /(`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\)|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<!_)_[^_\n]+_(?!_))/g;
+  // Underscores inside identifiers are literal: MAC_QA_CHAT_OK must survive
+  // rendering exactly as it appears in the terminal and native transcript.
+  const marker = /(`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\)|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/gu;
   let offset = 0;
   for (const match of source.matchAll(marker)) {
     const index = match.index ?? 0;

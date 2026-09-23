@@ -1,0 +1,81 @@
+name: Remote PC bundles
+on:
+  workflow_dispatch:
+  push:
+    tags: ['remote-v*']
+permissions:
+  contents: read
+jobs:
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck && bun run build
+      - run: bun run scripts/build-remote-bundle.ts
+      - run: bun run scripts/remote-bundle-smoke.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-${{ matrix.os }}
+          path: remote-bundles/*
+  ssh:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: sudo apt-get update && sudo apt-get install -y openssh-server
+      - run: bun install --frozen-lockfile && bun run build && bun run scripts/build-remote-bundle.ts
+      - run: bun run scripts/ssh-integration.ts
+        env:
+          SSH_TEST_PASSWORD: 1
+      - run: bun run scripts/ssh-password-docker.ts
+  release:
+    if: startsWith(github.ref, 'refs/tags/remote-v')
+    needs: [bundle, ssh]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: bundles
+          merge-multiple: true
+      - name: Merge pinned platform checksums
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import glob, json, os
+          version = os.environ['RELEASE_TAG'].removeprefix('remote-v')
+          result = {'version': version, 'assets': {}}
+          for path in glob.glob('bundles/manifest-*.json'):
+              data = json.load(open(path))
+              assert data['version'] == version
+              for platform, asset in data['assets'].items():
+                  asset['url'] = 'https://github.com/' + os.environ['REPOSITORY'] + '/releases/download/' + os.environ['RELEASE_TAG'] + '/' + asset['url']
+                  result['assets'][platform] = asset
+          assert len(result['assets']) == 4
+          json.dump(result, open('bundles/manifest.json', 'w'), indent=2)
+          PY
+      - name: Publish versioned bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" bundles/*.tgz bundles/manifest.json --title "$RELEASE_TAG" --notes 'SSH remote bridge runtimes with SHA-256 manifest.'

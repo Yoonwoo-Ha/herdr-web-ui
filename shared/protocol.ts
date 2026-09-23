@@ -29,9 +29,28 @@ export type HerdrWorkspace = WorkspaceInfo;
 export type HerdrTab = TabInfo;
 export type HerdrPane = PaneInfo;
 
+export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAction, BridgeIdentity, BridgeHealth } from "./machines.ts";
+
+/** Machine API (same token gate; mutations require X-Herdr-Machine: 1 + same origin)
+ * GET /api/health?scope=bridge -> BridgeHealth, never waits for herdr
+ * GET /api/bridge -> authenticated BridgeIdentity (socket + runtime compatibility)
+ * GET /api/machines -> { machines: Machine[] }; GET /api/machines/events -> MachineEvent SSE
+ * POST /api/machines/setup -> SetupJob; GET/POST/DELETE /api/machines/setup/:job_id
+ * PATCH /api/machines/:id { name?, enabled? }; DELETE /api/machines/:id
+ * /api/machines/:id/{session,agents,pane/*,workspace/*} -> existing target-local API
+ * /ws?machine_id=:id -> immutable target, unchanged role + output ACK protocol
+ * Legacy paths and missing machine IDs continue to mean local.
+ */
+
 /** HTTP API
- *  GET    /api/health                    -> { ok: true, herdr: { version, protocol }, auth: HealthAuth }
+ *  GET    /api/health                    -> { ok: true, herdr: { version, protocol }, auth: HealthAuth,
+ *                                          web_ui: { boot_id: string | null, revision: string | null } }
  *  GET    /api/session                   -> { snapshot: SessionSnapshot }
+ *  GET    /api/updates                   -> UpdateStatus (shared/update.ts), no-store
+ *  POST   /api/updates/check             -> 202 { accepted: true }
+ *  POST   /api/updates/install           -> 202 { accepted: true }
+ *         Update POSTs require X-Herdr-Update: 1, same-origin browser requests,
+ *         and the usual token gate. Managed starts only; status is polled during restart.
  *  GET    /api/agents                    -> { agents: AgentKind[] } (herdr's agent manifests: the
  *         kinds `agent.start` accepts, for the new-session dialog)
  *  GET    /api/pane/read?pane_id=&source=&format=&lines=  -> { read: PaneReadResult }
@@ -177,6 +196,8 @@ export interface PromptAnswer {
  * is shared with the in-tab notification of the same pane, so one replaces the other.
  */
 export interface PushPayload {
+  /** Absent in legacy payloads means local. */
+  machine_id?: string;
   pane_id: string | null;
   title: string;
   body: string;

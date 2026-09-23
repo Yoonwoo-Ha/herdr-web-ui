@@ -1,0 +1,21 @@
+.update-actions,
+.update-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-updates .settings-hint {
+  overflow-wrap: anywhere;
+}
+
+.update-notice {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-4);
+  color: var(--text-strong);
+  background: var(--bg-elevated);
+  border-bottom: var(--hairline) solid var(--border);
+  font-size: var(--fs-xs);
+}

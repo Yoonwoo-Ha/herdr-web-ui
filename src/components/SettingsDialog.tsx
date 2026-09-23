@@ -7,11 +7,14 @@ import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, formatKeys } from "../lib/shortcuts.ts";
 import { TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, useSettings } from "../lib/settings.ts";
+import type { UpdatesModel } from "../lib/updates.ts";
+import { UpdateControls } from "./UpdateControls.tsx";
 
 export interface SettingsDialogProps {
   open: boolean;
   onClose: () => void;
   actions: AppActions;
+  updates: UpdatesModel;
 }
 
 function Toggle({ checked, label, onChange }: { checked: boolean; label: string; onChange: (checked: boolean) => void }) {
@@ -22,7 +25,7 @@ function Toggle({ checked, label, onChange }: { checked: boolean; label: string;
   );
 }
 
-export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) {
   const { settings, update } = useSettings();
   const installPrompt = useInstallPrompt();
   const firstControlRef = useRef<HTMLButtonElement>(null);
@@ -118,6 +121,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <p><strong>herdr web ui</strong></p>
             <a href="https://github.com/devswha/herdr-web-ui" target="_blank" rel="noreferrer">github.com/devswha/herdr-web-ui</a>
           </section>
+          <UpdateControls updates={updates} />
         </div>
       </section>
     </div>

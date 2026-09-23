@@ -9,7 +9,8 @@ import { controlCode, isPrintable, keySequence, type KeyBarKey } from "../lib/ke
 import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "../lib/draft.ts";
 import { QUEUE_READY_STATUS, composerPayload } from "../lib/compose.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
-import { uploadPaneImage } from "../lib/api.ts";
+import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
+import { paneStorageId } from "../../shared/machines.ts";
 import { KeyBar } from "./KeyBar.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { Composer } from "./Composer.tsx";
@@ -61,6 +62,8 @@ export function PaneTerminal({
   onConnectionChange,
   onServerMessage,
 }: PaneTerminalProps) {
+  const machineId = useMachineId();
+  const { uploadPaneImage } = useMachineApi();
   const chatView = view === "chat";
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -82,6 +85,13 @@ export function PaneTerminal({
   // input typed while disconnected, held for the user to review and send
   const [draft, setDraft] = useState<InputDraft>(EMPTY_DRAFT);
   const draftPaneRef = useRef<string | null>(null);
+  const draftOwner = useRef<string | null>(null);
+  useEffect(() => {
+    if (!paneId) return;
+    const owner = paneStorageId(machineId, paneId);
+    if (draftOwner.current !== owner) { draftOwner.current = owner; return; }
+    try { if (draftIsEmpty(draft)) localStorage.removeItem(`herdr-web-ui:terminal-draft:${owner}`); else localStorage.setItem(`herdr-web-ui:terminal-draft:${owner}`, JSON.stringify(draft)); } catch {}
+  }, [draft, paneId]);
   // transient OSC 52 feedback ("copied") — a pill in the banner column
   const [clipboardNote, setClipboardNote] = useState<string | null>(null);
   const clipboardTimerRef = useRef<number | null>(null);
@@ -92,12 +102,12 @@ export function PaneTerminal({
     setChatMetadata((previous) => previous?.pane === pane && previous.value?.model === value?.model
       && previous.value?.reasoning_effort === value?.reasoning_effort ? previous : { pane, value });
   }, []);
-  // the next message queued while the agent runs (chatmux's queued draft): held
-  // per pane in localStorage, dispatched the moment the run ends. It carries the
+  // The next message is held per target in localStorage for an explicit send. It carries the
   // pane it was written for, because a pane switch changes `agent`/`agentStatus`
   // in the same commit that reloads this state: without the tag, the dispatch
   // effect sees the OLD text beside the NEW pane's ready status and types one
   // pane's message into another pane's agent.
+  const queueOwner = useRef<string | null>(null);
   const [queued, setQueued] = useState<QueuedMessage | null>(null);
 
   paneRef.current = paneId;
@@ -156,7 +166,7 @@ export function PaneTerminal({
       return true;
     });
 
-    const socket = new HerdrSocket();
+    const socket = new HerdrSocket(`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws?machine_id=${encodeURIComponent(machineId)}`);
     socketRef.current = socket;
     const off = socket.on((message) => {
       onServerMessageRef.current?.(message);
@@ -188,7 +198,7 @@ export function PaneTerminal({
         if (!observeRef.current || message.pane_id !== paneRef.current) return;
         if (term.cols !== message.cols || term.rows !== message.rows) term.resize(message.cols, message.rows);
       } else if (message.type === "error") {
-        if (message.code === "output_stalled") {
+        if (message.code === "output_stalled" || message.code === "attach_conflict") {
           setOutputError(message.message);
           setEnded(true);
           setConnected(false);
@@ -351,14 +361,21 @@ export function PaneTerminal({
     setEnded(false);
     setOutputError(null);
     term.options.disableStdin = observeRef.current;
-    setDraft(EMPTY_DRAFT);
-    draftPaneRef.current = null;
+    draftOwner.current = null;
+    let saved = EMPTY_DRAFT;
+    try {
+      const value = paneId ? JSON.parse(localStorage.getItem(`herdr-web-ui:terminal-draft:${paneStorageId(machineId, paneId)}`) ?? "null") : null;
+      if (value && typeof value.text === "string" && Number.isInteger(value.droppedSpecial)) saved = value;
+    } catch {}
+    setDraft(saved);
+    draftPaneRef.current = paneId;
     term.reset();
     // a message queued for the next idle moment is remembered per pane
+    queueOwner.current = null;
     setQueued(() => {
       if (paneId === null) return null;
       try {
-        const text = window.localStorage.getItem(`herdr-web-ui:queue:${paneId}`);
+        const text = window.localStorage.getItem(`herdr-web-ui:queue:${paneStorageId(machineId, paneId)}`);
         return text === null ? null : { pane: paneId, text };
       } catch { return null; }
     });
@@ -452,23 +469,17 @@ export function PaneTerminal({
     [agent, agentStatus, sendComposerText],
   );
 
-  // the queue auto-dispatches once the pane reports a ready state (idle or done)
-  // and on reconnect. Approval/question menus (`blocked`) and an
-  // unrecognized or `unknown` status holds it: see QUEUE_READY_STATUS.
-  useEffect(() => {
-    if (queued === null || queued.pane !== paneId) return;
-    if (agent === null || !readyForQueue || !connected || ended || observing) return;
-    if (sendComposerText(queued.text)) setQueued(null);
-  }, [queued, paneId, agent, readyForQueue, connected, ended, observing, sendComposerText]);
-
-  // the queue is per-pane durable: a reload while the agent runs still delivers
+  // A reconnect or status refresh never sends held text without a user action.
+  // Held messages survive reloads but always require review and an explicit send.
   useEffect(() => {
     const pane = paneRef.current;
     if (pane === null) return;
+    const owner = paneStorageId(machineId, pane);
+    if (queueOwner.current !== owner) { queueOwner.current = owner; return; }
     try {
       if (queued !== null && queued.pane === pane && queued.text.trim().length > 0) {
-        window.localStorage.setItem(`herdr-web-ui:queue:${pane}`, queued.text);
-      } else if (queued === null) window.localStorage.removeItem(`herdr-web-ui:queue:${pane}`);
+        window.localStorage.setItem(`herdr-web-ui:queue:${paneStorageId(machineId, pane)}`, queued.text);
+      } else if (queued === null) window.localStorage.removeItem(`herdr-web-ui:queue:${paneStorageId(machineId, pane)}`);
     } catch {
       /* private mode: the queue just stops being remembered */
     }
@@ -495,7 +506,7 @@ export function PaneTerminal({
         {paneId !== null && outputError && (
           <div className="terminal-banner terminal-banner-warning terminal-banner-output-error" role="status">
             <span>{outputError}</span>
-            <a className="btn" href={`?pane=${encodeURIComponent(paneId)}`}>Reconnect</a>
+            <a className="btn" href={`?machine=${encodeURIComponent(machineId)}&pane=${encodeURIComponent(paneId)}`}>Reconnect</a>
           </div>
         )}
         {/* the chat lens says these itself (ChatView), inline; the pills are the grid's */}
@@ -555,7 +566,7 @@ export function PaneTerminal({
       {paneId !== null && !observing && !ended && queued !== null && queued.pane === paneId && (
         <div className="composer-queue" role="group" aria-label="Queued next message">
           <span className="composer-queue-label">
-            {readyForQueue ? "sending…" : "queued — sends when the agent is ready"}
+            {readyForQueue ? "Held message — review and send" : "Held until the agent is ready"}
           </span>
           <textarea
             className="composer-queue-text"

@@ -3,7 +3,8 @@ import { Send } from "lucide-react";
 
 import "./PromptCard.css";
 
-import { answerPanePrompt, ApiError } from "../lib/api.ts";
+import { ApiError } from "../lib/api.ts";
+import { useMachineApi } from "../lib/machineContext.tsx";
 import type { InteractivePrompt, PromptAnswer } from "../../shared/protocol.ts";
 
 export interface PromptCardProps {
@@ -14,6 +15,7 @@ export interface PromptCardProps {
 }
 
 export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered }: PromptCardProps) {
+  const { answerPanePrompt } = useMachineApi();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [custom, setCustom] = useState("");
   const [pending, setPending] = useState(false);

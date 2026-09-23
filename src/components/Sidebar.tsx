@@ -5,7 +5,7 @@ import "./Sidebar.css";
 
 import type { AgentStatus, PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import { paneTitle } from "../../shared/notify-policy.ts";
-import { closePane, moveWorkspace, renamePane, renameWorkspace } from "../lib/api.ts";
+import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { knownStatus, STATUS_WORD } from "../lib/status.ts";
@@ -56,9 +56,12 @@ export interface SidebarProps {
   selectedPaneId: string | null;
   actions: AppActions;
   version: string | null;
+  embedded?: boolean;
 }
 
-export function Sidebar({ snapshot, selectedPaneId, actions, version }: SidebarProps) {
+export function Sidebar({ snapshot, selectedPaneId, actions, version, embedded = false }: SidebarProps) {
+  const machineId = useMachineId();
+  const { closePane, moveWorkspace, renamePane, renameWorkspace } = useMachineApi();
   const [armedId, setArmedId] = useState<string | null>(null);
   const [editingPaneId, setEditingPaneId] = useState<string | null>(null);
   const [paneLabel, setPaneLabel] = useState("");
@@ -162,12 +165,15 @@ export function Sidebar({ snapshot, selectedPaneId, actions, version }: SidebarP
   const onDragStart = (event: DragEvent<HTMLElement>, workspaceId: string): void => {
     setDragWorkspaceId(workspaceId);
     event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", workspaceId);
+    event.dataTransfer.setData("application/x-herdr-workspace", JSON.stringify({ machine_id: machineId, workspace_id: workspaceId }));
   };
 
   const onDrop = (event: DragEvent<HTMLElement>, targetWorkspaceId: string): void => {
     event.preventDefault();
-    const sourceId = dragWorkspaceId ?? event.dataTransfer.getData("text/plain");
+    let payload: { machine_id?: string; workspace_id?: string };
+    try { payload = JSON.parse(event.dataTransfer.getData("application/x-herdr-workspace")); } catch { return; }
+    if (payload.machine_id !== machineId || typeof payload.workspace_id !== "string") return;
+    const sourceId = dragWorkspaceId ?? payload.workspace_id;
     setDragWorkspaceId(null);
     reorderWorkspace(sourceId, workspaceOrder.indexOf(targetWorkspaceId));
   };
@@ -195,13 +201,13 @@ export function Sidebar({ snapshot, selectedPaneId, actions, version }: SidebarP
   );
 
   return (
-    <div className="sidebar-shell">
-      <div className="sidebar-topbar">
+    <div className={embedded ? "machine-workspaces" : "sidebar-shell"}>
+      {!embedded && <div className="sidebar-topbar">
         <button type="button" className="btn sidebar-new-session" onClick={actions.openNewSession}>
           <Plus aria-hidden="true" />
           New session
         </button>
-      </div>
+      </div>}
 
       <nav className="sidebar-list" aria-label="Herdr workspaces">
         {!snapshot && <p className="tree-state" role="status">Loading workspaces…</p>}
@@ -211,6 +217,8 @@ export function Sidebar({ snapshot, selectedPaneId, actions, version }: SidebarP
         {orderedWorkspaces.map((workspace) => {
           const visiblePanes = panes.filter((pane) => pane.workspace_id === workspace.workspace_id);
           if (visiblePanes.length === 0) return null;
+          // A single pane already names its workspace in the subtitle. Keep the
+          // separate workspace heading only when it groups several panes.
           const merged = visiblePanes.length === 1;
           return (
             <section
@@ -335,7 +343,7 @@ export function Sidebar({ snapshot, selectedPaneId, actions, version }: SidebarP
         )}
       </nav>
 
-      <footer className="sidebar-footer">
+      {!embedded && <footer className="sidebar-footer">
         {canInstall && (
           <button type="button" className="btn btn-ghost sidebar-footer-action" onClick={() => void install().catch((reason: unknown) => noteError(reason instanceof Error ? reason.message : String(reason)))}>
             <Download aria-hidden="true" />
@@ -350,7 +358,7 @@ export function Sidebar({ snapshot, selectedPaneId, actions, version }: SidebarP
           <span className="sidebar-app-name">herdr web ui</span>
           <span className="pill">herdr {version ?? "offline"}</span>
         </div>
-      </footer>
+      </footer>}
     </div>
   );
 }

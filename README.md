@@ -51,9 +51,15 @@ Structured chat depends on finding the correct local session file. Codex session
 
 Interactive prompt support depends on the agent's visible menu format. For unsupported menus, use Terminal. See the [chat-mode audit](docs/chat-mode-audit.md) for implementation details and verification.
 
+## Remote PCs over SSH
+
+Use **Add PC** in the sidebar to connect a Linux/macOS computer with an SSH alias or `user@address`. The app guides fingerprint/authentication prompts and approved installation, then groups local and remote workspaces by PC. Chat, files, images, terminal input and alerts follow the selected PC; SSH uses the web server account’s configuration.
+
+The server automatically finds locally built remote bundles in `remote-bundles/`, or downloads a published release. An explicit `HERDR_WEB_BUNDLE_MANIFEST` takes priority. Mac bundles can be prepared on Linux with `bun run build:remote darwin-arm64` (Apple Silicon) or `darwin-x64` (Intel). See [remote setup, deployment and verification](docs/remote-pcs.md) for packaging, reconnect behavior and the **Update bridge…** action. Existing herdr sessions and the connection server’s app updater are preserved.
+
 ## Get started
 
-You need **Bun 1.4+**, **Node 18+**, and a running **herdr 0.9.0+** server. The `herdr` CLI must be on `PATH`. herdr is a separate project and is not bundled here. Node runs the terminal-attach sidecar.
+You need **Bun 1.4+**, **Node 18+**, and a running **herdr 0.9.0+** server. The `herdr` CLI must be on `PATH`. herdr is a separate project. Install it separately for local sessions; remote runtime bundles include a verified fallback binary. Node runs the terminal-attach sidecar.
 
 ```bash
 git clone https://github.com/devswha/herdr-web-ui.git
@@ -88,6 +94,18 @@ herdr plugin config-dir devswha.herdr-web-ui
 
 Add `KEY=value` lines for the variables below. Protect that file if it contains a token. Plugin commands inherit herdr's environment, so use this file for persistent settings.
 
+### Updates
+
+`bun run start` and plugin `start` run a supervisor that checks `origin/main` after 10 seconds and every 5 minutes. Open **Settings → Updates** to check immediately or choose **Update and restart**. The header also announces an available update. Versions are identified by Git commit, independently of the herdr daemon version.
+
+To install updates automatically, set `HERDR_WEB_AUTO_UPDATE=1` before starting (or add it to the plugin's `env` file). The default is automatic checks with installation initiated from Settings. An existing server needs one stop/start with this version to enable the supervisor; plugin `start` leaves an already running server alone. `bun run server` and `bun run dev` remain development commands and do not install updates.
+
+Updates require a clean Git checkout on `main` with an `origin` remote. Local modifications, untracked files, and a running revision ahead of or diverging from `origin/main` block installation. Changing the source checkout's HEAD requires a supervisor restart. The updater never resets or overwrites the source checkout.
+
+Each candidate is fetched at an exact commit into a private checkout, installed with `bun install --frozen-lockfile`, typechecked, and built while the current bridge keeps serving. Only then does the supervisor restart the bridge and verify the new process's health. Failed startup restores the previous build. Automatic installation will not retry the same failed revision across checks or restarts; retry manually or wait for a newer commit. Herdr and its sessions keep running; browser connections briefly reconnect. A **Reload app** notice lets you load the new frontend after saving any unsent drafts.
+
+The active release pointer and the current/previous builds live under `HERDR_WEB_STATE_DIR/updates/` (separated by source path and port). Keep this directory across restarts, along with the existing push state. A manual source update takes precedence on the next start. Update commands and their status use the same token gate as terminal access; update POSTs additionally reject cross-site browser requests. Errors are visible in Settings and supervisor logs.
+
 ## Use it on your phone
 
 Serve the app over **HTTPS** to install it and receive Web Push notifications. For example, with Tailscale configured on your devices:
@@ -109,6 +127,7 @@ Tap the bell to enable notifications for that device. On iPhone, Web Push requir
 | --- | --- | --- |
 | `HOST` | `0.0.0.0` for direct runs; `127.0.0.1` for the plugin | Bind address |
 | `PORT` | `7317` | HTTP and WebSocket port |
+| `HERDR_WEB_AUTO_UPDATE` | `0` | `1` installs new `origin/main` revisions automatically under `bun run start` / plugin start; otherwise checks only |
 | `HERDR_SOCKET` | `~/.config/herdr/herdr.sock` | Socket used by both API calls and terminal attach |
 | `HERDR_WEB_TOKEN` | unset | Shared token protecting terminal access |
 | `HERDR_WEB_STATE_DIR` | `~/.config/herdr-web-ui` | Persistent push keys and subscriptions |

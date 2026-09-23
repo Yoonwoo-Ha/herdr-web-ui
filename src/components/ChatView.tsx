@@ -9,7 +9,8 @@ import "./ChatView.css";
 import { AgentMark } from "./AgentMark.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { PromptCard } from "./PromptCard.tsx";
-import { ApiError, fetchPaneConversation, fetchPanePrompt, fetchPaneTranscript } from "../lib/api.ts";
+import { ApiError } from "../lib/api.ts";
+import { useMachineApi } from "../lib/machineContext.tsx";
 import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.ts";
 import { formatWorkDuration, splitTurn, workSummary, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
 import { phaseRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
@@ -213,6 +214,7 @@ function FallbackTurn({ message }: { message: TranscriptMessage }) {
 }
 
 export function ChatView({ paneId, refreshKey, connected, ended, agent, agentStatus, onMetadata }: ChatViewProps) {
+  const { fetchPaneConversation, fetchPanePrompt, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
   const [state, setState] = useState<ChatState>(EMPTY_STATE);
   const [error, setError] = useState<string | null>(null);
@@ -262,17 +264,21 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [paneId, refreshKey, onMetadata]);
 
+  // A new Codex TUI can show its directory-trust menu while herdr still reports
+  // idle. The visible prompt, not the status badge, decides whether to offer answers.
+  const pollPrompt = connected && !ended && agent !== null;
   useEffect(() => {
-    if (agentStatus !== "blocked") { setPrompt(null); return; }
+    if (!pollPrompt) { setPrompt(null); return; }
     let cancelled = false;
+    let timer = 0;
     const readPrompt = async (): Promise<void> => {
       try { const next = await fetchPanePrompt(paneId); if (!cancelled) setPrompt(next); }
       catch { if (!cancelled) setPrompt(null); }
+      finally { if (!cancelled) timer = window.setTimeout(() => void readPrompt(), POLL_MS); }
     };
     void readPrompt();
-    const timer = window.setInterval(() => void readPrompt(), POLL_MS);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [agentStatus, paneId, promptPollKey]);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [pollPrompt, paneId, promptPollKey, fetchPanePrompt]);
 
   useEffect(() => {
     const node = scroller.current;
@@ -305,7 +311,7 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
           : state.messages.map((message, index) => <FallbackTurn key={index} message={message} />)}
       {!ended && !connected && <p className="chat-inline-state">reconnecting…</p>}
       {error !== null && <p className="chat-inline-state chat-inline-error" role="alert">{errorStatus === 401 ? "locked — the token gate is asking again" : error}</p>}
-      {empty && error === null && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>No conversation yet — say something below</p></div>}
+      {empty && error === null && prompt === null && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>No conversation yet — say something below</p></div>}
       {prompt !== null && <PromptCard paneId={paneId} prompt={prompt} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={() => setPrompt(null)} />}
       {ended && <p className="chat-endcap">terminal ended</p>}
     </div>

@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, Lock, Menu, MessageSquare, Moon, PanelLeft, Search, Settings, SquareTerminal, Sun, X } from "lucide-react";
 
-import type { AgentStatus, ClientRole, ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
-import { ApiError, authenticate, fetchHealth, fetchSession, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
-import { displayPaneTitle, paneTitle, Sidebar } from "./components/Sidebar.tsx";
+import type { AgentStatus, ClientRole, ServerMessage } from "../shared/protocol.ts";
+import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
+import { displayPaneTitle, paneTitle } from "./components/Sidebar.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
 import { TokenGate } from "./components/TokenGate.tsx";
 import { AgentMark } from "./components/AgentMark.tsx";
 import { NewSessionDialog } from "./components/NewSessionDialog.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
 import { CommandPalette } from "./components/CommandPalette.tsx";
-import { applyPaneStatus } from "./lib/snapshot.ts";
+import { MachineContext } from "./lib/machineContext.tsx";
+import { MachineSidebar } from "./components/MachineSidebar.tsx";
+import { MachineDialog } from "./components/MachineDialog.tsx";
+import { paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { useSettings } from "./lib/settings.ts";
 import { useShortcuts } from "./lib/shortcuts.ts";
@@ -24,6 +27,8 @@ import {
   type NotificationState,
 } from "./lib/notifications.ts";
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./lib/push.ts";
+import { useUpdates } from "./lib/updates.ts";
+import { UpdateNotice } from "./components/UpdateControls.tsx";
 
 const APP_TITLE = "herdr web ui";
 const POLL_MS = 5000;
@@ -36,9 +41,9 @@ function paneFromUrl(): string | null {
 }
 
 /** The lens a pane opens in: remembered per pane; agent panes start as chat, shells as terminal. */
-function storedView(paneId: string, hasAgent: boolean): PaneView {
+function storedView(paneId: string, hasAgent: boolean, machineId: string): PaneView {
   try {
-    const stored = window.localStorage.getItem(`herdr-web-ui:view:${paneId}`);
+    const stored = window.localStorage.getItem(`herdr-web-ui:view:${paneStorageId(machineId, paneId)}`);
     if (stored === "chat" || stored === "terminal") return stored;
   } catch {
     /* private mode */
@@ -59,18 +64,34 @@ function Brand() {
 
 export function App() {
   const { settings, resolvedTheme, update: updateSettings } = useSettings();
-  const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
+  const [machines, setMachines] = useState<Machine[]>([]);
+  const [selectedMachineId, setSelectedMachineId] = useState(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (query.has("pane")) return query.get("machine") ?? "local";
+    try { return JSON.parse(localStorage.getItem("herdr-web-ui:selection") ?? "null")?.machine_id ?? "local"; } catch { return "local"; }
+  });
+  const selectedMachine = machines.find((m) => m.id === selectedMachineId);
+  const snapshot = selectedMachine?.snapshot ?? null;
+  const machinesRef = useRef(machines); machinesRef.current = machines;
+  const [updateRemote, setUpdateRemote] = useState(false);
+  const [machineDialog, setMachineDialog] = useState<Machine | "new" | null>(null);
+  const [newSessionMachineId, setNewSessionMachineId] = useState("local");
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   // null until the server has said whether it wants a token: the shell, and with it
   // the WebSocket, never mounts before that is known
   const [locked, setLocked] = useState<boolean | null>(null);
-  const [selectedPaneId, setSelectedPaneId] = useState<string | null>(paneFromUrl);
+  const updates = useUpdates(locked === false);
+  const [selectedPaneId, setSelectedPaneId] = useState<string | null>(() => {
+    if (paneFromUrl()) return paneFromUrl();
+    try { return JSON.parse(localStorage.getItem("herdr-web-ui:selection") ?? "null")?.pane_id ?? null; } catch { return null; }
+  });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [view, setViewState] = useState<PaneView>("terminal");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [connected, setConnected] = useState(false);
   const [outputStopped, setOutputStopped] = useState(false);
@@ -86,39 +107,18 @@ export function App() {
   // last-seen agent status per pane: the baseline that decides whether a push is news
   const statusRef = useRef<Map<string, AgentStatus>>(new Map());
   const refetchTimer = useRef<number | null>(null);
-  const snapshotRef = useRef<SessionSnapshot | null>(null);
+  const snapshotRef = useRef<typeof snapshot>(null);
   snapshotRef.current = snapshot;
 
   const loadHealth = useCallback(async () => {
-    try {
-      const next = await fetchHealth();
-      setHealth(next);
-      if (next.auth) setLocked(next.auth.required && !next.auth.authenticated);
-    } catch {
-      setHealth(null);
-    }
+    try { const next = await fetchBridgeHealth(); setLocked(next.auth.required && !next.auth.authenticated); }
+    catch { /* retain the gate while the connection server restarts */ }
+    try { setHealth(await fetchHealth()); } catch { setHealth(null); }
   }, []);
-
   const load = useCallback(async () => {
-    try {
-      const next = await fetchSession();
-      setSnapshot(next);
-      setError(null);
-      setLocked(false);
-      // a closed pane leaves the selection: fall through to herdr's focus or the first pane
-      setSelectedPaneId((current) =>
-        current !== null && next.panes.some((pane) => pane.pane_id === current)
-          ? current
-          : (next.focused_pane_id ?? next.panes[0]?.pane_id ?? null),
-      );
-    } catch (err) {
-      // the auth check runs before every route: 401 means the cookie is missing or
-      // stale, and any other answer proves this browser is past the gate
-      if (err instanceof ApiError && err.status === 401) {
-        setLocked(true);
-        return;
-      }
-      setLocked(false);
+    try { const next = await fetchMachines(); setMachines(next); setError(null); setLocked(false); }
+    catch (err) {
+      if (err instanceof ApiError && err.status === 401) { setLocked(true); return; }
       setError(err instanceof Error ? err.message : String(err));
     }
   }, []);
@@ -160,49 +160,42 @@ export function App() {
     if (refetchTimer.current !== null) window.clearTimeout(refetchTimer.current);
   }, []);
 
-  // remember the baseline statuses a notification is measured against
+  // One SSE subscription watches every PC, even when no terminal is selected.
   useEffect(() => {
-    if (!snapshot) return;
-    for (const pane of snapshot.panes) statusRef.current.set(pane.pane_id, pane.agent_status);
-  }, [snapshot]);
-
-  const notifyStatus = useCallback((paneId: string, status: AgentStatus) => {
-    const previous = statusRef.current.get(paneId);
-    statusRef.current.set(paneId, status);
-    if (!shouldNotifyStatus(previous, status) || pushOnRef.current) return;
-    const pane = snapshotRef.current?.panes.find((candidate) => candidate.pane_id === paneId);
-    if (!pane) return;
-    showPaneStatusNotification(paneId, paneTitle(pane), status, () => selectPaneRef.current?.(paneId));
-  }, []);
-
-  const handleServerMessage = useCallback(
-    (message: ServerMessage) => {
-      switch (message.type) {
-        case "error":
-          if (message.code === "output_stalled") setOutputStopped(true);
-          break;
-        case "pane-status":
-          setSnapshot((current) => (current ? applyPaneStatus(current, message.pane_id, message.agent_status) : current));
-          notifyStatus(message.pane_id, message.agent_status);
-          scheduleRefetch(); // derived workspace/tab rollups come from the snapshot
-          break;
-        case "pane-exited": {
-          const pane = snapshotRef.current?.panes.find((candidate) => candidate.pane_id === message.pane_id);
-          if (pane && !pushOnRef.current) {
-            showPaneEndedNotification(message.pane_id, paneTitle(pane), () => selectPaneRef.current?.(message.pane_id));
-          }
-          scheduleRefetch();
-          break;
-        }
-        case "session-changed":
-          scheduleRefetch();
-          break;
-        default:
-          break; // terminal-level frames are PaneTerminal's business
+    if (locked !== false) return;
+    const seed = (list: Machine[]) => {
+      for (const machine of list) for (const pane of machine.snapshot?.panes ?? []) {
+        statusRef.current.set(paneStorageId(machine.id, pane.pane_id), pane.agent_status);
       }
-    },
-    [notifyStatus, scheduleRefetch],
-  );
+    };
+    const events = new EventSource("/api/machines/events");
+    events.onmessage = (event) => {
+      let payload: MachineEvent;
+      try { payload = JSON.parse(event.data); } catch { return; }
+      if (payload.type === "machines") { seed(payload.machines); setMachines(payload.machines); return; }
+      const machine = machinesRef.current.find((m) => m.id === payload.machine_id);
+      if (!machine) return;
+      const message = payload.message;
+      if (message.type === "pane-status") {
+        const key = paneStorageId(machine.id, message.pane_id);
+        const previous = statusRef.current.get(key);
+        statusRef.current.set(key, message.agent_status);
+        const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
+        if (pane && shouldNotifyStatus(previous, message.agent_status) && !pushOnRef.current) showPaneStatusNotification(message.pane_id, `${machine.name} · ${paneTitle(pane)}`, message.agent_status, () => selectTargetRef.current(machine.id, message.pane_id), machine.id);
+        setMachines((list) => list.map((m) => m.id === machine.id && m.snapshot ? { ...m, snapshot: { ...m.snapshot, panes: m.snapshot.panes.map((p) => p.pane_id === message.pane_id ? { ...p, agent_status: message.agent_status } : p) } } : m));
+      }
+      if (message.type === "pane-exited" && !pushOnRef.current) {
+        const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
+        if (pane) showPaneEndedNotification(message.pane_id, `${machine.name} · ${paneTitle(pane)}`, () => selectTargetRef.current(machine.id, message.pane_id), machine.id);
+      }
+      if (message.type === "session-changed" || message.type === "pane-exited") scheduleRefetch();
+    };
+    return () => events.close();
+  }, [locked, scheduleRefetch]);
+
+  const handleServerMessage = useCallback((message: ServerMessage) => {
+    if (message.type === "error" && message.code === "output_stalled") setOutputStopped(true);
+  }, []);
 
   const enableNotifications = useCallback(async () => {
     const next = notificationState() === "granted" ? "granted" : await requestNotificationPermission();
@@ -270,19 +263,31 @@ export function App() {
     await loadHealth();
   }, [loadHealth]);
 
+  const selectTarget = useCallback((machineId: string, paneId: string | null) => {
+    setSelectedMachineId(machineId); setSelectedPaneId(paneId); setDrawerOpen(false);
+    setConnected(false); setOutputStopped(false);
+    try { localStorage.setItem("herdr-web-ui:selection", JSON.stringify({ machine_id: machineId, pane_id: paneId })); } catch {}
+  }, []);
+  const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
+  useEffect(() => {
+    if (selectedPaneId !== null || !snapshot || selectedMachine?.state !== "connected") return;
+    setSelectedPaneId(snapshot.focused_pane_id ?? snapshot.panes[0]?.pane_id ?? null);
+  }, [snapshot, selectedPaneId, selectedMachine?.state]);
+  useEffect(() => {
+    try { localStorage.setItem("herdr-web-ui:selection", JSON.stringify({ machine_id: selectedMachineId, pane_id: selectedPaneId })); } catch {}
+  }, [selectedMachineId, selectedPaneId]);
+
   const selectPane = useCallback((paneId: string) => {
     setSelectedPaneId(paneId);
     setDrawerOpen(false);
   }, []);
-  const selectPaneRef = useRef(selectPane);
-  selectPaneRef.current = selectPane;
 
   // a tapped notification focuses this window and names the pane (public/sw.js)
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMessage = (event: MessageEvent) => {
-      const data = event.data as { type?: unknown; pane_id?: unknown } | null;
-      if (data?.type === "select-pane" && typeof data.pane_id === "string") selectPaneRef.current(data.pane_id);
+      const data = event.data as { type?: unknown; pane_id?: unknown; machine_id?: unknown } | null;
+      if (data?.type === "select-pane" && typeof data.pane_id === "string") selectTargetRef.current(typeof data.machine_id === "string" ? data.machine_id : "local", data.pane_id);
     };
     navigator.serviceWorker.addEventListener("message", onMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
@@ -297,26 +302,27 @@ export function App() {
   const selectedWorkspace = selectedPane
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
     : null;
+  const targetHerdr = selectedMachineId === "local" ? health?.herdr : selectedMachine?.herdr;
   const selectedTitle = selectedPane ? displayPaneTitle(selectedPane) : null;
   const selectedAgent = selectedPane?.agent ?? null;
 
   // the lens follows the selected pane: each pane remembers its own
   useEffect(() => {
     if (selectedPaneId === null) return;
-    setViewState(storedView(selectedPaneId, selectedAgent !== null));
-  }, [selectedPaneId, selectedAgent]);
+    setViewState(storedView(selectedPaneId, selectedAgent !== null, selectedMachineId));
+  }, [selectedPaneId, selectedAgent, selectedMachineId]);
 
   const setView = useCallback(
     (next: PaneView) => {
       setViewState(next);
       if (selectedPaneId === null) return;
       try {
-        window.localStorage.setItem(`herdr-web-ui:view:${selectedPaneId}`, next);
+        window.localStorage.setItem(`herdr-web-ui:view:${paneStorageId(selectedMachineId, selectedPaneId)}`, next);
       } catch {
         /* private mode: the lens just stops being remembered */
       }
     },
-    [selectedPaneId],
+    [selectedPaneId, selectedMachineId],
   );
 
   const bell =
@@ -351,6 +357,7 @@ export function App() {
       toggleView: () => setView(view === "chat" ? "terminal" : "chat"),
       openNewSession: () => {
         setDrawerOpen(false);
+        setNewSessionMachineId(selectedMachineId);
         setNewSessionOpen(true);
       },
       openPalette: () => setPaletteOpen(true),
@@ -367,7 +374,7 @@ export function App() {
       enableNotifications: bellVisible && !bell.disabled ? () => void enableNotifications() : null,
       refresh: () => void load(),
     }),
-    [selectPane, selectedPaneId, setView, view, updateSettings, resolvedTheme, health, lock, bellVisible, bell.disabled, enableNotifications, load],
+    [selectPane, selectedPaneId, selectedMachineId, setView, view, updateSettings, resolvedTheme, health, lock, bellVisible, bell.disabled, enableNotifications, load],
   );
 
   useShortcuts(actions, locked === false);
@@ -401,7 +408,7 @@ export function App() {
   if (locked) return <TokenGate onUnlocked={unlock} />;
 
   return (
-    <div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
+    <MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       <header className="app-header">
         <button
           type="button"
@@ -430,6 +437,7 @@ export function App() {
               <span className="context-title-text">{selectedTitle}</span>
             </div>
             <div className="context-sub">
+              <span className="machine-context-name">{selectedMachine?.name ?? selectedMachineId}</span><span aria-hidden="true"> › </span>
               <span>{selectedWorkspace?.label ?? selectedPane.workspace_id}</span>
               {selectedPane.cwd && (
                 <>
@@ -442,7 +450,7 @@ export function App() {
             </div>
           </div>
         ) : (
-          <Brand />
+          <><Brand /><span className="machine-context-name">{selectedMachine?.name ?? selectedMachineId}</span></>
         )}
         {selectedPane && (
           <div className="segmented view-switch" role="group" aria-label="Pane view">
@@ -461,9 +469,9 @@ export function App() {
             <span className="conn-dot" aria-hidden="true" />
             <span className="conn-text">{connected ? "live" : outputStopped ? "disconnected" : "reconnecting"}</span>
           </span>
-          {health ? (
-            <span className="pill pill-version" title={`herdr protocol ${health.herdr.protocol}`}>
-              herdr {health.herdr.version}
+          {targetHerdr ? (
+            <span className="pill pill-version" title={`herdr protocol ${targetHerdr.protocol}`}>
+              herdr {targetHerdr.version}
             </span>
           ) : (
             <span className="pill pill-offline">herdr offline</span>
@@ -503,24 +511,18 @@ export function App() {
         </div>
       </header>
 
+      <UpdateNotice updates={updates} onOpen={() => setSettingsOpen(true)} />
       <div className="app-body">
         <aside id="workspace-drawer" className={`sidebar${drawerOpen ? " is-open" : ""}`}>
-          {error ? (
-            <div className="error-state" role="alert">
-              <p className="error-message">{error}</p>
-              <button type="button" className="error-retry" onClick={() => void load()}>
-                Retry
-              </button>
-            </div>
-          ) : (
-            <Sidebar snapshot={snapshot} selectedPaneId={selectedPaneId} actions={actions} version={health?.herdr.version ?? null} />
-          )}
+          {error && <div className="error-state" role="alert"><p>{error}</p><button className="btn" onClick={() => void load()}>Retry</button></div>}
+          <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} onAdd={() => { setUpdateRemote(false); setMachineDialog("new"); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewSessionOpen(true); setDrawerOpen(false); }} />
         </aside>
 
         {drawerOpen && <div className="scrim" aria-hidden="true" onClick={() => setDrawerOpen(false)} />}
 
         <main className="terminal-host">
           <PaneTerminal
+            key={selectedMachineId}
             paneId={selectedPaneId}
             agent={selectedAgent}
             agentStatus={selectedPane?.agent_status}
@@ -535,18 +537,21 @@ export function App() {
         </main>
       </div>
 
-      <NewSessionDialog
+      <MachineContext.Provider value={newSessionMachineId}><NewSessionDialog
+        key={newSessionMachineId}
+        machineName={machines.find((m) => m.id === newSessionMachineId)?.name ?? newSessionMachineId}
         open={newSessionOpen}
-        defaultCwd={selectedPane?.cwd ?? null}
+        defaultCwd={newSessionMachineId === selectedMachineId ? selectedPane?.cwd ?? null : null}
         onClose={() => setNewSessionOpen(false)}
         onCreated={(paneId) => {
           setNewSessionOpen(false);
-          selectPane(paneId);
+          selectTarget(newSessionMachineId, paneId);
           void load();
         }}
-      />
-      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} actions={actions} />
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} snapshot={snapshot} selectedPaneId={selectedPaneId} view={view} actions={actions} />
-    </div>
+      /></MachineContext.Provider>
+      {machineDialog && <MachineDialog updateRemote={updateRemote} machine={machineDialog === "new" ? undefined : machineDialog} onClose={() => setMachineDialog(null)} onConnected={(id) => { setMachineDialog(null); selectTarget(id, null); void load(); }} />}
+      <SettingsDialog open={settingsOpen} onClose={closeSettings} actions={actions} updates={updates} />
+      <CommandPalette key={selectedMachineId} open={paletteOpen} onClose={() => setPaletteOpen(false)} snapshot={snapshot} selectedPaneId={selectedPaneId} view={view} actions={actions} />
+    </div></MachineContext.Provider>
   );
 }

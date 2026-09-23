@@ -13,11 +13,13 @@
     "dev": "vite",
     "build": "vite build",
     "server": "bun run server/index.ts",
-    "start": "bun run build && bun run server/index.ts",
+    "start": "bun run build && bun run server/managed.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:ui": "bun run build && bun scripts/ui-regression.ts",
-    "generate:types": "bun run scripts/generate-protocol-types.ts"
+    "generate:types": "bun run scripts/generate-protocol-types.ts",
+    "build:remote": "bun run scripts/build-remote-bundle.ts",
+    "test:ssh": "bun run scripts/ssh-integration.ts"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

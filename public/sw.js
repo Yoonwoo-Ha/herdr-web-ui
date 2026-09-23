@@ -94,7 +94,7 @@ self.addEventListener("push", (event) => {
         tag: payload.tag || "herdr",
         renotify: !watching,
         silent: watching,
-        data: { pane_id: payload.pane_id || null },
+        data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local" },
         icon: "/icons/icon-192.png?v=ram1",
       });
     })(),
@@ -106,16 +106,17 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const paneId = event.notification.data ? event.notification.data.pane_id : null;
+  const machineId = event.notification.data?.machine_id || "local";
   event.waitUntil(
     (async () => {
       const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       const target = windows.find((client) => client.focused) || windows[0];
       if (target) {
         await target.focus();
-        if (paneId) target.postMessage({ type: "select-pane", pane_id: paneId });
+        if (paneId) target.postMessage({ type: "select-pane", pane_id: paneId, machine_id: machineId });
         return;
       }
-      await self.clients.openWindow(paneId ? `/?pane=${encodeURIComponent(paneId)}` : "/");
+      await self.clients.openWindow(paneId ? `/?machine=${encodeURIComponent(machineId)}&pane=${encodeURIComponent(paneId)}` : "/");
     })(),
   );
 });

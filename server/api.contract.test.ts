@@ -29,6 +29,38 @@ afterAll(() => {
 
 const base = () => `http://localhost:${server.port}`;
 
+describe("update API", () => {
+  it("reports unmanaged servers without performing network discovery", async () => {
+    const response = await fetch(`${base()}/api/updates`);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect((await response.json() as { managed: boolean }).managed).toBe(false);
+  });
+
+  it("refuses cross-site/form update requests and unmanaged installs", async () => {
+    for (const headers of [{}, { "x-herdr-update": "1", origin: "https://untrusted.invalid" },
+      { "x-herdr-update": "1", "sec-fetch-site": "cross-site" }] as Record<string, string>[]) {
+      const response = await fetch(`${base()}/api/updates/install`, { method: "POST", headers });
+      expect(response.status).toBe(403);
+    }
+    const response = await fetch(`${base()}/api/updates/install`, { method: "POST", headers: { "x-herdr-update": "1" } });
+    expect(response.status).toBe(409);
+    expect((await response.json() as ApiError).error.code).toBe("updates_unmanaged");
+  });
+
+  it("keeps status and update actions behind the token gate", async () => {
+    const protectedState = mkdtempSync(join(tmpdir(), "herdr-update-auth-"));
+    const protectedServer = createServer({ port: 0, stateDir: protectedState, token: "test-update-token" });
+    try {
+      for (const path of ["/api/updates", "/api/updates/check", "/api/updates/install"]) {
+        const response = await fetch(`http://localhost:${protectedServer.port}${path}`, {
+          method: path === "/api/updates" ? "GET" : "POST", headers: { "x-herdr-update": "1" },
+        });
+        expect(response.status).toBe(401);
+      }
+    } finally { protectedServer.stop(); rmSync(protectedState, { recursive: true, force: true }); }
+  });
+});
+
 describe("mutation body validation", () => {
   it("rejects non-object JSON without touching herdr or losing the error envelope", async () => {
     for (const path of [
@@ -1113,5 +1145,41 @@ describe("generated wire types", () => {
       expect(workspace.agent_status).toBe("teleporting");
     }
     expect(roundTripped.workspaces.length).toBe(snapshot.workspaces.length);
+  });
+});
+
+
+describe("PC management API", () => {
+  it("reports bridge auth independently of herdr and exposes the local PC", async () => {
+    const health = await fetch(`${base()}/api/health?scope=bridge`);
+    expect(health.status).toBe(200);
+    const body = await health.json() as { auth: HealthAuth; bridge_protocol: number };
+    expect(body.bridge_protocol).toBe(1);
+    expect(body.auth.authenticated).toBe(true);
+    const list = await fetch(`${base()}/api/machines`);
+    expect(list.headers.get("cache-control")).toBe("no-store");
+    const data = await list.json() as { machines: { id: string; kind: string }[] };
+    expect(data.machines[0]).toMatchObject({ id: "local", kind: "local" });
+    const local = await fetch(`${base()}/api/machines/local/session`);
+    expect(local.status).toBe(200);
+  });
+  it("rejects CSRF, malformed targets and remote forwarding outside the allowlist", async () => {
+    for (const headers of [{}, { "x-herdr-machine": "1", origin: "https://evil.invalid" }, { "x-herdr-machine": "1", "sec-fetch-site": "cross-site" }] as Record<string, string>[]) {
+      const response = await fetch(`${base()}/api/machines/setup`, { method: "POST", headers, body: JSON.stringify({ destination: "host" }) });
+      expect(response.status).toBe(403);
+    }
+    const bad = await fetch(`${base()}/api/machines/setup`, { method: "POST", headers: { "x-herdr-machine": "1" }, body: JSON.stringify({ destination: "-oProxyCommand=bad" }) });
+    expect(bad.status).toBe(400);
+    expect((await fetch(`${base()}/api/machines/missing/pane/read?pane_id=p1`)).status).toBe(503);
+    expect((await fetch(`${base()}/api/machines/missing/auth`)).status).toBe(404);
+  });
+  it("gates PC metadata, setup and SSE behind the existing token", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "herdr-machine-auth-"));
+    const gated = createServer({ port: 0, token: "machine-test-secret", stateDir });
+    try {
+      for (const path of ["/api/machines", "/api/machines/events", "/api/machines/setup", "/api/bridge"]) expect((await fetch(`http://localhost:${gated.port}${path}`)).status).toBe(401);
+      const health = await fetch(`http://localhost:${gated.port}/api/health?scope=bridge`).then((r) => r.json()) as { auth: HealthAuth };
+      expect(health.auth).toEqual({ required: true, authenticated: false });
+    } finally { gated.stop(); rmSync(stateDir, { recursive: true, force: true }); }
   });
 });

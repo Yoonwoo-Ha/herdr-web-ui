@@ -1,3 +1,4 @@
+import { useMachineId } from "../lib/machineContext.tsx";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { Bell, LockKeyhole, MessageSquarePlus, PanelLeft, RefreshCw, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
 
@@ -30,19 +31,19 @@ interface PaletteAction {
   run: () => void;
 }
 
-function loadRecentPanes(): string[] {
+function loadRecentPanes(machineId: string): string[] {
   try {
-    const value: unknown = JSON.parse(window.localStorage.getItem(RECENT_KEY) ?? "[]");
+    const value: unknown = JSON.parse(window.localStorage.getItem(machineId === "local" ? RECENT_KEY : `${RECENT_KEY}:${machineId}`) ?? "[]");
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, RECENT_LIMIT) : [];
   } catch {
     return [];
   }
 }
 
-function rememberPane(paneId: string, current: readonly string[]): string[] {
+function rememberPane(paneId: string, current: readonly string[], machineId: string): string[] {
   const recent = [paneId, ...current.filter((id) => id !== paneId)].slice(0, RECENT_LIMIT);
   try {
-    window.localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+    window.localStorage.setItem(machineId === "local" ? RECENT_KEY : `${RECENT_KEY}:${machineId}`, JSON.stringify(recent));
   } catch {
     /* private mode: recent ordering remains available for this page */
   }
@@ -63,22 +64,23 @@ function ShortcutHint({ shortcutId }: { shortcutId?: ShortcutId }) {
 }
 
 export function CommandPalette({ open, onClose, snapshot, selectedPaneId, view, actions }: CommandPaletteProps) {
+  const machineId = useMachineId();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [recentPaneIds, setRecentPaneIds] = useState<string[]>(loadRecentPanes);
+  const [recentPaneIds, setRecentPaneIds] = useState<string[]>(() => loadRecentPanes(machineId));
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
     setQuery("");
     setActiveIndex(0);
-    setRecentPaneIds(loadRecentPanes());
+    setRecentPaneIds(loadRecentPanes(machineId));
     window.requestAnimationFrame(() => inputRef.current?.focus());
   }, [open]);
 
   useEffect(() => {
     if (selectedPaneId === null) return;
-    setRecentPaneIds((current) => rememberPane(selectedPaneId, current));
+    setRecentPaneIds((current) => rememberPane(selectedPaneId, current, machineId));
   }, [selectedPaneId]);
 
   const paletteActions = useMemo<PaletteAction[]>(() => [
@@ -115,7 +117,7 @@ export function CommandPalette({ open, onClose, snapshot, selectedPaneId, view, 
   if (!open) return null;
 
   const runPane = (pane: PaneInfo): void => {
-    setRecentPaneIds((current) => rememberPane(pane.pane_id, current));
+    setRecentPaneIds((current) => rememberPane(pane.pane_id, current, machineId));
     actions.selectPane(pane.pane_id);
     onClose();
   };

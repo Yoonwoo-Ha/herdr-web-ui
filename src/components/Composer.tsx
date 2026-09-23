@@ -14,7 +14,8 @@ import { Clock, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 import "./Composer.css";
 
 import type { AgentStatus, ConversationMetadata, SlashCommand } from "../../shared/protocol.ts";
-import { fetchPaneCommands, fetchPaneFiles } from "../lib/api.ts";
+import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
+import { paneStorageId } from "../../shared/machines.ts";
 import {
   agentDisplayLabel,
   composerStatusWord,
@@ -73,11 +74,11 @@ function readSlashUsage(): Record<string, number> {
   }
 }
 
-async function cachedPaneCommands(paneId: string): Promise<SlashCommand[]> {
-  const cached = commandCache.get(paneId);
+async function cachedPaneCommands(paneId: string, machineId: string, fetchCommands: (pane: string) => Promise<SlashCommand[]>): Promise<SlashCommand[]> {
+  const cached = commandCache.get(paneStorageId(machineId, paneId));
   if (cached && Date.now() - cached.loadedAt < COMMAND_CACHE_MS) return cached.commands;
-  const commands = await fetchPaneCommands(paneId);
-  commandCache.set(paneId, { loadedAt: Date.now(), commands });
+  const commands = await fetchCommands(paneId);
+  commandCache.set(paneStorageId(machineId, paneId), { loadedAt: Date.now(), commands });
   return commands;
 }
 
@@ -93,13 +94,15 @@ export function Composer({
   onAbort,
   onUploadImage,
 }: ComposerProps) {
+  const machineId = useMachineId();
+  const { fetchPaneCommands, fetchPaneFiles } = useMachineApi();
   const { settings } = useSettings();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentsRef = useRef<Attachment[]>([]);
   const removedAttachments = useRef(new Set<number>());
   const fileRequest = useRef(0);
-  const draftKey = `herdr-web-ui:composer-draft:${paneId}`;
+  const draftKey = `herdr-web-ui:composer-draft:${paneStorageId(machineId, paneId)}`;
   const [text, setText] = useState(() => {
     try { return window.localStorage.getItem(draftKey) ?? ""; }
     catch { return ""; }
@@ -139,7 +142,7 @@ export function Composer({
 
   useEffect(() => {
     let live = true;
-    void cachedPaneCommands(paneId)
+    void cachedPaneCommands(paneId, machineId, fetchPaneCommands)
       .then((next) => {
         if (live) setCommands(next);
       })

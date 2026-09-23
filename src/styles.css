@@ -917,12 +917,16 @@ button {
    and the subtitle go too - the drawer names the workspace, and the mark keeps the identity */
 @media (max-width: 480px) {
   .pill-version,
+  .pill-offline,
   .brand-name,
-  .context-sub,
   .conn-text,
   .header-desktop-only {
     display: none;
   }
+}
+
+@media (max-width: 480px) {
+  .context-sub > span:not(.machine-context-name) { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

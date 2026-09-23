@@ -1,3 +1,4 @@
+import { machinePath, type BridgeHealth, type Machine, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   AgentKind,
   ConversationResponse,
@@ -10,6 +11,17 @@ import type {
   SlashCommand,
   WorkspaceCreated,
 } from "../../shared/protocol.ts";
+import type { UpdateCommand, UpdateStatus } from "../../shared/update.ts";
+
+export function fetchUpdateStatus(): Promise<UpdateStatus> {
+  return getJson<UpdateStatus>("/api/updates");
+}
+
+export async function requestUpdate(command: UpdateCommand): Promise<void> {
+  const url = `/api/updates/${command}`;
+  const response = await fetch(url, { method: "POST", headers: { "x-herdr-update": "1" } });
+  if (!response.ok) throw await errorFrom(url, response);
+}
 
 /**
  * A non-2xx answer from the herdr-web-ui API. `code` is the server's error-envelope
@@ -47,8 +59,8 @@ async function getJson<T>(url: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function fetchSession(): Promise<SessionSnapshot> {
-  const body = await getJson<{ snapshot: SessionSnapshot }>("/api/session");
+export async function fetchSession(machineId = "local"): Promise<SessionSnapshot> {
+  const body = await getJson<{ snapshot: SessionSnapshot }>(machinePath(machineId, "session"));
   return body.snapshot;
 }
 
@@ -57,26 +69,27 @@ export async function fetchSession(): Promise<SessionSnapshot> {
  * `lines`), ANSI-stripped text. herdr owns scrollback — the attach stream cannot
  * serve history, so the transcript reads it back instead.
  */
-export async function fetchPaneTranscript(paneId: string, lines: number): Promise<PaneReadResult> {
+export async function fetchPaneTranscript(paneId: string, lines: number, machineId = "local"): Promise<PaneReadResult> {
   const query = new URLSearchParams({
     pane_id: paneId,
     source: "recent",
     format: "text",
     lines: String(lines),
   });
-  const body = await getJson<{ read: PaneReadResult }>(`/api/pane/read?${query.toString()}`);
+  const body = await getJson<{ read: PaneReadResult }>(machinePath(machineId, `pane/read?${query.toString()}`));
   return body.read;
 }
 
 /** GET /api/pane/conversation: structured turns, or scrollback fallback. */
-export async function fetchPaneConversation(paneId: string): Promise<ConversationResponse> {
+export async function fetchPaneConversation(paneId: string, machineId = "local"): Promise<ConversationResponse> {
   const query = new URLSearchParams({ pane_id: paneId });
-  return await getJson<ConversationResponse>(`/api/pane/conversation?${query.toString()}`);
+  return await getJson<ConversationResponse>(machinePath(machineId, `pane/conversation?${query.toString()}`));
 }
 
 export interface HealthInfo {
   ok: boolean;
   herdr: { version: string; protocol: number };
+  web_ui?: { boot_id: string | null; revision: string | null };
   /** Absent only on a server that predates the token gate. */
   auth?: HealthAuth;
 }
@@ -93,7 +106,7 @@ export async function fetchHealth(): Promise<HealthInfo> {
 export async function authenticate(token: string): Promise<void> {
   const response = await fetch("/api/auth", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-herdr-machine": "1" },
     body: JSON.stringify({ token }),
   });
   if (!response.ok) throw await errorFrom("/api/auth", response);
@@ -119,21 +132,21 @@ function base64FromBytes(bytes: Uint8Array): string {
  * resolves to the absolute path the prompt should reference (the composer inserts
  * `@path`). ApiError 413 image_too_large / 415 unsupported_media_type on bad input.
  */
-export async function uploadPaneImage(paneId: string, image: Blob): Promise<string> {
+export async function uploadPaneImage(paneId: string, image: Blob, machineId = "local"): Promise<string> {
   const data_base64 = base64FromBytes(new Uint8Array(await image.arrayBuffer()));
-  const response = await fetch("/api/pane/image", {
+  const response = await fetch(machinePath(machineId, "pane/image"), {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-herdr-machine": "1" },
     body: JSON.stringify({ pane_id: paneId, content_type: image.type, data_base64 }),
   });
-  if (!response.ok) throw await errorFrom("/api/pane/image", response);
+  if (!response.ok) throw await errorFrom(machinePath(machineId, "pane/image"), response);
   return ((await response.json()) as { path: string }).path;
 }
 
 async function sendJson(url: string, method: "POST" | "DELETE", body: unknown): Promise<Response> {
   const response = await fetch(url, {
     method,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-herdr-machine": "1" },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw await errorFrom(url, response);
@@ -145,18 +158,18 @@ async function sendJson(url: string, method: "POST" | "DELETE", body: unknown): 
  * The sidebar updates on its own when the server's session-changed broadcast lands;
  * a failure (e.g. the pane already gone) throws ApiError and the 5s poll reconciles.
  */
-export async function closePane(paneId: string): Promise<void> {
-  await sendJson("/api/pane/close", "POST", { pane_id: paneId });
+export async function closePane(paneId: string, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "pane/close"), "POST", { pane_id: paneId });
 }
 
 /** POST /api/pane/rename: sets the pane's label in herdr (an empty label clears it). */
-export async function renamePane(paneId: string, label: string): Promise<void> {
-  await sendJson("/api/pane/rename", "POST", { pane_id: paneId, label });
+export async function renamePane(paneId: string, label: string, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "pane/rename"), "POST", { pane_id: paneId, label });
 }
 
 /** GET /api/agents: the agent kinds herdr can start, for the new-session dialog. */
-export async function fetchAgentKinds(): Promise<AgentKind[]> {
-  return (await getJson<{ agents: AgentKind[] }>("/api/agents")).agents;
+export async function fetchAgentKinds(machineId = "local"): Promise<AgentKind[]> {
+  return (await getJson<{ agents: AgentKind[] }>(machinePath(machineId, "agents"))).agents;
 }
 
 export interface CreateWorkspaceRequest {
@@ -170,43 +183,43 @@ export interface CreateWorkspaceRequest {
  * pane when `agent` is given). Slow when an agent starts: herdr waits for the agent's
  * interactive prompt (up to 60s) before answering.
  */
-export async function createWorkspace(request: CreateWorkspaceRequest): Promise<WorkspaceCreated> {
-  const response = await sendJson("/api/workspace/create", "POST", request);
+export async function createWorkspace(request: CreateWorkspaceRequest, machineId = "local"): Promise<WorkspaceCreated> {
+  const response = await sendJson(machinePath(machineId, "workspace/create"), "POST", request);
   return (await response.json()) as WorkspaceCreated;
 }
 
-export async function renameWorkspace(workspaceId: string, label: string): Promise<void> {
-  await sendJson("/api/workspace/rename", "POST", { workspace_id: workspaceId, label });
+export async function renameWorkspace(workspaceId: string, label: string, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "workspace/rename"), "POST", { workspace_id: workspaceId, label });
 }
 
 /** POST /api/workspace/move: places the workspace at `insertIndex` in herdr's order (the sidebar order). */
-export async function moveWorkspace(workspaceId: string, insertIndex: number): Promise<void> {
-  await sendJson("/api/workspace/move", "POST", { workspace_id: workspaceId, insert_index: insertIndex });
+export async function moveWorkspace(workspaceId: string, insertIndex: number, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "workspace/move"), "POST", { workspace_id: workspaceId, insert_index: insertIndex });
 }
 
-export async function closeWorkspace(workspaceId: string): Promise<void> {
-  await sendJson("/api/workspace/close", "POST", { workspace_id: workspaceId });
+export async function closeWorkspace(workspaceId: string, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "workspace/close"), "POST", { workspace_id: workspaceId });
 }
 
 /** GET /api/pane/commands: the slash commands the pane's agent understands (built-in + custom). */
-export async function fetchPaneCommands(paneId: string): Promise<SlashCommand[]> {
-  return (await getJson<{ commands: SlashCommand[] }>(`/api/pane/commands?pane_id=${encodeURIComponent(paneId)}`)).commands;
+export async function fetchPaneCommands(paneId: string, machineId = "local"): Promise<SlashCommand[]> {
+  return (await getJson<{ commands: SlashCommand[] }>(machinePath(machineId, `pane/commands?pane_id=${encodeURIComponent(paneId)}`))).commands;
 }
 
 /** GET /api/pane/files: paths under the pane's cwd matching `query`, for @-mentions. */
-export async function fetchPaneFiles(paneId: string, query: string, limit = 20): Promise<string[]> {
+export async function fetchPaneFiles(paneId: string, query: string, limit = 20, machineId = "local"): Promise<string[]> {
   const params = new URLSearchParams({ pane_id: paneId, q: query, limit: String(limit) });
-  return (await getJson<{ files: string[] }>(`/api/pane/files?${params.toString()}`)).files;
+  return (await getJson<{ files: string[] }>(machinePath(machineId, `pane/files?${params.toString()}`))).files;
 }
 
 /** GET /api/pane/prompt: the agent's interactive menu currently on screen, or null. */
-export async function fetchPanePrompt(paneId: string): Promise<InteractivePrompt | null> {
-  return (await getJson<{ prompt: InteractivePrompt | null }>(`/api/pane/prompt?pane_id=${encodeURIComponent(paneId)}`)).prompt;
+export async function fetchPanePrompt(paneId: string, machineId = "local"): Promise<InteractivePrompt | null> {
+  return (await getJson<{ prompt: InteractivePrompt | null }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`))).prompt;
 }
 
 /** POST /api/pane/prompt/answer: ApiError 409 `prompt_changed` when the menu moved on. */
-export async function answerPanePrompt(answer: PromptAnswer): Promise<void> {
-  await sendJson("/api/pane/prompt/answer", "POST", answer);
+export async function answerPanePrompt(answer: PromptAnswer, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "pane/prompt/answer"), "POST", answer);
 }
 
 /** GET /api/push: the server's VAPID key, the `applicationServerKey` this device subscribes with. */
@@ -226,3 +239,18 @@ export async function unregisterPushSubscription(endpoint: string): Promise<void
 export async function sendTestPush(endpoint: string): Promise<void> {
   await sendJson("/api/push/test", "POST", { endpoint });
 }
+
+export function fetchBridgeHealth(): Promise<BridgeHealth> { return getJson("/api/health?scope=bridge"); }
+export async function fetchMachines(signal?: AbortSignal): Promise<Machine[]> {
+  const response = await fetch("/api/machines", { signal });
+  if (!response.ok) throw await errorFrom("/api/machines", response);
+  return ((await response.json()) as { machines: Machine[] }).machines;
+}
+export async function machineRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const response = await fetch(`/api/machines${path}`, { method, headers: { "content-type": "application/json", "x-herdr-machine": "1" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  if (!response.ok) throw await errorFrom("/api/machines", response);
+  return response.json();
+}
+export const startMachineSetup = (request: SetupRequest) => machineRequest<SetupJob>("/setup", "POST", request);
+export const fetchMachineSetup = (id: string) => machineRequest<SetupJob>(`/setup/${encodeURIComponent(id)}`);
+export const answerMachineSetup = (id: string, action: SetupAction) => machineRequest<SetupJob>(`/setup/${encodeURIComponent(id)}`, "POST", action);

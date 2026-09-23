@@ -78,7 +78,7 @@ async function start(): Promise<number> {
   }
   mkdirSync(STATE_DIR, { recursive: true });
   const log = openSync(LOG_FILE, "a");
-  const child = spawn(process.execPath, ["server/index.ts"], {
+  const child = spawn(process.execPath, ["server/managed.ts"], {
     cwd: ROOT,
     detached: true,
     stdio: ["ignore", log, log],

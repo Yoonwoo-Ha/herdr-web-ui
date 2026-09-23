@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -36,6 +37,14 @@ import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
 import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, replayTail } from "./output-window.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
+import { connectUpdater, handleUpdateRequest, type UpdateService } from "./update-api.ts";
+
+import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
+import { bridgeIdentity, registerBridge } from "./bridge.ts";
+import { MachineManager } from "./machines.ts";
+import { handleMachineRequest } from "./machine-api.ts";
+import { MachineRelay } from "./machine-relay.ts";
+import { sameOrigin } from "./machine-security.ts";
 
 const MAX_REPLAY_BYTES = 256 * 1024;
 
@@ -73,6 +82,7 @@ async function paneContext(paneId: string): Promise<{ agent: string | null; cwd:
 }
 
 interface SocketData {
+  relay?: MachineRelay;
   attached: Set<string>;
   output: Map<string, OutputWindow>;
   closing: boolean;
@@ -129,6 +139,9 @@ export function createServer(
     stateDir?: string;
     /** Native Codex store; defaults to CODEX_HOME. Tests use an isolated store. */
     codexHome?: string;
+    updates?: UpdateService;
+    machines?: boolean;
+    registerBridge?: boolean;
   } = {},
 ): { port: number; hostname: string; stop: () => void } {
   const attachments = new Map<string, PaneAttachment>();
@@ -196,6 +209,9 @@ export function createServer(
     },
   });
 
+  const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push);
+  const bridgeToken = randomBytes(32).toString("hex");
+
   function broadcast(paneId: string, message: ServerMessage): void {
     const attachment = attachments.get(paneId);
     if (!attachment) return;
@@ -203,6 +219,7 @@ export function createServer(
   }
 
   function broadcastAll(message: ServerMessage): void {
+    machines?.localMessage(message);
     for (const client of clients) send(client, message);
   }
 
@@ -284,10 +301,10 @@ export function createServer(
     };
     attachments.set(paneId, attachment);
 
-    // No --takeover: herdr 0.9.0 lets attaches coexist, so herdr-web-ui never displaces
-    // whoever is already looking at this terminal - including the user's own TUI.
+    // No --takeover: another web bridge may own the exclusive attach slot.
+    // Report that conflict without displacing it or the user's own TUI.
     attachment.pty = new PtySession({
-      command: "herdr",
+      command: process.env["HERDR_WEB_HERDR_BIN"] || "herdr",
       args: ["terminal", "attach", terminalId],
       // herdr's CLI reads HERDR_SOCKET_PATH, not HERDR_SOCKET: the stream must reach
       // the same session the RPCs talk to, or a named session's terminals are
@@ -304,6 +321,7 @@ export function createServer(
       },
       onExit: (code) => {
         if (attachments.get(paneId) !== attachment) return;
+        if (code !== 0 && /already has an attached client|retry with --takeover/.test(attachment.replay)) broadcast(paneId, { type: "error", code: "attach_conflict", message: "Another web bridge is attached to this pane. Disconnect its browser or reuse that bridge; the existing attach was left unchanged." });
         broadcast(paneId, { type: "pty-exit", pane_id: paneId, code });
         closeAttachment(paneId);
       },
@@ -360,21 +378,61 @@ export function createServer(
 
     async fetch(request, bunServer) {
       const url = new URL(request.url);
-      const { pathname } = url;
-      const authenticated = isAuthenticated(request, token);
+      let { pathname } = url;
+      const bridgeAuthorized = isAuthenticated(request, bridgeToken);
+      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === "/api/agents" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname === "/ws";
+      const authenticated = isAuthenticated(request, token) || (bridgePath && bridgeAuthorized);
 
       if (requiresAuth(pathname) && !authenticated) {
         // The WS client never parses a body, so the upgrade refusal stays plain text.
         return pathname === "/ws" ? new Response("unauthorized", { status: 401 }) : unauthorizedJson();
       }
 
+      if (pathname === "/api/bridge") {
+        if (token === "" && !bridgeAuthorized) return unauthorizedJson();
+        try { return jsonResponse(await bridgeIdentity()); } catch (error) { return errorResponse(error); }
+      }
+      if (pathname === "/api/machines" || pathname.startsWith("/api/machines/")) {
+        if (!machines) return jsonResponse({ error: { code: "bridge_only", message: "Manage PCs on the connection server" } }, 404);
+        // /local aliases preserve every existing endpoint without a self-proxy.
+        if (pathname.startsWith("/api/machines/local/")) {
+          if (!sameOrigin(request) || (request.method !== "GET" && request.headers.get("x-herdr-machine") !== "1")) return jsonResponse({ error: { code: "invalid_origin", message: "Use PC controls from this app" } }, 403);
+          pathname = pathname.replace("/api/machines/local/", "/api/");
+          if (!/^\/api\/(session|agents|pane\/|workspace\/)/.test(pathname)) return badRequest("invalid_route", "Unknown PC endpoint");
+          url.pathname = pathname;
+        } else {
+          bunServer.timeout(request, pathname === "/api/machines/events" ? 0 : 80);
+          const response = await handleMachineRequest(request, machines);
+          response.headers.set("cache-control", "no-store");
+          return response;
+        }
+      }
       if (pathname === "/ws") {
+        if (!sameOrigin(request)) return new Response("invalid origin", { status: 403 });
+        const machineId = url.searchParams.get("machine_id");
+        if (machineId && machineId !== "local") {
+          if (!isAuthenticated(request, token)) return unauthorizedJson();
+          if (!machines?.endpoint(machineId)) return jsonResponse({ error: { code: "machine_offline", message: "This PC is disconnected" } }, 503);
+          let relay: MachineRelay | undefined;
+          try {
+            relay = new MachineRelay(machines, machineId);
+            await relay.ready;
+            const upgraded = bunServer.upgrade(request, { data: { attached: new Set<string>(), mode: "interact", output: new Map(), closing: false, relay } });
+            if (upgraded) return undefined as unknown as Response;
+            relay.close();
+          } catch { relay?.close(); return new Response("remote websocket unavailable", { status: 502 }); }
+          return new Response("websocket upgrade required", { status: 426 });
+        }
         const upgraded = bunServer.upgrade(request, { data: { attached: new Set<string>(), mode: "interact", output: new Map(), closing: false } });
         if (upgraded) return undefined as unknown as Response;
         return new Response("websocket upgrade required", { status: 426 });
       }
 
       if (pathname === "/api/auth") return handleAuthRequest(request, token);
+
+      if (pathname === "/api/updates" || pathname.startsWith("/api/updates/")) {
+        return handleUpdateRequest(request, pathname, options.updates);
+      }
 
       if (pathname === "/api/push" || pathname.startsWith("/api/push/")) {
         try {
@@ -387,9 +445,11 @@ export function createServer(
 
       if (pathname === "/api/health") {
         const auth: HealthAuth = { required: token !== "", authenticated };
+        if (url.searchParams.get("scope") === "bridge") return jsonResponse({ ok: true, auth, bridge_protocol: BRIDGE_PROTOCOL });
         try {
           const info = await ping();
-          return jsonResponse({ ok: true, herdr: { version: info.version, protocol: info.protocol }, auth });
+          return jsonResponse({ ok: true, herdr: { version: info.version, protocol: info.protocol }, auth,
+            web_ui: { boot_id: process.env["HERDR_WEB_BOOT_ID"] ?? null, revision: process.env["HERDR_WEB_REVISION"] ?? null } });
         } catch (error) {
           return errorResponse(error);
         }
@@ -672,6 +732,7 @@ export function createServer(
         for (const paneId of client.data.attached) reconcileOutput(paneId);
       },
       async open(client) {
+        if (client.data.relay) { client.data.relay.bind(client as ServerWebSocket<unknown>); return; }
         clients.add(client);
         try {
           send(client, { type: "snapshot", snapshot: await sessionSnapshot() });
@@ -682,6 +743,7 @@ export function createServer(
       },
 
       async message(client, raw) {
+        if (client.data.relay) { client.data.relay.message(raw); return; }
         if (client.data.closing) return;
         let message: ClientMessage;
         try {
@@ -812,6 +874,7 @@ export function createServer(
       },
 
       close(client) {
+        if (client.data.relay) { client.data.relay.close(); return; }
         clients.delete(client);
         for (const paneId of client.data.attached) detach(paneId, client);
         client.data.attached.clear();
@@ -819,6 +882,8 @@ export function createServer(
       },
     },
   });
+
+  const registration = options.registerBridge ? registerBridge(server.port ?? 0, bridgeToken) : null;
 
   // ACKs can stop arriving entirely (a suspended tab). Bound the pause even then.
   const outputTimer = setInterval(() => {
@@ -832,6 +897,8 @@ export function createServer(
     stop: () => {
       clearInterval(outputTimer);
       collector.stop();
+      machines?.stop();
+      registration?.close();
       for (const paneId of [...attachments.keys()]) closeAttachment(paneId);
       server.stop(true);
     },
@@ -839,7 +906,18 @@ export function createServer(
 }
 
 if (import.meta.main) {
-  const instance = createServer();
+  const instance = createServer({ updates: connectUpdater(), registerBridge: true });
+  let stopping = false;
+  const shutdown = () => {
+    if (stopping) return;
+    stopping = true;
+    instance.stop();
+    // Attach sidecars need ~1.2s to release herdr's exclusive client slot.
+    setTimeout(() => process.exit(0), 2000);
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+  if (process.env["HERDR_WEB_MANAGED"] === "1") process.on("disconnect", shutdown);
   console.log(`herdr-web-ui listening on http://${instance.hostname}:${instance.port}`);
   if ((process.env["HERDR_WEB_TOKEN"] ?? "") === "" && !LOOPBACK_HOSTNAMES.has(instance.hostname)) {
     console.error(

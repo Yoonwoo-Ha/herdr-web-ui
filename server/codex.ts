@@ -190,6 +190,22 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = pr
   const open = new Set<string>();
   for (const process of processInfo.process_info?.foreground_processes ?? []) {
     if (!process.argv?.some((arg) => /(?:^|\/)codex(?:\.js)?$/.test(arg))) continue;
+    if (globalThis.process.platform === "darwin") {
+      // lsof is available on macOS, where /proc does not exist. Keep the same
+      // canonical-store and unambiguous-open-file checks as the Linux path.
+      const child = Bun.spawn(["/usr/sbin/lsof", "-nP", "-a", "-p", String(process.pid), "-Fn"], { stdout: "pipe", stderr: "ignore" });
+      const timer = setTimeout(() => child.kill(), 3000);
+      try {
+        const text = await new Response(child.stdout).text();
+        await child.exited;
+        for (const line of text.split("\n")) {
+          if (!line.startsWith("n") || !line.endsWith(".jsonl")) continue;
+          const path = codexRolloutPath(line.slice(1), home);
+          if (path) open.add(path);
+        }
+      } finally { clearTimeout(timer); }
+      continue;
+    }
     let descriptors: string[];
     try { descriptors = readdirSync(`/proc/${process.pid}/fd`); } catch { continue; }
     for (const descriptor of descriptors.slice(0, 512)) {
