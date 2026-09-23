@@ -8,13 +8,15 @@ import { HerdrSocket } from "../lib/ws.ts";
 import { controlCode, isPrintable, keySequence, type KeyBarKey } from "../lib/keys.ts";
 import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "../lib/draft.ts";
 import { QUEUE_READY_STATUS, composerMessage, composerPayload, submitNote } from "../lib/compose.ts";
+import { answerFromText, answerHint, answerRefusal } from "../lib/promptAnswer.ts";
+import { ApiError } from "../lib/api.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { paneStorageId } from "../../shared/machines.ts";
 import { KeyBar } from "./KeyBar.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { Composer } from "./Composer.tsx";
-import type { AgentStatus, ClientRole, ConversationMetadata, ServerMessage } from "../../shared/protocol.ts";
+import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, ServerMessage } from "../../shared/protocol.ts";
 import type { PaneView } from "../lib/actions.ts";
 import { terminalTheme, type ResolvedTheme } from "../lib/settings.ts";
 
@@ -65,7 +67,7 @@ export function PaneTerminal({
   onServerMessage,
 }: PaneTerminalProps) {
   const machineId = useMachineId();
-  const { uploadPaneImage } = useMachineApi();
+  const { answerPanePrompt, uploadPaneImage } = useMachineApi();
   const chatView = view === "chat";
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -100,6 +102,12 @@ export function PaneTerminal({
   // the composer's send bumps this so the chat lens refetches without waiting a poll beat
   const [chatRefresh, setChatRefresh] = useState(0);
   const [chatMetadata, setChatMetadata] = useState<{ pane: string; value: ConversationMetadata | null } | null>(null);
+  // The prompt the chat shows: while it waits, a message from the composer answers it.
+  const [chatPrompt, setChatPrompt] = useState<{ pane: string; value: InteractivePrompt } | null>(null);
+  const [promptRefresh, setPromptRefresh] = useState(0);
+  const onChatPrompt = useCallback((pane: string, value: InteractivePrompt | null) => {
+    setChatPrompt((current) => value !== null ? { pane, value } : current?.pane === pane ? null : current);
+  }, []);
   const onChatMetadata = useCallback((pane: string, value: ConversationMetadata | null) => {
     setChatMetadata((previous) => previous?.pane === pane && previous.value?.model === value?.model
       && previous.value?.reasoning_effort === value?.reasoning_effort ? previous : { pane, value });
@@ -464,19 +472,32 @@ export function PaneTerminal({
 
   // chatmux's queue-next: while the pane's agent runs, a send becomes the ONE
   // queued message; it leaves the queue when the agent is known to be ready.
-  const busy = agent !== null && agentStatus === "working";
+  const answering = chatView && chatPrompt !== null && chatPrompt.pane === paneId ? chatPrompt.value : null;
+  const busy = agent !== null && agentStatus === "working" && answering === null;
   const readyForQueue = agentStatus !== undefined && QUEUE_READY_STATUS[agentStatus] === true;
 
   const composerSend = useCallback(
-    (text: string): boolean | Promise<boolean | string> => {
+    (text: string): boolean | string | Promise<boolean | string> => {
       const pane = paneRef.current;
+      if (pane !== null && answering !== null) {
+        // never typed into the agent's menu: only as one of its options, or its own reply row
+        const choice = answerFromText(answering, text);
+        if (choice === null) return answerRefusal(answering);
+        return answerPanePrompt({ pane_id: pane, prompt_id: answering.id, ...choice }).then(
+          () => { setPromptRefresh((key) => key + 1); return true; },
+          (cause: unknown) => {
+            setPromptRefresh((key) => key + 1);
+            return cause instanceof ApiError && cause.status === 409 ? "The question on screen changed; check it and answer again." : String(cause instanceof Error ? cause.message : cause);
+          },
+        );
+      }
       if (pane !== null && agent !== null && agentStatus === "working") {
         setQueued({ pane, text });
         return true; // the composer may clear its box: the text lives in the queue card
       }
       return sendComposerText(text);
     },
-    [agent, agentStatus, sendComposerText],
+    [agent, agentStatus, answerPanePrompt, answering, sendComposerText],
   );
 
   // A reconnect or status refresh never sends held text without a user action.
@@ -570,6 +591,8 @@ export function PaneTerminal({
             agent={agent}
             agentStatus={agentStatus}
             onMetadata={onChatMetadata}
+            onPrompt={onChatPrompt}
+            promptRefreshKey={promptRefresh}
           />
         )}
       </div>
@@ -620,6 +643,7 @@ export function PaneTerminal({
           metadata={chatMetadata?.pane === paneId ? chatMetadata.value : null}
           connected={connected}
           queueMode={busy}
+          answerHint={answering === null ? null : answerHint(answering)}
           onSend={composerSend}
           onAbort={abortTurn}
           onUploadImage={uploadImage}

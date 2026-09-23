@@ -31,6 +31,10 @@ export interface ChatViewProps {
   agent: string | null;
   agentStatus?: AgentStatus;
   onMetadata?: (paneId: string, metadata: ConversationMetadata | null) => void;
+  /** the agent's waiting prompt, for the composer to answer too */
+  onPrompt?: (paneId: string, prompt: InteractivePrompt | null) => void;
+  /** bumped after the composer answered: read the prompt again now */
+  promptRefreshKey?: number;
 }
 
 interface ChatState {
@@ -216,7 +220,7 @@ function FallbackTurn({ message }: { message: TranscriptMessage }) {
   return <Turn turn={turn} live={false} last={false} showThinking={false} />;
 }
 
-export function ChatView({ paneId, refreshKey, connected, ended, agent, agentStatus, onMetadata }: ChatViewProps) {
+export function ChatView({ paneId, refreshKey, connected, ended, agent, agentStatus, onMetadata, onPrompt, promptRefreshKey = 0 }: ChatViewProps) {
   const { fetchPaneConversation, fetchPanePrompt, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
   // polls pause while the page is hidden and pick up at once when it is back
@@ -381,13 +385,19 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
     let cancelled = false;
     let timer = 0;
     const readPrompt = async (): Promise<void> => {
-      try { const next = await fetchPanePrompt(paneId); if (!cancelled) setPrompt(next); }
+      // the same prompt keeps its object: the composer and the card only change with it
+      try { const next = await fetchPanePrompt(paneId); if (!cancelled) setPrompt((current) => current?.id === next?.id ? current : next); }
       catch { if (!cancelled) setPrompt(null); }
       finally { if (!cancelled) timer = window.setTimeout(() => void readPrompt(), POLL_MS); }
     };
     void readPrompt();
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [pollPrompt, paneId, promptPollKey, fetchPanePrompt, visible]);
+  }, [pollPrompt, paneId, promptPollKey, promptRefreshKey, fetchPanePrompt, visible]);
+
+  useEffect(() => {
+    onPrompt?.(paneId, prompt);
+    return () => onPrompt?.(paneId, null);
+  }, [onPrompt, paneId, prompt]);
 
   // Before paint and without animation: an opened conversation starts at its end
   // instead of scrolling there from the top.

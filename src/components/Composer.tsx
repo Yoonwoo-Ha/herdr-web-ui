@@ -36,6 +36,8 @@ export interface ComposerProps {
   agentStatus?: AgentStatus;
   metadata?: ConversationMetadata | null;
   queueMode?: boolean;
+  /** replaces the placeholder: how a message answers the agent's waiting prompt */
+  answerHint?: string | null;
   /** true: sent, clear the box; a string: keep the text and say why; a promise settles to either */
   onSend: (text: string) => boolean | string | Promise<boolean | string>;
   onAbort: () => void;
@@ -126,6 +128,7 @@ export function Composer({
   agentStatus,
   metadata,
   queueMode = false,
+  answerHint = null,
   onSend,
   onAbort,
   onUploadImage,
@@ -170,9 +173,9 @@ export function Composer({
   const trigger = useMemo(() => activeTrigger(text, caret), [caret, text]);
   const uploading = attachments.some((attachment) => attachment.state === "uploading");
   const agentLabel = agentDisplayLabel(agent);
-  const placeholder = connected
-    ? `Message ${agentLabel}…`
-    : "Reconnecting… message held here, never queued";
+  const placeholder = !connected
+    ? "Reconnecting… message held here, never queued"
+    : answerHint ?? `Message ${agentLabel}…`;
 
   useEffect(() => {
     try {

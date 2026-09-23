@@ -70,13 +70,13 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered }: Prom
             return (
               <label className="prompt-card-check" key={index}>
                 <input type="checkbox" checked={selected.has(index)} disabled={pending} onChange={() => toggle(index)} />
-                <span><strong>{option.label}</strong>{option.description !== null && <small>{option.description}</small>}</span>
+                <span><strong><span className="prompt-card-number">{index + 1}.</span> {option.label}</strong>{option.description !== null && <small>{option.description}</small>}</span>
               </label>
             );
           }
           return (
             <button key={index} type="button" className={index === 0 ? "btn btn-primary" : "btn"} disabled={pending} onClick={() => void answer({ option_index: index })}>
-              <span>{option.label}</span>{option.description !== null && <small>{option.description}</small>}
+              <span><span className="prompt-card-number">{index + 1}.</span> {option.label}</span>{option.description !== null && <small>{option.description}</small>}
             </button>
           );
         })}
