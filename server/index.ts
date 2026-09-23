@@ -630,7 +630,13 @@ export function createServer(
           from: url.searchParams.get("from") ?? undefined,
         };
         try {
-          return jsonResponse(await paneConversation(paneId, options.codexHome, page));
+          const { version, ...conversation } = await paneConversation(paneId, options.codexHome, page);
+          // The chat polls every 2s: an unchanged conversation answers 304 with no body.
+          // no-store keeps the browser's own cache out of it, so the chat sees the 304.
+          const etag = `"${version}"`;
+          const headers = { etag, "cache-control": "no-store" };
+          if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers });
+          return jsonResponse(conversation, 200, headers);
         } catch (error) {
           if (error instanceof HistoryChanged) return jsonResponse({ error: { code: "history_changed", message: error.message } }, 409);
           // an unrecognized pane is not an error: the client falls back to the
