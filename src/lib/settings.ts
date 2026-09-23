@@ -16,6 +16,8 @@ export interface Settings {
   density: Density;
   /** xterm font size in px */
   terminalFontSize: number;
+  /** chat text size in px (its body text; the rest scales with it); null follows the density */
+  chatFontSize: number | null;
   /** true: Enter sends in the composer, Shift+Enter breaks the line; false: Ctrl/Cmd+Enter sends */
   enterSends: boolean;
   /** show the agent's folded reasoning blocks in the chat view */
@@ -26,6 +28,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
   density: "comfortable",
   terminalFontSize: 13,
+  chatFontSize: null,
   enterSends: true,
   showThinking: false,
 };
@@ -34,8 +37,18 @@ const STORAGE_KEY = "herdr-web-ui:settings";
 export const TERMINAL_FONT_MIN = 10;
 export const TERMINAL_FONT_MAX = 22;
 
+export const CHAT_FONT_MIN = 11;
+export const CHAT_FONT_MAX = 24;
+/** each density's body size, --fs-md in src/styles.css: the chat's size when none is chosen */
+const CHAT_BASE_FONT: Record<Density, number> = { comfortable: 14, compact: 13 };
+
 function clampFont(size: number): number {
   return Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, Math.round(size)));
+}
+
+/** The chat's body text size in px: the chosen one, or the density's. */
+export function chatFontSize(settings: Settings): number {
+  return settings.chatFontSize ?? CHAT_BASE_FONT[settings.density];
 }
 
 /** Only known keys with the right type survive: a stale or hand-edited record never breaks the UI. */
@@ -44,10 +57,14 @@ export function sanitizeSettings(raw: unknown): Settings {
   const theme = record["theme"];
   const density = record["density"];
   const font = record["terminalFontSize"];
+  const chatFont = record["chatFontSize"];
   return {
     theme: theme === "dark" || theme === "light" || theme === "system" ? theme : DEFAULT_SETTINGS.theme,
     density: density === "compact" || density === "comfortable" ? density : DEFAULT_SETTINGS.density,
     terminalFontSize: typeof font === "number" && Number.isFinite(font) ? clampFont(font) : DEFAULT_SETTINGS.terminalFontSize,
+    chatFontSize: typeof chatFont === "number" && Number.isFinite(chatFont)
+      ? Math.min(CHAT_FONT_MAX, Math.max(CHAT_FONT_MIN, Math.round(chatFont)))
+      : DEFAULT_SETTINGS.chatFontSize,
     enterSends: typeof record["enterSends"] === "boolean" ? record["enterSends"] : DEFAULT_SETTINGS.enterSends,
     showThinking: typeof record["showThinking"] === "boolean" ? record["showThinking"] : DEFAULT_SETTINGS.showThinking,
   };
@@ -91,6 +108,8 @@ function applyToDocument(settings: Settings, resolved: ResolvedTheme): void {
   const root = document.documentElement;
   root.dataset["theme"] = resolved;
   root.dataset["density"] = settings.density;
+  // ChatView.css scales its type tokens by this: the chosen size over the density's
+  root.style.setProperty("--chat-scale", String(chatFontSize(settings) / CHAT_BASE_FONT[settings.density]));
   root.style.colorScheme = resolved;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLOR[resolved]);
 }

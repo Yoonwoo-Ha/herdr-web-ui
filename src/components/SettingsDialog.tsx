@@ -6,7 +6,7 @@ import "./SettingsDialog.css";
 import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, formatKeys } from "../lib/shortcuts.ts";
-import { TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, useSettings } from "../lib/settings.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, useSettings } from "../lib/settings.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
 import { UpdateControls } from "./UpdateControls.tsx";
 
@@ -97,6 +97,14 @@ export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) 
             <div className="settings-row">
               <div><span className="settings-label">Show thinking</span><span className="settings-description">Include the agent's reasoning blocks</span></div>
               <Toggle label="Show thinking" checked={settings.showThinking} onChange={(showThinking) => update({ showThinking })} />
+            </div>
+            <div className="settings-row">
+              <div><span className="settings-label">Chat font size</span><span className="settings-description">Messages, code and prompt cards in the chat view</span></div>
+              <div className="settings-stepper" aria-label="Chat font size">
+                <button type="button" className="icon-button" aria-label="Decrease chat font size" disabled={chatFontSize(settings) <= CHAT_FONT_MIN} onClick={() => update({ chatFontSize: chatFontSize(settings) - 1 })}><Minus /></button>
+                <output aria-live="polite">{chatFontSize(settings)}px</output>
+                <button type="button" className="icon-button" aria-label="Increase chat font size" disabled={chatFontSize(settings) >= CHAT_FONT_MAX} onClick={() => update({ chatFontSize: chatFontSize(settings) + 1 })}><Plus /></button>
+              </div>
             </div>
           </section>
 
