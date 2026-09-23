@@ -193,8 +193,8 @@ export class MachineManager {
     const generation = runtime.generation;
     const ssh = runtime.ssh!;
     const session = runtime.machine.target!.session;
-    const inspection = await ssh.run(REMOTE_PATH + `printf '%s\\n' "$(uname -s)" "$(uname -m)" "$(cd -P "$HOME" && pwd -P)" "$(command -v herdr || true)"; test -x "$HOME/${BUNDLE_DIR}/bin/bun" && printf 'bundle-ready\\n' || true; for f in "$HOME/.config/herdr-web-ui/bridges/"*.json; do test ! -f "$f" || cat "$f"; printf '\\n'; done`);
-    const [os, arch, home, herdrPath, ...lines] = inspection.split("\n");
+    const inspection = await ssh.run(REMOTE_PATH + `printf '%s\\n' "$(uname -s)" "$(uname -m)" "$(cd -P "$HOME" && pwd -P)" "\${XDG_CONFIG_HOME:-$HOME/.config}" "$(command -v herdr || true)"; test -x "$HOME/${BUNDLE_DIR}/bin/bun" && printf 'bundle-ready\\n' || true; for f in "$HOME/.config/herdr-web-ui/bridges/"*.json; do test ! -f "$f" || cat "$f"; printf '\\n'; done`);
+    const [os, arch, home, xdgConfig, herdrPath, ...lines] = inspection.split("\n");
     if (!home?.startsWith("/") || !["Linux", "Darwin"].includes(os ?? "") || !["x86_64", "aarch64", "arm64"].includes(arch ?? "")) throw new Error("Only Linux/macOS x64 and arm64 PCs are supported");
     const platform = `${os === "Darwin" ? "darwin" : "linux"}-${arch === "x86_64" ? "x64" : "arm64"}`;
     if (herdrPath) {
@@ -202,7 +202,9 @@ export class MachineManager {
       const match = /herdr (\d+)\.(\d+)\.(\d+)/.exec(version);
       if (!match || Number(match[1]) === 0 && Number(match[2]) < 9) throw new Error("The installed herdr is incompatible. Update it explicitly to 0.9+ before connecting; it was left unchanged.");
     }
-    const nominalSocket = session ? `${home}/.config/herdr/sessions/${session}/herdr.sock` : `${home}/.config/herdr/herdr.sock`;
+    // the same XDG_CONFIG_HOME rule remote-entry.ts and herdr itself follow
+    const herdrConfig = `${xdgConfig?.startsWith("/") ? xdgConfig : `${home}/.config`}/herdr`;
+    const nominalSocket = session ? `${herdrConfig}/sessions/${session}/herdr.sock` : `${herdrConfig}/herdr.sock`;
     const expectedSocket = await ssh.run(`socket=${shellQuote(nominalSocket)}; if test -d "\${socket%/*}"; then cd -P "\${socket%/*}" && printf '%s/herdr.sock' "$PWD"; else printf '%s' "$socket"; fi`);
     const descriptors: BridgeDescriptor[] = lines.flatMap((line) => { try { const d = JSON.parse(line); return d.socket_path === expectedSocket ? [d] : []; } catch { return []; } });
     let descriptor = descriptors.find((d) => d.bridge_protocol === BRIDGE_PROTOCOL && d.bundle_version === REMOTE_BUNDLE_VERSION);

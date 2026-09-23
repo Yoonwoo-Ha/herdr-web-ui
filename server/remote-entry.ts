@@ -11,7 +11,10 @@ process.env["HERDR_WEB_REMOTE"] = "1";
 const bundle = join(import.meta.dir, "..");
 process.env["PATH"] = `${join(bundle, "bin")}:${process.env["PATH"] ?? "/usr/bin:/bin"}`;
 const session = process.env["HERDR_REMOTE_SESSION"];
-process.env["HERDR_SOCKET"] = session ? join(homedir(), ".config/herdr/sessions", session, "herdr.sock") : join(homedir(), ".config/herdr/herdr.sock");
+// herdr puts its sockets under XDG_CONFIG_HOME when it is set (GitHub's Linux runners and some
+// desktops set it), so the bridge must look where the daemon it starts will listen
+const herdrConfig = join(process.env["XDG_CONFIG_HOME"] || join(homedir(), ".config"), "herdr");
+process.env["HERDR_SOCKET"] = session ? join(herdrConfig, "sessions", session, "herdr.sock") : join(herdrConfig, "herdr.sock");
 const descriptor = descriptorPath();
 mkdirSync(dirname(descriptor), { recursive: true, mode: 0o700 });
 const lock = descriptor + ".lock";

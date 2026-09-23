@@ -6,19 +6,21 @@ import { join, resolve } from "node:path";
 const root = realpathSync(mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "herdr-bundle-smoke-")));
 const bundle = join(root, "runtime");
 const home = join(root, "home");
+// herdr follows XDG_CONFIG_HOME; a value apart from ~/.config proves the bridge follows it too
+const xdg = join(home, "xdg");
 mkdirSync(bundle); mkdirSync(home);
 let child: ReturnType<typeof Bun.spawn> | undefined;
 try {
   const archive = resolve(`remote-bundles/herdr-web-ui-${process.platform}-${process.arch}.tgz`);
   assert.equal(Bun.spawnSync(["tar", "xzf", archive, "-C", bundle]).exitCode, 0);
-  child = Bun.spawn([join(bundle, "bin/bun"), join(bundle, "server/remote-entry.ts")], { env: { ...process.env, HOME: home, HERDR_REMOTE_SESSION: "smoke", HERDR_WEB_HERDR_BIN: join(bundle, "bin/herdr") }, stdout: "inherit", stderr: "inherit" });
+  child = Bun.spawn([join(bundle, "bin/bun"), join(bundle, "server/remote-entry.ts")], { env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, HERDR_REMOTE_SESSION: "smoke", HERDR_WEB_HERDR_BIN: join(bundle, "bin/herdr") }, stdout: "inherit", stderr: "inherit" });
   const { createHash } = await import("node:crypto");
-  const socket = join(home, ".config/herdr/sessions/smoke/herdr.sock");
+  const socket = join(xdg, "herdr/sessions/smoke/herdr.sock");
   const path = join(home, ".config/herdr-web-ui/bridges", createHash("sha256").update(socket).digest("hex") + ".json");
   let descriptor: { port: number; token: string } | undefined;
   for (let i = 0; i < 400; i++) { try { descriptor = JSON.parse(readFileSync(path, "utf8")); break; } catch { await Bun.sleep(100); } }
   if (!descriptor) {
-    for (const log of [join(home, ".config/herdr-web-ui/bridges/herdr.log"), join(home, ".config/herdr/sessions/smoke/herdr-server.log")]) {
+    for (const log of [join(home, ".config/herdr-web-ui/bridges/herdr.log"), join(xdg, "herdr/sessions/smoke/herdr-server.log")]) {
       console.error(`--- ${log}\n${existsSync(log) ? readFileSync(log, "utf8").slice(-4000) : "(missing)"}`);
     }
   }
@@ -31,6 +33,6 @@ try {
   console.log("Remote bundle startup, isolated socket and authentication passed");
 } finally {
   child?.kill(); if (child) await child.exited;
-  Bun.spawnSync([join(bundle, "bin/herdr"), "--session", "smoke", "server", "stop"], { env: { ...process.env, HOME: home } });
+  Bun.spawnSync([join(bundle, "bin/herdr"), "--session", "smoke", "server", "stop"], { env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg } });
   rmSync(root, { recursive: true, force: true });
 }
