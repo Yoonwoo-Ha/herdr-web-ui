@@ -14,6 +14,12 @@ async function commit(contents: string, failBuild = false) {
   await git(upstream, "commit", "-qm", contents);
   return git(upstream, "rev-parse", "HEAD");
 }
+/** Commit and publish it as a release tag; only tags make an update available. */
+async function release(contents: string, tag: string, options: { failBuild?: boolean; annotated?: boolean } = {}) {
+  const revision = await commit(contents, options.failBuild);
+  await git(upstream, "tag", ...(options.annotated ? ["-a", "-m", tag] : []), tag);
+  return revision;
+}
 
 beforeEach(async () => {
   directory = mkdtempSync(join(tmpdir(), "herdr-updater-"));
@@ -41,7 +47,7 @@ afterEach(() => {
 describe("managed source updates with real Git repositories and builds", () => {
   it("checks without installing, then builds an exact revision without changing the source", async () => {
     const original = await git(root, "rev-parse", "HEAD");
-    const target = await commit("second");
+    const target = await release("second", "v0.2.0");
     await updater.request("check");
     expect(updater.status.available).toBe(true);
     expect(updater.status.current_revision).toBe(original);
@@ -69,11 +75,11 @@ describe("managed source updates with real Git repositories and builds", () => {
     expect(updater.status.blocked_reason).toContain("main");
     await git(root, "checkout", "main", "--quiet");
     await git(upstream, "checkout", "--orphan", "replacement", "--quiet");
-    await commit("unrelated");
+    await release("unrelated", "v9.0.0");
     await git(upstream, "branch", "-M", "main");
     await updater.request("install");
     expect(updater.status.available).toBe(false);
-    expect(updater.status.blocked_reason).toContain("diverges");
+    expect(updater.status.blocked_reason).toContain("release history");
   });
 
   it("updates a herdr-managed plugin checkout: shallow, detached, owned by herdr", async () => {
@@ -97,7 +103,7 @@ describe("managed source updates with real Git repositories and builds", () => {
     const managed = make(true);
     await managed.initialize();
     expect(managed.status.blocked_reason).toBeNull();
-    const target = await commit("second");
+    const target = await release("second", "v0.2.0");
     await managed.request("install");
     expect(managed.status.error).toBeNull();
     expect(managed.status.current_revision).toBe(target);
@@ -107,9 +113,54 @@ describe("managed source updates with real Git repositories and builds", () => {
     managed.stop();
   });
 
+  it("follows only plain vX.Y.Z tags: untagged commits, bundle tags and pre-releases stay put", async () => {
+    await commit("untagged work on main");
+    await git(upstream, "tag", "remote-v9");
+    await git(upstream, "tag", "v1.0.0-rc1");
+    await updater.request("check");
+    expect(updater.status.error).toBeNull();
+    expect(updater.status.available).toBe(false);
+    expect(updater.status.latest_version).toBeNull();
+
+    const target = await release("released", "v0.10.0", { annotated: true });
+    await release("older", "v0.9.0");
+    await git(upstream, "reset", "-q", "--hard", target);
+    await updater.request("check");
+    expect(updater.status.latest_version).toBe("0.10.0");
+    // the annotated tag peels to the commit that builds and health checks report
+    expect(updater.status.latest_revision).toBe(target);
+    expect(updater.status.available).toBe(true);
+    await updater.request("install");
+    expect(updater.status.error).toBeNull();
+    expect(updater.status.current_revision).toBe(target);
+  });
+
+  it("treats a shallow plugin checkout ahead of the latest release as up to date", async () => {
+    await git(upstream, "tag", "v0.1.0", "HEAD");
+    await commit("unreleased");
+    const plugin = join(directory, "plugin");
+    mkdirSync(plugin);
+    await git(plugin, "init", "-q");
+    await git(plugin, "remote", "add", "origin", `file://${upstream}`);
+    await git(plugin, "fetch", "-q", "--depth", "1", "origin", "main");
+    await git(plugin, "checkout", "-q", "FETCH_HEAD");
+    const managed = new Updater({ root: plugin, stateDir: join(directory, "plugin-state"), autoUpdate: false, pluginCheckout: true,
+      publish() {}, activate: async (_next, persist) => persist() });
+    await managed.initialize();
+    await managed.request("check");
+    expect(managed.status.error).toBeNull();
+    expect(managed.status.blocked_reason).toBeNull();
+    expect(managed.status.latest_version).toBe("0.1.0");
+    expect(managed.status.available).toBe(false);
+    await release("third", "v0.2.0");
+    await managed.request("check");
+    expect(managed.status.available).toBe(true);
+    managed.stop();
+  });
+
   it("leaves the current release intact on build failure and cleans the failed stage", async () => {
     const original = updater.release;
-    await commit("broken build", true);
+    await release("broken build", "v0.2.0", { failBuild: true });
     await updater.request("install");
     expect(updater.status.phase).toBe("error");
     expect(updater.status.error).toContain("fixture build failure");
@@ -120,7 +171,7 @@ describe("managed source updates with real Git repositories and builds", () => {
   it("does not persist a candidate that failed startup", async () => {
     updater.options.activate = async () => { throw new Error("health check failed; previous restored"); };
     const original = updater.release;
-    await commit("bad startup");
+    await release("bad startup", "v0.2.0");
     await updater.request("install");
     expect(updater.release).toBe(original);
     expect(updater.status.error).toContain("health check failed");
@@ -131,7 +182,7 @@ describe("managed source updates with real Git repositories and builds", () => {
     let activations = 0;
     updater.options.autoUpdate = true;
     updater.options.activate = async (_release: Release, persist) => { activations++; persist(); };
-    const target = await commit("automatic");
+    const target = await release("automatic", "v0.2.0");
     await Promise.all([updater.request("check"), updater.request("install"), updater.request("check")]);
     expect(activations).toBe(1);
     expect(updater.status.current_revision).toBe(target);
@@ -147,7 +198,7 @@ describe("managed source updates with real Git repositories and builds", () => {
     updater.options.autoUpdate = true;
     let attempts = 0;
     updater.options.activate = async () => { attempts++; throw new Error("startup failed"); };
-    await commit("bad automatic startup");
+    await release("bad automatic startup", "v0.2.0");
     await updater.request("check");
     await updater.request("check");
     expect(attempts).toBe(1);
@@ -202,7 +253,7 @@ describe("managed source updates with real Git repositories and builds", () => {
     };
     try {
       await until(async () => (await readStatus())?.managed === true);
-      const target = await commit("managed second");
+      const target = await release("managed second", "v0.2.0");
       await request("check");
       await until(async () => (await readStatus())?.available === true);
       await request("install");
@@ -212,7 +263,7 @@ describe("managed source updates with real Git repositories and builds", () => {
       expect(health.web_ui.revision).toBe(target);
 
       writeFileSync(join(upstream, "server/index.ts"), "throw new Error('fixture startup failure');");
-      await commit("broken startup");
+      await release("broken startup", "v0.3.0");
       await request("check");
       await until(async () => (await readStatus())?.available === true);
       await request("install");

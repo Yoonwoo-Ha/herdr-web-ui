@@ -6,6 +6,15 @@ import { unmanagedUpdateStatus, type UpdateCommand, type UpdateStatus } from "..
 
 export interface Release { directory: string; revision: string; source_revision: string }
 const SHA = /^[0-9a-f]{40,64}$/;
+/** A release is a plain `vX.Y.Z` tag: `remote-v*` bundle tags and pre-releases never qualify. */
+const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+
+function packageVersion(directory: string): string | null {
+  try {
+    const version = (JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { version?: unknown }).version;
+    return typeof version === "string" ? version : null;
+  } catch { return null; }
+}
 
 /** Commands use argv, bounded output/time, and a separate group for cancellation. */
 export function runCommand(cwd: string, argv: string[], signal?: AbortSignal, timeout = 30_000): Promise<string> {
@@ -80,7 +89,7 @@ export class Updater {
               await runCommand(saved.directory, ["git", "rev-parse", "HEAD"]) === saved.revision) this.release = saved;
         } catch { /* missing/stale release: use the source checkout */ }
       }
-      this.patch({ current_revision: this.release.revision, blocked_reason: reason });
+      this.patch({ current_revision: this.release.revision, current_version: packageVersion(this.release.directory), blocked_reason: reason });
     } catch {
       this.patch({ managed: false, blocked_reason: "Updates require a Git checkout on the main branch." });
     }
@@ -108,16 +117,39 @@ export class Updater {
     this.patch({ phase: "checking", error: null, available: false, blocked_reason: null });
     const reason = await this.sourceBlock();
     if (reason) { this.patch({ blocked_reason: reason, checked_at: new Date().toISOString() }); return; }
-    await this.git("fetch", "--no-tags", "origin", "refs/heads/main");
-    const target = await this.git("rev-parse", "FETCH_HEAD");
-    if (!SHA.test(target)) throw new Error("Invalid update revision");
-    let block: string | null = null;
-    if (target !== this.release!.revision) {
-      try { await this.git("merge-base", "--is-ancestor", this.release!.revision, target); }
-      catch { block = "The running revision is ahead of or diverges from origin/main; automatic downgrade is disabled."; }
+    // Only published releases update installs: commits pushed to main without a tag stay put.
+    await this.git("fetch", "--no-tags", "origin", "+refs/tags/v*:refs/tags/v*");
+    const tags = (await this.git("for-each-ref", "--sort=-v:refname", "--format=%(refname:short)", "refs/tags/v*"))
+      .split("\n").filter((tag) => RELEASE_TAG.test(tag));
+    const checked_at = new Date().toISOString();
+    const latest = tags[0];
+    if (!latest) {
+      this.patch({ latest_revision: null, latest_version: null, checked_at, blocked_reason: null, available: false });
+      return;
     }
-    this.patch({ latest_revision: target, checked_at: new Date().toISOString(), blocked_reason: block,
-      available: target !== this.release!.revision && !block });
+    // ^{commit} peels an annotated tag to the commit the build and the health check report
+    const target = await this.git("rev-parse", `${latest}^{commit}`);
+    if (!SHA.test(target)) throw new Error("Invalid update revision");
+    const current = this.release!.revision;
+    let block: string | null = null;
+    let available = false;
+    if (target !== current) {
+      if (await this.ancestor(current, target)) available = true;
+      // running ahead of the latest release (a development checkout) is simply up to date
+      else if (!await this.ancestor(target, current)) {
+        block = "The running version is not part of the release history; automatic downgrade is disabled.";
+      }
+    }
+    this.patch({ latest_revision: target, latest_version: latest.slice(1), checked_at, blocked_reason: block, available });
+  }
+
+  /** herdr's plugin checkout is shallow: fetch the missing history once before calling two commits unrelated. */
+  private async ancestor(older: string, newer: string): Promise<boolean> {
+    const test = () => this.git("merge-base", "--is-ancestor", older, newer).then(() => true, () => false);
+    if (await test()) return true;
+    if (await this.git("rev-parse", "--is-shallow-repository") !== "true") return false;
+    await this.git("fetch", "--no-tags", "--unshallow", "origin");
+    return test();
   }
 
   async request(command: UpdateCommand): Promise<void> {
@@ -158,7 +190,7 @@ export class Updater {
         });
         this.release = next;
         stage = null;
-        this.patch({ current_revision: revision, available: false });
+        this.patch({ current_revision: revision, current_version: packageVersion(next.directory), available: false });
         this.failedRevision = null;
         rmSync(join(this.options.stateDir, "failed.json"), { force: true });
         for (const entry of readdirSync(this.options.stateDir, { withFileTypes: true })) {

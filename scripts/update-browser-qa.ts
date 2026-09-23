@@ -68,7 +68,7 @@ try {
   await page.getByRole("heading", { name: "Updates", exact: true }).scrollIntoViewIfNeeded();
 
   writeFileSync(join(upstream, "qa-revision.txt"), "second build\n");
-  await git(upstream, "add", "."); await git(upstream, "commit", "-qm", "QA update");
+  await git(upstream, "add", "."); await git(upstream, "commit", "-qm", "QA update"); await git(upstream, "tag", "v99.0.0");
   const next = await git(upstream, "rev-parse", "HEAD");
   await page.getByRole("button", { name: "Check for updates", exact: true }).click();
   const installButton = page.getByRole("button", { name: "Update and restart", exact: true });
@@ -87,11 +87,11 @@ try {
   await page.locator(".update-notice").getByRole("button", { name: "Reload app" }).click();
   await page.locator(".app-header").getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("heading", { name: "Updates", exact: true }).scrollIntoViewIfNeeded();
-  await page.getByText(`Running ${next.slice(0, 12)}`, { exact: true }).waitFor();
+  await page.getByText(new RegExp(`^Running (v[0-9.]+ \\()?${next.slice(0, 12)}\\)?$`)).waitFor();
   assert.equal(await page.locator(".update-notice").count(), 0);
 
   writeFileSync(join(upstream, "server/index.ts"), `throw new Error('QA startup failure');\n${readFileSync(join(upstream, "server/index.ts"), "utf8")}`);
-  await git(upstream, "add", "."); await git(upstream, "commit", "-qm", "QA failed startup");
+  await git(upstream, "add", "."); await git(upstream, "commit", "-qm", "QA failed startup"); await git(upstream, "tag", "v99.0.1");
   await page.getByRole("button", { name: "Check for updates", exact: true }).click();
   await until(() => installButton.isEnabled(), "Rollback candidate never became available");
   await installButton.click();

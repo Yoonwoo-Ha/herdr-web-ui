@@ -8,6 +8,8 @@ import { useInstallPrompt } from "../lib/install.ts";
 import { Sidebar } from "./Sidebar.tsx";
 import "./Machines.css";
 
+declare const __APP_VERSION__: string;
+
 /** The PC header's state word; "connected" is the quiet default and shows as a dot alone. */
 const STATE_WORD: Readonly<Record<MachineState, string>> = {
   connecting: "Connecting…",
@@ -30,7 +32,7 @@ export function MachineSidebar(props: Props) {
       {canInstall && <button className="btn btn-ghost sidebar-footer-action" onClick={() => void install()}><Download aria-hidden="true" />Install app</button>}
       <button className="btn btn-ghost sidebar-footer-action" onClick={props.actions.openSettings}><Settings aria-hidden="true" />Settings</button>
       <div className="sidebar-brandline">
-        <span className="sidebar-app-name">herdr web ui</span>
+        <span className="sidebar-app-name">herdr web ui v{__APP_VERSION__}</span>
         {props.version && <span className="pill">herdr {props.version}</span>}
       </div>
     </footer>

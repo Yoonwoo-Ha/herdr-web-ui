@@ -107,7 +107,7 @@ Tap the bell to turn on alerts for that device. iPhone needs iOS 16.4+ and the h
 
 ## Updates
 
-`bun run start` and the plugin run a supervisor that checks `origin/main` 10 seconds after start and every 5 minutes. When a newer commit exists, the header says so; **Settings → Updates** checks on demand and offers **Update and restart**. Set `HERDR_WEB_AUTO_UPDATE=1` to install new commits automatically. `bun run server` and `bun run dev` never update.
+`bun run start` and the plugin run a supervisor that looks for a newer **release** 10 seconds after start and every 5 minutes. A release is a `vX.Y.Z` tag ([CHANGELOG](CHANGELOG.md)); commits on `main` between releases never reach installs. When a release is out, the header names its version; **Settings → Updates** checks on demand and offers **Update and restart**. Set `HERDR_WEB_AUTO_UPDATE=1` to install releases automatically. `bun run server` and `bun run dev` never update.
 
 An update is built and typechecked in a private checkout while the current server keeps serving, then the server restarts and must pass a health check, or the previous build comes back. herdr and its sessions keep running; browsers reconnect briefly, and a **Reload app** notice lets you save drafts before loading the new frontend.
 
@@ -122,7 +122,7 @@ Updates need a clean checkout with an `origin` remote: `main` for a source insta
 | `HERDR_SOCKET` | `~/.config/herdr/herdr.sock` | herdr socket for API calls and terminal attach. Use `~/.config/herdr/sessions/<name>/herdr.sock` for a named session. |
 | `HERDR_WEB_TOKEN` | unset | Shared token that gates terminal access |
 | `HERDR_WEB_STATE_DIR` | `~/.config/herdr-web-ui` | Push keys, device subscriptions, PC registrations and update builds |
-| `HERDR_WEB_AUTO_UPDATE` | `0` | `1` installs new `origin/main` commits automatically |
+| `HERDR_WEB_AUTO_UPDATE` | `0` | `1` installs new releases automatically |
 | `HERDR_WEB_PUSH_SUBJECT` | this repository's URL | VAPID contact URL or `mailto:` address |
 | `HERDR_WEB_BUNDLE_MANIFEST` | unset | Remote-PC bundle manifest (path or URL) that overrides local and published bundles |
 | `HERDR_WEB_HERDR_BIN` | `herdr` | herdr executable used for terminal attach |
@@ -178,6 +178,8 @@ bun run test:ui                 # browser regression against isolated test serve
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun run test:ssh                # remote-PC integration over SSH
 ```
+
+To release, bump `version` in `package.json` and `herdr-plugin.toml`, move the `Unreleased` notes in [CHANGELOG.md](CHANGELOG.md) under the new version, commit, then push `main` together with a `vX.Y.Z` tag (`git push origin main vX.Y.Z`). The release workflow checks that the three versions agree, builds, tests and publishes the GitHub release; installs pick it up within five minutes. Remote-PC runtime bundles are released separately by pushing `remote-vN` after raising `REMOTE_BUNDLE_VERSION` in `shared/machines.ts`.
 
 Browser checks look for Chrome at `/opt/google/chrome/chrome`; set `CHROME_PATH` otherwise. After a herdr upgrade, refresh the generated wire types with `bun run generate:types --refresh` (and `--check` to verify).
 
