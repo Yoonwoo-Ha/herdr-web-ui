@@ -7,6 +7,15 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-23
+
+### Fixed
+- Updates now replace the update supervisor too. `server/managed.ts` became a small launcher that
+  runs the active release's supervisor; after an install passes its health check the supervisor
+  hands over to the new one (one more brief reconnect), and a new supervisor that cannot start is
+  replaced by the previous one, with the failure shown in Settings → Updates.
+- Release CI skips the one updater test that needs a live herdr.
+
 ## [0.2.0] - 2026-09-23
 
 ### Added
@@ -46,6 +55,7 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/devswha/herdr-web-ui/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/devswha/herdr-web-ui/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/devswha/herdr-web-ui/releases/tag/v0.1.0
