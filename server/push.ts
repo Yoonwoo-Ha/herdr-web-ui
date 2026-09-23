@@ -15,7 +15,6 @@
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import webpush from "web-push";
 
@@ -63,11 +62,7 @@ export interface PushServiceOptions {
   lookupTitle?: (paneId: string) => Promise<string | undefined>;
 }
 
-export function defaultStateDir(): string {
-  const override = process.env["HERDR_WEB_STATE_DIR"];
-  if (override) return override;
-  return join(process.env["XDG_CONFIG_HOME"] || join(homedir(), ".config"), "herdr-web-ui");
-}
+export { defaultStateDir } from "./update-state.ts";
 
 function readJson(path: string): unknown {
   try {

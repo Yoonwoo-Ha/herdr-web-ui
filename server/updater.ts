@@ -59,9 +59,13 @@ export class Updater {
     /** herdr's `plugin install` checks out a shallow, detached commit it owns; that HEAD is
      * accepted when it is an ancestor of origin/main (a user's own detached checkout is not). */
     pluginCheckout?: boolean;
+    /** Runs once a release is installed and active; the supervisor hands itself over here. */
+    afterInstall?: (release: Release) => void | Promise<void>;
+    /** A standing problem to report in every status (a supervisor that fell back to its predecessor). */
+    notice?: string;
     activate: (release: Release, commit: () => void) => Promise<void>;
     publish: (status: UpdateStatus) => void;
-  }) { this.status.auto_update = options.autoUpdate; }
+  }) { this.status.auto_update = options.autoUpdate; this.status.error = options.notice ?? null; }
 
   private git(...args: string[]) { return runCommand(this.options.root, ["git", ...args], this.controller.signal); }
   private patch(patch: Partial<UpdateStatus>) {
@@ -114,7 +118,7 @@ export class Updater {
   }
 
   private async discover() {
-    this.patch({ phase: "checking", error: null, available: false, blocked_reason: null });
+    this.patch({ phase: "checking", error: this.options.notice ?? null, available: false, blocked_reason: null });
     const reason = await this.sourceBlock();
     if (reason) { this.patch({ blocked_reason: reason, checked_at: new Date().toISOString() }); return; }
     // Only published releases update installs: commits pushed to main without a tag stay put.
@@ -199,6 +203,10 @@ export class Updater {
             rmSync(directory, { recursive: true, force: true });
           }
         }
+        // before "idle": a supervisor that hands over exits here, so "idle" with the new revision
+        // only ever comes from the supervisor that will keep running it
+        try { await this.options.afterInstall?.(next); }
+        catch (error) { console.error("afterInstall failed", error); }
       }
       this.patch({ phase: "idle" });
     } catch (error) {

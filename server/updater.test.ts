@@ -45,6 +45,58 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+/** A real launcher + supervisor + bridge on a free port, serving the fixture checkout. */
+async function managedFixture(supervisor?: string) {
+  updater.stop();
+  mkdirSync(join(upstream, "server"), { recursive: true });
+  const entry = `
+    import { createServer } from ${JSON.stringify(join(import.meta.dir, "index.ts"))};
+    import { connectUpdater } from ${JSON.stringify(join(import.meta.dir, "update-api.ts"))};
+    const server = createServer({ updates: connectUpdater() });
+    process.on('SIGTERM', () => { server.stop(); setTimeout(() => process.exit(0), 50); });
+    process.on('disconnect', () => { server.stop(); process.exit(0); });
+  `;
+  writeFileSync(join(upstream, "server/index.ts"), entry);
+  if (supervisor !== undefined) writeFileSync(join(upstream, "server/supervisor.ts"), supervisor);
+  await commit("managed initial");
+  await git(root, "pull", "--ff-only", "--quiet");
+  const reservation = Bun.serve({ port: 0, fetch: () => new Response() });
+  const port = reservation.port!; reservation.stop(true);
+  const origin = `http://127.0.0.1:${port}`;
+  const headers = { authorization: "Bearer test-managed-token", "x-herdr-update": "1" };
+  const launch = () => Bun.spawn([process.execPath, "--eval",
+    `import {runManaged} from ${JSON.stringify(join(import.meta.dir, "managed.ts"))}; await runManaged(${JSON.stringify(root)});`], {
+    env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", HERDR_WEB_STATE_DIR: stateDir,
+      HERDR_WEB_TOKEN: "test-managed-token", HERDR_WEB_AUTO_UPDATE: "0", SUPERVISOR_MARKER: join(directory, "marker") },
+    stdout: "ignore", stderr: "ignore",
+  });
+  const readStatus = async () => {
+    try { return await (await fetch(`${origin}/api/updates`, { headers })).json() as typeof updater.status; }
+    catch { return null; }
+  };
+  const until = async (check: () => Promise<boolean>) => {
+    const deadline = Date.now() + 12_000;
+    while (!await check()) {
+      if (Date.now() > deadline) throw new Error(`Managed update timeout: ${JSON.stringify(await readStatus())}`);
+      await Bun.sleep(50);
+    }
+  };
+  const request = async (command: string) => {
+    const response = await fetch(`${origin}/api/updates/${command}`, { method: "POST", headers });
+    expect(response.status).toBe(202);
+  };
+  const health = async () => (await (await fetch(`${origin}/api/health`)).json()) as { web_ui: { revision: string; boot_id: string } };
+  return { launch, readStatus, until, request, health, origin };
+}
+/** A release's own supervisor: records that it ran, then runs the real one (or fails on purpose). */
+const releaseSupervisor = (broken = false) => broken ? "process.exit(3);\n" : `
+  import { appendFileSync } from "node:fs";
+  appendFileSync(process.env.SUPERVISOR_MARKER, "release\\n");
+  const { runSupervisor } = await import(${JSON.stringify(join(import.meta.dir, "supervisor.ts"))});
+  await runSupervisor(process.env.HERDR_WEB_SOURCE_ROOT);
+`;
+const liveHerdr = existsSync(process.env["HERDR_SOCKET"] || HERDR_SOCKET_PATH);
+
 describe("managed source updates with real Git repositories and builds", () => {
   it("checks without installing, then builds an exact revision without changing the source", async () => {
     const original = await git(root, "rev-parse", "HEAD");
@@ -214,55 +266,18 @@ describe("managed source updates with real Git repositories and builds", () => {
   });
 
   // the supervisor's health check pings herdr, so this one needs a live herdr (CI has none)
-  it.skipIf(!existsSync(process.env["HERDR_SOCKET"] || HERDR_SOCKET_PATH))("restarts the real bridge over IPC, rolls back a failed boot, and resumes the saved release", async () => {
-    updater.stop();
-    mkdirSync(join(upstream, "server"));
-    const entry = `
-      import { createServer } from ${JSON.stringify(join(import.meta.dir, "index.ts"))};
-      import { connectUpdater } from ${JSON.stringify(join(import.meta.dir, "update-api.ts"))};
-      const server = createServer({ updates: connectUpdater() });
-      process.on('SIGTERM', () => { server.stop(); setTimeout(() => process.exit(0), 50); });
-      process.on('disconnect', () => { server.stop(); process.exit(0); });
-    `;
-    writeFileSync(join(upstream, "server/index.ts"), entry);
-    await commit("managed initial");
-    await git(root, "pull", "--ff-only", "--quiet");
-    const reservation = Bun.serve({ port: 0, fetch: () => new Response() });
-    const port = reservation.port!; reservation.stop(true);
-    const origin = `http://127.0.0.1:${port}`;
-    const headers = { authorization: "Bearer test-managed-token", "x-herdr-update": "1" };
-    const launch = () => Bun.spawn([process.execPath, "--eval",
-      `import {runManaged} from ${JSON.stringify(join(import.meta.dir, "managed.ts"))}; await runManaged(${JSON.stringify(root)});`], {
-      env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", HERDR_WEB_STATE_DIR: stateDir,
-        HERDR_WEB_TOKEN: "test-managed-token", HERDR_WEB_AUTO_UPDATE: "0" },
-      stdout: "ignore", stderr: "ignore",
-    });
+  it.skipIf(!liveHerdr)("restarts the real bridge over IPC, rolls back a failed boot, and resumes the saved release", async () => {
+    const { launch, readStatus, until, request, health } = await managedFixture();
     let processHandle = launch();
-    const readStatus = async () => {
-      try { return await (await fetch(`${origin}/api/updates`, { headers })).json() as typeof updater.status; }
-      catch { return null; }
-    };
-    const until = async (check: () => Promise<boolean>) => {
-      const deadline = Date.now() + 12_000;
-      while (!await check()) {
-        if (Date.now() > deadline) throw new Error(`Managed update timeout: ${JSON.stringify(await readStatus())}`);
-        await Bun.sleep(50);
-      }
-    };
-    const request = async (command: string) => {
-      const response = await fetch(`${origin}/api/updates/${command}`, { method: "POST", headers });
-      expect(response.status).toBe(202);
-    };
     try {
       await until(async () => (await readStatus())?.managed === true);
       const target = await release("managed second", "v0.2.0");
       await request("check");
       await until(async () => (await readStatus())?.available === true);
       await request("install");
-      await until(async () => (await readStatus())?.current_revision === target);
+      await until(async () => { const s = await readStatus(); return s?.current_revision === target && s.phase === "idle"; });
       expect((await readStatus())?.error).toBeNull();
-      const health = await (await fetch(`${origin}/api/health`)).json() as { web_ui: { revision: string } };
-      expect(health.web_ui.revision).toBe(target);
+      expect((await health()).web_ui.revision).toBe(target);
 
       writeFileSync(join(upstream, "server/index.ts"), "throw new Error('fixture startup failure');");
       await release("broken startup", "v0.3.0");
@@ -280,6 +295,49 @@ describe("managed source updates with real Git repositories and builds", () => {
     } finally {
       processHandle.kill("SIGTERM");
       await processHandle.exited;
+    }
+  }, 30_000);
+
+  it.skipIf(!liveHerdr)("hands over to the installed release's own supervisor", async () => {
+    const { launch, readStatus, until, request, health } = await managedFixture(releaseSupervisor());
+    const marker = join(directory, "marker");
+    const handle = launch();
+    try {
+      await until(async () => (await readStatus())?.managed === true);
+      // the source checkout's supervisor starts first: nothing is installed yet
+      expect(existsSync(marker)).toBe(false);
+      const target = await release("handover", "v0.2.0");
+      await request("check");
+      await until(async () => (await readStatus())?.available === true);
+      await request("install");
+      await until(async () => { const s = await readStatus(); return existsSync(marker) && s?.current_revision === target && s.phase === "idle"; });
+      expect(readFileSync(marker, "utf8")).toBe("release\n");
+      expect((await health()).web_ui.revision).toBe(target);
+      expect((await readStatus())?.error).toBeNull();
+    } finally {
+      handle.kill("SIGTERM");
+      expect(await handle.exited).toBe(0);
+    }
+  }, 30_000);
+
+  it.skipIf(!liveHerdr)("falls back to the previous supervisor when the new one cannot start", async () => {
+    const { launch, readStatus, until, request, health } = await managedFixture();
+    const handle = launch();
+    try {
+      await until(async () => (await readStatus())?.managed === true);
+      writeFileSync(join(upstream, "server/supervisor.ts"), releaseSupervisor(true));
+      const target = await release("broken supervisor", "v0.2.0");
+      await request("check");
+      await until(async () => (await readStatus())?.available === true);
+      await request("install");
+      await until(async () => (await readStatus())?.error?.includes("previous one") === true);
+      // the bridge that passed its health check keeps serving under the old supervisor
+      expect((await readStatus())?.current_revision).toBe(target);
+      expect((await health()).web_ui.revision).toBe(target);
+      expect(handle.exitCode).toBeNull();
+    } finally {
+      handle.kill("SIGTERM");
+      await handle.exited;
     }
   }, 30_000);
 });
