@@ -7,6 +7,9 @@
  * and fades in on hover.
  */
 
+/* The chat's text has its own size (Settings → Chat font size): the view scales the type
+   tokens by --chat-scale (lib/settings.ts) and the transcript uses the scaled ones under
+   the same names, so every message, code block and prompt card grows together */
 .chat-view {
   position: absolute;
   inset: 0;
@@ -15,15 +18,28 @@
   padding: var(--space-4) var(--space-4) var(--space-5);
   background: var(--bg);
   scroll-behavior: smooth;
+  --chat-fs-2xs: calc(var(--fs-2xs) * var(--chat-scale, 1));
+  --chat-fs-xs: calc(var(--fs-xs) * var(--chat-scale, 1));
+  --chat-fs-sm: calc(var(--fs-sm) * var(--chat-scale, 1));
+  --chat-fs-md: calc(var(--fs-md) * var(--chat-scale, 1));
+  --chat-fs-lg: calc(var(--fs-lg) * var(--chat-scale, 1));
+  --chat-fs-xl: calc(var(--fs-xl) * var(--chat-scale, 1));
 }
 
 .chat-transcript {
+  --fs-2xs: var(--chat-fs-2xs);
+  --fs-xs: var(--chat-fs-xs);
+  --fs-sm: var(--chat-fs-sm);
+  --fs-md: var(--chat-fs-md);
+  --fs-lg: var(--chat-fs-lg);
+  --fs-xl: var(--chat-fs-xl);
   width: min(100%, var(--content-w));
   min-height: 100%;
   margin-inline: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  font-size: var(--fs-md);
 }
 
 .chat-turn {
