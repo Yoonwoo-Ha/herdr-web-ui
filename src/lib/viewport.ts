@@ -7,6 +7,11 @@
  * and pinning the page at (0, 0) keeps header, terminal and key bar in view.
  * Chrome resizes the layout viewport itself (interactive-widget=resizes-content
  * in index.html), so there the same value changes nothing.
+ *
+ * Only the shell (.app) is pinned. The token gate sizes itself to the same height
+ * and is otherwise a plain page: pinning it fought iOS scrolling the focused field
+ * into view, and a second tap on the field (to paste) landed after the page jumped,
+ * off the field, which dismissed the keyboard.
  */
 
 const viewport = window.visualViewport;
@@ -14,7 +19,7 @@ const viewport = window.visualViewport;
 if (viewport) {
   const sync = (): void => {
     document.documentElement.style.setProperty("--app-height", `${Math.round(viewport.height)}px`);
-    window.scrollTo(0, 0);
+    if (document.querySelector(".app") !== null) window.scrollTo(0, 0);
   };
   viewport.addEventListener("resize", sync);
   viewport.addEventListener("scroll", sync);
