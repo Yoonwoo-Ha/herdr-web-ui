@@ -79,7 +79,9 @@ export async function runManaged(root = resolve(import.meta.dir, "..")) {
     await stopChild();
     throw new Error("The new bridge failed its startup health check.");
   }
+  const pluginRoot = process.env["HERDR_PLUGIN_ROOT"];
   const updater = new Updater({ root, stateDir, autoUpdate: process.env["HERDR_WEB_AUTO_UPDATE"] === "1", publish,
+    pluginCheckout: pluginRoot !== undefined && resolve(pluginRoot) === root,
     async activate(next, commit) {
       switching = true;
       try {

@@ -9,7 +9,7 @@ Inspected `devswha/chatmux` at commit `3b1f3b49216157399e3fb9666a49c942908c3e32`
 | Priority | Adopted behavior | Implementation |
 | --- | --- | --- |
 | 1 | Automatic discovery, explicit install | Supervisor checks after 10 seconds/every 5 minutes; Settings provides check/install controls |
-| 2 | Protect locally modified or diverged source | Clean `main` checkout required; exact target SHA and ancestry verified; source worktree never rewritten |
+| 2 | Protect locally modified or diverged source | Clean `main` checkout required (herdr's shallow, detached plugin checkout is accepted when running as that plugin); exact target SHA and ancestry verified; source worktree never rewritten |
 | 3 | Verify deployment and recover | Build isolated checkout, restart bridge, match a fresh boot ID through health, restore prior build on failure |
 | 4 | Optional unattended installation | `HERDR_WEB_AUTO_UPDATE=1`; persist failed SHA to prevent repeating a bad automatic deployment |
 

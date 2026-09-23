@@ -76,6 +76,37 @@ describe("managed source updates with real Git repositories and builds", () => {
     expect(updater.status.blocked_reason).toContain("diverges");
   });
 
+  it("updates a herdr-managed plugin checkout: shallow, detached, owned by herdr", async () => {
+    // What `herdr plugin install` leaves behind: a depth-1 fetch checked out as FETCH_HEAD.
+    const plugin = join(directory, "plugin");
+    mkdirSync(plugin);
+    await git(plugin, "init", "-q");
+    await git(plugin, "remote", "add", "origin", `file://${upstream}`);
+    await git(plugin, "fetch", "-q", "--depth", "1", "origin", "main");
+    await git(plugin, "checkout", "-q", "FETCH_HEAD");
+    const original = await git(plugin, "rev-parse", "HEAD");
+    const pluginState = join(directory, "plugin-state");
+    const make = (pluginCheckout: boolean) => new Updater({ root: plugin, stateDir: pluginState, autoUpdate: false, pluginCheckout,
+      publish() {}, activate: async (_next, persist) => persist() });
+
+    const outside = make(false);
+    await outside.initialize();
+    expect(outside.status.blocked_reason).toContain("main");
+    outside.stop();
+
+    const managed = make(true);
+    await managed.initialize();
+    expect(managed.status.blocked_reason).toBeNull();
+    const target = await commit("second");
+    await managed.request("install");
+    expect(managed.status.error).toBeNull();
+    expect(managed.status.current_revision).toBe(target);
+    expect(readFileSync(join(managed.release!.directory, "dist/index.html"), "utf8")).toBe("second");
+    expect(await git(plugin, "rev-parse", "HEAD")).toBe(original);
+    expect(await git(plugin, "status", "--porcelain")).toBe("");
+    managed.stop();
+  });
+
   it("leaves the current release intact on build failure and cleans the failed stage", async () => {
     const original = updater.release;
     await commit("broken build", true);

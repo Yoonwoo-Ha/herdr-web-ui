@@ -47,6 +47,9 @@ export class Updater {
 
   constructor(readonly options: {
     root: string; stateDir: string; autoUpdate: boolean;
+    /** herdr's `plugin install` checks out a shallow, detached commit it owns; that HEAD is
+     * accepted when it is an ancestor of origin/main (a user's own detached checkout is not). */
+    pluginCheckout?: boolean;
     activate: (release: Release, commit: () => void) => Promise<void>;
     publish: (status: UpdateStatus) => void;
   }) { this.status.auto_update = options.autoUpdate; }
@@ -85,7 +88,8 @@ export class Updater {
   }
 
   private async sourceBlock(): Promise<string | null> {
-    if (await this.git("branch", "--show-current") !== "main") return "Switch the source checkout to main to update.";
+    const branch = await this.git("branch", "--show-current");
+    if (branch !== "main" && !(branch === "" && this.options.pluginCheckout)) return "Switch the source checkout to main to update.";
     if (await this.git("status", "--porcelain", "--untracked-files=all")) return "The source checkout has local changes. Commit or move them before updating.";
     if (await this.git("rev-parse", "HEAD") !== this.sourceRevision) return "The source checkout changed. Restart the app before updating.";
     return null;
