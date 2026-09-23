@@ -73,6 +73,31 @@
   text-align: left;
 }
 
+/* a typed pick of an approval's option: highlighted, and sent only on Confirm */
+.prompt-card-options .btn.is-typed {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+.prompt-card-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--accent);
+  border-radius: var(--radius-md);
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+}
+
+.prompt-card-confirm span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* the number the agent's menu shows: typing it in the composer picks the option too */
 .prompt-card-number {
   color: var(--text-dim);

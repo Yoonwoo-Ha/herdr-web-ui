@@ -8,7 +8,7 @@ import { HerdrSocket } from "../lib/ws.ts";
 import { controlCode, isPrintable, keySequence, type KeyBarKey } from "../lib/keys.ts";
 import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "../lib/draft.ts";
 import { QUEUE_READY_STATUS, composerMessage, composerPayload, submitNote } from "../lib/compose.ts";
-import { answerFromText, answerHint, answerRefusal } from "../lib/promptAnswer.ts";
+import { answerFromText, answerHint, answerRefusal, needsConfirmation, type TypedAnswer } from "../lib/promptAnswer.ts";
 import { ApiError } from "../lib/api.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
@@ -105,6 +105,9 @@ export function PaneTerminal({
   // The prompt the chat shows: while it waits, a message from the composer answers it.
   const [chatPrompt, setChatPrompt] = useState<{ pane: string; value: InteractivePrompt } | null>(null);
   const [promptRefresh, setPromptRefresh] = useState(0);
+  // a typed pick of an approval's option, shown in the card until Confirm or Cancel
+  const [pendingAnswer, setPendingAnswer] = useState<{ pane: string; promptId: string; answer: TypedAnswer } | null>(null);
+  const clearPendingAnswer = useCallback(() => setPendingAnswer(null), []);
   const onChatPrompt = useCallback((pane: string, value: InteractivePrompt | null) => {
     setChatPrompt((current) => value !== null ? { pane, value } : current?.pane === pane ? null : current);
   }, []);
@@ -483,6 +486,11 @@ export function PaneTerminal({
         // never typed into the agent's menu: only as one of its options, or its own reply row
         const choice = answerFromText(answering, text);
         if (choice === null) return answerRefusal(answering);
+        if (needsConfirmation(answering, choice)) {
+          setPendingAnswer({ pane, promptId: answering.id, answer: choice });
+          return true;
+        }
+        setPendingAnswer(null);
         return answerPanePrompt({ pane_id: pane, prompt_id: answering.id, ...choice }).then(
           () => { setPromptRefresh((key) => key + 1); return true; },
           (cause: unknown) => {
@@ -593,6 +601,8 @@ export function PaneTerminal({
             onMetadata={onChatMetadata}
             onPrompt={onChatPrompt}
             promptRefreshKey={promptRefresh}
+            pendingAnswer={pendingAnswer !== null && pendingAnswer.pane === paneId ? pendingAnswer : null}
+            onPendingAnswerDone={clearPendingAnswer}
           />
         )}
       </div>
@@ -643,7 +653,8 @@ export function PaneTerminal({
           metadata={chatMetadata?.pane === paneId ? chatMetadata.value : null}
           connected={connected}
           queueMode={busy}
-          answerHint={answering === null ? null : answerHint(answering)}
+          answerHint={answering === null ? null
+            : pendingAnswer?.promptId === answering.id ? "Confirm your answer in the card above, or type another…" : answerHint(answering)}
           onSend={composerSend}
           onAbort={abortTurn}
           onUploadImage={uploadImage}

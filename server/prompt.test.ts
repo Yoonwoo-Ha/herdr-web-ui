@@ -308,6 +308,75 @@ Ready to submit your answers?
     expect(write).toMatchObject({ kind: "approval", title: "Create file", question: "Do you want to create hello.txt?", body: "hello.txt\n1 hi" });
   });
 
+  test("finds Claude's question tabs over a wrapped question and a cut-off bar, and never answers the next question", () => {
+    // a narrow pane: the question wraps over seven lines and the bar loses its right end
+    const wrapped = parseInteractivePrompt("claude", `
+────────────────────────────
+←  ☒ Route  ☐ Author  ✔ Su
+Who should author the
+commits that go into the
+pull request, given that
+the fork belongs to the
+lab account and the
+upstream repository to
+its owner?
+❯ 1. Keep local
+     The local git identity.
+  2. Repo owner
+     The repository owner.
+  3. Type something.
+────────────────────────────
+  4. Chat about this
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+`);
+    expect(wrapped).toMatchObject({
+      kind: "question", title: "Author",
+      question: "Who should author the commits that go into the pull request, given that the fork belongs to the lab account and the upstream repository to its owner?",
+    });
+    expect(answerKeys(wrapped!, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+
+    // a multiple choice alone: → reaches the review of the answers, which has its own card
+    const alone = parseInteractivePrompt("claude", `
+←  ☐ Sets  ✔ Submit  →
+Which datasets?
+❯ 1. [ ] LM-O
+  2. [ ] YCB-V
+  3. [ ] T-LESS
+  4. [ ] Type something
+     Submit
+────────────────────────────
+  5. Chat about this
+Enter to select · ↑/↓ to navigate · Esc to cancel
+`);
+    expect(alone).toMatchObject({ title: "Sets", multi_select: true });
+    expect(answerKeys(alone!, { option_indices: [1] })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }, { keys: ["right"] }]);
+  });
+
+  test("titles a Claude approval from its panel, not from rules in a file preview, and joins labels wrapped over lines", () => {
+    const edit = parseInteractivePrompt("claude", `
+● Write(notes.md)
+────────────────────────────────────────
+ Create file
+ notes.md
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  1 # Notes
+  2 ────────────────────────────────────────
+  3 Results below the rule
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to create notes.md?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits
+   (auto-approve file edits and common
+   file commands) for this session
+   3. No
+ Esc to cancel · Tab to amend
+`);
+    expect(edit).toMatchObject({ kind: "approval", title: "Create file", question: "Do you want to create notes.md?" });
+    expect(labels(edit)).toEqual([
+      "Yes", "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session", "No",
+    ]);
+  });
+
   test("parses the last of several Codex 0.156 questions and its folder trust prompt", () => {
     const last = parseInteractivePrompt("codex", `
   Question 2/2 (1 unanswered)

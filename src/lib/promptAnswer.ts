@@ -66,3 +66,12 @@ export function answerRefusal(prompt: InteractivePrompt): string {
     ? "Choose with the option numbers above, e.g. 1 3."
     : `Choose one of the options above: type ${range(prompt)}.`;
 }
+
+/**
+ * A typed message picking an approval's option (or a plan's) could run a command or
+ * a plan on a stray "yes" or "1": the card asks for a tap on Confirm first. A tap on
+ * an option in the card is explicit already, and a plan's own reply is feedback.
+ */
+export function needsConfirmation(prompt: InteractivePrompt, answer: TypedAnswer): boolean {
+  return (prompt.kind === "approval" || prompt.kind === "plan") && answer.option_index !== undefined;
+}

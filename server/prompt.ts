@@ -15,7 +15,9 @@ const CODEX_ASYNC_ASK_HINT_RE = /(?:enter|return).*submit.*(?:ctrl\s*\+\s*\]|ski
 const CODEX_CONTINUE_HINT_RE = /press\s+enter\s+to\s+continue/i;
 // several questions navigate between tabs: "Tab/Arrow keys to navigate"
 const CLAUDE_ASK_HINT_RE = /enter to select.*(?:↑\/↓|tab\/arrow keys) to navigate.*esc to cancel/i;
-const CLAUDE_TABS_RE = /^←.*Submit\s*→$/;
+// question tabs, whole (`←  ☒ Route  ☐ Author  ✔ Submit  →`) or cut off by a narrow pane
+const CLAUDE_TABS_RE = /^←\s+[☐☒☑✔]/;
+const SOLID_RULE_RE = /^[─━]{8,}$/;
 const CODEX_APPROVAL_HEADER_RE =
   /(?:Would you like to (?:run|make|apply|continue|grant)|Allow Codex to|Approve (?:this )?(?:app )?tool call|Do you trust the contents|Trust this folder\?|Enable full access)/i;
 const NUMBERED_OPTION_RE = /^\s*([›>❯])?\s*(\d+)\.\s+(.+)$/;
@@ -50,8 +52,6 @@ type ParsedPrompt = InteractivePrompt & {
   checkedOptionIndices: number[];
   customMenuIndex: number | null;
   rejectWithEscapeIndex: number | null;
-  /** one of several Claude questions: → moves to the next one, not to Submit */
-  tabbed?: boolean;
 };
 
 type AnswerStep = { keys?: string[]; text?: string };
@@ -275,13 +275,14 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
   const chatIndex = rows.findIndex((row) => row.label === "Chat about this");
   const customIndex = rows.findIndex((row) => /^Type something\.?$/i.test(row.label));
   if (chatIndex !== rows.length - 1 || customIndex !== chatIndex - 1 || customIndex < 1) return null;
-  const question = nearestQuestion(lines, rows[0]!.lineIndex);
+  const tabs = claudeTabs(lines, rows[0]!.lineIndex);
+  const question = claudeQuestionText(lines, tabs?.index ?? -1, rows[0]!.lineIndex) ?? nearestQuestion(lines, rows[0]!.lineIndex);
   if (!question) return null;
   const optionRows = rows.slice(0, customIndex);
   const multiSelect = optionRows.some((row) => /^\s*(?:[›>❯]\s*)?\d+\.\s+\[[ xX✓]\]/.test(lines[row.lineIndex]!));
-  const tabs = claudeTabs(lines, rows[0]!.lineIndex);
-  const current = tabs.findIndex((tab) => !tab.answered);
-  const title = tabs.length > 1 && current >= 0 ? `${tabs[current]!.label} · ${current + 1} of ${tabs.length}`
+  const current = tabs?.tabs.findIndex((tab) => !tab.answered) ?? -1;
+  // a bar cut off by a narrow pane does not show how many questions there are
+  const title = tabs && current >= 0 ? `${tabs.tabs[current]!.label}${tabs.whole && tabs.tabs.length > 1 ? ` · ${current + 1} of ${tabs.tabs.length}` : ""}`
     : multiSelect ? "Multiple choice" : "Question";
   return finishPrompt("claude", {
     kind: "question", title, question, body: null,
@@ -291,18 +292,39 @@ function parseClaudeQuestion(screen: string): ParsedPrompt | null {
     responder: "claude-question", menuLabels: rows.map((row) => row.label),
     selectedIndex: rows.findIndex((row) => row.selected),
     checkedOptionIndices: optionRows.flatMap((row, index) => row.checked ? [index] : []),
-    customMenuIndex: customIndex, rejectWithEscapeIndex: null, tabbed: tabs.length > 1,
+    customMenuIndex: customIndex, rejectWithEscapeIndex: null,
   });
 }
 
-/** Claude's question tabs above several questions: `←  ☒ Route  ☐ Author  ✔ Submit  →`. */
-function claudeTabs(lines: string[], beforeIndex: number): { label: string; answered: boolean }[] {
-  const tabsIndex = findLastIndex(lines.slice(Math.max(0, beforeIndex - 8), beforeIndex), (line) => CLAUDE_TABS_RE.test(cleanLine(line)));
-  if (tabsIndex < 0) return [];
-  const bar = cleanLine(lines[Math.max(0, beforeIndex - 8) + tabsIndex]!).replace(/^←|→$/g, "");
-  return [...bar.matchAll(/([☐☒☑✔])\s+(.+?)(?=\s{2,}|\s*$)/g)]
-    .filter((match) => match[2] !== "Submit")
-    .map((match) => ({ label: match[2]!, answered: match[1] !== "☐" }));
+/**
+ * Claude's question tabs above several questions, `←  ☒ Route  ☐ Author  ✔ Submit  →`,
+ * looked for up the panel however far a long question wraps; a narrow pane can cut
+ * the bar off at its right edge. ☐ is unanswered, ☒ answered, ✔ the Submit step.
+ */
+function claudeTabs(lines: string[], beforeIndex: number): { index: number; whole: boolean; tabs: { label: string; answered: boolean }[] } | null {
+  for (let index = beforeIndex - 1; index >= Math.max(0, beforeIndex - 60); index -= 1) {
+    const line = cleanLine(lines[index]!);
+    if (SOLID_RULE_RE.test(line)) return null;
+    if (!CLAUDE_TABS_RE.test(line)) continue;
+    const tabs = [...line.replace(/^←/, "").replace(/→$/, "").matchAll(/([☐☒☑✔])\s+(.+?)(?=\s{2,}|\s*$)/g)]
+      .filter((match) => match[1] !== "✔")
+      .map((match) => ({ label: match[2]!.trim(), answered: match[1] !== "☐" }));
+    return { index, whole: /→$/.test(line), tabs };
+  }
+  return null;
+}
+
+/** The question over Claude's options, joined back when a narrow pane wraps it over several lines. */
+function claudeQuestionText(lines: string[], tabsIndex: number, firstRow: number): string | null {
+  const text: string[] = [];
+  for (let index = firstRow - 1; index > Math.max(tabsIndex, firstRow - 30); index -= 1) {
+    const line = cleanLine(lines[index]!);
+    if (!line) { if (text.length > 0) break; continue; }
+    // the single question's header chip (`☐ Dataset`) or the panel's top rule ends the question
+    if (/^[☐☒☑✔]\s+\S/.test(line) || isDivider(line) || CLAUDE_TABS_RE.test(line)) break;
+    text.unshift(line);
+  }
+  return text.length > 0 ? normalizeText(text.join(" ")) : null;
 }
 
 /** After several questions Claude shows the answers and asks before sending them. */
@@ -405,7 +427,11 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
   } else {
     // Claude Code 2.1 has neither marker: the panel under a solid rule opens with the
     // tool ("Bash command", "Create file"), then the command or file and its description
-    const ruleIndex = findLastIndex(lines.slice(0, questionIndex), (line) => /^[─━]{8,}$/.test(cleanLine(line)));
+    // the panel's rule is the first one under the tool call (`● Write(a.ts)`): rules further
+    // down belong to a file preview; with the call scrolled away, the nearest rule
+    const callIndex = findLastIndex(lines.slice(0, questionIndex), (line) => /^●\s/.test(cleanLine(line)));
+    const rules = lines.slice(0, questionIndex).flatMap((line, index) => index > callIndex && SOLID_RULE_RE.test(cleanLine(line)) ? [index] : []);
+    const ruleIndex = callIndex >= 0 ? rules[0] ?? -1 : rules.at(-1) ?? -1;
     if (ruleIndex < 0 || questionIndex - ruleIndex > 60) return null;
     const panel = lines.slice(ruleIndex + 1, questionIndex).map(cleanLine)
       .filter((line) => line && !isDivider(line) && !/^Tip:/i.test(line));
@@ -416,8 +442,9 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
   return finishPrompt("claude", {
     kind: "approval", title, question: cleanLine(lines[questionIndex]!),
     body: body || null,
-    // an approval's options have no descriptions: a line under one is its label wrapped by a narrow pane
-    options: rows.map((row) => ({ label: row.description ? `${row.label} ${row.description}` : row.label, description: null })),
+    // an approval's options have no descriptions: lines under one are its label wrapped by a narrow pane
+    options: rows.map((row, index) => ({ label: normalizeText([row.label, ...lines.slice(row.lineIndex + 1, rows[index + 1]?.lineIndex ?? (hintIndex > questionIndex ? hintIndex : lines.length))
+      .map(cleanLine).filter((line) => line && !isDivider(line))].join(" ")), description: null })),
     multi_select: false, custom_option_index: null,
   }, {
     responder: "claude-approval", menuLabels: rows.map((row) => row.label), selectedIndex: rows.findIndex((row) => row.selected),
@@ -521,8 +548,9 @@ export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer,
       cursor = optionIndex;
     }
     if (parsed.responder === "omp-question") keys.push(KEY.tab, KEY.enter);
-    // one of several questions: → goes on to the next one; alone, → reaches Submit and enter sends it
-    else if (parsed.responder === "claude-question") keys.push(...(parsed.tabbed ? [KEY.right] : [KEY.right, KEY.enter]));
+    // → leaves the choice for the next question or the review of the answers, never an
+    // enter: on the next question it would pick that question's first option
+    else if (parsed.responder === "claude-question") keys.push(KEY.right);
     else throw new InvalidAnswer("This agent does not support multiple selections.");
     return keySteps(keys);
   }
