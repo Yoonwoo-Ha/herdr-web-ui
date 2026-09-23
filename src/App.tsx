@@ -40,6 +40,31 @@ function paneFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get("pane");
 }
 
+const SELECTION_KEY = "herdr-web-ui:selection";
+type StoredSelection = { machine_id?: string; pane_id?: string | null };
+
+/**
+ * The pane to open: this window's own (sessionStorage is per window and survives
+ * its reloads), else the last one any window showed, for a newly opened window.
+ */
+function storedSelection(): StoredSelection | null {
+  for (const storage of ["sessionStorage", "localStorage"] as const) {
+    try {
+      const value: unknown = JSON.parse(window[storage].getItem(SELECTION_KEY) ?? "null");
+      if (value !== null && typeof value === "object") return value as StoredSelection;
+    } catch {
+      /* private mode */
+    }
+  }
+  return null;
+}
+
+function storeSelection(machineId: string, paneId: string | null): void {
+  for (const storage of ["sessionStorage", "localStorage"] as const) {
+    try { window[storage].setItem(SELECTION_KEY, JSON.stringify({ machine_id: machineId, pane_id: paneId })); } catch {}
+  }
+}
+
 /** The lens a pane opens in: remembered per pane; agent panes start as chat, shells as terminal. */
 function storedView(paneId: string, hasAgent: boolean, machineId: string): PaneView {
   try {
@@ -68,7 +93,7 @@ export function App() {
   const [selectedMachineId, setSelectedMachineId] = useState(() => {
     const query = new URLSearchParams(window.location.search);
     if (query.has("pane")) return query.get("machine") ?? "local";
-    try { return JSON.parse(localStorage.getItem("herdr-web-ui:selection") ?? "null")?.machine_id ?? "local"; } catch { return "local"; }
+    return storedSelection()?.machine_id ?? "local";
   });
   const selectedMachine = machines.find((m) => m.id === selectedMachineId);
   const snapshot = selectedMachine?.snapshot ?? null;
@@ -84,7 +109,7 @@ export function App() {
   const updates = useUpdates(locked === false);
   const [selectedPaneId, setSelectedPaneId] = useState<string | null>(() => {
     if (paneFromUrl()) return paneFromUrl();
-    try { return JSON.parse(localStorage.getItem("herdr-web-ui:selection") ?? "null")?.pane_id ?? null; } catch { return null; }
+    return storedSelection()?.pane_id ?? null;
   });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -266,7 +291,7 @@ export function App() {
   const selectTarget = useCallback((machineId: string, paneId: string | null) => {
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setDrawerOpen(false);
     setConnected(false); setOutputStopped(false);
-    try { localStorage.setItem("herdr-web-ui:selection", JSON.stringify({ machine_id: machineId, pane_id: paneId })); } catch {}
+    storeSelection(machineId, paneId);
   }, []);
   const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
   useEffect(() => {
@@ -274,7 +299,7 @@ export function App() {
     setSelectedPaneId(snapshot.focused_pane_id ?? snapshot.panes[0]?.pane_id ?? null);
   }, [snapshot, selectedPaneId, selectedMachine?.state]);
   useEffect(() => {
-    try { localStorage.setItem("herdr-web-ui:selection", JSON.stringify({ machine_id: selectedMachineId, pane_id: selectedPaneId })); } catch {}
+    storeSelection(selectedMachineId, selectedPaneId);
   }, [selectedMachineId, selectedPaneId]);
 
   const selectPane = useCallback((paneId: string) => {
