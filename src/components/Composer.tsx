@@ -8,6 +8,7 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Clock, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 
@@ -44,6 +45,11 @@ const MAX_IMAGES_PER_ACTION = 4;
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 const COMMAND_CACHE_MS = 60_000;
 const SLASH_USAGE_KEY = "herdr-web-ui:slash-usage";
+/** One height for every pane on this device: it is the screen, not the conversation, that decides it. */
+const COMPOSER_HEIGHT_KEY = "herdr-web-ui:composer-height";
+const COMPOSER_HEIGHT_MIN = 56;
+const COMPOSER_HEIGHT_MAX = 480;
+const COMPOSER_HEIGHT_STEP = 24;
 const COMMAND_SOURCES = ["builtin", "user", "project"] as const;
 const SOURCE_LABEL: Record<SlashCommand["source"], string> = {
   builtin: "Built in",
@@ -73,6 +79,23 @@ function readSlashUsage(): Record<string, number> {
   } catch {
     return {};
   }
+}
+
+/** A saved manual height, or null for the automatic one (also for anything malformed). */
+function readComposerHeight(): number | null {
+  try {
+    const value = Number(window.localStorage.getItem(COMPOSER_HEIGHT_KEY));
+    return Number.isFinite(value) && value >= COMPOSER_HEIGHT_MIN && value <= COMPOSER_HEIGHT_MAX ? Math.round(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Half the visible viewport at most, so a raised keyboard never leaves the transcript without room. */
+function clampComposerHeight(value: number): number {
+  const viewport = window.visualViewport?.height ?? window.innerHeight;
+  const limit = Math.max(COMPOSER_HEIGHT_MIN, Math.min(COMPOSER_HEIGHT_MAX, Math.floor(viewport / 2)));
+  return Math.round(Math.min(limit, Math.max(COMPOSER_HEIGHT_MIN, value)));
 }
 
 async function cachedPaneCommands(paneId: string, machineId: string, fetchCommands: (pane: string) => Promise<SlashCommand[]>): Promise<SlashCommand[]> {
@@ -120,6 +143,9 @@ export function Composer({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [manualHeight, setManualHeight] = useState<number | null>(readComposerHeight);
+  /** the box's rendered height, for the grip to announce while the height is automatic */
+  const [shownHeight, setShownHeight] = useState(COMPOSER_HEIGHT_MIN);
 
   attachmentsRef.current = attachments;
   textRef.current = text;
@@ -187,9 +213,54 @@ export function Composer({
   useLayoutEffect(() => {
     const element = textareaRef.current;
     if (!element) return;
+    if (manualHeight !== null) {
+      element.style.height = `${manualHeight}px`;
+      return;
+    }
     element.style.height = "auto";
     element.style.height = `${element.scrollHeight}px`;
-  }, [text]);
+    const height = Math.round(element.getBoundingClientRect().height);
+    setShownHeight((current) => current === height ? current : height);
+  }, [text, manualHeight]);
+
+  useEffect(() => {
+    try {
+      if (manualHeight !== null) window.localStorage.setItem(COMPOSER_HEIGHT_KEY, String(manualHeight));
+      else window.localStorage.removeItem(COMPOSER_HEIGHT_KEY);
+    } catch {
+      // Without storage the height still holds until reload.
+    }
+  }, [manualHeight]);
+
+  /** Dragging the grip up grows the box; the pointer stays captured, so a finger may leave the grip. */
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const element = textareaRef.current;
+    if (!element || event.button !== 0) return;
+    event.preventDefault();
+    const grip = event.currentTarget;
+    grip.setPointerCapture(event.pointerId);
+    const startY = event.clientY;
+    const startHeight = element.getBoundingClientRect().height;
+    const move = (next: PointerEvent): void => setManualHeight(clampComposerHeight(startHeight + startY - next.clientY));
+    const end = (): void => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", end);
+      grip.removeEventListener("pointercancel", end);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  };
+
+  const onResizeKey = (event: KeyboardEvent<HTMLDivElement>): void => {
+    const current = manualHeight ?? textareaRef.current?.getBoundingClientRect().height ?? COMPOSER_HEIGHT_MIN;
+    const step = event.shiftKey ? COMPOSER_HEIGHT_STEP * 2 : COMPOSER_HEIGHT_STEP;
+    if (event.key === "ArrowUp") setManualHeight(clampComposerHeight(current + step));
+    else if (event.key === "ArrowDown") setManualHeight(clampComposerHeight(current - step));
+    else if (event.key === "Home") setManualHeight(null);
+    else return;
+    event.preventDefault();
+  };
 
   const filteredCommands = useMemo(
     () => (trigger?.kind === "slash" ? rankSlashCommands(commands, trigger.query, slashUsage) : []),
@@ -425,6 +496,21 @@ export function Composer({
         }}
         onDrop={onDrop}
       >
+        <div
+          className="composer-resize"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize message box"
+          aria-valuemin={COMPOSER_HEIGHT_MIN}
+          aria-valuemax={COMPOSER_HEIGHT_MAX}
+          aria-valuenow={manualHeight ?? shownHeight}
+          aria-valuetext={manualHeight === null ? "automatic height" : `${manualHeight} pixels`}
+          tabIndex={0}
+          title="Drag to resize · double-click to reset"
+          onPointerDown={startResize}
+          onDoubleClick={() => setManualHeight(null)}
+          onKeyDown={onResizeKey}
+        />
         {menuOpen && trigger && (
           <div id={menuId} className="menu composer-menu" role="listbox" aria-label={trigger.kind === "slash" ? "Slash commands" : "Files"}>
             {trigger.kind === "slash" ? (
@@ -495,7 +581,7 @@ export function Composer({
 
         <textarea
           ref={textareaRef}
-          className="composer-text"
+          className={`composer-text${manualHeight !== null ? " is-sized" : ""}`}
           rows={1}
           maxLength={MAX_COMPOSER_CHARS}
           value={text}
