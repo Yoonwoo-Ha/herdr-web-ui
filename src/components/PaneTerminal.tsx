@@ -18,8 +18,10 @@ import type { AgentStatus, ClientRole, ConversationMetadata, ServerMessage } fro
 import type { PaneView } from "../lib/actions.ts";
 import { terminalTheme, type ResolvedTheme } from "../lib/settings.ts";
 
+// xterm sizes every cell from the first matching font, so a proportional one (Malgun Gothic)
+// must never win it: it stays behind the generic monospace as a per-glyph Hangul fallback
 const FONT_STACK =
-  '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Noto Sans Mono CJK KR", "Malgun Gothic", monospace';
+  '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Cascadia Mono", Consolas, "Noto Sans Mono CJK KR", monospace, "Malgun Gothic"';
 
 /** The one message parked for a pane, tagged with the pane it belongs to. */
 interface QueuedMessage {
