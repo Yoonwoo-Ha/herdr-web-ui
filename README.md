@@ -4,62 +4,32 @@
 
 <h1 align="center">herdr web ui</h1>
 
-<p align="center">Chat with your coding agents. Open the live terminal. Pick up from your phone.</p>
+<p align="center">Chat with your coding agents. Open the live terminal. Pick up from your phone or another PC.</p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-f0a830" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/Bun-1.4%2B-black" alt="Bun 1.4+">
-  <img src="https://img.shields.io/badge/herdr-0.9.0%2B-6cb6ff" alt="herdr 0.9.0+">
-  <img src="https://img.shields.io/badge/PWA-installable-4ec9a5" alt="Installable PWA">
+  <img src="https://img.shields.io/badge/herdr-0.9.0%2B-f0a830" alt="herdr 0.9.0+">
+  <img src="https://img.shields.io/badge/PWA-installable-93c36b" alt="Installable PWA">
 </p>
 
-A browser and mobile client for [herdr](https://github.com/herdrdev/herdr). Connect to a running herdr server to follow your agents, send prompts, answer supported approval menus and work in the same terminal from another screen.
+A browser and mobile client for [herdr](https://github.com/herdrdev/herdr). Follow every agent, send prompts, answer approval menus and type into the same terminal from any screen, on this computer or on other PCs reached over SSH.
 
-The **Chat** and **Terminal** views share one live pane. herdr owns the sessions and terminal processes; this app adds a web interface through herdr's socket API and `herdr terminal attach`.
+herdr owns the sessions and terminal processes. This app only adds a web interface, through herdr's socket API and `herdr terminal attach`. The **Chat** and **Terminal** views are two lenses on one live pane.
 
 <p align="center">
   <a href="#get-started">Get started</a> ·
   <a href="#chat-and-terminal">Chat &amp; terminal</a> ·
+  <a href="#remote-pcs-over-ssh">Remote PCs</a> ·
   <a href="#use-it-on-your-phone">Mobile</a> ·
+  <a href="#updates">Updates</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="#development">Development</a>
 </p>
 
-## Chat and terminal
-
-| | What you can do |
-| --- | --- |
-| **Read the conversation** | See prompts and Markdown answers, with commands, edits and progress grouped into an expandable work block. Copy answers as Markdown or plain text. |
-| **See the active model** | View the model name and reasoning effort reported by the session beside the composer. Missing metadata stays unknown. Thinking summaries are optional. |
-| **Keep the real terminal** | Switch to xterm.js for full-screen TUIs, raw output, keyboard input and herdr's scrollback. |
-| **Answer prompts** | Respond to supported approval, question and plan menus in chat. The server checks that the prompt is still current before answering. |
-| **Compose comfortably** | Complete `/` commands and `@` file mentions. Paste, pick or drop images. Keep drafts per pane and queue the next message while an agent works. |
-| **Manage sessions** | Create a session with an agent and directory, rename workspaces and panes, reorder workspaces, and find panes through the command palette. |
-| **Follow every agent** | See status updates across all panes. Enable alerts when an agent needs input, finishes or its terminal ends. |
-| **Make it yours** | Choose light, dark or system theme, compact density, terminal font size, Enter behavior and thinking visibility. |
-
-### Transcript support
-
-| Agent | Chat source |
-| --- | --- |
-| **Codex** | Native rollout JSONL, with tool results and commentary/final phases. Internal context records and duplicate event/model messages are filtered. |
-| **Claude Code** | Native conversation transcript resolved through herdr. |
-| **omp / omo** | Native session JSONL; omo is identified through the pane's process tree. |
-| **Other or unresolved sessions** | Terminal-text fallback; switch to Terminal for the full TUI. |
-
-Structured chat depends on finding the correct local session file. Codex session resolution validates pane/session evidence instead of selecting an arbitrary recent session in the same directory. Model and reasoning labels come from recorded metadata; they are not inferred from answer text.
-
-Interactive prompt support depends on the agent's visible menu format. For unsupported menus, use Terminal. See the [chat-mode audit](docs/chat-mode-audit.md) for implementation details and verification.
-
-## Remote PCs over SSH
-
-Use **Add PC** in the sidebar to connect a Linux/macOS computer with an SSH alias or `user@address`. The app guides fingerprint/authentication prompts and approved installation, then groups local and remote workspaces by PC. Chat, files, images, terminal input and alerts follow the selected PC; SSH uses the web server account’s configuration.
-
-The server automatically finds locally built remote bundles in `remote-bundles/`, or downloads a published release. An explicit `HERDR_WEB_BUNDLE_MANIFEST` takes priority. Mac bundles can be prepared on Linux with `bun run build:remote darwin-arm64` (Apple Silicon) or `darwin-x64` (Intel). See [remote setup, deployment and verification](docs/remote-pcs.md) for packaging, reconnect behavior and the **Update bridge…** action. Existing herdr sessions and the connection server’s app updater are preserved.
-
 ## Get started
 
-You need **Bun 1.4+**, **Node 18+**, and a running **herdr 0.9.0+** server. The `herdr` CLI must be on `PATH`. herdr is a separate project. Install it separately for local sessions; remote runtime bundles include a verified fallback binary. Node runs the terminal-attach sidecar.
+You need **Bun 1.4+**, **Node 18+** (it runs the terminal-attach sidecar) and a running **herdr 0.9.0+** with the `herdr` CLI on `PATH`. herdr is a separate project; install it first.
 
 ```bash
 git clone https://github.com/devswha/herdr-web-ui.git
@@ -68,86 +38,105 @@ bun install
 HOST=127.0.0.1 bun run start
 ```
 
-Open **http://localhost:7317**. The start command builds the client and launches the API/WebSocket server. It connects to `~/.config/herdr/herdr.sock` by default.
+Open **http://localhost:7317**. `start` builds the client and launches the server under an update supervisor. It talks to `~/.config/herdr/herdr.sock` unless `HERDR_SOCKET` says otherwise.
 
-### Install as a herdr plugin
+### Or install it as a herdr plugin
 
 ```bash
 herdr plugin install devswha/herdr-web-ui
 ```
 
-The plugin builds the app and starts it with herdr. You can also control it directly:
+The plugin builds the app and starts it with herdr, bound to `127.0.0.1` and following the socket of the current herdr session. Control it directly with:
 
 ```bash
-herdr plugin action invoke devswha.herdr-web-ui.start
+herdr plugin action invoke devswha.herdr-web-ui.start    # leaves a running server alone
 herdr plugin action invoke devswha.herdr-web-ui.status
 herdr plugin action invoke devswha.herdr-web-ui.stop
 ```
 
-`start` leaves an already running server alone. The plugin defaults to `127.0.0.1`, keeps its PID and log under `HERDR_PLUGIN_STATE_DIR`, and follows the socket herdr supplies for the current session.
+Its PID and log live under `HERDR_PLUGIN_STATE_DIR`. For persistent settings, add `KEY=value` lines (see [Configuration](#configuration)) to the `env` file in the directory printed by `herdr plugin config-dir devswha.herdr-web-ui`. Protect that file if it holds a token.
 
-Plugin configuration lives in an `env` file in the directory printed by:
+## Chat and terminal
 
-```bash
-herdr plugin config-dir devswha.herdr-web-ui
-```
+| | What you can do |
+| --- | --- |
+| **Read the conversation** | Prompts and Markdown answers, with the agent's commands, edits and progress folded into one "Worked for …" block per turn. Copy an answer as Markdown or plain text. |
+| **See the model** | The model and reasoning effort the session recorded, beside the composer. Thinking summaries are optional. |
+| **Drop into the real terminal** | Switch to xterm.js for full-screen TUIs, raw output, keyboard input and herdr's scrollback. |
+| **Answer prompts** | Respond to supported approval, question and plan menus from chat. The server checks the menu is still current before answering. |
+| **Compose** | `/` commands and `@` file mentions, pasted or dropped images, a draft per pane, and one queued message while the agent works. |
+| **Manage sessions** | Start an agent in a directory, rename workspaces and panes, reorder workspaces, and jump anywhere from the command palette. |
+| **Follow every agent** | Live status for all panes, and alerts when an agent needs input, finishes or its terminal ends. |
+| **Make it yours** | Dark, light or system theme, compact density, terminal font size, Enter behavior and thinking visibility. |
 
-Add `KEY=value` lines for the variables below. Protect that file if it contains a token. Plugin commands inherit herdr's environment, so use this file for persistent settings.
+### Where chat comes from
 
-### Updates
+| Agent | Source |
+| --- | --- |
+| **Codex** | Native rollout JSONL, with tool results and commentary/final phases. Internal context and duplicate records are filtered out. |
+| **Claude Code** | Native conversation transcript, resolved through herdr. |
+| **omp / omo** | Native session JSONL; omo is recognized by the pane's process tree. |
+| **Anything else** | Terminal-text fallback. Use Terminal for the full TUI. |
 
-`bun run start` and plugin `start` run a supervisor that checks `origin/main` after 10 seconds and every 5 minutes. Open **Settings → Updates** to check immediately or choose **Update and restart**. The header also announces an available update. Versions are identified by Git commit, independently of the herdr daemon version.
+Structured chat needs the right local session file. Codex resolution checks pane and session evidence instead of picking the newest session in the same directory, and model labels come from recorded metadata, never from answer text. Prompt answering depends on the agent's visible menu format; for an unsupported menu, use Terminal. Details and verification are in the [chat-mode audit](docs/chat-mode-audit.md).
 
-To install updates automatically, set `HERDR_WEB_AUTO_UPDATE=1` before starting (or add it to the plugin's `env` file). The default is automatic checks with installation initiated from Settings. An existing server needs one stop/start with this version to enable the supervisor; plugin `start` leaves an already running server alone. `bun run server` and `bun run dev` remain development commands and do not install updates.
+## Remote PCs over SSH
 
-Updates require a clean Git checkout on `main` with an `origin` remote. Local modifications, untracked files, and a running revision ahead of or diverging from `origin/main` block installation. Changing the source checkout's HEAD requires a supervisor restart. The updater never resets or overwrites the source checkout.
+Choose **Add PC** in the sidebar and enter an SSH alias or `user@host` for a Linux or macOS computer. The setup dialog walks through the host fingerprint, password or key passphrase, and an explicit install approval. The sidebar then groups workspaces by PC, and chat, files, images, terminal input and alerts all follow the selected PC.
 
-Each candidate is fetched at an exact commit into a private checkout, installed with `bun install --frozen-lockfile`, typechecked, and built while the current bridge keeps serving. Only then does the supervisor restart the bridge and verify the new process's health. Failed startup restores the previous build. Automatic installation will not retry the same failed revision across checks or restarts; retry manually or wait for a newer commit. Herdr and its sessions keep running; browser connections briefly reconnect. A **Reload app** notice lets you load the new frontend after saving any unsent drafts.
+SSH runs as the web server's account, with its OpenSSH configuration and agent; the browser never opens SSH itself. The remote side gets a private runtime bundle and a loopback-only bridge reached through an SSH forward. A running herdr daemon on that PC is never stopped or replaced.
 
-The active release pointer and the current/previous builds live under `HERDR_WEB_STATE_DIR/updates/` (separated by source path and port). Keep this directory across restarts, along with the existing push state. A manual source update takes precedence on the next start. Update commands and their status use the same token gate as terminal access; update POSTs additionally reject cross-site browser requests. Errors are visible in Settings and supervisor logs.
+The server uses bundles built into `remote-bundles/`, or downloads a published release; `HERDR_WEB_BUNDLE_MANIFEST` overrides both. Build a bundle for another platform with `bun run build:remote <linux-x64|linux-arm64|darwin-x64|darwin-arm64>`. See [remote PCs](docs/remote-pcs.md) for the security model, packaging, reconnection and **Update bridge…**.
 
 ## Use it on your phone
 
-Serve the app over **HTTPS** to install it and receive Web Push notifications. For example, with Tailscale configured on your devices:
+Serve the app over **HTTPS** to install it and receive Web Push. For example, with Tailscale:
 
 ```bash
 HOST=127.0.0.1 HERDR_WEB_TOKEN='replace-with-a-long-random-token' bun run start
 tailscale serve --bg --https=443 http://127.0.0.1:7317
 ```
 
-Open the HTTPS address and enter your token. In Safari, choose **Share → Add to Home Screen**; in Chrome, choose **Install app**. A plain HTTP LAN address can display the app, but does not provide the secure context required for installation and push.
+Open the HTTPS address and enter the token. In Safari choose **Share → Add to Home Screen**; in Chrome choose **Install app**. A plain HTTP LAN address still works in the browser, but it cannot install the app or receive push.
 
-The phone layout includes a touch key bar with Esc, Tab, Ctrl, arrows and Ctrl+C. It follows the software keyboard and safe-area insets. Dragging the terminal scrolls the real herdr pane.
+On a phone, the terminal gets a key bar (Esc, Tab, Ctrl, arrows, Ctrl+C) that sits above the software keyboard, and dragging the terminal scrolls the real herdr pane.
 
-Tap the bell to enable notifications for that device. On iPhone, Web Push requires iOS 16.4+ and the installed home-screen app. The bridge must remain running to send alerts. Keep `HERDR_WEB_STATE_DIR` across restarts: it holds the VAPID key and device subscriptions.
+Tap the bell to turn on alerts for that device. iPhone needs iOS 16.4+ and the home-screen app. Alerts are sent by the running server, so keep it running, and keep `HERDR_WEB_STATE_DIR` across restarts: it holds the push key and device subscriptions.
+
+## Updates
+
+`bun run start` and the plugin run a supervisor that checks `origin/main` 10 seconds after start and every 5 minutes. When a newer commit exists, the header says so; **Settings → Updates** checks on demand and offers **Update and restart**. Set `HERDR_WEB_AUTO_UPDATE=1` to install new commits automatically. `bun run server` and `bun run dev` never update.
+
+An update is built and typechecked in a private checkout while the current server keeps serving, then the server restarts and must pass a health check, or the previous build comes back. herdr and its sessions keep running; browsers reconnect briefly, and a **Reload app** notice lets you save drafts before loading the new frontend.
+
+Updates need a clean checkout of `main` with an `origin` remote. Local changes, untracked files or a diverged branch block installation, and the updater never resets or overwrites your checkout. An already running server needs one restart on this version to gain the supervisor. Builds and the release pointer live in `HERDR_WEB_STATE_DIR/updates/`. More in [app updates](docs/app-updates.md).
 
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HOST` | `0.0.0.0` for direct runs; `127.0.0.1` for the plugin | Bind address |
+| `HOST` | `0.0.0.0`; `127.0.0.1` for the plugin | Bind address |
 | `PORT` | `7317` | HTTP and WebSocket port |
-| `HERDR_WEB_AUTO_UPDATE` | `0` | `1` installs new `origin/main` revisions automatically under `bun run start` / plugin start; otherwise checks only |
-| `HERDR_SOCKET` | `~/.config/herdr/herdr.sock` | Socket used by both API calls and terminal attach |
-| `HERDR_WEB_TOKEN` | unset | Shared token protecting terminal access |
-| `HERDR_WEB_STATE_DIR` | `~/.config/herdr-web-ui` | Persistent push keys and subscriptions |
-| `HERDR_WEB_PUSH_SUBJECT` | This repository's URL | VAPID contact URL or `mailto:` address |
+| `HERDR_SOCKET` | `~/.config/herdr/herdr.sock` | herdr socket for API calls and terminal attach. Use `~/.config/herdr/sessions/<name>/herdr.sock` for a named session. |
+| `HERDR_WEB_TOKEN` | unset | Shared token that gates terminal access |
+| `HERDR_WEB_STATE_DIR` | `~/.config/herdr-web-ui` | Push keys, device subscriptions, PC registrations and update builds |
+| `HERDR_WEB_AUTO_UPDATE` | `0` | `1` installs new `origin/main` commits automatically |
+| `HERDR_WEB_PUSH_SUBJECT` | this repository's URL | VAPID contact URL or `mailto:` address |
+| `HERDR_WEB_BUNDLE_MANIFEST` | unset | Remote-PC bundle manifest (path or URL) that overrides local and published bundles |
+| `HERDR_WEB_HERDR_BIN` | `herdr` | herdr executable used for terminal attach |
+| `CODEX_HOME` | `~/.codex` | Where Codex transcripts are read |
 
-Set `HERDR_SOCKET` to `~/.config/herdr/sessions/<name>/herdr.sock` to select a named herdr session.
+### Access and safety
 
-### Access and connection behavior
+Anyone who can reach an ungated server, or who knows its token, can type into the attached terminals. For remote access, use a token and HTTPS, or bind to loopback and tunnel over SSH.
 
-Anyone with access to an ungated server, or with its shared token, can operate the attached terminals. Use a token and HTTPS for remote access, or bind to loopback and use an SSH tunnel.
+With a token set, the API and WebSockets require sign-in; only the app shell, health check and sign-in route stay public. Browsers get an HttpOnly, SameSite=Strict cookie, and scripts can send `Authorization: Bearer <token>`. A TLS proxy should send `x-forwarded-proto: https` so the cookie is marked Secure.
 
-With a token configured, private API routes and WebSocket connections require authentication. Browser sign-in uses an HttpOnly, SameSite=Strict cookie; scripts can use `Authorization: Bearer <token>`. The shell, health endpoint and sign-in route remain public. A TLS proxy should send `x-forwarded-proto: https` so the cookie is marked Secure.
-
-Input typed during a disconnect waits as a reviewable draft. Reconnecting does not silently send it. Queued messages wait through approval and question menus before sending when the agent is ready.
-
-The app uses an interactive connection. The WebSocket protocol also supports server-enforced `observe` clients that cannot type or resize; there is no observe-mode toggle in the app. Attachments never use `--takeover`. A separate web server cannot attach a pane already held by another web server.
+Nothing you type is sent behind your back: input typed while disconnected waits as a draft for you to send or discard, and a queued message waits until the agent is ready and sends only to the pane it was written for. Attaches never use `--takeover`, so they coexist with your own herdr TUI; two web servers cannot attach the same pane.
 
 ## Keyboard shortcuts
 
-`Mod` means **⌘** on macOS and **Ctrl** elsewhere.
+`Mod` is **⌘** on macOS and **Ctrl** elsewhere. Every shortcut adds Shift so the terminal keeps its own Ctrl keys.
 
 | Shortcut | Action |
 | --- | --- |
@@ -158,51 +147,47 @@ The app uses an interactive connection. The WebSocket protocol also supports ser
 | `Mod+Shift+↑` / `↓` | Previous / next pane |
 | `Mod+Shift+,` | Settings |
 
-Choose Enter or Mod+Enter to send in Settings. Shift+Enter inserts a newline when Enter sends.
+Enter sends and Shift+Enter adds a line; Settings can switch sending to Mod+Enter.
 
 ## How it works
 
-The React client talks to a Bun HTTP/WebSocket bridge. The bridge reads workspace and agent state through herdr's Unix socket and forwards the real terminal-attach stream through a Node PTY sidecar. Chat reads local agent transcripts; sending still reaches the same live pane.
+A React client talks to a Bun HTTP/WebSocket server. The server reads workspace and agent state from herdr's Unix socket and streams the real `herdr terminal attach` output through a Node PTY sidecar. Chat reads the agents' local transcripts, and sending types into the same live pane.
 
-One attachment is shared by browsers viewing the same pane. Output has a bounded replay tail and backpressure; a stalled client is disconnected rather than accumulating unlimited output. herdr owns scrollback. See [terminal flow control](docs/terminal-flow-control.md) for the protocol and limits.
+Browsers viewing one pane share one attach. Output has a bounded replay tail and backpressure; a client that stops reading is disconnected instead of buffering without limit ([terminal flow control](docs/terminal-flow-control.md)). herdr owns scrollback.
 
-The service worker caches the app shell and static assets. It does not intercept `/api` or `/ws`; working with live terminals requires a connection. OSC 52 clipboard handling is wired, but herdr 0.9.x consumes those sequences before they reach the browser.
+The service worker caches the app shell and static assets and never touches `/api` or `/ws`. OSC 52 clipboard support is wired, but herdr 0.9.x consumes those sequences before they reach the browser.
 
 ## Development
 
-Run the backend and Vite in separate terminals:
+Run the server and Vite side by side:
 
 ```bash
 bun run server   # API + WebSocket on :7317
 bun run dev      # Vite on :5173, proxies /api and /ws
 ```
 
+Checks:
+
 ```bash
 bun run typecheck
 bun run build
-bun test
-bun run test:ui
-bun scripts/chat-browser-qa.ts
+bun test                        # needs a live herdr; creates and removes its own workspaces
+bun run test:ui                 # browser regression against isolated test servers
+bun scripts/chat-browser-qa.ts  # chat lens end to end
+bun run test:ssh                # remote-PC integration over SSH
 ```
 
-Integration tests require a live herdr server. They create and clean up their own test workspaces and use temporary push state. Browser checks use isolated test servers and panes; set `CHROME_PATH` if Chrome is not at `/opt/google/chrome/chrome`.
-
-After a herdr upgrade, refresh the generated wire types:
-
-```bash
-bun run generate:types --refresh
-bun run generate:types --check
-```
+Browser checks look for Chrome at `/opt/google/chrome/chrome`; set `CHROME_PATH` otherwise. After a herdr upgrade, refresh the generated wire types with `bun run generate:types --refresh` (and `--check` to verify).
 
 | Path | Contents |
 | --- | --- |
-| [`src/`](src/) | React UI, chat, terminal, composer and settings |
-| [`server/`](server/) | API, WebSockets, transcript readers, push and PTY bridge |
-| [`shared/protocol.ts`](shared/protocol.ts) | Shared HTTP/WebSocket contract |
-| [`scripts/`](scripts/) | Plugin lifecycle, type generation and browser checks |
-| [`public/`](public/) | PWA manifest, service worker and app icons |
-| [`docs/brand/`](docs/brand/) | Original artwork and icon/social-preview export instructions |
-| [`DESIGN.md`](DESIGN.md) | UI tokens and design conventions |
+| [`src/`](src/) | React UI: chat, terminal, composer, sidebar, settings |
+| [`server/`](server/) | API, WebSockets, transcript readers, push, PTY bridge, remote PCs and updater |
+| [`shared/`](shared/) | HTTP/WebSocket contract and generated herdr types |
+| [`scripts/`](scripts/) | Plugin lifecycle, type generation, remote bundles and browser checks |
+| [`public/`](public/) | PWA manifest, service worker and icons |
+| [`docs/`](docs/) | Remote PCs, updates, flow control, chat audit and brand assets |
+| [`DESIGN.md`](DESIGN.md) | Design tokens and UI conventions |
 
 ## License
 
