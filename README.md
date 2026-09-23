@@ -29,6 +29,8 @@ herdr owns the sessions and terminal processes. This app only adds a web interfa
 
 ## Get started
 
+Setting it up with a coding agent? Point it at [INSTALL.md](INSTALL.md), a step-by-step guide written for agents.
+
 You need **Bun 1.4+**, **Node 18+** (it runs the terminal-attach sidecar) and a running **herdr 0.9.0+** with the `herdr` CLI on `PATH`. herdr is a separate project; install it first.
 
 ```bash
@@ -109,7 +111,7 @@ Tap the bell to turn on alerts for that device. iPhone needs iOS 16.4+ and the h
 
 An update is built and typechecked in a private checkout while the current server keeps serving, then the server restarts and must pass a health check, or the previous build comes back. herdr and its sessions keep running; browsers reconnect briefly, and a **Reload app** notice lets you save drafts before loading the new frontend.
 
-Updates need a clean checkout of `main` with an `origin` remote. Local changes, untracked files or a diverged branch block installation, and the updater never resets or overwrites your checkout. An already running server needs one restart on this version to gain the supervisor. Builds and the release pointer live in `HERDR_WEB_STATE_DIR/updates/`. More in [app updates](docs/app-updates.md).
+Updates need a clean checkout with an `origin` remote: `main` for a source install, or herdr's own plugin checkout. Local changes, untracked files, another branch or a diverged history block installation, and the updater never resets or overwrites the checkout. An already running server needs one restart on this version to gain the supervisor. Builds and the release pointer live in `HERDR_WEB_STATE_DIR/updates/`. More in [app updates](docs/app-updates.md).
 
 ## Configuration
 
