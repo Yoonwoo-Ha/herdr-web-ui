@@ -65,15 +65,21 @@ function storeSelection(machineId: string, paneId: string | null): void {
   }
 }
 
-/** The lens a pane opens in: remembered per pane; a pane seen for the first time opens its terminal. */
-function storedView(paneId: string, machineId: string): PaneView {
+/**
+ * The lens a pane opens in: remembered per pane. A pane seen for the first time opens its
+ * terminal, except an agent pane on a touch screen, which opens its chat: a phone reads a
+ * conversation better than a TUI sized for a desktop. Until the snapshot says whether the
+ * pane has an agent (null), a touch screen guesses chat: most panes opened there are agents,
+ * and guessing terminal flashed it for the seconds before the snapshot arrived.
+ */
+function storedView(paneId: string, machineId: string, hasAgent: boolean | null): PaneView {
   try {
     const stored = window.localStorage.getItem(`herdr-web-ui:view:${paneStorageId(machineId, paneId)}`);
     if (stored === "chat" || stored === "terminal") return stored;
   } catch {
     /* private mode */
   }
-  return "terminal";
+  return hasAgent !== false && window.matchMedia?.("(pointer: coarse)").matches === true ? "chat" : "terminal";
 }
 
 function Brand() {
@@ -334,8 +340,8 @@ export function App() {
   // the lens follows the selected pane: each pane remembers its own
   useEffect(() => {
     if (selectedPaneId === null) return;
-    setViewState(storedView(selectedPaneId, selectedMachineId));
-  }, [selectedPaneId, selectedMachineId]);
+    setViewState(storedView(selectedPaneId, selectedMachineId, selectedPane ? selectedAgent !== null : null));
+  }, [selectedPaneId, selectedMachineId, selectedPane !== null, selectedAgent !== null]);
 
   const setView = useCallback(
     (next: PaneView) => {
