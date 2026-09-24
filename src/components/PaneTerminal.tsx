@@ -7,7 +7,7 @@ import "./PaneTerminal.css";
 import { HerdrSocket } from "../lib/ws.ts";
 import { controlCode, isPrintable, keySequence, type KeyBarKey } from "../lib/keys.ts";
 import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "../lib/draft.ts";
-import { QUEUE_READY_STATUS, composerPayload } from "../lib/compose.ts";
+import { QUEUE_READY_STATUS, composerMessage, composerPayload, submitNote } from "../lib/compose.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { paneStorageId } from "../../shared/machines.ts";
@@ -111,6 +111,7 @@ export function PaneTerminal({
   // pane's message into another pane's agent.
   const queueOwner = useRef<string | null>(null);
   const [queued, setQueued] = useState<QueuedMessage | null>(null);
+  const [queueSending, setQueueSending] = useState(false);
 
   paneRef.current = paneId;
   onConnectionChangeRef.current = onConnectionChange;
@@ -432,17 +433,24 @@ export function PaneTerminal({
     setDraft(EMPTY_DRAFT);
   }, []);
 
-  // the composer rides the same term.input() -> onData -> socket path as the key
-  // bar: one input path, and the never-queue draft policy still governs it on a
-  // dead socket. Bracketed-paste wrapping follows the pane program's own mode.
-  const sendComposerText = useCallback((text: string): boolean => {
+  // the composer goes straight to the socket, not through onData: an armed key-bar Ctrl
+  // must not turn a one-letter message into a control key. Offline it sends nothing and
+  // keeps its text (never-queue); a message the server could not deliver keeps it too,
+  // with the reason. Bracketed-paste wrapping follows the pane program's mode.
+  const sendComposerText = useCallback((text: string): false | Promise<true | string> => {
     const term = termRef.current;
     const socket = socketRef.current;
-    if (!term || !socket || !socket.connected) return false;
-    term.input(composerPayload(text, term.modes.bracketedPasteMode));
-    // the chat lens refetches at once so the sent prompt appears without a poll beat
-    setChatRefresh((current) => current + 1);
-    return true;
+    const pane = paneRef.current;
+    if (!term || !socket || pane === null) return false;
+    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode));
+    if (sent === null) return false;
+    term.scrollToBottom();
+    return sent.then((result) => {
+      if (!result.ok) return submitNote(result.code, result.message);
+      // the chat lens refetches at once so the sent prompt appears without a poll beat
+      setChatRefresh((current) => current + 1);
+      return true;
+    });
   }, []);
 
   // the composer's stop button: Escape interrupts the agent's current turn in every
@@ -460,7 +468,7 @@ export function PaneTerminal({
   const readyForQueue = agentStatus !== undefined && QUEUE_READY_STATUS[agentStatus] === true;
 
   const composerSend = useCallback(
-    (text: string): boolean => {
+    (text: string): boolean | Promise<boolean | string> => {
       const pane = paneRef.current;
       if (pane !== null && agent !== null && agentStatus === "working") {
         setQueued({ pane, text });
@@ -584,9 +592,13 @@ export function PaneTerminal({
             <button
               type="button"
               className="composer-queue-send"
-              disabled={!connected}
+              disabled={!connected || queueSending}
               onClick={() => {
-                if (sendComposerText(queued.text)) setQueued(null);
+                // a held message leaves the queue only once the pane has it; one send at a time
+                setQueueSending(true);
+                void Promise.resolve(sendComposerText(queued.text))
+                  .then((result) => { if (result === true) setQueued(null); })
+                  .finally(() => setQueueSending(false));
               }}
             >
               Send now

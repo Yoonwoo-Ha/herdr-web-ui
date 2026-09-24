@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { ServerWebSocket } from "bun";
 
-import type { AgentKind, ClientMessage, ClientRole, HealthAuth, HerdrPane, ServerMessage } from "../shared/protocol.ts";
+import type { AgentKind, ClientMessage, ClientRole, HealthAuth, HerdrPane, ServerFeature, ServerMessage } from "../shared/protocol.ts";
 import { paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { handleAuthRequest, isAuthenticated, requiresAuth, unauthorizedJson } from "./auth.ts";
@@ -16,6 +16,7 @@ import { startStatusCollector } from "./collector.ts";
 import { ConversationUnavailable, HistoryChanged, paneConversation } from "./conversation.ts";
 import {
   agentManifests,
+  agentPrompt,
   agentStart,
   HerdrError,
   herdrSocketPath,
@@ -32,7 +33,7 @@ import {
   workspaceRename,
 } from "./herdr/client.ts";
 import { createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
-import { handlePromptRequest } from "./prompt.ts";
+import { codexQuestionsCollapsed, handlePromptRequest } from "./prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
 import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, replayTail } from "./output-window.ts";
@@ -47,6 +48,15 @@ import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
 
 const MAX_REPLAY_BYTES = 256 * 1024;
+/** The gap between a composer message's text and its Enter (see submitText). */
+export const SUBMIT_DELAY_MS = 120;
+/**
+ * herdr holds a lone ESC typed through the attach pty ~150ms (measured) to tell it from
+ * an Alt+key: a composer message waits this long after the pane's last keystroke, so a
+ * Stop tapped just before Send still reaches the pane first.
+ */
+const TYPED_SETTLE_MS = 300;
+const SERVER_FEATURES: ServerFeature[] = ["submit"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -150,9 +160,63 @@ export function createServer(
   // herdr releases its exclusive attach slot only after the old process exits.
   const retiringAttachments = new Map<string, Promise<void>>();
   const clients = new Set<Client>();
+  /** each pane's input while a composer message is in flight, one step after another */
+  const paneQueues = new Map<string, Promise<unknown>>();
+  /** when each pane last got keystrokes through its attach pty */
+  const lastTyped = new Map<string, number>();
   const hostname = options.hostname ?? process.env["HOST"] ?? "0.0.0.0";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
+
+  /**
+   * Runs `task` after everything queued for the pane. While a composer message is in
+   * flight, the pane's other input (keystrokes, keys, prompt answers) waits behind it:
+   * a Stop tapped right after Send must not land between the text and its Enter.
+   */
+  function serialize<T>(paneId: string, task: () => T | Promise<T>): Promise<T> {
+    const run = (paneQueues.get(paneId) ?? Promise.resolve()).catch(() => {}).then(task);
+    paneQueues.set(paneId, run);
+    run.catch(() => {}).finally(() => { if (paneQueues.get(paneId) === run) paneQueues.delete(paneId); });
+    return run;
+  }
+
+  /**
+   * Types a composer message and submits it, with its own Enter after the text: arriving
+   * in the same chunk as the paste, a TUI still busy with it (turning an image path into
+   * an attachment, redrawing after the phone keyboard closed) could take it for a newline
+   * and leave the message unsent in its input box. Done here rather than in the browser,
+   * the gap survives a jittery connection and the Enter still goes when the phone locks.
+   *
+   * An agent gets it through herdr's agent.prompt (the paste, then Enter 300ms later),
+   * which refuses while the agent waits for an answer: the message is not typed into its
+   * menu. A pane without an agent in front gets `payload`, shaped for its own paste mode,
+   * through send_text, then Enter SUBMIT_DELAY_MS later; both return once the pane has
+   * the bytes, so the pane sees the whole gap. So does a Codex "blocked" only by questions
+   * waiting collapsed in its queue: its main prompt still takes the message.
+   */
+  async function submitText(paneId: string, text: string, payload: string): Promise<void> {
+    const typed = Date.now() - (lastTyped.get(paneId) ?? 0);
+    if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
+    lastTyped.delete(paneId);
+    try {
+      await agentPrompt(paneId, text);
+      return;
+    } catch (error) {
+      if (!(error instanceof HerdrError)) throw error;
+      const queuedOnly = error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
+      if (error.code !== "agent_not_found" && error.code !== "agent_not_ready" && !queuedOnly) throw error;
+    }
+    await paneSendText(paneId, payload);
+    await Bun.sleep(SUBMIT_DELAY_MS);
+    await paneSendKeys(paneId, ["Enter"]);
+  }
+
+  /** Is this pane's agent Codex, blocked only by questions waiting collapsed in its queue (codexQuestionsCollapsed)? */
+  async function blockedOnlyByCodexQueue(paneId: string): Promise<boolean> {
+    const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
+    if ((pane?.agent ?? pane?.agent_session?.agent) !== "codex") return false;
+    return codexQuestionsCollapsed((await paneRead({ paneId, source: "visible", format: "text" })).text);
+  }
 
   function stopSlowClient(client: Client): void {
     if (client.data.closing) return;
@@ -721,7 +785,7 @@ export function createServer(
 
       if (pathname.startsWith("/api/pane/prompt")) {
         try {
-          const response = await handlePromptRequest(request, url);
+          const response = await handlePromptRequest(request, url, { serialize });
           if (response) return response;
         } catch (error) {
           return errorResponse(error);
@@ -747,7 +811,7 @@ export function createServer(
         if (client.data.relay) { client.data.relay.bind(client as ServerWebSocket<unknown>); return; }
         clients.add(client);
         try {
-          send(client, { type: "snapshot", snapshot: await sessionSnapshot() });
+          send(client, { type: "snapshot", snapshot: await sessionSnapshot(), features: SERVER_FEATURES });
         } catch (error) {
           const code = error instanceof HerdrError ? error.code : "snapshot_failed";
           send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error) });
@@ -835,8 +899,22 @@ export function createServer(
                 send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
                 break;
               }
+              // typing goes straight through the pty, unless a composer message is still in
+              // flight: then it waits its turn and goes the message's own way (send_text), since
+              // the pty holds a lone ESC ~150ms and a Stop would overtake nothing
+              // typing reaches an attached pane only, queued or not
               const attachment = attachments.get(message.pane_id);
-              if (attachment) attachment.pty.write(message.text);
+              if (!attachment) break;
+              if (paneQueues.has(message.pane_id)) {
+                const text = message.text;
+                void serialize(message.pane_id, () => paneSendText(message.pane_id, text)).catch(() => undefined);
+              } else {
+                attachment.pty.write(message.text);
+                lastTyped.set(message.pane_id, Date.now());
+                if (lastTyped.size > 64) {
+                  for (const [pane, at] of lastTyped) if (Date.now() - at > TYPED_SETTLE_MS) lastTyped.delete(pane);
+                }
+              }
               break;
             }
             case "resize": {
@@ -857,7 +935,29 @@ export function createServer(
                 send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
                 break;
               }
-              await paneSendKeys(message.pane_id, message.keys);
+              await serialize(message.pane_id, () => paneSendKeys(message.pane_id, message.keys));
+              break;
+            }
+            case "submit": {
+              // every submit is answered: the composer keeps its text until it hears back
+              const result = (ok: boolean, code?: string, text?: string) => send(client, {
+                type: "submit-result", id: message.id, pane_id: message.pane_id, ok, ...(code ? { code, message: text } : {}),
+              });
+              if (!Number.isSafeInteger(message.id) || typeof message.pane_id !== "string" || !message.pane_id
+                || typeof message.text !== "string" || typeof message.payload !== "string") {
+                send(client, { type: "error", code: "invalid_submit", message: "id must be an integer, pane_id, text and payload strings" });
+                break;
+              }
+              if (client.data.mode === "observe") {
+                result(false, "read_only", "this connection is in observe mode");
+                break;
+              }
+              try {
+                await serialize(message.pane_id, () => submitText(message.pane_id, message.text, message.payload));
+                result(true);
+              } catch (error) {
+                result(false, error instanceof HerdrError ? error.code : "submit_failed", error instanceof Error ? error.message : String(error));
+              }
               break;
             }
             case "role": {

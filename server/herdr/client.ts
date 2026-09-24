@@ -222,6 +222,15 @@ export async function paneSendText(paneId: string, text: string, socketPath?: st
   await herdrRpc("pane.send_text", { pane_id: paneId, text }, socketPath);
 }
 
+/**
+ * herdr's own agent.prompt: pastes `text` into the pane's agent (bracketed), then its
+ * Enter 300ms later, and returns after the Enter. Refuses with agent_blocked while the
+ * agent waits for an answer, agent_not_found / agent_not_ready without an agent in front.
+ */
+export async function agentPrompt(target: string, text: string, socketPath?: string): Promise<void> {
+  await herdrRpc("agent.prompt", { target, text }, socketPath);
+}
+
 export async function paneSendKeys(paneId: string, keys: string[], socketPath?: string): Promise<void> {
   await herdrRpc("pane.send_keys", { pane_id: paneId, keys }, socketPath);
 }

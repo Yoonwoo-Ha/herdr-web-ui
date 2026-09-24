@@ -383,6 +383,24 @@ function parsePrompt(agent: string, screen: string): ParsedPrompt | null {
   return candidates.find((candidate): candidate is ParsedPrompt => candidate !== null && promptTailIsActive(candidate, screen)) ?? null;
 }
 
+/**
+ * Codex 0.156 holds the questions it asked with request_user_input_async in a queue above
+ * its main prompt, collapsed to "? 2 questions / alt+↑ to answer", and herdr reports the
+ * agent blocked meanwhile. Yet the main prompt has the input and takes a message (Codex
+ * then drops the questions). True only for that collapsed queue with the main prompt (›)
+ * right under it and no other prompt on screen: an open question (its "enter submit …
+ * skip" hint) or an approval below the queue holds the input itself.
+ */
+export function codexQuestionsCollapsed(screen: string): boolean {
+  if (parsePrompt("codex", screen) !== null) return false;
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine).filter(Boolean);
+  const header = findLastIndex(lines, (line) => /^(?:•\s*)?Queued follow-up inputs$/.test(line));
+  if (header < 0 || lines.length - header > 16 || lines.some((line) => CODEX_ASYNC_ASK_HINT_RE.test(line))) return false;
+  const count = lines.findIndex((line, index) => index > header && /^\?\s*\d+\s+questions?\b/.test(line));
+  if (count < 0 || count > header + 7) return false;
+  return /\bto answer$/i.test(lines[count + 1] ?? "") && /^›\s/.test(lines[count + 2] ?? "");
+}
+
 export function parseInteractivePrompt(agent: string, screen: string): InteractivePrompt | null {
   const parsed = parsePrompt(agent, screen);
   return parsed ? publicPrompt(parsed) : null;
@@ -461,7 +479,12 @@ function promptChanged(): Response {
   return jsonResponse({ error: { code: "prompt_changed", message: "The interactive prompt changed; reopen it and try again." } }, 409);
 }
 
-export async function handlePromptRequest(request: Request, url: URL): Promise<Response | null> {
+export interface PromptRequestOptions {
+  /** runs a pane's answer after the input already queued for it (a composer message in flight) */
+  serialize?: <T>(paneId: string, task: () => Promise<T>) => Promise<T>;
+}
+
+export async function handlePromptRequest(request: Request, url: URL, options: PromptRequestOptions = {}): Promise<Response | null> {
   if (url.pathname !== "/api/pane/prompt" && url.pathname !== "/api/pane/prompt/answer") return null;
   try {
     if (url.pathname === "/api/pane/prompt") {
@@ -482,22 +505,26 @@ export async function handlePromptRequest(request: Request, url: URL): Promise<R
     if (typeof body.pane_id !== "string" || !body.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required.");
     if (typeof body.prompt_id !== "string" || !body.prompt_id) return badRequest("invalid_answer", "prompt_id is required.");
 
-    const { prompt } = await readPrompt(body.pane_id);
-    if (!prompt || prompt.id !== body.prompt_id) return promptChanged();
-    let steps: AnswerStep[];
-    try {
-      steps = answerKeys(prompt, body);
-    } catch (error) {
-      if (error instanceof InvalidAnswer) return badRequest("invalid_answer", error.message);
-      throw error;
-    }
-    for (let index = 0; index < steps.length; index += 1) {
-      const step = steps[index]!;
-      if (step.keys) await paneSendKeys(body.pane_id, step.keys);
-      else if (step.text !== undefined) await paneSendText(body.pane_id, step.text);
-      if (index < steps.length - 1) await Bun.sleep(30);
-    }
-    return jsonResponse({ ok: true });
+    // read, checked and answered in the pane's turn: a message still in flight goes first
+    const serialize = options.serialize ?? (<T>(_paneId: string, task: () => Promise<T>) => task());
+    return await serialize(body.pane_id, async () => {
+      const { prompt } = await readPrompt(body.pane_id);
+      if (!prompt || prompt.id !== body.prompt_id) return promptChanged();
+      let steps: AnswerStep[];
+      try {
+        steps = answerKeys(prompt, body);
+      } catch (error) {
+        if (error instanceof InvalidAnswer) return badRequest("invalid_answer", error.message);
+        throw error;
+      }
+      for (let index = 0; index < steps.length; index += 1) {
+        const step = steps[index]!;
+        if (step.keys) await paneSendKeys(body.pane_id, step.keys);
+        else if (step.text !== undefined) await paneSendText(body.pane_id, step.text);
+        if (index < steps.length - 1) await Bun.sleep(30);
+      }
+      return jsonResponse({ ok: true });
+    });
   } catch (error) {
     return errorResponse(error);
   }

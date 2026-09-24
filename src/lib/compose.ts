@@ -18,14 +18,23 @@ export const MAX_COMPOSER_CHARS = 20_000;
 const PASTE_START = "\u001b[200~";
 const PASTE_END = "\u001b[201~";
 
-/** Trailing newlines are dropped first: the submit CR is the composer's, not the text's. */
+/** A composer message as written: trailing newlines are the composer's, not the text's; CRLF reads as one newline. */
+export function composerMessage(text: string): string {
+  return text.replace(/[\r\n]+$/, "").replace(/\r\n?/g, "\n");
+}
+
+/** The text a composer message types, without its submit (HerdrSocket.submit adds the Enter). */
 export function composerPayload(text: string, bracketedPaste: boolean): string {
-  const body = text
-    .replace(/[\r\n]+$/, "")
-    .replace(/\r\n?/g, "\n")
-    .replace(/\n/g, "\r");
-  if (bracketedPaste) return PASTE_START + body + PASTE_END + "\r";
-  return body + "\r";
+  const body = composerMessage(text).replace(/\n/g, "\r");
+  return bracketedPaste ? PASTE_START + body + PASTE_END : body;
+}
+
+/** Why a composer message did not go (SubmitResult's code): the composer keeps the text and says this. */
+export function submitNote(code: string, message: string): string {
+  if (code === "agent_blocked") return "Not sent: the agent is waiting for an answer in the terminal. Answer it first.";
+  if (code === "read_only") return "Not sent: this view only watches the pane.";
+  if (code === "disconnected" || code === "timeout") return "Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.";
+  return `Not sent: ${message}`;
 }
 
 /**
