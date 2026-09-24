@@ -445,14 +445,16 @@ export function Composer({
       if (!mounted.current) return;
       if (typeof result === "string") setNote(result);
       if (result !== true) return;
-      // only what was sent leaves the box: text added while it was on its way stays
+      // only what was sent leaves the box: text added after it stays exactly as typed. Changed
+      // inside while on its way, the whole edit stays, and the note says it was not sent
       const current = textRef.current;
-      const rest = current === sent ? "" : current.startsWith(sent) ? current.slice(sent.length).replace(/^\s+/, "") : current;
+      const edited = current !== sent && !current.startsWith(sent);
+      const rest = current === sent ? "" : edited ? current : current.slice(sent.length);
       setText(rest);
       setCaret(rest.length);
       textRef.current = rest;
       caretRef.current = rest.length;
-      setNote(null);
+      setNote(edited ? "Sent as it was. Your changes made while it was sending stayed here and were not sent." : null);
       for (const attachment of sentAttachments) URL.revokeObjectURL(attachment.previewUrl);
       setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
     };

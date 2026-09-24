@@ -292,7 +292,6 @@ function historyChain(path: string, home: string): HistorySegment[] {
   return remember(chain, false);
 }
 
-/** A Codex conversation's files oldest first, each with how many of its bytes belong to it. */
 /**
  * historyChain, for reading now: a remembered chain can outlive its files (a parent
  * archived since, moved out of sessions/). Then it is looked up again and comes back
@@ -305,6 +304,7 @@ function liveChain(path: string, home: string): HistorySegment[] {
   return historyChain(path, home);
 }
 
+/** A Codex conversation's files oldest first, each with how many of its bytes belong to it. */
 export function codexHistorySegments(path: string, home = defaultCodexHome()): HistorySegment[] {
   return [...liveChain(path, home)].reverse().concat({ path, end: statSync(path).size });
 }
@@ -422,11 +422,17 @@ const claimChecks = new Map<string, { panes: string; at: number }>();
 const CLAIM_CHECK_MS = 5000;
 
 /**
- * Which of `threads` (rollouts) another Codex pane in this cwd shows: only those threads
- * are matched against each pane's screen, whether or not anyone opened its chat, and a
- * pane that shows one is bound to it. A thread one of them shows is theirs, not a /new of
- * this pane. The same threads and panes are looked at again at most every 5s: a pane whose
- * answer is not on screen yet is tried after that.
+ * Which of `threads` (rollouts) another Codex pane in this cwd shows, as its own: a pane
+ * claims a thread when its screen shows the thread's first message (typed there) and an
+ * answer of it, and the match is unique against this pane's threads and that pane's
+ * binding too. A pane that shows one is bound to it, whether or not anyone opened its
+ * chat, and that thread is theirs, not a /new of this pane. The same threads and panes are
+ * looked at again at most every 5s: a pane whose answer is not on screen yet is tried then.
+ *
+ * Trade-off: the first message must still be in that pane's last 400 lines and read as at
+ * least 8 letters or digits. After a long session with this chat closed, or for a first
+ * message like "hi", the thread is never claimed, and this pane says it cannot tell while
+ * its own answer is off screen, until that pane's chat binds it. Never another conversation.
  */
 async function claimedByOtherPanes(paneId: string, cwd: string, threads: string[], own: string[], firsts: ReadonlyMap<string, string>, home: string, sessionPanes?: HerdrPane[]): Promise<Set<string>> {
   const claimed = new Set<string>();

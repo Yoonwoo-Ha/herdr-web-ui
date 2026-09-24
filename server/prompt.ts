@@ -398,7 +398,8 @@ export function codexQuestionsCollapsed(screen: string): boolean {
   if (header < 0 || lines.length - header > 16 || lines.some((line) => CODEX_ASYNC_ASK_HINT_RE.test(line))) return false;
   const count = lines.findIndex((line, index) => index > header && /^\?\s*\d+\s+questions?\b/.test(line));
   if (count < 0 || count > header + 7) return false;
-  return /\bto answer$/i.test(lines[count + 1] ?? "") && /^›\s/.test(lines[count + 2] ?? "");
+  // (the main prompt, not a numbered menu row the parser did not recognise)
+  return /\bto answer$/i.test(lines[count + 1] ?? "") && /^›\s(?!\d+\.)/.test(lines[count + 2] ?? "");
 }
 
 export function parseInteractivePrompt(agent: string, screen: string): InteractivePrompt | null {

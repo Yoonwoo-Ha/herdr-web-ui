@@ -245,6 +245,30 @@ describe("WebSocket submit", () => {
     }
   }, 30_000);
 
+  it("types nothing of a message that waited past its deadline behind another", async () => {
+    // a deadline of 50ms: the second message waits longer than that behind the first one's gap
+    const hurried = createServer({ port: 0, stateDir: join(root, "push-hurried"), submitDeadlineMs: 50 });
+    const ws = new WebSocket(`ws://localhost:${hurried.port}/ws`);
+    const seen: any[] = [];
+    ws.addEventListener("message", (event) => seen.push(JSON.parse(String((event as MessageEvent).data))));
+    try {
+      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve()));
+      for (let i = 0; i < 100 && !seen.some((message) => message.type === "snapshot"); i++) await Bun.sleep(50);
+      const from = chunks(shell).length;
+      ws.send(JSON.stringify({ type: "submit", id: 1, pane_id: shell.pane, text: "first", payload: "first" }));
+      ws.send(JSON.stringify({ type: "submit", id: 2, pane_id: shell.pane, text: "late", payload: "late" }));
+      let late: any;
+      for (let i = 0; i < 100 && !(late = seen.find((message) => message.type === "submit-result" && message.id === 2)); i++) await Bun.sleep(50);
+      expect(seen.find((message) => message.type === "submit-result" && message.id === 1)).toMatchObject({ ok: true });
+      expect(late).toMatchObject({ ok: false, code: "submit_timeout" });
+      await Bun.sleep(SUBMIT_DELAY_MS * 3);
+      expect(typed(shell, from)).toBe("first\r");
+    } finally {
+      ws.close();
+      hurried.stop();
+    }
+  }, 30_000);
+
   it("still sends the Enter after the sender is gone", async () => {
     const socket = await Socket.connect();
     const from = chunks(shell).length;
