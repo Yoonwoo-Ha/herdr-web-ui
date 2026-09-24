@@ -135,28 +135,32 @@
   box-shadow: 0 0 0 var(--hairline) var(--accent);
 }
 
-/* the resize grip: a short bar on the box's top edge. Its hit area straddles the border and
-   is taller than the bar, but stays inside the textarea's top padding, never over its text */
+/* the resize grip: a short bar on the box's top edge. Its hit area rises from the border into
+   the status line's gap and never reaches into the box, so a tap at the box's top still lands
+   on the text and a remove button in the attachment strip stays reachable */
 .composer-resize {
   position: absolute;
-  top: -6px;
+  bottom: 100%;
   left: 50%;
   z-index: 1;
   display: grid;
-  place-items: center;
+  place-items: end center;
   width: 48px;
-  height: 14px;
+  height: 12px;
   transform: translateX(-50%);
   cursor: ns-resize;
   touch-action: none;
 }
 
+/* the bar sits on the border; its half over the box is drawn, not hit */
 .composer-resize::before {
   content: "";
   width: var(--space-8);
   height: 4px;
   border-radius: var(--radius-pill);
   background: var(--border-strong);
+  transform: translateY(2px);
+  pointer-events: none;
   transition: background-color var(--dur-fast) var(--ease-out);
 }
 
@@ -197,7 +201,7 @@
    shrinks the viewport, so the saved height comes back once there is room again */
 .composer-text.is-sized {
   max-height: min(50vh, 480px);
-  max-height: min(50dvh, 480px);
+  max-height: min(calc(var(--app-height, 100dvh) / 2), 480px);
 }
 
 .composer-text::placeholder {
@@ -439,9 +443,8 @@
   }
 
   .composer-resize {
-    top: -10px;
     width: 64px;
-    height: 22px;
+    height: 20px;
   }
 }
 
