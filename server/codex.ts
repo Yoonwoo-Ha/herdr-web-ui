@@ -1,11 +1,11 @@
 /** Native Codex rollouts contain both display events and model context. Only
  * conversation records belong in chat; developer prompts and terminal chrome do not. */
 import { Database } from "bun:sqlite";
-import { closeSync, openSync, readdirSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { ConversationPart, ConversationTurn } from "../shared/protocol.ts";
-import { herdrRpc, paneRead } from "./herdr/client.ts";
+import { herdrRpc, paneRead, sessionSnapshot } from "./herdr/client.ts";
 
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): RecordValue => value !== null && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : {};
@@ -334,17 +334,116 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   return matching.size === 1 ? [...matching][0]! : null;
 }
 
+/** `codex resume <thread>`: the thread a TUI was started on, straight from its command line. */
+export function resumedThread(argvs: readonly (readonly string[])[]): string | null {
+  for (const argv of argvs) {
+    const at = argv.indexOf("resume");
+    const thread = at < 0 ? undefined : argv[at + 1];
+    if (thread !== undefined && UUID.test(thread)) return thread;
+  }
+  return null;
+}
+
+/** The rollout each pane's Codex was last matched to on screen, the processes that were running it, and when. */
+const boundRollouts = new Map<string, { processes: string; path: string; at: number }>();
+
+/**
+ * When a process started, in ms since the epoch: Linux counts it in /proc (USER_HZ
+ * ticks after boot). null where that is not readable, as on macOS.
+ */
+function processStartedAt(pid: number): number | null {
+  try {
+    const ticks = Number(readFileSync(`/proc/${pid}/stat`, "utf8").split(") ").pop()!.split(" ")[19]);
+    const boot = Number(readFileSync("/proc/stat", "utf8").match(/^btime (\d+)$/m)?.[1]);
+    return Number.isFinite(ticks) && Number.isFinite(boot) ? boot * 1000 + ticks * 10 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Threads begun in this cwd since `since` (seconds) that this pane's Codex may have moved
+ * on to (/new), as their rollouts. Only interactive threads count: subagents (often with
+ * a NULL agent_role) and `codex exec` runs share their parent's cwd but never replace the
+ * TUI's conversation. A thread another pane is bound to is that pane's (theirs).
+ */
+function newerThreads(db: Database, cwd: string, since: number, except: string | null, paneId: string, home: string): string[] {
+  const interactive = db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'source'").get() !== null
+    ? " AND source IN ('cli', 'vscode')" : "";
+  const rows = db.query<{ id: string; rollout_path: string }, [string, number]>(
+    `SELECT id, rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL${interactive} AND created_at >= ?`,
+  ).all(cwd, since);
+  return theirs(rows.flatMap((row) => row.id === except ? [] : [codexRolloutPath(row.rollout_path, home) ?? row.rollout_path]), paneId);
+}
+
+/** The rollouts no other pane is bound to. */
+function theirs(rollouts: string[], paneId: string, claimed: ReadonlySet<string> = new Set()): string[] {
+  const elsewhere = new Set([...boundRollouts].flatMap(([pane, binding]) => pane === paneId ? [] : [binding.path]));
+  return rollouts.filter((rollout) => !elsewhere.has(rollout) && !claimed.has(rollout));
+}
+
+/** A pane's Codex processes: the ones whose command line names codex, and their pids as one key. */
+async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; argv?: string[] }[]; key: string }> {
+  const processInfo = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>(
+    "pane.process_info", { pane_id: paneId },
+  );
+  const list = (processInfo.process_info?.foreground_processes ?? [])
+    .filter((process) => process.argv?.some((arg) => /(?:^|\/)codex(?:\.js)?$/.test(arg)));
+  return { list, key: list.map((process) => process.pid).sort((left, right) => left - right).join(",") };
+}
+
+/** When each pane last looked at the other Codex panes for a set of threads. */
+const claimChecks = new Map<string, number>();
+const CLAIM_CHECK_MS = 5000;
+
+/**
+ * Which of `threads` (rollouts) another Codex pane in this cwd shows: only those threads
+ * are matched against each pane's screen, whether or not anyone opened its chat, and a
+ * pane that shows one is bound to it. A thread one of them shows is theirs, not a /new of
+ * this pane. The same threads and panes are looked at again at most every 5s: a pane whose
+ * answer is not on screen yet is tried after that.
+ */
+async function claimedByOtherPanes(paneId: string, cwd: string, threads: string[], home: string): Promise<Set<string>> {
+  const claimed = new Set<string>();
+  const panes = (await sessionSnapshot()).panes
+    .filter((pane) => pane.pane_id !== paneId && pane.cwd === cwd && (pane.agent ?? pane.agent_session?.agent) === "codex")
+    .slice(0, 8);
+  // a pane that appeared since is looked at at once
+  const key = `${paneId}\0${[...threads].sort().join("\0")}\0${panes.map((pane) => pane.pane_id).join()}`;
+  const last = claimChecks.get(key);
+  if (panes.length === 0 || (last !== undefined && Date.now() - last < CLAIM_CHECK_MS)) return claimed;
+  claimChecks.set(key, Date.now());
+  if (claimChecks.size > 64) claimChecks.delete(claimChecks.keys().next().value!);
+  const candidates = threads.flatMap((path) => {
+    try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
+  });
+  if (candidates.length === 0) return claimed;
+  for (const pane of panes) {
+    try {
+      const screen = await paneRead({ paneId: pane.pane_id, source: "recent", lines: 400, stripAnsi: true });
+      const shown = matchCodexTranscript(screen.text, candidates);
+      if (shown === null) continue;
+      claimed.add(shown);
+      const processes = (await codexProcessesOf(pane.pane_id)).key;
+      if (processes !== "") {
+        boundRollouts.delete(pane.pane_id);
+        boundRollouts.set(pane.pane_id, { processes, path: shown, at: Date.now() });
+        if (boundRollouts.size > 64) boundRollouts.delete(boundRollouts.keys().next().value!);
+      }
+    } catch { /* a pane closed meanwhile */ }
+  }
+  return claimed;
+}
+
 export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome()): Promise<string | null> {
   const info = await herdrRpc<{ agent: { agent_session?: { kind?: string; value?: string } } }>("agent.get", { target: paneId });
   const session = info.agent.agent_session;
   if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
 
-  const processInfo = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>(
-    "pane.process_info", { pane_id: paneId },
-  );
+  const { list: codexProcesses, key: processes } = await codexProcessesOf(paneId);
+  const resumed = resumedThread(codexProcesses.map((process) => process.argv ?? []));
   const open = new Set<string>();
-  for (const process of processInfo.process_info?.foreground_processes ?? []) {
-    if (!process.argv?.some((arg) => /(?:^|\/)codex(?:\.js)?$/.test(arg))) continue;
+  for (const process of codexProcesses) {
     if (globalThis.process.platform === "darwin") {
       // lsof is available on macOS, where /proc does not exist. Keep the same
       // canonical-store and unambiguous-open-file checks as the Linux path.
@@ -376,12 +475,34 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
 
   let db: Database | undefined;
   let paths: string[] = [...open];
+  let resumedPath: string | null = null;
+  let resumedNewer: string[] = [];
+  const bound = boundRollouts.get(paneId);
+  const boundHere = bound !== undefined && bound.processes === processes && processes !== "" ? bound : undefined;
+  let boundNewer: string[] = [];
   try {
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     if (session?.value && UUID.test(session.value)) {
       const row = db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ?").get(session.value);
       return row ? codexRolloutPath(row.rollout_path, home) : null;
     }
+    if (resumed !== null) {
+      const row = db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ?").get(resumed);
+      // After /new the command line still names the resumed thread. Trust it only while
+      // no other interactive thread in this cwd began after this Codex did (newerThreads;
+      // one no other pane shows counts too: then the chat says it cannot tell, rather
+      // than show the wrong conversation). Without a start time, since the resumed
+      // thread was last updated.
+      const startedAt = Math.min(...codexProcesses.map((process) => processStartedAt(process.pid) ?? Infinity));
+      const since = Number.isFinite(startedAt)
+        ? Math.floor(startedAt / 1000)
+        : (db.query<{ updated_at: number }, [string]>("SELECT updated_at FROM threads WHERE id = ?").get(resumed)?.updated_at ?? 0);
+      resumedPath = row ? codexRolloutPath(row.rollout_path, home) : null;
+      resumedNewer = newerThreads(db, cwd, since, resumed, paneId, home);
+    }
+    // the same guard for a match: after /new the process writes a thread begun since
+    // (created_at has whole seconds, so one begun in the match's second counts too)
+    if (boundHere !== undefined) boundNewer = newerThreads(db, cwd, Math.floor(boundHere.at / 1000), null, paneId, home);
     const rows = db.query<{ rollout_path: string }, [string]>(
       "SELECT rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL ORDER BY updated_at DESC LIMIT 32",
     ).all(cwd);
@@ -391,10 +512,34 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     })])];
   } catch { /* Older installations can still resolve their open descriptors. */ }
   finally { db?.close(); }
-  if (!paths.length) return null;
-  const screen = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
+  const screen = paths.length ? await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true }) : null;
   const candidates = paths.flatMap((path) => {
     try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
   });
-  return matchCodexTranscript(screen.text, candidates);
+  const matched = screen ? matchCodexTranscript(screen.text, candidates) : null;
+  if (matched !== null) {
+    boundRollouts.delete(paneId);
+    boundRollouts.set(paneId, { processes, path: matched, at: Date.now() });
+    if (boundRollouts.size > 64) boundRollouts.delete(boundRollouts.keys().next().value!);
+    return matched;
+  }
+  // Nothing on screen tells: a long run of tool output pushed the last answer out of
+  // the read, or nothing is answered yet. The same Codex process still writes the
+  // rollout it was last matched to, while no thread begun since in this cwd leaves it
+  // unsure: one another Codex pane here shows is that pane's. The binding is kept even
+  // when unsure, so it holds again once that thread turns out to be another pane's.
+  // Failing that, the thread it was resumed on, under the same rule.
+  const unsure = [...new Set([...boundNewer, ...(resumedPath !== null ? resumedNewer : [])])];
+  if (unsure.length > 0) {
+    const claimed = await claimedByOtherPanes(paneId, cwd, unsure, home);
+    boundNewer = theirs(boundNewer, paneId, claimed);
+    resumedNewer = theirs(resumedNewer, paneId, claimed);
+  }
+  if (boundHere !== undefined && boundNewer.length === 0 && codexRolloutPath(boundHere.path, home) !== null) {
+    // a pane in use stays among the kept ones
+    boundRollouts.delete(paneId);
+    boundRollouts.set(paneId, boundHere);
+    return boundHere.path;
+  }
+  return resumedNewer.length === 0 ? resumedPath : null;
 }
