@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-25
+
 ### Changed
 - A pane opens its terminal the first time you select it, agent panes included, instead of the chat.
   Switch to Chat once and that pane keeps opening in chat.
@@ -16,6 +18,15 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - The README and INSTALL.md say when a token is needed: not on this computer, over an SSH tunnel,
   or through `tailscale serve` on a tailnet of your own devices; needed on a LAN, a shared tailnet
   or a public address.
+
+### Fixed
+- A composer message that waited more than 45s behind earlier input is not typed any more; the
+  composer keeps it and says nothing was typed. Before, it could reach the pane after the composer
+  had given up on it, so sending it again typed it twice.
+- Text typed after a message that is still sending keeps its leading spaces, and an edit inside
+  the part being sent stays in the box with a note that it was not sent.
+- A numbered menu row under Codex's collapsed question queue is no longer mistaken for its main
+  prompt.
 
 ## [0.3.1] - 2026-09-25
 
@@ -117,7 +128,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/devswha/herdr-web-ui/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/devswha/herdr-web-ui/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/devswha/herdr-web-ui/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/devswha/herdr-web-ui/compare/v0.2.0...v0.2.1
