@@ -1,4 +1,5 @@
 /** Real xterm + real herdr; only delays outgoing ACKs to exercise a suspended consumer. */
+import "./test-herdr.ts"; // a herdr session of its own: nothing shows in the user's
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";

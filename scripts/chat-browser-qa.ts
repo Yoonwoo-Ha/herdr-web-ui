@@ -1,5 +1,6 @@
 /** Native transcript -> real HTTP -> React checks on an owned herdr pane.
  * Run after bun run build. No live user's terminal is attached or written. */
+import "./test-herdr.ts"; // a herdr session of its own: nothing shows in the user's
 import assert from "node:assert/strict";
 import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
