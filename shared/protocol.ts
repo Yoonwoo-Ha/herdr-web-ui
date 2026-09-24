@@ -242,9 +242,11 @@ export type ClientMessage =
   | { type: "detach"; pane_id: string }
   | { type: "input"; pane_id: string; text: string }
   | { type: "keys"; pane_id: string; keys: string[] }
-  /** a composer message: the server types `text`, then its own Enter after a short gap
-   * (only to servers whose snapshot lists the "submit" feature) */
-  | { type: "submit"; pane_id: string; text: string }
+  /** a composer message, sent to servers whose snapshot lists "submit": the server types it and
+   * its own Enter after a short gap, and answers with a submit-result of the same id. `text` is
+   * the message as written (agent.prompt pastes it itself), `payload` the same shaped for the
+   * pane's bracketed-paste mode, typed when no agent is in front */
+  | { type: "submit"; id: number; pane_id: string; text: string; payload: string }
   | { type: "resize"; pane_id: string; cols: number; rows: number }
   /** Cumulative UTF-8 payload bytes processed by xterm, only for this subscription. */
   | { type: "pty-ack"; pane_id: string; stream_id: string; offset: number }
@@ -261,6 +263,8 @@ export type ServerMessage =
   /** the shared pty's grid changed: observe clients adopt it, interact clients drive it */
   | { type: "pane-geometry"; pane_id: string; cols: number; rows: number }
   | { type: "role-ack"; mode: ClientRole }
+  /** how a submit ended: ok once its Enter was sent; otherwise nothing, or only the text, reached the pane */
+  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; code?: string; message?: string }
   /** agent-status push for ANY pane, attached or not (server-side status collector) */
   | { type: "pane-status"; pane_id: string; agent_status: AgentStatus }
   /** a pane's process exited (pushed even when nobody is attached to it) */

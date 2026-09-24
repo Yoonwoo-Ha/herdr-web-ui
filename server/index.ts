@@ -16,6 +16,7 @@ import { startStatusCollector } from "./collector.ts";
 import { ConversationUnavailable, HistoryChanged, paneConversation } from "./conversation.ts";
 import {
   agentManifests,
+  agentPrompt,
   agentStart,
   HerdrError,
   herdrSocketPath,
@@ -49,6 +50,12 @@ import { sameOrigin } from "./machine-security.ts";
 const MAX_REPLAY_BYTES = 256 * 1024;
 /** The gap between a composer message's text and its Enter (see submitText). */
 export const SUBMIT_DELAY_MS = 120;
+/**
+ * herdr holds a lone ESC typed through the attach pty ~150ms (measured) to tell it from
+ * an Alt+key: a composer message waits this long after the pane's last keystroke, so a
+ * Stop tapped just before Send still reaches the pane first.
+ */
+const TYPED_SETTLE_MS = 200;
 const SERVER_FEATURES: ServerFeature[] = ["submit"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
@@ -153,32 +160,51 @@ export function createServer(
   // herdr releases its exclusive attach slot only after the old process exits.
   const retiringAttachments = new Map<string, Promise<void>>();
   const clients = new Set<Client>();
-  /** each pane's composer messages, one after another */
-  const submits = new Map<string, Promise<void>>();
+  /** each pane's input while a composer message is in flight, one step after another */
+  const paneQueues = new Map<string, Promise<unknown>>();
+  /** when each pane last got keystrokes through its attach pty */
+  const lastTyped = new Map<string, number>();
   const hostname = options.hostname ?? process.env["HOST"] ?? "0.0.0.0";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
 
   /**
-   * Types a composer message and submits it. The Enter goes on its own, SUBMIT_DELAY_MS
-   * after the text, as chatmux sends tmux its Enter: arriving in the same chunk as the
-   * paste, a TUI still busy with it (turning an image path into an attachment, redrawing
-   * after the phone keyboard closed) could take it for a newline and leave the message
-   * unsent in its input box. Timed here rather than in the browser, the gap survives a
-   * jittery connection, and the Enter still goes when the phone locks right after the tap.
-   * Both go through herdr's own send_text/send_keys, which return once the pane has the
-   * bytes: the attach pty's extra hop could shrink the gap the pane sees (54ms measured).
-   * Messages to one pane queue, so a quick second send cannot land before the first's Enter.
+   * Runs `task` after everything queued for the pane. While a composer message is in
+   * flight, the pane's other input (keystrokes, keys, prompt answers) waits behind it:
+   * a Stop tapped right after Send must not land between the text and its Enter.
    */
-  function submitText(paneId: string, text: string): Promise<void> {
-    const run = (submits.get(paneId) ?? Promise.resolve()).catch(() => {}).then(async () => {
-      await paneSendText(paneId, text);
-      await Bun.sleep(SUBMIT_DELAY_MS);
-      await paneSendKeys(paneId, ["Enter"]);
-    });
-    submits.set(paneId, run);
-    run.catch(() => {}).finally(() => { if (submits.get(paneId) === run) submits.delete(paneId); });
+  function serialize<T>(paneId: string, task: () => T | Promise<T>): Promise<T> {
+    const run = (paneQueues.get(paneId) ?? Promise.resolve()).catch(() => {}).then(task);
+    paneQueues.set(paneId, run);
+    run.catch(() => {}).finally(() => { if (paneQueues.get(paneId) === run) paneQueues.delete(paneId); });
     return run;
+  }
+
+  /**
+   * Types a composer message and submits it, with its own Enter after the text: arriving
+   * in the same chunk as the paste, a TUI still busy with it (turning an image path into
+   * an attachment, redrawing after the phone keyboard closed) could take it for a newline
+   * and leave the message unsent in its input box. Done here rather than in the browser,
+   * the gap survives a jittery connection and the Enter still goes when the phone locks.
+   *
+   * An agent gets it through herdr's agent.prompt (the paste, then Enter 300ms later),
+   * which refuses while the agent waits for an answer: the message is not typed into its
+   * menu. A pane without an agent in front gets `payload`, shaped for its own paste mode,
+   * through send_text, then Enter SUBMIT_DELAY_MS later; both return once the pane has
+   * the bytes, so the pane sees the whole gap.
+   */
+  async function submitText(paneId: string, text: string, payload: string): Promise<void> {
+    const typed = Date.now() - (lastTyped.get(paneId) ?? 0);
+    if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
+    try {
+      await agentPrompt(paneId, text);
+      return;
+    } catch (error) {
+      if (!(error instanceof HerdrError) || (error.code !== "agent_not_found" && error.code !== "agent_not_ready")) throw error;
+    }
+    await paneSendText(paneId, payload);
+    await Bun.sleep(SUBMIT_DELAY_MS);
+    await paneSendKeys(paneId, ["Enter"]);
   }
 
   function stopSlowClient(client: Client): void {
@@ -748,7 +774,7 @@ export function createServer(
 
       if (pathname.startsWith("/api/pane/prompt")) {
         try {
-          const response = await handlePromptRequest(request, url);
+          const response = await handlePromptRequest(request, url, { serialize });
           if (response) return response;
         } catch (error) {
           return errorResponse(error);
@@ -862,8 +888,19 @@ export function createServer(
                 send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
                 break;
               }
-              const attachment = attachments.get(message.pane_id);
-              if (attachment) attachment.pty.write(message.text);
+              // typing goes straight through the pty, unless a composer message is still in
+              // flight: then it waits its turn and goes the message's own way (send_text), since
+              // the pty holds a lone ESC ~150ms and a Stop would overtake nothing
+              if (paneQueues.has(message.pane_id)) {
+                const text = message.text;
+                void serialize(message.pane_id, () => paneSendText(message.pane_id, text)).catch(() => undefined);
+              } else {
+                const attachment = attachments.get(message.pane_id);
+                if (attachment) {
+                  attachment.pty.write(message.text);
+                  lastTyped.set(message.pane_id, Date.now());
+                }
+              }
               break;
             }
             case "resize": {
@@ -884,19 +921,28 @@ export function createServer(
                 send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
                 break;
               }
-              await paneSendKeys(message.pane_id, message.keys);
+              await serialize(message.pane_id, () => paneSendKeys(message.pane_id, message.keys));
               break;
             }
             case "submit": {
+              // every submit is answered: the composer keeps its text until it hears back
+              const result = (ok: boolean, code?: string, text?: string) => send(client, {
+                type: "submit-result", id: message.id, pane_id: message.pane_id, ok, ...(code ? { code, message: text } : {}),
+              });
+              if (!Number.isSafeInteger(message.id) || typeof message.text !== "string" || typeof message.payload !== "string") {
+                send(client, { type: "error", code: "invalid_submit", message: "id must be an integer, text and payload strings" });
+                break;
+              }
               if (client.data.mode === "observe") {
-                send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
+                result(false, "read_only", "this connection is in observe mode");
                 break;
               }
-              if (typeof message.text !== "string") {
-                send(client, { type: "error", code: "invalid_submit", message: "text must be a string" });
-                break;
+              try {
+                await serialize(message.pane_id, () => submitText(message.pane_id, message.text, message.payload));
+                result(true);
+              } catch (error) {
+                result(false, error instanceof HerdrError ? error.code : "submit_failed", error instanceof Error ? error.message : String(error));
               }
-              await submitText(message.pane_id, message.text);
               break;
             }
             case "role": {

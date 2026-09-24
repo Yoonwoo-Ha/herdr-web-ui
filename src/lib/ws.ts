@@ -3,6 +3,15 @@ import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 
 type Handler = (message: ServerMessage) => void;
 
+/** How a composer message ended: ok once the pane has it and its Enter, else why not. */
+export type SubmitResult = { ok: true } | { ok: false; code: string; message: string };
+
+/** Right after a reconnect the snapshot that says what the server supports may still be on its way. */
+const SNAPSHOT_WAIT_MS = 2000;
+/** A submit the server never answers: the composer stops waiting and keeps the text. */
+const SUBMIT_TIMEOUT_MS = 30_000;
+const DISCONNECTED: SubmitResult = { ok: false, code: "disconnected", message: "the connection dropped before the pane confirmed this message" };
+
 interface AttachState {
   cols: number;
   rows: number;
@@ -38,6 +47,12 @@ export class HerdrSocket {
   private outputStopped = false;
   /** what the connected server listed in its snapshot: empty until it arrives, and on older bridges */
   private features = new Set<ServerFeature>();
+  /** settles when this connection's snapshot arrives (or the connection ends) */
+  private snapshotSeen: Promise<void> = Promise.resolve();
+  private markSnapshot: () => void = () => {};
+  private nextSubmit = 1;
+  /** submits waiting for their submit-result, by id */
+  private readonly submits = new Map<number, (result: SubmitResult) => void>();
 
   constructor(url: string = defaultUrl()) {
     this.url = url;
@@ -55,6 +70,7 @@ export class HerdrSocket {
     const socket = new WebSocket(this.url);
     this.socket = socket;
     this.features = new Set();
+    this.snapshotSeen = new Promise((resolve) => { this.markSnapshot = resolve; });
 
     socket.addEventListener("open", () => {
       this.retries = 0;
@@ -77,7 +93,15 @@ export class HerdrSocket {
         /* ignore malformed frame */
         return;
       }
-      if (message.type === "snapshot") this.features = new Set(message.features ?? []);
+      if (message.type === "snapshot") {
+        this.features = new Set(message.features ?? []);
+        this.markSnapshot();
+      }
+      if (message.type === "submit-result") {
+        const settle = this.submits.get(message.id);
+        this.submits.delete(message.id);
+        settle?.(message.ok ? { ok: true } : { ok: false, code: message.code ?? "submit_failed", message: message.message ?? "the pane did not take the message" });
+      }
       // A terminal/parser failure is not malformed JSON and must not disappear.
       this.emit(message);
     });
@@ -85,6 +109,8 @@ export class HerdrSocket {
     socket.addEventListener("close", (event) => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.markSnapshot();
+      this.settleSubmits(DISCONNECTED);
       if (event.code === OUTPUT_STALLED_CLOSE_CODE) {
         this.outputStopped = true;
         this.emit({ type: "error", code: "output_stalled", message: "Terminal output stopped because this device could not keep up." });
@@ -182,14 +208,37 @@ export class HerdrSocket {
   /**
    * Types a composer message and submits it, straight to the socket: a Ctrl armed on the
    * terminal key bar must not turn a one-letter message into a control key. A server
-   * listing "submit" sends the Enter itself, after a gap; an older bridge gets the text
-   * and its Enter in one frame, as before. Returns false, sending nothing, when offline.
+   * listing "submit" sends the Enter itself, after a gap, and says how it went; an older
+   * bridge gets the payload and its Enter in one frame, as before. `text` is the message
+   * as written, `payload` the same shaped for the pane's paste mode. null, sending
+   * nothing, when offline.
    */
-  submit(paneId: string, text: string): boolean {
-    if (!this.connected) return false;
-    if (this.features.has("submit")) this.rawSend({ type: "submit", pane_id: paneId, text });
-    else this.rawSend({ type: "input", pane_id: paneId, text: `${text}\r` });
-    return true;
+  submit(paneId: string, text: string, payload: string): Promise<SubmitResult> | null {
+    const socket = this.socket;
+    if (!this.connected || socket === null) return null;
+    return (async (): Promise<SubmitResult> => {
+      await Promise.race([this.snapshotSeen, new Promise((resolve) => window.setTimeout(resolve, SNAPSHOT_WAIT_MS))]);
+      if (!this.connected || this.socket !== socket) return DISCONNECTED;
+      if (!this.features.has("submit")) {
+        this.rawSend({ type: "input", pane_id: paneId, text: `${payload}\r` });
+        return { ok: true };
+      }
+      const id = this.nextSubmit++;
+      const result = new Promise<SubmitResult>((resolve) => {
+        this.submits.set(id, resolve);
+        window.setTimeout(() => {
+          if (!this.submits.delete(id)) return;
+          resolve({ ok: false, code: "timeout", message: "the pane did not confirm this message in time" });
+        }, SUBMIT_TIMEOUT_MS);
+      });
+      this.rawSend({ type: "submit", id, pane_id: paneId, text, payload });
+      return await result;
+    })();
+  }
+
+  private settleSubmits(result: SubmitResult): void {
+    for (const settle of this.submits.values()) settle(result);
+    this.submits.clear();
   }
 
   sendKeys(paneId: string, keys: string[]): void {
@@ -203,6 +252,7 @@ export class HerdrSocket {
     this.reconnectTimer = null;
     this.socket?.close();
     this.socket = null;
+    this.settleSubmits(DISCONNECTED);
     this.handlers.clear();
   }
 }

@@ -36,7 +36,8 @@ export interface ComposerProps {
   agentStatus?: AgentStatus;
   metadata?: ConversationMetadata | null;
   queueMode?: boolean;
-  onSend: (text: string) => boolean;
+  /** true: sent, clear the box; a string: keep the text and say why; a promise settles to either */
+  onSend: (text: string) => boolean | string | Promise<boolean | string>;
   onAbort: () => void;
   onUploadImage: (file: File) => Promise<string>;
 }
@@ -154,6 +155,7 @@ export function Composer({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const [manualHeight, setManualHeight] = useState<number | null>(readComposerHeight);
   /** the box's rendered height, for the grip to announce while the height is automatic */
   const [autoHeight, setAutoHeight] = useState(0);
@@ -436,8 +438,11 @@ export function Composer({
   }, []);
 
   const send = useCallback(() => {
-    if (!connected || uploading || text.trim().length === 0) return;
-    if (onSend(text)) {
+    if (!connected || uploading || sending || text.trim().length === 0) return;
+    const settle = (result: boolean | string): void => {
+      if (!mounted.current) return;
+      if (typeof result === "string") setNote(result);
+      if (result !== true) return;
       setText("");
       setCaret(0);
       textRef.current = "";
@@ -445,8 +450,12 @@ export function Composer({
       setNote(null);
       for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl);
       setAttachments([]);
-    }
-  }, [attachments, connected, onSend, text, uploading]);
+    };
+    const result = onSend(text);
+    if (!(result instanceof Promise)) { settle(result); return; }
+    setSending(true);
+    void result.then(settle).finally(() => { if (mounted.current) setSending(false); });
+  }, [attachments, connected, onSend, sending, text, uploading]);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -690,7 +699,7 @@ export function Composer({
               className="composer-queue-button"
               aria-label="Queue message"
               title="Queue as the next message"
-              disabled={!connected || uploading || text.trim().length === 0}
+              disabled={!connected || uploading || sending || text.trim().length === 0}
               onClick={send}
             >
               <Clock aria-hidden="true" />
@@ -714,7 +723,7 @@ export function Composer({
               className="composer-action composer-send"
               aria-label="Send message"
               title="Send message"
-              disabled={!connected || uploading || text.trim().length === 0}
+              disabled={!connected || uploading || sending || text.trim().length === 0}
               onClick={send}
             >
               <SendHorizontal aria-hidden="true" />

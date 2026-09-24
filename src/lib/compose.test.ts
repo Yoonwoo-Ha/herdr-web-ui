@@ -2,13 +2,28 @@ import { describe, expect, it } from "bun:test";
 
 import {
   agentDisplayLabel,
+  composerMessage,
   composerPayload,
   composerStatusWord,
   imageMention,
   MAX_COMPOSER_CHARS,
   QUEUE_READY_STATUS,
   rankSlashCommands,
+  submitNote,
 } from "./compose.ts";
+
+describe("composerMessage and submitNote", () => {
+  it("keeps the message as written for agent.prompt: inner newlines stay, the composer's own trailing ones go", () => {
+    expect(composerMessage("line one\r\nline two\n\n")).toBe("line one\nline two");
+  });
+
+  it("says why a message did not go, and never claims a lost one was sent", () => {
+    expect(submitNote("agent_blocked", "x")).toBe("Not sent: the agent is waiting for an answer in the terminal. Answer it first.");
+    expect(submitNote("read_only", "x")).toBe("Not sent: this view only watches the pane.");
+    expect(submitNote("disconnected", "x")).toMatch(/^Not confirmed: .*Check the terminal/);
+    expect(submitNote("pane_not_found", "pane w1:p9 not found")).toBe("Not sent: pane w1:p9 not found");
+  });
+});
 
 describe("composerPayload", () => {
   it("bracketed mode wraps the text as one paste, without the submit", () => {
