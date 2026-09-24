@@ -2,48 +2,52 @@ import { describe, expect, it } from "bun:test";
 
 import {
   agentDisplayLabel,
+  COMPOSER_SUBMIT,
   composerPayload,
   composerStatusWord,
   imageMention,
   MAX_COMPOSER_CHARS,
   QUEUE_READY_STATUS,
   rankSlashCommands,
+  SUBMIT_DELAY_MS,
 } from "./compose.ts";
 
 describe("composerPayload", () => {
-  it("bracketed mode wraps the text as one paste and submits with a bare CR", () => {
-    expect(composerPayload("hello", true)).toBe("\u001b[200~hello\u001b[201~\r");
+  it("bracketed mode wraps the text as one paste; the submit CR goes on its own", () => {
+    expect(composerPayload("hello", true)).toBe("\u001b[200~hello\u001b[201~");
+    expect(COMPOSER_SUBMIT).toBe("\r");
+    expect(SUBMIT_DELAY_MS).toBeGreaterThan(0);
   });
 
   it("bracketed mode keeps inner newlines literal to the TUI input box", () => {
-    expect(composerPayload("line one\nline two", true)).toBe("\u001b[200~line one\rline two\u001b[201~\r");
+    expect(composerPayload("line one\nline two", true)).toBe("\u001b[200~line one\rline two\u001b[201~");
   });
 
   it("normalizes CRLF and lone CR to the pty newline CR", () => {
-    expect(composerPayload("a\r\nb\rc", true)).toBe("\u001b[200~a\rb\rc\u001b[201~\r");
+    expect(composerPayload("a\r\nb\rc", true)).toBe("\u001b[200~a\rb\rc\u001b[201~");
   });
 
   it("drops trailing newlines: the submit CR belongs to the composer, not the text", () => {
-    expect(composerPayload("cmd\n\n", true)).toBe("\u001b[200~cmd\u001b[201~\r");
-    expect(composerPayload("cmd\n\n", false)).toBe("cmd\r");
+    expect(composerPayload("cmd\n\n", true)).toBe("\u001b[200~cmd\u001b[201~");
+    expect(composerPayload("cmd\n\n", false)).toBe("cmd");
   });
 
   it("plain mode uses classic paste semantics: every newline submits its own line", () => {
-    expect(composerPayload("git status\ngit diff", false)).toBe("git status\rgit diff\r");
+    expect(composerPayload("git status\ngit diff", false)).toBe("git status\rgit diff");
   });
 
-  it("plain mode sends a single line plus the submit CR", () => {
-    expect(composerPayload("git status", false)).toBe("git status\r");
+  it("plain mode sends a single line; the submit CR goes on its own", () => {
+    expect(composerPayload("git status", false)).toBe("git status");
   });
 
-  it("empty text still emits only the submit keystroke", () => {
-    expect(composerPayload("", true)).toBe("\u001b[200~\u001b[201~\r");
-    expect(composerPayload("", false)).toBe("\r");
+  it("empty text types nothing; its submit still goes on its own", () => {
+    expect(composerPayload("", true)).toBe("\u001b[200~\u001b[201~");
+    expect(composerPayload("", false)).toBe("");
   });
 
   it("caps what one send can carry", () => {
     expect(MAX_COMPOSER_CHARS).toBeLessThanOrEqual(20_000);
-    expect(composerPayload("x".repeat(MAX_COMPOSER_CHARS), false)).toHaveLength(MAX_COMPOSER_CHARS + 1);
+    expect(composerPayload("x".repeat(MAX_COMPOSER_CHARS), false)).toHaveLength(MAX_COMPOSER_CHARS);
   });
 });
 

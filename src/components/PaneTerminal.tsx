@@ -7,7 +7,7 @@ import "./PaneTerminal.css";
 import { HerdrSocket } from "../lib/ws.ts";
 import { controlCode, isPrintable, keySequence, type KeyBarKey } from "../lib/keys.ts";
 import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "../lib/draft.ts";
-import { QUEUE_READY_STATUS, composerPayload } from "../lib/compose.ts";
+import { COMPOSER_SUBMIT, QUEUE_READY_STATUS, SUBMIT_DELAY_MS, composerPayload } from "../lib/compose.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { paneStorageId } from "../../shared/machines.ts";
@@ -438,8 +438,14 @@ export function PaneTerminal({
   const sendComposerText = useCallback((text: string): boolean => {
     const term = termRef.current;
     const socket = socketRef.current;
-    if (!term || !socket || !socket.connected) return false;
+    const pane = paneRef.current;
+    if (!term || !socket || !socket.connected || pane === null) return false;
     term.input(composerPayload(text, term.modes.bracketedPasteMode));
+    // the submit follows on its own (COMPOSER_SUBMIT), and only into the pane that got
+    // the text: a pane switch in between leaves the text unsent rather than submit elsewhere
+    window.setTimeout(() => {
+      if (paneRef.current === pane && termRef.current === term && socket.connected) term.input(COMPOSER_SUBMIT);
+    }, SUBMIT_DELAY_MS);
     // the chat lens refetches at once so the sent prompt appears without a poll beat
     setChatRefresh((current) => current + 1);
     return true;

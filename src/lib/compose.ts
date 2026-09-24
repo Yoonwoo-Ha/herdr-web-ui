@@ -18,14 +18,23 @@ export const MAX_COMPOSER_CHARS = 20_000;
 const PASTE_START = "\u001b[200~";
 const PASTE_END = "\u001b[201~";
 
-/** Trailing newlines are dropped first: the submit CR is the composer's, not the text's. */
+/**
+ * The keypress that submits a composer message. It goes on its own, SUBMIT_DELAY_MS
+ * after the text, as chatmux sends tmux its Enter: arriving in the same chunk as the
+ * paste, a TUI still busy with it (turning an image path into an attachment, redrawing
+ * after the phone keyboard closed) could take it for a newline and leave the message
+ * sitting unsent in its input box.
+ */
+export const COMPOSER_SUBMIT = "\r";
+export const SUBMIT_DELAY_MS = 120;
+
+/** The text a composer message types, without its submit: trailing newlines are the composer's, not the text's. */
 export function composerPayload(text: string, bracketedPaste: boolean): string {
   const body = text
     .replace(/[\r\n]+$/, "")
     .replace(/\r\n?/g, "\n")
     .replace(/\n/g, "\r");
-  if (bracketedPaste) return PASTE_START + body + PASTE_END + "\r";
-  return body + "\r";
+  return bracketedPaste ? PASTE_START + body + PASTE_END : body;
 }
 
 /**
