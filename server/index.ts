@@ -13,7 +13,7 @@ import { paneFiles } from "./files.ts";
 import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
-import { ConversationUnavailable, paneConversation } from "./conversation.ts";
+import { ConversationUnavailable, HistoryChanged, paneConversation } from "./conversation.ts";
 import {
   agentManifests,
   agentStart,
@@ -624,9 +624,15 @@ export function createServer(
       if (pathname === "/api/pane/conversation") {
         const paneId = url.searchParams.get("pane_id");
         if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
+        const page = {
+          before: url.searchParams.get("before") ?? undefined,
+          since: url.searchParams.get("since") ?? undefined,
+          from: url.searchParams.get("from") ?? undefined,
+        };
         try {
-          return jsonResponse(await paneConversation(paneId, options.codexHome));
+          return jsonResponse(await paneConversation(paneId, options.codexHome, page));
         } catch (error) {
+          if (error instanceof HistoryChanged) return jsonResponse({ error: { code: "history_changed", message: error.message } }, 409);
           // an unrecognized pane is not an error: the client falls back to the
           // scrollback transcript, exactly like chatmux's terminal fallback
           if (error instanceof ConversationUnavailable) return jsonResponse({ source: "scrollback", turns: [] });

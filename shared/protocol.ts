@@ -131,6 +131,16 @@ export interface ConversationResponse {
   source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "codex-transcript" | "scrollback";
   turns: ConversationTurn[];
   metadata?: ConversationMetadata;
+  /**
+   * Where the first turn sits in the transcript: pass it as `before` for the page
+   * of turns before these (with `since`, never reaching back past that cursor), or
+   * as `from` to keep polling from it. A `from` answer starts later than `from` when
+   * the newest page has moved past it: the turns in between come from `before` +
+   * `since`. null at the conversation's beginning; absent for scrollback and from
+   * bridges without pages. A cursor the transcript no longer knows answers 409
+   * `history_changed`.
+   */
+  cursor?: string | null;
 }
 
 /** GET /api/agents: one agent kind herdr can start (`agent.start` kind), with a display label. */

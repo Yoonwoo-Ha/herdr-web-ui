@@ -80,9 +80,15 @@ export async function fetchPaneTranscript(paneId: string, lines: number, machine
   return body.read;
 }
 
-/** GET /api/pane/conversation: structured turns, or scrollback fallback. */
-export async function fetchPaneConversation(paneId: string, machineId = "local"): Promise<ConversationResponse> {
+/** Which turns (ConversationResponse.cursor): the page `before` a cursor, not past `since`; the newest ones `from` a held start. */
+export type ConversationPageQuery = { before?: string; since?: string; from?: string };
+
+/** GET /api/pane/conversation: structured turns, or scrollback fallback; `page` as ConversationResponse.cursor describes. */
+export async function fetchPaneConversation(paneId: string, machineId = "local", page: ConversationPageQuery = {}): Promise<ConversationResponse> {
   const query = new URLSearchParams({ pane_id: paneId });
+  if (page.before !== undefined) query.set("before", page.before);
+  if (page.since !== undefined) query.set("since", page.since);
+  if (page.from !== undefined) query.set("from", page.from);
   return await getJson<ConversationResponse>(machinePath(machineId, `pane/conversation?${query.toString()}`));
 }
 

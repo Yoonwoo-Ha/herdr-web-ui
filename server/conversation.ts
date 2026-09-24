@@ -20,16 +20,33 @@
  * integration and lives in paneConversation.
  */
 
-import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn } from "../shared/protocol.ts";
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
-import { codexTranscriptPath, parseCodexTranscript } from "./codex.ts";
+import { codexHistorySegments, codexTranscriptPath, defaultCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { parseConversationMetadata } from "./conversation-metadata.ts";
 
-/** Enough turns for a conversation; a 6MB transcript is not read whole into the UI. */
+/** Enough turns for a conversation. */
 export const MAX_TURNS = 100;
+
+/**
+ * A transcript is read a page at a time, the newest page re-read on every append
+ * while an agent works: Codex rollouts reach hundreds of MB (a 400MB one took 1.1s
+ * and 1.7GB of memory to parse whole). 16MB still holds dozens of turns of a
+ * tool-heavy session; the chat asks for the pages before it as the reader scrolls up.
+ */
+export const TRANSCRIPT_WINDOW_BYTES = 16 * 1024 * 1024;
+
+/** A page never holds more prompts than this (each opens a user + assistant pair). */
+const MAX_PAGE_PROMPTS = MAX_TURNS / 2;
+
+/** A single turn longer than a window still gets a page of its own, up to this. */
+const MAX_PAGE_BYTES = 4 * TRANSCRIPT_WINDOW_BYTES;
+
+/** Settings recorded once at the start (an omp thinking level) sit before a tail window. */
+const METADATA_HEAD_BYTES = 64 * 1024;
 
 /** Claude's project slug: the cwd with every `/` replaced by `-`. */
 function projectSlug(cwd: string): string {
@@ -42,6 +59,16 @@ const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 /** Slash-command and bookkeeping entries Claude logs as user turns — not conversations. */
 function isCommandEntry(text: string): boolean {
   return text.startsWith("<command-") || text.startsWith("<local-command") || text.startsWith("<task-");
+}
+
+/**
+ * Claude Code wraps a long paste in `<pasted_content id="…">` tags so the model can
+ * tell it from typed text; its own TUI shows only the text, and so does the chat.
+ */
+export function unwrapPastes(text: string): string {
+  return text
+    .replace(/<pasted_content(?:\s[^>]*)?>\n?([\s\S]*?)\n?<\/pasted_content(?:\s[^>]*)?>/g, "$1")
+    .replace(/^\n+|\n+$/g, "");
 }
 
 /** The one-line summary a collapsed tool chip shows. */
@@ -64,7 +91,7 @@ interface TranscriptEntry {
  * merge into a single turn (text parts + tool parts); each tool_use is followed
  * by a user tool_result entry, which is folded into the tool part it answers.
  */
-export function parseClaudeTranscript(text: string): ConversationTurn[] {
+export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   /** tool parts still waiting for their result, by tool_use id */
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
@@ -90,7 +117,7 @@ export function parseClaudeTranscript(text: string): ConversationTurn[] {
 
     if (entry.type === "user" && typeof content === "string") {
       if (isCommandEntry(content)) continue;
-      turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: content }] });
+      turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: unwrapPastes(content) }] });
       continue;
     }
 
@@ -116,7 +143,7 @@ export function parseClaudeTranscript(text: string): ConversationTurn[] {
               : "";
         if (tool.output.length > 4000) tool.output = `${tool.output.slice(0, 4000)}\n… trimmed`;
       }
-      if (prompt.trim()) turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: prompt }] });
+      if (prompt.trim()) turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: unwrapPastes(prompt) }] });
       continue;
     }
 
@@ -148,7 +175,7 @@ export function parseClaudeTranscript(text: string): ConversationTurn[] {
     }
   }
 
-  return turns.filter((turn) => turn.parts.length > 0).slice(-MAX_TURNS);
+  return turns.filter((turn) => turn.parts.length > 0).slice(-maxTurns);
 }
 
 /** An omp session line's message shape (only the fields we read). */
@@ -168,7 +195,7 @@ interface OmpEntry {
  * of the toolResult entry that answers them (matched by toolCallId), thinking
  * stays private to the agent.
  */
-export function parseOmpTranscript(text: string): ConversationTurn[] {
+export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   /** tool parts still waiting for their result, by toolCall id */
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
@@ -250,11 +277,11 @@ export function parseOmpTranscript(text: string): ConversationTurn[] {
     }
   }
 
-  return turns.filter((turn) => turn.parts.length > 0).slice(-MAX_TURNS);
+  return turns.filter((turn) => turn.parts.length > 0).slice(-maxTurns);
 }
 
 /** Re-parse on file changes, including replacement and same-size rewrites. */
-const cache = new Map<string, { signature: string; turns: ConversationTurn[]; metadata: ConversationMetadata }>();
+const cache = new Map<string, { signature: string; turns: ConversationTurn[]; metadata: ConversationMetadata; cursor: string | null }>();
 
 export class ConversationUnavailable extends Error {
   constructor(reason: string) {
@@ -263,8 +290,147 @@ export class ConversationUnavailable extends Error {
   }
 }
 
-/** What paneConversation resolved: which store the turns came from. */
-export type RecognizedConversation = { source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "codex-transcript"; turns: ConversationTurn[]; metadata: ConversationMetadata };
+/** A cursor from another transcript: the pane started a new session, or a Codex backtrack replaced the file. */
+export class HistoryChanged extends Error {
+  constructor() {
+    super("the conversation's transcript changed; reload it from its newest turns");
+    this.name = "HistoryChanged";
+  }
+}
+
+/** What paneConversation resolved: which store the turns came from, and where they start. */
+export type RecognizedConversation = {
+  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "codex-transcript";
+  turns: ConversationTurn[];
+  metadata: ConversationMetadata;
+  /** the first turn's position, for the page before it; null at the conversation's beginning */
+  cursor: string | null;
+};
+
+/**
+ * Which turns: without `before`, the newest page (with `from`, from that held start
+ * while it is still inside the newest page); with `before`, the page ending there,
+ * never reaching back past `since`.
+ */
+export type ConversationPage = { before?: string; since?: string; from?: string };
+
+/**
+ * A transcript as one byte stream: for a paginated Codex rollout the history it
+ * continues comes first (codexHistorySegments). Transcripts only grow at the end,
+ * so a position in it keeps naming the same turn for as long as the file does.
+ */
+interface TranscriptStream {
+  /** the live file's identity: cursors from any other file are refused */
+  id: string;
+  files: { path: string; start: number; length: number }[];
+  length: number;
+}
+
+function transcriptStream(source: RecognizedConversation["source"], path: string, stat: { dev: number; ino: number; size: number }, codexHome: string): TranscriptStream {
+  const segments = source === "codex-transcript" ? codexHistorySegments(path, codexHome) : [{ path, end: stat.size }];
+  const files: TranscriptStream["files"] = [];
+  let start = 0;
+  for (const segment of segments) {
+    // the live file is read to the size it had when it was identified
+    const length = segment.path === path ? Math.min(segment.end, stat.size) : segment.end;
+    files.push({ path: segment.path, start, length });
+    start += length;
+  }
+  return { id: `${stat.dev.toString(36)}-${stat.ino.toString(36)}`, files, length: start };
+}
+
+function readStream(stream: TranscriptStream, from: number, to: number): Buffer {
+  const chunks: Buffer[] = [];
+  for (const file of stream.files) {
+    const low = Math.max(from, file.start);
+    const high = Math.min(to, file.start + file.length);
+    if (low >= high) continue;
+    const fd = openSync(file.path, "r");
+    try {
+      const buffer = Buffer.alloc(high - low);
+      chunks.push(buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, low - file.start)));
+    } finally {
+      closeSync(fd);
+    }
+  }
+  return Buffer.concat(chunks);
+}
+
+/** Bytes that every line opening a turn contains: a cheap filter before JSON.parse. */
+const TURN_MARK: Record<RecognizedConversation["source"], Buffer> = {
+  "codex-transcript": Buffer.from('"task_started"'),
+  "claude-transcript": Buffer.from('"type":"user"'),
+  "omp-transcript": Buffer.from('"role":"user"'),
+  "omo-transcript": Buffer.from('"role":"user"'),
+};
+
+/**
+ * Does this line open a turn? Pages start at such lines, so a page never splits
+ * a turn: a Codex task (its prompt, duplicate records and tool calls all follow
+ * task_started), a Claude or omp prompt (tool results answer the turn before it).
+ */
+function opensTurn(source: RecognizedConversation["source"], line: string): boolean {
+  let entry: { type?: unknown; isMeta?: unknown; isCompactSummary?: unknown; payload?: { type?: unknown }; message?: { role?: unknown; content?: unknown } };
+  try { entry = JSON.parse(line); } catch { return false; }
+  if (entry === null || typeof entry !== "object") return false;
+  if (source === "codex-transcript") return entry.type === "event_msg" && entry.payload?.type === "task_started";
+  if (source !== "claude-transcript") return entry.type === "message" && entry.message?.role === "user";
+  if (entry.type !== "user" || entry.isMeta || entry.isCompactSummary) return false;
+  const content = entry.message?.content;
+  if (typeof content === "string") return !isCommandEntry(content);
+  return Array.isArray(content) && content.some((block: { type?: unknown; text?: unknown } | null) =>
+    block?.type === "text" && typeof block.text === "string" && !isCommandEntry(block.text.trim()));
+}
+
+function turnStarts(bytes: Buffer, source: RecognizedConversation["source"]): number[] {
+  const starts: number[] = [];
+  for (let offset = 0; offset < bytes.length;) {
+    const newline = bytes.indexOf(0x0a, offset);
+    const end = newline === -1 ? bytes.length : newline;
+    const line = bytes.subarray(offset, end);
+    if (line.includes(TURN_MARK[source]) && opensTurn(source, line.toString("utf8"))) starts.push(offset);
+    offset = end + 1;
+  }
+  return starts;
+}
+
+/**
+ * The page of turns ending at `to`: at most MAX_PAGE_PROMPTS prompts, starting on a
+ * line that opens a turn, at `floor` (a held start) or at the very beginning. An
+ * older page is read once, so for a turn longer than a window it reaches further
+ * back, a new chunk at a time, up to MAX_PAGE_BYTES. The newest page is read on
+ * every append, so it never does: with no turn start in its window it starts
+ * mid-turn, at a whole line.
+ */
+function pageBefore(stream: TranscriptStream, source: RecognizedConversation["source"], to: number, { floor = 0, widen }: { floor?: number; widen: boolean }): { start: number; bytes: Buffer } {
+  let from = Math.max(floor, to - TRANSCRIPT_WINDOW_BYTES);
+  let bytes = readStream(stream, from, to);
+  for (;;) {
+    const starts = turnStarts(bytes, source);
+    const keep = starts.length > MAX_PAGE_PROMPTS ? starts[starts.length - MAX_PAGE_PROMPTS] : from === floor ? 0 : starts[0];
+    if (keep !== undefined) return { start: from + keep, bytes: bytes.subarray(keep) };
+    if (!widen || to - from >= MAX_PAGE_BYTES) {
+      const firstLine = bytes.indexOf(0x0a) + 1;
+      return { start: from + firstLine, bytes: bytes.subarray(firstLine) };
+    }
+    const next = Math.max(floor, from - TRANSCRIPT_WINDOW_BYTES);
+    bytes = Buffer.concat([readStream(stream, next, from), bytes]);
+    from = next;
+  }
+}
+
+function formatCursor(stream: TranscriptStream, offset: number): string | null {
+  return offset > 0 ? `${stream.id}:${offset}` : null;
+}
+
+function parseCursor(stream: TranscriptStream, cursor: string): number {
+  const separator = cursor.lastIndexOf(":");
+  const offset = Number(cursor.slice(separator + 1));
+  if (separator <= 0 || cursor.slice(0, separator) !== stream.id || !Number.isSafeInteger(offset) || offset < 0 || offset > stream.length) {
+    throw new HistoryChanged();
+  }
+  return offset;
+}
 
 /** omo's per-cwd session dir: `/home/u/p` -> `--home-u-p--` (verified against every dir on disk). */
 function omoSlug(cwd: string): string {
@@ -403,36 +569,75 @@ async function resolveTranscript(paneId: string, agent: string, cwd: string, cod
  * cwd (omoTranscriptPath). Throws ConversationUnavailable when the pane has
  * no recognized agent store (the caller falls back to the scrollback
  * transcript view, like chatmux).
+ *
+ * Without `page` this is the newest page. `before` is the page ending at a
+ * returned cursor; `from` is every turn after one, for a chat that already
+ * shows the pages before it. A cursor from another file throws HistoryChanged.
  */
-export async function paneConversation(paneId: string, codexHome?: string): Promise<RecognizedConversation> {
+export async function paneConversation(paneId: string, codexHome?: string, page: ConversationPage = {}): Promise<RecognizedConversation> {
   const snapshot = await sessionSnapshot();
   const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined) throw new ConversationUnavailable("pane_not_found");
   if (typeof pane.cwd !== "string" || pane.cwd.length === 0) throw new ConversationUnavailable("no_recognized_transcript");
 
   const { source, path } = await resolveTranscript(paneId, pane.agent ?? pane.agent_session?.agent ?? "", pane.cwd, codexHome);
+  return transcriptPage(source, path, page, codexHome);
+}
 
-  let text: string;
-  let signature: string;
+/** One page of a resolved transcript (paneConversation's `page`). */
+export function transcriptPage(source: RecognizedConversation["source"], path: string, page: ConversationPage = {}, codexHome?: string): RecognizedConversation {
+  let stat: { dev: number; ino: number; size: number; mtimeMs: number };
   try {
-    const stat = statSync(path);
-    signature = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
-    const cached = cache.get(path);
-    if (cached?.signature === signature) return { source, turns: cached.turns, metadata: cached.metadata };
-    text = readFileSync(path, "utf8");
+    stat = statSync(path);
   } catch {
+    throw new ConversationUnavailable("transcript_missing");
+  }
+  // an older page never changes while its file lives; the newest one changes with every append
+  const key = page.before !== undefined ? `${path}\0before:${page.before}:${page.since ?? ""}` : `${path}\0from:${page.from ?? ""}`;
+  const signature = page.before !== undefined ? `${stat.dev}:${stat.ino}` : `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+  const cached = cache.get(key);
+  if (cached?.signature === signature) return { source, turns: cached.turns, metadata: cached.metadata, cursor: cached.cursor };
+
+  let start: number;
+  let text: string;
+  let head = "";
+  let cursor: string | null;
+  try {
+    const stream = transcriptStream(source, path, stat, codexHome ?? defaultCodexHome());
+    if (page.before !== undefined) {
+      const before = parseCursor(stream, page.before);
+      const floor = page.since === undefined ? 0 : parseCursor(stream, page.since);
+      if (floor > before) throw new HistoryChanged();
+      const older = before === floor ? { start: floor, bytes: Buffer.alloc(0) } : pageBefore(stream, source, before, { floor, widen: true });
+      start = older.start;
+      text = older.bytes.toString("utf8");
+    } else {
+      const newest = pageBefore(stream, source, stream.length, { widen: false });
+      const held = page.from === undefined ? null : parseCursor(stream, page.from);
+      // A chat that shows older pages holds the start of its newest turns and keeps
+      // every turn after it while they are inside the newest page. Once the newest
+      // page has moved past it, the chat gets the newest page and fetches the turns
+      // in between with `before` + `since`: no poll reads more than a page.
+      start = held !== null && held >= newest.start ? held : newest.start;
+      text = newest.bytes.subarray(start - newest.start).toString("utf8");
+    }
+    if (page.before === undefined && start > 0) head = readRange(path, 0, METADATA_HEAD_BYTES);
+    cursor = formatCursor(stream, start);
+  } catch (error) {
+    if (error instanceof HistoryChanged) throw error;
     throw new ConversationUnavailable("transcript_missing");
   }
 
   // the store decides the parser, not the pane's label: omo writes omp's
-  // session shape while herdr may be calling that same pane `claude`.
-  const turns = source === "codex-transcript" ? parseCodexTranscript(text, MAX_TURNS)
-    : source === "claude-transcript" ? parseClaudeTranscript(text) : parseOmpTranscript(text);
-  const metadata = parseConversationMetadata(text, source);
+  // session shape while herdr may be calling that same pane `claude`. The page
+  // bounds the turns, so none are cut: they must meet the next page exactly.
+  const turns = source === "codex-transcript" ? parseCodexTranscript(text, Infinity)
+    : source === "claude-transcript" ? parseClaudeTranscript(text, Infinity) : parseOmpTranscript(text, Infinity);
+  const metadata = parseConversationMetadata(`${head}\n${text}`, source);
   // Record the stat from BEFORE the read: an append during parsing must cause
   // another read on the next poll, not permanently cache a torn tail.
-  cache.delete(path);
-  cache.set(path, { signature, turns, metadata });
+  cache.delete(key);
+  cache.set(key, { signature, turns, metadata, cursor });
   if (cache.size > 32) cache.delete(cache.keys().next().value!);
-  return { source, turns, metadata };
+  return { source, turns, metadata, cursor };
 }

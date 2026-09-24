@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ConversationUnavailable, isOmoProcess, MAX_TURNS, omoTranscriptPath, parseClaudeTranscript, parseOmpTranscript } from "./conversation.ts";
+import { ConversationUnavailable, HistoryChanged, isOmoProcess, MAX_TURNS, omoTranscriptPath, parseClaudeTranscript, parseOmpTranscript, transcriptPage } from "./conversation.ts";
 
 /** Minimal but shape-true slices of a Claude Code session jsonl. */
 const lines = [
@@ -33,6 +33,20 @@ describe("parseClaudeTranscript", () => {
         { kind: "thinking", text: "internal reasoning stays private" },
         { kind: "text", text: "변경된 파일이 하나입니다." },
       ] },
+    ]);
+  });
+
+  it("shows a pasted text without Claude Code's paste wrapper, in string and block prompts", () => {
+    const pasted = '\n\n<pasted_content id="6d8b">\n| a | b |\n\nsecond paragraph\n</pasted_content id="6d8b">\n';
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", message: { role: "user", content: pasted } }),
+      JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: `look at this${pasted}` }] } }),
+      JSON.stringify({ type: "user", message: { role: "user", content: "typed <\\pasted_content id=\"6d8b\"> stays" } }),
+    ].join("\n"));
+    expect(turns.map((turn) => turn.parts[0])).toEqual([
+      { kind: "text", text: "| a | b |\n\nsecond paragraph" },
+      { kind: "text", text: "look at this\n\n| a | b |\n\nsecond paragraph" },
+      { kind: "text", text: 'typed <\\pasted_content id="6d8b"> stays' },
     ]);
   });
 
@@ -220,5 +234,103 @@ describe("omo transcript resolution", () => {
     const home = omoHome("--home-u-project--", [{ name: "foreign.jsonl", cwd: "/home/u/elsewhere", mtime: "2026-09-21T00:00:00.000Z" }]);
     expect(() => omoTranscriptPath("/home/u/project", home)).toThrow(ConversationUnavailable);
     expect(() => omoTranscriptPath("/home/u/never-opened", home)).toThrow(ConversationUnavailable);
+  });
+});
+
+describe("transcript pages", () => {
+  const roots: string[] = [];
+  afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+  const temp = (): string => { const root = mkdtempSync(join(tmpdir(), "herdr-pages-")); roots.push(root); return root; };
+  /** a prompt, a tool call and its result: the result answers the turn, never the next page */
+  const claudeTurn = (n: number) => [
+    { type: "user", timestamp: `2026-09-23T00:00:${String(n % 60).padStart(2, "0")}.000Z`, message: { role: "user", content: `prompt ${n}` } },
+    { type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: `t${n}`, name: "Bash", input: { command: `echo ${n}` } }] } },
+    { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: `t${n}`, content: `out ${n}` }] } },
+    { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: `answer ${n}` }] } },
+  ].map((entry) => JSON.stringify(entry)).join("\n");
+  const texts = (turns: { parts: { kind: string; text?: string; output?: string }[] }[]) =>
+    turns.map((turn) => turn.parts.map((part) => part.kind === "tool" ? `[${part.output}]` : part.text).join(" "));
+
+  it("pages back through a long conversation without gaps, overlaps or split turns", () => {
+    const path = join(temp(), "session.jsonl");
+    const whole = Array.from({ length: 120 }, (_, n) => claudeTurn(n)).join("\n");
+    writeFileSync(path, `${whole}\n`);
+
+    const newest = transcriptPage("claude-transcript", path);
+    expect(newest.turns).toHaveLength(MAX_TURNS);
+    expect(texts(newest.turns)[0]).toBe("prompt 70");
+    expect(newest.cursor).not.toBeNull();
+    const middle = transcriptPage("claude-transcript", path, { before: newest.cursor! });
+    expect(texts(middle.turns)[0]).toBe("prompt 20");
+    const first = transcriptPage("claude-transcript", path, { before: middle.cursor! });
+    expect(first.cursor).toBeNull();
+    expect(texts([...first.turns, ...middle.turns, ...newest.turns])).toEqual(texts(parseClaudeTranscript(whole, Infinity)));
+    expect(texts(middle.turns).at(-1)).toBe("[out 69] answer 69");
+  });
+
+  it("keeps a held start while it is inside the newest page, then fills the turns it moved past a page at a time", () => {
+    const path = join(temp(), "session.jsonl");
+    writeFileSync(path, `${Array.from({ length: 60 }, (_, n) => claudeTurn(n)).join("\n")}\n`);
+    const held = transcriptPage("claude-transcript", path).cursor!;
+    // while the last turn grows, the held start (prompt 10) is still inside the newest page
+    const more = JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "still working" }] } });
+    writeFileSync(path, `${Array.from({ length: 60 }, (_, n) => claudeTurn(n)).join("\n")}\n${more}\n`);
+    const growing = transcriptPage("claude-transcript", path, { from: held });
+    expect(growing.cursor).toBe(held);
+    expect(texts(growing.turns).at(-1)).toBe("[out 59] answer 59 still working");
+    writeFileSync(path, `${Array.from({ length: 70 }, (_, n) => claudeTurn(n)).join("\n")}\n`);
+    // the newest page slid past it: the answer is the newest page, never more than a page
+    const newest = transcriptPage("claude-transcript", path, { from: held });
+    expect(newest.cursor).not.toBe(held);
+    expect(texts(newest.turns)[0]).toBe("prompt 20");
+    // the turns in between come from `before` the newest page, `since` the held start
+    const gap = transcriptPage("claude-transcript", path, { before: newest.cursor!, since: held });
+    expect(gap.cursor).toBe(held);
+    expect(texts(gap.turns)[0]).toBe("prompt 10");
+    expect(texts(gap.turns).at(-1)).toBe("[out 19] answer 19");
+    for (const cursor of ["another-file:10", `${held.split(":")[0]}:999999999`, "garbage"]) {
+      expect(() => transcriptPage("claude-transcript", path, { before: cursor })).toThrow(HistoryChanged);
+    }
+    expect(() => transcriptPage("claude-transcript", path, { before: held, since: newest.cursor! })).toThrow(HistoryChanged);
+  });
+
+  it("reads one window for the newest page even when no turn starts in it; an older page reaches the turn's start", () => {
+    const path = join(temp(), "session.jsonl");
+    const prompt = JSON.stringify({ type: "user", message: { role: "user", content: "run the long job" } });
+    // one turn of 20MB of tool output: no turn starts in the newest window
+    const output = JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "y".repeat(1024 * 1024) }] } });
+    writeFileSync(path, `${claudeTurn(0)}\n${prompt}\n${Array.from({ length: 20 }, () => output).join("\n")}\n`);
+    const size = Buffer.byteLength(`${claudeTurn(0)}\n${prompt}\n`) + 20 * (Buffer.byteLength(output) + 1);
+    const newest = transcriptPage("claude-transcript", path);
+    const start = Number(newest.cursor!.split(":").at(-1));
+    expect(size - start).toBeLessThanOrEqual(16 * 1024 * 1024);
+    expect(newest.turns.every((turn) => turn.role === "assistant")).toBe(true);
+    const older = transcriptPage("claude-transcript", path, { before: newest.cursor! });
+    expect(texts(older.turns).slice(0, 3)).toEqual(["prompt 0", "[out 0] answer 0", "run the long job"]);
+  });
+
+  it("pages across the rollouts a backtracked Codex conversation continues", () => {
+    const home = join(temp(), "codex");
+    const thread = "01a0a337-19e8-7712-92f5-aa0883392afd";
+    const task = (n: number) => [
+      { type: "event_msg", timestamp: "2026-09-23T00:00:00.000Z", payload: { type: "task_started" } },
+      { type: "response_item", timestamp: "2026-09-23T00:00:00.000Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: `prompt ${n}` }] } },
+      { type: "response_item", timestamp: "2026-09-23T00:00:01.000Z", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `answer ${n}` }] } },
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    const meta = (extra = {}) => JSON.stringify({ type: "session_meta", payload: { source: "cli", thread_source: "user", ...extra } });
+    mkdirSync(join(home, "sessions", "2026", "09", "15"), { recursive: true });
+    mkdirSync(join(home, "sessions", "2026", "09", "23"), { recursive: true });
+    const kept = `${meta()}\n${Array.from({ length: 60 }, (_, n) => task(n)).join("\n")}\n`;
+    const keptLines = kept.split("\n").length - 1;
+    writeFileSync(join(home, "sessions", "2026", "09", "15", `rollout-2026-09-15T12-58-12-${thread}.jsonl`), `${kept}${task(999)}\n`);
+    const segment = join(home, "sessions", "2026", "09", "23", `rollout-2026-09-23T10-46-43-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`);
+    writeFileSync(segment, `${meta({ history_base: { thread_id: thread, end_ordinal_exclusive: keptLines, end_byte_offset: Buffer.byteLength(kept) } })}\n${Array.from({ length: 10 }, (_, n) => task(60 + n)).join("\n")}\n`);
+
+    const newest = transcriptPage("codex-transcript", segment, {}, home);
+    expect(texts(newest.turns)[0]).toBe("prompt 20");
+    const older = transcriptPage("codex-transcript", segment, { before: newest.cursor! }, home);
+    expect(older.cursor).toBeNull();
+    const all = texts([...older.turns, ...newest.turns]);
+    expect(all).toEqual(Array.from({ length: 70 }, (_, n) => [`prompt ${n}`, `answer ${n}`]).flat());
   });
 });

@@ -124,6 +124,19 @@ export function parseCodexTranscript(text: string, maxTurns = 100): Conversation
   return turns.filter((turn) => turn.parts.length > 0).slice(-maxTurns);
 }
 
+export const defaultCodexHome = (): string => process.env["CODEX_HOME"] || join(homedir(), ".codex");
+
+/** The session_meta payload on a rollout's first line, or null when the file is not a rollout. */
+function rolloutHeader(path: string): RecordValue | null {
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.alloc(256 * 1024);
+    const length = readSync(fd, buffer, 0, buffer.length, 0);
+    const header = record(JSON.parse(buffer.subarray(0, length).toString("utf8").split("\n")[0]!));
+    return header.type === "session_meta" ? record(header.payload) : null;
+  } finally { closeSync(fd); }
+}
+
 /** File access is constrained by canonical paths, including symlink targets. */
 export function codexRolloutPath(path: string, codexHome: string): string | null {
   try {
@@ -131,32 +144,157 @@ export function codexRolloutPath(path: string, codexHome: string): string | null
     const rel = relative(realpathSync(join(codexHome, "sessions")), canonical);
     if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel) || !canonical.endsWith(".jsonl")) return null;
     if (!statSync(canonical).isFile()) return null;
-    const fd = openSync(canonical, "r");
-    try {
-      const buffer = Buffer.alloc(256 * 1024);
-      const length = readSync(fd, buffer, 0, buffer.length, 0);
-      const header = record(JSON.parse(buffer.subarray(0, length).toString("utf8").split("\n")[0]!));
-      const metadata = record(header.payload);
-      // A child Codex can be in the foreground process group too. Its rollout
-      // is not the conversation of the parent TUI.
-      if (header.type !== "session_meta" || (metadata.source && typeof metadata.source !== "string")
-        || metadata.source === "subagent" || (metadata.thread_source && metadata.thread_source !== "user")
-        || metadata.agent_role) return null;
-      return canonical;
-    } finally { closeSync(fd); }
+    const metadata = rolloutHeader(canonical);
+    // A child Codex can be in the foreground process group too. Its rollout
+    // is not the conversation of the parent TUI.
+    if (metadata === null || (metadata.source && typeof metadata.source !== "string")
+      || metadata.source === "subagent" || (metadata.thread_source && metadata.thread_source !== "user")
+      || metadata.agent_role) return null;
+    return canonical;
   } catch { return null; }
 }
 
-function readTail(path: string): string {
+/** Bytes [start, end) of a file as text; a cut first line is dropped. */
+export function readRange(path: string, start: number, end: number): string {
   const fd = openSync(path, "r");
   try {
-    const size = statSync(path).size;
-    const buffer = Buffer.alloc(Math.min(size, 1024 * 1024));
-    const offset = size - buffer.length;
-    const length = readSync(fd, buffer, 0, buffer.length, offset);
+    const buffer = Buffer.alloc(Math.max(0, end - start));
+    const length = readSync(fd, buffer, 0, buffer.length, start);
     const text = buffer.subarray(0, length).toString("utf8");
-    return offset > 0 ? text.slice(text.indexOf("\n") + 1) : text;
+    return start > 0 ? text.slice(text.indexOf("\n") + 1) : text;
   } finally { closeSync(fd); }
+}
+
+const readdir = (path: string): string[] => { try { return readdirSync(path); } catch { return []; } };
+
+/** A byte range of rollout history: the file's first `end` bytes. */
+export interface HistorySegment { path: string; end: number }
+
+/** Complete chains per rollout, newest first: a header never changes, so neither does its chain. */
+const historyChains = new Map<string, HistorySegment[]>();
+
+/** Lines before a cut, per file identity and cut: the bytes before a cut never change. */
+const linesBeforeCut = new Map<string, number>();
+
+function countLines(path: string, end: number): number {
+  const stat = statSync(path);
+  const key = `${stat.dev}:${stat.ino}:${end}`;
+  const known = linesBeforeCut.get(key);
+  if (known !== undefined) return known;
+  const fd = openSync(path, "r");
+  let lines = 0;
+  try {
+    const buffer = Buffer.alloc(16 * 1024 * 1024);
+    for (let offset = 0; offset < end;) {
+      const length = readSync(fd, buffer, 0, Math.min(buffer.length, end - offset), offset);
+      if (length === 0) break;
+      for (let index = buffer.indexOf(0x0a, 0); index !== -1 && index < length; index = buffer.indexOf(0x0a, index + 1)) lines += 1;
+      offset += length;
+    }
+  } finally { closeSync(fd); }
+  linesBeforeCut.set(key, lines);
+  if (linesBeforeCut.size > 256) linesBeforeCut.delete(linesBeforeCut.keys().next().value!);
+  return lines;
+}
+
+function byteAt(path: string, offset: number): number | null {
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.alloc(1);
+    return readSync(fd, buffer, 0, 1, offset) === 1 ? buffer[0]! : null;
+  } finally { closeSync(fd); }
+}
+
+/** A rollout's first ordinal: where the history it continues ends, 0 for a whole history. */
+function firstOrdinal(header: RecordValue): number {
+  const ordinal = record(header.history_base).end_ordinal_exclusive;
+  return typeof ordinal === "number" && Number.isSafeInteger(ordinal) && ordinal > 0 ? ordinal : 0;
+}
+
+/**
+ * Does `path` hold a cut at (ordinal, byte)? Every record is one line and a rollout's
+ * ordinals start at its own first ordinal, so the cut must end a line with exactly
+ * `ordinal - first` lines before it (checked on a three-rollout Codex 0.156 chain
+ * against the turn offsets in its thread_history_1.sqlite).
+ */
+function holdsCut(path: string, ordinal: number, end: number): boolean {
+  let header: RecordValue | null;
+  try { header = rolloutHeader(path); } catch { return false; }
+  if (header === null) return false;
+  const lines = ordinal - firstOrdinal(header);
+  if (lines <= 0 || (statSync(path, { throwIfNoEntry: false })?.size ?? 0) < end || byteAt(path, end - 1) !== 0x0a) return false;
+  return countLines(path, end) === lines;
+}
+
+/** Every rollout of a thread: rollout-<time>-<thread>.jsonl and its rollout-<time>-<thread>_<segment>.jsonl. */
+function threadRollouts(home: string, threadId: string): string[] {
+  const sessions = join(home, "sessions");
+  return readdir(sessions).flatMap((year) => readdir(join(sessions, year)).flatMap((month) =>
+    readdir(join(sessions, year, month)).flatMap((day) => readdir(join(sessions, year, month, day))
+      .filter((name) => name.endsWith(`-${threadId}.jsonl`) || name.includes(`-${threadId}_`))
+      .map((name) => join(sessions, year, month, day, name)))));
+}
+
+/**
+ * Paginated rollouts (Codex 0.156) do not copy history. A backtrack or fork starts
+ * a new file whose session_meta.history_base names what it continues by thread,
+ * ordinal and byte: the same thread before a backtrack, the parent after a fork.
+ * The bytes past that cut are the turns the backtrack discarded. A thread can have
+ * several rollouts (one per backtrack) and a later backtrack can cut into any of
+ * them, so the one that continues is the one that holds the cut (holdsCut), never
+ * guessed from names or sizes. A chain that stops at a cut no file holds shows
+ * less history rather than the wrong one, and is looked up again next time.
+ */
+function historyChain(path: string, home: string): HistorySegment[] {
+  const cached = historyChains.get(path);
+  if (cached) return cached;
+  const chain: HistorySegment[] = [];
+  let current = path;
+  for (let depth = 0; depth < 32; depth++) {
+    let base: RecordValue;
+    try { base = record(rolloutHeader(current)?.history_base); } catch { return chain; }
+    const threadId = string(base.thread_id);
+    const ordinal = base.end_ordinal_exclusive;
+    const end = base.end_byte_offset;
+    if (Object.keys(base).length === 0) {
+      historyChains.set(path, chain);
+      if (historyChains.size > 64) historyChains.delete(historyChains.keys().next().value!);
+      return chain;
+    }
+    if (!UUID.test(threadId) || typeof ordinal !== "number" || !Number.isSafeInteger(ordinal)
+      || typeof end !== "number" || !Number.isSafeInteger(end) || end <= 0) return chain;
+    const holders = threadRollouts(home, threadId).flatMap((candidate) => {
+      const resolved = codexRolloutPath(candidate, home);
+      return resolved !== null && resolved !== current && !chain.some((segment) => segment.path === resolved)
+        && holdsCut(resolved, ordinal, end) ? [resolved] : [];
+    });
+    if (holders.length !== 1) return chain;
+    chain.push({ path: holders[0]!, end });
+    current = holders[0]!;
+  }
+  return chain;
+}
+
+/** A Codex conversation's files oldest first, each with how many of its bytes belong to it. */
+export function codexHistorySegments(path: string, home = defaultCodexHome()): HistorySegment[] {
+  return [...historyChain(path, home)].reverse().concat({ path, end: statSync(path).size });
+}
+
+/**
+ * The last `budget` bytes of a Codex conversation, across the earlier rollouts a
+ * paginated one continues. A rollout can reach hundreds of MB while the chat
+ * shows only its latest turns, so nothing before the budget is read.
+ */
+export function codexHistoryTail(path: string, budget: number, home = defaultCodexHome()): string {
+  const chunks: string[] = [];
+  let remaining = budget;
+  for (const segment of [{ path, end: statSync(path).size }, ...historyChain(path, home)]) {
+    if (remaining <= 0) break;
+    const start = Math.max(0, segment.end - remaining);
+    chunks.unshift(readRange(segment.path, start, segment.end));
+    remaining -= segment.end - start;
+  }
+  return chunks.join("\n");
 }
 
 const normalizeDisplay = (text: string): string => text.normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "");
@@ -179,7 +317,7 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   return matching.size === 1 ? [...matching][0]! : null;
 }
 
-export async function codexTranscriptPath(paneId: string, cwd: string, home = process.env["CODEX_HOME"] || join(homedir(), ".codex")): Promise<string | null> {
+export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome()): Promise<string | null> {
   const info = await herdrRpc<{ agent: { agent_session?: { kind?: string; value?: string } } }>("agent.get", { target: paneId });
   const session = info.agent.agent_session;
   if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
@@ -239,7 +377,7 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = pr
   if (!paths.length) return null;
   const screen = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
   const candidates = paths.flatMap((path) => {
-    try { return [{ path, text: readTail(path) }]; } catch { return []; }
+    try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
   });
   return matchCodexTranscript(screen.text, candidates);
 }

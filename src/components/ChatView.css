@@ -17,7 +17,6 @@
   overflow-y: auto;
   padding: var(--space-4) var(--space-4) var(--space-5);
   background: var(--bg);
-  scroll-behavior: smooth;
   --chat-fs-2xs: calc(var(--fs-2xs) * var(--chat-scale, 1));
   --chat-fs-xs: calc(var(--fs-xs) * var(--chat-scale, 1));
   --chat-fs-sm: calc(var(--fs-sm) * var(--chat-scale, 1));
@@ -480,6 +479,14 @@
 .chat-checklist li.is-active .chat-checklist-box { color: var(--status-working); }
 .chat-checklist-phase { margin-top: var(--space-2); color: var(--text-dim); font-weight: var(--fw-semibold); }
 
+/* the top of what is loaded: the way to the page before it */
+.chat-older {
+  align-self: center;
+  min-height: var(--control-h);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
 .chat-inline-state,
 .chat-endcap {
   align-self: center;
@@ -560,7 +567,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-view { scroll-behavior: auto; }
   .chat-turn-meta { transition: none; }
   .work-block.is-live .work-block-title::before { animation: none; }
 }
