@@ -45,7 +45,15 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
         return jsonResponse(manager.job(parts[1]!));
       }
     }
+    if (parts[0] === "settings" && parts.length === 1) {
+      if (request.method === "GET") return jsonResponse(manager.settings());
+      if (request.method !== "PATCH") return fail("method_not_allowed", "Use GET or PATCH", 405);
+      const patch = await request.json();
+      if (!isJsonObject(patch)) return fail("invalid_body", "Expected PC settings", 400);
+      return jsonResponse(manager.updateSettings(patch));
+    }
     const id = parts[0]!;
+    if (parts.length === 2 && parts[1] === "update-bridge" && request.method === "POST") return jsonResponse(manager.updateBridge(id), 202);
     if (parts.length === 1 && request.method === "PATCH") {
       const patch = await request.json();
       if (!isJsonObject(patch)) return fail("invalid_body", "Expected a PC update", 400);
