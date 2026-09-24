@@ -76,10 +76,10 @@ function MachineGroup({ machine, ...props }: Props & { machine: Machine }) {
       {machine.kind === "ssh" && <button className="sidebar-row-action" aria-label={`Manage ${machine.name}`} title="Manage PC" aria-expanded={editing} onClick={() => { setEditing(!editing); setConfirmDelete(false); }}><SlidersHorizontal aria-hidden="true" /></button>}
     </header>
     {/* connected is the norm and says nothing new; every other state is spelled out */}
-    <p className={`machine-state is-${machine.state}${online ? " visually-hidden" : ""}`} role="status" title={machine.error ?? undefined}>
+    {machine.action_required ? <MachineActionNotice machine={machine} onSetup={props.onSetup} /> : <p className={`machine-state is-${machine.state}${online ? " visually-hidden" : ""}`} role="status" title={machine.error ?? undefined}>
       <span className="machine-state-word">{STATE_WORD[machine.state]}</span>
       {machine.error && <span className="machine-state-detail">{machine.error}</span>}
-    </p>
+    </p>}
     {editing && <div className="machine-controls">
       <form onSubmit={(e) => { e.preventDefault(); void mutate("PATCH", { name }); }}><label className="field"><span className="field-label">PC name</span><input className="input" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} /></label><button className="btn" type="submit">Rename</button></form>
       <div className="machine-control-buttons"><button className="btn" onClick={() => void mutate("PATCH", { enabled: !machine.enabled })}>{machine.enabled ? "Disconnect" : "Connect"}</button><button className="btn" onClick={() => props.onSetup(machine)}>Reconnect / setup</button><button className="btn" onClick={() => props.onSetup(machine, true)}>Update bridge…</button><button className="btn btn-danger" onClick={() => { if (confirmDelete) void mutate("DELETE"); else setConfirmDelete(true); }}>{confirmDelete ? "Confirm remove PC" : "Remove PC"}</button></div>
@@ -91,3 +91,29 @@ function MachineGroup({ machine, ...props }: Props & { machine: Machine }) {
     </div>}
   </section>;
 }
+
+/** Retrying can't reconnect this PC: say what the user has to do, with the button that does it. */
+function MachineActionNotice({ machine, onSetup }: { machine: Machine; onSetup(machine: Machine, update?: boolean): void }) {
+  const update = machine.action_required === "update_bridge";
+  return <div className="machine-action" role="alert">
+    <p className="machine-action-text">
+      <strong>{update ? "Bridge update needed" : "Setup needed"}</strong>
+      <span>{update ? "This PC runs a bridge from a different version of herdr web ui. Update it to reconnect; herdr sessions keep running." : "Reconnecting needs your approval on this PC."}</span>
+    </p>
+    <button type="button" className="btn btn-primary" onClick={() => onSetup(machine, update)}>{update ? "Update bridge…" : "Set up…"}</button>
+  </div>;
+}
+
+/** The app-wide line for PCs that wait on the user, so a closed drawer on a phone still says so. */
+export function MachineActionBanner({ machines, onSetup }: { machines: Machine[]; onSetup(machine: Machine, update?: boolean): void }) {
+  const waiting = machines.filter((machine) => machine.action_required);
+  const first = waiting[0];
+  if (!first) return null;
+  const update = first.action_required === "update_bridge";
+  const others = waiting.length > 1 ? ` (+${waiting.length - 1} more)` : "";
+  return <div className="update-notice" role="status">
+    <span>{update ? `${first.name} needs a bridge update to reconnect${others}.` : `${first.name} needs setup approval to reconnect${others}.`}</span>
+    <button type="button" className="btn" onClick={() => onSetup(first, update)}>{update ? "Update bridge…" : "Set up…"}</button>
+  </div>;
+}
+
