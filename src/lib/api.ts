@@ -84,9 +84,10 @@ export async function fetchPaneTranscript(paneId: string, lines: number, machine
 export type ConversationPageQuery = { before?: string; since?: string; from?: string };
 
 /**
- * The last answer per conversation URL and its ETag. The chat polls every 2s and a
- * newest page can be megabytes: an unchanged one comes back as a bodyless 304, and
- * the chat gets the very same object back, which tells it nothing changed.
+ * The last answer per polled conversation URL and its ETag. The chat polls every 2s
+ * and a newest page can be megabytes: an unchanged one comes back as a bodyless 304,
+ * and the chat gets the very same object back, which tells it nothing changed. An
+ * older page (`before`) is asked for once, so it keeps no ETag and takes no slot.
  */
 const conversationAnswers = new Map<string, { etag: string; body: ConversationResponse }>();
 const CONVERSATION_ANSWERS_KEPT = 16;
@@ -98,12 +99,19 @@ export async function fetchPaneConversation(paneId: string, machineId = "local",
   if (page.since !== undefined) query.set("since", page.since);
   if (page.from !== undefined) query.set("from", page.from);
   const url = machinePath(machineId, `pane/conversation?${query.toString()}`);
-  const known = conversationAnswers.get(url);
+  const polled = page.before === undefined;
+  const known = polled ? conversationAnswers.get(url) : undefined;
   const response = await fetch(url, { cache: "no-store", ...(known ? { headers: { "if-none-match": known.etag } } : {}) });
-  if (response.status === 304 && known) return known.body;
+  if (response.status === 304 && known) {
+    // the pane being polled stays among the kept answers
+    conversationAnswers.delete(url);
+    conversationAnswers.set(url, known);
+    return known.body;
+  }
   if (!response.ok) throw await errorFrom(url, response);
   const body = (await response.json()) as ConversationResponse;
   const etag = response.headers.get("etag");
+  if (!polled) return body;
   conversationAnswers.delete(url);
   if (etag !== null) {
     conversationAnswers.set(url, { etag, body });

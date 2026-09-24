@@ -292,7 +292,6 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
         if (cancelled) return;
         // a 304 hands back the answer already shown: nothing to compare or lay out again
         if (conversation === lastAnswer.current) { setError(null); setErrorStatus(null); return; }
-        lastAnswer.current = conversation;
         // The newest page moved past the held start: the turns in between join the older
         // pages and the newest page is held from its new start, so no poll reads more than a page.
         const held = heldFrom.current;
@@ -320,6 +319,9 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
           setState(next);
         }
         setError(null); setErrorStatus(null);
+        // only an answer laid out in full is skipped when it comes back unchanged: a read
+        // cancelled mid-way (a pane switch, the page hidden during a gap fill) is redone
+        lastAnswer.current = conversation;
       } catch (cause) {
         if (cancelled) return;
         setError(cause instanceof Error ? cause.message : String(cause));
