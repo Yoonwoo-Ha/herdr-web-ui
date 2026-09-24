@@ -8,6 +8,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Changed
+- A pane opens its terminal the first time you select it, agent panes included, instead of the chat.
+  Switch to Chat once and that pane keeps opening in chat.
 - `bun run start` now listens on `127.0.0.1` by default, like the plugin, instead of every
   interface. To reach it from your LAN again, set `HOST=0.0.0.0` together with `HERDR_WEB_TOKEN`;
   for a phone, `tailscale serve` or an SSH tunnel to `127.0.0.1` needs no change.

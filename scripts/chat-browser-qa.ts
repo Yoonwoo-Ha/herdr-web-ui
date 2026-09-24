@@ -46,6 +46,8 @@ try {
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), codexHome });
   browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  // a pane opens its terminal the first time; this QA is about the chat lens
+  await page.addInitScript((id) => localStorage.setItem(`herdr-web-ui:view:${id}`, "chat"), paneId);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.setDefaultTimeout(10_000);
