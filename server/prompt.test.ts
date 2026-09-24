@@ -241,6 +241,14 @@ describe("Codex's collapsed question queue", () => {
   enter submit   ctrl+] skip   alt+↓ main prompt
 `)).toBe(false);
     expect(codexQuestionsCollapsed("› Ask Codex to do anything\n")).toBe(false);
+    // a numbered menu the parser does not know, right under the queue: not the main prompt
+    expect(codexQuestionsCollapsed(`
+• Queued follow-up inputs
+  ? 1 question
+    alt+↑ to answer
+› 1. Continue with the new plan
+  2. Stop here
+`)).toBe(false);
     // an approval under the queue holds the input: a message would answer it
     expect(codexQuestionsCollapsed(`
 • Queued follow-up inputs

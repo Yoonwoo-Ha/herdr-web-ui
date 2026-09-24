@@ -33,6 +33,7 @@ export function composerPayload(text: string, bracketedPaste: boolean): string {
 export function submitNote(code: string, message: string): string {
   if (code === "agent_blocked") return "Not sent: the agent is waiting for an answer in the terminal. Answer it first.";
   if (code === "read_only") return "Not sent: this view only watches the pane.";
+  if (code === "submit_timeout") return "Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.";
   if (code === "disconnected" || code === "timeout") return "Not confirmed: the pane did not confirm this message. Check the terminal before sending it again.";
   return `Not sent: ${message}`;
 }

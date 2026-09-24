@@ -56,6 +56,14 @@ export const SUBMIT_DELAY_MS = 120;
  * Stop tapped just before Send still reaches the pane first.
  */
 const TYPED_SETTLE_MS = 300;
+/**
+ * Nothing of a composer message is typed once this long has passed since it reached the
+ * server (it can wait behind a stalled one in the pane's queue): it answers submit_timeout
+ * instead. A send that starts in time ends within two more 10s RPCs, before the client
+ * stops waiting (SUBMIT_TIMEOUT_MS in src/lib/ws.ts), so a message it gave up on never
+ * reaches the pane later.
+ */
+export const SUBMIT_DEADLINE_MS = 45_000;
 const SERVER_FEATURES: ServerFeature[] = ["submit"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
@@ -152,6 +160,8 @@ export function createServer(
     updates?: UpdateService;
     machines?: boolean;
     registerBridge?: boolean;
+    /** SUBMIT_DEADLINE_MS; tests shorten it */
+    submitDeadlineMs?: number;
   } = {},
 ): { port: number; hostname: string; stop: () => void } {
   const attachments = new Map<string, PaneAttachment>();
@@ -194,10 +204,16 @@ export function createServer(
    * the bytes, so the pane sees the whole gap. So does a Codex "blocked" only by questions
    * waiting collapsed in its queue: its main prompt still takes the message.
    */
-  async function submitText(paneId: string, text: string, payload: string): Promise<void> {
+  async function submitText(paneId: string, text: string, payload: string, arrivedAt: number): Promise<void> {
+    const inTime = (): void => {
+      if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) {
+        throw new HerdrError("submit_timeout", "the message waited too long behind earlier input; nothing was typed");
+      }
+    };
     const typed = Date.now() - (lastTyped.get(paneId) ?? 0);
     if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
     lastTyped.delete(paneId);
+    inTime();
     try {
       await agentPrompt(paneId, text);
       return;
@@ -206,6 +222,7 @@ export function createServer(
       const queuedOnly = error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
       if (error.code !== "agent_not_found" && error.code !== "agent_not_ready" && !queuedOnly) throw error;
     }
+    inTime();
     await paneSendText(paneId, payload);
     await Bun.sleep(SUBMIT_DELAY_MS);
     await paneSendKeys(paneId, ["Enter"]);
@@ -952,8 +969,9 @@ export function createServer(
                 result(false, "read_only", "this connection is in observe mode");
                 break;
               }
+              const arrivedAt = Date.now();
               try {
-                await serialize(message.pane_id, () => submitText(message.pane_id, message.text, message.payload));
+                await serialize(message.pane_id, () => submitText(message.pane_id, message.text, message.payload, arrivedAt));
                 result(true);
               } catch (error) {
                 result(false, error instanceof HerdrError ? error.code : "submit_failed", error instanceof Error ? error.message : String(error));
