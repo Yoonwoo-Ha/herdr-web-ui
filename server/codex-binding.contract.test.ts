@@ -72,6 +72,15 @@ const newerThread = (source = "cli", id = `01a0c7a1-56d9-7e20-9f08-f7a2d973bc${r
     db.close();
   };
 };
+/** Waits until the answer shows in the pane. */
+const onScreen = async (paneId: string, answer: string): Promise<void> => {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const recent = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
+    if (recent.text.replace(/\s+/g, " ").includes(answer.slice(0, 48))) return;
+    await Bun.sleep(100);
+  }
+  throw new Error(`the answer never showed in ${paneId}`);
+};
 /** Waits until the pane's flood has pushed the answer out of the 400 lines the match reads. */
 const floodedAway = async (paneId: string, answer: string): Promise<void> => {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -163,19 +172,20 @@ it("drops a matched rollout once a newer interactive thread begins in its cwd, a
   }
 }, 30_000);
 
-it("keeps a matched rollout when the newer thread is another pane's", async () => {
+it("keeps a matched rollout when the newer thread shows in another Codex pane, whether or not its chat was opened", async () => {
   const paneId = await pane("mine", `FLOOD_AFTER=3 ${join(root, "bin", "codex")} --say`);
   for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
   await floodedAway(paneId, answers.matched);
-  // a second Codex in the same repo starts its own thread: unbound, it leaves this pane unsure
   const remove = newerThread("cli", threads.other, rollout("other"));
   try {
+    // no other Codex pane here shows that thread: this pane cannot tell it from its own /new
     expect((await read(paneId)).source).toBe("scrollback");
+    // a second Codex in the same repo shows its answer, and nobody opens its chat
     const otherPane = await pane("theirs", `${join(root, "bin", "codex")} --say other`);
-    for (let attempt = 0; attempt < 30 && lastAnswer(await read(otherPane)) !== answers.other; attempt++) await Bun.sleep(100);
-    expect(lastAnswer(await read(otherPane))).toBe(answers.other);
-    // once it is bound to the other pane, this pane's binding holds again
+    await onScreen(otherPane, answers.other);
     expect(lastAnswer(await read(paneId))).toBe(answers.matched);
+    // and the other pane was bound to its thread on the way
+    expect(lastAnswer(await read(otherPane))).toBe(answers.other);
   } finally {
     remove();
   }
