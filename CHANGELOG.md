@@ -7,6 +7,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Changed
+- On a phone or tablet, an agent pane opens in the chat the first time you select it; shells, and
+  every pane on a desktop, still open their terminal. The lens you pick is still remembered per
+  pane.
+
 ## [0.3.3] - 2026-09-25
 
 ### Added
