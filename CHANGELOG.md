@@ -7,6 +7,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Changed
+- Remote PCs use the `remote-v2` runtime, which carries 0.3.0's server changes (chat pages, the
+  Codex conversation fixes, server-side message sending and `304` answers) to the remote side.
+  A PC connected with the `remote-v1` bridge asks for **Update bridge…** once; its herdr sessions
+  are kept.
+
 ## [0.3.0] - 2026-09-25
 
 ### Added
