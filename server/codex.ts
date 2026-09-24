@@ -356,6 +356,22 @@ function processStartedAt(pid: number): number | null {
   }
 }
 
+/**
+ * Has a thread begun in this cwd since `since` (seconds) that this pane's Codex may have
+ * moved on to (/new)? Only interactive threads count: subagents (often with a NULL
+ * agent_role) and `codex exec` runs share their parent's cwd but never replace the TUI's
+ * conversation. A thread another pane is bound to is that pane's.
+ */
+function newerThread(db: Database, cwd: string, since: number, except: string | null, paneId: string, home: string): boolean {
+  const interactive = db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'source'").get() !== null
+    ? " AND source IN ('cli', 'vscode')" : "";
+  const rows = db.query<{ id: string; rollout_path: string }, [string, number]>(
+    `SELECT id, rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL${interactive} AND created_at >= ?`,
+  ).all(cwd, since);
+  const elsewhere = new Set([...boundRollouts].flatMap(([pane, binding]) => pane === paneId ? [] : [binding.path]));
+  return rows.some((row) => row.id !== except && !elsewhere.has(codexRolloutPath(row.rollout_path, home) ?? row.rollout_path));
+}
+
 export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome()): Promise<string | null> {
   const info = await herdrRpc<{ agent: { agent_session?: { kind?: string; value?: string } } }>("agent.get", { target: paneId });
   const session = info.agent.agent_session;
@@ -414,26 +430,19 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     if (resumed !== null) {
       const row = db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ?").get(resumed);
       // After /new the command line still names the resumed thread. Trust it only while
-      // no other thread in this cwd began after this Codex did (a later one in another
-      // pane counts too: then the chat says it cannot tell, rather than show the wrong
-      // conversation). Without a start time, only while it is the cwd's newest thread.
+      // no other interactive thread in this cwd began after this Codex did (newerThread;
+      // an unbound one in another pane counts too: then the chat says it cannot tell,
+      // rather than show the wrong conversation). Without a start time, since the resumed
+      // thread was last updated.
       const startedAt = Math.min(...codexProcesses.map((process) => processStartedAt(process.pid) ?? Infinity));
-      const newer = Number.isFinite(startedAt)
-        ? db.query<{ id: string }, [string, string, number]>(
-          "SELECT id FROM threads WHERE cwd = ? AND id != ? AND archived = 0 AND agent_role IS NULL AND created_at * 1000 > ? LIMIT 1",
-        ).get(cwd, resumed, startedAt)
-        : db.query<{ id: string }, [string, string, string]>(
-          "SELECT id FROM threads WHERE cwd = ? AND id != ? AND archived = 0 AND agent_role IS NULL AND updated_at > (SELECT updated_at FROM threads WHERE id = ?) LIMIT 1",
-        ).get(cwd, resumed, resumed);
-      resumedPath = row && !newer ? codexRolloutPath(row.rollout_path, home) : null;
+      const since = Number.isFinite(startedAt)
+        ? Math.floor(startedAt / 1000)
+        : (db.query<{ updated_at: number }, [string]>("SELECT updated_at FROM threads WHERE id = ?").get(resumed)?.updated_at ?? 0);
+      resumedPath = row && !newerThread(db, cwd, since, resumed, paneId, home) ? codexRolloutPath(row.rollout_path, home) : null;
     }
-    if (boundHere !== undefined) {
-      // the same guard for a match: after /new the process writes a thread begun since
-      // (created_at has whole seconds, so one begun in the match's second counts too)
-      boundSuperseded = db.query<{ id: string }, [string, number]>(
-        "SELECT id FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL AND created_at >= ? LIMIT 1",
-      ).get(cwd, Math.floor(boundHere.at / 1000)) !== null;
-    }
+    // the same guard for a match: after /new the process writes a thread begun since
+    // (created_at has whole seconds, so one begun in the match's second counts too)
+    if (boundHere !== undefined) boundSuperseded = newerThread(db, cwd, Math.floor(boundHere.at / 1000), null, paneId, home);
     const rows = db.query<{ rollout_path: string }, [string]>(
       "SELECT rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL ORDER BY updated_at DESC LIMIT 32",
     ).all(cwd);
@@ -456,10 +465,10 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   }
   // Nothing on screen tells: a long run of tool output pushed the last answer out of
   // the read, or nothing is answered yet. The same Codex process still writes the
-  // rollout it was last matched to, until a thread begun since in this cwd (/new here,
-  // or a Codex in another pane) leaves it unsure; failing that, the thread it was resumed on.
-  if (boundSuperseded) boundRollouts.delete(paneId);
-  else if (boundHere !== undefined && codexRolloutPath(boundHere.path, home) !== null) {
+  // rollout it was last matched to, while no thread begun since in this cwd leaves it
+  // unsure (the binding is kept: once that thread is bound to another pane, it holds
+  // again); failing that, the thread it was resumed on.
+  if (!boundSuperseded && boundHere !== undefined && codexRolloutPath(boundHere.path, home) !== null) {
     // a pane in use stays among the kept ones
     boundRollouts.delete(paneId);
     boundRollouts.set(paneId, boundHere);

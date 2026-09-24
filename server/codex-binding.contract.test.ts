@@ -4,17 +4,22 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
-import { herdrRpc, workspaceClose, workspaceCreate } from "./herdr/client.ts";
+import { herdrRpc, paneRead, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
 
 // Real herdr panes running a stand-in `codex` process: which rollout the chat reads
 // while nothing Codex said is on screen.
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-binding-"));
 const codexHome = join(root, "codex");
-const threads = { resumed: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc01", matched: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc02" };
+const threads = {
+  resumed: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc01",
+  matched: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc02",
+  other: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc03",
+};
 const answers = {
   resumed: "The resumed thread answers from its own rollout, found by the id on the command line without any screen match.",
   matched: "The matched thread was recognised on screen once, and stays bound while tool output scrolls its answer away.",
+  other: "Another pane in the same repository started this thread later, and it is that pane's own conversation entirely.",
 };
 const workspaces: string[] = [];
 let server: ReturnType<typeof createServer>;
@@ -54,12 +59,12 @@ const read = async (paneId: string): Promise<ConversationResponse> => {
   const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`);
   return await response.json() as ConversationResponse;
 };
-/** A thread begun now in the panes' cwd, as /new starts one; returns its removal. */
-const newerThread = (): (() => void) => {
-  const id = `01a0c7a1-56d9-7e20-9f08-f7a2d973bc${String(Math.floor(Math.random() * 90) + 10)}`;
+/** A thread row begun now in the panes' cwd, as /new starts one (or a subagent, or `codex exec`); returns its removal. */
+let rows = 10;
+const newerThread = (source = "cli", id = `01a0c7a1-56d9-7e20-9f08-f7a2d973bc${rows++}`, path = join(codexHome, "sessions", "missing.jsonl")): (() => void) => {
   const db = new Database(join(codexHome, "state_5.sqlite"));
   const now = Math.ceil(Date.now() / 1000) + 1;
-  db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, ?, ?)").run(id, join(codexHome, "sessions", "missing.jsonl"), root, now, now);
+  db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, ?, ?, ?)").run(id, path, root, now, now, source);
   db.close();
   return () => {
     const db = new Database(join(codexHome, "state_5.sqlite"));
@@ -67,23 +72,33 @@ const newerThread = (): (() => void) => {
     db.close();
   };
 };
+/** Waits until the pane's flood has pushed the answer out of the 400 lines the match reads. */
+const floodedAway = async (paneId: string, answer: string): Promise<void> => {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const recent = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
+    if (!recent.text.replace(/\s+/g, " ").includes(answer.slice(0, 48))) return;
+    await Bun.sleep(100);
+  }
+  throw new Error(`the answer is still on screen in ${paneId}`);
+};
 const lastAnswer = (conversation: ConversationResponse) =>
   conversation.turns.at(-1)?.parts.map((part) => part.kind === "text" ? part.text : "").join("") ?? null;
 
 beforeAll(() => {
   mkdirSync(join(codexHome, "sessions"), { recursive: true });
   const db = new Database(join(codexHome, "state_5.sqlite"));
-  db.exec("CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, archived INTEGER, agent_role TEXT, created_at INTEGER, updated_at INTEGER)");
-  for (const name of Object.keys(threads) as (keyof typeof threads)[]) {
-    db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1)").run(threads[name], rollout(name), root);
+  db.exec("CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, archived INTEGER, agent_role TEXT, created_at INTEGER, updated_at INTEGER, source TEXT)");
+  for (const name of ["resumed", "matched"] as const) {
+    db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli')").run(threads[name], rollout(name), root);
   }
   db.close();
   // a stand-in TUI: its command line names it codex; `--say` prints the matched answer
   // from a file (never from the typed command), then output floods the screen
   mkdirSync(join(root, "bin"));
-  writeFileSync(join(root, "bin", "answer.txt"), `${answers.matched}\n`);
+  writeFileSync(join(root, "bin", "matched.txt"), `${answers.matched}\n`);
+  writeFileSync(join(root, "bin", "other.txt"), `${answers.other}\n`);
   const script = join(root, "bin", "codex");
-  writeFileSync(script, `#!/bin/sh\n[ "$1" = --say ] && cat "$(dirname "$0")/answer.txt"\nsleep "\${FLOOD_AFTER:-600}"\nseq 1 600\nsleep 600\n`);
+  writeFileSync(script, `#!/bin/sh\n[ "$1" = --say ] && cat "$(dirname "$0")/\${2:-matched}.txt"\nsleep "\${FLOOD_AFTER:-600}"\nseq 1 600\nsleep 600\n`);
   chmodSync(script, 0o755);
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), codexHome });
 });
@@ -115,7 +130,7 @@ it("keeps a matched rollout while tool output scrolls the answer away, and drops
   for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
   expect(lastAnswer(await read(paneId))).toBe(answers.matched);
   // 600 lines of output: the answer is past the 400 the match reads
-  await Bun.sleep(3500);
+  await floodedAway(paneId, answers.matched);
   expect(lastAnswer(await read(paneId))).toBe(answers.matched);
   // another codex process in the pane is not the one that was matched
   await herdrRpc("pane.send_keys", { pane_id: paneId, keys: ["ctrl+c"] });
@@ -124,17 +139,44 @@ it("keeps a matched rollout while tool output scrolls the answer away, and drops
   expect((await read(paneId)).source).toBe("scrollback");
 }, 20_000);
 
-it("drops a matched rollout once a newer thread begins in its cwd, as /new does", async () => {
+it("drops a matched rollout once a newer interactive thread begins in its cwd, as /new does, not for a subagent or codex exec", async () => {
   const paneId = await pane("renewed", `FLOOD_AFTER=3 ${join(root, "bin", "codex")} --say`);
   for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
   expect(lastAnswer(await read(paneId))).toBe(answers.matched);
-  await Bun.sleep(3500);
-  expect(lastAnswer(await read(paneId))).toBe(answers.matched);
-  // the process now writes a thread begun after the match: the chat cannot tell which
-  const remove = newerThread();
+  await floodedAway(paneId, answers.matched);
+  // the pane's own subagent (agent_role NULL, as many are) and a `codex exec` in the repo
+  const spawned = [
+    newerThread(JSON.stringify({ subagent: { thread_spawn: { parent_thread_id: threads.matched, depth: 1, agent_role: null } } })),
+    newerThread("exec"),
+  ];
+  try {
+    expect(lastAnswer(await read(paneId))).toBe(answers.matched);
+    // the process now writes a thread begun after the match: the chat cannot tell which
+    const remove = newerThread();
+    try {
+      expect((await read(paneId)).source).toBe("scrollback");
+    } finally {
+      remove();
+    }
+  } finally {
+    for (const remove of spawned) remove();
+  }
+}, 30_000);
+
+it("keeps a matched rollout when the newer thread is another pane's", async () => {
+  const paneId = await pane("mine", `FLOOD_AFTER=3 ${join(root, "bin", "codex")} --say`);
+  for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
+  await floodedAway(paneId, answers.matched);
+  // a second Codex in the same repo starts its own thread: unbound, it leaves this pane unsure
+  const remove = newerThread("cli", threads.other, rollout("other"));
   try {
     expect((await read(paneId)).source).toBe("scrollback");
+    const otherPane = await pane("theirs", `${join(root, "bin", "codex")} --say other`);
+    for (let attempt = 0; attempt < 30 && lastAnswer(await read(otherPane)) !== answers.other; attempt++) await Bun.sleep(100);
+    expect(lastAnswer(await read(otherPane))).toBe(answers.other);
+    // once it is bound to the other pane, this pane's binding holds again
+    expect(lastAnswer(await read(paneId))).toBe(answers.matched);
   } finally {
     remove();
   }
-}, 20_000);
+}, 30_000);
