@@ -16,6 +16,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Scrolling the terminal on a phone scrolls herdr's history again when another tab (for example a
   desktop browser) already had that pane open. The phone joined a busy pane without its mouse
   mode, so a drag turned into arrow keys and paged through the agent's prompt history instead.
+- Picking a session in the chat view and typing straight away now types into the chat box. The
+  keys went to the hidden terminal instead, straight into the agent's own prompt, and a phone
+  showed the typed text in the middle of the screen.
 
 ## [0.3.3] - 2026-09-25
 
