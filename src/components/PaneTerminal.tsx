@@ -67,6 +67,8 @@ export function PaneTerminal({
   const machineId = useMachineId();
   const { uploadPaneImage } = useMachineApi();
   const chatView = view === "chat";
+  const chatViewRef = useRef(chatView);
+  chatViewRef.current = chatView;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -395,7 +397,9 @@ export function PaneTerminal({
       /* not laid out yet; the ResizeObserver will follow up */
     }
     socket.attach(paneId, term.cols, term.rows);
-    term.focus();
+    // the chat lens covers the grid and its composer takes the keyboard: focusing the hidden
+    // grid sent the keys straight to the pane, and showed a phone's IME text mid-screen
+    if (!chatViewRef.current) term.focus();
     return () => {
       socket.detach(paneId);
     };

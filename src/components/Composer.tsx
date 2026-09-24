@@ -134,6 +134,11 @@ export function Composer({
   const { fetchPaneCommands, fetchPaneFiles } = useMachineApi();
   const { settings } = useSettings();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // the chat lens's input surface takes the keyboard when it appears (a pane switch remounts
+  // it), as the grid does in the terminal lens: a pane picked from the drawer is typed into
+  useEffect(() => {
+    textareaRef.current?.focus({ preventScroll: true });
+  }, []);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentsRef = useRef<Attachment[]>([]);
   const removedAttachments = useRef(new Set<number>());
