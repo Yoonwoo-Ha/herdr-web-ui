@@ -19,6 +19,11 @@ const viewport = window.visualViewport;
 if (viewport) {
   const sync = (): void => {
     document.documentElement.style.setProperty("--app-height", `${Math.round(viewport.height)}px`);
+    // iOS keeps the layout viewport when the soft keyboard opens and shrinks only the
+    // visual one: a shortfall that large at scale 1 is the keyboard (a pinch zoom scales
+    // instead). The composer then drops the home-indicator space the keyboard covers.
+    const keyboard = Math.abs(viewport.scale - 1) < 0.01 && window.innerHeight - viewport.height > 120;
+    document.documentElement.toggleAttribute("data-keyboard", keyboard);
     if (document.querySelector(".app") !== null) window.scrollTo(0, 0);
   };
   viewport.addEventListener("resize", sync);
