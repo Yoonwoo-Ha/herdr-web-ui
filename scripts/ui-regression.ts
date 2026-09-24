@@ -55,7 +55,8 @@ try {
     });
     socket.on("framesent", ({ payload }) => {
       const message = JSON.parse(String(payload));
-      if (message.type === "input") inputs.push(message);
+      // composer messages go out as "submit" on servers that list it (#15), keystrokes as "input"
+      if (message.type === "input" || message.type === "submit") inputs.push(message);
     });
   });
   await page.goto(`${origin}/?pane=${encodeURIComponent(paneA)}`);
