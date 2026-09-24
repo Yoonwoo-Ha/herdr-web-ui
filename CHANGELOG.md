@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-25
+
 ### Added
 - Remote PC bridges update in the background. When an app update needs a newer bridge, PCs that
   connect with their saved key are updated automatically (**Settings → Remote PCs**, on by
@@ -16,6 +18,18 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   update**. Closing the dialog after approval no longer cancels an install.
 - The web server keeps downloaded bridge bundles by checksum and downloads each once, so a second
   PC or a retry only sends it to the PC.
+
+### Fixed
+- Dragging the terminal on a phone scrolls herdr's history again. The gesture was lost after its
+  first move, since the redraw replaced the row it started on, and the browser then scrolled the
+  page or the composer instead. The text now also follows the finger (drag down for older lines),
+  and each scroll lands at the finger's position.
+- Android notifications show the herdr mark instead of Chrome's bell as their small icon.
+
+### Development
+- Tests and the browser QA scripts run in a herdr session of their own, `herdr-web-ui-test`, so
+  their workspaces and agents never show in the herdr you work in. `HERDR_TEST_LIVE=1` restores
+  the old behaviour.
 
 ## [0.3.2] - 2026-09-25
 
@@ -138,7 +152,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/devswha/herdr-web-ui/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/devswha/herdr-web-ui/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/devswha/herdr-web-ui/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/devswha/herdr-web-ui/compare/v0.2.1...v0.3.0
