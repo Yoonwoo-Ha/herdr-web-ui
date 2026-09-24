@@ -8,6 +8,7 @@ import {
   type ClipboardEvent,
   type DragEvent,
   type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Clock, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 
@@ -44,6 +45,14 @@ const MAX_IMAGES_PER_ACTION = 4;
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 const COMMAND_CACHE_MS = 60_000;
 const SLASH_USAGE_KEY = "herdr-web-ui:slash-usage";
+/** One height for every pane on this device: it is the screen, not the conversation, that decides it. */
+const COMPOSER_HEIGHT_KEY = "herdr-web-ui:composer-height";
+const COMPOSER_HEIGHT_MAX = 480;
+const COMPOSER_HEIGHT_STEP = 24;
+/** How far a press on the grip must travel to become a resize: a tap or a resting finger sets nothing. */
+const RESIZE_SLACK = { mouse: 3, touch: 10 } as const;
+/** Two taps on the grip this close return the box to its automatic height (iOS may send no dblclick). */
+const DOUBLE_TAP_MS = 350;
 const COMMAND_SOURCES = ["builtin", "user", "project"] as const;
 const SOURCE_LABEL: Record<SlashCommand["source"], string> = {
   builtin: "Built in",
@@ -73,6 +82,31 @@ function readSlashUsage(): Record<string, number> {
   } catch {
     return {};
   }
+}
+
+/** A saved manual height, or null for the automatic one (also for anything malformed). */
+function readComposerHeight(): number | null {
+  try {
+    const value = Number(window.localStorage.getItem(COMPOSER_HEIGHT_KEY));
+    return Number.isFinite(value) && value > 0 && value <= COMPOSER_HEIGHT_MAX ? Math.round(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveComposerHeight(value: number | null): void {
+  try {
+    if (value === null) window.localStorage.removeItem(COMPOSER_HEIGHT_KEY);
+    else window.localStorage.setItem(COMPOSER_HEIGHT_KEY, String(value));
+  } catch {
+    // Without storage the height still holds until reload.
+  }
+}
+
+/** Half the visible viewport at most, so a raised keyboard never leaves the transcript without room. */
+function composerHeightLimit(): number {
+  const viewport = window.visualViewport?.height ?? window.innerHeight;
+  return Math.min(COMPOSER_HEIGHT_MAX, Math.floor(viewport / 2));
 }
 
 async function cachedPaneCommands(paneId: string, machineId: string, fetchCommands: (pane: string) => Promise<SlashCommand[]>): Promise<SlashCommand[]> {
@@ -120,6 +154,13 @@ export function Composer({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [manualHeight, setManualHeight] = useState<number | null>(readComposerHeight);
+  /** the box's rendered height, for the grip to announce while the height is automatic */
+  const [autoHeight, setAutoHeight] = useState(0);
+  /** the automatic height of an empty box (the textarea's CSS min-height): the grip's floor */
+  const [minHeight, setMinHeight] = useState(0);
+  const [heightLimit, setHeightLimit] = useState(composerHeightLimit);
+  const lastGripTap = useRef(0);
 
   attachmentsRef.current = attachments;
   textRef.current = text;
@@ -187,9 +228,90 @@ export function Composer({
   useLayoutEffect(() => {
     const element = textareaRef.current;
     if (!element) return;
+    const floor = Math.round(parseFloat(getComputedStyle(element).minHeight)) || 0;
+    setMinHeight((current) => current === floor ? current : floor);
+    if (manualHeight !== null) {
+      element.style.height = `${manualHeight}px`;
+      return;
+    }
     element.style.height = "auto";
     element.style.height = `${element.scrollHeight}px`;
-  }, [text]);
+    const height = Math.round(element.getBoundingClientRect().height);
+    setAutoHeight((current) => current === height ? current : height);
+  }, [text, manualHeight, placeholder]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const update = (): void => setHeightLimit(composerHeightLimit());
+    viewport?.addEventListener("resize", update);
+    window.addEventListener("resize", update);
+    return () => {
+      viewport?.removeEventListener("resize", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
+  const maxHeight = Math.max(minHeight, heightLimit);
+  /** A grip height within the limits; at or below the automatic floor it is the automatic height again. */
+  const gripHeight = (value: number): number | null => value <= minHeight ? null : Math.round(Math.min(maxHeight, value));
+
+  /**
+   * Dragging the grip up grows the box; the pointer stays captured, so a finger may leave the grip.
+   * The height changes only once the press has moved past the slack, and is saved when it lets go.
+   */
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const element = textareaRef.current;
+    if (!element || event.button !== 0) return;
+    event.preventDefault();
+    const grip = event.currentTarget;
+    grip.setPointerCapture(event.pointerId);
+    const slack = event.pointerType === "mouse" ? RESIZE_SLACK.mouse : RESIZE_SLACK.touch;
+    const startHeight = element.getBoundingClientRect().height;
+    const startY = event.clientY;
+    let resizing = false;
+    let height = manualHeight;
+    const move = (next: PointerEvent): void => {
+      if (!resizing && Math.abs(next.clientY - startY) < slack) return;
+      resizing = true;
+      height = gripHeight(startHeight + startY - next.clientY);
+      setManualHeight(height);
+    };
+    const end = (finished: PointerEvent): void => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", end);
+      grip.removeEventListener("pointercancel", end);
+      if (resizing) {
+        lastGripTap.current = 0;
+        saveComposerHeight(height);
+      } else if (finished.type === "pointerup") {
+        // a tap: the second of two quick ones returns the automatic height
+        if (finished.timeStamp - lastGripTap.current < DOUBLE_TAP_MS) {
+          lastGripTap.current = 0;
+          setManualHeight(null);
+          saveComposerHeight(null);
+        } else {
+          lastGripTap.current = finished.timeStamp;
+        }
+      }
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  };
+
+  const onResizeKey = (event: KeyboardEvent<HTMLDivElement>): void => {
+    const current = manualHeight ?? textareaRef.current?.getBoundingClientRect().height ?? minHeight;
+    const step = event.shiftKey ? COMPOSER_HEIGHT_STEP * 2 : COMPOSER_HEIGHT_STEP;
+    let next: number | null;
+    if (event.key === "ArrowUp") next = gripHeight(current + step);
+    else if (event.key === "ArrowDown") next = gripHeight(current - step);
+    else if (event.key === "Home") next = null;
+    else return;
+    event.preventDefault();
+    setManualHeight(next);
+    saveComposerHeight(next);
+  };
+  const gripValue = Math.round(Math.min(maxHeight, Math.max(minHeight, manualHeight ?? autoHeight)));
 
   const filteredCommands = useMemo(
     () => (trigger?.kind === "slash" ? rankSlashCommands(commands, trigger.query, slashUsage) : []),
@@ -425,6 +547,20 @@ export function Composer({
         }}
         onDrop={onDrop}
       >
+        <div
+          className="composer-resize"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize message box"
+          aria-valuemin={minHeight}
+          aria-valuemax={maxHeight}
+          aria-valuenow={gripValue}
+          aria-valuetext={manualHeight === null ? "automatic height" : `${gripValue} pixels`}
+          tabIndex={0}
+          title="Drag to resize · double-click to reset"
+          onPointerDown={startResize}
+          onKeyDown={onResizeKey}
+        />
         {menuOpen && trigger && (
           <div id={menuId} className="menu composer-menu" role="listbox" aria-label={trigger.kind === "slash" ? "Slash commands" : "Files"}>
             {trigger.kind === "slash" ? (
@@ -495,7 +631,7 @@ export function Composer({
 
         <textarea
           ref={textareaRef}
-          className="composer-text"
+          className={`composer-text${manualHeight !== null ? " is-sized" : ""}`}
           rows={1}
           maxLength={MAX_COMPOSER_CHARS}
           value={text}

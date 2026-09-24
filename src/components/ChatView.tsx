@@ -383,6 +383,18 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
     if (node !== null && stickToBottom.current) node.scrollTop = node.scrollHeight;
   }, [state, prompt]);
 
+  // A resized composer, a raised keyboard or a narrower window shrinks the view
+  // without a scroll event; a reader at the end stays at the end, at once.
+  useEffect(() => {
+    const node = scroller.current;
+    if (node === null) return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottom.current) node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   const onScroll = (): void => {
     const node = scroller.current;
     if (node === null) return;
