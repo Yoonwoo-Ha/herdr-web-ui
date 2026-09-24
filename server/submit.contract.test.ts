@@ -22,8 +22,9 @@ const { appendFileSync, writeFileSync } = require("node:fs");
 const out = process.argv[2];
 process.stdin.setRawMode(true);
 process.stdin.resume();
-// bracketed paste on, as agent TUIs have it: herdr passes the paste markers through
-process.stdout.write("\\u001b[?2004h", () => writeFileSync(out, ""));
+// bracketed paste on, as agent TUIs have it: herdr passes the paste markers through;
+// then what the TUI would show, when asked to (argv[3])
+process.stdout.write("\\u001b[?2004h" + (process.argv[3] ?? ""), () => writeFileSync(out, ""));
 process.stdin.on("data", (chunk) => appendFileSync(out, JSON.stringify({ at: Date.now(), data: chunk.toString("utf8") }) + "\\n"));
 `;
 
@@ -31,6 +32,7 @@ interface Chunk { at: number; data: string }
 interface Recorder { pane: string; log: string }
 let shell: Recorder;
 let agent: Recorder;
+let codex: Recorder;
 
 const chunks = (recorder: Recorder): Chunk[] =>
   readFileSync(recorder.log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as Chunk);
@@ -45,13 +47,14 @@ async function received(recorder: Recorder, from: number, count: number): Promis
   throw new Error(`no ${count} Enter(s) within 5s: ${JSON.stringify(chunks(recorder).slice(from))}`);
 }
 
-async function recorder(label: string, program: string): Promise<Recorder> {
+async function recorder(label: string, program: string, screen = ""): Promise<Recorder> {
   const created = await herdrRpc<{ workspace: { workspace_id: string }; root_pane: { pane_id: string } }>(
     "workspace.create", { label: `herdr-web-ui-test-submit-${label}`, cwd: root, focus: false },
   );
   workspaces.push(created.workspace.workspace_id);
   const log = join(root, `${label}.jsonl`);
-  await herdrRpc("pane.send_text", { pane_id: created.root_pane.pane_id, text: `exec '${program}' '${join(root, "record.js")}' '${log}'\n` });
+  const shown = screen ? ` '${screen.replace(/\n/g, "\r\n")}'` : "";
+  await herdrRpc("pane.send_text", { pane_id: created.root_pane.pane_id, text: `exec '${program}' '${join(root, "record.js")}' '${log}'${shown}\n` });
   for (let i = 0; i < 200 && !existsSync(log); i++) await Bun.sleep(50);
   expect(existsSync(log)).toBe(true);
   return { pane: created.root_pane.pane_id, log };
@@ -97,9 +100,14 @@ beforeAll(async () => {
   // herdr's agent.prompt checks that the pane's foreground process is the agent
   copyFileSync(process.execPath, join(root, "claude"));
   chmodSync(join(root, "claude"), 0o755);
+  copyFileSync(process.execPath, join(root, "codex"));
+  chmodSync(join(root, "codex"), 0o755);
   shell = await recorder("shell", process.execPath);
   agent = await recorder("agent", join(root, "claude"));
   await herdrRpc("pane.report_agent", { pane_id: agent.pane, source: "manual", agent: "claude", state: "idle" });
+  // Codex with a question waiting collapsed in its queue: herdr calls it blocked
+  codex = await recorder("codex", join(root, "codex"), "\n• Queued follow-up inputs\n  ? 1 question\n    alt+↑ to answer\n› Ask Codex to do anything\n");
+  await herdrRpc("pane.report_agent", { pane_id: codex.pane, source: "manual", agent: "codex", state: "blocked" });
 }, 30_000);
 
 afterAll(async () => {
@@ -162,6 +170,19 @@ describe("WebSocket submit", () => {
       expect(chunks(agent).slice(from)).toEqual([]);
     } finally {
       await herdrRpc("pane.report_agent", { pane_id: agent.pane, source: "manual", agent: "claude", state: "idle" });
+      socket.close();
+    }
+  }, 30_000);
+
+  it("still hands a message to a Codex blocked only by questions waiting collapsed in its queue", async () => {
+    const socket = await Socket.connect();
+    try {
+      const from = chunks(codex).length;
+      socket.send({ type: "submit", id: 9, pane_id: codex.pane, text: "stop, do not touch prod", payload: paste("stop, do not touch prod") });
+      expect(await socket.result(9)).toMatchObject({ ok: true });
+      await received(codex, from, 1);
+      expect(typed(codex, from)).toBe(`${paste("stop, do not touch prod")}\r`);
+    } finally {
       socket.close();
     }
   }, 30_000);

@@ -33,7 +33,7 @@ import {
   workspaceRename,
 } from "./herdr/client.ts";
 import { createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
-import { handlePromptRequest } from "./prompt.ts";
+import { codexQuestionsCollapsed, handlePromptRequest } from "./prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
 import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, replayTail } from "./output-window.ts";
@@ -191,7 +191,8 @@ export function createServer(
    * which refuses while the agent waits for an answer: the message is not typed into its
    * menu. A pane without an agent in front gets `payload`, shaped for its own paste mode,
    * through send_text, then Enter SUBMIT_DELAY_MS later; both return once the pane has
-   * the bytes, so the pane sees the whole gap.
+   * the bytes, so the pane sees the whole gap. So does a Codex "blocked" only by questions
+   * waiting collapsed in its queue: its main prompt still takes the message.
    */
   async function submitText(paneId: string, text: string, payload: string): Promise<void> {
     const typed = Date.now() - (lastTyped.get(paneId) ?? 0);
@@ -200,7 +201,10 @@ export function createServer(
       await agentPrompt(paneId, text);
       return;
     } catch (error) {
-      if (!(error instanceof HerdrError) || (error.code !== "agent_not_found" && error.code !== "agent_not_ready")) throw error;
+      if (!(error instanceof HerdrError)) throw error;
+      const queuedOnly = error.code === "agent_blocked"
+        && codexQuestionsCollapsed((await paneRead({ paneId, source: "visible", format: "text" })).text);
+      if (error.code !== "agent_not_found" && error.code !== "agent_not_ready" && !queuedOnly) throw error;
     }
     await paneSendText(paneId, payload);
     await Bun.sleep(SUBMIT_DELAY_MS);

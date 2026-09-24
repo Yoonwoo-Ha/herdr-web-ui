@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { InteractivePrompt } from "../shared/protocol.ts";
 
-import { answerKeys, parseInteractivePrompt } from "./prompt.ts";
+import { answerKeys, codexQuestionsCollapsed, parseInteractivePrompt } from "./prompt.ts";
 
 const labels = (prompt: InteractivePrompt | null) => prompt?.options.map((option) => option.label);
 
@@ -218,6 +218,29 @@ Press enter to confirm or esc to cancel
 • Command completed successfully.
 › Ask Codex to do something
 `)).toBeNull();
+  });
+});
+
+describe("Codex's collapsed question queue", () => {
+  test("is told apart from an open question, which holds the input", () => {
+    const collapsed = `
+• WAITING
+• Queued follow-up inputs
+  ? 2 questions · 8s
+    alt+↑ to answer
+› Ask Codex to do anything
+  GPT-6-Sol xhigh · ~/lab · Context 97% left
+`;
+    expect(codexQuestionsCollapsed(collapsed)).toBe(true);
+    expect(codexQuestionsCollapsed(`
+• Queued follow-up inputs
+  Which split?
+  › 1. train
+    2. test
+    3. Other
+  enter submit   ctrl+] skip   alt+↓ main prompt
+`)).toBe(false);
+    expect(codexQuestionsCollapsed("› Ask Codex to do anything\n")).toBe(false);
   });
 });
 

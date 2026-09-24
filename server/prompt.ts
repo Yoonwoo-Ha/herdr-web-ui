@@ -383,6 +383,20 @@ function parsePrompt(agent: string, screen: string): ParsedPrompt | null {
   return candidates.find((candidate): candidate is ParsedPrompt => candidate !== null && promptTailIsActive(candidate, screen)) ?? null;
 }
 
+/**
+ * Codex 0.156 holds the questions it asked with request_user_input_async in a queue above
+ * its main prompt, collapsed to "? 2 questions / alt+↑ to answer", and herdr reports the
+ * agent blocked meanwhile. Yet the main prompt has the input and takes a message (Codex
+ * then drops the questions). True for that collapsed queue only: an open one, with its
+ * "enter submit … skip" hint, holds the input itself.
+ */
+export function codexQuestionsCollapsed(screen: string): boolean {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine).filter(Boolean);
+  const header = findLastIndex(lines, (line) => /^(?:•\s*)?Queued follow-up inputs$/.test(line));
+  if (header < 0 || lines.length - header > 16 || lines.some((line) => CODEX_ASYNC_ASK_HINT_RE.test(line))) return false;
+  return lines.slice(header + 1, header + 8).some((line) => /^\?\s*\d+\s+questions?\b/.test(line));
+}
+
 export function parseInteractivePrompt(agent: string, screen: string): InteractivePrompt | null {
   const parsed = parsePrompt(agent, screen);
   return parsed ? publicPrompt(parsed) : null;
