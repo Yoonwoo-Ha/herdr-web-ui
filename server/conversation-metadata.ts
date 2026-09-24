@@ -29,6 +29,8 @@ export function parseConversationMetadata(text: string, source: ConversationResp
     } else if (source === "claude-transcript") {
       const message = record(entry.message);
       if (entry.type === "assistant" && label(message.model)) metadata.model = label(message.model);
+      // Claude Code records the effort each response ran at; versions before it record none
+      if (entry.type === "assistant" && "effort" in entry) metadata.reasoning_effort = label(entry.effort);
     }
   }
   return metadata;
