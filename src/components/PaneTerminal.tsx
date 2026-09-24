@@ -254,6 +254,9 @@ export function PaneTerminal({
     // translate a single-finger drag on the terminal into wheel events, so the
     // normal buffer scrolls its own viewport and the alternate buffer (with mouse
     // reporting on) forwards the gesture to herdr, exactly like a mouse wheel.
+    // The text follows the finger, as everywhere on a phone: dragging down brings
+    // older lines in. Each event carries the finger's position, since xterm reports
+    // a wheel at the cell under it (without one, every report said row 1, column 1).
     let touchY = 0;
     let tracking = false;
     const onTouchStart = (event: TouchEvent): void => {
@@ -265,13 +268,13 @@ export function PaneTerminal({
       if (!tracking || event.touches.length !== 1) return;
       event.preventDefault();
       const first = event.touches[0];
-      const y = first ? first.clientY : touchY;
-      // finger moving up (y < touchY) must scroll up, i.e. a negative wheel deltaY
-      const delta = y - touchY;
-      touchY = y;
+      if (!first) return;
+      // finger moving down (y > touchY) shows older lines: a wheel scrolling up, negative deltaY
+      const delta = touchY - first.clientY;
+      touchY = first.clientY;
       if (delta !== 0) {
         const target = term.element ?? host;
-        target.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: delta }));
+        target.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: delta, clientX: first.clientX, clientY: first.clientY }));
       }
     };
     const onTouchEnd = (): void => {
