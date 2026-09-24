@@ -19,14 +19,29 @@ const viewport = window.visualViewport;
 if (viewport) {
   const sync = (): void => {
     document.documentElement.style.setProperty("--app-height", `${Math.round(viewport.height)}px`);
-    // iOS keeps the layout viewport when the soft keyboard opens and shrinks only the
-    // visual one: a shortfall that large at scale 1 is the keyboard (a pinch zoom scales
-    // instead). The composer then drops the home-indicator space the keyboard covers.
-    const keyboard = Math.abs(viewport.scale - 1) < 0.01 && window.innerHeight - viewport.height > 120;
-    document.documentElement.toggleAttribute("data-keyboard", keyboard);
     if (document.querySelector(".app") !== null) window.scrollTo(0, 0);
   };
   viewport.addEventListener("resize", sync);
   viewport.addEventListener("scroll", sync);
   sync();
 }
+
+/**
+ * Marks the page while a phone's soft keyboard is up, so the composer drops the
+ * home-indicator space the keyboard covers (Composer.css). Viewport sizes do not
+ * tell: iOS Safari 26 resizes both viewports with the keyboard. A touch device
+ * with a text field focused has its keyboard up - except xterm's own hidden field,
+ * which the app focuses on its own, and which never raises a keyboard that way.
+ */
+const touch = window.matchMedia("(pointer: coarse)");
+const typing = (element: Element | null): boolean =>
+  (element instanceof HTMLTextAreaElement && !element.classList.contains("xterm-helper-textarea"))
+  || (element instanceof HTMLInputElement && !["button", "checkbox", "radio", "range", "submit", "reset", "file", "color"].includes(element.type))
+  || (element instanceof HTMLElement && element.isContentEditable);
+const syncKeyboard = (): void => {
+  document.documentElement.toggleAttribute("data-keyboard", touch.matches && typing(document.activeElement));
+};
+document.addEventListener("focusin", syncKeyboard);
+// focus moving from one field to the next blurs first: read where it landed
+document.addEventListener("focusout", () => window.setTimeout(syncKeyboard, 0));
+syncKeyboard();
