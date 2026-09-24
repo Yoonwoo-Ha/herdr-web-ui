@@ -21,10 +21,21 @@ export interface Machine {
   error: string | null;
   /** set when retrying cannot help: the user has to update the remote bridge or approve setup */
   action_required?: MachineAction | null;
+  /** a bridge update running for this PC right now (in the background, or from its dialog) */
+  updating?: MachineUpdate | null;
   snapshot: SessionSnapshot | null;
   herdr?: { version: string; protocol: number };
 }
 export type MachineAction = "update_bridge" | "setup";
+export interface MachineUpdate { job_id: string; step: string; progress: SetupProgress | null }
+/**
+ * Where a bridge install is. download (the web server fetching the bundle) and upload (the
+ * bundle going to the PC over SSH) count bytes; install and restart have no size.
+ * rate is bytes per second over the stage so far; elapsed_ms is how long the stage has run.
+ */
+export interface SetupProgress { stage: "download" | "upload" | "install" | "restart"; done: number; total: number | null; rate: number | null; elapsed_ms: number }
+/** Server-side PC preferences (machine-settings.json in the state directory). */
+export interface MachineSettings { auto_update_bridges: boolean }
 export interface SetupRequest extends SshTarget { name?: string; machine_id?: string; update_remote?: boolean }
 export type SetupPhase = "connecting" | "authentication" | "checking" | "approval" | "installing" | "starting" | "connected" | "failed" | "cancelled";
 export interface SetupChallenge { id: string; kind: "host_key" | "secret"; prompt: string }
@@ -37,6 +48,7 @@ export interface SetupJob {
   installations: string[];
   error: string | null;
   target: SshTarget;
+  progress?: SetupProgress | null;
 }
 export type SetupAction = { action: "answer"; challenge_id: string; answer: string } | { action: "approve" } | { action: "cancel" };
 export type MachineEvent = { type: "machines"; machines: Machine[] } | { type: "machine-message"; machine_id: string; message: ServerMessage };

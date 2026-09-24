@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Minus, Plus, X } from "lucide-react";
 
 import "./SettingsDialog.css";
@@ -8,6 +8,8 @@ import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, formatKeys } from "../lib/shortcuts.ts";
 import { CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, useSettings } from "../lib/settings.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
+import type { MachineSettings } from "../../shared/machines.ts";
+import { machineRequest } from "../lib/api.ts";
 import { UpdateControls } from "./UpdateControls.tsx";
 
 export interface SettingsDialogProps {
@@ -29,6 +31,17 @@ export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) 
   const { settings, update } = useSettings();
   const installPrompt = useInstallPrompt();
   const firstControlRef = useRef<HTMLButtonElement>(null);
+  // server-side: the web server updates PC bridges, so it keeps this choice
+  const [pcSettings, setPcSettings] = useState<MachineSettings | null>(null);
+  const [pcSettingsError, setPcSettingsError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    machineRequest<MachineSettings>("/settings").then(setPcSettings, () => setPcSettings(null));
+  }, [open]);
+  const updatePcSettings = async (patch: Partial<MachineSettings>) => {
+    try { setPcSettings(await machineRequest<MachineSettings>("/settings", "PATCH", patch)); setPcSettingsError(null); }
+    catch (e) { setPcSettingsError(e instanceof Error ? e.message : String(e)); }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -129,7 +142,16 @@ export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) 
             <p><strong>herdr web ui</strong></p>
             <a href="https://github.com/devswha/herdr-web-ui" target="_blank" rel="noreferrer">github.com/devswha/herdr-web-ui</a>
           </section>
-          <UpdateControls updates={updates} />
+          {pcSettings && <section className="settings-section">
+            <h3>Remote PCs</h3>
+            <div className="settings-row">
+              <div><span className="settings-label">Update PC bridges automatically</span><span className="settings-description">When an app update needs a newer bridge, PCs that connect with their saved key are updated in the background. PCs that need a password ask first.</span></div>
+              <Toggle label="Update PC bridges automatically" checked={pcSettings.auto_update_bridges} onChange={(auto_update_bridges) => void updatePcSettings({ auto_update_bridges })} />
+            </div>
+            {pcSettingsError && <p className="settings-hint" role="alert">{pcSettingsError}</p>}
+          </section>}
+
+          <UpdateControls updates={updates} bridgesFollow={pcSettings?.auto_update_bridges === true} />
         </div>
       </section>
     </div>

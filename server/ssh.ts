@@ -4,6 +4,10 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SshTarget } from "../shared/machines.ts";
 import { shellQuote } from "./machine-security.ts";
+import { chunksOf } from "./remote-bundle.ts";
+
+/** A file streamed to a remote command's stdin, with how much of it went so far. */
+export interface StreamInput { path: string; onProgress?(done: number): void; onUploaded?(): void }
 
 export class SshConnection {
   private dir = mkdtempSync(join(tmpdir(), "herdr-ssh-"));
@@ -70,7 +74,7 @@ export class SshConnection {
       await Bun.sleep(100);
     }
   }
-  async run(script: string, input?: Uint8Array, timeout = 90_000): Promise<string> {
+  async run(script: string, input?: Uint8Array | StreamInput, timeout = 90_000): Promise<string> {
     if (this.closed) throw new Error("SSH connection closed");
     // BatchMode prevents an expired master from unexpectedly opening a new password prompt.
     return this.exec([...this.base(), "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-T", this.target.destination, "sh -c " + shellQuote(script)], input, timeout);
@@ -78,14 +82,30 @@ export class SshConnection {
   async forward(port: number, remotePort: number): Promise<void> {
     await this.exec([...this.base(), "-O", "forward", "-L", `127.0.0.1:${port}:127.0.0.1:${remotePort}`, this.target.destination]);
   }
-  private async exec(args: string[], input?: Uint8Array, timeout = 30_000): Promise<string> {
-    const proc = Bun.spawn(args, { stdin: input ? new Blob([new Uint8Array(input)]) : "ignore", stdout: "pipe", stderr: "pipe" });
+  private async exec(args: string[], input?: Uint8Array | StreamInput, timeout = 30_000): Promise<string> {
+    const stream = input !== undefined && !(input instanceof Uint8Array) ? input : undefined;
+    const proc = Bun.spawn(args, { stdin: stream ? "pipe" : input ? new Blob([new Uint8Array(input as Uint8Array)]) : "ignore", stdout: "pipe", stderr: "pipe" });
     this.children.add(proc);
     const timer = setTimeout(() => proc.kill(), timeout);
+    // a file goes over in chunks, each written once ssh has taken the last one, so what was
+    // written tracks what was sent to within ssh's own buffer
+    const feed = stream ? (async () => {
+      const sink = proc.stdin as import("bun").FileSink;
+      let done = 0;
+      try {
+        for await (const chunk of chunksOf(Bun.file(stream.path).stream())) {
+          sink.write(chunk); await sink.flush();
+          done += chunk.length; stream.onProgress?.(done);
+        }
+      } finally { try { await sink.end(); } catch {} }
+      stream.onUploaded?.();
+    })().then(() => null, (error: unknown) => error) : Promise.resolve(null);
     try {
-      const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+      const [out, err, code, fed] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited, feed]);
       if (this.closed) throw new Error("Connection cancelled");
+      // the remote side's own words say more than a broken pipe on this side
       if (code !== 0) throw new Error(err.trim().slice(-4096) || `SSH command failed (${code})`);
+      if (fed) throw fed instanceof Error ? fed : new Error(String(fed));
       return out;
     } finally { clearTimeout(timer); this.children.delete(proc); }
   }

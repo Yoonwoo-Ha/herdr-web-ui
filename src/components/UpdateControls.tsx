@@ -8,7 +8,7 @@ function versionLabel(version: string | null | undefined, revision: string | nul
   return commit ?? null;
 }
 
-export function UpdateControls({ updates }: { updates: UpdatesModel }) {
+export function UpdateControls({ updates, bridgesFollow = false }: { updates: UpdatesModel; bridgesFollow?: boolean }) {
   const { status, error, busy, needsReload, request } = updates;
   return <section className="settings-section settings-updates">
     <h3>Updates</h3>
@@ -19,7 +19,7 @@ export function UpdateControls({ updates }: { updates: UpdatesModel }) {
         status?.available ? `Version ${versionLabel(status.latest_version, status.latest_revision)} is available.` : status?.checked_at ? "Up to date." : "Waiting for an update check…")}
     </p>
     {status?.managed && <>
-      <p className="settings-hint">Checks for new releases every 5 minutes. {status.auto_update ? "Automatic installation is enabled." : "Install when you are ready; the bridge briefly reconnects and herdr sessions keep running."}</p>
+      <p className="settings-hint">Checks for new releases every 5 minutes. {status.auto_update ? "Automatic installation is enabled." : "Install when you are ready; the bridge briefly reconnects and herdr sessions keep running."}{bridgesFollow ? " Remote PCs' bridges are updated afterwards when the new version needs it." : ""}</p>
       <div className="update-actions">
         <button type="button" className="btn" disabled={busy} onClick={() => void request("check")}>Check for updates</button>
         <button type="button" className="btn btn-primary" disabled={busy || !status.available || !!status.blocked_reason} onClick={() => void request("install")}>Update and restart</button>
