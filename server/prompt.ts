@@ -37,9 +37,10 @@ const KEY = {
   tab: "tab",
   right: "right",
   backtab: "shift+tab",
-  // opens Codex's queue on its first question (herdr's own alt+arrow bindings
-  // apply to the keyboard, not to keys sent to the pane)
+  // opens Codex's queue on its first question, and closes it back to the main prompt
+  // (herdr's own alt+arrow bindings apply to the keyboard, not to keys sent to the pane)
   openQueue: "alt+up",
+  closeQueue: "alt+down",
 } as const;
 
 type Responder =
@@ -179,6 +180,7 @@ function publicPrompt(parsed: ParsedPrompt): InteractivePrompt {
     options: parsed.options,
     multi_select: parsed.multi_select,
     custom_option_index: parsed.custom_option_index,
+    ...(parsed.queued ? { queued: true } : {}),
   };
   parsedByPublicPrompt.set(prompt, parsed);
   return prompt;
@@ -310,12 +312,17 @@ function parseCodexAsyncQuestion(screen: string): ParsedPrompt | null {
   });
 }
 
-/** How many questions wait in Codex's collapsed queue at the bottom of the screen; 0 when none do. */
+/**
+ * How many questions wait in Codex's collapsed queue at the bottom of the screen; 0 when
+ * none do. A message of the user's own waiting to be submitted replaces the questions'
+ * block (alt+↑ then opens nothing, checked on Codex 0.156.1): no count then either.
+ */
 function queuedQuestionCount(screen: string): number {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine).filter(Boolean);
   const header = findLastIndex(lines, (line) => CODEX_QUEUE_HEADER_RE.test(line));
   // the queue sits right above the main prompt and its status line
   if (header < 0 || lines.length - header > 16) return 0;
+  if (lines.slice(header).some((line) => /^↳\s/.test(line) || /Messages to be submitted/i.test(line))) return 0;
   for (const line of lines.slice(header + 1, header + 8)) {
     const count = line.match(CODEX_QUEUE_COUNT_RE);
     if (count) return Number(count[1]);
@@ -334,7 +341,7 @@ function queuedPrompt(count: number, unanswered: QueuedQuestion[]): ParsedPrompt
   return finishPrompt("codex", {
     kind: "question", title: count > 1 ? `Question 1 of ${count}` : "Question", question: normalizeText(first.title), body: null,
     options: first.options.map((label) => ({ label, description: null })),
-    multi_select: false, custom_option_index: first.options.length,
+    multi_select: false, custom_option_index: first.options.length, queued: true,
   }, {
     responder: "codex-queued-question", menuLabels: first.options.length ? [...first.options, "Other"] : [],
     selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: first.options.length, rejectWithEscapeIndex: null,
@@ -414,7 +421,8 @@ function parseClaudeSubmit(screen: string): ParsedPrompt | null {
   const body = lines.slice(tabsIndex + 1, questionIndex).map(cleanLine)
     .filter((line) => line && !isDivider(line) && !/^Review your answers$/i.test(line)).join("\n");
   return finishPrompt("claude", {
-    kind: "question", title: "Review your answers", question: cleanLine(lines[questionIndex]!), body: body || null,
+    // a menu, not a question: a typed pick submits every answer at once, so it waits for Confirm
+    kind: "menu", title: "Review your answers", question: cleanLine(lines[questionIndex]!), body: body || null,
     options: rows.map((row) => ({ label: row.label, description: null })), multi_select: false, custom_option_index: null,
   }, {
     responder: "claude-submit", menuLabels: rows.map((row) => row.label), selectedIndex: rows.findIndex((row) => row.selected),
@@ -504,7 +512,8 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     // tool ("Bash command", "Create file"), then the command or file and its description
     // the panel's rule is the first one under the tool call (`● Write(a.ts)`): rules further
     // down belong to a file preview; with the call scrolled away, the nearest rule
-    const callIndex = findLastIndex(lines.slice(0, questionIndex), (line) => /^●\s/.test(cleanLine(line)));
+    // Claude's own text opens with ● too ("● Results table follows:"): a call is a tool name and "("
+    const callIndex = findLastIndex(lines.slice(0, questionIndex), (line) => /^●\s+[\w.:-]+(?:\s[\w.:-]+)*\(/.test(cleanLine(line)));
     const rules = lines.slice(0, questionIndex).flatMap((line, index) => index > callIndex && SOLID_RULE_RE.test(cleanLine(line)) ? [index] : []);
     const ruleIndex = callIndex >= 0 ? rules[0] ?? -1 : rules.at(-1) ?? -1;
     if (ruleIndex < 0 || questionIndex - ruleIndex > 60) return null;
@@ -666,9 +675,22 @@ async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: 
     if (queueRollouts.size > 64) queueRollouts.delete(queueRollouts.keys().next().value!);
   }
   try {
-    return { agent, prompt: rollout.path ? codexQueuedPrompt(screen.text, unansweredCodexQuestions(rollout.path)) : null };
+    return { agent, prompt: rollout.path ? codexQueuedPrompt(screen.text, await unansweredCodexQuestions(rollout.path)) : null };
   } catch {
     return { agent, prompt: null }; // the rollout went away
+  }
+}
+
+/** After an answer from the chat: close Codex's queue if it opened its next question. */
+async function closeQueue(paneId: string): Promise<void> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await Bun.sleep(100);
+    const screen = (await paneRead({ paneId, source: "visible", format: "text" })).text;
+    if (parsePrompt("codex", screen)?.responder === "codex-async-question") {
+      await paneSendKeys(paneId, [KEY.closeQueue]);
+      return;
+    }
+    if (queuedQuestionCount(screen) > 0) return;
   }
 }
 
@@ -689,6 +711,8 @@ function sameText(shown: string, asked: string): boolean {
  * guess behind); a queue that does not open is left alone.
  */
 async function openQueuedQuestion(paneId: string, queued: ParsedPrompt): Promise<InteractivePrompt | null> {
+  // the key only once the screen still shows the questions' count, nothing of the user's queued
+  if (queuedQuestionCount((await paneRead({ paneId, source: "visible", format: "text" })).text) === 0) return null;
   await paneSendKeys(paneId, [KEY.openQueue]);
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await Bun.sleep(100);
@@ -759,6 +783,9 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         else if (step.text !== undefined) await paneSendText(body.pane_id, step.text);
         if (index < steps.length - 1) await Bun.sleep(30);
       }
+      // opened from the chat, the queue closes again: the next question waits collapsed, and
+      // the main prompt (where a message typed in the chat goes) has the input back
+      if (target !== prompt) await closeQueue(body.pane_id);
       return jsonResponse({ ok: true });
     });
   } catch (error) {

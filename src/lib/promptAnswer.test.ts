@@ -40,6 +40,8 @@ describe("answering a prompt from the chat", () => {
     expect(needsConfirmation(approval, { option_index: 0 })).toBe(true);
     expect(needsConfirmation(prompt(["LM-O"], 1), { option_index: 0 })).toBe(false);
     expect(needsConfirmation({ ...prompt(["Yes", "No", "Tell Claude what to change"], 2), kind: "plan" }, { custom_text: "shorter" })).toBe(false);
+    // Claude's review submits every answer, a Codex menu continues or stops: a typed pick waits too
+    expect(needsConfirmation({ ...prompt(["Submit answers", "Cancel"], null), kind: "menu" }, { option_index: 0 })).toBe(true);
   });
 
   it("skips a plan's custom row inside the options and reads several numbers for a multiple choice", () => {

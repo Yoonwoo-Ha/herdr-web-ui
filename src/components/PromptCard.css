@@ -38,6 +38,13 @@
   line-height: var(--lh-base);
 }
 
+/* a question in Codex's queue: the agent is not waiting on it, so the card says who answers what */
+.prompt-card-hint {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+}
+
 .prompt-card-body {
   max-height: 10rem;
   margin: 0;

@@ -196,7 +196,7 @@ export function readRange(path: string, start: number, end: number): string {
 /** A question Codex queued with request_user_input_async; `options` is empty for a free-form one. */
 export interface QueuedQuestion { key: string; title: string; options: string[] }
 
-const QUESTION_SCAN_BYTES = 16 * 1024 * 1024;
+const QUESTION_SCAN_BYTES = 4 * 1024 * 1024;
 /** Per rollout: how far it was read, the questions asked and the ones answered since. */
 const questionScans = new Map<string, { ino: number; size: number; cut: boolean; asked: QueuedQuestion[]; answered: Set<string> }>();
 
@@ -204,9 +204,10 @@ const questionScans = new Map<string, { ino: number; size: number; cut: boolean;
  * The questions a rollout asked with request_user_input_async and holds no answer for,
  * oldest first. A question skipped in the TUI leaves no record, so a caller takes as
  * many of the newest as the TUI shows waiting. Only bytes appended since the last call
- * are read (the first call reads the last 16MB), and only lines naming the tool parsed.
+ * are read (the first call reads the last 4MB, without blocking), and only lines naming
+ * the tool parsed.
  */
-export function unansweredCodexQuestions(path: string): QueuedQuestion[] {
+export async function unansweredCodexQuestions(path: string): Promise<QueuedQuestion[]> {
   const stat = statSync(path);
   let scan = questionScans.get(path);
   if (!scan || scan.ino !== stat.ino || stat.size < scan.size) {
@@ -214,12 +215,7 @@ export function unansweredCodexQuestions(path: string): QueuedQuestion[] {
     scan = { ino: stat.ino, size: start, cut: start > 0, asked: [], answered: new Set() };
   }
   if (stat.size > scan.size) {
-    const fd = openSync(path, "r");
-    let bytes: Buffer;
-    try {
-      const buffer = Buffer.alloc(stat.size - scan.size);
-      bytes = buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, scan.size));
-    } finally { closeSync(fd); }
+    const bytes = Buffer.from(await Bun.file(path).slice(scan.size, stat.size).arrayBuffer());
     // whole lines only: a line still being written is read again next time
     const end = bytes.lastIndexOf(0x0a) + 1;
     let text = bytes.subarray(0, end).toString("utf8");

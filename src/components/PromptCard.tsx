@@ -72,6 +72,7 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
         <h2>{prompt.title}</h2>
       </header>
       <p className="prompt-card-question">{prompt.question}</p>
+      {prompt.queued && <p className="prompt-card-hint">Codex keeps working meanwhile. Answer here; the message box still talks to Codex.</p>}
       {prompt.body !== null && prompt.body.length > 0 && <pre className="prompt-card-body">{prompt.body}</pre>}
       <div className="prompt-card-options">
         {prompt.options.map((option, index) => {

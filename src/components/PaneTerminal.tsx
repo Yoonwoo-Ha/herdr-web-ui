@@ -475,7 +475,9 @@ export function PaneTerminal({
 
   // chatmux's queue-next: while the pane's agent runs, a send becomes the ONE
   // queued message; it leaves the queue when the agent is known to be ready.
-  const answering = chatView && chatPrompt !== null && chatPrompt.pane === paneId ? chatPrompt.value : null;
+  // a question in Codex's queue leaves the composer alone: Codex keeps working, and a
+  // message ("stop, don't touch prod") must reach it, not become the answer; its card answers it
+  const answering = chatView && chatPrompt !== null && chatPrompt.pane === paneId && !chatPrompt.value.queued ? chatPrompt.value : null;
   const busy = agent !== null && agentStatus === "working" && answering === null;
   const readyForQueue = agentStatus !== undefined && QUEUE_READY_STATUS[agentStatus] === true;
 

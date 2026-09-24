@@ -137,20 +137,20 @@ describe("Codex queued questions (request_user_input_async)", () => {
     expect(turns[1]!.parts[0]).toMatchObject({ kind: "tool", name: "request_user_input_async", summary: "Which dataset? · Any notes?" });
   });
 
-  it("lists the questions still unanswered, reading only what the rollout appends", () => {
+  it("lists the questions still unanswered, reading only what the rollout appends", async () => {
     dir = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-questions-"));
     const path = join(dir, "rollout.jsonl");
     writeFileSync(path, `${jsonl(message("user", "go"), asked)}\n`);
-    expect(unansweredCodexQuestions(path)).toEqual([
+    expect(await unansweredCodexQuestions(path)).toEqual([
       { key: "call_a:0", title: "Which dataset?", options: ["LM-O", "YCB-V"] },
       { key: "call_a:1", title: "Any notes?", options: [] },
     ]);
     appendFileSync(path, `${jsonl(reply({ callId: "call_a", index: 0, question: "Which dataset?", answer: "LM-O" }))}\n`);
     // a record still being written is not read yet
     appendFileSync(path, JSON.stringify(ask("call_b", [{ title: "Split?", options: [{ label: "train" }, { label: "test" }] }])).slice(0, 40));
-    expect(unansweredCodexQuestions(path).map((question) => question.key)).toEqual(["call_a:1"]);
+    expect((await unansweredCodexQuestions(path)).map((question) => question.key)).toEqual(["call_a:1"]);
     appendFileSync(path, `${JSON.stringify(ask("call_b", [{ title: "Split?", options: [{ label: "train" }, { label: "test" }] }])).slice(40)}\n`);
-    expect(unansweredCodexQuestions(path)).toEqual([
+    expect(await unansweredCodexQuestions(path)).toEqual([
       { key: "call_a:1", title: "Any notes?", options: [] },
       { key: "call_b:0", title: "Split?", options: ["train", "test"] },
     ]);

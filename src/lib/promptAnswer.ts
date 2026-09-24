@@ -70,10 +70,11 @@ export function answerRefusal(prompt: InteractivePrompt): string {
 }
 
 /**
- * A typed message picking an approval's option (or a plan's) could run a command or
- * a plan on a stray "yes" or "1": the card asks for a tap on Confirm first. A tap on
+ * A typed message picking an approval's option (or a plan's, or a menu's: Claude's
+ * "Review your answers" submits every answer at once, Codex's menus continue or stop)
+ * could act on a stray "yes" or "1": the card asks for a tap on Confirm first. A tap on
  * an option in the card is explicit already, and a plan's own reply is feedback.
  */
 export function needsConfirmation(prompt: InteractivePrompt, answer: TypedAnswer): boolean {
-  return (prompt.kind === "approval" || prompt.kind === "plan") && answer.option_index !== undefined;
+  return (prompt.kind === "approval" || prompt.kind === "plan" || prompt.kind === "menu") && answer.option_index !== undefined;
 }

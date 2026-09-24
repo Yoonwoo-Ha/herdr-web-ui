@@ -184,6 +184,9 @@ export interface InteractivePrompt {
   multi_select: boolean;
   /** index of the "type your own answer" option, when the menu has one */
   custom_option_index: number | null;
+  /** a question waiting in Codex's queue while Codex keeps working: only the card answers it,
+   * and a message typed in the chat still goes to Codex */
+  queued?: boolean;
 }
 
 export interface InteractivePromptOption {

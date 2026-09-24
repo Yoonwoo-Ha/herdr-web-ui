@@ -255,7 +255,8 @@ Ready to submit your answers?
 ❯ 1. Submit answers
   2. Cancel
 `);
-    expect(review).toMatchObject({ kind: "question", title: "Review your answers", question: "Ready to submit your answers?", custom_option_index: null });
+    // a menu: a typed pick submits every answer at once, so the chat asks for Confirm
+    expect(review).toMatchObject({ kind: "menu", title: "Review your answers", question: "Ready to submit your answers?", custom_option_index: null });
     expect(review?.body).toContain("→ Repo owner");
     expect(labels(review)).toEqual(["Submit answers", "Cancel"]);
 
@@ -289,6 +290,23 @@ Ready to submit your answers?
  Esc to cancel · Tab to amend
 `);
     expect(labels(wrapped)).toEqual(["Yes", "Yes, and always allow access to /tmp/prompt-lab/junk from this project", "No"]);
+    // Claude's own text opens with ● as well: a rule in its table is not the approval's panel
+    const underText = parseInteractivePrompt("claude", `
+● Results table follows:
+────────────────────────────────────────
+  run   AR
+────────────────────────────────────────
+  a     0.66
+────────────────────────────────────────
+ Bash command
+   rm -rf junk
+   Delete the junk directory
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel · Tab to amend
+`);
+    expect(underText).toMatchObject({ kind: "approval", title: "Bash command", body: "rm -rf junk\nDelete the junk directory" });
     expect(answerKeys(bash!, { option_index: 3 })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { keys: ["down"] }, { keys: ["enter"] }]);
 
     const write = parseInteractivePrompt("claude", `
@@ -478,6 +496,12 @@ describe("Codex's queue of questions (request_user_input_async)", () => {
 ${status}
 `;
     expect(parseInteractivePrompt("codex", collapsed)).toBeNull();
+    // only the card answers it: Codex keeps working, and the chat's messages still go to Codex
+    expect(codexQueuedPrompt(collapsed, [{ key: "call_c:0", title: "Which dataset?", options: ["LM-O"] }, { key: "call_c:1", title: "Any notes?", options: [] }])?.queued).toBe(true);
+    // a message of the user's own waiting to go replaces the questions' block: nothing to open
+    expect(codexQueuedPrompt(collapsed.replace("    alt+↑ to answer", "    alt+↑ to answer\n• Messages to be submitted after next tool call\n  ↳ stop, don't touch prod"), [
+      { key: "call_c:0", title: "Which dataset?", options: ["LM-O"] }, { key: "call_c:1", title: "Any notes?", options: [] },
+    ])).toBeNull();
     const asked = [
       // skipped in the TUI: no record says so, but only the newest two are waiting
       { key: "call_a:0", title: "Old question?", options: ["x", "y"] },
