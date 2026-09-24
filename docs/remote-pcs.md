@@ -41,7 +41,11 @@ PC registrations and last snapshots persist in `<stateDir>/machines.json`; `HERD
 
 **Disconnect** closes that PC’s observer, forwards and terminal attachments, preserving remote processes. **Remove PC** additionally forgets its local registration/key; the public key line on the remote account remains visible for manual removal (`herdr-web-ui:<machine-id>`). No unrelated authorized keys are removed.
 
-**Update bridge…** is an explicit setup operation. A verified runtime is installed into a checksum-addressed directory before the selected managed bridge is restarted. Existing runtime directories remain available to other running bridges. The updater authenticates the old bridge and checks its PID before stopping it; herdr itself is left running. A separately managed server must use its own update controls. The connection server’s existing Settings-based app updater remains independent.
+**Updating a bridge.** A bridge from another bundle version is refused, and the PC waits instead of retrying. With **Settings → Remote PCs → Update PC bridges automatically** on (the default), the connection server then updates it in the background: installing the app update was the approval, and SSH uses the PC's saved key only (`BatchMode`). A PC that needs a password or passphrase fails with the reason and waits; its **Sign in and update…** button opens the dialog. With the setting off, the PC's **Update bridge** button starts the same background update, and the tap is the approval. A first install still asks for approval in the dialog.
+
+The update runs on the server, not in a dialog: closing the dialog after approval, or never opening one, does not stop it, and **Cancel update** does. The sidebar and the header show the step (download, upload to the PC, verify and install, restart), the bytes, and roughly how long is left. The connection server keeps the verified bundle under `<stateDir>/bundles/<sha256>.tgz` (the newest four), downloads each checksum once even for PCs updating together, and streams the file to the PC instead of holding it in memory.
+
+A verified runtime is installed into a checksum-addressed directory before the selected managed bridge is restarted. Existing runtime directories remain available to other running bridges. The updater authenticates the old bridge and checks its PID before stopping it; herdr itself is left running. A separately managed server must use its own update controls. The connection server's own app update (Settings → Updates) is separate from these bridge updates.
 
 ## Building and distributing runtimes
 

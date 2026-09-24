@@ -7,6 +7,16 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- Remote PC bridges update in the background. When an app update needs a newer bridge, PCs that
+  connect with their saved key are updated automatically (**Settings → Remote PCs**, on by
+  default); with it off, **Update bridge** starts the same update in one tap. A PC that needs a
+  password asks through **Sign in and update…**.
+- The sidebar and the header show a bridge update's step, bytes and time left, with **Cancel
+  update**. Closing the dialog after approval no longer cancels an install.
+- The web server keeps downloaded bridge bundles by checksum and downloads each once, so a second
+  PC or a retry only sends it to the PC.
+
 ## [0.3.2] - 2026-09-25
 
 ### Changed
