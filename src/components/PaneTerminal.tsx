@@ -478,6 +478,8 @@ export function PaneTerminal({
   // a question in Codex's queue leaves the composer alone: Codex keeps working, and a
   // message ("stop, don't touch prod") must reach it, not become the answer; its card answers it
   const answering = chatView && chatPrompt !== null && chatPrompt.pane === paneId && !chatPrompt.value.queued ? chatPrompt.value : null;
+  // ...and while it is open in the terminal it holds the input: nothing is sent into it
+  const heldByOpenQueue = chatView && chatPrompt !== null && chatPrompt.pane === paneId && chatPrompt.value.queued === "open";
   const busy = agent !== null && agentStatus === "working" && answering === null;
   const readyForQueue = agentStatus !== undefined && QUEUE_READY_STATUS[agentStatus] === true;
 
@@ -485,7 +487,7 @@ export function PaneTerminal({
     (text: string): boolean | string | Promise<boolean | string> => {
       const pane = paneRef.current;
       // Codex's queue open in the terminal holds the input: a message would become the answer
-      if (pane !== null && chatView && chatPrompt?.pane === pane && chatPrompt.value.queued === "open") {
+      if (pane !== null && heldByOpenQueue) {
         return "Codex has a question open in the terminal: answer it above, or close it there (alt+↓) to message Codex.";
       }
       if (pane !== null && answering !== null) {
@@ -511,7 +513,7 @@ export function PaneTerminal({
       }
       return sendComposerText(text);
     },
-    [agent, agentStatus, answerPanePrompt, answering, chatPrompt, chatView, sendComposerText],
+    [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, sendComposerText],
   );
 
   // A reconnect or status refresh never sends held text without a user action.
@@ -631,7 +633,8 @@ export function PaneTerminal({
             <button
               type="button"
               className="composer-queue-send"
-              disabled={!connected || queueSending}
+              disabled={!connected || queueSending || heldByOpenQueue}
+              title={heldByOpenQueue ? "Codex has a question open in the terminal: answer it above first" : undefined}
               onClick={() => {
                 // a held message leaves the queue only once the pane has it; one send at a time
                 setQueueSending(true);

@@ -526,7 +526,14 @@ ${status}
     expect(labels(prompt)).toEqual(["LM-O", "YCB-V"]);
     expect(codexQueuedPrompt(collapsed.replace("? 2 questions", "? 1 question"), asked)).toMatchObject({ title: "Question", question: "Any notes?", options: [], custom_option_index: 0 });
     // the queue opened on another question last time (one was skipped): the card shows that one
-    expect(codexQueuedPrompt(collapsed, asked, "Old question?")).toMatchObject({ question: "Old question?", title: "Question 1 of 2" });
+    expect(codexQueuedPrompt(collapsed, asked, { question: "Old question?", options: ["x", "y"] })).toMatchObject({ question: "Old question?", title: "Question 1 of 2" });
+    // by title and options: an older skipped question with the same title is not the one it opened on
+    const twins = [
+      { key: "call_t:0", title: "Which dataset?", options: ["COCO"] },
+      ...asked,
+    ];
+    expect(labels(codexQueuedPrompt(collapsed, twins, { question: "Which dataset?", options: ["LM-O", "YCB-V"] }))).toEqual(["LM-O", "YCB-V"]);
+    expect(labels(codexQueuedPrompt(collapsed, twins, { question: "Which dataset?", options: ["COCO"] }))).toEqual(["COCO"]);
     // fewer on record than the queue holds: the card cannot say which is first
     expect(codexQueuedPrompt(collapsed, asked.slice(2))).toBeNull();
     // the count must be the queue above the main prompt, not an old line higher up
