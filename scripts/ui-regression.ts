@@ -1,4 +1,5 @@
 /** Real-browser regressions against owned herdr panes. Run after `bun run build`. */
+import "./test-herdr.ts"; // a herdr session of its own: nothing shows in the user's
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

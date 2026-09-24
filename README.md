@@ -186,11 +186,13 @@ Checks:
 ```bash
 bun run typecheck
 bun run build
-bun test                        # needs a live herdr; creates and removes its own workspaces
+bun test                        # needs herdr installed; creates and removes its own workspaces
 bun run test:ui                 # browser regression against isolated test servers
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun run test:ssh                # remote-PC integration over SSH
 ```
+
+Tests run against a herdr session of their own, `herdr-web-ui-test`: the first run starts a headless `herdr --session herdr-web-ui-test server` and later runs reuse it, so test workspaces never show in the herdr you work in (`scripts/test-herdr.ts`). Stop it with `herdr --session herdr-web-ui-test server stop`. `HERDR_TEST_SESSION` picks another name, and `HERDR_TEST_LIVE=1` runs against `HERDR_SOCKET` or your default session as before.
 
 To release, bump `version` in `package.json` and `herdr-plugin.toml`, move the `Unreleased` notes in [CHANGELOG.md](CHANGELOG.md) under the new version, commit, then push `main` together with a `vX.Y.Z` tag (`git push origin main vX.Y.Z`). The release workflow checks that the three versions agree, builds, tests and publishes the GitHub release; installs pick it up within five minutes. Remote-PC runtime bundles are released separately by pushing `remote-vN` after raising `REMOTE_BUNDLE_VERSION` in `shared/machines.ts`.
 
