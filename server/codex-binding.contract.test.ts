@@ -54,6 +54,19 @@ const read = async (paneId: string): Promise<ConversationResponse> => {
   const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`);
   return await response.json() as ConversationResponse;
 };
+/** A thread begun now in the panes' cwd, as /new starts one; returns its removal. */
+const newerThread = (): (() => void) => {
+  const id = `01a0c7a1-56d9-7e20-9f08-f7a2d973bc${String(Math.floor(Math.random() * 90) + 10)}`;
+  const db = new Database(join(codexHome, "state_5.sqlite"));
+  const now = Math.ceil(Date.now() / 1000) + 1;
+  db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, ?, ?)").run(id, join(codexHome, "sessions", "missing.jsonl"), root, now, now);
+  db.close();
+  return () => {
+    const db = new Database(join(codexHome, "state_5.sqlite"));
+    db.query("DELETE FROM threads WHERE id = ?").run(id);
+    db.close();
+  };
+};
 const lastAnswer = (conversation: ConversationResponse) =>
   conversation.turns.at(-1)?.parts.map((part) => part.kind === "text" ? part.text : "").join("") ?? null;
 
@@ -88,11 +101,12 @@ it("reads the thread a Codex TUI was resumed on while none of its answers is on 
   expect(lastAnswer(conversation)).toBe(answers.resumed);
   // /new in that TUI (or any Codex in this cwd) starts a thread after it: the command
   // line no longer tells, and the chat says so rather than show the resumed thread
-  const db = new Database(join(codexHome, "state_5.sqlite"));
-  const now = Math.ceil(Date.now() / 1000) + 1;
-  db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, ?, ?)").run("01a0c7a1-56d9-7e20-9f08-f7a2d973bc03", join(codexHome, "sessions", "missing.jsonl"), root, now, now);
-  db.close();
-  expect((await read(paneId)).source).toBe("scrollback");
+  const remove = newerThread();
+  try {
+    expect((await read(paneId)).source).toBe("scrollback");
+  } finally {
+    remove();
+  }
 });
 
 it("keeps a matched rollout while tool output scrolls the answer away, and drops it for another process", async () => {
@@ -108,4 +122,19 @@ it("keeps a matched rollout while tool output scrolls the answer away, and drops
   await herdrRpc("pane.send_text", { pane_id: paneId, text: `${join(root, "bin", "codex")}\n` });
   await codexRunning(paneId, first);
   expect((await read(paneId)).source).toBe("scrollback");
+}, 20_000);
+
+it("drops a matched rollout once a newer thread begins in its cwd, as /new does", async () => {
+  const paneId = await pane("renewed", `FLOOD_AFTER=3 ${join(root, "bin", "codex")} --say`);
+  for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
+  expect(lastAnswer(await read(paneId))).toBe(answers.matched);
+  await Bun.sleep(3500);
+  expect(lastAnswer(await read(paneId))).toBe(answers.matched);
+  // the process now writes a thread begun after the match: the chat cannot tell which
+  const remove = newerThread();
+  try {
+    expect((await read(paneId)).source).toBe("scrollback");
+  } finally {
+    remove();
+  }
 }, 20_000);

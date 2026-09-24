@@ -339,8 +339,8 @@ export function resumedThread(argvs: readonly (readonly string[])[]): string | n
   return null;
 }
 
-/** The rollout each pane's Codex was last matched to on screen, and the processes that were running it. */
-const boundRollouts = new Map<string, { processes: string; path: string }>();
+/** The rollout each pane's Codex was last matched to on screen, the processes that were running it, and when. */
+const boundRollouts = new Map<string, { processes: string; path: string; at: number }>();
 
 /**
  * When a process started, in ms since the epoch: Linux counts it in /proc (USER_HZ
@@ -402,6 +402,9 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   let db: Database | undefined;
   let paths: string[] = [...open];
   let resumedPath: string | null = null;
+  const bound = boundRollouts.get(paneId);
+  const boundHere = bound !== undefined && bound.processes === processes && processes !== "" ? bound : undefined;
+  let boundSuperseded = false;
   try {
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     if (session?.value && UUID.test(session.value)) {
@@ -424,6 +427,13 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
         ).get(cwd, resumed, resumed);
       resumedPath = row && !newer ? codexRolloutPath(row.rollout_path, home) : null;
     }
+    if (boundHere !== undefined) {
+      // the same guard for a match: after /new the process writes a thread begun since
+      // (created_at has whole seconds, so one begun in the match's second counts too)
+      boundSuperseded = db.query<{ id: string }, [string, number]>(
+        "SELECT id FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL AND created_at >= ? LIMIT 1",
+      ).get(cwd, Math.floor(boundHere.at / 1000)) !== null;
+    }
     const rows = db.query<{ rollout_path: string }, [string]>(
       "SELECT rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL ORDER BY updated_at DESC LIMIT 32",
     ).all(cwd);
@@ -440,20 +450,20 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   const matched = screen ? matchCodexTranscript(screen.text, candidates) : null;
   if (matched !== null) {
     boundRollouts.delete(paneId);
-    boundRollouts.set(paneId, { processes, path: matched });
+    boundRollouts.set(paneId, { processes, path: matched, at: Date.now() });
     if (boundRollouts.size > 64) boundRollouts.delete(boundRollouts.keys().next().value!);
     return matched;
   }
   // Nothing on screen tells: a long run of tool output pushed the last answer out of
   // the read, or nothing is answered yet. The same Codex process still writes the
-  // rollout it was last matched to (a later match to another one, after /new, wins);
-  // failing that, the thread it was resumed on.
-  const bound = boundRollouts.get(paneId);
-  if (bound !== undefined && bound.processes === processes && processes !== "" && codexRolloutPath(bound.path, home) !== null) {
+  // rollout it was last matched to, until a thread begun since in this cwd (/new here,
+  // or a Codex in another pane) leaves it unsure; failing that, the thread it was resumed on.
+  if (boundSuperseded) boundRollouts.delete(paneId);
+  else if (boundHere !== undefined && codexRolloutPath(boundHere.path, home) !== null) {
     // a pane in use stays among the kept ones
     boundRollouts.delete(paneId);
-    boundRollouts.set(paneId, bound);
-    return bound.path;
+    boundRollouts.set(paneId, boundHere);
+    return boundHere.path;
   }
   return resumedPath;
 }
