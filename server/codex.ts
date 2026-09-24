@@ -377,51 +377,65 @@ function theirs(rollouts: string[], paneId: string, claimed: ReadonlySet<string>
   return rollouts.filter((rollout) => !elsewhere.has(rollout) && !claimed.has(rollout));
 }
 
-/** When each cwd's other Codex panes were last looked at, and which panes those were. */
-const claimChecks = new Map<string, { panes: string; at: number }>();
+/** A pane's Codex processes: the ones whose command line names codex, and their pids as one key. */
+async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; argv?: string[] }[]; key: string }> {
+  const processInfo = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>(
+    "pane.process_info", { pane_id: paneId },
+  );
+  const list = (processInfo.process_info?.foreground_processes ?? [])
+    .filter((process) => process.argv?.some((arg) => /(?:^|\/)codex(?:\.js)?$/.test(arg)));
+  return { list, key: list.map((process) => process.pid).sort((left, right) => left - right).join(",") };
+}
+
+/** When each pane last looked at the other Codex panes for a set of threads. */
+const claimChecks = new Map<string, number>();
 const CLAIM_CHECK_MS = 5000;
 
 /**
- * The rollouts the other Codex panes in this cwd show: each is resolved here, without
- * looking further (so a match binds it), whether or not anyone opened its chat. A thread
- * one of them started is then theirs, not a /new of this pane. At most once per 5s per
- * set of panes: a pane whose answer is not on screen yet is tried again after that.
+ * Which of `threads` (rollouts) another Codex pane in this cwd shows: only those threads
+ * are matched against each pane's screen, whether or not anyone opened its chat, and a
+ * pane that shows one is bound to it. A thread one of them shows is theirs, not a /new of
+ * this pane. The same threads and panes are looked at again at most every 5s: a pane whose
+ * answer is not on screen yet is tried after that.
  */
-async function claimedByOtherPanes(paneId: string, cwd: string, home: string): Promise<Set<string>> {
+async function claimedByOtherPanes(paneId: string, cwd: string, threads: string[], home: string): Promise<Set<string>> {
+  const claimed = new Set<string>();
   const panes = (await sessionSnapshot()).panes
     .filter((pane) => pane.pane_id !== paneId && pane.cwd === cwd && (pane.agent ?? pane.agent_session?.agent) === "codex")
-    .map((pane) => pane.pane_id).slice(0, 8);
-  const claimed = new Set<string>();
-  const key = `${cwd}\0${paneId}`;
+    .slice(0, 8);
+  // a pane that appeared since is looked at at once
+  const key = `${paneId}\0${[...threads].sort().join("\0")}\0${panes.map((pane) => pane.pane_id).join()}`;
   const last = claimChecks.get(key);
-  if (panes.length === 0 || (last && last.panes === panes.join() && Date.now() - last.at < CLAIM_CHECK_MS)) return claimed;
-  claimChecks.set(key, { panes: panes.join(), at: Date.now() });
+  if (panes.length === 0 || (last !== undefined && Date.now() - last < CLAIM_CHECK_MS)) return claimed;
+  claimChecks.set(key, Date.now());
   if (claimChecks.size > 64) claimChecks.delete(claimChecks.keys().next().value!);
+  const candidates = threads.flatMap((path) => {
+    try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
+  });
+  if (candidates.length === 0) return claimed;
   for (const pane of panes) {
     try {
-      const rollout = await codexTranscriptPath(pane, cwd, home, false);
-      if (rollout !== null) claimed.add(rollout);
+      const screen = await paneRead({ paneId: pane.pane_id, source: "recent", lines: 400, stripAnsi: true });
+      const shown = matchCodexTranscript(screen.text, candidates);
+      if (shown === null) continue;
+      claimed.add(shown);
+      const processes = (await codexProcessesOf(pane.pane_id)).key;
+      if (processes !== "") {
+        boundRollouts.delete(pane.pane_id);
+        boundRollouts.set(pane.pane_id, { processes, path: shown, at: Date.now() });
+        if (boundRollouts.size > 64) boundRollouts.delete(boundRollouts.keys().next().value!);
+      }
     } catch { /* a pane closed meanwhile */ }
   }
   return claimed;
 }
 
-/**
- * The rollout a pane's Codex writes, or null when nothing tells. `others`: when this
- * pane's own screen cannot tell, look at the other Codex panes in its cwd before
- * reading a newer thread as this pane's /new (claimedByOtherPanes, which passes false).
- */
-export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), others = true): Promise<string | null> {
+export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome()): Promise<string | null> {
   const info = await herdrRpc<{ agent: { agent_session?: { kind?: string; value?: string } } }>("agent.get", { target: paneId });
   const session = info.agent.agent_session;
   if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
 
-  const processInfo = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>(
-    "pane.process_info", { pane_id: paneId },
-  );
-  const codexProcesses = (processInfo.process_info?.foreground_processes ?? [])
-    .filter((process) => process.argv?.some((arg) => /(?:^|\/)codex(?:\.js)?$/.test(arg)));
-  const processes = codexProcesses.map((process) => process.pid).sort((left, right) => left - right).join(",");
+  const { list: codexProcesses, key: processes } = await codexProcessesOf(paneId);
   const resumed = resumedThread(codexProcesses.map((process) => process.argv ?? []));
   const open = new Set<string>();
   for (const process of codexProcesses) {
@@ -510,8 +524,9 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   // unsure: one another Codex pane here shows is that pane's. The binding is kept even
   // when unsure, so it holds again once that thread turns out to be another pane's.
   // Failing that, the thread it was resumed on, under the same rule.
-  if (others && (boundNewer.length > 0 || (resumedPath !== null && resumedNewer.length > 0))) {
-    const claimed = await claimedByOtherPanes(paneId, cwd, home);
+  const unsure = [...new Set([...boundNewer, ...(resumedPath !== null ? resumedNewer : [])])];
+  if (unsure.length > 0) {
+    const claimed = await claimedByOtherPanes(paneId, cwd, unsure, home);
     boundNewer = theirs(boundNewer, paneId, claimed);
     resumedNewer = theirs(resumedNewer, paneId, claimed);
   }
