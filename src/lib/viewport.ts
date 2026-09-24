@@ -25,3 +25,23 @@ if (viewport) {
   viewport.addEventListener("scroll", sync);
   sync();
 }
+
+/**
+ * Marks the page while a phone's soft keyboard is up, so the composer drops the
+ * home-indicator space the keyboard covers (Composer.css). Viewport sizes do not
+ * tell: iOS Safari 26 resizes both viewports with the keyboard. A touch device
+ * with a text field focused has its keyboard up - except xterm's own hidden field,
+ * which the app focuses on its own, and which never raises a keyboard that way.
+ */
+const touch = window.matchMedia("(pointer: coarse)");
+const typing = (element: Element | null): boolean =>
+  (element instanceof HTMLTextAreaElement && !element.classList.contains("xterm-helper-textarea"))
+  || (element instanceof HTMLInputElement && !["button", "checkbox", "radio", "range", "submit", "reset", "file", "color"].includes(element.type))
+  || (element instanceof HTMLElement && element.isContentEditable);
+const syncKeyboard = (): void => {
+  document.documentElement.toggleAttribute("data-keyboard", touch.matches && typing(document.activeElement));
+};
+document.addEventListener("focusin", syncKeyboard);
+// focus moving from one field to the next blurs first: read where it landed
+document.addEventListener("focusout", () => window.setTimeout(syncKeyboard, 0));
+syncKeyboard();

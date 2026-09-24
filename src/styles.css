@@ -298,6 +298,12 @@ button {
   padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
+/* the chat's composer takes the home-indicator inset itself (Composer.css): kept here as
+   well, it stacked under the composer's own padding as a band of another colour */
+.terminal-host:has(.composer) {
+  padding-bottom: 0;
+}
+
 /* ---------- header ---------- */
 
 .brand {
