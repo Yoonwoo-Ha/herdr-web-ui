@@ -96,6 +96,8 @@ self.addEventListener("push", (event) => {
         silent: watching,
         data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local" },
         icon: "/icons/icon-192.png?v=ram1",
+        // Android's status bar and small icon: white on transparent, or Chrome's bell
+        badge: "/icons/badge-96.png?v=ram1",
       });
     })(),
   );

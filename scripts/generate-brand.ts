@@ -23,6 +23,10 @@ for (const size of [192, 512]) {
   exportImage(`public/icons/icon-maskable-${size}.png`,
     `scale=${inset}:${inset}:flags=lanczos,pad=${size}:${size}:(ow-iw)/2:(oh-ih)/2:color=0xd7d8d8`);
 }
+// Android draws a notification's small icon from its alpha alone: the dark artwork becomes
+// white on transparent, cropped to the mark. Without it Chrome shows its own bell.
+exportImage("public/icons/badge-96.png",
+  "crop=1040:1040:145:127,scale=96:96:flags=lanczos,format=rgba,geq=r=255:g=255:b=255:a='clip((200-r(X,Y))*2.5,0,255)'");
 exportImage("public/apple-touch-icon.png", "scale=180:180:flags=lanczos");
 exportImage("public/favicon.png", "scale=64:64:flags=lanczos");
 exportImage("public/favicon.ico", "scale=32:32:flags=lanczos", ["-c:v", "bmp"]);
