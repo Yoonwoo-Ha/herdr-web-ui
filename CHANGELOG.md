@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-09-25
+
 ### Changed
 - On a phone or tablet, an agent pane opens in the chat the first time you select it; shells, and
   every pane on a desktop, still open their terminal. The lens you pick is still remembered per
@@ -165,7 +167,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/devswha/herdr-web-ui/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/devswha/herdr-web-ui/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/devswha/herdr-web-ui/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/devswha/herdr-web-ui/compare/v0.3.0...v0.3.1
