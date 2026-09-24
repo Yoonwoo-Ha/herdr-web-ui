@@ -52,6 +52,10 @@ async function download(url: string, sha256: string, cacheDir: string, report: (
   const length = Number(response.headers.get("content-length"));
   const total = Number.isFinite(length) && length > 0 ? length : null;
   await mkdir(cacheDir, { recursive: true, mode: 0o700 });
+  // a download cut short by a restart leaves its part file; nothing else will pick it up
+  for (const name of await readdir(cacheDir)) {
+    if (name.includes(".part-") && Date.now() - (await stat(join(cacheDir, name)).catch(() => ({ mtimeMs: Date.now() }))).mtimeMs > 3_600_000) await rm(join(cacheDir, name), { force: true });
+  }
   const part = join(cacheDir, `${sha256}.tgz.part-${process.pid}-${Date.now()}`);
   const sink = Bun.file(part).writer();
   const hash = createHash("sha256");

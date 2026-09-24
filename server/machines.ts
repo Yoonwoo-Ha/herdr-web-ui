@@ -206,7 +206,9 @@ export class MachineManager {
         if (job.public.phase !== "cancelled") {
           job.public.phase = "failed"; job.public.step = "Connection failed";
           job.public.error = e instanceof Error ? e.message : String(e);
-          if (ownsRuntime) { runtime.machine.state = "error"; runtime.machine.error = job.public.error; runtime.machine.action_required = e instanceof MachineActionRequired ? e.action : null; }
+          // a failed bridge update keeps its button: the bridge is still out of date, and the
+          // error says why this attempt failed (no network, a password needed, …)
+          if (ownsRuntime) { runtime.machine.state = "error"; runtime.machine.error = job.public.error; runtime.machine.action_required = e instanceof MachineActionRequired ? e.action : job.update && existing ? "update_bridge" : null; }
           this.emit();
         }
       } finally {
@@ -295,7 +297,7 @@ export class MachineManager {
     }
     const hasBundle = lines.includes("bundle-ready");
     // a runtime from another bundle version and no bridge running (the PC rebooted since): an update
-    if (!descriptor && !hasBundle && lines.includes("bundle-older") && !job?.update) throw new MachineActionRequired("This PC has the bridge runtime of a different version. Update the bridge to reconnect; herdr sessions keep running.", "update_bridge");
+    if (!descriptor && !hasBundle && lines.includes("bundle-older") && !job) throw new MachineActionRequired("This PC has the bridge runtime of a different version. Update the bridge to reconnect; herdr sessions keep running.", "update_bridge");
     const installs: string[] = [];
     if (job?.update) installs.push("Download and verify the bridge runtime, then restart this bridge (herdr sessions keep running)");
     if (!descriptor && !hasBundle) installs.push("Private web bridge bundle (Bun, Node and node-pty; no build tools needed)");
