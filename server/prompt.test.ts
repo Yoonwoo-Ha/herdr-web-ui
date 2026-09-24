@@ -241,6 +241,21 @@ describe("Codex's collapsed question queue", () => {
   enter submit   ctrl+] skip   alt+↓ main prompt
 `)).toBe(false);
     expect(codexQuestionsCollapsed("› Ask Codex to do anything\n")).toBe(false);
+    // an approval under the queue holds the input: a message would answer it
+    expect(codexQuestionsCollapsed(`
+• Queued follow-up inputs
+  ? 1 question
+    alt+↑ to answer
+
+Would you like to run the following command?
+
+$ rm -rf junk
+
+› 1. Yes, proceed (y)
+  2. No, and tell Codex what to do differently (esc)
+
+Press enter to confirm or esc to cancel
+`)).toBe(false);
   });
 });
 

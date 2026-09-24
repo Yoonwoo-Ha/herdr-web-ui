@@ -55,7 +55,7 @@ export const SUBMIT_DELAY_MS = 120;
  * an Alt+key: a composer message waits this long after the pane's last keystroke, so a
  * Stop tapped just before Send still reaches the pane first.
  */
-const TYPED_SETTLE_MS = 200;
+const TYPED_SETTLE_MS = 300;
 const SERVER_FEATURES: ServerFeature[] = ["submit"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
@@ -197,18 +197,25 @@ export function createServer(
   async function submitText(paneId: string, text: string, payload: string): Promise<void> {
     const typed = Date.now() - (lastTyped.get(paneId) ?? 0);
     if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
+    lastTyped.delete(paneId);
     try {
       await agentPrompt(paneId, text);
       return;
     } catch (error) {
       if (!(error instanceof HerdrError)) throw error;
-      const queuedOnly = error.code === "agent_blocked"
-        && codexQuestionsCollapsed((await paneRead({ paneId, source: "visible", format: "text" })).text);
+      const queuedOnly = error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
       if (error.code !== "agent_not_found" && error.code !== "agent_not_ready" && !queuedOnly) throw error;
     }
     await paneSendText(paneId, payload);
     await Bun.sleep(SUBMIT_DELAY_MS);
     await paneSendKeys(paneId, ["Enter"]);
+  }
+
+  /** Is this pane's agent Codex, blocked only by questions waiting collapsed in its queue (codexQuestionsCollapsed)? */
+  async function blockedOnlyByCodexQueue(paneId: string): Promise<boolean> {
+    const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
+    if ((pane?.agent ?? pane?.agent_session?.agent) !== "codex") return false;
+    return codexQuestionsCollapsed((await paneRead({ paneId, source: "visible", format: "text" })).text);
   }
 
   function stopSlowClient(client: Client): void {
@@ -895,14 +902,17 @@ export function createServer(
               // typing goes straight through the pty, unless a composer message is still in
               // flight: then it waits its turn and goes the message's own way (send_text), since
               // the pty holds a lone ESC ~150ms and a Stop would overtake nothing
+              // typing reaches an attached pane only, queued or not
+              const attachment = attachments.get(message.pane_id);
+              if (!attachment) break;
               if (paneQueues.has(message.pane_id)) {
                 const text = message.text;
                 void serialize(message.pane_id, () => paneSendText(message.pane_id, text)).catch(() => undefined);
               } else {
-                const attachment = attachments.get(message.pane_id);
-                if (attachment) {
-                  attachment.pty.write(message.text);
-                  lastTyped.set(message.pane_id, Date.now());
+                attachment.pty.write(message.text);
+                lastTyped.set(message.pane_id, Date.now());
+                if (lastTyped.size > 64) {
+                  for (const [pane, at] of lastTyped) if (Date.now() - at > TYPED_SETTLE_MS) lastTyped.delete(pane);
                 }
               }
               break;
@@ -933,8 +943,9 @@ export function createServer(
               const result = (ok: boolean, code?: string, text?: string) => send(client, {
                 type: "submit-result", id: message.id, pane_id: message.pane_id, ok, ...(code ? { code, message: text } : {}),
               });
-              if (!Number.isSafeInteger(message.id) || typeof message.text !== "string" || typeof message.payload !== "string") {
-                send(client, { type: "error", code: "invalid_submit", message: "id must be an integer, text and payload strings" });
+              if (!Number.isSafeInteger(message.id) || typeof message.pane_id !== "string" || !message.pane_id
+                || typeof message.text !== "string" || typeof message.payload !== "string") {
+                send(client, { type: "error", code: "invalid_submit", message: "id must be an integer, pane_id, text and payload strings" });
                 break;
               }
               if (client.data.mode === "observe") {

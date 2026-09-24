@@ -439,17 +439,22 @@ export function Composer({
 
   const send = useCallback(() => {
     if (!connected || uploading || sending || text.trim().length === 0) return;
+    const sent = text;
+    const sentAttachments = attachments;
     const settle = (result: boolean | string): void => {
       if (!mounted.current) return;
       if (typeof result === "string") setNote(result);
       if (result !== true) return;
-      setText("");
-      setCaret(0);
-      textRef.current = "";
-      caretRef.current = 0;
+      // only what was sent leaves the box: text added while it was on its way stays
+      const current = textRef.current;
+      const rest = current === sent ? "" : current.startsWith(sent) ? current.slice(sent.length).replace(/^\s+/, "") : current;
+      setText(rest);
+      setCaret(rest.length);
+      textRef.current = rest;
+      caretRef.current = rest.length;
       setNote(null);
-      for (const attachment of attachments) URL.revokeObjectURL(attachment.previewUrl);
-      setAttachments([]);
+      for (const attachment of sentAttachments) URL.revokeObjectURL(attachment.previewUrl);
+      setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
     };
     const result = onSend(text);
     if (!(result instanceof Promise)) { settle(result); return; }

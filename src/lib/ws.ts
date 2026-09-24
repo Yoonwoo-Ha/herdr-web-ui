@@ -8,8 +8,12 @@ export type SubmitResult = { ok: true } | { ok: false; code: string; message: st
 
 /** Right after a reconnect the snapshot that says what the server supports may still be on its way. */
 const SNAPSHOT_WAIT_MS = 2000;
-/** A submit the server never answers: the composer stops waiting and keeps the text. */
-const SUBMIT_TIMEOUT_MS = 30_000;
+/**
+ * A submit the server never answers: the composer stops waiting and keeps the text. Longer
+ * than the server can take (a fallback send is at most four 10s herdr RPCs), so a message
+ * the client gave up on is never submitted later.
+ */
+const SUBMIT_TIMEOUT_MS = 60_000;
 const DISCONNECTED: SubmitResult = { ok: false, code: "disconnected", message: "the connection dropped before the pane confirmed this message" };
 
 interface AttachState {

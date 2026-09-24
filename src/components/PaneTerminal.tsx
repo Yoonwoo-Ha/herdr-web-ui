@@ -111,6 +111,7 @@ export function PaneTerminal({
   // pane's message into another pane's agent.
   const queueOwner = useRef<string | null>(null);
   const [queued, setQueued] = useState<QueuedMessage | null>(null);
+  const [queueSending, setQueueSending] = useState(false);
 
   paneRef.current = paneId;
   onConnectionChangeRef.current = onConnectionChange;
@@ -591,10 +592,13 @@ export function PaneTerminal({
             <button
               type="button"
               className="composer-queue-send"
-              disabled={!connected}
+              disabled={!connected || queueSending}
               onClick={() => {
-                // a held message leaves the queue only once the pane has it
-                void Promise.resolve(sendComposerText(queued.text)).then((result) => { if (result === true) setQueued(null); });
+                // a held message leaves the queue only once the pane has it; one send at a time
+                setQueueSending(true);
+                void Promise.resolve(sendComposerText(queued.text))
+                  .then((result) => { if (result === true) setQueued(null); })
+                  .finally(() => setQueueSending(false));
               }}
             >
               Send now

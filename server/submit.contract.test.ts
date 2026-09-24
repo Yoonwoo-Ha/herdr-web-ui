@@ -33,6 +33,8 @@ interface Recorder { pane: string; log: string }
 let shell: Recorder;
 let agent: Recorder;
 let codex: Recorder;
+let codexApproval: Recorder;
+let claudeQueue: Recorder;
 
 const chunks = (recorder: Recorder): Chunk[] =>
   readFileSync(recorder.log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as Chunk);
@@ -106,8 +108,15 @@ beforeAll(async () => {
   agent = await recorder("agent", join(root, "claude"));
   await herdrRpc("pane.report_agent", { pane_id: agent.pane, source: "manual", agent: "claude", state: "idle" });
   // Codex with a question waiting collapsed in its queue: herdr calls it blocked
-  codex = await recorder("codex", join(root, "codex"), "\n• Queued follow-up inputs\n  ? 1 question\n    alt+↑ to answer\n› Ask Codex to do anything\n");
+  const queue = "\n• Queued follow-up inputs\n  ? 1 question\n    alt+↑ to answer\n";
+  codex = await recorder("codex", join(root, "codex"), `${queue}› Ask Codex to do anything\n`);
   await herdrRpc("pane.report_agent", { pane_id: codex.pane, source: "manual", agent: "codex", state: "blocked" });
+  // the queue above an approval: the approval holds the input, and y / Enter would answer it
+  codexApproval = await recorder("codex-approval", join(root, "codex"), `${queue}\nWould you like to run the following command?\n\n$ rm -rf junk\n\n› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)\n\nPress enter to confirm or esc to cancel\n`);
+  await herdrRpc("pane.report_agent", { pane_id: codexApproval.pane, source: "manual", agent: "codex", state: "blocked" });
+  // the same text in a pane whose agent is not Codex
+  claudeQueue = await recorder("claude-queue", join(root, "claude"), `${queue}› Ask Codex to do anything\n`);
+  await herdrRpc("pane.report_agent", { pane_id: claudeQueue.pane, source: "manual", agent: "claude", state: "blocked" });
 }, 30_000);
 
 afterAll(async () => {
@@ -120,8 +129,8 @@ describe("WebSocket submit", () => {
   it("lists the submit feature in the first snapshot", async () => {
     const socket = await Socket.connect();
     try {
-      expect(socket.seen[0].type).toBe("snapshot");
-      expect(socket.seen[0].features).toContain("submit");
+      // a pane-status can arrive first: the snapshot is found by its type
+      expect(socket.seen.find((message) => message.type === "snapshot")?.features).toContain("submit");
     } finally {
       socket.close();
     }
@@ -182,6 +191,21 @@ describe("WebSocket submit", () => {
       expect(await socket.result(9)).toMatchObject({ ok: true });
       await received(codex, from, 1);
       expect(typed(codex, from)).toBe(`${paste("stop, do not touch prod")}\r`);
+    } finally {
+      socket.close();
+    }
+  }, 30_000);
+
+  it("never types a message into an approval under the queue, nor for an agent other than Codex", async () => {
+    const socket = await Socket.connect();
+    try {
+      for (const [id, recorder] of [[10, codexApproval], [11, claudeQueue]] as const) {
+        const from = chunks(recorder).length;
+        socket.send({ type: "submit", id, pane_id: recorder.pane, text: "y", payload: "y" });
+        expect(await socket.result(id)).toMatchObject({ ok: false, code: "agent_blocked" });
+        await Bun.sleep(SUBMIT_DELAY_MS * 3);
+        expect(chunks(recorder).slice(from)).toEqual([]);
+      }
     } finally {
       socket.close();
     }
