@@ -61,10 +61,10 @@ const read = async (paneId: string): Promise<ConversationResponse> => {
 };
 /** A thread row begun now in the panes' cwd, as /new starts one (or a subagent, or `codex exec`); returns its removal. */
 let rows = 10;
-const newerThread = (source = "cli", id = `01a0c7a1-56d9-7e20-9f08-f7a2d973bc${rows++}`, path = join(codexHome, "sessions", "missing.jsonl")): (() => void) => {
+const newerThread = (source = "cli", id = `01a0c7a1-56d9-7e20-9f08-f7a2d973bc${rows++}`, path = join(codexHome, "sessions", "missing.jsonl"), first: string | null = null): (() => void) => {
   const db = new Database(join(codexHome, "state_5.sqlite"));
   const now = Math.ceil(Date.now() / 1000) + 1;
-  db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, ?, ?, ?)").run(id, path, root, now, now, source);
+  db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, ?, ?, ?, ?)").run(id, path, root, now, now, source, first);
   db.close();
   return () => {
     const db = new Database(join(codexHome, "state_5.sqlite"));
@@ -96,9 +96,9 @@ const lastAnswer = (conversation: ConversationResponse) =>
 beforeAll(() => {
   mkdirSync(join(codexHome, "sessions"), { recursive: true });
   const db = new Database(join(codexHome, "state_5.sqlite"));
-  db.exec("CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, archived INTEGER, agent_role TEXT, created_at INTEGER, updated_at INTEGER, source TEXT)");
+  db.exec("CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, archived INTEGER, agent_role TEXT, created_at INTEGER, updated_at INTEGER, source TEXT, first_user_message TEXT)");
   for (const name of ["resumed", "matched"] as const) {
-    db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli')").run(threads[name], rollout(name), root);
+    db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli', ?)").run(threads[name], rollout(name), root, `question for ${name}`);
   }
   db.close();
   // a stand-in TUI: its command line names it codex; `--say` prints the matched answer
@@ -107,7 +107,8 @@ beforeAll(() => {
   writeFileSync(join(root, "bin", "matched.txt"), `${answers.matched}\n`);
   writeFileSync(join(root, "bin", "other.txt"), `${answers.other}\n`);
   const script = join(root, "bin", "codex");
-  writeFileSync(script, `#!/bin/sh\n[ "$1" = --say ] && cat "$(dirname "$0")/\${2:-matched}.txt"\nsleep "\${FLOOD_AFTER:-600}"\nseq 1 600\nsleep 600\n`);
+  // `--say NAME` shows the question typed and its answer; `--quote NAME` only the answer, as pasted
+  writeFileSync(script, `#!/bin/sh\nname="\${2:-matched}"\n[ "$1" = --say ] && echo "› question for $name"\n[ "$1" = --say ] || [ "$1" = --quote ] && cat "$(dirname "$0")/$name.txt"\nsleep "\${FLOOD_AFTER:-600}"\nseq 1 600\nsleep 600\n`);
   chmodSync(script, 0o755);
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), codexHome });
 });
@@ -176,9 +177,13 @@ it("keeps a matched rollout when the newer thread shows in another Codex pane, w
   const paneId = await pane("mine", `FLOOD_AFTER=3 ${join(root, "bin", "codex")} --say`);
   for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
   await floodedAway(paneId, answers.matched);
-  const remove = newerThread("cli", threads.other, rollout("other"));
+  const remove = newerThread("cli", threads.other, rollout("other"), "question for other");
   try {
     // no other Codex pane here shows that thread: this pane cannot tell it from its own /new
+    expect((await read(paneId)).source).toBe("scrollback");
+    // one that only shows its answer, pasted without the question typed there, does not claim it
+    const quoting = await pane("quoting", `${join(root, "bin", "codex")} --quote other`);
+    await onScreen(quoting, answers.other);
     expect((await read(paneId)).source).toBe("scrollback");
     // a second Codex in the same repo shows its answer, and nobody opens its chat
     const otherPane = await pane("theirs", `${join(root, "bin", "codex")} --say other`);
@@ -188,5 +193,16 @@ it("keeps a matched rollout when the newer thread shows in another Codex pane, w
     expect(lastAnswer(await read(otherPane))).toBe(answers.other);
   } finally {
     remove();
+  }
+}, 30_000);
+
+it("finds a pane's thread however many codex exec runs the repo had since", async () => {
+  const paneId = await pane("burst", `${join(root, "bin", "codex")} --say`);
+  await onScreen(paneId, answers.matched);
+  const removes = Array.from({ length: 40 }, () => newerThread("exec"));
+  try {
+    expect(lastAnswer(await read(paneId))).toBe(answers.matched);
+  } finally {
+    for (const remove of removes) remove();
   }
 }, 30_000);

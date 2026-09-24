@@ -24,9 +24,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ConversationMetadata, ConversationPart, ConversationTurn } from "../shared/protocol.ts";
+import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
-import { codexHistorySegments, codexTranscriptPath, defaultCodexHome, forgetHistoryChain, parseCodexTranscript, readRange } from "./codex.ts";
+import { codexHistorySegments, codexTranscriptPath, defaultCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { parseConversationMetadata } from "./conversation-metadata.ts";
 
 /** Enough turns for a conversation. */
@@ -337,14 +337,8 @@ interface TranscriptStream {
 }
 
 function transcriptStream(source: RecognizedConversation["source"], path: string, stat: { dev: number; ino: number; size: number }, codexHome: string): TranscriptStream {
-  let segments = source === "codex-transcript" ? codexHistorySegments(path, codexHome) : [{ path, end: stat.size }];
-  // A remembered chain can outlive its files: a parent archived since (moved out of
-  // sessions/) cannot be read. Look the chain up again: it comes back shorter, under
-  // another id, so a cursor into the old chain answers 409 once and the chat reloads.
-  if (segments.slice(0, -1).some((segment) => !statSync(segment.path, { throwIfNoEntry: false }))) {
-    forgetHistoryChain(path);
-    segments = codexHistorySegments(path, codexHome);
-  }
+  // (a chain whose parent was archived since comes back shorter: codexHistorySegments)
+  const segments = source === "codex-transcript" ? codexHistorySegments(path, codexHome) : [{ path, end: stat.size }];
   const files: TranscriptStream["files"] = [];
   let start = 0;
   for (const segment of segments) {
@@ -570,10 +564,10 @@ async function ompTranscriptPath(paneId: string): Promise<string> {
  * process tree decides: omo's own store is read only when omo is really running
  * in that pane, never on a matching cwd alone.
  */
-async function resolveTranscript(paneId: string, agent: string, cwd: string, codexHome?: string): Promise<{ source: RecognizedConversation["source"]; path: string }> {
+async function resolveTranscript(paneId: string, agent: string, cwd: string, codexHome?: string, panes?: HerdrPane[]): Promise<{ source: RecognizedConversation["source"]; path: string }> {
   try {
     if (agent === "codex") {
-      const path = await codexTranscriptPath(paneId, cwd, codexHome);
+      const path = await codexTranscriptPath(paneId, cwd, codexHome, panes);
       if (!path) throw new ConversationUnavailable("no_session_path");
       return { source: "codex-transcript", path };
     }
@@ -605,7 +599,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   if (pane === undefined) throw new ConversationUnavailable("pane_not_found");
   if (typeof pane.cwd !== "string" || pane.cwd.length === 0) throw new ConversationUnavailable("no_recognized_transcript");
 
-  const { source, path } = await resolveTranscript(paneId, pane.agent ?? pane.agent_session?.agent ?? "", pane.cwd, codexHome);
+  const { source, path } = await resolveTranscript(paneId, pane.agent ?? pane.agent_session?.agent ?? "", pane.cwd, codexHome, snapshot.panes);
   return transcriptPage(source, path, page, codexHome);
 }
 

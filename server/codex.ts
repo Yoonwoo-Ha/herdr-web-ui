@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
-import type { ConversationPart, ConversationTurn } from "../shared/protocol.ts";
+import type { ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
 import { herdrRpc, paneRead, sessionSnapshot } from "./herdr/client.ts";
 
 type RecordValue = Record<string, unknown>;
@@ -293,8 +293,20 @@ function historyChain(path: string, home: string): HistorySegment[] {
 }
 
 /** A Codex conversation's files oldest first, each with how many of its bytes belong to it. */
+/**
+ * historyChain, for reading now: a remembered chain can outlive its files (a parent
+ * archived since, moved out of sessions/). Then it is looked up again and comes back
+ * shorter, so the stream's id changes and a cursor into the old chain answers 409 once.
+ */
+function liveChain(path: string, home: string): HistorySegment[] {
+  const chain = historyChain(path, home);
+  if (chain.every((segment) => statSync(segment.path, { throwIfNoEntry: false }))) return chain;
+  forgetHistoryChain(path);
+  return historyChain(path, home);
+}
+
 export function codexHistorySegments(path: string, home = defaultCodexHome()): HistorySegment[] {
-  return [...historyChain(path, home)].reverse().concat({ path, end: statSync(path).size });
+  return [...liveChain(path, home)].reverse().concat({ path, end: statSync(path).size });
 }
 
 /**
@@ -305,7 +317,7 @@ export function codexHistorySegments(path: string, home = defaultCodexHome()): H
 export function codexHistoryTail(path: string, budget: number, home = defaultCodexHome()): string {
   const chunks: string[] = [];
   let remaining = budget;
-  for (const segment of [{ path, end: statSync(path).size }, ...historyChain(path, home)]) {
+  for (const segment of [{ path, end: statSync(path).size }, ...liveChain(path, home)]) {
     if (remaining <= 0) break;
     const start = Math.max(0, segment.end - remaining);
     chunks.unshift(readRange(segment.path, start, segment.end));
@@ -367,13 +379,26 @@ function processStartedAt(pid: number): number | null {
  * a NULL agent_role) and `codex exec` runs share their parent's cwd but never replace the
  * TUI's conversation. A thread another pane is bound to is that pane's (theirs).
  */
-function newerThreads(db: Database, cwd: string, since: number, except: string | null, paneId: string, home: string): string[] {
-  const interactive = db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'source'").get() !== null
-    ? " AND source IN ('cli', 'vscode')" : "";
-  const rows = db.query<{ id: string; rollout_path: string }, [string, number]>(
-    `SELECT id, rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL${interactive} AND created_at >= ?`,
+function newerThreads(db: Database, cwd: string, since: number, except: string | null, paneId: string, home: string, firsts?: Map<string, string>): string[] {
+  const first = db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'first_user_message'").get() !== null ? ", first_user_message" : "";
+  const rows = db.query<{ id: string; rollout_path: string; first_user_message?: string | null }, [string, number]>(
+    `SELECT id, rollout_path${first} FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL${interactive(db)} AND created_at >= ?`,
   ).all(cwd, since);
-  return theirs(rows.flatMap((row) => row.id === except ? [] : [codexRolloutPath(row.rollout_path, home) ?? row.rollout_path]), paneId);
+  return theirs(rows.flatMap((row) => {
+    if (row.id === except) return [];
+    const path = codexRolloutPath(row.rollout_path, home) ?? row.rollout_path;
+    if (typeof row.first_user_message === "string") firsts?.set(path, row.first_user_message);
+    return [path];
+  }), paneId);
+}
+
+/**
+ * Interactive threads only, where the store says (`source`): subagents (often with a NULL
+ * agent_role) and `codex exec` runs share a TUI's cwd but are never its conversation.
+ */
+function interactive(db: Database): string {
+  return db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'source'").get() !== null
+    ? " AND source IN ('cli', 'vscode')" : "";
 }
 
 /** The rollouts no other pane is bound to. */
@@ -392,8 +417,8 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
   return { list, key: list.map((process) => process.pid).sort((left, right) => left - right).join(",") };
 }
 
-/** When each pane last looked at the other Codex panes for a set of threads. */
-const claimChecks = new Map<string, number>();
+/** When each pane last looked at the other Codex panes for a set of threads, and which panes those were. */
+const claimChecks = new Map<string, { panes: string; at: number }>();
 const CLAIM_CHECK_MS = 5000;
 
 /**
@@ -403,26 +428,34 @@ const CLAIM_CHECK_MS = 5000;
  * this pane. The same threads and panes are looked at again at most every 5s: a pane whose
  * answer is not on screen yet is tried after that.
  */
-async function claimedByOtherPanes(paneId: string, cwd: string, threads: string[], home: string): Promise<Set<string>> {
+async function claimedByOtherPanes(paneId: string, cwd: string, threads: string[], own: string[], firsts: ReadonlyMap<string, string>, home: string, sessionPanes?: HerdrPane[]): Promise<Set<string>> {
   const claimed = new Set<string>();
-  const panes = (await sessionSnapshot()).panes
+  const key = `${paneId}\0${[...threads].sort().join("\0")}`;
+  const panes = (sessionPanes ?? (await sessionSnapshot()).panes)
     .filter((pane) => pane.pane_id !== paneId && pane.cwd === cwd && (pane.agent ?? pane.agent_session?.agent) === "codex")
     .slice(0, 8);
   // a pane that appeared since is looked at at once
-  const key = `${paneId}\0${[...threads].sort().join("\0")}\0${panes.map((pane) => pane.pane_id).join()}`;
   const last = claimChecks.get(key);
-  if (panes.length === 0 || (last !== undefined && Date.now() - last < CLAIM_CHECK_MS)) return claimed;
-  claimChecks.set(key, Date.now());
+  const seen = panes.map((pane) => pane.pane_id).join();
+  if (panes.length === 0 || (last !== undefined && last.panes === seen && Date.now() - last.at < CLAIM_CHECK_MS)) return claimed;
+  claimChecks.set(key, { panes: seen, at: Date.now() });
   if (claimChecks.size > 64) claimChecks.delete(claimChecks.keys().next().value!);
-  const candidates = threads.flatMap((path) => {
-    try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
-  });
+  const tail = (path: string) => { try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; } };
+  const candidates = threads.flatMap(tail);
   if (candidates.length === 0) return claimed;
+  // a screen is matched against this pane's own threads and that pane's too, not only the
+  // new ones: an answer of this pane quoted over there is then not unique, and claims nothing
+  const known = [...new Set(own)].flatMap(tail);
   for (const pane of panes) {
     try {
+      const theirsNow = boundRollouts.get(pane.pane_id)?.path;
       const screen = await paneRead({ paneId: pane.pane_id, source: "recent", lines: 400, stripAnsi: true });
-      const shown = matchCodexTranscript(screen.text, candidates);
-      if (shown === null) continue;
+      const shown = matchCodexTranscript(screen.text, [...candidates, ...known, ...(theirsNow && !threads.includes(theirsNow) && !own.includes(theirsNow) ? tail(theirsNow) : [])]);
+      if (shown === null || !threads.includes(shown)) continue;
+      // and the thread's first message shows there too: typed in that pane, not only its answer
+      // quoted or pasted there (a thread whose first message is gone from that screen stays unclaimed)
+      const first = normalizeDisplay(firsts.get(shown) ?? "").slice(0, 48);
+      if (firsts.has(shown) && (first.length < 8 || !normalizeDisplay(screen.text).includes(first))) continue;
       claimed.add(shown);
       const processes = (await codexProcessesOf(pane.pane_id)).key;
       if (processes !== "") {
@@ -435,7 +468,15 @@ async function claimedByOtherPanes(paneId: string, cwd: string, threads: string[
   return claimed;
 }
 
-export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome()): Promise<string | null> {
+/**
+ * The rollout a pane's Codex writes, or null when nothing tells. `panes`: the session's
+ * panes, when the caller has them (saves a snapshot, and closed panes' bindings go).
+ */
+export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[]): Promise<string | null> {
+  if (panes !== undefined) {
+    const open = new Set(panes.map((pane) => pane.pane_id));
+    for (const pane of [...boundRollouts.keys()]) if (!open.has(pane)) boundRollouts.delete(pane);
+  }
   const info = await herdrRpc<{ agent: { agent_session?: { kind?: string; value?: string } } }>("agent.get", { target: paneId });
   const session = info.agent.agent_session;
   if (session?.kind === "path" && session.value) return codexRolloutPath(session.value, home);
@@ -477,6 +518,8 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   let paths: string[] = [...open];
   let resumedPath: string | null = null;
   let resumedNewer: string[] = [];
+  /** the first message of each newer thread, when the store keeps it */
+  const firsts = new Map<string, string>();
   const bound = boundRollouts.get(paneId);
   const boundHere = bound !== undefined && bound.processes === processes && processes !== "" ? bound : undefined;
   let boundNewer: string[] = [];
@@ -498,13 +541,14 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
         ? Math.floor(startedAt / 1000)
         : (db.query<{ updated_at: number }, [string]>("SELECT updated_at FROM threads WHERE id = ?").get(resumed)?.updated_at ?? 0);
       resumedPath = row ? codexRolloutPath(row.rollout_path, home) : null;
-      resumedNewer = newerThreads(db, cwd, since, resumed, paneId, home);
+      resumedNewer = newerThreads(db, cwd, since, resumed, paneId, home, firsts);
     }
     // the same guard for a match: after /new the process writes a thread begun since
     // (created_at has whole seconds, so one begun in the match's second counts too)
-    if (boundHere !== undefined) boundNewer = newerThreads(db, cwd, Math.floor(boundHere.at / 1000), null, paneId, home);
+    if (boundHere !== undefined) boundNewer = newerThreads(db, cwd, Math.floor(boundHere.at / 1000), null, paneId, home, firsts);
     const rows = db.query<{ rollout_path: string }, [string]>(
-      "SELECT rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL ORDER BY updated_at DESC LIMIT 32",
+      // a burst of `codex exec` runs must not push the pane's own thread out of the 32
+      `SELECT rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL${interactive(db)} ORDER BY updated_at DESC LIMIT 32`,
     ).all(cwd);
     paths = [...new Set([...paths, ...rows.flatMap((row) => {
       const path = codexRolloutPath(row.rollout_path, home);
@@ -531,7 +575,8 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   // Failing that, the thread it was resumed on, under the same rule.
   const unsure = [...new Set([...boundNewer, ...(resumedPath !== null ? resumedNewer : [])])];
   if (unsure.length > 0) {
-    const claimed = await claimedByOtherPanes(paneId, cwd, unsure, home);
+    const own = [boundHere?.path, resumedPath].filter((path): path is string => typeof path === "string");
+    const claimed = await claimedByOtherPanes(paneId, cwd, unsure, own, firsts, home, panes);
     boundNewer = theirs(boundNewer, paneId, claimed);
     resumedNewer = theirs(resumedNewer, paneId, claimed);
   }

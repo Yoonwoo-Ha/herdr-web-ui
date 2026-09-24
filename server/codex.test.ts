@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { codexHistoryTail, codexRolloutPath, forgetHistoryChains, matchCodexTranscript, parseCodexTranscript, resumedThread } from "./codex.ts";
@@ -189,6 +189,20 @@ describe("Codex rollout resolution", () => {
     expect(answers(second.path)).toEqual(["a0.", "a1.", "a2.", "a3.", "b0.", "b1."]);
     expect(answers(third.path)).toEqual(["a0.", "a1.", "c0."]);
     expect(answers(fourth.path)).toEqual(["a0.", "a1.", "a2.", "a3.", "b0.", "d0."]);
+  });
+
+  it("reads a remembered chain again once a rollout in it is archived, instead of failing the read", () => {
+    const { rollout, texts } = store();
+    const first = rollout("22", `rollout-2026-09-22T12-00-00-${thread}.jsonl`, thread, [message("user", "earlier question"), message("assistant", "earlier answer")]);
+    const segment = rollout("23", `rollout-2026-09-23T12-00-00-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`, thread,
+      [message("user", "later question"), message("assistant", "later answer")], { thread, ordinal: 3, byte: first.size });
+    forgetHistoryChains();
+    expect(texts(segment.path)).toEqual(["earlier question", "earlier answer", "later question", "later answer"]);
+    // archived while its complete chain is remembered: the tail the screen match reads still comes
+    const archive = join(first.path, "..", "..", "..", "..", "..", "archived_sessions");
+    mkdirSync(archive, { recursive: true });
+    renameSync(first.path, join(archive, `rollout-2026-09-22T12-00-00-${thread}.jsonl`));
+    expect(texts(segment.path)).toEqual(["later question", "later answer"]);
   });
 
   it("shows less history, never the wrong one, when no rollout holds a cut, and finds it once one does", () => {
