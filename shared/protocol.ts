@@ -184,9 +184,10 @@ export interface InteractivePrompt {
   multi_select: boolean;
   /** index of the "type your own answer" option, when the menu has one */
   custom_option_index: number | null;
-  /** a question waiting in Codex's queue while Codex keeps working: only the card answers it,
-   * and a message typed in the chat still goes to Codex */
-  queued?: boolean;
+  /** a question in Codex's queue while Codex keeps working: only the card answers it. Collapsed,
+   * a message typed in the chat still goes to Codex; open in the terminal, the queue holds the
+   * input, so the chat sends nothing until it is answered or closed */
+  queued?: "collapsed" | "open";
 }
 
 export interface InteractivePromptOption {

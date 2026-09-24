@@ -137,6 +137,19 @@ describe("Codex queued questions (request_user_input_async)", () => {
     expect(turns[1]!.parts[0]).toMatchObject({ kind: "tool", name: "request_user_input_async", summary: "Which dataset? · Any notes?" });
   });
 
+  it("scans a rollout once however many ask at the same time", async () => {
+    dir = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-questions-"));
+    const path = join(dir, "rollout.jsonl");
+    writeFileSync(path, `${jsonl(message("user", "go"), ask("call_x", [{ title: "First?", options: ["a"] }]))}\n`);
+    await unansweredCodexQuestions(path);
+    appendFileSync(path, `${jsonl(ask("call_y", [{ title: "Second?", options: ["b"] }]))}\n`);
+    // two viewers polling at once: the append is read once, not once per poll
+    const [one, two] = await Promise.all([unansweredCodexQuestions(path), unansweredCodexQuestions(path)]);
+    expect(one.map((question) => question.title)).toEqual(["First?", "Second?"]);
+    expect(two).toEqual(one);
+    expect((await unansweredCodexQuestions(path)).map((question) => question.title)).toEqual(["First?", "Second?"]);
+  });
+
   it("lists the questions still unanswered, reading only what the rollout appends", async () => {
     dir = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-questions-"));
     const path = join(dir, "rollout.jsonl");

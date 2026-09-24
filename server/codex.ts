@@ -207,13 +207,24 @@ const questionScans = new Map<string, { ino: number; size: number; cut: boolean;
  * are read (the first call reads the last 4MB, without blocking), and only lines naming
  * the tool parsed.
  */
-export async function unansweredCodexQuestions(path: string): Promise<QueuedQuestion[]> {
+export function unansweredCodexQuestions(path: string): Promise<QueuedQuestion[]> {
+  // two viewers polling, or a poll overlapping an answer: one scan per file at a time
+  const running = questionScansInFlight.get(path);
+  if (running) return running;
+  const scan = scanQuestions(path).finally(() => questionScansInFlight.delete(path));
+  questionScansInFlight.set(path, scan);
+  return scan;
+}
+
+const questionScansInFlight = new Map<string, Promise<QueuedQuestion[]>>();
+
+async function scanQuestions(path: string): Promise<QueuedQuestion[]> {
   const stat = statSync(path);
-  let scan = questionScans.get(path);
-  if (!scan || scan.ino !== stat.ino || stat.size < scan.size) {
-    const start = Math.max(0, stat.size - QUESTION_SCAN_BYTES);
-    scan = { ino: stat.ino, size: start, cut: start > 0, asked: [], answered: new Set() };
-  }
+  const known = questionScans.get(path);
+  // the scan is built on a copy and kept only once complete
+  const scan = known && known.ino === stat.ino && stat.size >= known.size
+    ? { ...known, asked: [...known.asked], answered: new Set(known.answered) }
+    : { ino: stat.ino, size: Math.max(0, stat.size - QUESTION_SCAN_BYTES), cut: stat.size > QUESTION_SCAN_BYTES, asked: [] as QueuedQuestion[], answered: new Set<string>() };
   if (stat.size > scan.size) {
     const bytes = Buffer.from(await Bun.file(path).slice(scan.size, stat.size).arrayBuffer());
     // whole lines only: a line still being written is read again next time
@@ -230,7 +241,7 @@ export async function unansweredCodexQuestions(path: string): Promise<QueuedQues
         let args: RecordValue = {};
         try { args = record(JSON.parse(string(payload.arguments))); } catch { continue; }
         const questions = Array.isArray(args.questions) ? args.questions.map(record) : [];
-        questions.forEach((question, index) => scan!.asked.push({
+        questions.forEach((question, index) => scan.asked.push({
           key: `${string(payload.call_id)}:${index}`,
           title: string(question.title) || string(question.question),
           options: Array.isArray(question.options)
@@ -254,7 +265,7 @@ export async function unansweredCodexQuestions(path: string): Promise<QueuedQues
   questionScans.delete(path);
   questionScans.set(path, scan);
   if (questionScans.size > 16) questionScans.delete(questionScans.keys().next().value!);
-  return scan.asked.filter((question) => !scan!.answered.has(question.key));
+  return scan.asked.filter((question) => !scan.answered.has(question.key));
 }
 
 const readdir = (path: string): string[] => { try { return readdirSync(path); } catch { return []; } };

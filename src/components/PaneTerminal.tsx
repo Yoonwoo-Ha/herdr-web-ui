@@ -484,6 +484,10 @@ export function PaneTerminal({
   const composerSend = useCallback(
     (text: string): boolean | string | Promise<boolean | string> => {
       const pane = paneRef.current;
+      // Codex's queue open in the terminal holds the input: a message would become the answer
+      if (pane !== null && chatView && chatPrompt?.pane === pane && chatPrompt.value.queued === "open") {
+        return "Codex has a question open in the terminal: answer it above, or close it there (alt+↓) to message Codex.";
+      }
       if (pane !== null && answering !== null) {
         // never typed into the agent's menu: only as one of its options, or its own reply row
         const choice = answerFromText(answering, text);
@@ -507,7 +511,7 @@ export function PaneTerminal({
       }
       return sendComposerText(text);
     },
-    [agent, agentStatus, answerPanePrompt, answering, sendComposerText],
+    [agent, agentStatus, answerPanePrompt, answering, chatPrompt, chatView, sendComposerText],
   );
 
   // A reconnect or status refresh never sends held text without a user action.

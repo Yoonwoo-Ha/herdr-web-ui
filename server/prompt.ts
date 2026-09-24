@@ -180,7 +180,7 @@ function publicPrompt(parsed: ParsedPrompt): InteractivePrompt {
     options: parsed.options,
     multi_select: parsed.multi_select,
     custom_option_index: parsed.custom_option_index,
-    ...(parsed.queued ? { queued: true } : {}),
+    ...(parsed.queued ? { queued: parsed.queued } : {}),
   };
   parsedByPublicPrompt.set(prompt, parsed);
   return prompt;
@@ -305,7 +305,8 @@ function parseCodexAsyncQuestion(screen: string): ParsedPrompt | null {
   const at = position as RegExpMatchArray | null;
   return finishPrompt("codex", {
     kind: "question", title: at ? `Question ${at[1]} of ${at[2]}` : "Question", question, body: null,
-    options, multi_select: false, custom_option_index: options.length,
+    // Codex keeps working while it asks: the card answers it, never a message typed in the chat
+    options, multi_select: false, custom_option_index: options.length, queued: "open",
   }, {
     responder: "codex-async-question", menuLabels, selectedIndex, checkedOptionIndices: [],
     customMenuIndex: menuLabels.length === 0 ? 0 : menuLabels.length - 1, rejectWithEscapeIndex: null,
@@ -334,14 +335,15 @@ function queuedQuestionCount(screen: string): number {
  * The collapsed queue shows only a count: the card takes its first question from the
  * rollout, the newest `count` unanswered ones (a skipped question leaves no record).
  */
-function queuedPrompt(count: number, unanswered: QueuedQuestion[]): ParsedPrompt | null {
+function queuedPrompt(count: number, unanswered: QueuedQuestion[], front: string | null = null): ParsedPrompt | null {
   const waiting = unanswered.slice(-count);
-  const first = waiting[0];
+  // the question the queue opened on last time, when that was not the newest guess
+  const first = (front !== null ? unanswered.find((question) => sameText(front, question.title)) : undefined) ?? waiting[0];
   if (!first || waiting.length !== count || !first.title.trim()) return null;
   return finishPrompt("codex", {
     kind: "question", title: count > 1 ? `Question 1 of ${count}` : "Question", question: normalizeText(first.title), body: null,
     options: first.options.map((label) => ({ label, description: null })),
-    multi_select: false, custom_option_index: first.options.length, queued: true,
+    multi_select: false, custom_option_index: first.options.length, queued: "collapsed",
   }, {
     responder: "codex-queued-question", menuLabels: first.options.length ? [...first.options, "Other"] : [],
     selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: first.options.length, rejectWithEscapeIndex: null,
@@ -513,7 +515,8 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
     // the panel's rule is the first one under the tool call (`● Write(a.ts)`): rules further
     // down belong to a file preview; with the call scrolled away, the nearest rule
     // Claude's own text opens with ● too ("● Results table follows:"): a call is a tool name and "("
-    const callIndex = findLastIndex(lines.slice(0, questionIndex), (line) => /^●\s+[\w.:-]+(?:\s[\w.:-]+)*\(/.test(cleanLine(line)));
+    // (an MCP call reads "● server - tool (MCP)(…)")
+    const callIndex = findLastIndex(lines.slice(0, questionIndex), (line) => /^●\s+[\w.:-]+(?:\s[\w.:-]+)*(?:\s\(MCP\))?\(/.test(cleanLine(line)));
     const rules = lines.slice(0, questionIndex).flatMap((line, index) => index > callIndex && SOLID_RULE_RE.test(cleanLine(line)) ? [index] : []);
     const ruleIndex = callIndex >= 0 ? rules[0] ?? -1 : rules.at(-1) ?? -1;
     if (ruleIndex < 0 || questionIndex - ruleIndex > 60) return null;
@@ -581,9 +584,9 @@ export function codexQuestionsCollapsed(screen: string): boolean {
 }
 
 /** The card for Codex's collapsed queue on this screen, from the rollout's unanswered questions. */
-export function codexQueuedPrompt(screen: string, unanswered: QueuedQuestion[]): InteractivePrompt | null {
+export function codexQueuedPrompt(screen: string, unanswered: QueuedQuestion[], front: string | null = null): InteractivePrompt | null {
   const count = queuedQuestionCount(screen);
-  const queued = count > 0 ? queuedPrompt(count, unanswered) : null;
+  const queued = count > 0 ? queuedPrompt(count, unanswered, front) : null;
   return queued ? publicPrompt(queued) : null;
 }
 
@@ -655,6 +658,12 @@ export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer,
   return keySteps([...navigationKeys(index! - parsed.selectedIndex), KEY.enter]);
 }
 
+/**
+ * The question each pane's queue opened on when that was not the card's (a skipped
+ * question leaves the rollout's newest-first guess behind): the next card shows it.
+ */
+const queueFronts = new Map<string, string>();
+
 /** Each pane's rollout, resolved for its collapsed queue: a poll every 2s would otherwise redo it. */
 const queueRollouts = new Map<string, { path: string | null; at: number }>();
 const QUEUE_ROLLOUT_MS = 15_000;
@@ -675,22 +684,30 @@ async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: 
     if (queueRollouts.size > 64) queueRollouts.delete(queueRollouts.keys().next().value!);
   }
   try {
-    return { agent, prompt: rollout.path ? codexQueuedPrompt(screen.text, await unansweredCodexQuestions(rollout.path)) : null };
+    return { agent, prompt: rollout.path ? codexQueuedPrompt(screen.text, await unansweredCodexQuestions(rollout.path), queueFronts.get(paneId) ?? null) : null };
   } catch {
     return { agent, prompt: null }; // the rollout went away
   }
 }
 
 /** After an answer from the chat: close Codex's queue if it opened its next question. */
-async function closeQueue(paneId: string): Promise<void> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+/**
+ * After an answer from the chat: if Codex opened its next question, close the queue, so
+ * the main prompt has the input back. Only once another question shows: the one just
+ * answered can still be on screen for a moment. (alt+↓ elsewhere, on the main prompt or
+ * an approval, changes nothing: checked on Codex 0.156.1.)
+ */
+async function closeQueue(paneId: string, answered: string): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
     await Bun.sleep(100);
     const screen = (await paneRead({ paneId, source: "visible", format: "text" })).text;
-    if (parsePrompt("codex", screen)?.responder === "codex-async-question") {
+    const shown = parsePrompt("codex", screen);
+    if (shown?.responder === "codex-async-question") {
+      if (sameText(shown.question, answered)) continue;
       await paneSendKeys(paneId, [KEY.closeQueue]);
       return;
     }
-    if (queuedQuestionCount(screen) > 0) return;
+    if (queuedQuestionCount(screen) > 0 || shown === null) return;
   }
 }
 
@@ -720,8 +737,14 @@ async function openQueuedQuestion(paneId: string, queued: ParsedPrompt): Promise
     if (opened?.responder !== "codex-async-question") continue;
     if (sameText(opened.question, queued.question) && opened.options.length === queued.options.length
       && opened.options.every((option, index) => sameText(option.label, queued.options[index]!.label))) return publicPrompt(opened);
-    return null;
+    queueFronts.set(paneId, opened.question);
+    if (queueFronts.size > 64) queueFronts.delete(queueFronts.keys().next().value!);
+    break;
   }
+  // not the card's question (a skip can leave the rollout's guess behind), or nothing opened:
+  // never leave the queue open, where it would hold the input a message goes to
+  const screen = (await paneRead({ paneId, source: "visible", format: "text" })).text;
+  if (parsePrompt("codex", screen)?.responder === "codex-async-question") await paneSendKeys(paneId, [KEY.closeQueue]);
   return null;
 }
 
@@ -783,9 +806,12 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
         else if (step.text !== undefined) await paneSendText(body.pane_id, step.text);
         if (index < steps.length - 1) await Bun.sleep(30);
       }
-      // opened from the chat, the queue closes again: the next question waits collapsed, and
+      // answered from the chat, the queue closes again: the next question waits collapsed, and
       // the main prompt (where a message typed in the chat goes) has the input back
-      if (target !== prompt) await closeQueue(body.pane_id);
+      if (parsedByPublicPrompt.get(target)?.responder === "codex-async-question") {
+        queueFronts.delete(body.pane_id);
+        await closeQueue(body.pane_id, target.question);
+      }
       return jsonResponse({ ok: true });
     });
   } catch (error) {

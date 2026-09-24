@@ -307,6 +307,19 @@ Ready to submit your answers?
  Esc to cancel · Tab to amend
 `);
     expect(underText).toMatchObject({ kind: "approval", title: "Bash command", body: "rm -rf junk\nDelete the junk directory" });
+    // an MCP call is a call too: the first rule under it opens the panel, not a rule in its preview
+    const mcp = parseInteractivePrompt("claude", `
+● github - create_issue (MCP)(title: "Flaky test")
+────────────────────────────────────────
+ Tool use
+   github - create_issue(title: "Flaky test")
+────────────────────────────────────────
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel · Tab to amend
+`);
+    expect(mcp).toMatchObject({ kind: "approval", title: "Tool use" });
     expect(answerKeys(bash!, { option_index: 3 })).toEqual([{ keys: ["down"] }, { keys: ["down"] }, { keys: ["down"] }, { keys: ["enter"] }]);
 
     const write = parseInteractivePrompt("claude", `
@@ -452,7 +465,7 @@ describe("Codex's queue of questions (request_user_input_async)", () => {
   enter submit   ctrl+] skip   alt+↓ main prompt   alt+↑ next question
 `);
     expect(prompt).toMatchObject({
-      kind: "question", title: "Question 1 of 2",
+      kind: "question", title: "Question 1 of 2", queued: "open",
       question: "정리 범위를 현재 Q255 학습 출력과 연결된 산출물로 한정할까요, 아니면 output/test 전체 실험까지 포함할까요?",
       custom_option_index: 2,
     });
@@ -497,7 +510,7 @@ ${status}
 `;
     expect(parseInteractivePrompt("codex", collapsed)).toBeNull();
     // only the card answers it: Codex keeps working, and the chat's messages still go to Codex
-    expect(codexQueuedPrompt(collapsed, [{ key: "call_c:0", title: "Which dataset?", options: ["LM-O"] }, { key: "call_c:1", title: "Any notes?", options: [] }])?.queued).toBe(true);
+    expect(codexQueuedPrompt(collapsed, [{ key: "call_c:0", title: "Which dataset?", options: ["LM-O"] }, { key: "call_c:1", title: "Any notes?", options: [] }])?.queued).toBe("collapsed");
     // a message of the user's own waiting to go replaces the questions' block: nothing to open
     expect(codexQueuedPrompt(collapsed.replace("    alt+↑ to answer", "    alt+↑ to answer\n• Messages to be submitted after next tool call\n  ↳ stop, don't touch prod"), [
       { key: "call_c:0", title: "Which dataset?", options: ["LM-O"] }, { key: "call_c:1", title: "Any notes?", options: [] },
@@ -512,6 +525,8 @@ ${status}
     expect(prompt).toMatchObject({ kind: "question", title: "Question 1 of 2", question: "Which dataset?", custom_option_index: 2 });
     expect(labels(prompt)).toEqual(["LM-O", "YCB-V"]);
     expect(codexQueuedPrompt(collapsed.replace("? 2 questions", "? 1 question"), asked)).toMatchObject({ title: "Question", question: "Any notes?", options: [], custom_option_index: 0 });
+    // the queue opened on another question last time (one was skipped): the card shows that one
+    expect(codexQueuedPrompt(collapsed, asked, "Old question?")).toMatchObject({ question: "Old question?", title: "Question 1 of 2" });
     // fewer on record than the queue holds: the card cannot say which is first
     expect(codexQueuedPrompt(collapsed, asked.slice(2))).toBeNull();
     // the count must be the queue above the main prompt, not an old line higher up
