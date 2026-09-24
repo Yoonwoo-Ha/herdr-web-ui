@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { forgetHistoryChains } from "./codex.ts";
 import { ConversationUnavailable, HistoryChanged, isOmoProcess, MAX_TURNS, omoTranscriptPath, parseClaudeTranscript, parseOmpTranscript, transcriptPage } from "./conversation.ts";
 
 /** Minimal but shape-true slices of a Claude Code session jsonl. */
@@ -307,6 +308,36 @@ describe("transcript pages", () => {
     expect(newest.turns.every((turn) => turn.role === "assistant")).toBe(true);
     const older = transcriptPage("claude-transcript", path, { before: newest.cursor! });
     expect(texts(older.turns).slice(0, 3)).toEqual(["prompt 0", "[out 0] answer 0", "run the long job"]);
+  });
+
+  it("refuses a cursor once the rollouts before the live file change, instead of pointing at other turns", () => {
+    const home = join(temp(), "codex");
+    const thread = "01a0a337-19e8-7712-92f5-aa0883392afd";
+    const task = (n: number) => [
+      { type: "event_msg", timestamp: "2026-09-23T00:00:00.000Z", payload: { type: "task_started" } },
+      { type: "response_item", timestamp: "2026-09-23T00:00:00.000Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: `prompt ${n}` }] } },
+      { type: "response_item", timestamp: "2026-09-23T00:00:01.000Z", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `answer ${n}` }] } },
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    const meta = (extra = {}) => JSON.stringify({ type: "session_meta", payload: { source: "cli", thread_source: "user", ...extra } });
+    mkdirSync(join(home, "sessions", "2026", "09", "15"), { recursive: true });
+    mkdirSync(join(home, "sessions", "2026", "09", "23"), { recursive: true });
+    const kept = `${meta()}\n${Array.from({ length: 20 }, (_, n) => task(n)).join("\n")}\n`;
+    const segment = join(home, "sessions", "2026", "09", "23", `rollout-2026-09-23T10-46-43-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`);
+    writeFileSync(segment, `${meta({ history_base: { thread_id: thread, end_ordinal_exclusive: kept.split("\n").length - 1, end_byte_offset: Buffer.byteLength(kept) } })}\n${Array.from({ length: 60 }, (_, n) => task(20 + n)).join("\n")}\n`);
+    // the earlier rollout is not there yet: the chain stops at the segment
+    forgetHistoryChains();
+    const newest = transcriptPage("codex-transcript", segment, {}, home);
+    const older = transcriptPage("codex-transcript", segment, { before: newest.cursor! }, home);
+    expect(texts(older.turns)[0]).toBe("prompt 20");
+    // it appears: positions now count from its start, and the old cursors name another chain
+    writeFileSync(join(home, "sessions", "2026", "09", "15", `rollout-2026-09-15T12-58-12-${thread}.jsonl`), kept);
+    forgetHistoryChains();
+    expect(() => transcriptPage("codex-transcript", segment, { before: newest.cursor! }, home)).toThrow(HistoryChanged);
+    expect(() => transcriptPage("codex-transcript", segment, { from: newest.cursor! }, home)).toThrow(HistoryChanged);
+    // read afresh, the pages reach the earlier rollout
+    const again = transcriptPage("codex-transcript", segment, {}, home);
+    const all = [...transcriptPage("codex-transcript", segment, { before: again.cursor! }, home).turns, ...again.turns];
+    expect(texts(all)[0]).toBe("prompt 0");
   });
 
   it("pages across the rollouts a backtracked Codex conversation continues", () => {

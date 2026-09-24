@@ -20,6 +20,7 @@
  * integration and lives in paneConversation.
  */
 
+import { createHash } from "node:crypto";
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -336,7 +337,15 @@ function transcriptStream(source: RecognizedConversation["source"], path: string
     files.push({ path: segment.path, start, length });
     start += length;
   }
-  return { id: `${stat.dev.toString(36)}-${stat.ino.toString(36)}`, files, length: start };
+  // Positions count from the start of the whole chain: a cursor names the live file AND
+  // the rollouts before it, so one read against another chain (an earlier rollout found
+  // later, a parent since archived) answers 409 instead of pointing at other turns.
+  const earlier = files.slice(0, -1).map((file) => {
+    const identity = statSync(file.path, { throwIfNoEntry: false });
+    return `${file.path}\0${file.length}\0${identity ? `${identity.dev}:${identity.ino}` : "-"}`;
+  });
+  const chain = earlier.length === 0 ? "" : `-${createHash("sha256").update(earlier.join("\n")).digest("base64url").slice(0, 10)}`;
+  return { id: `${stat.dev.toString(36)}-${stat.ino.toString(36)}${chain}`, files, length: start };
 }
 
 function readStream(stream: TranscriptStream, from: number, to: number): Buffer {
@@ -592,9 +601,16 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
   } catch {
     throw new ConversationUnavailable("transcript_missing");
   }
-  // an older page never changes while its file lives; the newest one changes with every append
+  let stream: TranscriptStream;
+  try {
+    stream = transcriptStream(source, path, stat, codexHome ?? defaultCodexHome());
+  } catch {
+    throw new ConversationUnavailable("transcript_missing");
+  }
+  // an older page never changes while its file and the rollouts before it stay the same
+  // (the stream's id names both); the newest one changes with every append
   const key = page.before !== undefined ? `${path}\0before:${page.before}:${page.since ?? ""}` : `${path}\0from:${page.from ?? ""}`;
-  const signature = page.before !== undefined ? `${stat.dev}:${stat.ino}` : `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+  const signature = page.before !== undefined ? stream.id : `${stream.id}:${stat.size}:${stat.mtimeMs}`;
   const cached = cache.get(key);
   if (cached?.signature === signature) return { source, turns: cached.turns, metadata: cached.metadata, cursor: cached.cursor };
 
@@ -603,7 +619,6 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
   let head = "";
   let cursor: string | null;
   try {
-    const stream = transcriptStream(source, path, stat, codexHome ?? defaultCodexHome());
     if (page.before !== undefined) {
       const before = parseCursor(stream, page.before);
       const floor = page.since === undefined ? 0 : parseCursor(stream, page.since);

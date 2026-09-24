@@ -170,8 +170,18 @@ const readdir = (path: string): string[] => { try { return readdirSync(path); } 
 /** A byte range of rollout history: the file's first `end` bytes. */
 export interface HistorySegment { path: string; end: number }
 
-/** Complete chains per rollout, newest first: a header never changes, so neither does its chain. */
-const historyChains = new Map<string, HistorySegment[]>();
+/**
+ * Chains per rollout, newest first. A header never changes, so a complete chain is
+ * kept for good; one that stops at a cut no file holds yet is kept a short while,
+ * so every append does not walk sessions/ again, and then looked up afresh.
+ */
+const historyChains = new Map<string, { chain: HistorySegment[]; complete: boolean; at: number }>();
+const INCOMPLETE_CHAIN_MS = 30_000;
+
+/** Drops every remembered chain: the next read resolves each one again. */
+export function forgetHistoryChains(): void {
+  historyChains.clear();
+}
 
 /** Lines before a cut, per file identity and cut: the bytes before a cut never change. */
 const linesBeforeCut = new Map<string, number>();
@@ -247,32 +257,34 @@ function threadRollouts(home: string, threadId: string): string[] {
  */
 function historyChain(path: string, home: string): HistorySegment[] {
   const cached = historyChains.get(path);
-  if (cached) return cached;
+  if (cached && (cached.complete || Date.now() - cached.at < INCOMPLETE_CHAIN_MS)) return cached.chain;
+  const remember = (chain: HistorySegment[], complete: boolean): HistorySegment[] => {
+    historyChains.delete(path);
+    historyChains.set(path, { chain, complete, at: Date.now() });
+    if (historyChains.size > 64) historyChains.delete(historyChains.keys().next().value!);
+    return chain;
+  };
   const chain: HistorySegment[] = [];
   let current = path;
   for (let depth = 0; depth < 32; depth++) {
     let base: RecordValue;
-    try { base = record(rolloutHeader(current)?.history_base); } catch { return chain; }
+    try { base = record(rolloutHeader(current)?.history_base); } catch { return remember(chain, false); }
     const threadId = string(base.thread_id);
     const ordinal = base.end_ordinal_exclusive;
     const end = base.end_byte_offset;
-    if (Object.keys(base).length === 0) {
-      historyChains.set(path, chain);
-      if (historyChains.size > 64) historyChains.delete(historyChains.keys().next().value!);
-      return chain;
-    }
+    if (Object.keys(base).length === 0) return remember(chain, true);
     if (!UUID.test(threadId) || typeof ordinal !== "number" || !Number.isSafeInteger(ordinal)
-      || typeof end !== "number" || !Number.isSafeInteger(end) || end <= 0) return chain;
+      || typeof end !== "number" || !Number.isSafeInteger(end) || end <= 0) return remember(chain, false);
     const holders = threadRollouts(home, threadId).flatMap((candidate) => {
       const resolved = codexRolloutPath(candidate, home);
       return resolved !== null && resolved !== current && !chain.some((segment) => segment.path === resolved)
         && holdsCut(resolved, ordinal, end) ? [resolved] : [];
     });
-    if (holders.length !== 1) return chain;
+    if (holders.length !== 1) return remember(chain, false);
     chain.push({ path: holders[0]!, end });
     current = holders[0]!;
   }
-  return chain;
+  return remember(chain, false);
 }
 
 /** A Codex conversation's files oldest first, each with how many of its bytes belong to it. */

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexHistoryTail, codexRolloutPath, matchCodexTranscript, parseCodexTranscript } from "./codex.ts";
+import { codexHistoryTail, codexRolloutPath, forgetHistoryChains, matchCodexTranscript, parseCodexTranscript } from "./codex.ts";
 import { splitTurn } from "../src/lib/workBlocks.ts";
 
 const ts = "2026-09-22T01:00:00.000Z";
@@ -193,6 +193,10 @@ describe("Codex rollout resolution", () => {
     const segment = rollout("23", `rollout-2026-09-23T12-00-00-${thread}.jsonl`, thread, [message("user", "later question"), message("assistant", "later answer")], cut);
     expect(texts(segment.path)).toEqual(["later question", "later answer"]);
     rollout("22", `rollout-2026-09-22T12-00-00-${other}.jsonl`, other, pending);
+    // an incomplete chain is kept a short while (no walk of sessions/ on every append)...
+    expect(texts(segment.path)).toEqual(["later question", "later answer"]);
+    // ...and looked up afresh once that expires
+    forgetHistoryChains();
     expect(texts(segment.path)).toEqual(["earlier question", "earlier answer", "later question", "later answer"]);
   });
 
