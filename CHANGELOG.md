@@ -7,6 +7,14 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Changed
+- `bun run start` now listens on `127.0.0.1` by default, like the plugin, instead of every
+  interface. To reach it from your LAN again, set `HOST=0.0.0.0` together with `HERDR_WEB_TOKEN`;
+  for a phone, `tailscale serve` or an SSH tunnel to `127.0.0.1` needs no change.
+- The README and INSTALL.md say when a token is needed: not on this computer, over an SSH tunnel,
+  or through `tailscale serve` on a tailnet of your own devices; needed on a LAN, a shared tailnet
+  or a public address.
+
 ## [0.3.1] - 2026-09-25
 
 ### Changed
