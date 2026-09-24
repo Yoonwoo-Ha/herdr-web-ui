@@ -183,6 +183,11 @@ export function forgetHistoryChains(): void {
   historyChains.clear();
 }
 
+/** Drops one rollout's remembered chain: its next read resolves it again. */
+export function forgetHistoryChain(path: string): void {
+  historyChains.delete(path);
+}
+
 /** Lines before a cut, per file identity and cut: the bytes before a cut never change. */
 const linesBeforeCut = new Map<string, number>();
 

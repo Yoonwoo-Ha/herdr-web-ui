@@ -26,7 +26,7 @@ import { join } from "node:path";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn } from "../shared/protocol.ts";
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
-import { codexHistorySegments, codexTranscriptPath, defaultCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
+import { codexHistorySegments, codexTranscriptPath, defaultCodexHome, forgetHistoryChain, parseCodexTranscript, readRange } from "./codex.ts";
 import { parseConversationMetadata } from "./conversation-metadata.ts";
 
 /** Enough turns for a conversation. */
@@ -328,7 +328,14 @@ interface TranscriptStream {
 }
 
 function transcriptStream(source: RecognizedConversation["source"], path: string, stat: { dev: number; ino: number; size: number }, codexHome: string): TranscriptStream {
-  const segments = source === "codex-transcript" ? codexHistorySegments(path, codexHome) : [{ path, end: stat.size }];
+  let segments = source === "codex-transcript" ? codexHistorySegments(path, codexHome) : [{ path, end: stat.size }];
+  // A remembered chain can outlive its files: a parent archived since (moved out of
+  // sessions/) cannot be read. Look the chain up again: it comes back shorter, under
+  // another id, so a cursor into the old chain answers 409 once and the chat reloads.
+  if (segments.slice(0, -1).some((segment) => !statSync(segment.path, { throwIfNoEntry: false }))) {
+    forgetHistoryChain(path);
+    segments = codexHistorySegments(path, codexHome);
+  }
   const files: TranscriptStream["files"] = [];
   let start = 0;
   for (const segment of segments) {

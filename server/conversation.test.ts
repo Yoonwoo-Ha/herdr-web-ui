@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -338,6 +338,36 @@ describe("transcript pages", () => {
     const again = transcriptPage("codex-transcript", segment, {}, home);
     const all = [...transcriptPage("codex-transcript", segment, { before: again.cursor! }, home).turns, ...again.turns];
     expect(texts(all)[0]).toBe("prompt 0");
+  });
+
+  it("looks a remembered chain up again once a rollout in it is archived, instead of failing every read", () => {
+    const home = join(temp(), "codex");
+    const thread = "01a0a337-19e8-7712-92f5-aa0883392afd";
+    const task = (n: number) => [
+      { type: "event_msg", timestamp: "2026-09-23T00:00:00.000Z", payload: { type: "task_started" } },
+      { type: "response_item", timestamp: "2026-09-23T00:00:00.000Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: `prompt ${n}` }] } },
+      { type: "response_item", timestamp: "2026-09-23T00:00:01.000Z", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `answer ${n}` }] } },
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    const meta = (extra = {}) => JSON.stringify({ type: "session_meta", payload: { source: "cli", thread_source: "user", ...extra } });
+    mkdirSync(join(home, "sessions", "2026", "09", "15"), { recursive: true });
+    mkdirSync(join(home, "sessions", "2026", "09", "23"), { recursive: true });
+    mkdirSync(join(home, "archived_sessions"), { recursive: true });
+    const kept = `${meta()}\n${Array.from({ length: 80 }, (_, n) => task(n)).join("\n")}\n`;
+    const parent = join(home, "sessions", "2026", "09", "15", `rollout-2026-09-15T12-58-12-${thread}.jsonl`);
+    writeFileSync(parent, kept);
+    // right after a backtrack the live file is small: its newest page reaches into the parent
+    const segment = join(home, "sessions", "2026", "09", "23", `rollout-2026-09-23T10-46-43-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`);
+    writeFileSync(segment, `${meta({ history_base: { thread_id: thread, end_ordinal_exclusive: kept.split("\n").length - 1, end_byte_offset: Buffer.byteLength(kept) } })}\n${Array.from({ length: 3 }, (_, n) => task(80 + n)).join("\n")}\n`);
+    forgetHistoryChains();
+    const before = transcriptPage("codex-transcript", segment, {}, home);
+    expect(texts(before.turns)[0]).toBe("prompt 33");
+    expect(before.cursor).not.toBeNull();
+    // archived while the complete chain is remembered
+    renameSync(parent, join(home, "archived_sessions", `rollout-2026-09-15T12-58-12-${thread}.jsonl`));
+    const after = transcriptPage("codex-transcript", segment, {}, home);
+    expect(texts(after.turns)).toEqual(["prompt 80", "answer 80", "prompt 81", "answer 81", "prompt 82", "answer 82"]);
+    // a reader holding a position in the old chain reloads once
+    expect(() => transcriptPage("codex-transcript", segment, { before: before.cursor! }, home)).toThrow(HistoryChanged);
   });
 
   it("pages across the rollouts a backtracked Codex conversation continues", () => {
