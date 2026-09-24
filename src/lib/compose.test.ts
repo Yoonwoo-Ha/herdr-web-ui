@@ -2,21 +2,17 @@ import { describe, expect, it } from "bun:test";
 
 import {
   agentDisplayLabel,
-  COMPOSER_SUBMIT,
   composerPayload,
   composerStatusWord,
   imageMention,
   MAX_COMPOSER_CHARS,
   QUEUE_READY_STATUS,
   rankSlashCommands,
-  SUBMIT_DELAY_MS,
 } from "./compose.ts";
 
 describe("composerPayload", () => {
-  it("bracketed mode wraps the text as one paste; the submit CR goes on its own", () => {
+  it("bracketed mode wraps the text as one paste, without the submit", () => {
     expect(composerPayload("hello", true)).toBe("\u001b[200~hello\u001b[201~");
-    expect(COMPOSER_SUBMIT).toBe("\r");
-    expect(SUBMIT_DELAY_MS).toBeGreaterThan(0);
   });
 
   it("bracketed mode keeps inner newlines literal to the TUI input box", () => {

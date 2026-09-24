@@ -1,4 +1,4 @@
-import type { ClientMessage, ClientRole, ServerMessage } from "../../shared/protocol.ts";
+import type { ClientMessage, ClientRole, ServerFeature, ServerMessage } from "../../shared/protocol.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 
 type Handler = (message: ServerMessage) => void;
@@ -36,6 +36,8 @@ export class HerdrSocket {
   private disposed = false;
   private mode: ClientRole = "interact";
   private outputStopped = false;
+  /** what the connected server listed in its snapshot: empty until it arrives, and on older bridges */
+  private features = new Set<ServerFeature>();
 
   constructor(url: string = defaultUrl()) {
     this.url = url;
@@ -52,6 +54,7 @@ export class HerdrSocket {
     }
     const socket = new WebSocket(this.url);
     this.socket = socket;
+    this.features = new Set();
 
     socket.addEventListener("open", () => {
       this.retries = 0;
@@ -74,6 +77,7 @@ export class HerdrSocket {
         /* ignore malformed frame */
         return;
       }
+      if (message.type === "snapshot") this.features = new Set(message.features ?? []);
       // A terminal/parser failure is not malformed JSON and must not disappear.
       this.emit(message);
     });
@@ -173,6 +177,19 @@ export class HerdrSocket {
   sendInput(paneId: string, text: string): void {
     if (!this.connected) return;
     this.rawSend({ type: "input", pane_id: paneId, text });
+  }
+
+  /**
+   * Types a composer message and submits it, straight to the socket: a Ctrl armed on the
+   * terminal key bar must not turn a one-letter message into a control key. A server
+   * listing "submit" sends the Enter itself, after a gap; an older bridge gets the text
+   * and its Enter in one frame, as before. Returns false, sending nothing, when offline.
+   */
+  submit(paneId: string, text: string): boolean {
+    if (!this.connected) return false;
+    if (this.features.has("submit")) this.rawSend({ type: "submit", pane_id: paneId, text });
+    else this.rawSend({ type: "input", pane_id: paneId, text: `${text}\r` });
+    return true;
   }
 
   sendKeys(paneId: string, keys: string[]): void {

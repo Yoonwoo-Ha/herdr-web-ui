@@ -242,13 +242,19 @@ export type ClientMessage =
   | { type: "detach"; pane_id: string }
   | { type: "input"; pane_id: string; text: string }
   | { type: "keys"; pane_id: string; keys: string[] }
+  /** a composer message: the server types `text`, then its own Enter after a short gap
+   * (only to servers whose snapshot lists the "submit" feature) */
+  | { type: "submit"; pane_id: string; text: string }
   | { type: "resize"; pane_id: string; cols: number; rows: number }
   /** Cumulative UTF-8 payload bytes processed by xterm, only for this subscription. */
   | { type: "pty-ack"; pane_id: string; stream_id: string; offset: number }
   | { type: "role"; mode: ClientRole };
 
+/** What a server supports beyond the base protocol, listed in its first snapshot; older bridges list nothing. */
+export type ServerFeature = "submit";
+
 export type ServerMessage =
-  | { type: "snapshot"; snapshot: SessionSnapshot }
+  | { type: "snapshot"; snapshot: SessionSnapshot; features?: ServerFeature[] }
   /** raw PTY bytes: append to the terminal, never repaint over it */
   | { type: "pty-data"; pane_id: string; data: string; flow?: { stream_id: string; offset: number } }
   | { type: "pty-exit"; pane_id: string; code: number | null }

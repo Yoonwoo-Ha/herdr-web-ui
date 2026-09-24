@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { ServerWebSocket } from "bun";
 
-import type { AgentKind, ClientMessage, ClientRole, HealthAuth, HerdrPane, ServerMessage } from "../shared/protocol.ts";
+import type { AgentKind, ClientMessage, ClientRole, HealthAuth, HerdrPane, ServerFeature, ServerMessage } from "../shared/protocol.ts";
 import { paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { handleAuthRequest, isAuthenticated, requiresAuth, unauthorizedJson } from "./auth.ts";
@@ -47,6 +47,9 @@ import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
 
 const MAX_REPLAY_BYTES = 256 * 1024;
+/** The gap between a composer message's text and its Enter (see submitText). */
+export const SUBMIT_DELAY_MS = 120;
+const SERVER_FEATURES: ServerFeature[] = ["submit"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -150,9 +153,33 @@ export function createServer(
   // herdr releases its exclusive attach slot only after the old process exits.
   const retiringAttachments = new Map<string, Promise<void>>();
   const clients = new Set<Client>();
+  /** each pane's composer messages, one after another */
+  const submits = new Map<string, Promise<void>>();
   const hostname = options.hostname ?? process.env["HOST"] ?? "0.0.0.0";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
+
+  /**
+   * Types a composer message and submits it. The Enter goes on its own, SUBMIT_DELAY_MS
+   * after the text, as chatmux sends tmux its Enter: arriving in the same chunk as the
+   * paste, a TUI still busy with it (turning an image path into an attachment, redrawing
+   * after the phone keyboard closed) could take it for a newline and leave the message
+   * unsent in its input box. Timed here rather than in the browser, the gap survives a
+   * jittery connection, and the Enter still goes when the phone locks right after the tap.
+   * Both go through herdr's own send_text/send_keys, which return once the pane has the
+   * bytes: the attach pty's extra hop could shrink the gap the pane sees (54ms measured).
+   * Messages to one pane queue, so a quick second send cannot land before the first's Enter.
+   */
+  function submitText(paneId: string, text: string): Promise<void> {
+    const run = (submits.get(paneId) ?? Promise.resolve()).catch(() => {}).then(async () => {
+      await paneSendText(paneId, text);
+      await Bun.sleep(SUBMIT_DELAY_MS);
+      await paneSendKeys(paneId, ["Enter"]);
+    });
+    submits.set(paneId, run);
+    run.catch(() => {}).finally(() => { if (submits.get(paneId) === run) submits.delete(paneId); });
+    return run;
+  }
 
   function stopSlowClient(client: Client): void {
     if (client.data.closing) return;
@@ -747,7 +774,7 @@ export function createServer(
         if (client.data.relay) { client.data.relay.bind(client as ServerWebSocket<unknown>); return; }
         clients.add(client);
         try {
-          send(client, { type: "snapshot", snapshot: await sessionSnapshot() });
+          send(client, { type: "snapshot", snapshot: await sessionSnapshot(), features: SERVER_FEATURES });
         } catch (error) {
           const code = error instanceof HerdrError ? error.code : "snapshot_failed";
           send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error) });
@@ -858,6 +885,18 @@ export function createServer(
                 break;
               }
               await paneSendKeys(message.pane_id, message.keys);
+              break;
+            }
+            case "submit": {
+              if (client.data.mode === "observe") {
+                send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
+                break;
+              }
+              if (typeof message.text !== "string") {
+                send(client, { type: "error", code: "invalid_submit", message: "text must be a string" });
+                break;
+              }
+              await submitText(message.pane_id, message.text);
               break;
             }
             case "role": {
