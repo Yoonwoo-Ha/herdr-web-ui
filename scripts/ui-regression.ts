@@ -138,7 +138,7 @@ try {
     await createGate;
     await route.continue();
   });
-  await page.getByRole("button", { name: /^New session/ }).click();
+  await page.getByRole("button", { name: "New session", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: /^New session/ });
   await dialog.getByLabel(/^Directory/).fill(root);
   await dialog.getByLabel(/^Name/).fill("herdr-web-ui-test-browser-created");
