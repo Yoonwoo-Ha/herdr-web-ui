@@ -20,7 +20,7 @@
  * integration and lives in paneConversation.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -306,7 +306,16 @@ export type RecognizedConversation = {
   metadata: ConversationMetadata;
   /** the first turn's position, for the page before it; null at the conversation's beginning */
   cursor: string | null;
+  /** changes whenever the answer could: the route's ETag, so an unchanged poll costs no body */
+  version: string;
 };
+
+/** A restart may parse the same files differently: its answers never match an earlier ETag. */
+const PROCESS_VERSION = randomUUID();
+
+function answerVersion(key: string, signature: string): string {
+  return createHash("sha256").update(`${PROCESS_VERSION}\0${key}\0${signature}`).digest("base64url").slice(0, 22);
+}
 
 /**
  * Which turns: without `before`, the newest page (with `from`, from that held start
@@ -612,7 +621,9 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
   const key = page.before !== undefined ? `${path}\0before:${page.before}:${page.since ?? ""}` : `${path}\0from:${page.from ?? ""}`;
   const signature = page.before !== undefined ? stream.id : `${stream.id}:${stat.size}:${stat.mtimeMs}`;
   const cached = cache.get(key);
-  if (cached?.signature === signature) return { source, turns: cached.turns, metadata: cached.metadata, cursor: cached.cursor };
+  // the answer is a function of the page asked for and the file's state, so they name it
+  const version = answerVersion(key, signature);
+  if (cached?.signature === signature) return { source, turns: cached.turns, metadata: cached.metadata, cursor: cached.cursor, version };
 
   let start: number;
   let text: string;
@@ -654,5 +665,5 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
   cache.delete(key);
   cache.set(key, { signature, turns, metadata, cursor });
   if (cache.size > 32) cache.delete(cache.keys().next().value!);
-  return { source, turns, metadata, cursor };
+  return { source, turns, metadata, cursor, version };
 }

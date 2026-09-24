@@ -83,13 +83,41 @@ export async function fetchPaneTranscript(paneId: string, lines: number, machine
 /** Which turns (ConversationResponse.cursor): the page `before` a cursor, not past `since`; the newest ones `from` a held start. */
 export type ConversationPageQuery = { before?: string; since?: string; from?: string };
 
+/**
+ * The last answer per polled conversation URL and its ETag. The chat polls every 2s
+ * and a newest page can be megabytes: an unchanged one comes back as a bodyless 304,
+ * and the chat gets the very same object back, which tells it nothing changed. An
+ * older page (`before`) is asked for once, so it keeps no ETag and takes no slot.
+ */
+const conversationAnswers = new Map<string, { etag: string; body: ConversationResponse }>();
+const CONVERSATION_ANSWERS_KEPT = 16;
+
 /** GET /api/pane/conversation: structured turns, or scrollback fallback; `page` as ConversationResponse.cursor describes. */
 export async function fetchPaneConversation(paneId: string, machineId = "local", page: ConversationPageQuery = {}): Promise<ConversationResponse> {
   const query = new URLSearchParams({ pane_id: paneId });
   if (page.before !== undefined) query.set("before", page.before);
   if (page.since !== undefined) query.set("since", page.since);
   if (page.from !== undefined) query.set("from", page.from);
-  return await getJson<ConversationResponse>(machinePath(machineId, `pane/conversation?${query.toString()}`));
+  const url = machinePath(machineId, `pane/conversation?${query.toString()}`);
+  const polled = page.before === undefined;
+  const known = polled ? conversationAnswers.get(url) : undefined;
+  const response = await fetch(url, { cache: "no-store", ...(known ? { headers: { "if-none-match": known.etag } } : {}) });
+  if (response.status === 304 && known) {
+    // the pane being polled stays among the kept answers
+    conversationAnswers.delete(url);
+    conversationAnswers.set(url, known);
+    return known.body;
+  }
+  if (!response.ok) throw await errorFrom(url, response);
+  const body = (await response.json()) as ConversationResponse;
+  const etag = response.headers.get("etag");
+  if (!polled) return body;
+  conversationAnswers.delete(url);
+  if (etag !== null) {
+    conversationAnswers.set(url, { etag, body });
+    if (conversationAnswers.size > CONVERSATION_ANSWERS_KEPT) conversationAnswers.delete(conversationAnswers.keys().next().value!);
+  }
+  return body;
 }
 
 export interface HealthInfo {

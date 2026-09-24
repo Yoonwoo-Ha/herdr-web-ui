@@ -15,6 +15,7 @@ import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.
 import { formatWorkDuration, splitTurn, workSummary, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
 import { phaseRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
 import { useSettings } from "../lib/settings.ts";
+import { usePageVisible } from "../lib/visibility.ts";
 import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationTurn, InteractivePrompt } from "../../shared/protocol.ts";
 
 const TRANSCRIPT_LINES = 400;
@@ -218,6 +219,10 @@ function FallbackTurn({ message }: { message: TranscriptMessage }) {
 export function ChatView({ paneId, refreshKey, connected, ended, agent, agentStatus, onMetadata }: ChatViewProps) {
   const { fetchPaneConversation, fetchPanePrompt, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
+  // polls pause while the page is hidden and pick up at once when it is back
+  const visible = usePageVisible();
+  /** the answer last laid out: an unchanged poll (a 304) hands back this very object */
+  const lastAnswer = useRef<unknown>(null);
   const [state, setState] = useState<ChatState>(EMPTY_STATE);
   const [error, setError] = useState<string | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
@@ -250,9 +255,11 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
     shownPane.current = paneId;
     stickToBottom.current = true; signature.current = ""; setState(EMPTY_STATE); setNewMessages(false); setError(null); setErrorStatus(null); setPrompt(null);
     dropOlder();
+    lastAnswer.current = null;
   }, [paneId]);
 
   useEffect(() => {
+    if (!visible) return;
     let cancelled = false;
     let timer: number | undefined;
     /** The turns between the held start and where the newest page now starts, a page at a time; null when they cannot be joined. */
@@ -283,6 +290,8 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
           conversation = await fetchPaneConversation(paneId);
         }
         if (cancelled) return;
+        // a 304 hands back the answer already shown: nothing to compare or lay out again
+        if (conversation === lastAnswer.current) { setError(null); setErrorStatus(null); return; }
         // The newest page moved past the held start: the turns in between join the older
         // pages and the newest page is held from its new start, so no poll reads more than a page.
         const held = heldFrom.current;
@@ -310,6 +319,9 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
           setState(next);
         }
         setError(null); setErrorStatus(null);
+        // only an answer laid out in full is skipped when it comes back unchanged: a read
+        // cancelled mid-way (a pane switch, the page hidden during a gap fill) is redone
+        lastAnswer.current = conversation;
       } catch (cause) {
         if (cancelled) return;
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -320,7 +332,7 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
     };
     void read();
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [paneId, refreshKey, onMetadata, pollKey]);
+  }, [paneId, refreshKey, onMetadata, pollKey, visible]);
 
   const loadOlder = useCallback(async (): Promise<void> => {
     const node = scroller.current;
@@ -365,6 +377,7 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
   const pollPrompt = connected && !ended && agent !== null;
   useEffect(() => {
     if (!pollPrompt) { setPrompt(null); return; }
+    if (!visible) return;
     let cancelled = false;
     let timer = 0;
     const readPrompt = async (): Promise<void> => {
@@ -374,7 +387,7 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
     };
     void readPrompt();
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [pollPrompt, paneId, promptPollKey, fetchPanePrompt]);
+  }, [pollPrompt, paneId, promptPollKey, fetchPanePrompt, visible]);
 
   // Before paint and without animation: an opened conversation starts at its end
   // instead of scrolling there from the top.

@@ -64,3 +64,22 @@ it("serves native Codex conversations and invalidates replaced files even at the
   rmSync(rollout);
   expect(await read()).toEqual({ source: "scrollback", turns: [] });
 });
+
+it("answers an unchanged conversation with a bodyless 304 and a changed one in full", async () => {
+  writeFileSync(rollout, transcript(`${answerPrefix}Answer one`));
+  const url = `http://127.0.0.1:${server.port}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`;
+  const first = await fetch(url);
+  const etag = first.headers.get("etag");
+  expect(first.status).toBe(200);
+  expect(etag).toMatch(/^"[\w-]+"$/);
+  expect(first.headers.get("cache-control")).toBe("no-store");
+  await first.json();
+  const unchanged = await fetch(url, { headers: { "if-none-match": etag! } });
+  expect(unchanged.status).toBe(304);
+  expect(await unchanged.text()).toBe("");
+  writeFileSync(rollout, transcript(`${answerPrefix}Answer two`));
+  const changed = await fetch(url, { headers: { "if-none-match": etag! } });
+  expect(changed.status).toBe(200);
+  expect(changed.headers.get("etag")).not.toBe(etag);
+  expect(((await changed.json()) as ConversationResponse).turns.at(-1)?.parts[0]).toMatchObject({ text: `${answerPrefix}Answer two` });
+});

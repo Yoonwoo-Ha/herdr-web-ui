@@ -61,11 +61,17 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       const headers = new Headers({ authorization: `Bearer ${endpoint.token}` });
       const contentType = request.headers.get("content-type");
       if (contentType) headers.set("content-type", contentType);
+      // a remote conversation answers 304 when unchanged, as a local one does
+      const ifNoneMatch = request.headers.get("if-none-match");
+      if (ifNoneMatch) headers.set("if-none-match", ifNoneMatch);
       const abort = new AbortController();
       const untrack = manager.trackTerminal(id, () => abort.abort());
       try {
         const response = await fetch(`${endpoint.url}/api/${path}${url.search}`, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body, redirect: "error", signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(75_000)]) });
-        return new Response(await response.arrayBuffer(), { status: response.status, headers: { "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store" } });
+        const etag = response.headers.get("etag");
+        return new Response(response.status === 304 ? null : await response.arrayBuffer(), { status: response.status, headers: {
+          "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", ...(etag ? { etag } : {}),
+        } });
       } catch { return fail("machine_unavailable", "The PC connection was interrupted; retry after reconnecting", 502); }
       finally { untrack(); }
     }
