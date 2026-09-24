@@ -65,15 +65,15 @@ function storeSelection(machineId: string, paneId: string | null): void {
   }
 }
 
-/** The lens a pane opens in: remembered per pane; agent panes start as chat, shells as terminal. */
-function storedView(paneId: string, hasAgent: boolean, machineId: string): PaneView {
+/** The lens a pane opens in: remembered per pane; a pane seen for the first time opens its terminal. */
+function storedView(paneId: string, machineId: string): PaneView {
   try {
     const stored = window.localStorage.getItem(`herdr-web-ui:view:${paneStorageId(machineId, paneId)}`);
     if (stored === "chat" || stored === "terminal") return stored;
   } catch {
     /* private mode */
   }
-  return hasAgent ? "chat" : "terminal";
+  return "terminal";
 }
 
 function Brand() {
@@ -334,8 +334,8 @@ export function App() {
   // the lens follows the selected pane: each pane remembers its own
   useEffect(() => {
     if (selectedPaneId === null) return;
-    setViewState(storedView(selectedPaneId, selectedAgent !== null, selectedMachineId));
-  }, [selectedPaneId, selectedAgent, selectedMachineId]);
+    setViewState(storedView(selectedPaneId, selectedMachineId));
+  }, [selectedPaneId, selectedMachineId]);
 
   const setView = useCallback(
     (next: PaneView) => {
