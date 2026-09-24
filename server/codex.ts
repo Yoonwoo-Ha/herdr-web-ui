@@ -329,6 +329,19 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   return matching.size === 1 ? [...matching][0]! : null;
 }
 
+/** `codex resume <thread>`: the thread a TUI was started on, straight from its command line. */
+export function resumedThread(argvs: readonly (readonly string[])[]): string | null {
+  for (const argv of argvs) {
+    const at = argv.indexOf("resume");
+    const thread = at < 0 ? undefined : argv[at + 1];
+    if (thread !== undefined && UUID.test(thread)) return thread;
+  }
+  return null;
+}
+
+/** The rollout each pane's Codex was last matched to on screen, and the processes that were running it. */
+const boundRollouts = new Map<string, { processes: string; path: string }>();
+
 export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome()): Promise<string | null> {
   const info = await herdrRpc<{ agent: { agent_session?: { kind?: string; value?: string } } }>("agent.get", { target: paneId });
   const session = info.agent.agent_session;
@@ -337,9 +350,12 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   const processInfo = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; argv?: string[] }[] } }>(
     "pane.process_info", { pane_id: paneId },
   );
+  const codexProcesses = (processInfo.process_info?.foreground_processes ?? [])
+    .filter((process) => process.argv?.some((arg) => /(?:^|\/)codex(?:\.js)?$/.test(arg)));
+  const processes = codexProcesses.map((process) => process.pid).sort((left, right) => left - right).join(",");
+  const resumed = resumedThread(codexProcesses.map((process) => process.argv ?? []));
   const open = new Set<string>();
-  for (const process of processInfo.process_info?.foreground_processes ?? []) {
-    if (!process.argv?.some((arg) => /(?:^|\/)codex(?:\.js)?$/.test(arg))) continue;
+  for (const process of codexProcesses) {
     if (globalThis.process.platform === "darwin") {
       // lsof is available on macOS, where /proc does not exist. Keep the same
       // canonical-store and unambiguous-open-file checks as the Linux path.
@@ -371,11 +387,16 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
 
   let db: Database | undefined;
   let paths: string[] = [...open];
+  let resumedPath: string | null = null;
   try {
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     if (session?.value && UUID.test(session.value)) {
       const row = db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ?").get(session.value);
       return row ? codexRolloutPath(row.rollout_path, home) : null;
+    }
+    if (resumed !== null) {
+      const row = db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ?").get(resumed);
+      resumedPath = row ? codexRolloutPath(row.rollout_path, home) : null;
     }
     const rows = db.query<{ rollout_path: string }, [string]>(
       "SELECT rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL ORDER BY updated_at DESC LIMIT 32",
@@ -386,10 +407,21 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     })])];
   } catch { /* Older installations can still resolve their open descriptors. */ }
   finally { db?.close(); }
-  if (!paths.length) return null;
-  const screen = await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true });
+  const screen = paths.length ? await paneRead({ paneId, source: "recent", lines: 400, stripAnsi: true }) : null;
   const candidates = paths.flatMap((path) => {
     try { return [{ path, text: codexHistoryTail(path, 1024 * 1024, home) }]; } catch { return []; }
   });
-  return matchCodexTranscript(screen.text, candidates);
+  const matched = screen ? matchCodexTranscript(screen.text, candidates) : null;
+  if (matched !== null) {
+    boundRollouts.set(paneId, { processes, path: matched });
+    if (boundRollouts.size > 64) boundRollouts.delete(boundRollouts.keys().next().value!);
+    return matched;
+  }
+  // Nothing on screen tells: a long run of tool output pushed the last answer out of
+  // the read, or nothing is answered yet. The same Codex process still writes the
+  // rollout it was last matched to (a later match to another one, after /new, wins);
+  // failing that, the thread it was resumed on.
+  const bound = boundRollouts.get(paneId);
+  if (bound !== undefined && bound.processes === processes && processes !== "" && codexRolloutPath(bound.path, home) !== null) return bound.path;
+  return resumedPath;
 }

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexHistoryTail, codexRolloutPath, forgetHistoryChains, matchCodexTranscript, parseCodexTranscript } from "./codex.ts";
+import { codexHistoryTail, codexRolloutPath, forgetHistoryChains, matchCodexTranscript, parseCodexTranscript, resumedThread } from "./codex.ts";
 import { splitTurn } from "../src/lib/workBlocks.ts";
 
 const ts = "2026-09-22T01:00:00.000Z";
@@ -103,6 +103,14 @@ describe("Codex conversation records", () => {
 });
 
 describe("Codex rollout resolution", () => {
+  it("reads the thread a TUI was resumed on from its command line", () => {
+    const thread = "01a0a337-19e8-7712-92f5-aa0883392afd";
+    expect(resumedThread([["node", "/usr/bin/codex", "resume", thread, "--yolo"], ["/vendor/codex", "resume"]])).toBe(thread);
+    expect(resumedThread([["codex", "resume", "--last"], ["codex"]])).toBeNull();
+    expect(resumedThread([["codex", "exec", "resume"]])).toBeNull();
+    expect(resumedThread([])).toBeNull();
+  });
+
   const roots: string[] = [];
   afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
