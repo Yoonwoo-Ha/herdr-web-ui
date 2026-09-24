@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { InteractivePrompt } from "../shared/protocol.ts";
 
-import { answerKeys, codexQuestionsCollapsed, parseInteractivePrompt } from "./prompt.ts";
+import { answerKeys, codexQuestionsCollapsed, codexQueuedPrompt, parseInteractivePrompt } from "./prompt.ts";
 
 const labels = (prompt: InteractivePrompt | null) => prompt?.options.map((option) => option.label);
 
@@ -186,7 +186,7 @@ Which accelerator?
 enter submit   ctrl + ] skip
 option 1/4   shift + → main prompt
 `);
-    expect(asyncQuestion).toMatchObject({ kind: "question", question: "Which accelerator?", custom_option_index: null });
+    expect(asyncQuestion).toMatchObject({ kind: "question", question: "Which accelerator?", custom_option_index: 3 });
     expect(labels(asyncQuestion)).toEqual(["CUDA", "CPU", "NPU"]);
 
     const approval = parseInteractivePrompt("codex", `
@@ -414,6 +414,84 @@ Press enter to confirm or esc to cancel
 • Command completed successfully.
 › Ask Codex to do something
 `)).toBeNull();
+  });
+});
+
+describe("Codex's queue of questions (request_user_input_async)", () => {
+  const status = "  GPT-6-Sol xhigh · ~/lab · Context 97% left · weekly 56% left";
+
+  test("reads an open question: its position, a wrapped title, wrapped options and the typed-answer row", () => {
+    const prompt = parseInteractivePrompt("codex", `
+• WAITING
+• Queued follow-up inputs
+  1 of 2
+  정리 범위를 현재 Q255 학습 출력과 연결된 산출물로 한정할까요, 아니면
+  output/test 전체 실험까지 포함할까요?
+  › 1. 현재 Q255 관련 산출물만
+    2. output/test 전체 실험까지 포함해서 모두 정리하고
+       결과를 표로 남기기
+    3. Other
+  enter submit   ctrl+] skip   alt+↓ main prompt   alt+↑ next question
+`);
+    expect(prompt).toMatchObject({
+      kind: "question", title: "Question 1 of 2",
+      question: "정리 범위를 현재 Q255 학습 출력과 연결된 산출물로 한정할까요, 아니면 output/test 전체 실험까지 포함할까요?",
+      custom_option_index: 2,
+    });
+    expect(labels(prompt)).toEqual(["현재 Q255 관련 산출물만", "output/test 전체 실험까지 포함해서 모두 정리하고 결과를 표로 남기기"]);
+    // an answer of its own is typed into the last row once it is selected, then submitted
+    expect(answerKeys(prompt!, { custom_text: "Q255 only, keep logs" })).toEqual([
+      { keys: ["down"] }, { keys: ["down"] }, { text: "Q255 only, keep logs" }, { keys: ["enter"] },
+    ]);
+    expect(answerKeys(prompt!, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
+  });
+
+  test("reads an open free-form question, and a last row already typed over", () => {
+    const freeForm = parseInteractivePrompt("codex", `
+• Queued follow-up inputs
+  Any notes?
+  Type your answer
+  enter submit   ctrl+] skip   alt+↓ main prompt
+`);
+    expect(freeForm).toMatchObject({ title: "Question", question: "Any notes?", options: [], custom_option_index: 0 });
+    expect(answerKeys(freeForm!, { custom_text: "none" })).toEqual([{ text: "none" }, { keys: ["enter"] }]);
+
+    const typed = parseInteractivePrompt("codex", `
+• Queued follow-up inputs
+  Which split?
+    1. train
+    2. test
+  › 3. val spl
+  enter submit   ctrl+] skip   alt+↓ main prompt
+`);
+    expect(labels(typed)).toEqual(["train", "test"]);
+    expect(answerKeys(typed!, { option_index: 0 })).toEqual([{ keys: ["up"] }, { keys: ["up"] }, { keys: ["enter"] }]);
+  });
+
+  test("a collapsed queue shows its first question, taken from the rollout's newest unanswered ones", () => {
+    const collapsed = `
+• WAITING
+• Queued follow-up inputs
+  ? 2 questions · 8s
+    alt+↑ to answer
+› Ask Codex to do anything
+${status}
+`;
+    expect(parseInteractivePrompt("codex", collapsed)).toBeNull();
+    const asked = [
+      // skipped in the TUI: no record says so, but only the newest two are waiting
+      { key: "call_a:0", title: "Old question?", options: ["x", "y"] },
+      { key: "call_b:0", title: "Which dataset?", options: ["LM-O", "YCB-V"] },
+      { key: "call_b:1", title: "Any notes?", options: [] },
+    ];
+    const prompt = codexQueuedPrompt(collapsed, asked);
+    expect(prompt).toMatchObject({ kind: "question", title: "Question 1 of 2", question: "Which dataset?", custom_option_index: 2 });
+    expect(labels(prompt)).toEqual(["LM-O", "YCB-V"]);
+    expect(codexQueuedPrompt(collapsed.replace("? 2 questions", "? 1 question"), asked)).toMatchObject({ title: "Question", question: "Any notes?", options: [], custom_option_index: 0 });
+    // fewer on record than the queue holds: the card cannot say which is first
+    expect(codexQueuedPrompt(collapsed, asked.slice(2))).toBeNull();
+    // the count must be the queue above the main prompt, not an old line higher up
+    expect(codexQueuedPrompt(collapsed.replace("› Ask Codex to do anything", `${"output line\n".repeat(20)}› Ask Codex`), asked)).toBeNull();
   });
 });
 

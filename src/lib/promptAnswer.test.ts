@@ -20,6 +20,13 @@ describe("answering a prompt from the chat", () => {
     expect(answerHint(question)).toBe("Answer above: type 1–2 or your own reply…");
   });
 
+  it("answers a free-form question (Codex's queue) with the text itself, numbers included", () => {
+    const freeForm = prompt([], 0);
+    expect(answerFromText(freeForm, "1")).toEqual({ custom_text: "1" });
+    expect(answerFromText(freeForm, "keep the logs")).toEqual({ custom_text: "keep the logs" });
+    expect(answerHint(freeForm)).toBe("Answer above: type your reply…");
+  });
+
   it("takes only an option for an approval", () => {
     const approval = { ...prompt(["Yes, proceed (y)", "Yes, and don't ask again (p)", "No, and tell Codex what to do differently (esc)"], null), kind: "approval" as const };
     expect(answerFromText(approval, "y")).toEqual({ option_index: 0 });

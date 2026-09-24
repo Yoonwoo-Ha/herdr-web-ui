@@ -55,6 +55,8 @@ function range(prompt: InteractivePrompt): string {
 /** How a typed message answers this prompt: the composer's placeholder while it waits. */
 export function answerHint(prompt: InteractivePrompt): string {
   if (prompt.multi_select) return "Answer above: type the numbers you choose, e.g. 1 3";
+  // a free-form question (Codex's queue) has no options to number
+  if (choices(prompt).length === 0) return "Answer above: type your reply…";
   return prompt.custom_option_index !== null
     ? `Answer above: type ${range(prompt)} or your own reply…`
     : `Answer above: type ${range(prompt)} to choose…`;

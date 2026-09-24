@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { InteractivePrompt, PromptAnswer } from "../shared/protocol.ts";
+import { codexTranscriptPath, unansweredCodexQuestions, type QueuedQuestion } from "./codex.ts";
 import { HerdrError, paneRead, paneSendKeys, paneSendText, sessionSnapshot } from "./herdr/client.ts";
 import { badRequest, errorResponse, jsonResponse } from "./http.ts";
 
@@ -13,6 +14,11 @@ const OMP_MULTI_HINT_RE = /space\/enter toggle.*↑\/↓ move.*esc cancel/i;
 const CODEX_ASK_HINT_RE = /tab to add notes.*enter to submit (?:answer|all).*esc to interrupt/i;
 const CODEX_ASYNC_ASK_HINT_RE = /(?:enter|return).*submit.*(?:ctrl\s*\+\s*\]|skip)/i;
 const CODEX_CONTINUE_HINT_RE = /press\s+enter\s+to\s+continue/i;
+// Codex 0.156's queue of questions asked with request_user_input_async, above the main
+// prompt: collapsed ("? 2 questions · 8s" / "alt+↑ to answer") or open on one question
+const CODEX_QUEUE_HEADER_RE = /^(?:•\s*)?Queued follow-up inputs$/;
+const CODEX_QUEUE_COUNT_RE = /^\?\s*(\d+)\s+questions?\b/;
+const CODEX_QUEUE_POSITION_RE = /^(\d+) of (\d+)$/;
 // several questions navigate between tabs: "Tab/Arrow keys to navigate"
 const CLAUDE_ASK_HINT_RE = /enter to select.*(?:↑\/↓|tab\/arrow keys) to navigate.*esc to cancel/i;
 // question tabs, whole (`←  ☒ Route  ☐ Author  ✔ Submit  →`) or cut off by a narrow pane
@@ -31,11 +37,15 @@ const KEY = {
   tab: "tab",
   right: "right",
   backtab: "shift+tab",
+  // opens Codex's queue on its first question (herdr's own alt+arrow bindings
+  // apply to the keyboard, not to keys sent to the pane)
+  openQueue: "alt+up",
 } as const;
 
 type Responder =
   | "codex-question"
   | "codex-async-question"
+  | "codex-queued-question"
   | "omp-question"
   | "claude-question"
   | "claude-submit"
@@ -245,24 +255,89 @@ function parseCodexQuestion(screen: string): ParsedPrompt | null {
   });
 }
 
+/**
+ * A question from Codex's queue, open: under the queue header, an optional "1 of 2", the
+ * question (wrapped over as many lines as the pane needs), then its options and a last
+ * row that takes a typed answer ("Other", or what was typed there). A free-form question
+ * has no options, only that answer line ("Type your answer").
+ */
 function parseCodexAsyncQuestion(screen: string): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const hintIndex = findLastIndex(lines, (line) => CODEX_ASYNC_ASK_HINT_RE.test(line));
   if (hintIndex < 0) return null;
-  const rows = parseNumberedRows(lines, Math.max(0, hintIndex - 48), hintIndex);
-  if (!sequentialRows(rows) || rows.filter((row) => row.selected).length !== 1) return null;
-  const customIndex = rows.findIndex((row) => /^Other\b/i.test(row.label));
-  if (customIndex !== rows.length - 1 || customIndex < 1) return null;
-  const question = nearestQuestion(lines, rows[0]!.lineIndex);
+  const header = findLastIndex(lines.slice(Math.max(0, hintIndex - 48), hintIndex), (line) => CODEX_QUEUE_HEADER_RE.test(cleanLine(line)));
+  const top = header < 0 ? Math.max(0, hintIndex - 48) : Math.max(0, hintIndex - 48) + header + 1;
+  const rows = parseNumberedRows(lines, top, hintIndex);
+  const text = (from: number, to: number) => lines.slice(from, to).map(cleanLine).filter((line) => line && !isDivider(line));
+  let position: RegExpMatchArray | null = null;
+  const questionLines = (to: number): string[] => {
+    const found = text(top, to);
+    position = found[0]?.match(CODEX_QUEUE_POSITION_RE) ?? null;
+    return position ? found.slice(1) : found;
+  };
+  let question: string | null;
+  let options: InteractivePrompt["options"];
+  let menuLabels: string[];
+  let selectedIndex: number;
+  if (rows.length === 0) {
+    // free form: the answer line sits right above the hint
+    if (header < 0) return null;
+    const answerLine = findLastIndex(lines.slice(0, hintIndex), (line) => Boolean(cleanLine(line)) && !isDivider(line));
+    if (answerLine < top) return null;
+    question = normalizeText(questionLines(answerLine).join(" ")) || null;
+    options = [];
+    menuLabels = [];
+    selectedIndex = 0;
+  } else {
+    if (!sequentialRows(rows) || rows.length < 2 || rows.filter((row) => row.selected).length !== 1) return null;
+    // an old layout without the header must still end in its "Other" row
+    if (header < 0 && !/^Other\b/i.test(rows.at(-1)!.label)) return null;
+    // a wrapped option continues on the lines under it: these rows carry no descriptions
+    const labels = rows.map((row, index) => normalizeText([row.label, ...text(row.lineIndex + 1, rows[index + 1]?.lineIndex ?? hintIndex)].join(" ")));
+    question = header < 0 ? nearestQuestion(lines, rows[0]!.lineIndex) : normalizeText(questionLines(rows[0]!.lineIndex).join(" ")) || null;
+    options = labels.slice(0, -1).map((label) => ({ label, description: null }));
+    menuLabels = labels;
+    selectedIndex = rows.findIndex((row) => row.selected);
+  }
   if (!question) return null;
+  const at = position as RegExpMatchArray | null;
   return finishPrompt("codex", {
-    kind: "question", title: "Question", question, body: null,
-    options: rows.slice(0, customIndex).map((row) => ({ label: row.label, description: row.description ?? null })),
-    multi_select: false, custom_option_index: null,
+    kind: "question", title: at ? `Question ${at[1]} of ${at[2]}` : "Question", question, body: null,
+    options, multi_select: false, custom_option_index: options.length,
   }, {
-    responder: "codex-async-question", menuLabels: rows.map((row) => row.label),
-    selectedIndex: rows.findIndex((row) => row.selected), checkedOptionIndices: [], customMenuIndex: null,
-    rejectWithEscapeIndex: null,
+    responder: "codex-async-question", menuLabels, selectedIndex, checkedOptionIndices: [],
+    customMenuIndex: menuLabels.length === 0 ? 0 : menuLabels.length - 1, rejectWithEscapeIndex: null,
+  });
+}
+
+/** How many questions wait in Codex's collapsed queue at the bottom of the screen; 0 when none do. */
+function queuedQuestionCount(screen: string): number {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine).filter(Boolean);
+  const header = findLastIndex(lines, (line) => CODEX_QUEUE_HEADER_RE.test(line));
+  // the queue sits right above the main prompt and its status line
+  if (header < 0 || lines.length - header > 16) return 0;
+  for (const line of lines.slice(header + 1, header + 8)) {
+    const count = line.match(CODEX_QUEUE_COUNT_RE);
+    if (count) return Number(count[1]);
+  }
+  return 0;
+}
+
+/**
+ * The collapsed queue shows only a count: the card takes its first question from the
+ * rollout, the newest `count` unanswered ones (a skipped question leaves no record).
+ */
+function queuedPrompt(count: number, unanswered: QueuedQuestion[]): ParsedPrompt | null {
+  const waiting = unanswered.slice(-count);
+  const first = waiting[0];
+  if (!first || waiting.length !== count || !first.title.trim()) return null;
+  return finishPrompt("codex", {
+    kind: "question", title: count > 1 ? `Question 1 of ${count}` : "Question", question: normalizeText(first.title), body: null,
+    options: first.options.map((label) => ({ label, description: null })),
+    multi_select: false, custom_option_index: first.options.length,
+  }, {
+    responder: "codex-queued-question", menuLabels: first.options.length ? [...first.options, "Other"] : [],
+    selectedIndex: 0, checkedOptionIndices: [], customMenuIndex: first.options.length, rejectWithEscapeIndex: null,
   });
 }
 
@@ -496,6 +571,13 @@ export function codexQuestionsCollapsed(screen: string): boolean {
   return /\bto answer$/i.test(lines[count + 1] ?? "") && /^›\s/.test(lines[count + 2] ?? "");
 }
 
+/** The card for Codex's collapsed queue on this screen, from the rollout's unanswered questions. */
+export function codexQueuedPrompt(screen: string, unanswered: QueuedQuestion[]): InteractivePrompt | null {
+  const count = queuedQuestionCount(screen);
+  const queued = count > 0 ? queuedPrompt(count, unanswered) : null;
+  return queued ? publicPrompt(queued) : null;
+}
+
 export function parseInteractivePrompt(agent: string, screen: string): InteractivePrompt | null {
   const parsed = parsePrompt(agent, screen);
   return parsed ? publicPrompt(parsed) : null;
@@ -522,7 +604,8 @@ export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer,
     const text = answer.custom_text.trim();
     if (!text || parsed.customMenuIndex === null || parsed.multi_select) throw new InvalidAnswer("This prompt does not accept a custom answer.");
     const navigation = navigationKeys(parsed.customMenuIndex - parsed.selectedIndex);
-    if (parsed.responder !== "claude-question" && parsed.responder !== "claude-plan" && parsed.responder !== "codex-question") navigation.push(KEY.enter);
+    // Codex's queue types into its last row once it is selected: no enter first
+    if (!["claude-question", "claude-plan", "codex-question", "codex-async-question"].includes(parsed.responder)) navigation.push(KEY.enter);
     if (parsed.responder === "codex-question") navigation.push(KEY.tab);
     return [
       ...keySteps(navigation),
@@ -563,13 +646,59 @@ export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer,
   return keySteps([...navigationKeys(index! - parsed.selectedIndex), KEY.enter]);
 }
 
-async function readPrompt(paneId: string): Promise<{ agent: string; prompt: InteractivePrompt | null }> {
+/** Each pane's rollout, resolved for its collapsed queue: a poll every 2s would otherwise redo it. */
+const queueRollouts = new Map<string, { path: string | null; at: number }>();
+const QUEUE_ROLLOUT_MS = 15_000;
+
+async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: string; prompt: InteractivePrompt | null }> {
   const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
   if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
   const agent = pane.agent ?? "";
   if (agent !== "claude" && agent !== "omp" && agent !== "codex") return { agent, prompt: null };
   const screen = await paneRead({ paneId, source: "visible", format: "text" });
-  return { agent, prompt: parseInteractivePrompt(agent, screen.text) };
+  const prompt = parseInteractivePrompt(agent, screen.text);
+  const count = agent === "codex" && prompt === null ? queuedQuestionCount(screen.text) : 0;
+  if (count === 0 || !pane.cwd) return { agent, prompt };
+  let rollout = queueRollouts.get(paneId);
+  if (!rollout || Date.now() - rollout.at > QUEUE_ROLLOUT_MS) {
+    rollout = { path: await codexTranscriptPath(paneId, pane.cwd, codexHome), at: Date.now() };
+    queueRollouts.set(paneId, rollout);
+    if (queueRollouts.size > 64) queueRollouts.delete(queueRollouts.keys().next().value!);
+  }
+  try {
+    return { agent, prompt: rollout.path ? codexQueuedPrompt(screen.text, unansweredCodexQuestions(rollout.path)) : null };
+  } catch {
+    return { agent, prompt: null }; // the rollout went away
+  }
+}
+
+/** Letters and digits only: a question the pane wraps or punctuates differently still compares equal. */
+const comparable = (text: string): string => text.normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+
+function sameText(shown: string, asked: string): boolean {
+  const a = comparable(shown);
+  const b = comparable(asked);
+  // a pane too narrow for a line may cut it with an ellipsis
+  return a === b || (/…\s*$/.test(shown) && a.length >= 24 && b.startsWith(a));
+}
+
+/**
+ * Opens Codex's collapsed queue on its first question and returns that question, only
+ * if it is the one the card showed (title and options). Another one stays open, so the
+ * chat's next read shows the question actually waiting (a skip can leave the rollout's
+ * guess behind); a queue that does not open is left alone.
+ */
+async function openQueuedQuestion(paneId: string, queued: ParsedPrompt): Promise<InteractivePrompt | null> {
+  await paneSendKeys(paneId, [KEY.openQueue]);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await Bun.sleep(100);
+    const opened = parsePrompt("codex", (await paneRead({ paneId, source: "visible", format: "text" })).text);
+    if (opened?.responder !== "codex-async-question") continue;
+    if (sameText(opened.question, queued.question) && opened.options.length === queued.options.length
+      && opened.options.every((option, index) => sameText(option.label, queued.options[index]!.label))) return publicPrompt(opened);
+    return null;
+  }
+  return null;
 }
 
 function promptChanged(): Response {
@@ -579,6 +708,8 @@ function promptChanged(): Response {
 export interface PromptRequestOptions {
   /** runs a pane's answer after the input already queued for it (a composer message in flight) */
   serialize?: <T>(paneId: string, task: () => Promise<T>) => Promise<T>;
+  /** Native Codex store, for the rollout behind a collapsed queue; defaults to CODEX_HOME */
+  codexHome?: string;
 }
 
 export async function handlePromptRequest(request: Request, url: URL, options: PromptRequestOptions = {}): Promise<Response | null> {
@@ -588,7 +719,7 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       if (request.method !== "GET") return badRequest("method_not_allowed", "GET is required.");
       const paneId = url.searchParams.get("pane_id")?.trim();
       if (!paneId) return badRequest("missing_pane_id", "pane_id is required.");
-      return jsonResponse({ prompt: (await readPrompt(paneId)).prompt });
+      return jsonResponse({ prompt: (await readPrompt(paneId, options.codexHome)).prompt });
     }
 
     if (request.method !== "POST") return badRequest("method_not_allowed", "POST is required.");
@@ -602,14 +733,22 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     if (typeof body.pane_id !== "string" || !body.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required.");
     if (typeof body.prompt_id !== "string" || !body.prompt_id) return badRequest("invalid_answer", "prompt_id is required.");
 
-    // read, checked and answered in the pane's turn: a message still in flight goes first
+    // read, checked and answered in the pane's turn: a message still in flight goes first, and
+    // one sent meanwhile waits until the queue is opened, answered and closed again
     const serialize = options.serialize ?? (<T>(_paneId: string, task: () => Promise<T>) => task());
     return await serialize(body.pane_id, async () => {
-      const { prompt } = await readPrompt(body.pane_id);
+      const { prompt } = await readPrompt(body.pane_id, options.codexHome);
       if (!prompt || prompt.id !== body.prompt_id) return promptChanged();
+      let target = prompt;
+      if (parsedByPublicPrompt.get(prompt)?.responder === "codex-queued-question") {
+        // the card came from the rollout: answer it in the open queue, once it shows this question
+        const opened = await openQueuedQuestion(body.pane_id, parsedByPublicPrompt.get(prompt)!);
+        if (!opened) return promptChanged();
+        target = opened;
+      }
       let steps: AnswerStep[];
       try {
-        steps = answerKeys(prompt, body);
+        steps = answerKeys(target, body);
       } catch (error) {
         if (error instanceof InvalidAnswer) return badRequest("invalid_answer", error.message);
         throw error;

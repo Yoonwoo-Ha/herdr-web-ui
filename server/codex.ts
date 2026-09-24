@@ -18,6 +18,31 @@ function contextOnly(text: string): boolean {
     || /^<(environment_context|permissions instructions|turn_aborted|subagent_notification)>[\s\S]*<\/\1>$/.test(value);
 }
 
+/**
+ * An answer to Codex's queued questions (request_user_input_async) reaches the model as
+ * a user message: a JSON list of {answer, question, questionItemId} inside
+ * `<send_user_message_question_reply>`. The chat shows what was answered, not the envelope.
+ */
+function questionReply(text: string): string | null {
+  const match = text.trim().match(/^<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>$/);
+  if (!match) return null;
+  try {
+    const items: unknown = JSON.parse(match[1]!);
+    if (!Array.isArray(items)) return null;
+    const answers = items.map((item) => string(record(item).answer).trim()).filter(Boolean);
+    return answers.length > 0 ? answers.join("\n") : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The questions of a request_user_input(_async) call: `title` (async) or `question` (plan mode). */
+function questionTitles(args: RecordValue): string[] {
+  return Array.isArray(args.questions)
+    ? args.questions.map((question) => string(record(question).title) || string(record(question).question)).filter(Boolean)
+    : [];
+}
+
 function contentText(value: unknown, user = false): string {
   if (typeof value === "string") return user && contextOnly(value) ? "" : value;
   if (!Array.isArray(value)) return "";
@@ -50,7 +75,8 @@ export function parseCodexTranscript(text: string, maxTurns = 100): Conversation
     if (ts) turn.end_ts = ts;
     return turn;
   };
-  const message = (role: "user" | "assistant", body: string, source: string, ts: string, phase?: "commentary" | "final_answer"): void => {
+  const message = (role: "user" | "assistant", text: string, source: string, ts: string, phase?: "commentary" | "final_answer"): void => {
+    const body = role === "user" ? questionReply(text) ?? text : text;
     if (!body.trim()) return;
     const duplicate = messages.slice(-8).reverse().find((other) => !other.paired && other.role === role && other.text === body
       && other.source !== source && (other.ts === ts || Math.abs(Date.parse(other.ts) - Date.parse(ts)) <= 1000));
@@ -104,7 +130,9 @@ export function parseCodexTranscript(text: string, maxTurns = 100): Conversation
       const raw = payload.type === "function_call" ? payload.arguments : payload.input;
       let args = record(raw);
       if (typeof raw === "string") { try { args = record(JSON.parse(raw)); } catch { /* Freeform tool input. */ } }
-      const summary = [args.cmd, args.command, args.file_path, args.path, args.pattern, args.description, args.url].find((v) => typeof v === "string");
+      const summary = /^request_user_input/.test(name) && questionTitles(args).length > 0
+        ? questionTitles(args).join(" · ")
+        : [args.cmd, args.command, args.file_path, args.path, args.pattern, args.description, args.url].find((v) => typeof v === "string");
       const part: Extract<ConversationPart, { kind: "tool" }> = {
         kind: "tool", name, summary: (string(summary) || name).slice(0, 120),
         input: Object.keys(args).length ? JSON.stringify(args, null, 2) : string(raw), output: "",
@@ -163,6 +191,74 @@ export function readRange(path: string, start: number, end: number): string {
     const text = buffer.subarray(0, length).toString("utf8");
     return start > 0 ? text.slice(text.indexOf("\n") + 1) : text;
   } finally { closeSync(fd); }
+}
+
+/** A question Codex queued with request_user_input_async; `options` is empty for a free-form one. */
+export interface QueuedQuestion { key: string; title: string; options: string[] }
+
+const QUESTION_SCAN_BYTES = 16 * 1024 * 1024;
+/** Per rollout: how far it was read, the questions asked and the ones answered since. */
+const questionScans = new Map<string, { ino: number; size: number; cut: boolean; asked: QueuedQuestion[]; answered: Set<string> }>();
+
+/**
+ * The questions a rollout asked with request_user_input_async and holds no answer for,
+ * oldest first. A question skipped in the TUI leaves no record, so a caller takes as
+ * many of the newest as the TUI shows waiting. Only bytes appended since the last call
+ * are read (the first call reads the last 16MB), and only lines naming the tool parsed.
+ */
+export function unansweredCodexQuestions(path: string): QueuedQuestion[] {
+  const stat = statSync(path);
+  let scan = questionScans.get(path);
+  if (!scan || scan.ino !== stat.ino || stat.size < scan.size) {
+    const start = Math.max(0, stat.size - QUESTION_SCAN_BYTES);
+    scan = { ino: stat.ino, size: start, cut: start > 0, asked: [], answered: new Set() };
+  }
+  if (stat.size > scan.size) {
+    const fd = openSync(path, "r");
+    let bytes: Buffer;
+    try {
+      const buffer = Buffer.alloc(stat.size - scan.size);
+      bytes = buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, scan.size));
+    } finally { closeSync(fd); }
+    // whole lines only: a line still being written is read again next time
+    const end = bytes.lastIndexOf(0x0a) + 1;
+    let text = bytes.subarray(0, end).toString("utf8");
+    if (scan.cut && end > 0) { text = text.slice(text.indexOf("\n") + 1); scan.cut = false; }
+    for (const line of text.split("\n")) {
+      if (!line.includes("request_user_input_async")) continue;
+      let entry: RecordValue;
+      try { entry = record(JSON.parse(line)); } catch { continue; }
+      if (entry.type !== "response_item") continue;
+      const payload = record(entry.payload);
+      if (payload.type === "function_call" && payload.name === "request_user_input_async") {
+        let args: RecordValue = {};
+        try { args = record(JSON.parse(string(payload.arguments))); } catch { continue; }
+        const questions = Array.isArray(args.questions) ? args.questions.map(record) : [];
+        questions.forEach((question, index) => scan!.asked.push({
+          key: `${string(payload.call_id)}:${index}`,
+          title: string(question.title) || string(question.question),
+          options: Array.isArray(question.options)
+            ? question.options.map((option) => typeof option === "string" ? option : string(record(option).label)).filter(Boolean)
+            : [],
+        }));
+      } else if (payload.type === "message" && payload.role === "user") {
+        const reply = contentText(payload.content).trim().match(/^<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>$/);
+        let items: unknown = [];
+        try { items = JSON.parse(reply?.[1] ?? "[]"); } catch { continue; }
+        for (const item of Array.isArray(items) ? items : []) {
+          // questionItemId: ["request_user_input_async", call id, question index]
+          let id: unknown;
+          try { id = JSON.parse(string(record(item).questionItemId)); } catch { continue; }
+          if (Array.isArray(id) && typeof id[1] === "string" && Number.isInteger(id[2])) scan.answered.add(`${id[1]}:${id[2]}`);
+        }
+      }
+    }
+    scan.size += end;
+  }
+  questionScans.delete(path);
+  questionScans.set(path, scan);
+  if (questionScans.size > 16) questionScans.delete(questionScans.keys().next().value!);
+  return scan.asked.filter((question) => !scan!.answered.has(question.key));
 }
 
 const readdir = (path: string): string[] => { try { return readdirSync(path); } catch { return []; } };

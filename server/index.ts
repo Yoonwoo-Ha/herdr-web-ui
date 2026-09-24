@@ -785,7 +785,7 @@ export function createServer(
 
       if (pathname.startsWith("/api/pane/prompt")) {
         try {
-          const response = await handlePromptRequest(request, url, { serialize });
+          const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome });
           if (response) return response;
         } catch (error) {
           return errorResponse(error);
