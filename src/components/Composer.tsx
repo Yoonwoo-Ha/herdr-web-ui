@@ -238,7 +238,7 @@ export function Composer({
     element.style.height = `${element.scrollHeight}px`;
     const height = Math.round(element.getBoundingClientRect().height);
     setAutoHeight((current) => current === height ? current : height);
-  }, [text, manualHeight]);
+  }, [text, manualHeight, placeholder]);
 
   useEffect(() => {
     const viewport = window.visualViewport;
