@@ -164,7 +164,7 @@ export function createServer(
   const paneQueues = new Map<string, Promise<unknown>>();
   /** when each pane last got keystrokes through its attach pty */
   const lastTyped = new Map<string, number>();
-  const hostname = options.hostname ?? process.env["HOST"] ?? "0.0.0.0";
+  const hostname = options.hostname ?? process.env["HOST"] ?? "127.0.0.1";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
 
@@ -1033,7 +1033,7 @@ if (import.meta.main) {
   console.log(`herdr-web-ui listening on http://${instance.hostname}:${instance.port}`);
   if ((process.env["HERDR_WEB_TOKEN"] ?? "") === "" && !LOOPBACK_HOSTNAMES.has(instance.hostname)) {
     console.error(
-      `WARNING: listening on all interfaces (${instance.hostname}) without HERDR_WEB_TOKEN - anyone who can reach this port can type into your terminals; set HERDR_WEB_TOKEN=<token> or HOST=127.0.0.1 to stop that.`,
+      `WARNING: listening on ${instance.hostname} without HERDR_WEB_TOKEN - anyone who can reach this address can type into your terminals; set HERDR_WEB_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
     );
   }
 }

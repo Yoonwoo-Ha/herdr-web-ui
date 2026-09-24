@@ -9,9 +9,11 @@ web server on port `7317` and never replaces herdr, its sessions or the user's o
 
 ## Rules
 
-- Bind to `127.0.0.1` unless the user asks for remote access. Never bind to `0.0.0.0`, or put it
-  behind a tunnel or proxy, without a token (`HERDR_WEB_TOKEN`). Anyone who can reach an ungated
-  server can type into the user's terminals.
+- Bind to `127.0.0.1` (the default) unless the user asks for remote access. Anyone who can reach an
+  ungated server can type into the user's terminals. Never bind to `0.0.0.0` or a LAN address, or
+  put it behind a proxy other people can reach, without a token (`HERDR_WEB_TOKEN`). A `tailscale
+  serve` address may go without one only when the user confirms every device in their tailnet is
+  their own.
 - Never print, log or commit the token. Write it only to the config file named below and tell the
   user where it is.
 - Do not install herdr, Bun or Node yourself unless the user agrees. Say which one is missing and how
@@ -87,7 +89,7 @@ herdr plugin action invoke devswha.herdr-web-ui.start
 git clone https://github.com/devswha/herdr-web-ui.git
 cd herdr-web-ui
 bun install
-HOST=127.0.0.1 bun run start
+bun run start
 ```
 
 `bun run start` runs in the foreground. Start it in a separate herdr pane, or under the user's
@@ -114,7 +116,9 @@ Tell the user to open <http://127.0.0.1:7317>.
 
 ## 5. Optional: phone or remote access
 
-**Ask** the user first. This exposes their terminals over the network.
+**Ask** the user first. This exposes their terminals over the network. Also ask who else can reach
+the address: with Tailscale, whether every device in their tailnet is their own. If yes, skip step 1
+(no token) and go to step 2. Otherwise, and for any LAN or public address, create the token.
 
 1. Create a token and store it without printing it. For the plugin:
 
@@ -126,7 +130,7 @@ Tell the user to open <http://127.0.0.1:7317>.
 
    For a source install, write the same line to a file only the user can read (for example
    `~/.config/herdr-web-ui/token.env`, mode `600`) and start with
-   `env $(cat ~/.config/herdr-web-ui/token.env) HOST=127.0.0.1 bun run start`.
+   `env $(cat ~/.config/herdr-web-ui/token.env) bun run start`.
    Restart herdr web ui either way.
 2. Serve it over HTTPS. Without HTTPS, a phone can view the app but cannot install it or receive
    alerts. With Tailscale:
@@ -135,9 +139,11 @@ Tell the user to open <http://127.0.0.1:7317>.
    tailscale serve --bg --https=443 http://127.0.0.1:7317
    ```
 
-3. Verify that `curl -s http://127.0.0.1:7317/api/health` now reports `"auth":{"required":true,...}`.
-4. Tell the user the HTTPS address and where the token is stored. They enter the token once per
-   browser.
+3. With a token, verify that `curl -s http://127.0.0.1:7317/api/health` now reports
+   `"auth":{"required":true,...}`.
+4. Tell the user the HTTPS address, and where the token is stored if there is one. They enter the
+   token once per browser address; keep to one address (the HTTPS one), since each address keeps
+   its own sign-in.
 
 Other PCs over SSH are added from the web UI (**Add PC**), not by an install step here.
 
@@ -145,7 +151,7 @@ Other PCs over SSH are added from the web UI (**Add PC**), not by an install ste
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HOST` | `127.0.0.1` for the plugin, `0.0.0.0` for `bun run start` | Bind address |
+| `HOST` | `127.0.0.1` | Bind address |
 | `PORT` | `7317` | HTTP and WebSocket port |
 | `HERDR_WEB_TOKEN` | unset | Token that gates access; required for anything but loopback |
 | `HERDR_SOCKET` | `~/.config/herdr/herdr.sock` | herdr socket (source installs; the plugin follows herdr) |
