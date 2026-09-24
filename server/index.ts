@@ -36,7 +36,7 @@ import { createPushService, defaultStateDir, handlePushRequest } from "./push.ts
 import { codexQuestionsCollapsed, handlePromptRequest } from "./prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
-import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, replayTail } from "./output-window.ts";
+import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, ReplayBuffer } from "./output-window.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import { connectUpdater, handleUpdateRequest, type UpdateService } from "./update-api.ts";
 
@@ -124,7 +124,7 @@ interface PaneAttachment {
   cols: number;
   rows: number;
   /** bounded tail so a client joining late still sees the current screen */
-  replay: string;
+  replay: ReplayBuffer;
   stalled: Map<Client, number>;
 }
 
@@ -377,7 +377,7 @@ export function createServer(
       clients: new Set<Client>(),
       cols: spawnCols,
       rows: spawnRows,
-      replay: "",
+      replay: new ReplayBuffer(MAX_REPLAY_BYTES),
       stalled: new Map(),
     };
     attachments.set(paneId, attachment);
@@ -396,13 +396,13 @@ export function createServer(
       onData: (data) => {
         const current = attachments.get(paneId);
         if (current !== attachment) return;
-        current.replay = replayTail(current.replay, data, MAX_REPLAY_BYTES);
+        current.replay.append(data);
         for (const client of current.clients) sendOutput(client, paneId, data);
         reconcileOutput(paneId);
       },
       onExit: (code) => {
         if (attachments.get(paneId) !== attachment) return;
-        if (code !== 0 && /already has an attached client|retry with --takeover/.test(attachment.replay)) broadcast(paneId, { type: "error", code: "attach_conflict", message: "Another web bridge is attached to this pane. Disconnect its browser or reuse that bridge; the existing attach was left unchanged." });
+        if (code !== 0 && /already has an attached client|retry with --takeover/.test(attachment.replay.recent)) broadcast(paneId, { type: "error", code: "attach_conflict", message: "Another web bridge is attached to this pane. Disconnect its browser or reuse that bridge; the existing attach was left unchanged." });
         broadcast(paneId, { type: "pty-exit", pane_id: paneId, code });
         closeAttachment(paneId);
       },
@@ -877,9 +877,8 @@ export function createServer(
               attachment.clients.add(client);
               if (!alreadyAttached && message.flow_control === "ack") client.data.output.set(message.pane_id, new OutputWindow());
               // hand the newcomer the current screen it would otherwise have missed
-              if (!alreadyAttached && attachment.replay) {
-                sendOutput(client, message.pane_id, attachment.replay);
-              }
+              const replay = attachment.replay.text();
+              if (!alreadyAttached && replay) sendOutput(client, message.pane_id, replay);
               reconcileOutput(message.pane_id);
               if (client.data.closing) break;
               if (client.data.mode === "interact") {

@@ -12,6 +12,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   every pane on a desktop, still open their terminal. The lens you pick is still remembered per
   pane.
 
+### Fixed
+- Scrolling the terminal on a phone scrolls herdr's history again when another tab (for example a
+  desktop browser) already had that pane open. The phone joined a busy pane without its mouse
+  mode, so a drag turned into arrow keys and paged through the agent's prompt history instead.
+
 ## [0.3.3] - 2026-09-25
 
 ### Added
