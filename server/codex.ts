@@ -1,7 +1,7 @@
 /** Native Codex rollouts contain both display events and model context. Only
  * conversation records belong in chat; developer prompts and terminal chrome do not. */
 import { Database } from "bun:sqlite";
-import { closeSync, openSync, readdirSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { ConversationPart, ConversationTurn } from "../shared/protocol.ts";
@@ -342,6 +342,20 @@ export function resumedThread(argvs: readonly (readonly string[])[]): string | n
 /** The rollout each pane's Codex was last matched to on screen, and the processes that were running it. */
 const boundRollouts = new Map<string, { processes: string; path: string }>();
 
+/**
+ * When a process started, in ms since the epoch: Linux counts it in /proc (USER_HZ
+ * ticks after boot). null where that is not readable, as on macOS.
+ */
+function processStartedAt(pid: number): number | null {
+  try {
+    const ticks = Number(readFileSync(`/proc/${pid}/stat`, "utf8").split(") ").pop()!.split(" ")[19]);
+    const boot = Number(readFileSync("/proc/stat", "utf8").match(/^btime (\d+)$/m)?.[1]);
+    return Number.isFinite(ticks) && Number.isFinite(boot) ? boot * 1000 + ticks * 10 : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome()): Promise<string | null> {
   const info = await herdrRpc<{ agent: { agent_session?: { kind?: string; value?: string } } }>("agent.get", { target: paneId });
   const session = info.agent.agent_session;
@@ -396,7 +410,19 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     }
     if (resumed !== null) {
       const row = db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ?").get(resumed);
-      resumedPath = row ? codexRolloutPath(row.rollout_path, home) : null;
+      // After /new the command line still names the resumed thread. Trust it only while
+      // no other thread in this cwd began after this Codex did (a later one in another
+      // pane counts too: then the chat says it cannot tell, rather than show the wrong
+      // conversation). Without a start time, only while it is the cwd's newest thread.
+      const startedAt = Math.min(...codexProcesses.map((process) => processStartedAt(process.pid) ?? Infinity));
+      const newer = Number.isFinite(startedAt)
+        ? db.query<{ id: string }, [string, string, number]>(
+          "SELECT id FROM threads WHERE cwd = ? AND id != ? AND archived = 0 AND agent_role IS NULL AND created_at * 1000 > ? LIMIT 1",
+        ).get(cwd, resumed, startedAt)
+        : db.query<{ id: string }, [string, string, string]>(
+          "SELECT id FROM threads WHERE cwd = ? AND id != ? AND archived = 0 AND agent_role IS NULL AND updated_at > (SELECT updated_at FROM threads WHERE id = ?) LIMIT 1",
+        ).get(cwd, resumed, resumed);
+      resumedPath = row && !newer ? codexRolloutPath(row.rollout_path, home) : null;
     }
     const rows = db.query<{ rollout_path: string }, [string]>(
       "SELECT rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL ORDER BY updated_at DESC LIMIT 32",
@@ -413,6 +439,7 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   });
   const matched = screen ? matchCodexTranscript(screen.text, candidates) : null;
   if (matched !== null) {
+    boundRollouts.delete(paneId);
     boundRollouts.set(paneId, { processes, path: matched });
     if (boundRollouts.size > 64) boundRollouts.delete(boundRollouts.keys().next().value!);
     return matched;
@@ -422,6 +449,11 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   // rollout it was last matched to (a later match to another one, after /new, wins);
   // failing that, the thread it was resumed on.
   const bound = boundRollouts.get(paneId);
-  if (bound !== undefined && bound.processes === processes && processes !== "" && codexRolloutPath(bound.path, home) !== null) return bound.path;
+  if (bound !== undefined && bound.processes === processes && processes !== "" && codexRolloutPath(bound.path, home) !== null) {
+    // a pane in use stays among the kept ones
+    boundRollouts.delete(paneId);
+    boundRollouts.set(paneId, bound);
+    return bound.path;
+  }
   return resumedPath;
 }
