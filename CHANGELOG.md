@@ -7,6 +7,47 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-25
+
+### Added
+- Chat history pages: a transcript is read one page at a time (at most 16MB and 50 prompts), and
+  scrolling up loads earlier turns while keeping your place. A long Codex rollout no longer re-reads
+  the whole file on every poll, and a Codex conversation that was backtracked shows the history
+  from the rollouts before it.
+- **Settings → Chat → Chat font size**, from 11 to 24px. Messages, code and prompt cards scale
+  together; the rest of the UI and the composer keep their size.
+- The composer is resizable: drag its top edge or use ↑/↓, double-tap or press Home to go back to
+  the automatic height. The height is remembered per device and capped at half the visible screen.
+- The status line shows the reasoning effort Claude Code records, for example `Reasoning xhigh`.
+
+### Changed
+- **New session** is back at the top of the sidebar, opening on the selected PC (the same as
+  Mod+Shift+N), with **Add PC** beside it.
+- **Install app** shows in the sidebar unless the app is installed. Where the browser offers no
+  install prompt (iOS, plain HTTP), it explains the platform's own steps, such as Share → Add to
+  Home Screen on iOS. Settings → Install shows the same steps.
+- A composer message is now sent on the server: agent panes use herdr's `agent.prompt`, which pastes
+  the text and presses Enter separately, and refuses while the agent waits for an answer. Other
+  panes get the text, a short gap, then Enter. This fixes messages left unsent in the agent's input
+  box on phones, where the text and its Enter used to arrive as one chunk. The composer keeps the
+  text until the pane confirms it, and says why when it can't be sent.
+- The empty composer is taller (42px on desktop, 48px on touch) and its status line is a size up.
+- Unchanged conversations answer `304` with no body, and the chat stops polling while the page is
+  hidden, which saves data and battery on phones.
+- Each window reopens its own pane on reload; a new window still starts on the last pane used.
+
+### Fixed
+- A Codex pane kept its conversation only while an answer was on screen; a long run of tool output
+  flipped the chat to "Conversation unavailable". The pane now keeps the rollout it matched, or the
+  thread named by `codex resume`, until a newer interactive thread begins in that directory.
+- Conversation cursors are tied to the Codex rollout chain, so a changed chain reloads the chat
+  instead of showing turns twice or out of order, and a chain whose earlier rollout was archived is
+  looked up again instead of falling back to terminal output.
+- On an iPhone, a second tap on the token field no longer closes the keyboard, and the empty band
+  under the composer is gone.
+- On Windows, the terminal measures its cells with a monospace font, so ASCII text is no longer
+  spaced apart.
+
 ## [0.2.1] - 2026-09-23
 
 ### Fixed
@@ -55,7 +96,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/devswha/herdr-web-ui/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/devswha/herdr-web-ui/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/devswha/herdr-web-ui/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/devswha/herdr-web-ui/releases/tag/v0.1.0

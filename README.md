@@ -69,7 +69,7 @@ Its PID and log live under `HERDR_PLUGIN_STATE_DIR`. For persistent settings, ad
 | **Compose** | `/` commands and `@` file mentions, pasted or dropped images, a draft per pane, and one queued message while the agent works. |
 | **Manage sessions** | Start an agent in a directory, rename workspaces and panes, reorder workspaces, and jump anywhere from the command palette. |
 | **Follow every agent** | Live status for all panes, and alerts when an agent needs input, finishes or its terminal ends. |
-| **Make it yours** | Dark, light or system theme, compact density, terminal font size, Enter behavior and thinking visibility. |
+| **Make it yours** | Dark, light or system theme, compact density, terminal and chat font sizes, a resizable composer, Enter behavior and thinking visibility. |
 
 ### Where chat comes from
 
