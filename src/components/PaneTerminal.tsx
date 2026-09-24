@@ -152,6 +152,9 @@ export function PaneTerminal({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
+    // herdr reads the wheel as mouse reports. Were reporting ever off, xterm would turn
+    // a wheel into arrow keys, which walk an agent's prompt history instead of scrolling.
+    term.attachCustomWheelEventHandler(() => term.modes.mouseTrackingMode !== "none");
     termRef.current = term;
     fitRef.current = fit;
 
