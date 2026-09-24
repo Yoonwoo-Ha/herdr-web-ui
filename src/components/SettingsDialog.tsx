@@ -121,7 +121,7 @@ export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) 
             <h3>Install</h3>
             {installPrompt.installed ? <p className="settings-hint">Installed</p> : installPrompt.canInstall ? (
               <button type="button" className="btn btn-primary" onClick={() => void installPrompt.install()}>Install app</button>
-            ) : <p className="settings-hint">Install from an HTTPS address, or use your browser's Add to Home Screen command.</p>}
+            ) : <p className="settings-hint">{installPrompt.help}</p>}
           </section>
 
           <section className="settings-section settings-about">

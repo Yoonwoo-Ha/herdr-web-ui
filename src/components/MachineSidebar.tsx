@@ -21,15 +21,23 @@ const STATE_WORD: Readonly<Record<MachineState, string>> = {
 
 interface Props { machines: Machine[]; selectedMachineId: string; selectedPaneId: string | null; actions: AppActions; version: string | null; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onAdd(): void; onSetup(machine: Machine, update?: boolean): void }
 export function MachineSidebar(props: Props) {
-  const { canInstall, install } = useInstallPrompt();
+  const { canInstall, installed, install, help } = useInstallPrompt();
+  const [installHelpOpen, setInstallHelpOpen] = useState(false);
+  // the new session opens on the selected PC, the same one Mod+Shift+N uses
+  const target = props.machines.find((machine) => machine.id === props.selectedMachineId);
   return <div className="sidebar-shell">
-    <div className="sidebar-topbar"><button className="btn sidebar-new-session" onClick={props.onAdd}><Monitor aria-hidden="true" /> Add PC</button></div>
+    <div className="sidebar-topbar sidebar-topbar-row">
+      <button className="btn sidebar-new-session" disabled={target !== undefined && target.state !== "connected"} title={target ? `New session on ${target.name}` : "New session"} onClick={props.actions.openNewSession}><Plus aria-hidden="true" />New session</button>
+      <button className="btn btn-ghost sidebar-add-pc" onClick={props.onAdd}><Monitor aria-hidden="true" />Add PC</button>
+    </div>
     <div className="machine-list" aria-label="PCs and workspaces">
       {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} />)}
       {!props.machines.length && <p className="tree-state" role="status">Loading PCs…</p>}
     </div>
     <footer className="sidebar-footer">
-      {canInstall && <button className="btn btn-ghost sidebar-footer-action" onClick={() => void install()}><Download aria-hidden="true" />Install app</button>}
+      {/* browsers without an install prompt (iOS, plain HTTP) get the steps instead */}
+      {!installed && <button className="btn btn-ghost sidebar-footer-action" aria-expanded={canInstall ? undefined : installHelpOpen} onClick={() => { if (canInstall) void install(); else setInstallHelpOpen(!installHelpOpen); }}><Download aria-hidden="true" />Install app</button>}
+      {!installed && !canInstall && installHelpOpen && <p className="sidebar-install-help" role="status">{help}</p>}
       <button className="btn btn-ghost sidebar-footer-action" onClick={props.actions.openSettings}><Settings aria-hidden="true" />Settings</button>
       <div className="sidebar-brandline">
         <span className="sidebar-app-name">herdr web ui v{__APP_VERSION__}</span>

@@ -52,10 +52,37 @@ if (typeof window !== "undefined") {
   displayMode?.addEventListener("change", emitChange);
 }
 
+export interface InstallEnvironment {
+  userAgent: string;
+  /** window.isSecureContext: browsers only offer installation over HTTPS or localhost */
+  secure: boolean;
+  /** iPadOS reports a Mac user agent; touch points tell the two apart */
+  maxTouchPoints: number;
+}
+
+/** How to install when the browser offers no prompt of its own (iOS never does). */
+export function installHelp(env: InstallEnvironment): string {
+  const ua = env.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && env.maxTouchPoints > 1);
+  if (ios) return "Tap the Share button, then Add to Home Screen.";
+  if (!env.secure) return "Open this page over HTTPS (or on localhost) to install it.";
+  if (/Firefox\//.test(ua) && !/Android/.test(ua)) return "Firefox on desktop can't install web apps. Open this page in Chrome or Edge.";
+  if (/Android/.test(ua)) return "Open the browser menu, then Install app or Add to Home screen.";
+  if (/Safari\//.test(ua) && !/Chrome\/|Chromium\/|Edg\//.test(ua)) return "Choose File, then Add to Dock.";
+  return "Use the install icon in the address bar, or the browser menu's Install option.";
+}
+
+function currentInstallHelp(): string {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return "";
+  return installHelp({ userAgent: navigator.userAgent, secure: window.isSecureContext, maxTouchPoints: navigator.maxTouchPoints ?? 0 });
+}
+
 export interface InstallPromptState {
   canInstall: boolean;
   installed: boolean;
   install(): Promise<void>;
+  /** what to tell the user when there is no prompt to show */
+  help: string;
 }
 
 export function useInstallPrompt(): InstallPromptState {
@@ -69,5 +96,5 @@ export function useInstallPrompt(): InstallPromptState {
     if (pendingPrompt === prompt) pendingPrompt = null;
     emitChange();
   }, []);
-  return { canInstall: pendingPrompt !== null && !installed, installed, install };
+  return { canInstall: pendingPrompt !== null && !installed, installed, install, help: currentInstallHelp() };
 }
