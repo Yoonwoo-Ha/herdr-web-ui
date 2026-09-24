@@ -19,9 +19,12 @@ export interface Machine {
   enabled: boolean;
   state: MachineState;
   error: string | null;
+  /** set when retrying cannot help: the user has to update the remote bridge or approve setup */
+  action_required?: MachineAction | null;
   snapshot: SessionSnapshot | null;
   herdr?: { version: string; protocol: number };
 }
+export type MachineAction = "update_bridge" | "setup";
 export interface SetupRequest extends SshTarget { name?: string; machine_id?: string; update_remote?: boolean }
 export type SetupPhase = "connecting" | "authentication" | "checking" | "approval" | "installing" | "starting" | "connected" | "failed" | "cancelled";
 export interface SetupChallenge { id: string; kind: "host_key" | "secret"; prompt: string }

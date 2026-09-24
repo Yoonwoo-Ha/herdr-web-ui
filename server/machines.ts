@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync,
 import { createServer as tcpServer } from "node:net";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { BRIDGE_PROTOCOL, LOCAL_MACHINE, REMOTE_BUNDLE_VERSION, type BridgeIdentity, type Machine, type MachineEvent, type SetupAction, type SetupJob, type SetupRequest, type SshTarget } from "../shared/machines.ts";
+import { BRIDGE_PROTOCOL, LOCAL_MACHINE, REMOTE_BUNDLE_VERSION, type BridgeIdentity, type Machine, type MachineAction, type MachineEvent, type SetupAction, type SetupJob, type SetupRequest, type SshTarget } from "../shared/machines.ts";
 import type { ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
 import type { PushService } from "./push.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
@@ -35,6 +35,11 @@ async function freePort(): Promise<number> {
   const port = (server.address() as { port: number }).port;
   await new Promise<void>((resolve) => server.close(() => resolve()));
   return port;
+}
+
+/** A connection that retrying cannot fix: the PC waits for the user instead of reconnecting. */
+export class MachineActionRequired extends Error {
+  constructor(message: string, readonly action: MachineAction) { super(message); }
 }
 
 export class MachineManager {
@@ -150,7 +155,7 @@ export class MachineManager {
         if (job.public.phase !== "cancelled") {
           job.public.phase = "failed"; job.public.step = "Connection failed";
           job.public.error = e instanceof Error ? e.message : String(e);
-          if (ownsRuntime) { runtime.machine.state = "error"; runtime.machine.error = job.public.error; }
+          if (ownsRuntime) { runtime.machine.state = "error"; runtime.machine.error = job.public.error; runtime.machine.action_required = e instanceof MachineActionRequired ? e.action : null; }
           this.emit();
         }
       } finally { clearTimeout(job.timer); job.public.challenge = null; job.pending = undefined; job.ssh = undefined; }
@@ -209,7 +214,7 @@ export class MachineManager {
     const descriptors: BridgeDescriptor[] = lines.flatMap((line) => { try { const d = JSON.parse(line); return d.socket_path === expectedSocket ? [d] : []; } catch { return []; } });
     let descriptor = descriptors.find((d) => d.bridge_protocol === BRIDGE_PROTOCOL && d.bundle_version === REMOTE_BUNDLE_VERSION);
     if (job?.update && !descriptor) descriptor = descriptors[0];
-    if (descriptors.length && !descriptor) throw new Error("An incompatible bridge is already registered for this herdr socket. Update or stop that bridge explicitly; existing sessions will be preserved.");
+    if (descriptors.length && !descriptor) throw new MachineActionRequired("This PC runs a bridge from a different version. Update the bridge to reconnect; herdr sessions keep running.", "update_bridge");
     if (descriptor) {
       if (!Number.isInteger(descriptor.pid) || descriptor.pid < 1) throw new Error("Invalid bridge process identity");
       const live = await ssh.run(`kill -0 ${descriptor.pid} 2>/dev/null && printf live || true`);
@@ -223,7 +228,7 @@ export class MachineManager {
     if (!descriptor && job) installs.push("Start the loopback bridge and, only if absent, the herdr daemon");
     if (ssh.usedSecret) installs.push("Register a dedicated SSH public key for automatic reconnection");
     if (installs.length) {
-      if (!job) throw new Error("Remote setup needs approval. Use Reconnect / setup on this PC.");
+      if (!job) throw new MachineActionRequired("Remote setup needs approval. Use Reconnect / setup on this PC.", "setup");
       job.public.installations = installs;
       this.stage(job, "approval", "Review the changes on this PC");
       await this.wait(job);
@@ -277,7 +282,8 @@ export class MachineManager {
     const response = await fetch(`${endpoint.url}/api/bridge`, { headers: { authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(15_000) });
     if (!response.ok) throw new Error(`Bridge verification failed (${response.status}). Reconnect after checking the remote bridge.`);
     const identity: BridgeIdentity = await response.json();
-    if (identity.bridge_protocol !== BRIDGE_PROTOCOL || (!allowOldBundle && identity.bundle_version !== REMOTE_BUNDLE_VERSION) || identity.socket_path !== expectedSocket || !identity.socket_id || identity.herdr.protocol < 22) throw new Error("Remote bridge/socket is incompatible; update it explicitly");
+    if (identity.bridge_protocol !== BRIDGE_PROTOCOL || !allowOldBundle && identity.bundle_version !== REMOTE_BUNDLE_VERSION) throw new MachineActionRequired("This PC runs a bridge from a different version. Update the bridge to reconnect; herdr sessions keep running.", "update_bridge");
+    if (identity.socket_path !== expectedSocket || !identity.socket_id || identity.herdr.protocol < 22) throw new Error("Remote bridge/socket is incompatible; update it explicitly");
     return { endpoint, identity };
   }
   endpoint(id: string): { url: string; token: string } | undefined {
@@ -309,7 +315,7 @@ export class MachineManager {
     const generation = runtime.generation;
     await this.refresh(runtime);
     if (generation !== runtime.generation || this.stopped) throw new Error("Connection cancelled");
-    runtime.machine.state = "connected"; runtime.attempts = 0;
+    runtime.machine.state = "connected"; runtime.machine.action_required = null; runtime.attempts = 0;
     const endpoint = runtime.endpoint!;
     const ws = authenticatedWebSocket(endpoint.url.replace("http:", "ws:") + "/ws", endpoint.token);
     runtime.observer = ws;
@@ -336,7 +342,13 @@ export class MachineManager {
   private lost(runtime: Runtime, generation: number, error: unknown): void {
     if (generation !== runtime.generation || !runtime.machine.enabled || this.stopped) return;
     this.disconnect(runtime);
-    runtime.machine.state = "reconnecting"; runtime.machine.error = error instanceof Error ? error.message : String(error);
+    runtime.machine.error = error instanceof Error ? error.message : String(error);
+    if (error instanceof MachineActionRequired) {
+      runtime.machine.state = "error"; runtime.machine.action_required = error.action;
+      this.emit();
+      return;
+    }
+    runtime.machine.state = "reconnecting";
     const delay = Math.min(60_000, 1000 * 2 ** Math.min(runtime.attempts++, 6));
     runtime.retry = setTimeout(() => void this.reconnect(runtime), delay); runtime.retry.unref();
     this.emit();
@@ -344,7 +356,7 @@ export class MachineManager {
   private async reconnect(runtime: Runtime): Promise<void> {
     if (this.stopped || !runtime.machine.enabled) return;
     this.disconnect(runtime);
-    runtime.machine.state = "reconnecting"; this.emit();
+    runtime.machine.state = "reconnecting"; runtime.machine.action_required = null; this.emit();
     const generation = runtime.generation;
     runtime.ssh = new SshConnection(runtime.machine.target!, this.sshDir, join(this.sshDir, runtime.machine.id));
     try {

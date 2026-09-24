@@ -11,7 +11,7 @@ import { NewSessionDialog } from "./components/NewSessionDialog.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { MachineContext } from "./lib/machineContext.tsx";
-import { MachineSidebar } from "./components/MachineSidebar.tsx";
+import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
@@ -526,6 +526,7 @@ export function App() {
       </header>
 
       <UpdateNotice updates={updates} onOpen={() => setSettingsOpen(true)} />
+      <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />
       <div className="app-body">
         <aside id="workspace-drawer" className={`sidebar${drawerOpen ? " is-open" : ""}`}>
           {error && <div className="error-state" role="alert"><p>{error}</p><button className="btn" onClick={() => void load()}>Retry</button></div>}
