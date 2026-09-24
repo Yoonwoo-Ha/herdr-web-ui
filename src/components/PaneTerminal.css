@@ -21,6 +21,11 @@
   min-height: 0;
   width: 100%;
   overflow: hidden;
+  /* a drag here is ours (PaneTerminal turns it into wheel events for herdr): without
+     this the browser takes the gesture after its first move and scrolls the page or
+     the composer instead, or starts pull-to-refresh */
+  touch-action: none;
+  overscroll-behavior: contain;
 }
 
 .pane-terminal .xterm {
@@ -222,4 +227,12 @@
   .terminal-banner-draft .draft-actions button {
     transition: none;
   }
+}
+
+/* xterm swaps its row elements on every redraw. A touch keeps its first target for the
+   whole gesture, so a finger that landed on a row lost every later move (and its end)
+   as soon as the first scroll redrew that row, and the browser took the drag. On touch
+   screens the rows take no touches: the gesture lands on the screen element, which stays. */
+@media (pointer: coarse) {
+  .pane-terminal .xterm-rows { pointer-events: none; }
 }
