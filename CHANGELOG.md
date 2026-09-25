@@ -7,7 +7,15 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-09-25
+
 ### Added
+- Answer an agent's waiting prompt from the chat's message box: type an option's number or your
+  own answer. A pick for an approval, a plan or a menu waits in the prompt card for **Confirm**,
+  and the options are numbered to match. (#6, by @Yoonwoo-Ha)
+- Codex's queued questions (the collapsed "? N questions" block) show as a card and are answered
+  from the chat; the queue closes again afterwards, so messages still reach Codex. Prompts of
+  Claude Code 2.1 and Codex 0.156 are recognised. (#6)
 - **Browse** beside the directory field of a new session: pick the folder from a list instead of
   typing its path. It lists one folder at a time on the PC the session starts on, hidden folders
   on request. A remote PC offers it once its bridge is updated; until then, type the path.
@@ -215,7 +223,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.7...HEAD
+[0.3.7]: https://github.com/devswha/herdr-web-ui/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/devswha/herdr-web-ui/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/devswha/herdr-web-ui/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/devswha/herdr-web-ui/compare/v0.3.3...v0.3.4
