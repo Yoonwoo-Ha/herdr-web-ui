@@ -13,7 +13,7 @@ import { paneFiles } from "./files.ts";
 import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
-import { ConversationUnavailable, HistoryChanged, paneConversation } from "./conversation.ts";
+import { ConversationUnavailable, HistoryChanged, labelOmoPanes, paneConversation } from "./conversation.ts";
 import {
   agentManifests,
   agentPrompt,
@@ -538,7 +538,7 @@ export function createServer(
 
       if (pathname === "/api/session") {
         try {
-          return jsonResponse({ snapshot: await sessionSnapshot() });
+          return jsonResponse({ snapshot: await labelOmoPanes(await sessionSnapshot()) });
         } catch (error) {
           return errorResponse(error);
         }
@@ -830,7 +830,7 @@ export function createServer(
         if (client.data.relay) { client.data.relay.bind(client as ServerWebSocket<unknown>); return; }
         clients.add(client);
         try {
-          send(client, { type: "snapshot", snapshot: await sessionSnapshot(), features: SERVER_FEATURES });
+          send(client, { type: "snapshot", snapshot: await labelOmoPanes(await sessionSnapshot()), features: SERVER_FEATURES });
         } catch (error) {
           const code = error instanceof HerdrError ? error.code : "snapshot_failed";
           send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error) });

@@ -24,7 +24,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
+import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
 import { codexHistorySegments, codexTranscriptPath, defaultCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { parseConversationMetadata } from "./conversation-metadata.ts";
@@ -711,6 +711,24 @@ async function paneRunsOmo(paneId: string): Promise<boolean> {
   return (info?.process_info?.foreground_processes ?? []).some((process) =>
     isOmoProcess(Array.isArray(process.argv) ? process.argv.map(String) : []),
   );
+}
+
+/**
+ * herdr labels an omo pane `pi` while it waits and `claude` while omo's claude-sdk child
+ * runs, so the sidebar showed another agent's mark, and one that changed as omo worked.
+ * The snapshots the browser gets name such a pane `omo`, decided by its process tree
+ * (paneRunsOmo), checked for those two labels only.
+ */
+export async function labelOmoPanes(snapshot: SessionSnapshot): Promise<SessionSnapshot> {
+  const candidates = snapshot.panes.filter((pane) => pane.agent === "pi" || pane.agent === "claude");
+  const omo = new Set<string>();
+  await Promise.all(candidates.map(async (pane) => { if (await paneRunsOmo(pane.pane_id)) omo.add(pane.pane_id); }));
+  if (omo.size === 0) return snapshot;
+  return {
+    ...snapshot,
+    panes: snapshot.panes.map((pane) => omo.has(pane.pane_id) ? { ...pane, agent: "omo" } : pane),
+    agents: snapshot.agents.map((agent) => omo.has(agent.pane_id) ? { ...agent, agent: "omo" } : agent),
+  };
 }
 
 /** Claude's transcript for a pane: herdr names the session id, the store is addressed by cwd slug. */
