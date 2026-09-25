@@ -3,8 +3,8 @@ import { useId } from "react";
 /**
  * Provider marks for the agents herdr names, ported from chatmux's
  * llm-logo-provider set (same owner, same visual language). Monochrome marks
- * (codex, cursor, the fallback) ride currentColor; claude/omp/opencode carry
- * their own brand fills.
+ * (codex, cursor, the fallback) ride currentColor; claude/omp/opencode/gjc/omo
+ * carry their own brand fills.
  */
 
 export interface AgentMarkProps {
@@ -71,6 +71,79 @@ function OmpMark({ size }: { size: number }) {
   );
 }
 
+/** gjc (Gajae Code): its mascot, a straw hat over a lobster-red visor. Ids are per instance. */
+function GjcMark({ size }: { size: number }) {
+  const id = useId();
+  return (
+    <svg viewBox="76 62 872 872" width={size} height={size} role="img" aria-label="gjc">
+      <defs>
+        <linearGradient id={`${id}-hatGold`} x1="0" y1="0" x2="0.85" y2="1">
+          <stop offset="0" stopColor="#FFD65B"/>
+          <stop offset="0.48" stopColor="#FFB52B"/>
+          <stop offset="1" stopColor="#F69A15"/>
+        </linearGradient>
+        <linearGradient id={`${id}-hatHighlight`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#FFE17A"/>
+          <stop offset="1" stopColor="#F5A11C"/>
+        </linearGradient>
+        <linearGradient id={`${id}-hatBand`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#9C5317"/>
+          <stop offset="1" stopColor="#5D2A0E"/>
+        </linearGradient>
+        <linearGradient id={`${id}-lobsterRed`} x1="0" y1="0" x2="0.8" y2="1">
+          <stop offset="0" stopColor="#FF5128"/>
+          <stop offset="0.52" stopColor="#FF3518"/>
+          <stop offset="1" stopColor="#E91F12"/>
+        </linearGradient>
+        <linearGradient id={`${id}-lobsterRedHighlight`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#FF6030"/>
+          <stop offset="1" stopColor="#F32615"/>
+        </linearGradient>
+        <linearGradient id={`${id}-eyeGreen`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#A5FFB8"/>
+          <stop offset="0.5" stopColor="#83FCA5"/>
+          <stop offset="1" stopColor="#6FEF98"/>
+        </linearGradient>
+        <filter id={`${id}-eyeGlow`} x="-80%" y="-250%" width="260%" height="600%" colorInterpolationFilters="sRGB">
+          <feGaussianBlur stdDeviation="12" result="blur"/>
+          <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.29  0 0 0 0 1  0 0 0 0 0.55  0 0 0 0.55 0" result="greenBlur"/>
+          <feMerge>
+            <feMergeNode in="greenBlur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+      <path d="M284 493 C307 423 337 375 377 349 C416 318 463 303 512 303 C561 303 608 318 647 349 C687 375 717 423 740 493 C615 454 409 454 284 493 Z" fill={`url(#${id}-hatGold)`}/>
+      <path d="M294 455 C411 408 613 408 730 455 L739 508 C610 465 414 465 285 508 Z" fill={`url(#${id}-hatBand)`} opacity="0.96"/>
+      <path d="M371 478 C355 367 304 260 197 229" fill="none" stroke={`url(#${id}-lobsterRedHighlight)`} strokeWidth="38" strokeLinecap="round"/>
+      <path d="M653 478 C669 367 720 260 827 229" fill="none" stroke={`url(#${id}-lobsterRedHighlight)`} strokeWidth="38" strokeLinecap="round"/>
+      <ellipse cx="512" cy="613" rx="372" ry="104" fill="#06162F"/>
+      <path d="M98 613 C109 510 295 451 512 451 C729 451 915 510 926 613 C935 681 850 744 759 765 L763 717 C833 698 883 655 881 613 C875 554 711 513 512 513 C313 513 149 554 143 613 C141 655 191 698 261 717 L265 765 C174 744 89 681 98 613 Z" fill={`url(#${id}-hatHighlight)`}/>
+      <rect x="262" y="560" width="500" height="226" rx="94" fill={`url(#${id}-lobsterRed)`}/>
+      <rect x="293" y="586" width="438" height="174" rx="71" fill="#06162F"/>
+      <rect x="300" y="593" width="424" height="160" rx="65" fill="#071A35" opacity="0.36"/>
+      <g filter={`url(#${id}-eyeGlow)`}>
+        <rect x="350" y="654" width="116" height="31" rx="15.5" fill={`url(#${id}-eyeGreen)`}/>
+        <rect x="558" y="654" width="116" height="31" rx="15.5" fill={`url(#${id}-eyeGreen)`}/>
+      </g>
+    </svg>
+  );
+}
+
+/** omo: the project's light tile with its dark mark. */
+function OmoMark({ size }: { size: number }) {
+  return (
+    <svg viewBox="0 0 1024 1024" width={size} height={size} role="img" aria-label="omo">
+      <path fill="#F4F4F4" d="M512.00 100.50 C591.13 100.50 697.66 102.37 749.39 106.27 C801.11 110.17 802.35 115.84 822.35 123.90 C842.34 131.96 856.40 141.68 869.36 154.64 C882.32 167.60 892.04 181.66 900.10 201.65 C908.16 221.65 913.83 222.89 917.73 274.61 C921.63 326.34 923.50 432.87 923.50 512.00 C923.50 591.13 921.63 697.66 917.73 749.39 C913.83 801.11 908.16 802.35 900.10 822.35 C892.04 842.34 882.32 856.40 869.36 869.36 C856.40 882.32 842.34 892.04 822.35 900.10 C802.35 908.16 801.11 913.83 749.39 917.73 C697.66 921.63 591.13 923.50 512.00 923.50 C432.87 923.50 326.34 921.63 274.61 917.73 C222.89 913.83 221.65 908.16 201.65 900.10 C181.66 892.04 167.60 882.32 154.64 869.36 C141.68 856.40 131.96 842.34 123.90 822.35 C115.84 802.35 110.17 801.11 106.27 749.39 C102.37 697.66 100.50 591.13 100.50 512.00 C100.50 432.87 102.37 326.34 106.27 274.61 C110.17 222.89 115.84 221.65 123.90 201.65 C131.96 181.66 141.68 167.60 154.64 154.64 C167.60 141.68 181.66 131.96 201.65 123.90 C221.65 115.84 222.89 110.17 274.61 106.27 C326.34 102.37 432.87 100.50 512.00 100.50Z"/>
+      <g transform="scale(0.5)">
+        <g transform="translate(0.000000,2048.000000) scale(0.050000,-0.050000)">
+          <path fill="#041617" fillRule="evenodd" d="M9270 32167 c-309 -64 -456 -152 -621 -373 -562 -748 -776 -2689 -547 -4984 118 -1187 325 -2600 570 -3890 143 -753 152 -653 -128 -1380 -403 -1045 -643 -1873 -812 -2800 -853 -4689 1979 -7986 7858 -9148 1140 -225 2514 -397 3202 -400 l361 -2 79 55 c264 182 210 642 -111 942 -387 362 -950 532 -2801 845 -3004 507 -4249 965 -5520 2030 -1358 1138 -2012 2878 -1809 4810 545 5195 6617 8726 13529 7866 5506 -684 9480 -4255 9480 -8518 0 -2607 -1462 -4522 -4157 -5448 -927 -318 -1534 -459 -3203 -740 -1851 -313 -2414 -483 -2801 -845 -321 -300 -375 -760 -111 -942 l79 -55 361 2 c688 3 2062 175 3202 400 5879 1162 8711 4459 7858 9148 -169 927 -409 1755 -812 2800 -280 727 -271 627 -128 1380 245 1290 452 2703 570 3890 271 2720 -77 4861 -855 5259 -758 388 -2310 -238 -5021 -2024 -868 -571 -764 -557 -1489 -211 -3271 1558 -6755 1558 -10026 0 -725 -346 -621 -360 -1489 211 -2371 1562 -3959 2278 -4708 2122z m4132 -3345 c175 -175 124 -268 -409 -739 -1028 -910 -1995 -2053 -2713 -3209 -97 -156 -200 -318 -228 -359 -221 -321 -646 -76 -469 270 153 301 883 1334 1388 1965 578 723 1466 1614 2029 2035 191 142 288 151 402 37z m14507 -1 c496 -341 1482 -1323 2080 -2071 505 -631 1235 -1664 1388 -1965 177 -346 -248 -591 -469 -270 -28 41 -131 203 -228 359 -718 1156 -1685 2299 -2713 3209 -535 473 -585 564 -407 742 100 100 199 99 349 -4z M19910 25308 c-4039 -205 -7212 -1666 -9086 -4184 -1840 -2473 -1753 -5794 196 -7540 1161 -1040 2447 -1518 5420 -2015 1374 -229 1998 -380 2456 -591 754 -348 1163 -1000 1033 -1650 -10 -49 -1 -72 47 -124 l60 -64 444 0 444 0 60 64 c48 52 57 75 47 124 -130 650 279 1302 1033 1650 458 211 1082 362 2456 591 2973 497 4259 975 5420 2015 2084 1866 2026 5374 -131 7956 -2063 2469 -5995 3966 -9899 3768z m-4644 -4374 c1356 -360 2272 -1909 1998 -3378 -426 -2278 -2856 -3144 -4424 -1576 -1497 1496 -924 4218 1031 4899 393 137 996 161 1395 55z m11480 35 c1491 -261 2504 -1921 2154 -3532 -487 -2247 -3108 -3024 -4525 -1341 -1719 2042 -129 5310 2371 4873z m-6948 -2980 c172 -40 341 -133 495 -273 95 -86 143 -116 187 -116 44 0 92 30 187 116 718 650 1716 188 1854 -860 35 -267 18 -968 -25 -1048 -119 -219 -350 -251 -491 -68 -68 89 -73 124 -85 670 -13 623 -25 675 -200 838 -212 198 -516 199 -735 2 -180 -161 -192 -212 -205 -840 -12 -546 -17 -581 -85 -670 -122 -159 -308 -159 -430 0 -68 89 -73 124 -85 670 -13 628 -25 679 -205 840 -219 197 -523 196 -735 -2 -175 -163 -187 -215 -200 -838 -12 -546 -17 -581 -85 -670 -141 -183 -372 -151 -491 68 -74 136 -54 1039 30 1332 170 594 758 978 1304 849z M14340 20290 c-1858 -372 -2230 -3228 -546 -4191 1280 -732 2786 338 2786 1981 0 1391 -1068 2445 -2240 2210z M25990 20291 c-1733 -343 -2208 -2981 -732 -4069 1287 -949 2981 108 2982 1860 0 1392 -1070 2443 -2250 2209z"/>
+        </g>
+      </g>
+    </svg>
+  );
+}
+
 /** The agent nobody has drawn yet: its initial in a quiet disc. */
 function FallbackMark({ agent, size }: { agent: string; size: number }) {
   const initial = agent.trim().charAt(0).toUpperCase() || "?";
@@ -96,6 +169,10 @@ export function AgentMark({ agent, size = 16, className }: AgentMarkProps) {
       <CursorMark size={size} />
     ) : agent === "opencode" ? (
       <OpenCodeMark size={size} />
+    ) : agent === "gjc" ? (
+      <GjcMark size={size} />
+    ) : agent === "omo" ? (
+      <OmoMark size={size} />
     ) : (
       <FallbackMark agent={agent} size={size} />
     );
