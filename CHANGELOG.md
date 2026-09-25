@@ -7,6 +7,14 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- gjc panes open in the chat view with their conversation, model and effort, like omp and omo.
+  The chat follows the session the pane's gjc has open.
+
+### Fixed
+- A request that failed (an authentication error, an overloaded provider) shows its error in the
+  chat of an omp, omo or gjc pane. The prompt used to stand there with no answer at all.
+
 ## [0.3.5] - 2026-09-25
 
 ### Added

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { forgetHistoryChains } from "./codex.ts";
-import { ConversationUnavailable, HistoryChanged, isOmoProcess, MAX_TURNS, omoTranscriptPath, parseClaudeTranscript, parseOmpTranscript, transcriptPage } from "./conversation.ts";
+import { ConversationUnavailable, gjcTranscriptPath, HistoryChanged, isOmoProcess, MAX_TURNS, omoTranscriptPath, parseClaudeTranscript, parseOmpTranscript, transcriptPage } from "./conversation.ts";
 
 /** Minimal but shape-true slices of a Claude Code session jsonl. */
 const lines = [
@@ -235,6 +235,43 @@ describe("omo transcript resolution", () => {
     const home = omoHome("--home-u-project--", [{ name: "foreign.jsonl", cwd: "/home/u/elsewhere", mtime: "2026-09-21T00:00:00.000Z" }]);
     expect(() => omoTranscriptPath("/home/u/project", home)).toThrow(ConversationUnavailable);
     expect(() => omoTranscriptPath("/home/u/never-opened", home)).toThrow(ConversationUnavailable);
+  });
+});
+
+describe("gjc sessions", () => {
+  const roots: string[] = [];
+  afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+  const session = (dir: string, name: string, cwd: string, mtime: string) => {
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, name);
+    writeFileSync(path, `${JSON.stringify({ type: "session", version: 5, cwd })}\n`);
+    utimesSync(path, new Date(mtime), new Date(mtime));
+    return path;
+  };
+
+  it("finds a pane's session by the cwd its directory is for, v2 scope file or older header", async () => {
+    const home = mkdtempSync(join(tmpdir(), "herdr-gjc-")); roots.push(home);
+    const store = join(home, ".gjc", "agent", "sessions");
+    const v2 = join(store, "v2-abc");
+    session(v2, "old.jsonl", "/home/u/project", "2026-09-20T00:00:00.000Z");
+    const live = session(v2, "live.jsonl", "/home/u/project", "2026-09-21T00:00:00.000Z");
+    writeFileSync(join(v2, ".gjc-managed-session-scope.v2.json"), JSON.stringify({ canonicalPath: "/home/u/project" }));
+    const other = join(store, "v2-def");
+    session(other, "newer.jsonl", "/home/u/elsewhere", "2026-09-22T00:00:00.000Z");
+    writeFileSync(join(other, ".gjc-managed-session-scope.v2.json"), JSON.stringify({ canonicalPath: "/home/u/elsewhere" }));
+    const legacy = session(join(store, "-legacy"), "a.jsonl", "/home/u/legacy", "2026-09-19T00:00:00.000Z");
+    // a pane herdr does not know has no process to follow: the cwd decides
+    expect(await gjcTranscriptPath("w9999:p9999", "/home/u/project", home)).toBe(live);
+    expect(await gjcTranscriptPath("w9999:p9999", "/home/u/legacy", home)).toBe(legacy);
+    await expect(gjcTranscriptPath("w9999:p9999", "/home/u/never-opened", home)).rejects.toThrow(ConversationUnavailable);
+  });
+
+  it("shows a failed request's error instead of an empty answer", () => {
+    const text = [
+      JSON.stringify({ type: "message", timestamp: "2026-09-25T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "hi" }] } }),
+      JSON.stringify({ type: "message", timestamp: "2026-09-25T00:00:01.000Z", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "401 Authentication Failed" } }),
+    ].join("\n");
+    expect(parseOmpTranscript(text).at(-1)?.parts).toEqual([{ kind: "text", text: "Error: 401 Authentication Failed" }]);
   });
 });
 

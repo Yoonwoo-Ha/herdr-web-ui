@@ -21,7 +21,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
@@ -187,6 +187,8 @@ interface OmpEntry {
     role?: string;
     content?: unknown;
     toolCallId?: string;
+    stopReason?: unknown;
+    errorMessage?: unknown;
   };
 }
 
@@ -275,6 +277,11 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS): Conversa
         }
         // unsupported transcript parts are intentionally ignored
       }
+      // a failed request (a 401, an overloaded provider) leaves an empty message: without its
+      // error the chat showed the prompt with no answer at all
+      if (message.stopReason === "error" && typeof message.errorMessage === "string" && message.errorMessage.length > 0) {
+        turn.parts.push({ kind: "text", text: `Error: ${message.errorMessage}` });
+      }
     }
   }
 
@@ -301,7 +308,7 @@ export class HistoryChanged extends Error {
 
 /** What paneConversation resolved: which store the turns came from, and where they start. */
 export type RecognizedConversation = {
-  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "codex-transcript";
+  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "codex-transcript";
   turns: ConversationTurn[];
   metadata: ConversationMetadata;
   /** the first turn's position, for the page before it; null at the conversation's beginning */
@@ -381,6 +388,7 @@ const TURN_MARK: Record<RecognizedConversation["source"], Buffer> = {
   "claude-transcript": Buffer.from('"type":"user"'),
   "omp-transcript": Buffer.from('"role":"user"'),
   "omo-transcript": Buffer.from('"role":"user"'),
+  "gjc-transcript": Buffer.from('"role":"user"'),
 };
 
 /**
@@ -616,6 +624,71 @@ export function omoTranscriptPath(cwd: string, home = process.env["HOME"] ?? "")
   return live.path;
 }
 
+/** A gjc session directory's cwd, by directory: one directory holds one cwd's sessions, for good. */
+const gjcDirCwds = new Map<string, string | null>();
+
+function gjcDirCwd(dir: string): string | null {
+  if (gjcDirCwds.has(dir)) return gjcDirCwds.get(dir)!;
+  let cwd: string | null = null;
+  try {
+    // v2 directories are named by a digest of the cwd, and say which in their scope file
+    const scope = JSON.parse(readFileSync(join(dir, ".gjc-managed-session-scope.v2.json"), "utf8")) as { canonicalPath?: unknown };
+    if (typeof scope.canonicalPath === "string") cwd = scope.canonicalPath;
+  } catch {
+    // an older, slug-named directory: its sessions' header names the cwd
+    const newest = newestJsonl(dir)[0];
+    cwd = newest === undefined ? null : transcriptCwd(newest);
+  }
+  if (cwd !== null) gjcDirCwds.set(dir, cwd);
+  return cwd;
+}
+
+function newestJsonl(dir: string): string[] {
+  let entries: string[];
+  try { entries = readdirSync(dir); } catch { return []; }
+  return entries.filter((entry) => entry.endsWith(".jsonl"))
+    .map((entry) => ({ path: join(dir, entry), mtimeMs: statSync(join(dir, entry), { throwIfNoEntry: false })?.mtimeMs ?? -1 }))
+    .filter((file) => file.mtimeMs >= 0)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .map((file) => file.path);
+}
+
+/**
+ * gjc's transcript. herdr labels the pane `gjc` but names no session, and gjc writes
+ * omp's session shape into one directory per cwd (`~/.gjc/agent/sessions/v2-<digest>`,
+ * older ones slug-named), which it keeps open while it runs: the pane's gjc process
+ * points at it through /proc (live-verified, gjc 0.17). Without /proc (macOS) the
+ * directory is the one whose cwd is the pane's. The newest session in it is the live one.
+ */
+export async function gjcTranscriptPath(paneId: string, cwd: string, home = process.env["HOME"] ?? ""): Promise<string> {
+  const root = join(home, ".gjc", "agent", "sessions");
+  const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid?: unknown; argv?: unknown }[] } }>(
+    "pane.process_info",
+    { pane_id: paneId },
+  ).catch(() => null);
+  const dirs = new Set<string>();
+  for (const process of info?.process_info?.foreground_processes ?? []) {
+    const argv = Array.isArray(process.argv) ? process.argv.map(String) : [];
+    if (typeof process.pid !== "number" || !/(^|\/)gjc$/.test(argv[0] ?? "")) continue;
+    let fds: string[] = [];
+    try { fds = readdirSync(`/proc/${process.pid}/fd`); } catch { continue; }
+    for (const fd of fds) {
+      let target = "";
+      try { target = readlinkSync(`/proc/${process.pid}/fd/${fd}`); } catch { continue; }
+      if (target.startsWith(`${root}/`) && !target.slice(root.length + 1).includes("/")) dirs.add(target);
+    }
+  }
+  if (dirs.size === 0) {
+    let entries: string[] = [];
+    try { entries = readdirSync(root); } catch { /* no store */ }
+    for (const entry of entries) if (gjcDirCwd(join(root, entry)) === cwd) dirs.add(join(root, entry));
+  }
+  const newest = [...dirs].flatMap((dir) => newestJsonl(dir).slice(0, 1))
+    .sort((left, right) => (statSync(right, { throwIfNoEntry: false })?.mtimeMs ?? 0) - (statSync(left, { throwIfNoEntry: false })?.mtimeMs ?? 0))[0];
+  if (newest === undefined) throw new ConversationUnavailable("no_session_path");
+  return newest;
+}
+
 /** argv words only an omo process carries: its launcher, its entry, or anything under its install root. */
 const OMO_PROCESS = /(^|\/)omo(\.js)?$|\/omo-ai\//;
 
@@ -677,6 +750,7 @@ async function resolveTranscript(paneId: string, agent: string, cwd: string, cod
     }
     if (agent === "claude") return { source: "claude-transcript", path: await claudeTranscriptPath(paneId, cwd) };
     if (agent === "omp") return { source: "omp-transcript", path: await ompTranscriptPath(paneId) };
+    if (agent === "gjc") return { source: "gjc-transcript", path: await gjcTranscriptPath(paneId, cwd) };
     throw new ConversationUnavailable("no_recognized_transcript");
   } catch (error) {
     if (!(error instanceof ConversationUnavailable) || !(await paneRunsOmo(paneId))) throw error;

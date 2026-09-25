@@ -22,7 +22,7 @@ export function parseConversationMetadata(text: string, source: ConversationResp
       if (model) metadata.model = model;
       // A new complete context without effort must not retain an older value.
       if (model || effort !== undefined) metadata.reasoning_effort = label(effort);
-    } else if (source === "omp-transcript" || source === "omo-transcript") {
+    } else if (source === "omp-transcript" || source === "omo-transcript" || source === "gjc-transcript") {
       if (entry.type === "model_change") metadata.model = label(entry.modelId);
       if (entry.type === "thinking_level_change") metadata.reasoning_effort = label(entry.thinkingLevel);
       const message = record(entry.message);
