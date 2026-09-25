@@ -13,7 +13,7 @@ import { paneFiles } from "./files.ts";
 import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
-import { ConversationUnavailable, HistoryChanged, paneConversation } from "./conversation.ts";
+import { ConversationUnavailable, HistoryChanged, labelOmoPanes, paneConversation } from "./conversation.ts";
 import {
   agentManifests,
   agentPrompt,
@@ -36,7 +36,7 @@ import { createPushService, defaultStateDir, handlePushRequest } from "./push.ts
 import { codexQuestionsCollapsed, handlePromptRequest } from "./prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
-import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, replayTail } from "./output-window.ts";
+import { OutputWindow, OUTPUT_HIGH_BYTES, OUTPUT_HARD_BYTES, OUTPUT_STALL_MS, ReplayBuffer } from "./output-window.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import { connectUpdater, handleUpdateRequest, type UpdateService } from "./update-api.ts";
 
@@ -56,6 +56,14 @@ export const SUBMIT_DELAY_MS = 120;
  * Stop tapped just before Send still reaches the pane first.
  */
 const TYPED_SETTLE_MS = 300;
+/**
+ * Nothing of a composer message is typed once this long has passed since it reached the
+ * server (it can wait behind a stalled one in the pane's queue): it answers submit_timeout
+ * instead. A send that starts in time ends within two more 10s RPCs, before the client
+ * stops waiting (SUBMIT_TIMEOUT_MS in src/lib/ws.ts), so a message it gave up on never
+ * reaches the pane later.
+ */
+export const SUBMIT_DEADLINE_MS = 45_000;
 const SERVER_FEATURES: ServerFeature[] = ["submit"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
@@ -116,7 +124,7 @@ interface PaneAttachment {
   cols: number;
   rows: number;
   /** bounded tail so a client joining late still sees the current screen */
-  replay: string;
+  replay: ReplayBuffer;
   stalled: Map<Client, number>;
 }
 
@@ -152,6 +160,8 @@ export function createServer(
     updates?: UpdateService;
     machines?: boolean;
     registerBridge?: boolean;
+    /** SUBMIT_DEADLINE_MS; tests shorten it */
+    submitDeadlineMs?: number;
   } = {},
 ): { port: number; hostname: string; stop: () => void } {
   const attachments = new Map<string, PaneAttachment>();
@@ -164,7 +174,7 @@ export function createServer(
   const paneQueues = new Map<string, Promise<unknown>>();
   /** when each pane last got keystrokes through its attach pty */
   const lastTyped = new Map<string, number>();
-  const hostname = options.hostname ?? process.env["HOST"] ?? "0.0.0.0";
+  const hostname = options.hostname ?? process.env["HOST"] ?? "127.0.0.1";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
 
@@ -194,10 +204,16 @@ export function createServer(
    * the bytes, so the pane sees the whole gap. So does a Codex "blocked" only by questions
    * waiting collapsed in its queue: its main prompt still takes the message.
    */
-  async function submitText(paneId: string, text: string, payload: string): Promise<void> {
+  async function submitText(paneId: string, text: string, payload: string, arrivedAt: number): Promise<void> {
+    const inTime = (): void => {
+      if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) {
+        throw new HerdrError("submit_timeout", "the message waited too long behind earlier input; nothing was typed");
+      }
+    };
     const typed = Date.now() - (lastTyped.get(paneId) ?? 0);
     if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
     lastTyped.delete(paneId);
+    inTime();
     try {
       await agentPrompt(paneId, text);
       return;
@@ -206,6 +222,7 @@ export function createServer(
       const queuedOnly = error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
       if (error.code !== "agent_not_found" && error.code !== "agent_not_ready" && !queuedOnly) throw error;
     }
+    inTime();
     await paneSendText(paneId, payload);
     await Bun.sleep(SUBMIT_DELAY_MS);
     await paneSendKeys(paneId, ["Enter"]);
@@ -360,7 +377,7 @@ export function createServer(
       clients: new Set<Client>(),
       cols: spawnCols,
       rows: spawnRows,
-      replay: "",
+      replay: new ReplayBuffer(MAX_REPLAY_BYTES),
       stalled: new Map(),
     };
     attachments.set(paneId, attachment);
@@ -379,13 +396,13 @@ export function createServer(
       onData: (data) => {
         const current = attachments.get(paneId);
         if (current !== attachment) return;
-        current.replay = replayTail(current.replay, data, MAX_REPLAY_BYTES);
+        current.replay.append(data);
         for (const client of current.clients) sendOutput(client, paneId, data);
         reconcileOutput(paneId);
       },
       onExit: (code) => {
         if (attachments.get(paneId) !== attachment) return;
-        if (code !== 0 && /already has an attached client|retry with --takeover/.test(attachment.replay)) broadcast(paneId, { type: "error", code: "attach_conflict", message: "Another web bridge is attached to this pane. Disconnect its browser or reuse that bridge; the existing attach was left unchanged." });
+        if (code !== 0 && /already has an attached client|retry with --takeover/.test(attachment.replay.recent)) broadcast(paneId, { type: "error", code: "attach_conflict", message: "Another web bridge is attached to this pane. Disconnect its browser or reuse that bridge; the existing attach was left unchanged." });
         broadcast(paneId, { type: "pty-exit", pane_id: paneId, code });
         closeAttachment(paneId);
       },
@@ -521,7 +538,7 @@ export function createServer(
 
       if (pathname === "/api/session") {
         try {
-          return jsonResponse({ snapshot: await sessionSnapshot() });
+          return jsonResponse({ snapshot: await labelOmoPanes(await sessionSnapshot()) });
         } catch (error) {
           return errorResponse(error);
         }
@@ -756,7 +773,7 @@ export function createServer(
 
       if (pathname === "/api/pane/image") {
         if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
-        let payload: { pane_id?: string; content_type?: string; data_base64?: string };
+        let payload: { pane_id?: string; content_type?: string; data_base64?: string; name?: string };
         try {
           payload = (await request.json()) as typeof payload;
         } catch {
@@ -765,14 +782,16 @@ export function createServer(
         if (!isJsonObject(payload)) return badRequest("invalid_body", "request body must be a JSON object");
         if (typeof payload.pane_id !== "string" || !payload.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required");
         if ((payload.content_type !== undefined && typeof payload.content_type !== "string")
-          || (payload.data_base64 !== undefined && typeof payload.data_base64 !== "string")) {
-          return badRequest("invalid_image", "content_type and data_base64 must be strings");
+          || (payload.data_base64 !== undefined && typeof payload.data_base64 !== "string")
+          || (payload.name !== undefined && typeof payload.name !== "string")) {
+          return badRequest("invalid_image", "content_type, data_base64 and name must be strings");
         }
         try {
           const path = await savePaneImage({
             paneId: payload.pane_id,
             contentType: payload.content_type ?? "",
             dataBase64: payload.data_base64 ?? "",
+            name: payload.name,
           });
           return jsonResponse({ ok: true, path });
         } catch (error) {
@@ -811,7 +830,7 @@ export function createServer(
         if (client.data.relay) { client.data.relay.bind(client as ServerWebSocket<unknown>); return; }
         clients.add(client);
         try {
-          send(client, { type: "snapshot", snapshot: await sessionSnapshot(), features: SERVER_FEATURES });
+          send(client, { type: "snapshot", snapshot: await labelOmoPanes(await sessionSnapshot()), features: SERVER_FEATURES });
         } catch (error) {
           const code = error instanceof HerdrError ? error.code : "snapshot_failed";
           send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error) });
@@ -860,9 +879,8 @@ export function createServer(
               attachment.clients.add(client);
               if (!alreadyAttached && message.flow_control === "ack") client.data.output.set(message.pane_id, new OutputWindow());
               // hand the newcomer the current screen it would otherwise have missed
-              if (!alreadyAttached && attachment.replay) {
-                sendOutput(client, message.pane_id, attachment.replay);
-              }
+              const replay = attachment.replay.text();
+              if (!alreadyAttached && replay) sendOutput(client, message.pane_id, replay);
               reconcileOutput(message.pane_id);
               if (client.data.closing) break;
               if (client.data.mode === "interact") {
@@ -952,8 +970,9 @@ export function createServer(
                 result(false, "read_only", "this connection is in observe mode");
                 break;
               }
+              const arrivedAt = Date.now();
               try {
-                await serialize(message.pane_id, () => submitText(message.pane_id, message.text, message.payload));
+                await serialize(message.pane_id, () => submitText(message.pane_id, message.text, message.payload, arrivedAt));
                 result(true);
               } catch (error) {
                 result(false, error instanceof HerdrError ? error.code : "submit_failed", error instanceof Error ? error.message : String(error));
@@ -1033,7 +1052,7 @@ if (import.meta.main) {
   console.log(`herdr-web-ui listening on http://${instance.hostname}:${instance.port}`);
   if ((process.env["HERDR_WEB_TOKEN"] ?? "") === "" && !LOOPBACK_HOSTNAMES.has(instance.hostname)) {
     console.error(
-      `WARNING: listening on all interfaces (${instance.hostname}) without HERDR_WEB_TOKEN - anyone who can reach this port can type into your terminals; set HERDR_WEB_TOKEN=<token> or HOST=127.0.0.1 to stop that.`,
+      `WARNING: listening on ${instance.hostname} without HERDR_WEB_TOKEN - anyone who can reach this address can type into your terminals; set HERDR_WEB_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
     );
   }
 }

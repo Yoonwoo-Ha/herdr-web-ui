@@ -37,7 +37,7 @@ You need **Bun 1.4+**, **Node 18+** (it runs the terminal-attach sidecar) and a 
 git clone https://github.com/devswha/herdr-web-ui.git
 cd herdr-web-ui
 bun install
-HOST=127.0.0.1 bun run start
+bun run start
 ```
 
 Open **http://localhost:7317**. `start` builds the client and launches the server under an update supervisor. It talks to `~/.config/herdr/herdr.sock` unless `HERDR_SOCKET` says otherwise.
@@ -92,14 +92,16 @@ The server uses bundles built into `remote-bundles/`, or downloads a published r
 
 ## Use it on your phone
 
-Serve the app over **HTTPS** to install it and receive Web Push. For example, with Tailscale:
+Serve the app over **HTTPS** to install it and receive Web Push. The simplest way is Tailscale: keep the server on `127.0.0.1` and let Tailscale add the HTTPS address.
 
 ```bash
-HOST=127.0.0.1 HERDR_WEB_TOKEN='replace-with-a-long-random-token' bun run start
+bun run start
 tailscale serve --bg --https=443 http://127.0.0.1:7317
 ```
 
-Open the HTTPS address and enter the token. In Safari choose **Share → Add to Home Screen**; in Chrome choose **Install app**. A plain HTTP LAN address still works in the browser, but it cannot install the app or receive push.
+Only devices in your tailnet can open that address. If they are all yours, that is the whole setup. If someone else shares your tailnet, also set `HERDR_WEB_TOKEN` (see [Access and safety](#access-and-safety)) or limit the port with Tailscale ACLs.
+
+Open the HTTPS address, and enter the token if you set one. In Safari choose **Share → Add to Home Screen**; in Chrome choose **Install app**. A plain HTTP LAN address still works in the browser, but it cannot install the app or receive push.
 
 On a phone, the terminal gets a key bar (Esc, Tab, Ctrl, arrows, Ctrl+C) that sits above the software keyboard, and dragging the terminal scrolls the real herdr pane.
 
@@ -117,7 +119,7 @@ Updates need a clean checkout with an `origin` remote: `main` for a source insta
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HOST` | `0.0.0.0`; `127.0.0.1` for the plugin | Bind address |
+| `HOST` | `127.0.0.1` | Bind address. Use `0.0.0.0` or a LAN address only together with `HERDR_WEB_TOKEN`. |
 | `PORT` | `7317` | HTTP and WebSocket port |
 | `HERDR_SOCKET` | `~/.config/herdr/herdr.sock` | herdr socket for API calls and terminal attach. Use `~/.config/herdr/sessions/<name>/herdr.sock` for a named session. |
 | `HERDR_WEB_TOKEN` | unset | Shared token that gates terminal access |
@@ -130,7 +132,18 @@ Updates need a clean checkout with an `origin` remote: `main` for a source insta
 
 ### Access and safety
 
-Anyone who can reach an ungated server, or who knows its token, can type into the attached terminals. For remote access, use a token and HTTPS, or bind to loopback and tunnel over SSH.
+Anyone who can reach the server can type into your terminals, so the question is who can reach it. The server listens on `127.0.0.1` by default: only this computer.
+
+| How you reach it | Token (`HERDR_WEB_TOKEN`) |
+| --- | --- |
+| This computer only (default) | Not needed |
+| SSH tunnel (`ssh -L 7317:127.0.0.1:7317 host`) | Not needed |
+| `tailscale serve`, and every device in the tailnet is yours | Not needed |
+| `tailscale serve` on a tailnet you share with others | Needed, or limit the port with Tailscale ACLs |
+| Your LAN (`HOST=0.0.0.0` or a LAN address) | Needed |
+| A public domain or reverse proxy | Needed, with HTTPS |
+
+The server warns on startup when it listens on anything but loopback without a token. Tailscale is one convenient way to get HTTPS on a phone, not a requirement.
 
 With a token set, the API and WebSockets require sign-in; only the app shell, health check and sign-in route stay public. Browsers get an HttpOnly, SameSite=Strict cookie, and scripts can send `Authorization: Bearer <token>`. A TLS proxy should send `x-forwarded-proto: https` so the cookie is marked Secure.
 
@@ -173,11 +186,13 @@ Checks:
 ```bash
 bun run typecheck
 bun run build
-bun test                        # needs a live herdr; creates and removes its own workspaces
+bun test                        # needs herdr installed; creates and removes its own workspaces
 bun run test:ui                 # browser regression against isolated test servers
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun run test:ssh                # remote-PC integration over SSH
 ```
+
+Tests run against a herdr session of their own, `herdr-web-ui-test`: the first run starts a headless `herdr --session herdr-web-ui-test server` and later runs reuse it, so test workspaces never show in the herdr you work in (`scripts/test-herdr.ts`). Stop it with `herdr --session herdr-web-ui-test server stop`. `HERDR_TEST_SESSION` picks another name, and `HERDR_TEST_LIVE=1` runs against `HERDR_SOCKET` or your default session as before.
 
 To release, bump `version` in `package.json` and `herdr-plugin.toml`, move the `Unreleased` notes in [CHANGELOG.md](CHANGELOG.md) under the new version, commit, then push `main` together with a `vX.Y.Z` tag (`git push origin main vX.Y.Z`). The release workflow checks that the three versions agree, builds, tests and publishes the GitHub release; installs pick it up within five minutes. Remote-PC runtime bundles are released separately by pushing `remote-vN` after raising `REMOTE_BUNDLE_VERSION` in `shared/machines.ts`.
 

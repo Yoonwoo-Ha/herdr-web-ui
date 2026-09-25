@@ -15,6 +15,7 @@ import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { paneStorageId, type Machine, type MachineEvent } from "../shared/machines.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
+import { applyPaneStatus } from "./lib/snapshot.ts";
 import { useSettings } from "./lib/settings.ts";
 import { useShortcuts } from "./lib/shortcuts.ts";
 import type { AppActions, PaneView } from "./lib/actions.ts";
@@ -32,6 +33,14 @@ import { UpdateNotice } from "./components/UpdateControls.tsx";
 
 const APP_TITLE = "herdr web ui";
 const POLL_MS = 5000;
+
+/**
+ * Polls and the event stream hand over fresh objects every few seconds even when nothing
+ * changed; storing them re-rendered the whole app (the chat transcript included) each time.
+ */
+function sameData(a: unknown, b: unknown): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
 /** trailing debounce for push-triggered refetches: bursts of events become one fetch */
 const REFETCH_DEBOUNCE_MS = 500;
 
@@ -65,15 +74,21 @@ function storeSelection(machineId: string, paneId: string | null): void {
   }
 }
 
-/** The lens a pane opens in: remembered per pane; agent panes start as chat, shells as terminal. */
-function storedView(paneId: string, hasAgent: boolean, machineId: string): PaneView {
+/**
+ * The lens a pane opens in: remembered per pane. A pane seen for the first time opens its
+ * terminal, except an agent pane on a touch screen, which opens its chat: a phone reads a
+ * conversation better than a TUI sized for a desktop. Until the snapshot says whether the
+ * pane has an agent (null), a touch screen guesses chat: most panes opened there are agents,
+ * and guessing terminal flashed it for the seconds before the snapshot arrived.
+ */
+function storedView(paneId: string, machineId: string, hasAgent: boolean | null): PaneView {
   try {
     const stored = window.localStorage.getItem(`herdr-web-ui:view:${paneStorageId(machineId, paneId)}`);
     if (stored === "chat" || stored === "terminal") return stored;
   } catch {
     /* private mode */
   }
-  return hasAgent ? "chat" : "terminal";
+  return hasAgent !== false && window.matchMedia?.("(pointer: coarse)").matches === true ? "chat" : "terminal";
 }
 
 function Brand() {
@@ -138,10 +153,10 @@ export function App() {
   const loadHealth = useCallback(async () => {
     try { const next = await fetchBridgeHealth(); setLocked(next.auth.required && !next.auth.authenticated); }
     catch { /* retain the gate while the connection server restarts */ }
-    try { setHealth(await fetchHealth()); } catch { setHealth(null); }
+    try { const next = await fetchHealth(); setHealth((previous) => sameData(previous, next) ? previous : next); } catch { setHealth(null); }
   }, []);
   const load = useCallback(async () => {
-    try { const next = await fetchMachines(); setMachines(next); setError(null); setLocked(false); }
+    try { const next = await fetchMachines(); setMachines((previous) => sameData(previous, next) ? previous : next); setError(null); setLocked(false); }
     catch (err) {
       if (err instanceof ApiError && err.status === 401) { setLocked(true); return; }
       setError(err instanceof Error ? err.message : String(err));
@@ -150,6 +165,8 @@ export function App() {
 
   useEffect(() => {
     const tick = (): void => {
+      // a hidden tab (or a phone app in the background) polls nothing; it catches up on return
+      if (document.visibilityState === "hidden") return;
       void loadHealth();
       // a locked tab only watches health, so a token entered in another tab still unlocks it
       if (lockedRef.current !== true) void load();
@@ -166,9 +183,14 @@ export function App() {
       tick();
       timer = window.setInterval(tick, POLL_MS);
     })();
+    const onVisible = (): void => {
+      if (document.visibilityState === "visible" && !disposed) tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       disposed = true;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [load, loadHealth]);
 
@@ -197,7 +219,11 @@ export function App() {
     events.onmessage = (event) => {
       let payload: MachineEvent;
       try { payload = JSON.parse(event.data); } catch { return; }
-      if (payload.type === "machines") { seed(payload.machines); setMachines(payload.machines); return; }
+      if (payload.type === "machines") {
+        seed(payload.machines);
+        setMachines((previous) => sameData(previous, payload.machines) ? previous : payload.machines);
+        return;
+      }
       const machine = machinesRef.current.find((m) => m.id === payload.machine_id);
       if (!machine) return;
       const message = payload.message;
@@ -207,7 +233,17 @@ export function App() {
         statusRef.current.set(key, message.agent_status);
         const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
         if (pane && shouldNotifyStatus(previous, message.agent_status) && !pushOnRef.current) showPaneStatusNotification(message.pane_id, `${machine.name} · ${paneTitle(pane)}`, message.agent_status, () => selectTargetRef.current(machine.id, message.pane_id), machine.id);
-        setMachines((list) => list.map((m) => m.id === machine.id && m.snapshot ? { ...m, snapshot: { ...m.snapshot, panes: m.snapshot.panes.map((p) => p.pane_id === message.pane_id ? { ...p, agent_status: message.agent_status } : p) } } : m));
+        setMachines((list) => {
+          let changed = false;
+          const next = list.map((m) => {
+            if (m.id !== machine.id || !m.snapshot) return m;
+            const snapshot = applyPaneStatus(m.snapshot, message.pane_id, message.agent_status);
+            if (snapshot === m.snapshot) return m;
+            changed = true;
+            return { ...m, snapshot };
+          });
+          return changed ? next : list;
+        });
       }
       if (message.type === "pane-exited" && !pushOnRef.current) {
         const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
@@ -334,8 +370,8 @@ export function App() {
   // the lens follows the selected pane: each pane remembers its own
   useEffect(() => {
     if (selectedPaneId === null) return;
-    setViewState(storedView(selectedPaneId, selectedAgent !== null, selectedMachineId));
-  }, [selectedPaneId, selectedAgent, selectedMachineId]);
+    setViewState(storedView(selectedPaneId, selectedMachineId, selectedPane ? selectedAgent !== null : null));
+  }, [selectedPaneId, selectedMachineId, selectedPane !== null, selectedAgent !== null]);
 
   const setView = useCallback(
     (next: PaneView) => {

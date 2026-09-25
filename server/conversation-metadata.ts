@@ -6,8 +6,9 @@ const label = (value: unknown): string | null => typeof value === "string" && va
 
 /** Read recorded settings, never infer effort from the presence of thinking text.
  * Codex turn_context is a snapshot; omp/omo setting changes are separate events. */
-export function parseConversationMetadata(text: string, source: ConversationResponse["source"]): ConversationMetadata {
-  const metadata: ConversationMetadata = { model: null, reasoning_effort: null };
+export function parseConversationMetadata(text: string, source: ConversationResponse["source"], before?: ConversationMetadata): ConversationMetadata {
+  // `before` is what the text preceding this one said: the fold picks up where it stopped
+  const metadata: ConversationMetadata = before ? { ...before } : { model: null, reasoning_effort: null };
   for (const line of text.split("\n")) {
     let entry: RecordValue;
     try { entry = record(JSON.parse(line)); } catch { continue; }
@@ -21,7 +22,7 @@ export function parseConversationMetadata(text: string, source: ConversationResp
       if (model) metadata.model = model;
       // A new complete context without effort must not retain an older value.
       if (model || effort !== undefined) metadata.reasoning_effort = label(effort);
-    } else if (source === "omp-transcript" || source === "omo-transcript") {
+    } else if (source === "omp-transcript" || source === "omo-transcript" || source === "gjc-transcript") {
       if (entry.type === "model_change") metadata.model = label(entry.modelId);
       if (entry.type === "thinking_level_change") metadata.reasoning_effort = label(entry.thinkingLevel);
       const message = record(entry.message);

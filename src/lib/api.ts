@@ -166,12 +166,13 @@ function base64FromBytes(bytes: Uint8Array): string {
  * resolves to the absolute path the prompt should reference (the composer inserts
  * `@path`). ApiError 413 image_too_large / 415 unsupported_media_type on bad input.
  */
+/** Any file: an image is stored as a paste, anything else under its own (sanitised) name. */
 export async function uploadPaneImage(paneId: string, image: Blob, machineId = "local"): Promise<string> {
   const data_base64 = base64FromBytes(new Uint8Array(await image.arrayBuffer()));
   const response = await fetch(machinePath(machineId, "pane/image"), {
     method: "POST",
     headers: { "content-type": "application/json", "x-herdr-machine": "1" },
-    body: JSON.stringify({ pane_id: paneId, content_type: image.type, data_base64 }),
+    body: JSON.stringify({ pane_id: paneId, content_type: image.type, data_base64, ...(image instanceof File ? { name: image.name } : {}) }),
   });
   if (!response.ok) throw await errorFrom(machinePath(machineId, "pane/image"), response);
   return ((await response.json()) as { path: string }).path;

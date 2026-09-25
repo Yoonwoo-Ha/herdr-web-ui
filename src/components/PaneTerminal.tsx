@@ -25,6 +25,9 @@ import { terminalTheme, type ResolvedTheme } from "../lib/settings.ts";
 const FONT_STACK =
   '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Cascadia Mono", Consolas, "Noto Sans Mono CJK KR", monospace, "Malgun Gothic"';
 
+/** How long a resize must rest before the grid refits and the pty follows it. */
+const RESIZE_SETTLE_MS = 120;
+
 /** The one message parked for a pane, tagged with the pane it belongs to. */
 interface QueuedMessage {
   pane: string;
@@ -69,6 +72,8 @@ export function PaneTerminal({
   const machineId = useMachineId();
   const { answerPanePrompt, uploadPaneImage } = useMachineApi();
   const chatView = view === "chat";
+  const chatViewRef = useRef(chatView);
+  chatViewRef.current = chatView;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -172,6 +177,9 @@ export function PaneTerminal({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
+    // herdr reads the wheel as mouse reports. Were reporting ever off, xterm would turn
+    // a wheel into arrow keys, which walk an agent's prompt history instead of scrolling.
+    term.attachCustomWheelEventHandler(() => term.modes.mouseTrackingMode !== "none");
     termRef.current = term;
     fitRef.current = fit;
 
@@ -258,15 +266,24 @@ export function PaneTerminal({
       socket.sendInput(current, data);
     });
 
+    // Dragging a window edge fires this every frame. Each resize of the pty makes herdr
+    // reflow the pane and the program in it redraw (Claude Code repaints its whole
+    // conversation), so a drag of a long session sent over a hundred resizes and the app
+    // lagged: fit once the size has settled.
+    let resizeTimer: number | null = null;
     const observer = new ResizeObserver(() => {
-      if (observeRef.current) return; // the grid belongs to the pty while observing
-      try {
-        fit.fit();
-      } catch {
-        return;
-      }
-      const current = paneRef.current;
-      if (current) socket.resize(current, term.cols, term.rows);
+      if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        resizeTimer = null;
+        if (observeRef.current) return; // the grid belongs to the pty while observing
+        try {
+          fit.fit();
+        } catch {
+          return;
+        }
+        const current = paneRef.current;
+        if (current) socket.resize(current, term.cols, term.rows);
+      }, RESIZE_SETTLE_MS);
     });
     observer.observe(host);
 
@@ -274,6 +291,9 @@ export function PaneTerminal({
     // translate a single-finger drag on the terminal into wheel events, so the
     // normal buffer scrolls its own viewport and the alternate buffer (with mouse
     // reporting on) forwards the gesture to herdr, exactly like a mouse wheel.
+    // The text follows the finger, as everywhere on a phone: dragging down brings
+    // older lines in. Each event carries the finger's position, since xterm reports
+    // a wheel at the cell under it (without one, every report said row 1, column 1).
     let touchY = 0;
     let tracking = false;
     const onTouchStart = (event: TouchEvent): void => {
@@ -285,13 +305,13 @@ export function PaneTerminal({
       if (!tracking || event.touches.length !== 1) return;
       event.preventDefault();
       const first = event.touches[0];
-      const y = first ? first.clientY : touchY;
-      // finger moving up (y < touchY) must scroll up, i.e. a negative wheel deltaY
-      const delta = y - touchY;
-      touchY = y;
+      if (!first) return;
+      // finger moving down (y > touchY) shows older lines: a wheel scrolling up, negative deltaY
+      const delta = touchY - first.clientY;
+      touchY = first.clientY;
       if (delta !== 0) {
         const target = term.element ?? host;
-        target.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: delta }));
+        target.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: delta, clientX: first.clientX, clientY: first.clientY }));
       }
     };
     const onTouchEnd = (): void => {
@@ -325,6 +345,7 @@ export function PaneTerminal({
     return () => {
       window.clearInterval(poll);
       observer.disconnect();
+      if (resizeTimer !== null) window.clearTimeout(resizeTimer);
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
@@ -409,7 +430,9 @@ export function PaneTerminal({
       /* not laid out yet; the ResizeObserver will follow up */
     }
     socket.attach(paneId, term.cols, term.rows);
-    term.focus();
+    // the chat lens covers the grid and its composer takes the keyboard: focusing the hidden
+    // grid sent the keys straight to the pane, and showed a phone's IME text mid-screen
+    if (!chatViewRef.current) term.focus();
     return () => {
       socket.detach(paneId);
     };

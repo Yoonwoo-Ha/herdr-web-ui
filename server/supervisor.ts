@@ -14,7 +14,7 @@ import { Updater, type Release } from "./updater.ts";
 export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
   root = resolve(root);
   const port = Number(process.env["PORT"] ?? DEFAULT_PORT);
-  const host = process.env["HOST"] ?? "0.0.0.0";
+  const host = process.env["HOST"] ?? "127.0.0.1";
   const probeHost = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "[::1]" : host.includes(":") ? `[${host}]` : host;
   const origin = `http://${probeHost}:${port}`;
   const appStateDir = resolve(defaultStateDir());

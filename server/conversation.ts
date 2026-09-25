@@ -21,10 +21,10 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane } from "../shared/protocol.ts";
+import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { herdrRpc, sessionSnapshot } from "./herdr/client.ts";
 import { codexHistorySegments, codexTranscriptPath, defaultCodexHome, parseCodexTranscript, readRange } from "./codex.ts";
 import { parseConversationMetadata } from "./conversation-metadata.ts";
@@ -187,6 +187,8 @@ interface OmpEntry {
     role?: string;
     content?: unknown;
     toolCallId?: string;
+    stopReason?: unknown;
+    errorMessage?: unknown;
   };
 }
 
@@ -275,6 +277,11 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS): Conversa
         }
         // unsupported transcript parts are intentionally ignored
       }
+      // a failed request (a 401, an overloaded provider) leaves an empty message: without its
+      // error the chat showed the prompt with no answer at all
+      if (message.stopReason === "error" && typeof message.errorMessage === "string" && message.errorMessage.length > 0) {
+        turn.parts.push({ kind: "text", text: `Error: ${message.errorMessage}` });
+      }
     }
   }
 
@@ -301,7 +308,7 @@ export class HistoryChanged extends Error {
 
 /** What paneConversation resolved: which store the turns came from, and where they start. */
 export type RecognizedConversation = {
-  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "codex-transcript";
+  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "codex-transcript";
   turns: ConversationTurn[];
   metadata: ConversationMetadata;
   /** the first turn's position, for the page before it; null at the conversation's beginning */
@@ -381,6 +388,7 @@ const TURN_MARK: Record<RecognizedConversation["source"], Buffer> = {
   "claude-transcript": Buffer.from('"type":"user"'),
   "omp-transcript": Buffer.from('"role":"user"'),
   "omo-transcript": Buffer.from('"role":"user"'),
+  "gjc-transcript": Buffer.from('"role":"user"'),
 };
 
 /**
@@ -436,6 +444,110 @@ function pageBefore(stream: TranscriptStream, source: RecognizedConversation["so
     bytes = Buffer.concat([readStream(stream, next, from), bytes]);
     from = next;
   }
+}
+
+/**
+ * The newest page is asked for on every poll while an agent works, and between polls its
+ * file only grows. Rescanning its whole window (16 MB on a long session) and reparsing
+ * the page each time held the event loop 50-110 ms every 2 s, so per live file:
+ * - the turn starts found so far are kept, and only the bytes appended since are scanned;
+ * - the turns before the page's last turn start are kept (a later append cannot change a
+ *   turn that another has followed), and only the last turn is parsed again.
+ */
+interface LiveScan {
+  id: string;
+  source: RecognizedConversation["source"];
+  /** complete lines up to here are scanned */
+  scanned: number;
+  /** turn starts in the scanned bytes, ascending, none before the window */
+  starts: number[];
+  /** the bytes just before `scanned`: a file rewritten rather than appended to no longer has them */
+  tail: string;
+}
+const liveScans = new Map<string, LiveScan>();
+
+interface SettledTurns {
+  id: string;
+  /** the page start these turns begin at, and the turn start they end at */
+  start: number;
+  end: number;
+  turns: ConversationTurn[];
+  metadata: ConversationMetadata;
+  /** the bytes just before `end` (see LiveScan.tail) */
+  tail: string;
+}
+const settledTurns = new Map<string, SettledTurns>();
+
+function bytesBefore(stream: TranscriptStream, offset: number): string {
+  return readStream(stream, Math.max(0, offset - 64), offset).toString("latin1");
+}
+
+function remember<T>(map: Map<string, T>, key: string, value: T, limit: number): void {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > limit) map.delete(map.keys().next().value!);
+}
+
+/** The newest page's start and every turn start in it (pageBefore without widening), or null when it starts mid-turn. */
+function newestPage(path: string, stream: TranscriptStream, source: RecognizedConversation["source"]): { start: number; starts: number[] } | null {
+  const from = Math.max(0, stream.length - TRANSCRIPT_WINDOW_BYTES);
+  let scan = liveScans.get(path);
+  // a window that slid past the scanned bytes starts over at its edge (a line may be cut
+  // there, as in pageBefore, and never counts as a start)
+  if (!scan || scan.id !== stream.id || scan.source !== source || scan.scanned > stream.length || scan.scanned < from
+    || bytesBefore(stream, scan.scanned) !== scan.tail) {
+    scan = { id: stream.id, source, scanned: from, starts: [], tail: bytesBefore(stream, from) };
+  }
+  let pending: number[] = [];
+  if (scan.scanned < stream.length) {
+    const bytes = readStream(stream, scan.scanned, stream.length);
+    const complete = bytes.lastIndexOf(0x0a) + 1;
+    for (const offset of turnStarts(bytes.subarray(0, complete), source)) scan.starts.push(scan.scanned + offset);
+    // a last line still without its newline counts now, and is scanned again once complete
+    pending = turnStarts(bytes.subarray(complete), source).map((offset) => scan!.scanned + complete + offset);
+    scan.scanned += complete;
+    scan.tail = bytesBefore(stream, scan.scanned);
+  }
+  const stale = scan.starts.findIndex((offset) => offset >= from);
+  if (stale !== 0) scan.starts.splice(0, stale === -1 ? scan.starts.length : stale);
+  remember(liveScans, path, scan, 32);
+  const starts = pending.length > 0 ? [...scan.starts, ...pending] : scan.starts;
+  const start = starts.length > MAX_PAGE_PROMPTS ? starts[starts.length - MAX_PAGE_PROMPTS] : from === 0 ? 0 : starts[0];
+  return start === undefined ? null : { start, starts };
+}
+
+function parseTurns(source: RecognizedConversation["source"], text: string): ConversationTurn[] {
+  return source === "codex-transcript" ? parseCodexTranscript(text, Infinity)
+    : source === "claude-transcript" ? parseClaudeTranscript(text, Infinity) : parseOmpTranscript(text, Infinity);
+}
+
+/**
+ * The newest page's turns from `start`: the settled ones (before the last turn start)
+ * from memory, extended by any turn that has since been followed, plus the live last turn.
+ */
+function liveTurns(path: string, stream: TranscriptStream, source: RecognizedConversation["source"], start: number, starts: number[]): { turns: ConversationTurn[]; metadata: ConversationMetadata } {
+  // starts ascend: the last one, when it lies past the page start
+  const last = Math.max(start, starts[starts.length - 1] ?? start);
+  const key = `${path}\0${start}`;
+  let settled = settledTurns.get(key);
+  if (!settled || settled.id !== stream.id || settled.end > last || bytesBefore(stream, settled.end) !== settled.tail) {
+    const head = start > 0 ? readRange(path, 0, METADATA_HEAD_BYTES) : "";
+    settled = { id: stream.id, start, end: start, turns: [], metadata: parseConversationMetadata(`${head}\n`, source), tail: bytesBefore(stream, start) };
+  }
+  if (settled.end < last) {
+    const text = readStream(stream, settled.end, last).toString("utf8");
+    settled = { ...settled, end: last, turns: [...settled.turns, ...parseTurns(source, text)], metadata: parseConversationMetadata(text, source, settled.metadata), tail: bytesBefore(stream, last) };
+  }
+  remember(settledTurns, key, settled, 8);
+  const text = readStream(stream, last, stream.length).toString("utf8");
+  return { turns: [...settled.turns, ...parseTurns(source, text)], metadata: parseConversationMetadata(text, source, settled.metadata) };
+}
+
+/** Forget every scan and parse kept between polls (tests compare against a cold read). */
+export function forgetTranscriptState(): void {
+  cache.clear();
+  liveScans.clear();
+  settledTurns.clear();
 }
 
 function formatCursor(stream: TranscriptStream, offset: number): string | null {
@@ -512,6 +624,71 @@ export function omoTranscriptPath(cwd: string, home = process.env["HOME"] ?? "")
   return live.path;
 }
 
+/** A gjc session directory's cwd, by directory: one directory holds one cwd's sessions, for good. */
+const gjcDirCwds = new Map<string, string | null>();
+
+function gjcDirCwd(dir: string): string | null {
+  if (gjcDirCwds.has(dir)) return gjcDirCwds.get(dir)!;
+  let cwd: string | null = null;
+  try {
+    // v2 directories are named by a digest of the cwd, and say which in their scope file
+    const scope = JSON.parse(readFileSync(join(dir, ".gjc-managed-session-scope.v2.json"), "utf8")) as { canonicalPath?: unknown };
+    if (typeof scope.canonicalPath === "string") cwd = scope.canonicalPath;
+  } catch {
+    // an older, slug-named directory: its sessions' header names the cwd
+    const newest = newestJsonl(dir)[0];
+    cwd = newest === undefined ? null : transcriptCwd(newest);
+  }
+  if (cwd !== null) gjcDirCwds.set(dir, cwd);
+  return cwd;
+}
+
+function newestJsonl(dir: string): string[] {
+  let entries: string[];
+  try { entries = readdirSync(dir); } catch { return []; }
+  return entries.filter((entry) => entry.endsWith(".jsonl"))
+    .map((entry) => ({ path: join(dir, entry), mtimeMs: statSync(join(dir, entry), { throwIfNoEntry: false })?.mtimeMs ?? -1 }))
+    .filter((file) => file.mtimeMs >= 0)
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .map((file) => file.path);
+}
+
+/**
+ * gjc's transcript. herdr labels the pane `gjc` but names no session, and gjc writes
+ * omp's session shape into one directory per cwd (`~/.gjc/agent/sessions/v2-<digest>`,
+ * older ones slug-named), which it keeps open while it runs: the pane's gjc process
+ * points at it through /proc (live-verified, gjc 0.17). Without /proc (macOS) the
+ * directory is the one whose cwd is the pane's. The newest session in it is the live one.
+ */
+export async function gjcTranscriptPath(paneId: string, cwd: string, home = process.env["HOME"] ?? ""): Promise<string> {
+  const root = join(home, ".gjc", "agent", "sessions");
+  const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid?: unknown; argv?: unknown }[] } }>(
+    "pane.process_info",
+    { pane_id: paneId },
+  ).catch(() => null);
+  const dirs = new Set<string>();
+  for (const process of info?.process_info?.foreground_processes ?? []) {
+    const argv = Array.isArray(process.argv) ? process.argv.map(String) : [];
+    if (typeof process.pid !== "number" || !/(^|\/)gjc$/.test(argv[0] ?? "")) continue;
+    let fds: string[] = [];
+    try { fds = readdirSync(`/proc/${process.pid}/fd`); } catch { continue; }
+    for (const fd of fds) {
+      let target = "";
+      try { target = readlinkSync(`/proc/${process.pid}/fd/${fd}`); } catch { continue; }
+      if (target.startsWith(`${root}/`) && !target.slice(root.length + 1).includes("/")) dirs.add(target);
+    }
+  }
+  if (dirs.size === 0) {
+    let entries: string[] = [];
+    try { entries = readdirSync(root); } catch { /* no store */ }
+    for (const entry of entries) if (gjcDirCwd(join(root, entry)) === cwd) dirs.add(join(root, entry));
+  }
+  const newest = [...dirs].flatMap((dir) => newestJsonl(dir).slice(0, 1))
+    .sort((left, right) => (statSync(right, { throwIfNoEntry: false })?.mtimeMs ?? 0) - (statSync(left, { throwIfNoEntry: false })?.mtimeMs ?? 0))[0];
+  if (newest === undefined) throw new ConversationUnavailable("no_session_path");
+  return newest;
+}
+
 /** argv words only an omo process carries: its launcher, its entry, or anything under its install root. */
 const OMO_PROCESS = /(^|\/)omo(\.js)?$|\/omo-ai\//;
 
@@ -534,6 +711,24 @@ async function paneRunsOmo(paneId: string): Promise<boolean> {
   return (info?.process_info?.foreground_processes ?? []).some((process) =>
     isOmoProcess(Array.isArray(process.argv) ? process.argv.map(String) : []),
   );
+}
+
+/**
+ * herdr labels an omo pane `pi` while it waits and `claude` while omo's claude-sdk child
+ * runs, so the sidebar showed another agent's mark, and one that changed as omo worked.
+ * The snapshots the browser gets name such a pane `omo`, decided by its process tree
+ * (paneRunsOmo), checked for those two labels only.
+ */
+export async function labelOmoPanes(snapshot: SessionSnapshot): Promise<SessionSnapshot> {
+  const candidates = snapshot.panes.filter((pane) => pane.agent === "pi" || pane.agent === "claude");
+  const omo = new Set<string>();
+  await Promise.all(candidates.map(async (pane) => { if (await paneRunsOmo(pane.pane_id)) omo.add(pane.pane_id); }));
+  if (omo.size === 0) return snapshot;
+  return {
+    ...snapshot,
+    panes: snapshot.panes.map((pane) => omo.has(pane.pane_id) ? { ...pane, agent: "omo" } : pane),
+    agents: snapshot.agents.map((agent) => omo.has(agent.pane_id) ? { ...agent, agent: "omo" } : agent),
+  };
 }
 
 /** Claude's transcript for a pane: herdr names the session id, the store is addressed by cwd slug. */
@@ -573,6 +768,7 @@ async function resolveTranscript(paneId: string, agent: string, cwd: string, cod
     }
     if (agent === "claude") return { source: "claude-transcript", path: await claudeTranscriptPath(paneId, cwd) };
     if (agent === "omp") return { source: "omp-transcript", path: await ompTranscriptPath(paneId) };
+    if (agent === "gjc") return { source: "gjc-transcript", path: await gjcTranscriptPath(paneId, cwd) };
     throw new ConversationUnavailable("no_recognized_transcript");
   } catch (error) {
     if (!(error instanceof ConversationUnavailable) || !(await paneRunsOmo(paneId))) throw error;
@@ -630,6 +826,7 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
   let text: string;
   let head = "";
   let cursor: string | null;
+  let live: { turns: ConversationTurn[]; metadata: ConversationMetadata } | null = null;
   try {
     if (page.before !== undefined) {
       const before = parseCursor(stream, page.before);
@@ -639,16 +836,24 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
       start = older.start;
       text = older.bytes.toString("utf8");
     } else {
-      const newest = pageBefore(stream, source, stream.length, { widen: false });
       const held = page.from === undefined ? null : parseCursor(stream, page.from);
+      const newest = newestPage(path, stream, source);
       // A chat that shows older pages holds the start of its newest turns and keeps
       // every turn after it while they are inside the newest page. Once the newest
       // page has moved past it, the chat gets the newest page and fetches the turns
       // in between with `before` + `since`: no poll reads more than a page.
-      start = held !== null && held >= newest.start ? held : newest.start;
-      text = newest.bytes.subarray(start - newest.start).toString("utf8");
+      if (newest !== null) {
+        start = held !== null && held >= newest.start ? held : newest.start;
+        live = liveTurns(path, stream, source, start, newest.starts);
+        text = "";
+      } else {
+        // no turn starts in the window: the page begins mid-turn, read whole as before
+        const whole = pageBefore(stream, source, stream.length, { widen: false });
+        start = held !== null && held >= whole.start ? held : whole.start;
+        text = whole.bytes.subarray(start - whole.start).toString("utf8");
+      }
     }
-    if (page.before === undefined && start > 0) head = readRange(path, 0, METADATA_HEAD_BYTES);
+    if (live === null && page.before === undefined && start > 0) head = readRange(path, 0, METADATA_HEAD_BYTES);
     cursor = formatCursor(stream, start);
   } catch (error) {
     if (error instanceof HistoryChanged) throw error;
@@ -658,9 +863,8 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
   // the store decides the parser, not the pane's label: omo writes omp's
   // session shape while herdr may be calling that same pane `claude`. The page
   // bounds the turns, so none are cut: they must meet the next page exactly.
-  const turns = source === "codex-transcript" ? parseCodexTranscript(text, Infinity)
-    : source === "claude-transcript" ? parseClaudeTranscript(text, Infinity) : parseOmpTranscript(text, Infinity);
-  const metadata = parseConversationMetadata(`${head}\n${text}`, source);
+  const turns = live?.turns ?? parseTurns(source, text);
+  const metadata = live?.metadata ?? parseConversationMetadata(`${head}\n${text}`, source);
   // Record the stat from BEFORE the read: an append during parsing must cause
   // another read on the next poll, not permanently cache a torn tail.
   cache.delete(key);

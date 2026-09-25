@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { forgetHistoryChains } from "./codex.ts";
-import { ConversationUnavailable, HistoryChanged, isOmoProcess, MAX_TURNS, omoTranscriptPath, parseClaudeTranscript, parseOmpTranscript, transcriptPage } from "./conversation.ts";
+import { ConversationUnavailable, gjcTranscriptPath, HistoryChanged, isOmoProcess, MAX_TURNS, omoTranscriptPath, parseClaudeTranscript, parseOmpTranscript, transcriptPage } from "./conversation.ts";
 
 /** Minimal but shape-true slices of a Claude Code session jsonl. */
 const lines = [
@@ -238,6 +238,43 @@ describe("omo transcript resolution", () => {
   });
 });
 
+describe("gjc sessions", () => {
+  const roots: string[] = [];
+  afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+  const session = (dir: string, name: string, cwd: string, mtime: string) => {
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, name);
+    writeFileSync(path, `${JSON.stringify({ type: "session", version: 5, cwd })}\n`);
+    utimesSync(path, new Date(mtime), new Date(mtime));
+    return path;
+  };
+
+  it("finds a pane's session by the cwd its directory is for, v2 scope file or older header", async () => {
+    const home = mkdtempSync(join(tmpdir(), "herdr-gjc-")); roots.push(home);
+    const store = join(home, ".gjc", "agent", "sessions");
+    const v2 = join(store, "v2-abc");
+    session(v2, "old.jsonl", "/home/u/project", "2026-09-20T00:00:00.000Z");
+    const live = session(v2, "live.jsonl", "/home/u/project", "2026-09-21T00:00:00.000Z");
+    writeFileSync(join(v2, ".gjc-managed-session-scope.v2.json"), JSON.stringify({ canonicalPath: "/home/u/project" }));
+    const other = join(store, "v2-def");
+    session(other, "newer.jsonl", "/home/u/elsewhere", "2026-09-22T00:00:00.000Z");
+    writeFileSync(join(other, ".gjc-managed-session-scope.v2.json"), JSON.stringify({ canonicalPath: "/home/u/elsewhere" }));
+    const legacy = session(join(store, "-legacy"), "a.jsonl", "/home/u/legacy", "2026-09-19T00:00:00.000Z");
+    // a pane herdr does not know has no process to follow: the cwd decides
+    expect(await gjcTranscriptPath("w9999:p9999", "/home/u/project", home)).toBe(live);
+    expect(await gjcTranscriptPath("w9999:p9999", "/home/u/legacy", home)).toBe(legacy);
+    await expect(gjcTranscriptPath("w9999:p9999", "/home/u/never-opened", home)).rejects.toThrow(ConversationUnavailable);
+  });
+
+  it("shows a failed request's error instead of an empty answer", () => {
+    const text = [
+      JSON.stringify({ type: "message", timestamp: "2026-09-25T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "hi" }] } }),
+      JSON.stringify({ type: "message", timestamp: "2026-09-25T00:00:01.000Z", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "401 Authentication Failed" } }),
+    ].join("\n");
+    expect(parseOmpTranscript(text).at(-1)?.parts).toEqual([{ kind: "text", text: "Error: 401 Authentication Failed" }]);
+  });
+});
+
 describe("transcript pages", () => {
   const roots: string[] = [];
   afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -251,6 +288,26 @@ describe("transcript pages", () => {
   ].map((entry) => JSON.stringify(entry)).join("\n");
   const texts = (turns: { parts: { kind: string; text?: string; output?: string }[] }[]) =>
     turns.map((turn) => turn.parts.map((part) => part.kind === "tool" ? `[${part.output}]` : part.text).join(" "));
+
+  it("reads a growing file's newest page incrementally, exactly as a cold read of it", () => {
+    const root = temp();
+    const path = join(root, "session.jsonl");
+    const whole = Buffer.from(`${Array.from({ length: 80 }, (_, n) => claudeTurn(n)).join("\n")}\n`);
+    writeFileSync(path, whole.subarray(0, 1000));
+    // appends of every size, cut mid-line too, including one that ends the file without a newline
+    for (let at = 1000, step = 1; at < whole.length; step = (step * 7) % 997 + 1) {
+      appendFileSync(path, whole.subarray(at, at + step * 23));
+      at += step * 23;
+      const cold = join(root, `cold-${at}.jsonl`);
+      copyFileSync(path, cold);
+      const live = transcriptPage("claude-transcript", path);
+      const reference = transcriptPage("claude-transcript", cold);
+      rmSync(cold);
+      expect(texts(live.turns)).toEqual(texts(reference.turns));
+      expect(live.metadata).toEqual(reference.metadata);
+      expect(live.cursor?.split(":").at(-1)).toBe(reference.cursor?.split(":").at(-1));
+    }
+  });
 
   it("pages back through a long conversation without gaps, overlaps or split turns", () => {
     const path = join(temp(), "session.jsonl");

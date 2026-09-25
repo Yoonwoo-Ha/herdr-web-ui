@@ -20,6 +20,7 @@ describe("composerMessage and submitNote", () => {
   it("says why a message did not go, and never claims a lost one was sent", () => {
     expect(submitNote("agent_blocked", "x")).toBe("Not sent: the agent is waiting for an answer in the terminal. Answer it first.");
     expect(submitNote("read_only", "x")).toBe("Not sent: this view only watches the pane.");
+    expect(submitNote("submit_timeout", "x")).toMatch(/^Not sent: .*nothing was typed/);
     expect(submitNote("disconnected", "x")).toMatch(/^Not confirmed: .*Check the terminal/);
     expect(submitNote("pane_not_found", "pane w1:p9 not found")).toBe("Not sent: pane w1:p9 not found");
   });

@@ -15,11 +15,13 @@ const threads = {
   resumed: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc01",
   matched: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc02",
   other: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc03",
+  fresh: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc04",
 };
 const answers = {
   resumed: "The resumed thread answers from its own rollout, found by the id on the command line without any screen match.",
   matched: "The matched thread was recognised on screen once, and stays bound while tool output scrolls its answer away.",
   other: "Another pane in the same repository started this thread later, and it is that pane's own conversation entirely.",
+  fresh: "A third Codex pane started this fresh thread in the repository, and only the pane that typed its question owns it.",
 };
 const workspaces: string[] = [];
 let server: ReturnType<typeof createServer>;
@@ -106,9 +108,11 @@ beforeAll(() => {
   mkdirSync(join(root, "bin"));
   writeFileSync(join(root, "bin", "matched.txt"), `${answers.matched}\n`);
   writeFileSync(join(root, "bin", "other.txt"), `${answers.other}\n`);
+  writeFileSync(join(root, "bin", "fresh.txt"), `${answers.fresh}\n`);
   const script = join(root, "bin", "codex");
-  // `--say NAME` shows the question typed and its answer; `--quote NAME` only the answer, as pasted
-  writeFileSync(script, `#!/bin/sh\nname="\${2:-matched}"\n[ "$1" = --say ] && echo "› question for $name"\n[ "$1" = --say ] || [ "$1" = --quote ] && cat "$(dirname "$0")/$name.txt"\nsleep "\${FLOOD_AFTER:-600}"\nseq 1 600\nsleep 600\n`);
+  // `--say NAME` shows the question typed and its answer; `--quote NAME` only the answer, as
+  // pasted; `--both NAME` the question and answer of NAME and the matched thread's answer too
+  writeFileSync(script, `#!/bin/sh\nname="\${2:-matched}"\n[ "$1" = --say ] || [ "$1" = --both ] && echo "› question for $name"\n[ "$1" = --say ] || [ "$1" = --quote ] || [ "$1" = --both ] && cat "$(dirname "$0")/$name.txt"\n[ "$1" = --both ] && cat "$(dirname "$0")/matched.txt"\nsleep "\${FLOOD_AFTER:-600}"\nseq 1 600\nsleep 600\n`);
   chmodSync(script, 0o755);
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), codexHome });
 });
@@ -206,3 +210,25 @@ it("finds a pane's thread however many codex exec runs the repo had since", asyn
     for (const remove of removes) remove();
   }
 }, 30_000);
+
+it("claims nothing for a pane whose screen matches this pane's thread as well, nor for a closed pane", async () => {
+  const paneId = await pane("unique", `FLOOD_AFTER=3 ${join(root, "bin", "codex")} --say`);
+  for (let attempt = 0; attempt < 30 && lastAnswer(await read(paneId)) !== answers.matched; attempt++) await Bun.sleep(100);
+  await floodedAway(paneId, answers.matched);
+  const remove = newerThread("cli", threads.fresh, rollout("fresh"), "question for fresh");
+  try {
+    // shows the other thread's question and answer, and this pane's answer too: not unique
+    const both = await pane("both", `${join(root, "bin", "codex")} --both fresh`);
+    await onScreen(both, answers.fresh);
+    expect((await read(paneId)).source).toBe("scrollback");
+    await workspaceClose(workspaces.pop()!);
+    // the pane that typed it claims it; once that pane is closed, its binding no longer counts
+    const theirs = await pane("owner", `${join(root, "bin", "codex")} --say fresh`);
+    await onScreen(theirs, answers.fresh);
+    expect(lastAnswer(await read(paneId))).toBe(answers.matched);
+    await workspaceClose(workspaces.pop()!);
+    expect((await read(paneId)).source).toBe("scrollback");
+  } finally {
+    remove();
+  }
+}, 40_000);

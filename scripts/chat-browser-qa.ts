@@ -1,5 +1,6 @@
 /** Native transcript -> real HTTP -> React checks on an owned herdr pane.
  * Run after bun run build. No live user's terminal is attached or written. */
+import "./test-herdr.ts"; // a herdr session of its own: nothing shows in the user's
 import assert from "node:assert/strict";
 import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -46,6 +47,8 @@ try {
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), codexHome });
   browser = await chromium.launch({ executablePath: process.env["CHROME_PATH"] ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  // a pane opens its terminal the first time; this QA is about the chat lens
+  await page.addInitScript((id) => localStorage.setItem(`herdr-web-ui:view:${id}`, "chat"), paneId);
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.setDefaultTimeout(10_000);

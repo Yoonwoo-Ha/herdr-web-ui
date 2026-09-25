@@ -7,6 +7,105 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-09-25
+
+### Added
+- gjc and omo have their own marks in the sidebar and the chat. An omo pane is named `omo` even
+  though herdr labels it `pi` or `claude` as omo works, so its mark no longer changes under you.
+- gjc panes open in the chat view with their conversation, model and effort, like omp and omo.
+  The chat follows the session the pane's gjc has open.
+
+### Fixed
+- A request that failed (an authentication error, an overloaded provider) shows its error in the
+  chat of an omp, omo or gjc pane. The prompt used to stand there with no answer at all.
+
+## [0.3.5] - 2026-09-25
+
+### Added
+- Web addresses in chat messages are links: a bare `https://…` URL or one in `<…>` opens in a
+  new tab, as a `[text](url)` link already did. Punctuation that ends the sentence stays out of
+  the link, and so does text written straight after it (e.g. Korean without a space).
+- The chat composer attaches any file, not only PNG, JPEG, GIF and WebP images. An icon, a PDF or
+  a log is stored beside the pane under its own name and mentioned by path, as images are; SVGs
+  get a thumbnail too. Other files used to be dropped without a word.
+
+### Fixed
+- Resizing the window no longer lags on a long session. Every frame of the drag resized the pane,
+  and each resize made herdr reflow it and the program in it (Claude Code) repaint its whole
+  conversation; the terminal now resizes once the drag rests.
+- The app does much less work while it sits open. The terminal under the chat view no longer
+  draws every output frame, an unchanged chat is no longer re-rendered on every status update,
+  and a hidden tab or a phone app in the background stops polling until it is back.
+- A chat open on a long session no longer stalls the server every poll while the agent works. The
+  server re-read and re-parsed up to 16 MB of the transcript every 2 s; it now reads only what was
+  appended and re-parses only the last turn.
+- Live status, pane-ended and session-changed updates resume after herdr restarts. One failed
+  reconnect used to stop them until the web server itself restarted.
+- Long code blocks in a chat answer no longer look cut off. A block was capped at about six lines
+  with the rest behind an inner scroll that a phone does not show, so a long answer seemed to stop
+  halfway. Blocks now show whole; one longer than 30 lines opens at its first 20 with a
+  **Show all N lines** row below it.
+
+## [0.3.4] - 2026-09-25
+
+### Changed
+- On a phone or tablet, an agent pane opens in the chat the first time you select it; shells, and
+  every pane on a desktop, still open their terminal. The lens you pick is still remembered per
+  pane.
+
+### Fixed
+- Scrolling the terminal on a phone scrolls herdr's history again when another tab (for example a
+  desktop browser) already had that pane open. The phone joined a busy pane without its mouse
+  mode, so a drag turned into arrow keys and paged through the agent's prompt history instead.
+- Picking a session in the chat view and typing straight away now types into the chat box. The
+  keys went to the hidden terminal instead, straight into the agent's own prompt, and a phone
+  showed the typed text in the middle of the screen.
+
+## [0.3.3] - 2026-09-25
+
+### Added
+- Remote PC bridges update in the background. When an app update needs a newer bridge, PCs that
+  connect with their saved key are updated automatically (**Settings → Remote PCs**, on by
+  default); with it off, **Update bridge** starts the same update in one tap. A PC that needs a
+  password asks through **Sign in and update…**.
+- The sidebar and the header show a bridge update's step, bytes and time left, with **Cancel
+  update**. Closing the dialog after approval no longer cancels an install.
+- The web server keeps downloaded bridge bundles by checksum and downloads each once, so a second
+  PC or a retry only sends it to the PC.
+
+### Fixed
+- Dragging the terminal on a phone scrolls herdr's history again. The gesture was lost after its
+  first move, since the redraw replaced the row it started on, and the browser then scrolled the
+  page or the composer instead. The text now also follows the finger (drag down for older lines),
+  and each scroll lands at the finger's position.
+- Android notifications show the herdr mark instead of Chrome's bell as their small icon.
+
+### Development
+- Tests and the browser QA scripts run in a herdr session of their own, `herdr-web-ui-test`, so
+  their workspaces and agents never show in the herdr you work in. `HERDR_TEST_LIVE=1` restores
+  the old behaviour.
+
+## [0.3.2] - 2026-09-25
+
+### Changed
+- A pane opens its terminal the first time you select it, agent panes included, instead of the chat.
+  Switch to Chat once and that pane keeps opening in chat.
+- `bun run start` now listens on `127.0.0.1` by default, like the plugin, instead of every
+  interface. To reach it from your LAN again, set `HOST=0.0.0.0` together with `HERDR_WEB_TOKEN`;
+  for a phone, `tailscale serve` or an SSH tunnel to `127.0.0.1` needs no change.
+- The README and INSTALL.md say when a token is needed: not on this computer, over an SSH tunnel,
+  or through `tailscale serve` on a tailnet of your own devices; needed on a LAN, a shared tailnet
+  or a public address.
+
+### Fixed
+- A composer message that waited more than 45s behind earlier input is not typed any more; the
+  composer keeps it and says nothing was typed. Before, it could reach the pane after the composer
+  had given up on it, so sending it again typed it twice.
+- Text typed after a message that is still sending keeps its leading spaces, and an edit inside
+  the part being sent stays in the box with a note that it was not sent.
+- A numbered menu row under Codex's collapsed question queue is no longer mistaken for its main
+  prompt.
+
 ## [0.3.1] - 2026-09-25
 
 ### Changed
@@ -107,7 +206,12 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/devswha/herdr-web-ui/compare/v0.3.5...v0.3.6
+[0.3.5]: https://github.com/devswha/herdr-web-ui/compare/v0.3.4...v0.3.5
+[0.3.4]: https://github.com/devswha/herdr-web-ui/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/devswha/herdr-web-ui/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/devswha/herdr-web-ui/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/devswha/herdr-web-ui/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/devswha/herdr-web-ui/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/devswha/herdr-web-ui/compare/v0.2.0...v0.2.1

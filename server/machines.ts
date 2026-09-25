@@ -4,11 +4,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync,
 import { createServer as tcpServer } from "node:net";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { BRIDGE_PROTOCOL, LOCAL_MACHINE, REMOTE_BUNDLE_VERSION, type BridgeIdentity, type Machine, type MachineAction, type MachineEvent, type SetupAction, type SetupJob, type SetupRequest, type SshTarget } from "../shared/machines.ts";
+import { BRIDGE_PROTOCOL, LOCAL_MACHINE, REMOTE_BUNDLE_VERSION, type BridgeIdentity, type Machine, type MachineAction, type MachineEvent, type MachineSettings, type SetupAction, type SetupJob, type SetupProgress, type SetupRequest, type SshTarget } from "../shared/machines.ts";
 import type { ServerMessage, SessionSnapshot } from "../shared/protocol.ts";
 import type { PushService } from "./push.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
 import { sessionSnapshot } from "./herdr/client.ts";
+import { labelOmoPanes } from "./conversation.ts";
 import { shellQuote, validateTarget } from "./machine-security.ts";
 import { BUNDLE_DIR, installBundle, REMOTE_PATH } from "./remote-bundle.ts";
 import { SshConnection } from "./ssh.ts";
@@ -27,7 +28,21 @@ interface Runtime {
   refreshing: boolean;
   terminals: Set<() => void>;
 }
-interface JobState { update: boolean; public: SetupJob; abort: AbortController; pending?: { resolve(value: string): void; reject(error: Error): void }; ssh?: SshConnection; timer: ReturnType<typeof setTimeout> }
+interface JobState {
+  update: boolean;
+  /** started by the server for a PC whose bridge is out of date: key-only SSH, approval already given */
+  auto: boolean;
+  public: SetupJob;
+  abort: AbortController;
+  pending?: { resolve(value: string): void; reject(error: Error): void };
+  ssh?: SshConnection;
+  timer: ReturnType<typeof setTimeout>;
+  /** the registered PC a bridge update is for, which shows it as `updating` */
+  runtime?: Runtime;
+  stageStartedAt: number;
+  finished: Promise<void>;
+}
+const DEFAULT_SETTINGS: MachineSettings = { auto_update_bridges: true };
 
 async function freePort(): Promise<number> {
   const server = tcpServer();
@@ -53,10 +68,21 @@ export class MachineManager {
   private statePath: string;
   private sshDir: string;
   private local: Machine = { id: LOCAL_MACHINE, name: hostname(), kind: "local", enabled: true, state: "connecting", error: null, snapshot: null };
+  private settingsPath: string;
+  private preferences: MachineSettings = { ...DEFAULT_SETTINGS };
+  /** automatic bridge updates run one at a time: they share one bundle download */
+  private autoChain: Promise<void> = Promise.resolve();
+  private autoQueued = new Set<string>();
+  private emitTimer?: ReturnType<typeof setTimeout>;
 
   constructor(readonly stateDir: string, private push: PushService) {
     this.statePath = join(stateDir, "machines.json");
     this.sshDir = join(stateDir, "ssh");
+    this.settingsPath = join(stateDir, "machine-settings.json");
+    try {
+      const saved: unknown = JSON.parse(readFileSync(this.settingsPath, "utf8"));
+      if (saved && typeof saved === "object" && typeof (saved as MachineSettings).auto_update_bridges === "boolean") this.preferences.auto_update_bridges = (saved as MachineSettings).auto_update_bridges;
+    } catch { /* absent or unreadable: the defaults */ }
     if (existsSync(this.statePath)) {
       const saved: unknown = JSON.parse(readFileSync(this.statePath, "utf8"));
       if (!Array.isArray(saved)) throw new Error("Invalid machines.json; registrations were preserved");
@@ -93,7 +119,7 @@ export class MachineManager {
   async refreshLocal(): Promise<void> {
     if (this.localBusy || this.stopped) return;
     this.localBusy = true;
-    try { this.local.snapshot = await sessionSnapshot(); this.local.state = "connected"; this.local.error = null; }
+    try { this.local.snapshot = await labelOmoPanes(await sessionSnapshot()); this.local.state = "connected"; this.local.error = null; }
     catch (e) { this.local.state = "error"; this.local.error = String(e instanceof Error ? e.message : e); }
     finally { this.localBusy = false; this.emit(); }
   }
@@ -110,7 +136,29 @@ export class MachineManager {
     chmodSync(tmp, 0o600); renameSync(tmp, this.statePath);
   }
   job(id: string): SetupJob | undefined { return this.jobs.get(id)?.public; }
-  setup(request: SetupRequest): SetupJob {
+  settings(): MachineSettings { return { ...this.preferences }; }
+  updateSettings(patch: Record<string, unknown>): MachineSettings {
+    if (patch["auto_update_bridges"] !== undefined) {
+      if (typeof patch["auto_update_bridges"] !== "boolean") throw new Error("auto_update_bridges must be boolean");
+      this.preferences.auto_update_bridges = patch["auto_update_bridges"];
+    }
+    mkdirSync(this.stateDir, { recursive: true, mode: 0o700 });
+    const tmp = this.settingsPath + ".tmp";
+    writeFileSync(tmp, JSON.stringify(this.preferences), { mode: 0o600 });
+    renameSync(tmp, this.settingsPath);
+    return this.settings();
+  }
+  /**
+   * Update a PC's bridge now, without a dialog: the tap (or the app update) is the approval,
+   * and SSH uses the PC's saved key only. A PC that needs a password fails with the reason,
+   * and its dialog stays the way in.
+   */
+  updateBridge(id: string): SetupJob {
+    const runtime = this.machines.get(id);
+    if (!runtime) throw new Error("PC not found");
+    return this.setup({ ...runtime.machine.target!, machine_id: id, update_remote: true }, { auto: true });
+  }
+  setup(request: SetupRequest, options: { auto?: boolean } = {}): SetupJob {
     if (this.stopped) throw new Error("Server stopping");
     const target = validateTarget(request);
     if (request.name !== undefined && (typeof request.name !== "string" || request.name.length > 100)) throw new Error("PC name must be at most 100 characters");
@@ -120,7 +168,9 @@ export class MachineManager {
     if (existing && [...this.jobs.values()].some((j) => j.public.machine_id === existing.machine.id && !["connected", "failed", "cancelled"].includes(j.public.phase))) throw new Error("A connection job for this PC is already running");
     const id = randomUUID();
     const machineId = existing?.machine.id ?? randomUUID();
-    const job: JobState = { update: request.update_remote === true, public: { id, machine_id: machineId, target, phase: "connecting", step: "Connecting with SSH keys and ssh-agent…", challenge: null, installations: [], error: null }, abort: new AbortController(), timer: setTimeout(() => this.cancelJob(id), 600_000) };
+    const auto = options.auto === true && request.update_remote === true && !!existing;
+    const job: JobState = { update: request.update_remote === true, auto, public: { id, machine_id: machineId, target, phase: "connecting", step: "Connecting with SSH keys and ssh-agent…", challenge: null, installations: [], error: null, progress: null }, abort: new AbortController(), timer: setTimeout(() => this.cancelJob(id), 600_000), stageStartedAt: Date.now(), finished: Promise.resolve() };
+    if (job.update && existing) job.runtime = existing;
     job.timer.unref();
     this.jobs.set(id, job);
     if (this.jobs.size > 40) for (const [key, j] of this.jobs) if (["connected", "failed", "cancelled"].includes(j.public.phase) && key !== id) { this.jobs.delete(key); break; }
@@ -132,9 +182,11 @@ export class MachineManager {
     runtime.ssh = ssh;
     runtime.abort = job.abort;
     const generation = ++runtime.generation;
-    void (async () => {
+    this.showUpdate(job);
+    job.finished = (async () => {
       try {
-        await ssh.start((prompt, host) => {
+        // an automatic update never asks: a PC that needs a password says so and waits
+        await ssh.start(auto ? undefined : (prompt, host) => {
           job.public.phase = "authentication";
           job.public.challenge = { id: randomUUID(), kind: host ? "host_key" : "secret", prompt };
           job.public.step = host ? "Verify the server fingerprint" : "SSH authentication required";
@@ -155,16 +207,40 @@ export class MachineManager {
         if (job.public.phase !== "cancelled") {
           job.public.phase = "failed"; job.public.step = "Connection failed";
           job.public.error = e instanceof Error ? e.message : String(e);
-          if (ownsRuntime) { runtime.machine.state = "error"; runtime.machine.error = job.public.error; runtime.machine.action_required = e instanceof MachineActionRequired ? e.action : null; }
+          // a failed bridge update keeps its button: the bridge is still out of date, and the
+          // error says why this attempt failed (no network, a password needed, …)
+          if (ownsRuntime) { runtime.machine.state = "error"; runtime.machine.error = job.public.error; runtime.machine.action_required = e instanceof MachineActionRequired ? e.action : job.update && existing ? "update_bridge" : null; }
           this.emit();
         }
-      } finally { clearTimeout(job.timer); job.public.challenge = null; job.pending = undefined; job.ssh = undefined; }
+      } finally {
+        clearTimeout(job.timer); job.public.challenge = null; job.pending = undefined; job.ssh = undefined;
+        if (job.runtime) { job.runtime.machine.updating = null; this.emit(); }
+      }
     })();
     return job.public;
   }
   private stage(job: JobState, phase: SetupJob["phase"], step: string): void {
     if (job.abort.signal.aborted) throw new Error("Setup cancelled");
     job.public.phase = phase; job.public.step = step; job.public.challenge = null;
+    // approved: from here on the install's own timeouts apply, not the setup's 10 minutes
+    if (phase === "installing") clearTimeout(job.timer);
+    if (phase === "starting") this.progress(job, "restart", 0, null);
+    this.showUpdate(job);
+  }
+  /** A stage's bytes so far; a new stage restarts the clock its rate is measured on. */
+  private progress(job: JobState, stage: SetupProgress["stage"], done: number, total: number | null): void {
+    const now = Date.now();
+    if (job.public.progress?.stage !== stage) job.stageStartedAt = now;
+    const elapsed = now - job.stageStartedAt;
+    job.public.progress = { stage, done, total, rate: elapsed >= 500 && done > 0 ? Math.round(done / (elapsed / 1000)) : null, elapsed_ms: elapsed };
+    this.showUpdate(job);
+  }
+  /** Mirror a bridge update onto its PC, so the sidebar and header show it without the dialog. */
+  private showUpdate(job: JobState): void {
+    if (!job.runtime) return;
+    job.runtime.machine.updating = { job_id: job.public.id, step: job.public.step, progress: job.public.progress ?? null };
+    // progress arrives per chunk: a few events a second are plenty
+    if (!this.emitTimer) { this.emitTimer = setTimeout(() => { this.emitTimer = undefined; this.emit(); }, 250); this.emitTimer.unref(); }
   }
   private wait(job: JobState): Promise<string> {
     if (job.abort.signal.aborted) return Promise.reject(new Error("Setup cancelled"));
@@ -198,7 +274,7 @@ export class MachineManager {
     const generation = runtime.generation;
     const ssh = runtime.ssh!;
     const session = runtime.machine.target!.session;
-    const inspection = await ssh.run(REMOTE_PATH + `printf '%s\\n' "$(uname -s)" "$(uname -m)" "$(cd -P "$HOME" && pwd -P)" "\${XDG_CONFIG_HOME:-$HOME/.config}" "$(command -v herdr || true)"; test -x "$HOME/${BUNDLE_DIR}/bin/bun" && printf 'bundle-ready\\n' || true; for f in "$HOME/.config/herdr-web-ui/bridges/"*.json; do test ! -f "$f" || cat "$f"; printf '\\n'; done`);
+    const inspection = await ssh.run(REMOTE_PATH + `printf '%s\\n' "$(uname -s)" "$(uname -m)" "$(cd -P "$HOME" && pwd -P)" "\${XDG_CONFIG_HOME:-$HOME/.config}" "$(command -v herdr || true)"; test -x "$HOME/${BUNDLE_DIR}/bin/bun" && printf 'bundle-ready\\n' || true; for d in "$HOME/.local/share/herdr-web-ui/remote-v"*; do if test -x "$d/bin/bun"; then printf 'bundle-older\\n'; break; fi; done; for f in "$HOME/.config/herdr-web-ui/bridges/"*.json; do test ! -f "$f" || cat "$f"; printf '\\n'; done`);
     const [os, arch, home, xdgConfig, herdrPath, ...lines] = inspection.split("\n");
     if (!home?.startsWith("/") || !["Linux", "Darwin"].includes(os ?? "") || !["x86_64", "aarch64", "arm64"].includes(arch ?? "")) throw new Error("Only Linux/macOS x64 and arm64 PCs are supported");
     const platform = `${os === "Darwin" ? "darwin" : "linux"}-${arch === "x86_64" ? "x64" : "arm64"}`;
@@ -221,6 +297,8 @@ export class MachineManager {
       if (live !== "live") descriptor = undefined;
     }
     const hasBundle = lines.includes("bundle-ready");
+    // a runtime from another bundle version and no bridge running (the PC rebooted since): an update
+    if (!descriptor && !hasBundle && lines.includes("bundle-older") && !job) throw new MachineActionRequired("This PC has the bridge runtime of a different version. Update the bridge to reconnect; herdr sessions keep running.", "update_bridge");
     const installs: string[] = [];
     if (job?.update) installs.push("Download and verify the bridge runtime, then restart this bridge (herdr sessions keep running)");
     if (!descriptor && !hasBundle) installs.push("Private web bridge bundle (Bun, Node and node-pty; no build tools needed)");
@@ -230,9 +308,12 @@ export class MachineManager {
     if (installs.length) {
       if (!job) throw new MachineActionRequired("Remote setup needs approval. Use Reconnect / setup on this PC.", "setup");
       job.public.installations = installs;
-      this.stage(job, "approval", "Review the changes on this PC");
-      await this.wait(job);
-      if (job.update || !descriptor && !hasBundle) { this.stage(job, "installing", `Installing verified ${platform} bundle…`); await installBundle(ssh, platform, job.abort.signal); }
+      // an automatic bridge update was approved by the app update (or the tap that started it)
+      if (!job.auto) {
+        this.stage(job, "approval", "Review the changes on this PC");
+        await this.wait(job);
+      }
+      if (job.update || !descriptor && !hasBundle) { this.stage(job, "installing", `Installing verified ${platform} bundle…`); await installBundle(ssh, platform, job.abort.signal, { cacheDir: join(this.stateDir, "bundles"), onProgress: (stage, done, total) => this.progress(job, stage, done, total) }); }
       if (ssh.usedSecret) {
         this.stage(job, "installing", "Registering the app SSH key…");
         const path = join(this.sshDir, runtime.machine.id);
@@ -346,6 +427,8 @@ export class MachineManager {
     if (error instanceof MachineActionRequired) {
       runtime.machine.state = "error"; runtime.machine.action_required = error.action;
       this.emit();
+      // SSH itself just worked without a password, so the update can run unattended
+      if (error.action === "update_bridge" && this.preferences.auto_update_bridges) this.queueAutoUpdate(runtime.machine.id);
       return;
     }
     runtime.machine.state = "reconnecting";
@@ -364,6 +447,19 @@ export class MachineManager {
       if (generation !== runtime.generation || this.stopped) return;
       await this.observe(runtime); this.emit();
     } catch (e) { this.lost(runtime, generation, e); }
+  }
+  private queueAutoUpdate(id: string): void {
+    if (this.autoQueued.has(id)) return;
+    this.autoQueued.add(id);
+    this.autoChain = this.autoChain.then(async () => {
+      const runtime = this.machines.get(id);
+      // still wanted: the PC may have been updated by hand, removed or disabled meanwhile
+      if (this.stopped || !runtime?.machine.enabled || runtime.machine.action_required !== "update_bridge" || !this.preferences.auto_update_bridges) return;
+      if ([...this.jobs.values()].some((j) => j.public.machine_id === id && !["connected", "failed", "cancelled"].includes(j.public.phase))) return;
+      const job = this.updateBridge(id);
+      await this.jobs.get(job.id)?.finished;
+    }).catch((e) => { console.error("Automatic bridge update failed:", e instanceof Error ? e.message : String(e)); })
+      .finally(() => { this.autoQueued.delete(id); });
   }
   private disconnect(runtime: Runtime): void {
     runtime.generation++;

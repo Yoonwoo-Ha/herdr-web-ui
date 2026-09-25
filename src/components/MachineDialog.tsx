@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Monitor, X } from "lucide-react";
 import type { Machine, SetupAction, SetupJob } from "../../shared/machines.ts";
 import { answerMachineSetup, fetchMachineSetup, startMachineSetup } from "../lib/api.ts";
+import { BridgeUpdateProgress } from "./MachineSidebar.tsx";
 import "./Machines.css";
 
 export function MachineDialog({ machine, updateRemote = false, onClose, onConnected }: { machine?: Machine; updateRemote?: boolean; onClose(): void; onConnected(id: string): void }) {
@@ -19,7 +20,10 @@ export function MachineDialog({ machine, updateRemote = false, onClose, onConnec
   const finished = !!job && ["failed", "cancelled", "connected"].includes(job.phase);
   const secretAllowed = window.isSecureContext;
 
-  useEffect(() => { dialog.current?.showModal(); return () => { const current = jobRef.current; if (current && !["connected", "failed", "cancelled"].includes(current.phase)) void answerMachineSetup(current.id, { action: "cancel" }).catch(() => {}); }; }, []);
+  // closing cancels a job that still waits on this dialog (a question, an approval); an
+  // approved install keeps going on the server and shows in the sidebar
+  useEffect(() => { dialog.current?.showModal(); return () => { const current = jobRef.current; if (current && !["connected", "failed", "cancelled", "installing", "starting"].includes(current.phase)) void answerMachineSetup(current.id, { action: "cancel" }).catch(() => {}); }; }, []);
+  const running = !!job && ["installing", "starting"].includes(job.phase);
   useEffect(() => {
     if (!job || finished) return;
     let cancelled = false;
@@ -60,7 +64,8 @@ export function MachineDialog({ machine, updateRemote = false, onClose, onConnec
         </div></details>
         <p className="field-hint">Uses the web server account’s SSH config and ssh-agent. Agent CLI tools and logins use the environment on the target PC.</p>
       </form>}
-      {job && <div className="machine-progress" role="status"><strong>{job.step}</strong>{job.error && <p>{job.error}</p>}</div>}
+      {job && <div className="machine-progress" role="status">{running && job.progress ? <BridgeUpdateProgress update={{ job_id: job.id, step: job.step, progress: job.progress }} /> : <strong>{job.step}</strong>}{job.error && <p>{job.error}</p>}</div>}
+      {running && <p className="field-hint">You can close this; the install keeps going and the sidebar shows it.</p>}
       {job?.phase === "approval" && <><ul className="machine-install-list">{job.installations.map((item) => <li key={item}>{item}</li>)}</ul><p className="field-hint">Installs into your home directory. Existing herdr sessions keep running.</p></>}
       {job?.challenge && <div className="machine-challenge"><pre>{job.challenge.prompt}</pre>{job.challenge.kind === "host_key" ? <p className="field-hint">Compare this fingerprint with the PC before accepting it.</p> : <form onSubmit={(e) => { e.preventDefault(); void act({ action: "answer", challenge_id: job.challenge!.id, answer: secret }); }}>
         <label className="field"><span className="field-label">Password or key passphrase</span><input autoFocus className="input" type="password" autoComplete="off" value={secret} disabled={!secretAllowed || pending} onChange={(e) => setSecret(e.target.value)} /></label>
@@ -70,7 +75,8 @@ export function MachineDialog({ machine, updateRemote = false, onClose, onConnec
       {error && <p className="machine-error" role="alert">{error}</p>}
     </div>
     <footer className="modal-footer">
-      {job && !finished && <button className="btn" disabled={pending} onClick={() => void act({ action: "cancel" })}>Cancel connection</button>}
+      {job && !finished && <button className="btn" disabled={pending} onClick={() => void act({ action: "cancel" })}>{running ? "Cancel install" : "Cancel connection"}</button>}
+      {running && <button className="btn btn-primary" onClick={onClose}>Continue in background</button>}
       {job?.challenge?.kind === "host_key" && <><button className="btn" disabled={pending} onClick={() => void act({ action: "answer", challenge_id: job.challenge!.id, answer: "no" })}>Reject</button><button className="btn btn-primary" disabled={pending} onClick={() => void act({ action: "answer", challenge_id: job.challenge!.id, answer: "yes" })}>Trust fingerprint</button></>}
       {job?.phase === "approval" && <button className="btn btn-primary" disabled={pending} onClick={() => void act({ action: "approve" })}>Install and connect</button>}
       {job?.phase === "connected" ? <button className="btn btn-primary" onClick={() => onConnected(job.machine_id)}>Open PC</button> : (!job || finished) && <button className="btn btn-primary" form="machine-connect-form" type="submit" disabled={pending}>{pending ? "Connecting…" : job ? "Retry connection" : "Connect"}</button>}
