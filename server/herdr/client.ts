@@ -324,6 +324,13 @@ export function subscribeEvents(
     })
     .catch((err: Error) => {
       handlers.onError?.(new HerdrError("connect_failed", err.message));
+      // a connect that never opened never closes either: report it as closed, or a
+      // subscriber that retries on close (the status collector) waits forever after
+      // one failed reconnect, e.g. while herdr restarts
+      if (!closed) {
+        closed = true;
+        handlers.onClose?.();
+      }
     });
 
   return {

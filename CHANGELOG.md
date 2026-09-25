@@ -14,6 +14,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - The app does much less work while it sits open. The terminal under the chat view no longer
   draws every output frame, an unchanged chat is no longer re-rendered on every status update,
   and a hidden tab or a phone app in the background stops polling until it is back.
+- A chat open on a long session no longer stalls the server every poll while the agent works. The
+  server re-read and re-parsed up to 16 MB of the transcript every 2 s; it now reads only what was
+  appended and re-parses only the last turn.
+- Live status, pane-ended and session-changed updates resume after herdr restarts. One failed
+  reconnect used to stop them until the web server itself restarted.
 - Long code blocks in a chat answer no longer look cut off. A block was capped at about six lines
   with the rest behind an inner scroll that a phone does not show, so a long answer seemed to stop
   halfway. Blocks now show whole; one longer than 30 lines opens at its first 20 with a
