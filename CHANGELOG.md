@@ -11,6 +11,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Resizing the window no longer lags on a long session. Every frame of the drag resized the pane,
   and each resize made herdr reflow it and the program in it (Claude Code) repaint its whole
   conversation; the terminal now resizes once the drag rests.
+- The app does much less work while it sits open. The terminal under the chat view no longer
+  draws every output frame, an unchanged chat is no longer re-rendered on every status update,
+  and a hidden tab or a phone app in the background stops polling until it is back.
 - Long code blocks in a chat answer no longer look cut off. A block was capped at about six lines
   with the rest behind an inner scroll that a phone does not show, so a long answer seemed to stop
   halfway. Blocks now show whole; one longer than 30 lines opens at its first 20 with a
