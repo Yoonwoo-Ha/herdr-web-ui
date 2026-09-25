@@ -30,7 +30,13 @@ Browser checks look for Chrome at `/opt/google/chrome/chrome`; set `CHROME_PATH`
 
 ## README media
 
-`bun run build && bun scripts/readme-media/capture.ts` regenerates the screenshots and demo GIFs in `docs/screenshots/` from a staged, fictional session in its own herdr session (`herdr-web-ui-demo`). It needs ffmpeg. Pass `shots` or `video` to redo only one of them.
+`bun run build && bun scripts/readme-media/capture.ts` regenerates the stills and demos in `docs/screenshots/` from a staged, fictional session in its own herdr session (`herdr-web-ui-demo`). Pass `shots` or `video` to redo only one of them. It needs ffmpeg.
+
+- `stage.ts` builds the session: five workspaces under `/tmp/herdr-demo`, curated chats served in place of transcripts, and the hostname rewritten.
+- `record.ts` records a walkthrough at 2x (Chrome's screencast, with `--force-device-scale-factor=2`), logging pointer moves, clicks, taps and camera cues as it drives the page.
+- `compose.ts` draws every output frame on a canvas: a backdrop, a browser window or a phone, the frame under an eased camera, and a vector cursor with click ripples or touch rings. It writes `demo-*.mp4` (1920×1200 and 1080×1920, 30 fps) and a GIF of each. Stills get the same window or phone on a transparent background.
+
+The MP4s are not committed: GitHub plays a README video only from an upload (`github.com/user-attachments/…`), so drop them into an issue or PR comment and use the link it gives.
 
 ## Releasing
 
