@@ -314,30 +314,32 @@ function parseCodexAsyncQuestion(screen: string): ParsedPrompt | null {
 }
 
 /**
- * How many questions wait in Codex's collapsed queue at the bottom of the screen; 0 when
- * none do. A message of the user's own waiting to be submitted replaces the questions'
- * block (alt+↑ then opens nothing, checked on Codex 0.156.1): no count then either.
+ * How many questions wait in Codex's collapsed queue at the bottom of the screen, with the
+ * main prompt right under it; 0 otherwise. The card (codexQueuedPrompt) and the send path
+ * (codexQuestionsCollapsed) both read this count, so they cannot disagree.
+ * - A message of the user's own waiting to be submitted replaces the questions' block
+ *   (alt+↑ then opens nothing, checked on Codex 0.156.1): no count then.
+ * - An open question (its "enter submit … skip" hint) or an approval under the queue holds the
+ *   input itself: no count either.
  */
 function queuedQuestionCount(screen: string): number {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine).filter(Boolean);
   const header = findLastIndex(lines, (line) => CODEX_QUEUE_HEADER_RE.test(line));
   // the queue sits right above the main prompt and its status line
   if (header < 0 || lines.length - header > 16) return 0;
-  if (lines.slice(header).some((line) => /^↳\s/.test(line) || /Messages to be submitted/i.test(line))) return 0;
-  for (const line of lines.slice(header + 1, header + 8)) {
-    const count = line.match(CODEX_QUEUE_COUNT_RE);
-    if (count) return Number(count[1]);
-  }
-  return 0;
+  if (lines.slice(header).some((line) => /^↳\s/.test(line) || /Messages to be submitted/i.test(line) || CODEX_ASYNC_ASK_HINT_RE.test(line))) return 0;
+  const at = lines.findIndex((line, index) => index > header && index <= header + 7 && CODEX_QUEUE_COUNT_RE.test(line));
+  if (at < 0 || !/\bto answer$/i.test(lines[at + 1] ?? "") || !/^›\s/.test(lines[at + 2] ?? "")) return 0;
+  return Number(lines[at]!.match(CODEX_QUEUE_COUNT_RE)![1]);
 }
+
+/** The question a pane's queue opened on, as it showed there, when that was not the card's. */
+export interface QueueFront { question: string; options: string[] }
 
 /**
  * The collapsed queue shows only a count: the card takes its first question from the
  * rollout, the newest `count` unanswered ones (a skipped question leaves no record).
  */
-/** The question a pane's queue opened on, as it showed there, when that was not the card's. */
-export interface QueueFront { question: string; options: string[] }
-
 function queuedPrompt(count: number, unanswered: QueuedQuestion[], front: QueueFront | null = null): ParsedPrompt | null {
   const waiting = unanswered.slice(-count);
   // the question the queue opened on last time, when that was not the newest guess: by its
@@ -580,13 +582,7 @@ function parsePrompt(agent: string, screen: string): ParsedPrompt | null {
  * skip" hint) or an approval below the queue holds the input itself.
  */
 export function codexQuestionsCollapsed(screen: string): boolean {
-  if (parsePrompt("codex", screen) !== null) return false;
-  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine).filter(Boolean);
-  const header = findLastIndex(lines, (line) => /^(?:•\s*)?Queued follow-up inputs$/.test(line));
-  if (header < 0 || lines.length - header > 16 || lines.some((line) => CODEX_ASYNC_ASK_HINT_RE.test(line))) return false;
-  const count = lines.findIndex((line, index) => index > header && /^\?\s*\d+\s+questions?\b/.test(line));
-  if (count < 0 || count > header + 7) return false;
-  return /\bto answer$/i.test(lines[count + 1] ?? "") && /^›\s/.test(lines[count + 2] ?? "");
+  return parsePrompt("codex", screen) === null && queuedQuestionCount(screen) > 0;
 }
 
 /** The card for Codex's collapsed queue on this screen, from the rollout's unanswered questions. */
@@ -702,12 +698,11 @@ async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: 
   }
 }
 
-/** After an answer from the chat: close Codex's queue if it opened its next question. */
 /**
  * After an answer from the chat: if Codex opened its next question, close the queue, so
  * the main prompt has the input back. Only once another question shows (`answered` is the
- * id of the one just answered, which can still be on screen for a moment). (alt+↓ elsewhere, on the main prompt or
- * an approval, changes nothing: checked on Codex 0.156.1.)
+ * id of the one just answered, which can still be on screen for a moment). alt+↓ elsewhere,
+ * on the main prompt or an approval, changes nothing (checked on Codex 0.156.1).
  */
 async function closeQueue(paneId: string, answered: string): Promise<void> {
   const since = Date.now();
@@ -759,9 +754,14 @@ async function openQueuedQuestion(paneId: string, queued: ParsedPrompt): Promise
   }
   // not the card's question (a skip can leave the rollout's guess behind), or nothing opened:
   // never leave the queue open, where it would hold the input a message goes to
+  await closeOpenQuestion(paneId);
+  return null;
+}
+
+/** Closes Codex's queue if a question shows open in it. */
+async function closeOpenQuestion(paneId: string): Promise<void> {
   const screen = (await paneRead({ paneId, source: "visible", format: "text" })).text;
   if (parsePrompt("codex", screen)?.responder === "codex-async-question") await paneSendKeys(paneId, [KEY.closeQueue]);
-  return null;
 }
 
 function promptChanged(): Response {
@@ -802,25 +802,39 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     return await serialize(body.pane_id, async () => {
       const { prompt } = await readPrompt(body.pane_id, options.codexHome);
       if (!prompt || prompt.id !== body.prompt_id) return promptChanged();
+      // checked against the card before anything is sent: an invalid answer never opens the queue
+      let steps: AnswerStep[];
+      try {
+        steps = answerKeys(prompt, body);
+      } catch (error) {
+        if (error instanceof InvalidAnswer) return badRequest("invalid_answer", error.message);
+        throw error;
+      }
       let target = prompt;
-      if (parsedByPublicPrompt.get(prompt)?.responder === "codex-queued-question") {
+      const opensQueue = parsedByPublicPrompt.get(prompt)?.responder === "codex-queued-question";
+      if (opensQueue) {
         // the card came from the rollout: answer it in the open queue, once it shows this question
         const opened = await openQueuedQuestion(body.pane_id, parsedByPublicPrompt.get(prompt)!);
         if (!opened) return promptChanged();
         target = opened;
       }
-      let steps: AnswerStep[];
+      let answered = false;
       try {
-        steps = answerKeys(target, body);
+        // the keys for the question as it shows in the open queue
+        if (target !== prompt) steps = answerKeys(target, body);
+        for (let index = 0; index < steps.length; index += 1) {
+          const step = steps[index]!;
+          if (step.keys) await paneSendKeys(body.pane_id, step.keys);
+          else if (step.text !== undefined) await paneSendText(body.pane_id, step.text);
+          if (index < steps.length - 1) await Bun.sleep(30);
+        }
+        answered = true;
       } catch (error) {
         if (error instanceof InvalidAnswer) return badRequest("invalid_answer", error.message);
         throw error;
-      }
-      for (let index = 0; index < steps.length; index += 1) {
-        const step = steps[index]!;
-        if (step.keys) await paneSendKeys(body.pane_id, step.keys);
-        else if (step.text !== undefined) await paneSendText(body.pane_id, step.text);
-        if (index < steps.length - 1) await Bun.sleep(30);
+      } finally {
+        // the queue this request opened never stays open, whatever failed on the way
+        if (opensQueue && !answered) await closeOpenQuestion(body.pane_id).catch(() => undefined);
       }
       // answered from the chat, the queue closes again: the next question waits collapsed, and
       // the main prompt (where a message typed in the chat goes) has the input back

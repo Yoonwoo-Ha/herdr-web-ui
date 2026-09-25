@@ -577,6 +577,28 @@ $ rm -rf junk
 Press enter to confirm or esc to cancel
 `)).toBe(false);
   });
+
+  test("the card and the send path read the same count, so they never tell different stories", () => {
+    const asked = [{ key: "call_c:0", title: "Which dataset?", options: ["LM-O"] }, { key: "call_c:1", title: "Any notes?", options: [] }];
+    const collapsed = `
+• Queued follow-up inputs
+  ? 2 questions · 8s
+    alt+↑ to answer
+› Ask Codex to do anything
+  GPT-6-Sol xhigh · ~/lab · Context 97% left
+`;
+    const screens = {
+      collapsed,
+      // a message of the user's own waiting to be submitted
+      queuedMessage: collapsed.replace("    alt+↑ to answer", "    alt+↑ to answer\n• Messages to be submitted after next tool call\n  ↳ stop, don't touch prod"),
+      // something the parser does not know sits between the queue and the main prompt
+      somethingBelow: collapsed.replace("› Ask Codex to do anything", "  Allow network access?\n› Ask Codex to do anything"),
+      noHint: collapsed.replace("    alt+↑ to answer\n", ""),
+      none: "› Ask Codex to do anything\n",
+    };
+    const shown = Object.fromEntries(Object.entries(screens).map(([name, screen]) => [name, [codexQueuedPrompt(screen, asked) !== null, codexQuestionsCollapsed(screen)]]));
+    expect(shown).toEqual({ collapsed: [true, true], queuedMessage: [false, false], somethingBelow: [false, false], noHint: [false, false], none: [false, false] });
+  });
 });
 
 describe("interactive prompt answers", () => {
