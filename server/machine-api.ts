@@ -4,7 +4,7 @@ import { canSendSecret, sameOrigin } from "./machine-security.ts";
 import { isJsonObject, jsonResponse } from "./http.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
-export const MACHINE_PROXY_PATH = /^(?:session|agents|pane\/(?:read|conversation|commands|files|prompt|prompt\/answer|input|keys|close|rename|image)|workspace\/(?:create|rename|move|close))$/;
+export const MACHINE_PROXY_PATH = /^(?:session|agents|pane\/(?:read|conversation|commands|files|prompt|prompt\/answer|input|keys|close|rename|image)|workspace\/(?:create|rename|move|close|directories))$/;
 
 export async function handleMachineRequest(request: Request, manager: MachineManager): Promise<Response> {
   const url = new URL(request.url);

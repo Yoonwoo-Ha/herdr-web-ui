@@ -7,6 +7,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- **Browse** beside the directory field of a new session: pick the folder from a list instead of
+  typing its path. It lists one folder at a time on the PC the session starts on, hidden folders
+  on request. A remote PC offers it once its bridge is updated; until then, type the path.
+
 ### Fixed
 - The header no longer says "reconnecting" after you switch to another pane on the same PC. The
   switch reset the connection badge, and the terminal, still connected, never reported again.

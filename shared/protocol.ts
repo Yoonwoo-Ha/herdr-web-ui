@@ -144,6 +144,20 @@ export interface ConversationResponse {
 }
 
 /** GET /api/agents: one agent kind herdr can start (`agent.start` kind), with a display label. */
+/** GET /api/workspace/directories: the folders inside one directory, for the folder browser. */
+export interface DirectoryListing {
+  /** the directory listed, absolute */
+  path: string;
+  /** its parent, or null at the root */
+  parent: string | null;
+  /** the user's home, so the browser can show `~` and offer a way back */
+  home: string;
+  /** folder names, sorted; hidden ones only when asked for */
+  directories: string[];
+  /** more folders than the list holds */
+  truncated: boolean;
+}
+
 export interface AgentKind {
   kind: string;
   label: string;
