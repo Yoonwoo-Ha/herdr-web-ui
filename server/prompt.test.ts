@@ -602,10 +602,12 @@ Press enter to confirm or esc to cancel
       // something the parser does not know sits between the queue and the main prompt
       somethingBelow: collapsed.replace("› Ask Codex to do anything", "  Allow network access?\n› Ask Codex to do anything"),
       noHint: collapsed.replace("    alt+↑ to answer\n", ""),
+      // a menu row the parser does not know, right under the hint, is not the main prompt
+      numberedRow: collapsed.replace("› Ask Codex to do anything", "› 1. Allow once\n  2. Deny"),
       none: "› Ask Codex to do anything\n",
     };
     const shown = Object.fromEntries(Object.entries(screens).map(([name, screen]) => [name, [codexQueuedPrompt(screen, asked) !== null, codexQuestionsCollapsed(screen)]]));
-    expect(shown).toEqual({ collapsed: [true, true], queuedMessage: [false, false], somethingBelow: [false, false], noHint: [false, false], none: [false, false] });
+    expect(shown).toEqual({ collapsed: [true, true], queuedMessage: [false, false], somethingBelow: [false, false], noHint: [false, false], numberedRow: [false, false], none: [false, false] });
   });
 });
 
