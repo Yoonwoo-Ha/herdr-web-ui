@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -251,6 +251,26 @@ describe("transcript pages", () => {
   ].map((entry) => JSON.stringify(entry)).join("\n");
   const texts = (turns: { parts: { kind: string; text?: string; output?: string }[] }[]) =>
     turns.map((turn) => turn.parts.map((part) => part.kind === "tool" ? `[${part.output}]` : part.text).join(" "));
+
+  it("reads a growing file's newest page incrementally, exactly as a cold read of it", () => {
+    const root = temp();
+    const path = join(root, "session.jsonl");
+    const whole = Buffer.from(`${Array.from({ length: 80 }, (_, n) => claudeTurn(n)).join("\n")}\n`);
+    writeFileSync(path, whole.subarray(0, 1000));
+    // appends of every size, cut mid-line too, including one that ends the file without a newline
+    for (let at = 1000, step = 1; at < whole.length; step = (step * 7) % 997 + 1) {
+      appendFileSync(path, whole.subarray(at, at + step * 23));
+      at += step * 23;
+      const cold = join(root, `cold-${at}.jsonl`);
+      copyFileSync(path, cold);
+      const live = transcriptPage("claude-transcript", path);
+      const reference = transcriptPage("claude-transcript", cold);
+      rmSync(cold);
+      expect(texts(live.turns)).toEqual(texts(reference.turns));
+      expect(live.metadata).toEqual(reference.metadata);
+      expect(live.cursor?.split(":").at(-1)).toBe(reference.cursor?.split(":").at(-1));
+    }
+  });
 
   it("pages back through a long conversation without gaps, overlaps or split turns", () => {
     const path = join(temp(), "session.jsonl");

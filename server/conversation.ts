@@ -438,6 +438,110 @@ function pageBefore(stream: TranscriptStream, source: RecognizedConversation["so
   }
 }
 
+/**
+ * The newest page is asked for on every poll while an agent works, and between polls its
+ * file only grows. Rescanning its whole window (16 MB on a long session) and reparsing
+ * the page each time held the event loop 50-110 ms every 2 s, so per live file:
+ * - the turn starts found so far are kept, and only the bytes appended since are scanned;
+ * - the turns before the page's last turn start are kept (a later append cannot change a
+ *   turn that another has followed), and only the last turn is parsed again.
+ */
+interface LiveScan {
+  id: string;
+  source: RecognizedConversation["source"];
+  /** complete lines up to here are scanned */
+  scanned: number;
+  /** turn starts in the scanned bytes, ascending, none before the window */
+  starts: number[];
+  /** the bytes just before `scanned`: a file rewritten rather than appended to no longer has them */
+  tail: string;
+}
+const liveScans = new Map<string, LiveScan>();
+
+interface SettledTurns {
+  id: string;
+  /** the page start these turns begin at, and the turn start they end at */
+  start: number;
+  end: number;
+  turns: ConversationTurn[];
+  metadata: ConversationMetadata;
+  /** the bytes just before `end` (see LiveScan.tail) */
+  tail: string;
+}
+const settledTurns = new Map<string, SettledTurns>();
+
+function bytesBefore(stream: TranscriptStream, offset: number): string {
+  return readStream(stream, Math.max(0, offset - 64), offset).toString("latin1");
+}
+
+function remember<T>(map: Map<string, T>, key: string, value: T, limit: number): void {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > limit) map.delete(map.keys().next().value!);
+}
+
+/** The newest page's start and every turn start in it (pageBefore without widening), or null when it starts mid-turn. */
+function newestPage(path: string, stream: TranscriptStream, source: RecognizedConversation["source"]): { start: number; starts: number[] } | null {
+  const from = Math.max(0, stream.length - TRANSCRIPT_WINDOW_BYTES);
+  let scan = liveScans.get(path);
+  // a window that slid past the scanned bytes starts over at its edge (a line may be cut
+  // there, as in pageBefore, and never counts as a start)
+  if (!scan || scan.id !== stream.id || scan.source !== source || scan.scanned > stream.length || scan.scanned < from
+    || bytesBefore(stream, scan.scanned) !== scan.tail) {
+    scan = { id: stream.id, source, scanned: from, starts: [], tail: bytesBefore(stream, from) };
+  }
+  let pending: number[] = [];
+  if (scan.scanned < stream.length) {
+    const bytes = readStream(stream, scan.scanned, stream.length);
+    const complete = bytes.lastIndexOf(0x0a) + 1;
+    for (const offset of turnStarts(bytes.subarray(0, complete), source)) scan.starts.push(scan.scanned + offset);
+    // a last line still without its newline counts now, and is scanned again once complete
+    pending = turnStarts(bytes.subarray(complete), source).map((offset) => scan!.scanned + complete + offset);
+    scan.scanned += complete;
+    scan.tail = bytesBefore(stream, scan.scanned);
+  }
+  const stale = scan.starts.findIndex((offset) => offset >= from);
+  if (stale !== 0) scan.starts.splice(0, stale === -1 ? scan.starts.length : stale);
+  remember(liveScans, path, scan, 32);
+  const starts = pending.length > 0 ? [...scan.starts, ...pending] : scan.starts;
+  const start = starts.length > MAX_PAGE_PROMPTS ? starts[starts.length - MAX_PAGE_PROMPTS] : from === 0 ? 0 : starts[0];
+  return start === undefined ? null : { start, starts };
+}
+
+function parseTurns(source: RecognizedConversation["source"], text: string): ConversationTurn[] {
+  return source === "codex-transcript" ? parseCodexTranscript(text, Infinity)
+    : source === "claude-transcript" ? parseClaudeTranscript(text, Infinity) : parseOmpTranscript(text, Infinity);
+}
+
+/**
+ * The newest page's turns from `start`: the settled ones (before the last turn start)
+ * from memory, extended by any turn that has since been followed, plus the live last turn.
+ */
+function liveTurns(path: string, stream: TranscriptStream, source: RecognizedConversation["source"], start: number, starts: number[]): { turns: ConversationTurn[]; metadata: ConversationMetadata } {
+  // starts ascend: the last one, when it lies past the page start
+  const last = Math.max(start, starts[starts.length - 1] ?? start);
+  const key = `${path}\0${start}`;
+  let settled = settledTurns.get(key);
+  if (!settled || settled.id !== stream.id || settled.end > last || bytesBefore(stream, settled.end) !== settled.tail) {
+    const head = start > 0 ? readRange(path, 0, METADATA_HEAD_BYTES) : "";
+    settled = { id: stream.id, start, end: start, turns: [], metadata: parseConversationMetadata(`${head}\n`, source), tail: bytesBefore(stream, start) };
+  }
+  if (settled.end < last) {
+    const text = readStream(stream, settled.end, last).toString("utf8");
+    settled = { ...settled, end: last, turns: [...settled.turns, ...parseTurns(source, text)], metadata: parseConversationMetadata(text, source, settled.metadata), tail: bytesBefore(stream, last) };
+  }
+  remember(settledTurns, key, settled, 8);
+  const text = readStream(stream, last, stream.length).toString("utf8");
+  return { turns: [...settled.turns, ...parseTurns(source, text)], metadata: parseConversationMetadata(text, source, settled.metadata) };
+}
+
+/** Forget every scan and parse kept between polls (tests compare against a cold read). */
+export function forgetTranscriptState(): void {
+  cache.clear();
+  liveScans.clear();
+  settledTurns.clear();
+}
+
 function formatCursor(stream: TranscriptStream, offset: number): string | null {
   return offset > 0 ? `${stream.id}:${offset}` : null;
 }
@@ -630,6 +734,7 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
   let text: string;
   let head = "";
   let cursor: string | null;
+  let live: { turns: ConversationTurn[]; metadata: ConversationMetadata } | null = null;
   try {
     if (page.before !== undefined) {
       const before = parseCursor(stream, page.before);
@@ -639,16 +744,24 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
       start = older.start;
       text = older.bytes.toString("utf8");
     } else {
-      const newest = pageBefore(stream, source, stream.length, { widen: false });
       const held = page.from === undefined ? null : parseCursor(stream, page.from);
+      const newest = newestPage(path, stream, source);
       // A chat that shows older pages holds the start of its newest turns and keeps
       // every turn after it while they are inside the newest page. Once the newest
       // page has moved past it, the chat gets the newest page and fetches the turns
       // in between with `before` + `since`: no poll reads more than a page.
-      start = held !== null && held >= newest.start ? held : newest.start;
-      text = newest.bytes.subarray(start - newest.start).toString("utf8");
+      if (newest !== null) {
+        start = held !== null && held >= newest.start ? held : newest.start;
+        live = liveTurns(path, stream, source, start, newest.starts);
+        text = "";
+      } else {
+        // no turn starts in the window: the page begins mid-turn, read whole as before
+        const whole = pageBefore(stream, source, stream.length, { widen: false });
+        start = held !== null && held >= whole.start ? held : whole.start;
+        text = whole.bytes.subarray(start - whole.start).toString("utf8");
+      }
     }
-    if (page.before === undefined && start > 0) head = readRange(path, 0, METADATA_HEAD_BYTES);
+    if (live === null && page.before === undefined && start > 0) head = readRange(path, 0, METADATA_HEAD_BYTES);
     cursor = formatCursor(stream, start);
   } catch (error) {
     if (error instanceof HistoryChanged) throw error;
@@ -658,9 +771,8 @@ export function transcriptPage(source: RecognizedConversation["source"], path: s
   // the store decides the parser, not the pane's label: omo writes omp's
   // session shape while herdr may be calling that same pane `claude`. The page
   // bounds the turns, so none are cut: they must meet the next page exactly.
-  const turns = source === "codex-transcript" ? parseCodexTranscript(text, Infinity)
-    : source === "claude-transcript" ? parseClaudeTranscript(text, Infinity) : parseOmpTranscript(text, Infinity);
-  const metadata = parseConversationMetadata(`${head}\n${text}`, source);
+  const turns = live?.turns ?? parseTurns(source, text);
+  const metadata = live?.metadata ?? parseConversationMetadata(`${head}\n${text}`, source);
   // Record the stat from BEFORE the read: an append during parsing must cause
   // another read on the next poll, not permanently cache a torn tail.
   cache.delete(key);

@@ -110,4 +110,20 @@ describe("subscribeEvents", () => {
     expect(handle).not.toBeNull();
     expect(() => handle!.close()).not.toThrow();
   });
+
+  it("reports a connect that fails as closed, so a subscriber retrying on close retries", async () => {
+    const closed = new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("onClose not called within 5s")), 5000);
+      let error = "";
+      subscribeEvents([{ type: "workspace.focused" }], {
+        onEvent: () => {},
+        onError: (err) => { error = (err as Error & { code?: string }).code ?? ""; },
+        onClose: () => {
+          clearTimeout(timer);
+          resolve(error);
+        },
+      }, "/nonexistent/herdr-web-ui-test.sock");
+    });
+    expect(await closed).toBe("connect_failed");
+  });
 });
