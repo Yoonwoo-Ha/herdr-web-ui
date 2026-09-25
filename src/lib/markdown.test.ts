@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { FOLD_CODE_AFTER_LINES, FOLDED_CODE_LINES, foldCode, parseInline, parseMarkdown, safeMarkdownHref } from "./markdown.ts";
+import { FOLD_CODE_AFTER_LINES, FOLDED_CODE_LINES, foldCode, parseInline, parseMarkdown, safeMarkdownHref, type InlineNode } from "./markdown.ts";
 
 describe("parseMarkdown", () => {
   it("parses level one through three headings", () => {
@@ -54,6 +54,48 @@ describe("inline markdown", () => {
     expect(parseInline("__MAC_QA_CHAT_OK__")).toEqual([
       { type: "strong", children: [{ type: "text", value: "MAC_QA_CHAT_OK" }] },
     ]);
+  });
+});
+
+describe("autolinks", () => {
+  const link = (href: string): InlineNode => ({ type: "link", href, children: [{ type: "text", value: href }] });
+
+  it("links a bare http(s) URL and keeps the text around it", () => {
+    expect(parseInline("https://github.com/devswha/herdr-web-ui/pull/36 이런거")).toEqual([
+      link("https://github.com/devswha/herdr-web-ui/pull/36"),
+      { type: "text", value: " 이런거" },
+    ]);
+    // no space before Korean: the address ends at the first non-ASCII character
+    expect(parseInline("see https://example.com/a에서 확인")).toEqual([
+      { type: "text", value: "see " }, link("https://example.com/a"), { type: "text", value: "에서 확인" },
+    ]);
+  });
+
+  it("leaves the sentence's punctuation out, and keeps parentheses the URL opened", () => {
+    expect(parseInline("(see https://example.com/a).")).toEqual([
+      { type: "text", value: "(see " }, link("https://example.com/a"), { type: "text", value: ")." },
+    ]);
+    expect(parseInline("https://en.wikipedia.org/wiki/Rust_(language), then")).toEqual([
+      link("https://en.wikipedia.org/wiki/Rust_(language)"), { type: "text", value: ", then" },
+    ]);
+    expect(parseInline("done: https://example.com/x?y=1&z=2!")).toEqual([
+      { type: "text", value: "done: " }, link("https://example.com/x?y=1&z=2"), { type: "text", value: "!" },
+    ]);
+  });
+
+  it("links an <angle> URL, and nothing inside code, a markdown link, or another scheme", () => {
+    expect(parseInline("<https://example.com/a>")).toEqual([link("https://example.com/a")]);
+    expect(parseInline("`https://example.com`")).toEqual([{ type: "code", value: "https://example.com" }]);
+    expect(parseInline("[https://example.com](https://example.com/b)")).toEqual([
+      { type: "link", href: "https://example.com/b", children: [{ type: "text", value: "https://example.com" }] },
+    ]);
+    for (const value of ["javascript:alert(1)", "ftp://example.com", "file:///etc/passwd", "http:/x"]) {
+      expect(parseInline(value).some((node) => node.type === "link")).toBe(false);
+    }
+  });
+
+  it("links inside emphasis", () => {
+    expect(parseInline("**https://example.com**")).toEqual([{ type: "strong", children: [link("https://example.com")] }]);
   });
 });
 
