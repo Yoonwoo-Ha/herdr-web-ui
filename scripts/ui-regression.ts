@@ -160,17 +160,20 @@ try {
   // herdr 0.9.0 reports Codex's first directory-trust menu as idle. Exercise a
   // live, owned PTY menu so the chat controls cannot depend on a blocked badge.
   await selectPane(paneB);
-  await herdrRpc("pane.send_text", {
-    pane_id: paneB,
-    text: "printf '\\033[2J\\033[HDo you trust the contents of this directory?\\n\\n› 1. Yes, continue\\n  2. No, quit\\n\\n  Press enter to continue\\n'; read -r qa_answer",
-  });
-  await herdrRpc("pane.send_keys", { pane_id: paneB, keys: ["Enter"] });
-  await until(async () => {
-    const result = await herdrRpc<{ read: { text: string } }>("pane.read", {
-      pane_id: paneB, source: "visible", format: "text",
+  const paintStartupMenu = async (): Promise<void> => {
+    await herdrRpc("pane.send_text", {
+      pane_id: paneB,
+      text: "printf '\\033[2J\\033[HDo you trust the contents of this directory?\\n\\n› 1. Yes, continue\\n  2. No, quit\\n\\n  Press enter to continue\\n'; read -r qa_answer",
     });
-    return result.read.text.includes("Press enter to continue");
-  }, "startup menu painted");
+    await herdrRpc("pane.send_keys", { pane_id: paneB, keys: ["Enter"] });
+    await until(async () => {
+      const result = await herdrRpc<{ read: { text: string } }>("pane.read", {
+        pane_id: paneB, source: "visible", format: "text",
+      });
+      return result.read.text.includes("Press enter to continue");
+    }, "startup menu painted");
+  };
+  await paintStartupMenu();
   await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "codex", state: "idle" });
   await page.locator('.composer-status[data-status="idle"]').waitFor();
   const startupPrompt = page.locator(".prompt-card");
@@ -180,6 +183,23 @@ try {
   await startupPrompt.getByRole("button", { name: "1. Yes, continue", exact: true }).click();
   await startupPrompt.waitFor({ state: "hidden" });
   console.log("PASS startup prompt appears and accepts an answer while the agent status is idle");
+
+  // A pick typed in the composer waits in the card for Confirm. Answered in the terminal
+  // instead, it must not come back when the same menu (the same prompt id) is asked again.
+  await paintStartupMenu();
+  await startupPrompt.getByRole("button", { name: "1. Yes, continue", exact: true }).waitFor();
+  await composer.fill("1");
+  await composer.press("Enter");
+  await startupPrompt.locator(".prompt-card-confirm").waitFor();
+  await herdrRpc("pane.send_keys", { pane_id: paneB, keys: ["Enter"] });
+  await startupPrompt.waitFor({ state: "hidden" });
+  await paintStartupMenu();
+  await startupPrompt.getByRole("button", { name: "1. Yes, continue", exact: true }).waitFor();
+  await page.waitForTimeout(500);
+  assert.equal(await startupPrompt.locator(".prompt-card-confirm").count(), 0);
+  await startupPrompt.getByRole("button", { name: "1. Yes, continue", exact: true }).click();
+  await startupPrompt.waitFor({ state: "hidden" });
+  console.log("PASS a typed pick answered in the terminal does not wait on the same menu asked again");
 
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await mobile.addInitScript(() => {

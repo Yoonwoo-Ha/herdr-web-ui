@@ -403,6 +403,12 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
     return () => onPrompt?.(paneId, null);
   }, [onPrompt, paneId, prompt]);
 
+  // away from the page, the prompt is not read: it can be answered in the terminal and asked
+  // again unseen, so a typed pick waiting for Confirm does not outlive the page being hidden
+  useEffect(() => {
+    if (!visible) onPendingAnswerDone?.();
+  }, [visible, onPendingAnswerDone]);
+
   // Before paint and without animation: an opened conversation starts at its end
   // instead of scrolling there from the top.
   useLayoutEffect(() => {
@@ -458,7 +464,7 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
       {!ended && !connected && <p className="chat-inline-state">reconnecting…</p>}
       {error !== null && <p className="chat-inline-state chat-inline-error" role="alert">{errorStatus === 401 ? "locked — the token gate is asking again" : error}</p>}
       {empty && error === null && prompt === null && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>No conversation yet — say something below</p></div>}
-      {prompt !== null && <PromptCard paneId={paneId} prompt={prompt} typedAnswer={pendingAnswer?.promptId === prompt.id ? pendingAnswer.answer : null} onTypedAnswerDone={onPendingAnswerDone} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={() => setPrompt(null)} />}
+      {prompt !== null && <PromptCard paneId={paneId} prompt={prompt} typedAnswer={pendingAnswer?.promptId === prompt.id ? pendingAnswer.answer : null} onTypedAnswerDone={onPendingAnswerDone} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={() => { setPrompt(null); onPendingAnswerDone?.(); }} />}
       {ended && <p className="chat-endcap">terminal ended</p>}
     </div>
     {newMessages && <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>New messages <ArrowDown aria-hidden="true" /></button>}
