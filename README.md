@@ -18,6 +18,10 @@ A browser and mobile client for [herdr](https://github.com/herdrdev/herdr). Foll
 herdr owns the sessions and terminal processes. This app only adds a web interface, through herdr's socket API and `herdr terminal attach`. The **Chat** and **Terminal** views are two lenses on one live pane.
 
 <p align="center">
+  <img src="docs/screenshots/demo-desktop.gif" width="880" alt="Demo: reading a Claude Code chat with its folded work, answering a Codex approval from the chat, typing into a live terminal, and jumping to a gjc pane from the command palette.">
+</p>
+
+<p align="center">
   <a href="#get-started">Get started</a> ·
   <a href="#chat-and-terminal">Chat &amp; terminal</a> ·
   <a href="#remote-pcs-over-ssh">Remote PCs</a> ·
@@ -25,6 +29,34 @@ herdr owns the sessions and terminal processes. This app only adds a web interfa
   <a href="#updates">Updates</a> ·
   <a href="#configuration">Configuration</a> ·
   <a href="#development">Development</a>
+</p>
+
+## A look around
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/desktop-chat.png" alt="Chat view of a Claude Code pane: the prompt, a folded &quot;Worked for 2m 36s&quot; block, and a Markdown answer with a code block and a link."></td>
+    <td width="50%"><img src="docs/screenshots/desktop-terminal.png" alt="Terminal view of a shell pane: git history and a passing bun test run in the live herdr terminal."></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Chat</b>: the agent's own transcript, work folded per turn</td>
+    <td align="center"><b>Terminal</b>: the same pane, live, through <code>herdr terminal attach</code></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/desktop-prompt.png" alt="A Codex pane waiting for input: an &quot;Allow command?&quot; card for git push with its three options, answered from the chat."></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><b>Answer prompts</b>: approvals and questions show as cards, answered from the chat</td>
+  </tr>
+</table>
+
+On a phone it is an installable app with the same views, a key bar for the terminal and push alerts:
+
+<p align="center">
+  <img src="docs/screenshots/demo-mobile.gif" width="200" alt="Phone demo: scrolling a chat, opening the session list, approving a Codex command, the terminal with its key bar, and typing a message.">
+  <img src="docs/screenshots/mobile-chat.png" width="200" alt="Phone chat view of a Claude Code pane.">
+  <img src="docs/screenshots/mobile-terminal.png" width="200" alt="Phone terminal view with the Esc, Tab, Ctrl, arrow and Ctrl+C key bar.">
+  <img src="docs/screenshots/mobile-sessions.png" width="200" alt="Phone session list with Claude Code, Codex, gjc, omo and shell panes and their live status.">
 </p>
 
 ## Get started
@@ -78,6 +110,7 @@ Its PID and log live under `HERDR_PLUGIN_STATE_DIR`. For persistent settings, ad
 | **Codex** | Native rollout JSONL, with tool results and commentary/final phases. Internal context and duplicate records are filtered out. |
 | **Claude Code** | Native conversation transcript, resolved through herdr. |
 | **omp / omo** | Native session JSONL; omo is recognized by the pane's process tree. |
+| **gjc** | Native session JSONL, from the session directory the pane's gjc keeps open. |
 | **Anything else** | Terminal-text fallback. Use Terminal for the full TUI. |
 
 Structured chat needs the right local session file. Codex resolution checks pane and session evidence instead of picking the newest session in the same directory, and model labels come from recorded metadata, never from answer text. Prompt answering depends on the agent's visible menu format; for an unsupported menu, use Terminal. Details and verification are in the [chat-mode audit](docs/chat-mode-audit.md).
