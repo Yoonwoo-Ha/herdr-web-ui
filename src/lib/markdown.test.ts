@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseInline, parseMarkdown, safeMarkdownHref } from "./markdown.ts";
+import { FOLD_CODE_AFTER_LINES, FOLDED_CODE_LINES, foldCode, parseInline, parseMarkdown, safeMarkdownHref } from "./markdown.ts";
 
 describe("parseMarkdown", () => {
   it("parses level one through three headings", () => {
@@ -54,5 +54,22 @@ describe("inline markdown", () => {
     expect(parseInline("__MAC_QA_CHAT_OK__")).toEqual([
       { type: "strong", children: [{ type: "text", value: "MAC_QA_CHAT_OK" }] },
     ]);
+  });
+});
+
+describe("foldCode", () => {
+  const lines = (count: number) => Array.from({ length: count }, (_, index) => `line ${index + 1}`).join("\n");
+
+  it("shows blocks up to the limit whole", () => {
+    expect(foldCode(lines(12))).toBeNull();
+    expect(foldCode(lines(FOLD_CODE_AFTER_LINES))).toBeNull();
+  });
+
+  it("folds a longer block to its first lines and counts all of them", () => {
+    const fold = foldCode(lines(382));
+    expect(fold?.lines).toBe(382);
+    expect(fold?.head.split("\n")).toHaveLength(FOLDED_CODE_LINES);
+    expect(fold?.head.startsWith("line 1\n")).toBe(true);
+    expect(fold?.head.endsWith(`line ${FOLDED_CODE_LINES}`)).toBe(true);
   });
 });

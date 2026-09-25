@@ -7,6 +7,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- Long code blocks in a chat answer no longer look cut off. A block was capped at about six lines
+  with the rest behind an inner scroll that a phone does not show, so a long answer seemed to stop
+  halfway. Blocks now show whole; one longer than 30 lines opens at its first 20 with a
+  **Show all N lines** row below it.
+
 ## [0.3.4] - 2026-09-25
 
 ### Changed

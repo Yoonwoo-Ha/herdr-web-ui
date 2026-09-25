@@ -267,6 +267,7 @@ Comfortable values are `:root`; the final column is the complete compact overrid
   no avatar or name) and open a new exchange with a hairline above. Assistant turns have no header: the answer is plain prose; a meta row (MD / TXT
   copy, time) fades in on hover (always visible on coarse pointers).
 - Markdown supports headings, lists, links, quotes, tables, inline/fenced code and code-copy actions.
+  Code blocks never scroll inside: one longer than 30 lines opens at its first 20 behind **Show all N lines**.
   Thinking renders as a folded block only when **Show thinking** is enabled.
 - Auto-follow stops when the reader scrolls up; later output raises a **New messages** pill.
 

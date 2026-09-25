@@ -103,6 +103,17 @@ function parseList(lines: string[], start: number): { block: ListBlock; next: nu
   return { block, next: index };
 }
 
+/** Code blocks longer than this open folded to their first FOLDED_CODE_LINES lines. */
+export const FOLD_CODE_AFTER_LINES = 30;
+export const FOLDED_CODE_LINES = 20;
+
+/** The folded head of a long code block and its full line count; null when it shows whole. */
+export function foldCode(value: string): { head: string; lines: number } | null {
+  const lines = value.split("\n");
+  if (lines.length <= FOLD_CODE_AFTER_LINES) return null;
+  return { head: lines.slice(0, FOLDED_CODE_LINES).join("\n"), lines: lines.length };
+}
+
 export function parseMarkdown(source: string): MarkdownBlock[] {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: MarkdownBlock[] = [];
