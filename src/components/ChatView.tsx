@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentType } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentType } from "react";
 import {
   ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, Copy, FilePen, FileSearch, Globe, ListChecks, Terminal, Wrench,
   type LucideProps,
@@ -188,7 +188,8 @@ interface TurnProps {
   showThinking: boolean;
 }
 
-function Turn({ turn, live, last, showThinking }: TurnProps) {
+// a turn that did not change keeps its object across polls: skip re-rendering it
+const Turn = memo(function Turn({ turn, live, last, showThinking }: TurnProps) {
   const time = formatTime(turn.ts);
   if (turn.role === "user") {
     const text = turn.parts.filter((part): part is Extract<ConversationPart, { kind: "text" }> => part.kind === "text").map((part) => part.text).join("\n\n");
@@ -208,7 +209,7 @@ function Turn({ turn, live, last, showThinking }: TurnProps) {
       {time !== null && <time dateTime={turn.ts ?? undefined}>{time}</time>}
     </div>}
   </article>;
-}
+});
 
 function FallbackTurn({ message }: { message: TranscriptMessage }) {
   if (message.role === "status") return null;
@@ -216,7 +217,8 @@ function FallbackTurn({ message }: { message: TranscriptMessage }) {
   return <Turn turn={turn} live={false} last={false} showThinking={false} />;
 }
 
-export function ChatView({ paneId, refreshKey, connected, ended, agent, agentStatus, onMetadata }: ChatViewProps) {
+// the app re-renders on every pane-status and poll; an unchanged transcript sits those out
+export const ChatView = memo(function ChatView({ paneId, refreshKey, connected, ended, agent, agentStatus, onMetadata }: ChatViewProps) {
   const { fetchPaneConversation, fetchPanePrompt, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
   // polls pause while the page is hidden and pick up at once when it is back
@@ -449,4 +451,4 @@ export function ChatView({ paneId, refreshKey, connected, ended, agent, agentSta
     </div>
     {newMessages && <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>New messages <ArrowDown aria-hidden="true" /></button>}
   </div>;
-}
+});

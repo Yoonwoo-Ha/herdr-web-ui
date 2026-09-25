@@ -236,3 +236,10 @@
 @media (pointer: coarse) {
   .pane-terminal .xterm-rows { pointer-events: none; }
 }
+
+/* under the chat lens the grid is covered: skip drawing it (xterm pauses its renderer while
+   the screen is not intersecting, and repaints in full on return). The box keeps its size,
+   so the grid never refits to zero */
+.terminal-stack.is-chat .pane-terminal {
+  content-visibility: hidden;
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { UpdateCommand, UpdateStatus } from "../../shared/update.ts";
 import { fetchUpdateStatus, requestUpdate } from "./api.ts";
+import { usePageVisible } from "./visibility.ts";
 
 declare const __APP_REVISION__: string | null;
 
@@ -10,8 +11,11 @@ export function useUpdates(enabled: boolean) {
   const [pending, setPending] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const mounted = useRef(false);
+  // a hidden page keeps the last status and polls again once it is back
+  const visible = usePageVisible();
   useEffect(() => {
     if (!enabled) { setStatus(null); setPending(false); setError(null); return; }
+    if (!visible) return;
     mounted.current = true;
     let timer: ReturnType<typeof setTimeout>;
     let stopped = false;
@@ -19,14 +23,14 @@ export function useUpdates(enabled: boolean) {
       let delay = 2000;
       try {
         const next = await fetchUpdateStatus();
-        if (!stopped) setStatus(next);
+        if (!stopped) setStatus((previous) => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
         if (next.phase === "idle" && !next.available) delay = 30_000;
       } catch { /* a restart/offline period must not erase the last known status */ }
       if (!stopped) timer = setTimeout(() => void poll(), delay);
     }
     void poll();
     return () => { stopped = true; mounted.current = false; clearTimeout(timer); };
-  }, [enabled, refresh]);
+  }, [enabled, refresh, visible]);
 
   const request = useCallback(async (command: UpdateCommand) => {
     setPending(true); setError(null);
