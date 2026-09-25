@@ -25,7 +25,8 @@ const RECONCILE_DEBOUNCE_MS = 500;
 const SNAPSHOT_RETRY_MS = 5_000;
 
 export interface StatusCollectorHandlers {
-  onStatus: (paneId: string, status: AgentStatus) => void;
+  /** `agent` is the agent herdr now sees in the pane (null: none) */
+  onStatus: (paneId: string, status: AgentStatus, agent: string | null) => void;
   /**
    * Every pane as of each reconcile's snapshot. Status events only report changes, so
    * this is where a consumer learns the status a later change is measured against -
@@ -41,11 +42,11 @@ export interface StatusCollector {
 }
 
 /** A status frame's payload: flat fields, no wrapper object. */
-export function parseStatusFrame(frame: EventFrame): { paneId: string; status: AgentStatus } | null {
+export function parseStatusFrame(frame: EventFrame): { paneId: string; status: AgentStatus; agent: string | null } | null {
   if (frame.event !== "pane.agent_status_changed") return null;
-  const data = frame.data as { pane_id?: unknown; agent_status?: unknown } | undefined;
+  const data = frame.data as { pane_id?: unknown; agent_status?: unknown; agent?: unknown } | undefined;
   if (typeof data?.pane_id !== "string" || typeof data.agent_status !== "string") return null;
-  return { paneId: data.pane_id, status: data.agent_status as AgentStatus };
+  return { paneId: data.pane_id, status: data.agent_status as AgentStatus, agent: typeof data.agent === "string" ? data.agent : null };
 }
 
 export type StructureEvent =
@@ -97,7 +98,7 @@ export function startStatusCollector(handlers: StatusCollectorHandlers): StatusC
       {
         onEvent: (frame) => {
           const parsed = parseStatusFrame(frame);
-          if (parsed) handlers.onStatus(parsed.paneId, parsed.status);
+          if (parsed) handlers.onStatus(parsed.paneId, parsed.status, parsed.agent);
         },
         // herdr answers a bad batch (e.g. a pane that vanished between snapshot and
         // subscribe) with an error frame and closes the socket: the whole set must be

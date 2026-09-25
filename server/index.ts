@@ -14,6 +14,7 @@ import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
 import { ConversationUnavailable, HistoryChanged, labelOmoPanes, paneConversation } from "./conversation.ts";
+import { completions } from "./completion.ts";
 import { listDirectories } from "./directories.ts";
 import {
   agentManifests,
@@ -497,12 +498,17 @@ export function createServer(
 
   /** Status of EVERY pane, attached or not: one collector feeds all connected clients and web push. */
   const collector = startStatusCollector({
-    onStatus: (paneId, status) => {
-      broadcastAll({ type: "pane-status", pane_id: paneId, agent_status: status });
-      push.onStatus(paneId, status).catch(logPushError);
+    onStatus: (paneId, raw, agent) => {
+      // an agent herdr lost on the way still works and finishes as such (server/completion.ts)
+      void completions.observe(paneId, raw, agent).then((status) => {
+        if (status === null) return;
+        broadcastAll({ type: "pane-status", pane_id: paneId, agent_status: status });
+        push.onStatus(paneId, status).catch(logPushError);
+      });
     },
     onBaseline: (panes) => push.seed(panes),
     onPaneEnded: (paneId) => {
+      completions.forget(paneId);
       broadcastAll({ type: "pane-exited", pane_id: paneId });
       push.onEnded(paneId).catch(logPushError);
     },
@@ -595,7 +601,7 @@ export function createServer(
 
       if (pathname === "/api/session") {
         try {
-          return jsonResponse({ snapshot: await labelOmoPanes(await sessionSnapshot()) });
+          return jsonResponse({ snapshot: completions.present(await labelOmoPanes(await sessionSnapshot())) });
         } catch (error) {
           return errorResponse(error);
         }
@@ -893,7 +899,7 @@ export function createServer(
         if (client.data.relay) { client.data.relay.bind(client as ServerWebSocket<unknown>); return; }
         clients.add(client);
         try {
-          send(client, { type: "snapshot", snapshot: await labelOmoPanes(await sessionSnapshot()), features: SERVER_FEATURES });
+          send(client, { type: "snapshot", snapshot: completions.present(await labelOmoPanes(await sessionSnapshot())), features: SERVER_FEATURES });
         } catch (error) {
           const code = error instanceof HerdrError ? error.code : "snapshot_failed";
           send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error) });
