@@ -7,6 +7,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- The header no longer says "reconnecting" after you switch to another pane on the same PC. The
+  switch reset the connection badge, and the terminal, still connected, never reported again.
+
 ## [0.3.6] - 2026-09-25
 
 ### Added

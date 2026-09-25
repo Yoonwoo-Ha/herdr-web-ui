@@ -324,9 +324,15 @@ export function App() {
     await loadHealth();
   }, [loadHealth]);
 
+  const selectedMachineRef = useRef(selectedMachineId);
+  selectedMachineRef.current = selectedMachineId;
   const selectTarget = useCallback((machineId: string, paneId: string | null) => {
+    // Only another PC mounts a new terminal (and socket), which reports its own state. A pane
+    // on the same PC keeps the connected socket, which never reports again: resetting here
+    // left the header on "reconnecting" after every pane switch.
+    if (machineId !== selectedMachineRef.current) setConnected(false);
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setDrawerOpen(false);
-    setConnected(false); setOutputStopped(false);
+    setOutputStopped(false);
     storeSelection(machineId, paneId);
   }, []);
   const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
