@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { createServer } from "./index.ts";
 import type { AgentKind, AgentStatus, ApiError, HealthAuth, PushKey, SessionSnapshot, PaneReadResult, WorkspaceCreated } from "../shared/protocol.ts";
 import { herdrRpc } from "./herdr/client.ts";
@@ -356,11 +356,17 @@ describe("POST /api/pane/image", () => {
     expect(body.error.code).toBe("pane_not_found");
   });
 
-  it("rejects a non-image content type with 415", async () => {
-    const res = await post({ pane_id: qaPaneId, content_type: "text/plain", data_base64: TINY_PNG_BASE64 });
-    expect(res.status).toBe(415);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("unsupported_media_type");
+  it("stores any other file under its own sanitised name", async () => {
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString("base64");
+    const res = await post({ pane_id: qaPaneId, content_type: "image/svg+xml", data_base64: svg, name: "../omo icon.SVG" });
+    expect(res.status).toBe(200);
+    const { path } = (await res.json()) as { path: string };
+    expect(path.startsWith(join(qaCwd!, ".herdr-web-ui") + "/")).toBe(true);
+    expect(basename(path)).toMatch(/^omo_icon-\d{8}-\d{6}-[0-9a-f]{8}\.svg$/);
+    expect(readFileSync(path, "utf8")).toBe('<svg xmlns="http://www.w3.org/2000/svg"/>');
+    // no name, or one without a usable extension: still stored, as .bin
+    const bare = (await (await post({ pane_id: qaPaneId, content_type: "", data_base64: svg })).json()) as { path: string };
+    expect(basename(bare.path)).toMatch(/^file-.*\.bin$/);
   });
 
   it("rejects an image above the size ceiling with 413", async () => {

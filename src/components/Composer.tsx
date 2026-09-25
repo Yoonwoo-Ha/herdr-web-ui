@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Clock, Paperclip, SendHorizontal, Square, X } from "lucide-react";
+import { Clock, FileText, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 
 import "./Composer.css";
 
@@ -43,7 +43,11 @@ export interface ComposerProps {
 }
 
 const MAX_IMAGES_PER_ACTION = 4;
-const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+/**
+ * Any file can be attached (an icon, a PDF, a log): the server stores it beside the pane
+ * and the message mentions its path. These image types also get a thumbnail.
+ */
+const PREVIEW_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"] as const;
 const COMMAND_CACHE_MS = 60_000;
 const SLASH_USAGE_KEY = "herdr-web-ui:slash-usage";
 /** One height for every pane on this device: it is the screen, not the conversation, that decides it. */
@@ -389,15 +393,13 @@ export function Composer({
 
   const uploadImages = useCallback(
     async (incoming: readonly File[]) => {
-      const images = incoming
-        .filter((file) => (ACCEPTED_IMAGE_TYPES as readonly string[]).includes(file.type))
-        .slice(0, MAX_IMAGES_PER_ACTION);
+      const images = incoming.slice(0, MAX_IMAGES_PER_ACTION);
       if (images.length === 0) return;
 
       const added = images.map<Attachment>((file) => ({
         id: ++attachmentSequence,
         file,
-        previewUrl: URL.createObjectURL(file),
+        previewUrl: (PREVIEW_TYPES as readonly string[]).includes(file.type) ? URL.createObjectURL(file) : "",
         path: null,
         state: "uploading",
       }));
@@ -509,7 +511,7 @@ export function Composer({
   const onPaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
       const images = Array.from(event.clipboardData.items)
-        .filter((item) => item.kind === "file" && (ACCEPTED_IMAGE_TYPES as readonly string[]).includes(item.type))
+        .filter((item) => item.kind === "file")
         .map((item) => item.getAsFile())
         .filter((file): file is File => file !== null);
       if (images.length === 0) return;
@@ -546,7 +548,7 @@ export function Composer({
         </span>}
         {(uploading || !connected) && (
           <span className="composer-status-hint">
-            <span aria-hidden="true">·</span> {uploading ? "Uploading image…" : "Reconnecting… message held here, never queued"}
+            <span aria-hidden="true">·</span> {uploading ? "Uploading file…" : "Reconnecting… message held here, never queued"}
           </span>
         )}
         {/* what the placeholder used to cram in; Enter-sends is the chat convention and goes unsaid */}
@@ -635,10 +637,11 @@ export function Composer({
         )}
 
         {attachments.length > 0 && (
-          <div className="composer-attachments" aria-label="Attached images">
+          <div className="composer-attachments" aria-label="Attached files">
             {attachments.map((attachment) => (
               <div className={`composer-attachment is-${attachment.state}`} key={attachment.id}>
-                <img src={attachment.previewUrl} alt={attachment.file.name} />
+                {attachment.previewUrl ? <img src={attachment.previewUrl} alt={attachment.file.name} />
+                  : <span className="composer-attachment-file" title={attachment.file.name}><FileText aria-hidden="true" /><span>{attachment.file.name}</span></span>}
                 <span className="composer-attachment-state">
                   {attachment.state === "uploading" ? "Uploading" : attachment.state === "error" ? "Failed" : "Attached"}
                 </span>
@@ -684,7 +687,6 @@ export function Composer({
           <input
             ref={fileInputRef}
             type="file"
-            accept={ACCEPTED_IMAGE_TYPES.join(",")}
             multiple
             hidden
             onChange={(event) => {
@@ -696,8 +698,8 @@ export function Composer({
           <button
             type="button"
             className="icon-button composer-attach"
-            aria-label="Attach images"
-            title="Attach images"
+            aria-label="Attach files"
+            title="Attach files"
             disabled={!connected || uploading}
             onClick={() => fileInputRef.current?.click()}
           >

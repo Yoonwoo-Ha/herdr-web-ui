@@ -11,6 +11,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Web addresses in chat messages are links: a bare `https://…` URL or one in `<…>` opens in a
   new tab, as a `[text](url)` link already did. Punctuation that ends the sentence stays out of
   the link, and so does text written straight after it (e.g. Korean without a space).
+- The chat composer attaches any file, not only PNG, JPEG, GIF and WebP images. An icon, a PDF or
+  a log is stored beside the pane under its own name and mentioned by path, as images are; SVGs
+  get a thumbnail too. Other files used to be dropped without a word.
 
 ### Fixed
 - Resizing the window no longer lags on a long session. Every frame of the drag resized the pane,

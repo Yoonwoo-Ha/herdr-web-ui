@@ -773,7 +773,7 @@ export function createServer(
 
       if (pathname === "/api/pane/image") {
         if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
-        let payload: { pane_id?: string; content_type?: string; data_base64?: string };
+        let payload: { pane_id?: string; content_type?: string; data_base64?: string; name?: string };
         try {
           payload = (await request.json()) as typeof payload;
         } catch {
@@ -782,14 +782,16 @@ export function createServer(
         if (!isJsonObject(payload)) return badRequest("invalid_body", "request body must be a JSON object");
         if (typeof payload.pane_id !== "string" || !payload.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required");
         if ((payload.content_type !== undefined && typeof payload.content_type !== "string")
-          || (payload.data_base64 !== undefined && typeof payload.data_base64 !== "string")) {
-          return badRequest("invalid_image", "content_type and data_base64 must be strings");
+          || (payload.data_base64 !== undefined && typeof payload.data_base64 !== "string")
+          || (payload.name !== undefined && typeof payload.name !== "string")) {
+          return badRequest("invalid_image", "content_type, data_base64 and name must be strings");
         }
         try {
           const path = await savePaneImage({
             paneId: payload.pane_id,
             contentType: payload.content_type ?? "",
             dataBase64: payload.data_base64 ?? "",
+            name: payload.name,
           });
           return jsonResponse({ ok: true, path });
         } catch (error) {
