@@ -49,6 +49,20 @@ import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
 
 const MAX_REPLAY_BYTES = 256 * 1024;
+/**
+ * herdr's refusal of an attach while a read of the same terminal is in progress; it asks
+ * for a retry. A read of more lines than an idle alt-screen agent (Codex) shows, like the
+ * transcript match's 400, makes herdr scroll the agent's history back with wheel events:
+ * up to 15 s, and 5 more to restore it (herdr 0.9, src/server/alt_screen_read.rs). A
+ * 400-line read of an idle Codex pane took about a second, refusing every attach meanwhile.
+ */
+const ATTACH_READ_RACE_RE = /has a read in progress; retry/;
+/** how long refused attaches are retried: herdr's longest read of that kind */
+const ATTACH_RETRY_FOR_MS = 20_000;
+const ATTACH_RETRY_MS = 50;
+const ATTACH_RETRY_MAX_MS = 500;
+/** a refused attach says so within milliseconds of its first bytes: those are held this long */
+const ATTACH_HOLD_MS = 100;
 /** The gap between a composer message's text and its Enter (see submitText). */
 export const SUBMIT_DELAY_MS = 120;
 /**
@@ -163,9 +177,12 @@ export function createServer(
     registerBridge?: boolean;
     /** SUBMIT_DEADLINE_MS; tests shorten it */
     submitDeadlineMs?: number;
+    /** ATTACH_RETRY_FOR_MS; tests shorten it */
+    attachRetryForMs?: number;
   } = {},
 ): { port: number; hostname: string; stop: () => void } {
   const attachments = new Map<string, PaneAttachment>();
+  const retryFor = options.attachRetryForMs ?? ATTACH_RETRY_FOR_MS;
   /** attachments still resolving their terminal, so concurrent attaches share one pty */
   const pendingAttachments = new Map<string, Promise<PaneAttachment>>();
   // herdr releases its exclusive attach slot only after the old process exits.
@@ -385,29 +402,68 @@ export function createServer(
 
     // No --takeover: another web bridge may own the exclusive attach slot.
     // Report that conflict without displacing it or the user's own TUI.
-    attachment.pty = new PtySession({
-      command: process.env["HERDR_WEB_HERDR_BIN"] || "herdr",
-      args: ["terminal", "attach", terminalId],
-      // herdr's CLI reads HERDR_SOCKET_PATH, not HERDR_SOCKET: the stream must reach
-      // the same session the RPCs talk to, or a named session's terminals are
-      // looked up on the default socket and the attach dies.
-      env: { HERDR_SOCKET_PATH: herdrSocketPath() },
-      cols: spawnCols,
-      rows: spawnRows,
-      onData: (data) => {
-        const current = attachments.get(paneId);
-        if (current !== attachment) return;
-        current.replay.append(data);
-        for (const client of current.clients) sendOutput(client, paneId, data);
-        reconcileOutput(paneId);
-      },
-      onExit: (code) => {
-        if (attachments.get(paneId) !== attachment) return;
-        if (code !== 0 && /already has an attached client|retry with --takeover/.test(attachment.replay.recent)) broadcast(paneId, { type: "error", code: "attach_conflict", message: "Another web bridge is attached to this pane. Disconnect its browser or reuse that bridge; the existing attach was left unchanged." });
-        broadcast(paneId, { type: "pty-exit", pane_id: paneId, code });
-        closeAttachment(paneId);
-      },
-    });
+    // herdr also refuses an attach while a read of the same terminal is in progress ("has a
+    // read in progress; retry"), and this server reads panes all the time (prompt polls,
+    // transcript matches): an attach that races one, typically a phone reconnecting just as
+    // Codex finished an answer, is started again for the same clients, for as long as such
+    // a read can last, instead of ending their terminal.
+    const forward = (data: string): void => {
+      if (attachments.get(paneId) !== attachment) return;
+      attachment.replay.append(data);
+      for (const client of attachment.clients) sendOutput(client, paneId, data);
+      reconcileOutput(paneId);
+    };
+    let retries = 0;
+    let refusedSince: number | null = null;
+    const start = (): PtySession => {
+      let output = ""; // this attach's own last words: herdr's refusal is in them
+      // its first bytes wait ATTACH_HOLD_MS: a refusal (herdr's setup, teardown and message)
+      // is dropped then, never painted into the clients' terminal
+      let held: string | null = "";
+      let holdTimer: ReturnType<typeof setTimeout> | undefined;
+      const release = (): void => {
+        clearTimeout(holdTimer);
+        if (held === null) return;
+        const data = held;
+        held = null;
+        if (data) forward(data);
+      };
+      return new PtySession({
+        command: process.env["HERDR_WEB_HERDR_BIN"] || "herdr",
+        args: ["terminal", "attach", terminalId],
+        // herdr's CLI reads HERDR_SOCKET_PATH, not HERDR_SOCKET: the stream must reach
+        // the same session the RPCs talk to, or a named session's terminals are
+        // looked up on the default socket and the attach dies.
+        env: { HERDR_SOCKET_PATH: herdrSocketPath() },
+        cols: attachment.cols,
+        rows: attachment.rows,
+        onData: (data) => {
+          if (attachments.get(paneId) !== attachment) return;
+          output = (output + data).slice(-1024);
+          if (held === null) return forward(data);
+          if (held === "") holdTimer = setTimeout(release, ATTACH_HOLD_MS);
+          held += data;
+        },
+        onExit: (code) => {
+          clearTimeout(holdTimer);
+          if (attachments.get(paneId) !== attachment) return;
+          const now = Date.now();
+          if (code !== 0 && ATTACH_READ_RACE_RE.test(output) && now - (refusedSince ??= now) < retryFor) {
+            held = null;
+            retries += 1;
+            setTimeout(() => {
+              if (attachments.get(paneId) === attachment) attachment.pty = start();
+            }, Math.min(ATTACH_RETRY_MS * 2 ** (retries - 1), ATTACH_RETRY_MAX_MS));
+            return;
+          }
+          release();
+          if (code !== 0 && /already has an attached client|retry with --takeover/.test(output)) broadcast(paneId, { type: "error", code: "attach_conflict", message: "Another web bridge is attached to this pane. Disconnect its browser or reuse that bridge; the existing attach was left unchanged." });
+          broadcast(paneId, { type: "pty-exit", pane_id: paneId, code });
+          closeAttachment(paneId);
+        },
+      });
+    };
+    attachment.pty = start();
 
     return attachment;
   }

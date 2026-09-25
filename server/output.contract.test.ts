@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
@@ -35,8 +35,8 @@ async function pane(): Promise<string> {
   return created.root_pane.pane_id;
 }
 
-async function connect(paneId: string, ack = true, observer = false) {
-  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+async function connect(paneId: string, ack = true, observer = false, port = server.port) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   sockets.push(ws);
   const state = {
     bytes: 0, frames: 0, ack, code: 0, exits: 0,
@@ -134,5 +134,82 @@ describe("real terminal output flow control", () => {
       expect(client.state.code).toBe(0);
       client.send({ type: "input", pane_id: paneId, text: "\x03" });
     } finally { client.ws.close(); }
+  }, 30_000);
+});
+
+describe("an attach herdr refuses over a read in progress", () => {
+  /**
+   * A herdr that refuses the first `refusals` attaches as herdr 0.9 refuses one racing a
+   * pane read of the same terminal, then attaches for real.
+   */
+  function refusingHerdr(refusals: number): { path: string; attempts: () => number } {
+    const real = process.env["HERDR_WEB_HERDR_BIN"] || Bun.which("herdr") || "herdr";
+    const dir = mkdtempSync(join(root, "refusing-herdr-"));
+    const count = join(dir, "count");
+    const path = join(dir, "herdr");
+    writeFileSync(path, [
+      "#!/bin/sh",
+      `n=$(cat '${count}' 2>/dev/null || echo 0)`,
+      `echo $((n + 1)) > '${count}'`,
+      `if [ "$n" -lt ${refusals} ]; then printf 'herdr: server shut down: terminal attach failed: terminal term_0 has a read in progress; retry\\r\\n'; exit 1; fi`,
+      `exec '${real}' "$@"`,
+      "",
+    ].join("\n"));
+    chmodSync(path, 0o755);
+    return { path, attempts: () => Number(readFileSync(count, "utf8").trim() || 0) };
+  }
+
+  async function withHerdr<T>(path: string, run: () => Promise<T>): Promise<T> {
+    const previous = process.env["HERDR_WEB_HERDR_BIN"];
+    process.env["HERDR_WEB_HERDR_BIN"] = path;
+    try { return await run(); } finally {
+      if (previous === undefined) delete process.env["HERDR_WEB_HERDR_BIN"];
+      else process.env["HERDR_WEB_HERDR_BIN"] = previous;
+    }
+  }
+
+  it("attaches again for the same client instead of ending its terminal", async () => {
+    const paneId = await pane();
+    const herdr = refusingHerdr(2);
+    await withHerdr(herdr.path, async () => {
+      const client = await connect(paneId);
+      try {
+        // the refusals are retried; the third attach is real and paints the pane
+        await until(() => herdr.attempts() === 3 && client.state.tail.includes("\x1b[?1049h"), "the third attach paints");
+        await Bun.sleep(300); // herdr's attach consumes very early keystrokes
+        client.send({ type: "input", pane_id: paneId, text: "echo attach-$((6*7))\r" });
+        await until(() => client.state.tail.includes("attach-42"), "the retried attach streams the pane");
+        expect(herdr.attempts()).toBe(3);
+        expect(client.state.exits).toBe(0);
+        expect(client.state.errors).toEqual([]);
+        // a refused attach's setup, teardown and message never reached the terminal
+        expect(client.state.tail).not.toContain("read in progress");
+      } finally { client.ws.close(); }
+    });
+  }, 30_000);
+
+  it("still ends the terminal when herdr keeps refusing past the longest such read", async () => {
+    const paneId = await pane();
+    const herdr = refusingHerdr(1000);
+    const impatient = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: mkdtempSync(join(root, "impatient-")), attachRetryForMs: 800 });
+    try {
+      await withHerdr(herdr.path, async () => {
+        const ws = new WebSocket(`ws://127.0.0.1:${impatient.port}/ws`);
+        sockets.push(ws);
+        let exits = 0; let tail = "";
+        ws.addEventListener("message", (event) => {
+          const frame = JSON.parse(String(event.data)) as ServerMessage;
+          if (frame.type === "pty-exit" && frame.pane_id === paneId) exits++;
+          if (frame.type === "pty-data" && frame.pane_id === paneId) tail += frame.data;
+        });
+        await until(() => ws.readyState === WebSocket.OPEN, "socket open");
+        ws.send(JSON.stringify({ type: "attach", pane_id: paneId, cols: 100, rows: 30 } satisfies ClientMessage));
+        await until(() => exits === 1, "pty-exit once the retries run out");
+        expect(herdr.attempts()).toBeGreaterThan(2);
+        // the last refusal is shown: it says why the terminal ended
+        expect(tail).toContain("read in progress");
+        ws.close();
+      });
+    } finally { impatient.stop(); }
   }, 30_000);
 });
