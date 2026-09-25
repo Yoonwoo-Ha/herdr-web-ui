@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
-import { X } from "lucide-react";
+import { FolderOpen, X } from "lucide-react";
 
 import "./NewSessionDialog.css";
 
 import type { AgentKind } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
+import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 
 const LAST_AGENT_KEY = "herdr-web-ui:new-session-agent";
@@ -40,6 +41,7 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated, machine
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdPaneId, setCreatedPaneId] = useState<string | null>(null);
+  const [browsing, setBrowsing] = useState(false);
   const firstFieldRef = useRef<HTMLSelectElement>(null);
   const defaultCwdRef = useRef(defaultCwd);
   defaultCwdRef.current = defaultCwd;
@@ -51,6 +53,7 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated, machine
     setError(null);
     setPending(false);
     setCreatedPaneId(null);
+    setBrowsing(false);
     const stored = rememberedAgent();
     setAgentKind(stored);
     let cancelled = false;
@@ -138,11 +141,18 @@ export function NewSessionDialog({ open, defaultCwd, onClose, onCreated, machine
               {agents.map((agent) => <option key={agent.kind} value={agent.kind}>{agent.label}</option>)}
             </select>
           </label>
-          <label className="field">
-            <span className="field-label">Directory</span>
-            <input className="input" value={cwd} disabled={fieldsDisabled} autoComplete="off" onChange={(event) => setCwd(event.target.value)} />
+          <div className="field">
+            <label className="field-label" htmlFor="new-session-cwd">Directory</label>
+            <div className="new-session-cwd">
+              <input id="new-session-cwd" className="input" value={cwd} disabled={fieldsDisabled} autoComplete="off" onChange={(event) => setCwd(event.target.value)} />
+              <button type="button" className="btn" aria-expanded={browsing} disabled={fieldsDisabled} onClick={() => setBrowsing((open) => !open)}>
+                <FolderOpen aria-hidden="true" />
+                Browse
+              </button>
+            </div>
+            {browsing && <DirectoryBrowser start={cwd} onPick={(picked) => { setCwd(picked); setBrowsing(false); }} />}
             <span className="field-hint">absolute path or ~/…</span>
-          </label>
+          </div>
           <label className="field">
             <span className="field-label">Name</span>
             <input

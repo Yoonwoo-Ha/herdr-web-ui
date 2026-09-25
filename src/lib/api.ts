@@ -1,6 +1,7 @@
 import { machinePath, type BridgeHealth, type Machine, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   AgentKind,
+  DirectoryListing,
   ConversationResponse,
   HealthAuth,
   InteractivePrompt,
@@ -205,6 +206,12 @@ export async function renamePane(paneId: string, label: string, machineId = "loc
 /** GET /api/agents: the agent kinds herdr can start, for the new-session dialog. */
 export async function fetchAgentKinds(machineId = "local"): Promise<AgentKind[]> {
   return (await getJson<{ agents: AgentKind[] }>(machinePath(machineId, "agents"))).agents;
+}
+
+/** GET /api/workspace/directories: the folders in `path` (empty: home), for the folder browser. */
+export async function fetchDirectories(path: string, hidden: boolean, machineId = "local"): Promise<DirectoryListing> {
+  const query = new URLSearchParams({ path, ...(hidden ? { hidden: "1" } : {}) });
+  return getJson<DirectoryListing>(machinePath(machineId, `workspace/directories?${query.toString()}`));
 }
 
 export interface CreateWorkspaceRequest {

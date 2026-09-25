@@ -99,7 +99,7 @@ Its PID and log live under `HERDR_PLUGIN_STATE_DIR`. For persistent settings, ad
 | **Drop into the real terminal** | Switch to xterm.js for full-screen TUIs, raw output, keyboard input and herdr's scrollback. |
 | **Answer prompts** | Respond to supported approval, question and plan menus from chat. The server checks the menu is still current before answering. |
 | **Compose** | `/` commands and `@` file mentions, pasted or dropped images, a draft per pane, and one queued message while the agent works. |
-| **Manage sessions** | Start an agent in a directory, rename workspaces and panes, reorder workspaces, and jump anywhere from the command palette. |
+| **Manage sessions** | Start an agent in a directory you type or pick with **Browse**, rename workspaces and panes, reorder workspaces, and jump anywhere from the command palette. |
 | **Follow every agent** | Live status for all panes, and alerts when an agent needs input, finishes or its terminal ends. |
 | **Make it yours** | Dark, light or system theme, compact density, terminal and chat font sizes, a resizable composer, Enter behavior and thinking visibility. |
 

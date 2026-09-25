@@ -14,6 +14,7 @@ import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
 import { ConversationUnavailable, HistoryChanged, labelOmoPanes, paneConversation } from "./conversation.ts";
+import { listDirectories } from "./directories.ts";
 import {
   agentManifests,
   agentPrompt,
@@ -557,6 +558,12 @@ export function createServer(
         } catch (error) {
           return errorResponse(error);
         }
+      }
+
+      if (pathname === "/api/workspace/directories") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        const listing = listDirectories(url.searchParams.get("path") ?? "", url.searchParams.get("hidden") === "1");
+        return listing === null ? badRequest("invalid_cwd", "path must be a directory this user can read") : jsonResponse(listing);
       }
 
       if (pathname === "/api/workspace/create") {
