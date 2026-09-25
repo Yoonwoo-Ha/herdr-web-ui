@@ -23,6 +23,9 @@ import { terminalTheme, type ResolvedTheme } from "../lib/settings.ts";
 const FONT_STACK =
   '"JetBrains Mono", "Fira Code", "D2Coding", Menlo, Monaco, "Cascadia Mono", Consolas, "Noto Sans Mono CJK KR", monospace, "Malgun Gothic"';
 
+/** How long a resize must rest before the grid refits and the pty follows it. */
+const RESIZE_SETTLE_MS = 120;
+
 /** The one message parked for a pane, tagged with the pane it belongs to. */
 interface QueuedMessage {
   pane: string;
@@ -243,15 +246,24 @@ export function PaneTerminal({
       socket.sendInput(current, data);
     });
 
+    // Dragging a window edge fires this every frame. Each resize of the pty makes herdr
+    // reflow the pane and the program in it redraw (Claude Code repaints its whole
+    // conversation), so a drag of a long session sent over a hundred resizes and the app
+    // lagged: fit once the size has settled.
+    let resizeTimer: number | null = null;
     const observer = new ResizeObserver(() => {
-      if (observeRef.current) return; // the grid belongs to the pty while observing
-      try {
-        fit.fit();
-      } catch {
-        return;
-      }
-      const current = paneRef.current;
-      if (current) socket.resize(current, term.cols, term.rows);
+      if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        resizeTimer = null;
+        if (observeRef.current) return; // the grid belongs to the pty while observing
+        try {
+          fit.fit();
+        } catch {
+          return;
+        }
+        const current = paneRef.current;
+        if (current) socket.resize(current, term.cols, term.rows);
+      }, RESIZE_SETTLE_MS);
     });
     observer.observe(host);
 
@@ -313,6 +325,7 @@ export function PaneTerminal({
     return () => {
       window.clearInterval(poll);
       observer.disconnect();
+      if (resizeTimer !== null) window.clearTimeout(resizeTimer);
       host.removeEventListener("touchstart", onTouchStart);
       host.removeEventListener("touchmove", onTouchMove);
       host.removeEventListener("touchend", onTouchEnd);
