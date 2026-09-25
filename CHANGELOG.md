@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-09-26
+
 ### Added
 - The chat pins the agent's todo list to its bottom: done count and the item in progress on one
   line, the whole list by phase when opened. It follows Claude Code's `TodoWrite`, Codex's
@@ -20,6 +22,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   retry. On an idle Codex pane, the transcript match's 400-line read makes herdr scroll the
   history back, which takes about a second or more. The attach is now retried for as long as
   such a read can last, and a refused attach no longer prints herdr's message into the terminal.
+  (#45, by @Yoonwoo-Ha)
 - An omo or gjc pane that finishes while you are not looking at it reads **DONE** (and alerts),
   not READY, and reads RUN while it works. herdr recognises these agents from their screen and
   processes; omo's label turns from `pi` to `claude` mid-turn, so herdr reported the whole turn
@@ -242,7 +245,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.8...HEAD
+[0.3.8]: https://github.com/devswha/herdr-web-ui/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/devswha/herdr-web-ui/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/devswha/herdr-web-ui/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/devswha/herdr-web-ui/compare/v0.3.4...v0.3.5
