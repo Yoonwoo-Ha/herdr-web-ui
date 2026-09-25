@@ -7,6 +7,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- The chat pins the agent's todo list to its bottom: done count and the item in progress on one
+  line, the whole list by phase when opened. It follows Claude Code's `TodoWrite`, Codex's
+  `update_plan`, and omp, omo and gjc todo operations, and in the work block a todo call reads as
+  one line ("done · Build") that opens to the list as it stood after it.
+
 ### Fixed
 - A pane's terminal (and the chat over it) no longer shows "terminal ended" when it reconnects
   just after Codex finished an answer, for example on a phone coming back from the background.

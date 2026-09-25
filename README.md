@@ -95,6 +95,7 @@ Its PID and log live under `HERDR_PLUGIN_STATE_DIR`. For persistent settings, ad
 | | What you can do |
 | --- | --- |
 | **Read the conversation** | Prompts and Markdown answers, with the agent's commands, edits and progress folded into one "Worked for …" block per turn. Copy an answer as Markdown or plain text. |
+| **Follow the plan** | The agent's todo list stays pinned to the bottom of the chat: done count and the current item, the whole list by phase when opened. |
 | **See the model** | The model and reasoning effort the session recorded, beside the composer. Thinking summaries are optional. |
 | **Drop into the real terminal** | Switch to xterm.js for full-screen TUIs, raw output, keyboard input and herdr's scrollback. |
 | **Answer prompts** | Respond to supported approval, question and plan menus from chat. The server checks the menu is still current before answering. |

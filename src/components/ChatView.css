@@ -590,3 +590,121 @@
   .chat-turn-meta { transition: none; }
   .work-block.is-live .work-block-title::before { animation: none; }
 }
+
+/* the todo list as it stands: pinned to the bottom of the chat, one line until opened */
+.todo-panel {
+  position: sticky;
+  z-index: var(--z-popover);
+  bottom: 0;
+  margin-top: var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.todo-panel-head {
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--chat-fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.todo-panel-icon,
+.todo-panel-caret {
+  flex: none;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--text-dim);
+}
+
+.todo-panel-count {
+  flex: none;
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--chat-fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.todo-panel-now {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.todo-panel-body {
+  max-height: min(40vh, calc(var(--control-h) * 10));
+  padding: 0 var(--space-3) var(--space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: var(--hairline) solid var(--border);
+}
+
+.todo-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.todo-phase {
+  margin: var(--space-2) 0 var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--chat-fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: var(--chat-fs-sm);
+  line-height: var(--lh-base);
+}
+
+.todo-icon {
+  flex: none;
+  width: calc(var(--icon-size) * 0.9);
+  height: calc(var(--icon-size) * 0.9);
+  margin-top: 0.15em;
+  color: var(--text-dim);
+}
+
+.todo-label { min-width: 0; overflow-wrap: anywhere; }
+.todo-note { display: block; color: var(--text-dim); font-size: var(--chat-fs-xs); }
+.todo-item.is-completed { color: var(--text-dim); }
+.todo-item.is-completed .todo-icon { color: var(--status-done); }
+.todo-item.is-in_progress { color: var(--text-strong); font-weight: var(--fw-medium); }
+.todo-item.is-in_progress .todo-icon { color: var(--status-working); }
+.todo-item.is-blocked .todo-icon { color: var(--status-blocked); }
+.todo-item.is-dropped { color: var(--text-dim); text-decoration: line-through; }
+
+/* a todo call's detail in the work block shows the list after it */
+.work-row-detail .todo-list { padding: var(--space-1) var(--space-3); }
+
+.todo-list .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .todo-panel-head { min-height: var(--touch-target); }
+}

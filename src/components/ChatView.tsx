@@ -1,6 +1,6 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentType } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import {
-  ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, Copy, FilePen, FileSearch, Globe, ListChecks, Terminal, Wrench,
+  ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, ChevronUp, Circle, CircleAlert, CircleCheck, CircleDot, CircleSlash, Copy, FilePen, FileSearch, Globe, ListChecks, Terminal, Wrench,
   type LucideProps,
 } from "lucide-react";
 
@@ -14,6 +14,7 @@ import { useMachineApi } from "../lib/machineContext.tsx";
 import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.ts";
 import { formatWorkDuration, splitTurn, workSummary, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
 import { phaseRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
+import { isTodoTool, parseTodoAnswer, todoCallSummary, todoState, type TodoItem, type TodoStatus } from "../lib/todos.ts";
 import { useSettings } from "../lib/settings.ts";
 import { usePageVisible } from "../lib/visibility.ts";
 import type { TypedAnswer } from "../lib/promptAnswer.ts";
@@ -90,6 +91,62 @@ function ChecklistView({ rows }: { rows: ChecklistRow[] }) {
   ))}</ul>;
 }
 
+const TODO_ICONS: Record<TodoStatus, ComponentType<LucideProps>> = {
+  completed: CircleCheck, in_progress: CircleDot, pending: Circle, blocked: CircleAlert, dropped: CircleSlash,
+};
+const TODO_LABELS: Record<TodoStatus, string> = {
+  completed: "done", in_progress: "in progress", pending: "to do", blocked: "blocked", dropped: "dropped",
+};
+
+/** A todo list by phase: one row per item, its state as an icon (and in words, for screen readers). */
+function TodoList({ items }: { items: TodoItem[] }) {
+  const groups: { phase: string | null; items: TodoItem[] }[] = [];
+  for (const item of items) {
+    const group = groups[groups.length - 1];
+    if (group && group.phase === item.phase) group.items.push(item); else groups.push({ phase: item.phase, items: [item] });
+  }
+  return <div className="todo-list">{groups.map((group, index) => (
+    <div key={index} className="todo-group">
+      {group.phase !== null && <p className="todo-phase">{group.phase}</p>}
+      <ul>{group.items.map((item, row) => {
+        const Icon = TODO_ICONS[item.status];
+        return <li key={row} className={`todo-item is-${item.status}`}>
+          <Icon className="todo-icon" aria-hidden="true" />
+          <span className="todo-label">{item.label}<span className="sr-only"> ({TODO_LABELS[item.status]})</span>{item.note && <span className="todo-note">{item.note}</span>}</span>
+        </li>;
+      })}</ul>
+    </div>
+  ))}</div>;
+}
+
+const TODO_OPEN_KEY = "herdr-web-ui:todo-open";
+
+/**
+ * The agent's todo list as it stands, pinned to the bottom of the chat: one line (done
+ * count and the item in progress) that opens to the whole list. Whether it is open is
+ * remembered for every pane.
+ */
+function TodoPanel({ items }: { items: TodoItem[] }) {
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem(TODO_OPEN_KEY) === "1"; } catch { return false; } });
+  const toggle = (): void => {
+    setOpen(!open);
+    try { localStorage.setItem(TODO_OPEN_KEY, open ? "0" : "1"); } catch { /* private mode */ }
+  };
+  const counted = items.filter((item) => item.status !== "dropped");
+  const done = counted.filter((item) => item.status === "completed").length;
+  const now = items.find((item) => item.status === "in_progress") ?? items.find((item) => item.status === "blocked");
+  const status = counted.length > 0 && done === counted.length ? "All done" : now ? `${now.status === "blocked" ? "Blocked" : "Now"}: ${now.label}` : `${counted.length - done} to do`;
+  return <section className={`todo-panel${open ? " is-open" : ""}`} aria-label="Todo list">
+    <button type="button" className="todo-panel-head" aria-expanded={open} onClick={toggle}>
+      <ListChecks className="todo-panel-icon" aria-hidden="true" />
+      <span className="todo-panel-count">{done}/{counted.length}</span>
+      <span className="todo-panel-now">{status}</span>
+      {open ? <ChevronDown className="todo-panel-caret" aria-hidden="true" /> : <ChevronUp className="todo-panel-caret" aria-hidden="true" />}
+    </button>
+    {open && <div className="todo-panel-body"><TodoList items={items} /></div>}
+  </section>;
+}
+
 function ompEditLineClass(line: string): string | undefined {
   if (line.startsWith("+-") || line.startsWith("-") || /^(CUT|REM)\b/.test(line)) return "chat-diff-del";
   if (line.startsWith("+")) return "chat-diff-add";
@@ -98,6 +155,9 @@ function ompEditLineClass(line: string): string | undefined {
 }
 
 function ToolInputView({ part }: { part: ToolPartType }) {
+  // a todo call shows the list as it stood after it, when the agent answered with it
+  const after = isTodoTool(part.name) ? parseTodoAnswer(part.output) : null;
+  if (after !== null && after.length > 0) return <TodoList items={after} />;
   let parsed: Record<string, unknown>;
   try { parsed = JSON.parse(part.input) as Record<string, unknown>; }
   catch { return <pre className="chat-tool-io">{part.input}</pre>; }
@@ -139,14 +199,17 @@ function toolIcon(name: string): ComponentType<LucideProps> {
 function WorkRow({ part }: { part: ToolPartType }) {
   const [open, setOpen] = useState(false);
   const Icon = toolIcon(part.name);
+  const summary = todoCallSummary(part) ?? part.summary;
+  // the list is the answer of a todo call: its raw text would say it twice
+  const output = isTodoTool(part.name) && parseTodoAnswer(part.output) !== null ? "" : part.output;
   return <div className="work-row">
     <button type="button" className="work-row-head" aria-expanded={open} onClick={() => setOpen(!open)}>
       <span className="work-row-caret" aria-hidden="true">{open ? <ChevronDown /> : <ChevronRight />}</span>
       <Icon className="work-row-icon" aria-hidden="true" />
       <span className="work-row-name">{part.name}</span>
-      {part.summary.length > 0 && part.summary !== part.name && <><span className="work-row-sep" aria-hidden="true">/</span><span className="work-row-summary">{part.summary}</span></>}
+      {summary.length > 0 && summary !== part.name && <><span className="work-row-sep" aria-hidden="true">/</span><span className="work-row-summary">{summary}</span></>}
     </button>
-    {open && <div className="work-row-detail"><ToolInputView part={part} />{part.output.length > 0 && <section className="chat-tool-output"><h4>Output</h4><pre className="chat-tool-io">{part.output}</pre></section>}</div>}
+    {open && <div className="work-row-detail"><ToolInputView part={part} />{output.length > 0 && <section className="chat-tool-output"><h4>Output</h4><pre className="chat-tool-io">{output}</pre></section>}</div>}
   </div>;
 }
 
@@ -443,7 +506,8 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, connected, 
     node.scrollTo({ top: node.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     stickToBottom.current = true; setNewMessages(false);
   };
-  const turns = older.length > 0 ? [...older, ...state.turns] : state.turns;
+  const turns = useMemo(() => older.length > 0 ? [...older, ...state.turns] : state.turns, [older, state.turns]);
+  const todos = useMemo(() => state.source === "conversation" ? todoState(turns) : null, [state.source, turns]);
   const empty = state.source === "conversation" ? turns.length === 0 : state.messages.length === 0;
 
   return <div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={`conversation of ${paneId}`}>
@@ -468,6 +532,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, connected, 
       {empty && error === null && prompt === null && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>No conversation yet — say something below</p></div>}
       {prompt !== null && <PromptCard paneId={paneId} prompt={prompt} typedAnswer={pendingAnswer?.promptId === prompt.id ? pendingAnswer.answer : null} onTypedAnswerDone={onPendingAnswerDone} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={() => { setPrompt(null); onPendingAnswerDone?.(); }} />}
       {ended && <p className="chat-endcap">terminal ended</p>}
+      {todos !== null && todos.length > 0 && <TodoPanel items={todos} />}
     </div>
     {newMessages && <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>New messages <ArrowDown aria-hidden="true" /></button>}
   </div>;
