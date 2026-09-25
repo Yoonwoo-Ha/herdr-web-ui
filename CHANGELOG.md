@@ -7,6 +7,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- A pane's terminal (and the chat over it) no longer shows "terminal ended" when it reconnects,
+  for example on a phone coming back from the background after an answer arrived. herdr refuses
+  an attach while a read of the same terminal is in progress, and asks for a retry. The server's
+  own screen reads (prompt polls, the Codex transcript match) often raced that attach, and the
+  refusal was reported as the terminal exiting. The attach is now retried, up to five times.
+
 ## [0.3.7] - 2026-09-25
 
 ### Added

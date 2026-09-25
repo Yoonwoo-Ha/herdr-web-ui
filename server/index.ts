@@ -49,6 +49,10 @@ import { MachineRelay } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
 
 const MAX_REPLAY_BYTES = 256 * 1024;
+/** herdr's refusal of an attach that raced a read of the same terminal; it asks for a retry */
+const ATTACH_READ_RACE_RE = /has a read in progress; retry/;
+const ATTACH_RETRIES = 5;
+const ATTACH_RETRY_MS = 50;
 /** The gap between a composer message's text and its Enter (see submitText). */
 export const SUBMIT_DELAY_MS = 120;
 /**
@@ -385,29 +389,46 @@ export function createServer(
 
     // No --takeover: another web bridge may own the exclusive attach slot.
     // Report that conflict without displacing it or the user's own TUI.
-    attachment.pty = new PtySession({
-      command: process.env["HERDR_WEB_HERDR_BIN"] || "herdr",
-      args: ["terminal", "attach", terminalId],
-      // herdr's CLI reads HERDR_SOCKET_PATH, not HERDR_SOCKET: the stream must reach
-      // the same session the RPCs talk to, or a named session's terminals are
-      // looked up on the default socket and the attach dies.
-      env: { HERDR_SOCKET_PATH: herdrSocketPath() },
-      cols: spawnCols,
-      rows: spawnRows,
-      onData: (data) => {
-        const current = attachments.get(paneId);
-        if (current !== attachment) return;
-        current.replay.append(data);
-        for (const client of current.clients) sendOutput(client, paneId, data);
-        reconcileOutput(paneId);
-      },
-      onExit: (code) => {
-        if (attachments.get(paneId) !== attachment) return;
-        if (code !== 0 && /already has an attached client|retry with --takeover/.test(attachment.replay.recent)) broadcast(paneId, { type: "error", code: "attach_conflict", message: "Another web bridge is attached to this pane. Disconnect its browser or reuse that bridge; the existing attach was left unchanged." });
-        broadcast(paneId, { type: "pty-exit", pane_id: paneId, code });
-        closeAttachment(paneId);
-      },
-    });
+    // herdr also refuses an attach while a read of the same terminal is in flight ("has a
+    // read in progress; retry"), and this server reads panes all the time (prompt polls,
+    // transcript matches): an attach that races one, typically a phone reconnecting, is
+    // started again for the same clients instead of ending their terminal.
+    let retries = 0;
+    const start = (): PtySession => {
+      let output = ""; // this attach's own last words: herdr's refusal is in them
+      return new PtySession({
+        command: process.env["HERDR_WEB_HERDR_BIN"] || "herdr",
+        args: ["terminal", "attach", terminalId],
+        // herdr's CLI reads HERDR_SOCKET_PATH, not HERDR_SOCKET: the stream must reach
+        // the same session the RPCs talk to, or a named session's terminals are
+        // looked up on the default socket and the attach dies.
+        env: { HERDR_SOCKET_PATH: herdrSocketPath() },
+        cols: attachment.cols,
+        rows: attachment.rows,
+        onData: (data) => {
+          const current = attachments.get(paneId);
+          if (current !== attachment) return;
+          output = (output + data).slice(-1024);
+          current.replay.append(data);
+          for (const client of current.clients) sendOutput(client, paneId, data);
+          reconcileOutput(paneId);
+        },
+        onExit: (code) => {
+          if (attachments.get(paneId) !== attachment) return;
+          if (code !== 0 && retries < ATTACH_RETRIES && ATTACH_READ_RACE_RE.test(output)) {
+            retries += 1;
+            setTimeout(() => {
+              if (attachments.get(paneId) === attachment) attachment.pty = start();
+            }, ATTACH_RETRY_MS * retries);
+            return;
+          }
+          if (code !== 0 && /already has an attached client|retry with --takeover/.test(attachment.replay.recent)) broadcast(paneId, { type: "error", code: "attach_conflict", message: "Another web bridge is attached to this pane. Disconnect its browser or reuse that bridge; the existing attach was left unchanged." });
+          broadcast(paneId, { type: "pty-exit", pane_id: paneId, code });
+          closeAttachment(paneId);
+        },
+      });
+    };
+    attachment.pty = start();
 
     return attachment;
   }

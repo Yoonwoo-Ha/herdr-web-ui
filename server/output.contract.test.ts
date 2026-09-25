@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
@@ -134,5 +134,67 @@ describe("real terminal output flow control", () => {
       expect(client.state.code).toBe(0);
       client.send({ type: "input", pane_id: paneId, text: "\x03" });
     } finally { client.ws.close(); }
+  }, 30_000);
+});
+
+describe("an attach herdr refuses over a read in progress", () => {
+  /**
+   * A herdr that refuses the first `refusals` attaches as herdr 0.9 refuses one racing a
+   * pane read of the same terminal, then attaches for real.
+   */
+  function refusingHerdr(refusals: number): { path: string; attempts: () => number } {
+    const real = process.env["HERDR_WEB_HERDR_BIN"] || Bun.which("herdr") || "herdr";
+    const dir = mkdtempSync(join(root, "refusing-herdr-"));
+    const count = join(dir, "count");
+    const path = join(dir, "herdr");
+    writeFileSync(path, [
+      "#!/bin/sh",
+      `n=$(cat '${count}' 2>/dev/null || echo 0)`,
+      `echo $((n + 1)) > '${count}'`,
+      `if [ "$n" -lt ${refusals} ]; then printf 'herdr: server shut down: terminal attach failed: terminal term_0 has a read in progress; retry\\r\\n'; exit 1; fi`,
+      `exec '${real}' "$@"`,
+      "",
+    ].join("\n"));
+    chmodSync(path, 0o755);
+    return { path, attempts: () => Number(readFileSync(count, "utf8").trim() || 0) };
+  }
+
+  async function withHerdr<T>(path: string, run: () => Promise<T>): Promise<T> {
+    const previous = process.env["HERDR_WEB_HERDR_BIN"];
+    process.env["HERDR_WEB_HERDR_BIN"] = path;
+    try { return await run(); } finally {
+      if (previous === undefined) delete process.env["HERDR_WEB_HERDR_BIN"];
+      else process.env["HERDR_WEB_HERDR_BIN"] = previous;
+    }
+  }
+
+  it("attaches again for the same client instead of ending its terminal", async () => {
+    const paneId = await pane();
+    const herdr = refusingHerdr(2);
+    await withHerdr(herdr.path, async () => {
+      const client = await connect(paneId);
+      try {
+        // the refusals are retried; the third attach is real and paints the pane again
+        await until(() => herdr.attempts() === 3 && client.state.tail.lastIndexOf("\x1b[?1049h") > client.state.tail.lastIndexOf("read in progress"), "the third attach paints");
+        await Bun.sleep(300); // herdr's attach consumes very early keystrokes
+        client.send({ type: "input", pane_id: paneId, text: "echo attach-$((6*7))\r" });
+        await until(() => client.state.tail.includes("attach-42"), "the retried attach streams the pane");
+        expect(herdr.attempts()).toBe(3);
+        expect(client.state.exits).toBe(0);
+        expect(client.state.errors).toEqual([]);
+      } finally { client.ws.close(); }
+    });
+  }, 30_000);
+
+  it("still ends the terminal when herdr keeps refusing", async () => {
+    const paneId = await pane();
+    const herdr = refusingHerdr(100);
+    await withHerdr(herdr.path, async () => {
+      const client = await connect(paneId);
+      try {
+        await until(() => client.state.exits === 1, "pty-exit after the last retry");
+        expect(herdr.attempts()).toBe(6); // the first attach and five retries
+      } finally { client.ws.close(); }
+    });
   }, 30_000);
 });
