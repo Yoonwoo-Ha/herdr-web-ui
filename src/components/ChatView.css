@@ -240,15 +240,34 @@
   font-size: var(--fs-2xs);
 }
 
+/* no height cap: an inner scroll hid the rest of the block on phones */
 .markdown-code pre {
-  max-height: calc(var(--row-h) * 6);
   margin: 0;
   padding: var(--space-3);
-  overflow: auto;
+  overflow-x: auto;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   line-height: var(--lh-base);
   white-space: pre;
+}
+
+.markdown-code-more {
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-top: var(--hairline) solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.markdown-code-more:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .markdown-table-wrap {
@@ -550,7 +569,8 @@
   .work-block-head,
   .work-row-head,
   .chat-copy,
-  .markdown-code-copy {
+  .markdown-code-copy,
+  .markdown-code-more {
     min-height: var(--touch-target);
   }
 

@@ -1,7 +1,7 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 
-import { parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../lib/markdown.ts";
+import { foldCode, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../lib/markdown.ts";
 
 function Inline({ nodes }: { nodes: InlineNode[] }) {
   return <>{nodes.map((node, index) => {
@@ -33,20 +33,43 @@ function List({ block }: { block: ListBlock }) {
 
 function CodeBlock({ language, value }: { language: string; value: string }) {
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const block = useRef<HTMLDivElement>(null);
+  // no inner scroll: a long block folds, with a visible "Show all" row
+  const fold = useMemo(() => foldCode(value), [value]);
   const copy = async (): Promise<void> => {
     await navigator.clipboard.writeText(value);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
   };
+  const folding = useRef(false);
+  const toggle = (): void => {
+    folding.current = expanded;
+    setExpanded(!expanded);
+  };
+  // "Show less" sits at the bottom of a long block: after folding, bring the block's top back
+  // into view rather than leave the reader far below it
+  useLayoutEffect(() => {
+    if (!folding.current) return;
+    folding.current = false;
+    const node = block.current;
+    const view = node?.closest(".chat-view");
+    if (node && view && node.getBoundingClientRect().top < view.getBoundingClientRect().top) node.scrollIntoView({ block: "start" });
+  }, [expanded]);
   return (
-    <div className="markdown-code">
+    <div className="markdown-code" ref={block}>
       <div className="markdown-code-header">
         <span>{language || "text"}</span>
         <button type="button" className="icon-button markdown-code-copy" onClick={() => void copy()} aria-label={copied ? "Code copied" : "Copy code"}>
           {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
         </button>
       </div>
-      <pre><code>{value}</code></pre>
+      <pre><code>{fold !== null && !expanded ? fold.head : value}</code></pre>
+      {fold !== null && (
+        <button type="button" className="markdown-code-more" aria-expanded={expanded} onClick={toggle}>
+          {expanded ? "Show less" : `Show all ${fold.lines} lines`}
+        </button>
+      )}
     </div>
   );
 }
