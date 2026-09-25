@@ -14,7 +14,7 @@ describe("parseStatusFrame", () => {
       event: "pane.agent_status_changed",
       data: { agent: "claude", agent_status: "blocked", pane_id: "w3J:p1", workspace_id: "w3J" },
     };
-    expect(parseStatusFrame(frame)).toEqual({ paneId: "w3J:p1", status: "blocked" });
+    expect(parseStatusFrame(frame)).toEqual({ paneId: "w3J:p1", status: "blocked", agent: "claude" });
   });
 
   it("rejects frames that are not status events", () => {
