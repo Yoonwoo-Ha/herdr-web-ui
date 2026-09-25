@@ -29,30 +29,55 @@ export function safeMarkdownHref(href: string): string | null {
   return /^(?:https?:\/\/|mailto:)/i.test(value) ? value : null;
 }
 
+/** A bare URL without the punctuation that closes the sentence around it (GFM's autolink rule). */
+function trimUrl(url: string): string {
+  let end = url.length;
+  for (;;) {
+    const last = url[end - 1];
+    if (last !== undefined && ".,:;!?'\"*_~".includes(last)) { end -= 1; continue; }
+    // a closing parenthesis stays only while it closes one opened inside the URL
+    if (last === ")") {
+      const text = url.slice(0, end);
+      if (text.split(")").length > text.split("(").length) { end -= 1; continue; }
+    }
+    break;
+  }
+  return url.slice(0, end);
+}
+
 /** Dependency-free inline markdown scanner. Unknown or malformed markup remains text. */
-export function parseInline(source: string): InlineNode[] {
+export function parseInline(source: string, links = true): InlineNode[] {
   const nodes: InlineNode[] = [];
   // Underscores inside identifiers are literal: MAC_QA_CHAT_OK must survive
   // rendering exactly as it appears in the terminal and native transcript.
-  const marker = /(`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\)|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/gu;
+  // a bare or <angle> http(s) URL is a link too; it stops at the first non-ASCII character,
+  // so `…/pull/36에서` links the address and leaves the Korean after it as text
+  const marker = /(`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\)|<https?:\/\/[^\s<>]+>|https?:\/\/[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/gu;
   let offset = 0;
   for (const match of source.matchAll(marker)) {
     const index = match.index ?? 0;
     if (index > offset) nodes.push({ type: "text", value: source.slice(offset, index) });
-    const token = match[0];
-    if (token.startsWith("`")) {
+    let token = match[0];
+    if (token.startsWith("<")) {
+      const url = token.slice(1, -1);
+      nodes.push(links ? { type: "link", href: url, children: [{ type: "text", value: url }] } : { type: "text", value: token });
+    } else if (/^https?:/i.test(token)) {
+      // what ends a sentence is not part of the address: "see https://x.dev/a)." links x.dev/a
+      token = trimUrl(token);
+      nodes.push(links ? { type: "link", href: token, children: [{ type: "text", value: token }] } : { type: "text", value: token });
+    } else if (token.startsWith("`")) {
       nodes.push({ type: "code", value: token.slice(1, -1) });
     } else if (token.startsWith("[")) {
       const split = token.lastIndexOf("](");
       const label = token.slice(1, split);
       const href = safeMarkdownHref(token.slice(split + 2, -1));
-      nodes.push(href === null ? { type: "text", value: label } : { type: "link", href, children: parseInline(label) });
+      nodes.push(href === null ? { type: "text", value: label } : { type: "link", href, children: parseInline(label, false) });
     } else if (token.startsWith("**") || token.startsWith("__")) {
-      nodes.push({ type: "strong", children: parseInline(token.slice(2, -2)) });
+      nodes.push({ type: "strong", children: parseInline(token.slice(2, -2), links) });
     } else if (token.startsWith("~~")) {
-      nodes.push({ type: "del", children: parseInline(token.slice(2, -2)) });
+      nodes.push({ type: "del", children: parseInline(token.slice(2, -2), links) });
     } else {
-      nodes.push({ type: "em", children: parseInline(token.slice(1, -1)) });
+      nodes.push({ type: "em", children: parseInline(token.slice(1, -1), links) });
     }
     offset = index + token.length;
   }
@@ -160,11 +185,11 @@ export function parseMarkdown(source: string): MarkdownBlock[] {
     }
 
     if (line.includes("|") && tableSeparator.test(lines[index + 1] ?? "")) {
-      const header = cells(line).map(parseInline);
+      const header = cells(line).map((cell) => parseInline(cell));
       index += 2;
       const rows: InlineNode[][][] = [];
       while (index < lines.length && lineAt(lines, index).includes("|") && lineAt(lines, index).trim() !== "") {
-        rows.push(cells(lineAt(lines, index)).map(parseInline));
+        rows.push(cells(lineAt(lines, index)).map((cell) => parseInline(cell)));
         index += 1;
       }
       blocks.push({ type: "table", header, rows });

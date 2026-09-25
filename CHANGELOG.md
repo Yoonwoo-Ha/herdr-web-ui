@@ -7,6 +7,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- Web addresses in chat messages are links: a bare `https://…` URL or one in `<…>` opens in a
+  new tab, as a `[text](url)` link already did. Punctuation that ends the sentence stays out of
+  the link, and so does text written straight after it (e.g. Korean without a space).
+
 ### Fixed
 - Resizing the window no longer lags on a long session. Every frame of the drag resized the pane,
   and each resize made herdr reflow it and the program in it (Claude Code) repaint its whole
