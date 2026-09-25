@@ -174,10 +174,10 @@ try {
   await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "codex", state: "idle" });
   await page.locator('.composer-status[data-status="idle"]').waitFor();
   const startupPrompt = page.locator(".prompt-card");
-  await startupPrompt.getByRole("button", { name: "Yes, continue", exact: true }).waitFor();
+  await startupPrompt.getByRole("button", { name: "1. Yes, continue", exact: true }).waitFor();
   assert.equal(await page.locator('.composer-status[data-status="idle"]').count(), 1);
   assert.equal(await page.locator(".chat-empty").count(), 0);
-  await startupPrompt.getByRole("button", { name: "Yes, continue", exact: true }).click();
+  await startupPrompt.getByRole("button", { name: "1. Yes, continue", exact: true }).click();
   await startupPrompt.waitFor({ state: "hidden" });
   console.log("PASS startup prompt appears and accepts an answer while the agent status is idle");
 
