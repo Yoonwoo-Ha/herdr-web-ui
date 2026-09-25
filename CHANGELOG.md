@@ -8,11 +8,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Fixed
-- A pane's terminal (and the chat over it) no longer shows "terminal ended" when it reconnects,
-  for example on a phone coming back from the background after an answer arrived. herdr refuses
-  an attach while a read of the same terminal is in progress, and asks for a retry. The server's
-  own screen reads (prompt polls, the Codex transcript match) often raced that attach, and the
-  refusal was reported as the terminal exiting. The attach is now retried, up to five times.
+- A pane's terminal (and the chat over it) no longer shows "terminal ended" when it reconnects
+  just after Codex finished an answer, for example on a phone coming back from the background.
+  herdr refuses an attach while a read of the same terminal is in progress, and asks for a
+  retry. On an idle Codex pane, the transcript match's 400-line read makes herdr scroll the
+  history back, which takes about a second or more. The attach is now retried for as long as
+  such a read can last, and a refused attach no longer prints herdr's message into the terminal.
 
 ## [0.3.7] - 2026-09-25
 
