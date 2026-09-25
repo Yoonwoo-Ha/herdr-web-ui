@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-09-25
+
 ### Added
 - gjc and omo have their own marks in the sidebar and the chat. An omo pane is named `omo` even
   though herdr labels it `pi` or `claude` as omo works, so its mark no longer changes under you.
@@ -204,7 +206,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/devswha/herdr-web-ui/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/devswha/herdr-web-ui/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/devswha/herdr-web-ui/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/devswha/herdr-web-ui/compare/v0.3.2...v0.3.3
