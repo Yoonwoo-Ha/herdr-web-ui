@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-09-25
+
 ### Added
 - Web addresses in chat messages are links: a bare `https://…` URL or one in `<…>` opens in a
   new tab, as a `[text](url)` link already did. Punctuation that ends the sentence stays out of
@@ -192,7 +194,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/devswha/herdr-web-ui/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/devswha/herdr-web-ui/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/devswha/herdr-web-ui/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/devswha/herdr-web-ui/compare/v0.3.1...v0.3.2
