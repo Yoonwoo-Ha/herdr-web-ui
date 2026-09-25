@@ -8,13 +8,15 @@ import { HerdrSocket } from "../lib/ws.ts";
 import { controlCode, isPrintable, keySequence, type KeyBarKey } from "../lib/keys.ts";
 import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "../lib/draft.ts";
 import { QUEUE_READY_STATUS, composerMessage, composerPayload, submitNote } from "../lib/compose.ts";
+import { answerFromText, answerHint, answerRefusal, needsConfirmation, type TypedAnswer } from "../lib/promptAnswer.ts";
+import { ApiError } from "../lib/api.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { paneStorageId } from "../../shared/machines.ts";
 import { KeyBar } from "./KeyBar.tsx";
 import { ChatView } from "./ChatView.tsx";
 import { Composer } from "./Composer.tsx";
-import type { AgentStatus, ClientRole, ConversationMetadata, ServerMessage } from "../../shared/protocol.ts";
+import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, ServerMessage } from "../../shared/protocol.ts";
 import type { PaneView } from "../lib/actions.ts";
 import { terminalTheme, type ResolvedTheme } from "../lib/settings.ts";
 
@@ -68,7 +70,7 @@ export function PaneTerminal({
   onServerMessage,
 }: PaneTerminalProps) {
   const machineId = useMachineId();
-  const { uploadPaneImage } = useMachineApi();
+  const { answerPanePrompt, uploadPaneImage } = useMachineApi();
   const chatView = view === "chat";
   const chatViewRef = useRef(chatView);
   chatViewRef.current = chatView;
@@ -105,6 +107,24 @@ export function PaneTerminal({
   // the composer's send bumps this so the chat lens refetches without waiting a poll beat
   const [chatRefresh, setChatRefresh] = useState(0);
   const [chatMetadata, setChatMetadata] = useState<{ pane: string; value: ConversationMetadata | null } | null>(null);
+  // The prompt the chat shows: while it waits, a message from the composer answers it.
+  const [chatPrompt, setChatPrompt] = useState<{ pane: string; value: InteractivePrompt } | null>(null);
+  const [promptRefresh, setPromptRefresh] = useState(0);
+  // a typed pick of an approval's option, shown in the card until Confirm or Cancel
+  const [pendingAnswer, setPendingAnswer] = useState<{ pane: string; promptId: string; answer: TypedAnswer } | null>(null);
+  const clearPendingAnswer = useCallback(() => setPendingAnswer(null), []);
+  const onChatPrompt = useCallback((pane: string, value: InteractivePrompt | null) => {
+    setChatPrompt((current) => value !== null ? { pane, value } : current?.pane === pane ? null : current);
+    // a typed pick belongs to the prompt it was typed for: once that prompt changes or goes
+    // away (a tap in the card, an answer in the terminal), the same question asked again
+    // later opens clean, not with the old pick waiting one tap from Confirm
+    setPendingAnswer((current) => current?.pane === pane && current.promptId !== value?.id ? null : current);
+  }, []);
+  // back at work, the agent has had its answer, maybe from the terminal: the same prompt asked
+  // again before the chat's next read must not bring the pick back either
+  useEffect(() => {
+    if (agentStatus === "working") setPendingAnswer(null);
+  }, [agentStatus]);
   const onChatMetadata = useCallback((pane: string, value: ConversationMetadata | null) => {
     setChatMetadata((previous) => previous?.pane === pane && previous.value?.model === value?.model
       && previous.value?.reasoning_effort === value?.reasoning_effort ? previous : { pane, value });
@@ -487,19 +507,45 @@ export function PaneTerminal({
 
   // chatmux's queue-next: while the pane's agent runs, a send becomes the ONE
   // queued message; it leaves the queue when the agent is known to be ready.
-  const busy = agent !== null && agentStatus === "working";
+  // a question in Codex's queue leaves the composer alone: Codex keeps working, and a
+  // message ("stop, don't touch prod") must reach it, not become the answer; its card answers it
+  const answering = chatView && chatPrompt !== null && chatPrompt.pane === paneId && !chatPrompt.value.queued ? chatPrompt.value : null;
+  // ...and while it is open in the terminal it holds the input: nothing is sent into it
+  const heldByOpenQueue = chatView && chatPrompt !== null && chatPrompt.pane === paneId && chatPrompt.value.queued === "open";
+  const busy = agent !== null && agentStatus === "working" && answering === null;
   const readyForQueue = agentStatus !== undefined && QUEUE_READY_STATUS[agentStatus] === true;
 
   const composerSend = useCallback(
-    (text: string): boolean | Promise<boolean | string> => {
+    (text: string): boolean | string | Promise<boolean | string> => {
       const pane = paneRef.current;
+      // Codex's queue open in the terminal holds the input: a message would become the answer
+      if (pane !== null && heldByOpenQueue) {
+        return "Codex has a question open in the terminal: answer it above, or close it there (alt+↓) to message Codex.";
+      }
+      if (pane !== null && answering !== null) {
+        // never typed into the agent's menu: only as one of its options, or its own reply row
+        const choice = answerFromText(answering, text);
+        if (choice === null) return answerRefusal(answering);
+        if (needsConfirmation(answering, choice)) {
+          setPendingAnswer({ pane, promptId: answering.id, answer: choice });
+          return true;
+        }
+        setPendingAnswer(null);
+        return answerPanePrompt({ pane_id: pane, prompt_id: answering.id, ...choice }).then(
+          () => { setPromptRefresh((key) => key + 1); return true; },
+          (cause: unknown) => {
+            setPromptRefresh((key) => key + 1);
+            return cause instanceof ApiError && cause.status === 409 ? "The question on screen changed; check it and answer again." : String(cause instanceof Error ? cause.message : cause);
+          },
+        );
+      }
       if (pane !== null && agent !== null && agentStatus === "working") {
         setQueued({ pane, text });
         return true; // the composer may clear its box: the text lives in the queue card
       }
       return sendComposerText(text);
     },
-    [agent, agentStatus, sendComposerText],
+    [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, sendComposerText],
   );
 
   // A reconnect or status refresh never sends held text without a user action.
@@ -593,6 +639,10 @@ export function PaneTerminal({
             agent={agent}
             agentStatus={agentStatus}
             onMetadata={onChatMetadata}
+            onPrompt={onChatPrompt}
+            promptRefreshKey={promptRefresh}
+            pendingAnswer={pendingAnswer !== null && pendingAnswer.pane === paneId ? pendingAnswer : null}
+            onPendingAnswerDone={clearPendingAnswer}
           />
         )}
       </div>
@@ -615,7 +665,8 @@ export function PaneTerminal({
             <button
               type="button"
               className="composer-queue-send"
-              disabled={!connected || queueSending}
+              disabled={!connected || queueSending || heldByOpenQueue}
+              title={heldByOpenQueue ? "Codex has a question open in the terminal: answer it above first" : undefined}
               onClick={() => {
                 // a held message leaves the queue only once the pane has it; one send at a time
                 setQueueSending(true);
@@ -643,6 +694,8 @@ export function PaneTerminal({
           metadata={chatMetadata?.pane === paneId ? chatMetadata.value : null}
           connected={connected}
           queueMode={busy}
+          answerHint={answering === null ? null
+            : pendingAnswer?.promptId === answering.id ? "Confirm your answer in the card above, or type another…" : answerHint(answering)}
           onSend={composerSend}
           onAbort={abortTurn}
           onUploadImage={uploadImage}

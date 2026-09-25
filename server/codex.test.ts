@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexHistoryTail, codexRolloutPath, forgetHistoryChains, matchCodexTranscript, parseCodexTranscript, resumedThread } from "./codex.ts";
+import { codexHistoryTail, codexRolloutPath, forgetHistoryChains, matchCodexTranscript, parseCodexTranscript, resumedThread, unansweredCodexQuestions } from "./codex.ts";
 import { splitTurn } from "../src/lib/workBlocks.ts";
 
 const ts = "2026-09-22T01:00:00.000Z";
@@ -99,6 +99,74 @@ describe("Codex conversation records", () => {
     expect(part?.kind === "tool" ? part.output.length : 0).toBeGreaterThan(4000);
     expect(part?.kind === "tool" ? part.output.length : 0).toBeLessThan(4100);
     expect(parseCodexTranscript(jsonl(...Array.from({ length: 150 }, (_, i) => message("user", `request ${i}`))))).toHaveLength(100);
+  });
+});
+
+describe("Codex queued questions (request_user_input_async)", () => {
+  const ask = (callId: string, questions: unknown[]) => item({
+    type: "function_call", name: "request_user_input_async", call_id: callId, arguments: JSON.stringify({ questions }),
+  });
+  const reply = (...answers: { callId: string; index: number; question: string; answer: string }[]) => message("user",
+    `<send_user_message_question_reply>\n${JSON.stringify(answers.map((answer) => ({
+      answer: answer.answer, question: answer.question,
+      questionItemId: JSON.stringify(["request_user_input_async", answer.callId, answer.index]),
+    })))}\n</send_user_message_question_reply>`);
+  const asked = ask("call_a", [
+    { title: "Which dataset?", options: ["LM-O", "YCB-V"] },
+    { title: "Any notes?" },
+  ]);
+  let dir: string | undefined;
+  afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); dir = undefined; });
+
+  it("shows only what was answered, and the questions asked as the tool's summary", () => {
+    const turns = parseCodexTranscript(jsonl(
+      message("user", "Clean up the outputs"),
+      asked,
+      item({ type: "function_call_output", call_id: "call_a", output: "{\"accepted\":true}" }),
+      reply({ callId: "call_a", index: 0, question: "Which dataset?", answer: "YCB-V" }),
+      reply({ callId: "call_a", index: 1, question: "Any notes?", answer: "keep the logs" }, { callId: "call_b", index: 0, question: "Split?", answer: "test" }),
+      message("user", "<send_user_message_question_reply>not json</send_user_message_question_reply>"),
+    ));
+    expect(turns.filter((turn) => turn.role === "user").map((turn) => turn.parts[0])).toEqual([
+      { kind: "text", text: "Clean up the outputs" },
+      { kind: "text", text: "YCB-V" },
+      { kind: "text", text: "keep the logs\ntest" },
+      // not a reply Codex wrote: shown as it is
+      { kind: "text", text: "<send_user_message_question_reply>not json</send_user_message_question_reply>" },
+    ]);
+    expect(turns[1]!.parts[0]).toMatchObject({ kind: "tool", name: "request_user_input_async", summary: "Which dataset? · Any notes?" });
+  });
+
+  it("scans a rollout once however many ask at the same time", async () => {
+    dir = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-questions-"));
+    const path = join(dir, "rollout.jsonl");
+    writeFileSync(path, `${jsonl(message("user", "go"), ask("call_x", [{ title: "First?", options: ["a"] }]))}\n`);
+    await unansweredCodexQuestions(path);
+    appendFileSync(path, `${jsonl(ask("call_y", [{ title: "Second?", options: ["b"] }]))}\n`);
+    // two viewers polling at once: the append is read once, not once per poll
+    const [one, two] = await Promise.all([unansweredCodexQuestions(path), unansweredCodexQuestions(path)]);
+    expect(one.map((question) => question.title)).toEqual(["First?", "Second?"]);
+    expect(two).toEqual(one);
+    expect((await unansweredCodexQuestions(path)).map((question) => question.title)).toEqual(["First?", "Second?"]);
+  });
+
+  it("lists the questions still unanswered, reading only what the rollout appends", async () => {
+    dir = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-questions-"));
+    const path = join(dir, "rollout.jsonl");
+    writeFileSync(path, `${jsonl(message("user", "go"), asked)}\n`);
+    expect(await unansweredCodexQuestions(path)).toEqual([
+      { key: "call_a:0", title: "Which dataset?", options: ["LM-O", "YCB-V"] },
+      { key: "call_a:1", title: "Any notes?", options: [] },
+    ]);
+    appendFileSync(path, `${jsonl(reply({ callId: "call_a", index: 0, question: "Which dataset?", answer: "LM-O" }))}\n`);
+    // a record still being written is not read yet
+    appendFileSync(path, JSON.stringify(ask("call_b", [{ title: "Split?", options: [{ label: "train" }, { label: "test" }] }])).slice(0, 40));
+    expect((await unansweredCodexQuestions(path)).map((question) => question.key)).toEqual(["call_a:1"]);
+    appendFileSync(path, `${JSON.stringify(ask("call_b", [{ title: "Split?", options: [{ label: "train" }, { label: "test" }] }])).slice(40)}\n`);
+    expect(await unansweredCodexQuestions(path)).toEqual([
+      { key: "call_a:1", title: "Any notes?", options: [] },
+      { key: "call_b:0", title: "Split?", options: ["train", "test"] },
+    ]);
   });
 });
 

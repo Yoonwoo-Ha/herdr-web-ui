@@ -16,6 +16,7 @@ import { formatWorkDuration, splitTurn, workSummary, type ToolPart as ToolPartTy
 import { phaseRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
 import { useSettings } from "../lib/settings.ts";
 import { usePageVisible } from "../lib/visibility.ts";
+import type { TypedAnswer } from "../lib/promptAnswer.ts";
 import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationTurn, InteractivePrompt } from "../../shared/protocol.ts";
 
 const TRANSCRIPT_LINES = 400;
@@ -31,6 +32,13 @@ export interface ChatViewProps {
   agent: string | null;
   agentStatus?: AgentStatus;
   onMetadata?: (paneId: string, metadata: ConversationMetadata | null) => void;
+  /** the agent's waiting prompt, for the composer to answer too */
+  onPrompt?: (paneId: string, prompt: InteractivePrompt | null) => void;
+  /** bumped after the composer answered: read the prompt again now */
+  promptRefreshKey?: number;
+  /** a typed pick of an approval's option, waiting in the card for Confirm */
+  pendingAnswer?: { promptId: string; answer: TypedAnswer } | null;
+  onPendingAnswerDone?: () => void;
 }
 
 interface ChatState {
@@ -218,7 +226,7 @@ function FallbackTurn({ message }: { message: TranscriptMessage }) {
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, refreshKey, connected, ended, agent, agentStatus, onMetadata }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, refreshKey, connected, ended, agent, agentStatus, onMetadata, onPrompt, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone }: ChatViewProps) {
   const { fetchPaneConversation, fetchPanePrompt, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
   // polls pause while the page is hidden and pick up at once when it is back
@@ -383,13 +391,25 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, connected, 
     let cancelled = false;
     let timer = 0;
     const readPrompt = async (): Promise<void> => {
-      try { const next = await fetchPanePrompt(paneId); if (!cancelled) setPrompt(next); }
+      // the same prompt keeps its object: the composer and the card only change with it
+      try { const next = await fetchPanePrompt(paneId); if (!cancelled) setPrompt((current) => current?.id === next?.id ? current : next); }
       catch { if (!cancelled) setPrompt(null); }
       finally { if (!cancelled) timer = window.setTimeout(() => void readPrompt(), POLL_MS); }
     };
     void readPrompt();
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [pollPrompt, paneId, promptPollKey, fetchPanePrompt, visible]);
+  }, [pollPrompt, paneId, promptPollKey, promptRefreshKey, fetchPanePrompt, visible]);
+
+  useEffect(() => {
+    onPrompt?.(paneId, prompt);
+    return () => onPrompt?.(paneId, null);
+  }, [onPrompt, paneId, prompt]);
+
+  // away from the page, the prompt is not read: it can be answered in the terminal and asked
+  // again unseen, so a typed pick waiting for Confirm does not outlive the page being hidden
+  useEffect(() => {
+    if (!visible) onPendingAnswerDone?.();
+  }, [visible, onPendingAnswerDone]);
 
   // Before paint and without animation: an opened conversation starts at its end
   // instead of scrolling there from the top.
@@ -446,7 +466,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, connected, 
       {!ended && !connected && <p className="chat-inline-state">reconnecting…</p>}
       {error !== null && <p className="chat-inline-state chat-inline-error" role="alert">{errorStatus === 401 ? "locked — the token gate is asking again" : error}</p>}
       {empty && error === null && prompt === null && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>No conversation yet — say something below</p></div>}
-      {prompt !== null && <PromptCard paneId={paneId} prompt={prompt} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={() => setPrompt(null)} />}
+      {prompt !== null && <PromptCard paneId={paneId} prompt={prompt} typedAnswer={pendingAnswer?.promptId === prompt.id ? pendingAnswer.answer : null} onTypedAnswerDone={onPendingAnswerDone} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={() => { setPrompt(null); onPendingAnswerDone?.(); }} />}
       {ended && <p className="chat-endcap">terminal ended</p>}
     </div>
     {newMessages && <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>New messages <ArrowDown aria-hidden="true" /></button>}

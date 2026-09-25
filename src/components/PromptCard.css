@@ -38,6 +38,13 @@
   line-height: var(--lh-base);
 }
 
+/* a question in Codex's queue: the agent is not waiting on it, so the card says who answers what */
+.prompt-card-hint {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+}
+
 .prompt-card-body {
   max-height: 10rem;
   margin: 0;
@@ -63,9 +70,51 @@
 .prompt-card-options .btn {
   height: auto;
   min-height: var(--control-h);
+  max-width: 100%;
   flex-direction: column;
   align-items: flex-start;
   padding-block: var(--space-1);
+  /* an option can name a long path: it wraps inside the card instead of running past it */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+/* a typed pick of an approval's option: highlighted, and sent only on Confirm */
+.prompt-card-options .btn.is-typed {
+  outline: var(--ring);
+  outline-offset: var(--ring-offset);
+}
+
+.prompt-card-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--accent);
+  border-radius: var(--radius-md);
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+}
+
+.prompt-card-confirm span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* the number the agent's menu shows: typing it in the composer picks the option too */
+.prompt-card-number {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-weight: var(--fw-regular);
+}
+
+.btn-primary .prompt-card-number {
+  color: inherit;
+  opacity: 0.72;
 }
 
 .prompt-card-options small,

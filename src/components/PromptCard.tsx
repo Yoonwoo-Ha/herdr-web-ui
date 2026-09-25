@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 
 import "./PromptCard.css";
@@ -6,20 +6,30 @@ import "./PromptCard.css";
 import { ApiError } from "../lib/api.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import type { InteractivePrompt, PromptAnswer } from "../../shared/protocol.ts";
+import type { TypedAnswer } from "../lib/promptAnswer.ts";
 
 export interface PromptCardProps {
   paneId: string;
   prompt: InteractivePrompt;
   onPromptChanged(): void;
   onAnswered(): void;
+  /** an option picked by a typed message, sent only on Confirm */
+  typedAnswer?: TypedAnswer | null;
+  onTypedAnswerDone?(): void;
 }
 
-export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered }: PromptCardProps) {
+export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone }: PromptCardProps) {
   const { answerPanePrompt } = useMachineApi();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [custom, setCustom] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const confirmRef = useRef<HTMLDivElement | null>(null);
+
+  // the question to confirm comes into view, clear of the chat's floating buttons
+  useEffect(() => {
+    confirmRef.current?.scrollIntoView({ block: "center" });
+  }, [typedAnswer]);
 
   useEffect(() => {
     setSelected(new Set());
@@ -62,6 +72,13 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered }: Prom
         <h2>{prompt.title}</h2>
       </header>
       <p className="prompt-card-question">{prompt.question}</p>
+      {prompt.queued && (
+        <p className="prompt-card-hint">
+          {prompt.queued === "open"
+            ? "Codex keeps working meanwhile. Answer here; the question holds the terminal's input until it is answered or closed."
+            : "Codex keeps working meanwhile. Answer here; the message box still talks to Codex."}
+        </p>
+      )}
       {prompt.body !== null && prompt.body.length > 0 && <pre className="prompt-card-body">{prompt.body}</pre>}
       <div className="prompt-card-options">
         {prompt.options.map((option, index) => {
@@ -70,13 +87,13 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered }: Prom
             return (
               <label className="prompt-card-check" key={index}>
                 <input type="checkbox" checked={selected.has(index)} disabled={pending} onChange={() => toggle(index)} />
-                <span><strong>{option.label}</strong>{option.description !== null && <small>{option.description}</small>}</span>
+                <span><strong><span className="prompt-card-number">{index + 1}.</span> {option.label}</strong>{option.description !== null && <small>{option.description}</small>}</span>
               </label>
             );
           }
           return (
-            <button key={index} type="button" className={index === 0 ? "btn btn-primary" : "btn"} disabled={pending} onClick={() => void answer({ option_index: index })}>
-              <span>{option.label}</span>{option.description !== null && <small>{option.description}</small>}
+            <button key={index} type="button" className={`${index === 0 ? "btn btn-primary" : "btn"}${typedAnswer?.option_index === index ? " is-typed" : ""}`} disabled={pending} onClick={() => void answer({ option_index: index })}>
+              <span><span className="prompt-card-number">{index + 1}.</span> {option.label}</span>{option.description !== null && <small>{option.description}</small>}
             </button>
           );
         })}
@@ -94,6 +111,13 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered }: Prom
           <button type="button" className="btn btn-primary" disabled={pending || custom.trim().length === 0} onClick={() => void answer({ custom_text: custom.trim() })}>
             <Send aria-hidden="true" /> Send
           </button>
+        </div>
+      )}
+      {typedAnswer?.option_index !== undefined && (
+        <div className="prompt-card-confirm" role="alert" ref={confirmRef}>
+          <span>Send <strong>{typedAnswer.option_index + 1}. {prompt.options[typedAnswer.option_index]?.label}</strong>?</span>
+          <button type="button" className="btn btn-primary" disabled={pending} onClick={() => void answer(typedAnswer).finally(() => onTypedAnswerDone?.())}>Confirm</button>
+          <button type="button" className="btn" disabled={pending} onClick={() => onTypedAnswerDone?.()}>Cancel</button>
         </div>
       )}
       {error !== null && <p className="prompt-card-error" role="alert">{error}</p>}
