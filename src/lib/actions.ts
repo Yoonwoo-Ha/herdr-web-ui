@@ -23,4 +23,6 @@ export interface AppActions {
   /** null once alerts are on (or unsupported); otherwise asks for permission */
   enableNotifications: (() => void) | null;
   refresh: () => void;
+  /** null without a pane: the files of its folder, each opened in the file viewer */
+  openFiles: (() => void) | null;
 }

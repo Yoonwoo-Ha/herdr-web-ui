@@ -1,6 +1,6 @@
 import { useMachineId } from "../lib/machineContext.tsx";
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
-import { Bell, LockKeyhole, MessageSquarePlus, PanelLeft, RefreshCw, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
+import { Bell, FolderOpen, LockKeyhole, MessageSquarePlus, PanelLeft, RefreshCw, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
 
 import "./CommandPalette.css";
 
@@ -91,6 +91,7 @@ export function CommandPalette({ open, onClose, snapshot, selectedPaneId, view, 
     { id: "settings", label: "Settings", icon: Settings, shortcut: "settings", run: actions.openSettings },
     ...(actions.enableNotifications ? [{ id: "notifications", label: "Enable notifications", icon: Bell, run: actions.enableNotifications }] : []),
     ...(actions.lock ? [{ id: "lock", label: "Lock", icon: LockKeyhole, run: actions.lock }] : []),
+    ...(actions.openFiles ? [{ id: "files", label: "Browse files", icon: FolderOpen, run: actions.openFiles }] : []),
     { id: "refresh", label: "Refresh", icon: RefreshCw, run: actions.refresh },
   ], [actions, view]);
 

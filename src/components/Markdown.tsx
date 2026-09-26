@@ -1,14 +1,24 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 
 import { foldCode, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../lib/markdown.ts";
+import { codeIsFilePath, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
+
+/** A file path the viewer opens: a button that reads as the text or code it replaced. */
+function FilePath({ path, code, open }: { path: string; code: boolean; open: (path: string) => void }) {
+  const label = code ? <code>{path}</code> : path;
+  return <button type="button" className={`markdown-file${code ? " is-code" : ""}`} title={`Open ${path}`} onClick={() => open(path)}>{label}</button>;
+}
 
 function Inline({ nodes }: { nodes: InlineNode[] }) {
+  const open = useContext(OpenFileContext);
   return <>{nodes.map((node, index) => {
     const key = `${node.type}-${index}`;
     switch (node.type) {
-      case "text": return <span key={key}>{node.value}</span>;
-      case "code": return <code key={key}>{node.value}</code>;
+      case "text":
+        if (open === null) return <span key={key}>{node.value}</span>;
+        return <span key={key}>{splitFilePaths(node.value).map((part, n) => typeof part === "string" ? part : <FilePath key={n} path={part.path} code={false} open={open} />)}</span>;
+      case "code": return open !== null && codeIsFilePath(node.value) ? <FilePath key={key} path={node.value} code open={open} /> : <code key={key}>{node.value}</code>;
       case "strong": return <strong key={key}><Inline nodes={node.children} /></strong>;
       case "em": return <em key={key}><Inline nodes={node.children} /></em>;
       case "del": return <del key={key}><Inline nodes={node.children} /></del>;

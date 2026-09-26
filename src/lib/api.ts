@@ -2,6 +2,7 @@ import { machinePath, type BridgeHealth, type Machine, type SetupAction, type Se
 import type {
   AgentKind,
   DirectoryListing,
+  FileInfo,
   ConversationResponse,
   HealthAuth,
   InteractivePrompt,
@@ -209,9 +210,23 @@ export async function fetchAgentKinds(machineId = "local"): Promise<AgentKind[]>
 }
 
 /** GET /api/workspace/directories: the folders in `path` (empty: home), for the folder browser. */
-export async function fetchDirectories(path: string, hidden: boolean, machineId = "local"): Promise<DirectoryListing> {
-  const query = new URLSearchParams({ path, ...(hidden ? { hidden: "1" } : {}) });
+export async function fetchDirectories(path: string, hidden: boolean, machineId = "local", files = false): Promise<DirectoryListing> {
+  const query = new URLSearchParams({ path, ...(hidden ? { hidden: "1" } : {}), ...(files ? { files: "1" } : {}) });
   return getJson<DirectoryListing>(machinePath(machineId, `workspace/directories?${query.toString()}`));
+}
+
+function fileQuery(path: string, paneId: string | null): string {
+  return new URLSearchParams({ path, ...(paneId ? { pane_id: paneId } : {}) }).toString();
+}
+
+/** GET /api/fs/stat: a file to open; `path` is absolute, `~/…` or relative to the pane's folder. */
+export async function fetchFileInfo(path: string, paneId: string | null, machineId = "local"): Promise<FileInfo> {
+  return getJson<FileInfo>(machinePath(machineId, `fs/stat?${fileQuery(path, paneId)}`));
+}
+
+/** GET /api/fs/file: the file itself, streamed (ranges for media); `download` saves it instead. */
+export function fileUrl(path: string, paneId: string | null, machineId = "local", download = false): string {
+  return machinePath(machineId, `fs/file?${fileQuery(path, paneId)}${download ? "&download=1" : ""}`);
 }
 
 export interface CreateWorkspaceRequest {

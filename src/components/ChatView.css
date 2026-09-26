@@ -708,3 +708,33 @@
 @media (pointer: coarse) {
   .todo-panel-head { min-height: var(--touch-target); }
 }
+
+/* a file path in an answer: opens the file viewer, reads as the text or code it is */
+.markdown-file {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: var(--space-1);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.markdown-file.is-code {
+  text-decoration: none;
+}
+
+.markdown-file.is-code code {
+  color: var(--accent);
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+
+.markdown-file:hover,
+.markdown-file:hover code {
+  text-decoration-style: solid;
+}

@@ -4,7 +4,7 @@ import { canSendSecret, sameOrigin } from "./machine-security.ts";
 import { isJsonObject, jsonResponse } from "./http.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
-export const MACHINE_PROXY_PATH = /^(?:session|agents|pane\/(?:read|conversation|commands|files|prompt|prompt\/answer|input|keys|close|rename|image)|workspace\/(?:create|rename|move|close|directories))$/;
+export const MACHINE_PROXY_PATH = /^(?:session|agents|pane\/(?:read|conversation|commands|files|prompt|prompt\/answer|input|keys|close|rename|image)|workspace\/(?:create|rename|move|close|directories)|fs\/(?:stat|file))$/;
 
 export async function handleMachineRequest(request: Request, manager: MachineManager): Promise<Response> {
   const url = new URL(request.url);
@@ -73,6 +73,21 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       const ifNoneMatch = request.headers.get("if-none-match");
       if (ifNoneMatch) headers.set("if-none-match", ifNoneMatch);
       const abort = new AbortController();
+      if (path === "fs/file") {
+        // a file (a video, say) streams through, with its ranges, never held here; it can
+        // play for longer than any request timeout
+        const range = request.headers.get("range");
+        if (range) headers.set("range", range);
+        try {
+          const response = await fetch(`${endpoint.url}/api/${path}${url.search}`, { method: request.method, headers, redirect: "error", signal: request.signal });
+          const passed = new Headers({ "cache-control": "private, no-store" });
+          for (const name of ["content-type", "content-length", "content-range", "accept-ranges", "content-disposition", "content-security-policy", "x-content-type-options"]) {
+            const value = response.headers.get(name);
+            if (value) passed.set(name, value);
+          }
+          return new Response(response.body, { status: response.status, headers: passed });
+        } catch { return fail("machine_unavailable", "The PC connection was interrupted; retry after reconnecting", 502); }
+      }
       const untrack = manager.trackTerminal(id, () => abort.abort());
       try {
         const response = await fetch(`${endpoint.url}/api/${path}${url.search}`, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body, redirect: "error", signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(75_000)]) });
