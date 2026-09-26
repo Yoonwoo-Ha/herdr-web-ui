@@ -15,7 +15,8 @@ export interface PtySessionOptions {
 
 /**
  * A command running on a real PTY, hosted by a Node sidecar (see pty-host.mjs for
- * why output flow control currently needs node-pty).
+ * why output flow control currently needs node-pty, and why it is the prebuilt
+ * @lydell/node-pty distribution of it).
  */
 export class PtySession {
   readonly exited: Promise<void>;

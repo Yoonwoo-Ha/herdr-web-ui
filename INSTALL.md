@@ -33,7 +33,8 @@ git --version
 - A missing tool: **Ask** the user before installing it. Bun: `curl -fsSL https://bun.sh/install | bash`.
   herdr: <https://herdr.dev>. Node: the user's usual manager (nvm, Homebrew, distro packages).
 - herdr not running: ask the user to start `herdr` in a terminal, then check again.
-- Supported platforms: Linux and macOS.
+- Supported platforms: Linux x64 and arm64, macOS. No compiler or Python is needed: the terminal
+  addon is prebuilt for these platforms. Other platforms (Alpine, 32-bit ARM) have no build.
 
 ## 2. Choose the install method
 
@@ -54,9 +55,10 @@ herdr clones the repository, runs `bun install` and `bun run build`, then regist
 takes about a minute.
 
 - Success: the command exits 0 and `herdr plugin list` shows `devswha.herdr-web-ui`.
-- `bun: command not found` during the build: herdr runs build commands with **its own** environment.
-  Make sure `bun` is on the `PATH` of the shell that started herdr (usually `~/.bun/bin`), ask the
-  user to restart herdr from that shell, then retry.
+- The first build step is a check that prints, in one line, what is missing (`bun`, `node`, or a
+  version too old) and how to fix it. `bun` or `node` not found means herdr runs build commands
+  with **its own** environment: make sure they are on the `PATH` of the shell that started herdr
+  (Bun installs to `~/.bun/bin`), ask the user to restart herdr from that shell, then retry.
 - "installing over a locally linked plugin is refused": run `herdr plugin unlink devswha.herdr-web-ui`
   first.
 

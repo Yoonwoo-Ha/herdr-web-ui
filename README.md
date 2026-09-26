@@ -76,7 +76,7 @@ https://github.com/user-attachments/assets/2f030569-1004-425e-835d-9e775ec6e4c8
 
 ## Quick start
 
-You need a running **[herdr](https://github.com/herdrdev/herdr) 0.9.0+**, **[Bun](https://bun.sh) 1.4+** and **Node 18+**. Node runs the terminal-attach sidecar.
+You need a running **[herdr](https://github.com/herdrdev/herdr) 0.9.0+**, **[Bun](https://bun.sh) 1.4+** and **Node 18+**. Node runs the terminal-attach sidecar. Nothing is compiled: the terminal addon comes prebuilt for Linux x64 and arm64 and for macOS, so no Python or C++ toolchain is needed.
 
 > **Want a look first?** [Try it in your browser](https://devswha.github.io/herdr-web-ui/demo/): the app on a fictional session, nothing to install. Nothing in it is live.
 

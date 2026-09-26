@@ -1,6 +1,6 @@
 # Terminal output control and the Bun PTY comparison
 
-Checked on 2026-09-22: Linux x64, Bun 1.4.2, Node 24.18.0, node-pty 1.1.0, xterm 5.5.0, herdr 0.9.0.
+Checked on 2026-09-22: Linux x64, Bun 1.4.2, Node 24.18.0, node-pty 1.1.0, xterm 5.5.0, herdr 0.9.0. Since 2026-09-26 node-pty comes as `@lydell/node-pty` 1.1.0, the same code with a prebuilt binary per platform, so nothing compiles at install.
 
 ## Decision
 
@@ -49,4 +49,4 @@ RSS includes the comparison runner and producer, plus the Node host for the side
 
 The contract tests use real herdr redraw traffic to verify stalled-observer eviction, bounded outstanding bytes, operator continuation, live Ctrl+C input, stale ACK rejection and valid-ACK resumption. PTY tests separately verify split UTF-8, final multi-megabyte output before exit, paused output with working input, and cleanup while paused. Browser QA drives the real built UI and xterm, withholding only outgoing ACKs to verify the notice, absence of an automatic reconnect loop, and recovery by pane selection. Test workspaces and servers are cleaned up.
 
-During validation, a pre-existing local node-pty binary linked against the system `libnode.so.109` crashed at shutdown under the active Node 24 runtime. Rebuilding with the active Node installation's bundled node-gyp and matching headers removed that linkage and the crash. The distro node-gyp build reintroduced the bad linkage. On a similar mixed installation, inspect `ldd node_modules/node-pty/build/Release/pty.node` and rebuild with the toolchain belonging to the Node executable that runs the sidecar.
+During validation, a pre-existing local node-pty binary linked against the system `libnode.so.109` crashed at shutdown under the active Node 24 runtime. Rebuilding with the active Node installation's bundled node-gyp and matching headers removed that linkage and the crash. The distro node-gyp build reintroduced the bad linkage. On a similar mixed installation, inspect `ldd node_modules/node-pty/build/Release/pty.node` and rebuild with the toolchain belonging to the Node executable that runs the sidecar. This applied to the compiled node-pty; the prebuilt distribution installs no toolchain and never runs node-gyp, so a normal install cannot hit it.

@@ -5,6 +5,9 @@
  * Bun.Terminal exists, but Bun 1.4.2 has no public output pause/resume API.
  * node-pty supplies that control so browser acknowledgements can stop PTY reads.
  * Keep it in Node: loading node-pty in Bun has panicked (oven-sh/bun#18546).
+ * It comes as @lydell/node-pty, node-pty 1.1.0 repackaged with a prebuilt binary per
+ * platform (Linux x64/arm64, macOS, Windows), so installing never runs node-gyp: a PC
+ * without Python and a C++ toolchain installs the same as one with them.
  *
  * Protocol
  *   argv:   <cols> <rows> <command> [args...]
@@ -17,7 +20,7 @@
  *   exit:   mirrors the child's exit code
  */
 
-import * as pty from "node-pty";
+import * as pty from "@lydell/node-pty";
 
 const [colsRaw, rowsRaw, command, ...args] = process.argv.slice(2);
 if (!command) {
