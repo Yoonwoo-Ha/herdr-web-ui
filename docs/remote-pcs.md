@@ -49,7 +49,7 @@ A verified runtime is installed into a checksum-addressed directory before the s
 
 ## Building and distributing runtimes
 
-`bun run build:remote` builds for the host OS and CPU after `bun run build`. All bundles use checksum-pinned Node 22.23.2. Linux bundles copy the installed Bun and native node-pty, so they must be built on the target OS/CPU. macOS bundles use checksum-pinned Bun 1.4.2 plus the locked node-pty package's macOS N-API prebuilds; they can also be assembled on Linux:
+`bun run build:remote` builds for the host OS and CPU after `bun run build`. All bundles use checksum-pinned Node 22.23.2. Linux bundles copy the installed Bun, so they must be built on the target OS/CPU. macOS bundles use checksum-pinned Bun 1.4.2 plus that platform's prebuilt PTY package (`@lydell/node-pty-<platform>`, fetched checksum-pinned from the npm registry when it is not the host's); they can also be assembled on Linux:
 
 ```sh
 bun run build:remote darwin-arm64  # Apple Silicon

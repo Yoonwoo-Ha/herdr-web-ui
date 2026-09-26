@@ -12,6 +12,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   fictional session, no server. Its five panes, chats and Codex approval are the README media's;
   answering the approval, sending a message and typing into the shell pane all get demo answers.
 
+### Fixed
+- Installing no longer compiles a native module. The terminal addon comes prebuilt for Linux x64
+  and arm64 and for macOS (`@lydell/node-pty`, node-pty 1.1.0 repackaged), so a PC without Python
+  and a C++ toolchain installs, where `herdr plugin install` used to end in a page of node-gyp
+  errors and "Plugin was not installed". The first build step now says in one line what is
+  missing (`bun`, `node`, or a version too old) instead of failing some steps later.
+
 ## [0.3.11] - 2026-09-26
 
 ### Added

@@ -1,6 +1,6 @@
 // Runs in bundled Node, including on the destination before runtime activation.
 // Loading the addon alone misses macOS spawn-helper permission/architecture errors.
-import pty from "node-pty";
+import pty from "@lydell/node-pty";
 
 const timer = setTimeout(() => { console.error("Bundled PTY smoke test timed out"); process.exit(1); }, 10_000);
 try {

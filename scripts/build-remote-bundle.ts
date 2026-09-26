@@ -1,6 +1,6 @@
 /** Native Linux bundles; macOS also supports assembly from verified prebuilds on Linux. */
 import { createHash } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
 
@@ -26,10 +26,20 @@ const nodePins: Record<string, string> = {
   "darwin-x64": macPins["darwin-x64"]!.nodeSha,
   "darwin-arm64": macPins["darwin-arm64"]!.nodeSha,
 };
+// The PTY addon: @lydell/node-pty ships one prebuilt package per platform and bun installs only the
+// host's, so a bundle for another platform fetches that platform's package from the registry.
+// sha256 of the registry tarballs for the version package.json pins; a bump must update these.
+const PTY_VERSION = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { dependencies: Record<string, string> }).dependencies["@lydell/node-pty"]!;
+const ptyPins: Record<string, string> = {
+  "linux-x64": "8d2e043026672f11aafd5f1a831f794a90d8fdd9d5e3255e8bc121df64b9d8e4",
+  "linux-arm64": "c4ace306e4099a7919c7852fe29a6a9052f9d9b9eaf36617bf7c6cb72cd16118",
+  "darwin-x64": "2a45297cec01dffa282f39cc1f87d1f2fa42e5c186e261ff88bfcfbce0186c00",
+  "darwin-arm64": "937a533814ddeb3eb1d6d7a84f5aa2302d73ffe69332a34a94ae05e9e203eab3",
+};
 const pin = herdrPins[platform];
 if (!pin) throw new Error(`Unsupported platform ${platform}`);
 const mac = macPins[platform];
-if (!mac && platform !== hostPlatform) throw new Error(`Build ${platform} on that OS/CPU; only macOS has cross-platform prebuilt PTY binaries`);
+if (!mac && platform !== hostPlatform) throw new Error(`Build ${platform} on that OS/CPU: a Linux bundle carries the host's Bun binary`);
 if (!existsSync(join(root, "dist/index.html"))) throw new Error("Run bun run build before building remote bundles");
 
 const output = resolve(process.env["HERDR_BUNDLE_OUTPUT"] ?? join(root, "remote-bundles"));
@@ -72,14 +82,22 @@ try {
     command(["unzip", "-qo", bunArchive, "-d", downloads]);
     cpSync(join(downloads, mac.bunFile, "bun"), join(stage, "bin/bun"));
     bunVersion = "1.4.2";
-    // The locked node-pty npm package includes N-API macOS prebuilds. Remove the
-    // host addon ahead of them in the loader search order, and make its helper executable.
-    const pty = join(stage, "node_modules/node-pty");
-    rmSync(join(pty, "build"), { recursive: true, force: true });
-    for (const name of ["pty.node", "spawn-helper"]) verifyMachO(join(pty, "prebuilds", platform, name));
-    chmodSync(join(pty, "prebuilds", platform, "spawn-helper"), 0o755);
   } else {
     cpSync(realpathSync(process.execPath), join(stage, "bin/bun"));
+  }
+  // every bundle carries exactly its own platform's PTY package (flat: pty.node, and spawn-helper on macOS)
+  const ptyPackages = join(stage, "node_modules/@lydell");
+  const ptyPackage = join(ptyPackages, `node-pty-${platform}`);
+  for (const name of readdirSync(ptyPackages)) if (name.startsWith("node-pty-") && name !== `node-pty-${platform}`) rmSync(join(ptyPackages, name), { recursive: true, force: true });
+  if (!existsSync(join(ptyPackage, "pty.node"))) {
+    const ptyArchive = join(downloads, "node-pty.tgz");
+    writeFileSync(ptyArchive, await download(`https://registry.npmjs.org/@lydell/node-pty-${platform}/-/node-pty-${platform}-${PTY_VERSION}.tgz`, ptyPins[platform]!));
+    mkdirSync(ptyPackage, { recursive: true });
+    command(["tar", "xzf", ptyArchive, "-C", ptyPackage, "--strip-components=1"]);
+  }
+  if (mac) {
+    for (const name of ["pty.node", "spawn-helper"]) verifyMachO(join(ptyPackage, name));
+    chmodSync(join(ptyPackage, "spawn-helper"), 0o755);
   }
   writeFileSync(join(stage, "bin/herdr"), await download(`https://github.com/herdrdev/herdr/releases/download/v0.9.1/${pin[0]}`, pin[1]), { mode: 0o755 });
   for (const name of ["bun", "node", "herdr"]) {
