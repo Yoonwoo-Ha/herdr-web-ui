@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-09-26
+
 ### Added
 - **Settings → Phone**: how to get the app onto a phone from this PC. When the page is already on
   an HTTPS address, or Tailscale on the PC already serves the app, it shows that address as a QR
@@ -283,7 +285,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.10...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.11...HEAD
+[0.3.11]: https://github.com/devswha/herdr-web-ui/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/devswha/herdr-web-ui/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/devswha/herdr-web-ui/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/devswha/herdr-web-ui/compare/v0.3.7...v0.3.8
