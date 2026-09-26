@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-09-26
+
 ### Added
 - Open the files your agents write, from any device. A file path in a chat answer
   (`docs/demo.mp4`, `~/out/shot.png`) opens in a viewer: images, video and audio that play and
@@ -14,6 +16,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   **Browse files** (in the header, or the command palette on a phone) lists the pane's folder
   and any other. Files stream from disk with ranges, so a large video costs the server no memory;
   HTML and SVG open sandboxed and text as plain text, never as script on the app's origin.
+
+### Changed
+- The README's screenshots and demos are sharper and framed: recorded at 2x, in a browser window
+  or a phone, with a moving camera and cursor on desktop. The phone demo no longer shows only the
+  top left of the screen.
 
 ## [0.3.8] - 2026-09-26
 
@@ -253,7 +260,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.8...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/devswha/herdr-web-ui/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/devswha/herdr-web-ui/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/devswha/herdr-web-ui/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/devswha/herdr-web-ui/compare/v0.3.5...v0.3.6
