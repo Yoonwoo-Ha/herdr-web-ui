@@ -37,6 +37,15 @@ Browser checks look for Chrome at `/opt/google/chrome/chrome`; set `CHROME_PATH`
 - `compose.ts` draws every output frame on a canvas: a backdrop, a browser window or a phone, the frame under an eased camera, and a vector cursor with click ripples or touch rings. It writes `demo-*.mp4` (1920×1200 and 1080×1920, 30 fps) and a GIF of each. Stills get the same window or phone on a transparent background.
 
 The MP4s are not committed: GitHub plays a README video only from an upload (`github.com/user-attachments/…`), so drop them into an issue or PR comment and use the link it gives.
+The website takes the same two uploads from the README, so a new recording needs only the README links changed.
+
+## Website
+
+<https://devswha.github.io/herdr-web-ui/> is `site/index.html`, a static page. `bun run build:site`
+assembles it into `_site/` with the icons, social preview and screenshots it references, the two demo
+videos (the local `docs/screenshots/*.mp4` when present, otherwise the README's uploads) and, when
+ffmpeg is installed, a poster frame for each video. `.github/workflows/pages.yml` runs the same build
+and deploys it to GitHub Pages on every push to `main` that touches the site or its sources.
 
 ## Releasing
 
@@ -58,4 +67,5 @@ Remote-PC runtime bundles are released separately: raise `REMOTE_BUNDLE_VERSION`
 | [`scripts/`](../scripts/) | Plugin lifecycle, type generation, remote bundles, README media and browser checks |
 | [`public/`](../public/) | PWA manifest, service worker and icons |
 | [`docs/`](.) | Remote PCs, updates, flow control, chat audit and brand assets |
+| [`site/`](../site/) | The website, built by `scripts/build-site.ts` and deployed by GitHub Pages |
 | [`DESIGN.md`](../DESIGN.md) | Design tokens and UI conventions |

@@ -7,6 +7,7 @@
 <p align="center"><b>Your herdr agents, in a browser and on your phone.</b><br>Read them as a chat, drop into the live terminal, answer when they ask — from any screen.</p>
 
 <p align="center">
+  <a href="https://devswha.github.io/herdr-web-ui/">Website</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#supported-agents">Agents</a> ·
   <a href="#on-your-phone">Phone</a> ·
@@ -298,6 +299,14 @@ No. The server reads session files and terminals locally, and serves them only t
 <summary><b>An agent is missing from the chat, or shows only terminal text.</b></summary>
 
 The chat needs the agent's own session file. Check that the agent runs in a herdr pane on this PC (or on an added PC) and has already written its first message. Agents without a native reader always get the terminal-text view, and the Terminal view always works.
+</details>
+
+<details>
+<summary><b>How is this different from collie, roamgate or herdr-remote?</b></summary>
+
+All three are in the herdr plugin marketplace too, and each does something this app does not. [collie](https://github.com/AltanS/collie) is a mobile terminal for herdr, tmux and zellij, with a status dashboard, a key pad, quick replies and voice input, served over Tailscale by its own bridge. [roamgate](https://github.com/powerfooI/roamgate) is a browser client for herdr with a file explorer and diff annotations, installed by its own script. [herdr-remote](https://github.com/dcolinmorgan/herdr-remote) is a macOS menu-bar app with a phone dashboard and a Telegram bot behind a relay and a free tunnel.
+
+herdr web ui reads the agent's own transcript, so Claude Code, Codex, omp, omo and gjc panes are a chat with the work folded per turn, and a prompt card is checked against the live menu before its answer is typed. The terminal is the same live pane as your TUI, other PCs join over SSH from the sidebar, and it installs and updates as a herdr plugin, with no server or account of its own. It brings no tunnel: you reach it over Tailscale, SSH or your own HTTPS proxy. If you want tmux or zellij, diffs, Telegram or a tunnel out of the box, one of the others is the better fit.
 </details>
 
 <details>

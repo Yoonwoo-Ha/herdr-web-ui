@@ -146,7 +146,7 @@
   margin-left: var(--space-1);
 }
 
-.settings-about a {
+.settings-about a:not(.btn) {
   color: var(--accent);
   font-size: var(--fs-sm);
   overflow-wrap: anywhere;
