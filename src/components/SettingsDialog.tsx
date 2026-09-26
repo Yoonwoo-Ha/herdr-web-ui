@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Minus, Plus, X } from "lucide-react";
+import { Minus, Plus, Star, X } from "lucide-react";
 
 import "./SettingsDialog.css";
 
@@ -140,7 +140,8 @@ export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) 
           <section className="settings-section settings-about">
             <h3>About</h3>
             <p><strong>herdr web ui</strong></p>
-            <a href="https://github.com/devswha/herdr-web-ui" target="_blank" rel="noreferrer">github.com/devswha/herdr-web-ui</a>
+            <a className="btn" href="https://github.com/devswha/herdr-web-ui" target="_blank" rel="noreferrer"><Star aria-hidden="true" />Star on GitHub</a>
+            <a href="https://devswha.github.io/herdr-web-ui/" target="_blank" rel="noreferrer">devswha.github.io/herdr-web-ui</a>
           </section>
           {pcSettings && <section className="settings-section">
             <h3>Remote PCs</h3>

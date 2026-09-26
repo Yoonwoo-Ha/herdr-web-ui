@@ -7,6 +7,16 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- **Star on GitHub** in Settings → About, next to a link to the website.
+- A website, <https://devswha.github.io/herdr-web-ui/>: the demos, the install command, the phone
+  setup and how it compares with other herdr phone clients. GitHub Pages builds it from `site/`
+  on every push to `main`; `bun run build:site` builds it locally.
+
+### Fixed
+- A link styled as a button (**Reconnect** after a PC drops, **Star on GitHub**) is no longer
+  underlined.
+
 ## [0.3.10] - 2026-09-26
 
 ### Fixed

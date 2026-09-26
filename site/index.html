@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>herdr web ui</title>
+    <meta name="description" content="Your herdr agents, in a browser and on your phone. Read them as a chat, drop into the live terminal, and answer when they ask. A herdr plugin." />
+    <link rel="canonical" href="https://devswha.github.io/herdr-web-ui/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://devswha.github.io/herdr-web-ui/" />
+    <meta property="og:title" content="herdr web ui" />
+    <meta property="og:description" content="Your herdr agents, in a browser and on your phone. Chat, live terminal, prompt cards and push alerts for every herdr pane." />
+    <meta property="og:image" content="https://devswha.github.io/herdr-web-ui/assets/social-preview.png" />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="640" />
+    <meta property="og:image:alt" content="herdr web ui: a ram, a terminal prompt, a browser window and a pointer" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#12100e" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#eeeae2" />
+    <link rel="icon" href="favicon.ico" sizes="32x32" />
+    <link rel="icon" type="image/png" href="favicon.png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
+    <style>
+      /* Tokens are the app's (DESIGN.md): lamp-lit graphite with one amber, or ledger paper. */
+      :root {
+        color-scheme: dark;
+        --bg: #12100e;
+        --bg-panel: #181613;
+        --bg-elevated: #211e1a;
+        --bg-hover: #2a2621;
+        --border: #2d2924;
+        --border-strong: #3e3830;
+        --text: #d8d0c3;
+        --text-dim: #9b9183;
+        --text-strong: #f2ebdf;
+        --accent: #f0a830;
+        --accent-tint: rgba(240, 168, 48, 0.13);
+        --primary: #f0a830;
+        --primary-hover: #f6bb55;
+        --primary-text: #1b1407;
+        --status-done: #93c36b;
+        --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif;
+        --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "D2Coding", monospace;
+        --gutter: clamp(16px, 4vw, 32px);
+        --content-w: 1080px;
+        --radius-md: 8px;
+        --radius-lg: 12px;
+        --dur-fast: 120ms;
+        --ease-out: cubic-bezier(0.2, 0, 0, 1);
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          color-scheme: light;
+          --bg: #eeeae2;
+          --bg-panel: #faf8f3;
+          --bg-elevated: #f2eee6;
+          --bg-hover: #e8e2d6;
+          --border: #dcd4c6;
+          --border-strong: #c5baa8;
+          --text: #2a251f;
+          --text-dim: #685e52;
+          --text-strong: #16120d;
+          --accent: #8c5000;
+          --accent-tint: rgba(140, 80, 0, 0.1);
+          --primary: #c57d12;
+          --primary-hover: #d48c1f;
+          --status-done: #2f6317;
+        }
+      }
+
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; scroll-padding-top: 72px; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-ui);
+        font-size: 16px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; text-underline-offset: 0.15em; }
+      :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+      code, pre, kbd { font-family: var(--font-mono); }
+      code { font-size: 0.92em; color: var(--text-strong); }
+      img, video { display: block; max-width: 100%; height: auto; }
+      h1, h2, h3, p, ol, ul, figure { margin: 0; }
+      .wrap { width: min(100% - 2 * var(--gutter), var(--content-w)); margin-inline: auto; }
+
+      /* header */
+      .top {
+        position: sticky; top: 0; z-index: 5;
+        background: color-mix(in srgb, var(--bg) 88%, transparent);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--border);
+      }
+      .top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 56px; }
+      .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text-strong); font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
+      .brand:hover { text-decoration: none; }
+      .brand img { width: 28px; height: 28px; border-radius: 7px; }
+      .top nav { display: flex; gap: clamp(12px, 2.5vw, 24px); font-size: 14px; font-weight: 500; }
+      .top nav a { color: var(--text); }
+      .top nav a:hover { color: var(--text-strong); text-decoration: none; }
+
+      /* sections */
+      section { padding-block: clamp(48px, 7vw, 80px); border-top: 1px solid var(--border); }
+      section:first-of-type { border-top: 0; }
+      h2 { font-size: clamp(24px, 3vw, 30px); font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; color: var(--text-strong); max-width: 26ch; }
+      .intro { margin-top: 14px; max-width: 62ch; color: var(--text-dim); font-size: 17px; }
+      .intro a { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 0.15em; }
+      .intro a:hover { color: var(--text-strong); text-decoration-color: currentColor; }
+
+      /* hero */
+      .hero { padding-top: clamp(40px, 6vw, 72px); }
+      .hero h1 { font-size: clamp(34px, 5.2vw, 56px); font-weight: 700; letter-spacing: -0.02em; line-height: 1.08; color: var(--text-strong); max-width: 18ch; text-wrap: balance; }
+      .lede { margin-top: 20px; max-width: 56ch; font-size: clamp(17px, 1.6vw, 20px); color: var(--text-dim); }
+      .lede a { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 0.15em; }
+      .lede a:hover { color: var(--text-strong); text-decoration-color: currentColor; }
+
+      .install { margin-top: 36px; max-width: 720px; }
+      .cmd {
+        display: flex; align-items: center; gap: 12px;
+        margin: 0; padding: 12px 12px 12px 16px;
+        background: var(--bg-panel);
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--accent);
+        border-radius: var(--radius-lg);
+      }
+      .cmd code { flex: 1 1 auto; min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 15px; color: var(--text-strong); line-height: 1.6; scrollbar-width: none; }
+      .cmd code::-webkit-scrollbar { display: none; }
+      .cmd .prompt { color: var(--accent); margin-right: 0.6em; user-select: none; }
+      .cmd .cursor { display: inline-block; width: 0.6em; height: 1.1em; margin-left: 2px; vertical-align: text-bottom; background: var(--accent); animation: blink 1.1s steps(1) infinite; }
+      @keyframes blink { 50% { opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) { .cmd .cursor { animation: none; } }
+      .btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+        height: 36px; padding: 0 14px;
+        background: var(--bg-elevated); color: var(--text-strong);
+        border: 1px solid var(--border); border-radius: var(--radius-md);
+        font: inherit; font-size: 14px; font-weight: 500; white-space: nowrap; cursor: pointer;
+        transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+      }
+      .btn:hover { background: var(--bg-hover); border-color: var(--border-strong); text-decoration: none; }
+      .btn.is-done { color: var(--status-done); }
+      @media (max-width: 560px) {
+        .cmd { align-items: flex-start; }
+        .cmd code { white-space: pre-wrap; overflow-wrap: anywhere; }
+      }
+      .after { margin-top: 12px; font-size: 15px; color: var(--text-dim); }
+      .after code { color: var(--text); }
+
+      .demos { display: grid; grid-template-columns: 1fr 0.3516fr; gap: clamp(12px, 2vw, 20px); margin-top: clamp(36px, 5vw, 56px); }
+      .demos video { width: 100%; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--bg-panel); }
+      .demos figcaption { margin-top: 10px; font-size: 14px; color: var(--text-dim); }
+      @media (max-width: 720px) {
+        .demos { grid-template-columns: 1fr; }
+        .demos figure:last-child { max-width: 62%; }
+      }
+
+      /* three tenets */
+      .facts ul { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(20px, 3vw, 40px); margin-top: 36px; }
+      .facts li { border-left: 3px solid var(--border-strong); padding-left: 16px; }
+      .facts h3 { font-size: 17px; font-weight: 600; color: var(--text-strong); }
+      .facts p { margin-top: 8px; font-size: 15px; color: var(--text-dim); }
+      .facts code { color: var(--text); font-size: 0.9em; }
+      @media (max-width: 720px) { .facts ul { grid-template-columns: 1fr; } }
+
+      /* stills */
+      .looks .grid { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(20px, 3vw, 36px); margin-top: 36px; }
+      .looks figure:first-child { grid-column: 1 / -1; }
+      .looks figcaption { margin-top: 10px; font-size: 14px; color: var(--text-dim); max-width: 60ch; }
+      .looks figcaption b { color: var(--text); font-weight: 600; }
+      @media (max-width: 720px) { .looks .grid { grid-template-columns: 1fr; } }
+
+      /* tables */
+      .table-wrap { margin-top: 32px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      table { width: 100%; border-collapse: collapse; font-size: 15px; }
+      th, td { text-align: left; vertical-align: top; padding: 12px 14px 12px 0; border-bottom: 1px solid var(--border); }
+      thead th { color: var(--text-dim); font-weight: 600; font-size: 14px; border-bottom-color: var(--border-strong); }
+      tbody th { color: var(--text-strong); font-weight: 600; white-space: nowrap; }
+      td { color: var(--text); }
+      td.dim { color: var(--text-dim); }
+      .compare th, .compare td { padding-right: 18px; min-width: 150px; }
+      .compare tbody th { min-width: 120px; }
+      .compare .us { background: var(--accent-tint); }
+      .compare thead .us { color: var(--accent); }
+      .compare td.us { color: var(--text-strong); padding-left: 12px; padding-right: 12px; }
+      .compare tbody th.us { padding-left: 12px; }
+      @media (max-width: 800px) {
+        .compare tbody th { position: sticky; left: 0; background: var(--bg); min-width: 0; white-space: normal; padding-right: 12px; }
+      }
+      .compare thead th a { color: inherit; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 0.15em; }
+      .compare thead th a:hover { color: var(--text-strong); text-decoration-color: currentColor; }
+      .compare tbody tr:last-child th, .compare tbody tr:last-child td { border-bottom: 0; }
+      .legend { margin-top: 14px; font-size: 14px; color: var(--text-dim); }
+
+      /* phone */
+      .phone .cols { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: clamp(28px, 4vw, 56px); margin-top: 36px; align-items: start; }
+      .steps { padding-left: 0; list-style: none; counter-reset: step; }
+      .steps li { counter-increment: step; display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 14px; padding-block: 16px; border-top: 1px solid var(--border); }
+      .steps li > div { min-width: 0; }
+      .steps li:last-child { border-bottom: 1px solid var(--border); }
+      .steps li::before { content: counter(step); display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--bg-elevated); border: 1px solid var(--border-strong); color: var(--text-strong); font-size: 13px; font-weight: 600; margin-top: 1px; }
+      .steps p { margin: 0; }
+      .steps p + p { margin-top: 8px; }
+      .steps pre { margin: 10px 0 0; padding: 10px 14px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); font-size: 14px; color: var(--text-strong); overflow-x: auto; }
+      .steps .note { font-size: 14px; color: var(--text-dim); }
+      .phone .shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+      .phone .shots img { width: 100%; }
+      .phone .shots figcaption { margin-top: 8px; font-size: 13px; color: var(--text-dim); text-align: center; }
+      .phone .more { margin-top: 20px; font-size: 15px; color: var(--text-dim); max-width: 60ch; }
+      @media (max-width: 800px) { .phone .cols { grid-template-columns: 1fr; } .phone .shots { max-width: 520px; } }
+
+      /* footer */
+      footer { border-top: 1px solid var(--border); padding-block: 32px 48px; font-size: 14px; color: var(--text-dim); }
+      footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: baseline; justify-content: space-between; }
+      footer nav { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+      footer a { color: var(--text); }
+      footer p { max-width: 62ch; }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <div class="wrap">
+        <a class="brand" href="./"><img src="assets/icon-192.png" alt="" width="28" height="28" />herdr web ui</a>
+        <nav aria-label="Sections">
+          <a href="#install">Install</a>
+          <a href="#phone">Phone</a>
+          <a href="#compare">Compare</a>
+          <a href="https://github.com/devswha/herdr-web-ui">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <h1>Your herdr agents, in a browser and on your phone.</h1>
+          <p class="lede">Read them as a chat, drop into the live terminal, and answer when they ask. The panes you already run in <a href="https://herdr.dev">herdr</a>, from any screen.</p>
+
+          <div class="install" id="install">
+            <pre class="cmd"><code><span class="prompt" aria-hidden="true">$</span>herdr plugin install devswha/herdr-web-ui<span class="cursor" aria-hidden="true"></span></code><button type="button" class="btn copy" data-copy="herdr plugin install devswha/herdr-web-ui">Copy</button></pre>
+            <p class="after">Then open <code>http://localhost:7317</code>. It needs a running herdr 0.9.0+, Bun 1.4+ and Node 18+, and it starts with herdr from then on. <a href="https://github.com/devswha/herdr-web-ui#quick-start">Run it from a checkout instead</a>, or hand <a href="https://github.com/devswha/herdr-web-ui/blob/main/INSTALL.md">INSTALL.md</a> to a coding agent.</p>
+          </div>
+
+          <div class="demos">
+            <figure>
+              <video src="media/demo-desktop.mp4" poster="media/demo-desktop.jpg" width="1920" height="1200" autoplay muted loop playsinline controls preload="metadata" aria-label="Desktop demo: reading a Claude Code chat with its folded work, answering a Codex approval from the chat, typing into a live terminal, and jumping to a gjc pane from the command palette."></video>
+              <figcaption>Desktop: a Claude Code chat with its work folded, a Codex approval answered from the chat, the live terminal, and the command palette.</figcaption>
+            </figure>
+            <figure>
+              <video src="media/demo-mobile.mp4" poster="media/demo-mobile.jpg" width="1080" height="1920" autoplay muted loop playsinline controls preload="metadata" aria-label="Phone demo: scrolling a chat, opening the session list, approving a Codex command, the terminal with its key bar, and typing a message."></video>
+              <figcaption>Phone: the session list, a Codex approval, the terminal with its key bar.</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="facts" aria-labelledby="facts-title">
+        <div class="wrap">
+          <h2 id="facts-title">Nothing in between</h2>
+          <ul>
+            <li>
+              <h3>herdr owns the sessions</h3>
+              <p>Claude Code, Codex, omp, omo, gjc and the rest keep running in herdr exactly as you start them. There is no wrapper command, no second daemon and no account. This app reads herdr's socket and attaches to its terminals.</p>
+            </li>
+            <li>
+              <h3>One pane, every screen</h3>
+              <p>The pane in your herdr TUI is the same pane in your browser and on your phone, live in all of them at once. Nothing is stopped or handed over, and other Linux and macOS PCs join the sidebar over SSH.</p>
+            </li>
+            <li>
+              <h3>Yours only</h3>
+              <p>It runs on your machine and listens on <code>127.0.0.1</code> by default. It sends nothing anywhere except GitHub, for its own updates, and your browser's push service, for alerts. Updates install in the background and roll back if the new build fails its health check.</p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="looks" aria-labelledby="looks-title">
+        <div class="wrap">
+          <h2 id="looks-title">The chat, the terminal, and the questions in between</h2>
+          <p class="intro">The chat is built from the agent's own transcript, not from screen text. Each turn's commands, edits and progress fold into one block, the todo list stays pinned below, and the real terminal is one tap away for full-screen TUIs and raw keys.</p>
+          <div class="grid">
+            <figure>
+              <img src="assets/desktop-chat.png" width="3024" height="2020" loading="lazy" decoding="async" alt="Chat view of a Claude Code pane: the prompt, a folded &quot;Worked for 2m 36s&quot; block, and a Markdown answer with a code block and a link." />
+              <figcaption><b>Chat.</b> Prompts and Markdown answers with links, code and tables. Copy an answer as Markdown or plain text.</figcaption>
+            </figure>
+            <figure>
+              <img src="assets/desktop-terminal.png" width="3024" height="2020" loading="lazy" decoding="async" alt="Terminal view of a shell pane: git history and a passing bun test run in the live herdr terminal." />
+              <figcaption><b>Terminal.</b> The same pane through <code>herdr terminal attach</code>, with herdr's scrollback, shared with your own TUI.</figcaption>
+            </figure>
+            <figure>
+              <img src="assets/desktop-prompt.png" width="3024" height="2020" loading="lazy" decoding="async" alt="A Codex pane waiting for input: an &quot;Allow command?&quot; card for git push with its three options, answered from the chat." />
+              <figcaption><b>Prompts.</b> Approvals, questions and plan menus become cards. Tap an option, or type its number. The server checks that the menu is still current before it answers.</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="agents" aria-labelledby="agents-title">
+        <div class="wrap">
+          <h2 id="agents-title">Every agent herdr runs</h2>
+          <p class="intro">Every pane shows up with its live status, terminal and alerts. The chat view reads the agent's own session files wherever it knows where they are.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th scope="col">Agent</th><th scope="col">Chat</th><th scope="col">Answer prompts from the chat</th></tr>
+              </thead>
+              <tbody>
+                <tr><th scope="row">Claude Code</th><td>Native transcript, resolved through herdr</td><td>Approvals, questions, plan and menu picks</td></tr>
+                <tr><th scope="row">Codex</th><td>Native rollout, with tool results and commentary and final phases</td><td>Approvals and questions, queued ones included</td></tr>
+                <tr><th scope="row">omp</th><td>Native session file</td><td>Yes</td></tr>
+                <tr><th scope="row">omo</th><td>Native session file, found through the pane's process tree</td><td class="dim">Use the terminal</td></tr>
+                <tr><th scope="row">gjc</th><td>Native session file, from the session directory gjc keeps open</td><td class="dim">Use the terminal</td></tr>
+                <tr><th scope="row">Anything else</th><td>The terminal's text</td><td class="dim">Use the terminal</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="phone" id="phone" aria-labelledby="phone-title">
+        <div class="wrap">
+          <h2 id="phone-title">On your phone</h2>
+          <p class="intro">Serve it over HTTPS to install it and get push alerts. Tailscale is the shortest route: the server stays on <code>127.0.0.1</code> and Tailscale adds an HTTPS address that only devices in your tailnet can open.</p>
+          <div class="cols">
+            <div>
+              <ol class="steps">
+                <li>
+                  <div>
+                    <p>On the PC that runs herdr, publish the app to your tailnet.</p>
+                    <pre><code>tailscale serve --bg --https=443 http://127.0.0.1:7317</code></pre>
+                  </div>
+                </li>
+                <li>
+                  <div>
+                    <p>Open that address on your phone and install the app.</p>
+                    <p class="note">Safari: Share, then Add to Home Screen. Chrome: Install app.</p>
+                  </div>
+                </li>
+                <li>
+                  <div>
+                    <p>Tap the bell to turn on alerts for that device.</p>
+                    <p class="note">You are told when an agent needs you or finishes. iPhone needs iOS 16.4+ and the home-screen app.</p>
+                  </div>
+                </li>
+              </ol>
+              <p class="more">If other people share your tailnet, or you use a LAN address, a public domain or a reverse proxy, set a token first. <a href="https://github.com/devswha/herdr-web-ui#access-and-safety">Access and safety</a> lists what each route needs.</p>
+            </div>
+            <div class="shots">
+              <figure><img src="assets/mobile-chat.png" width="960" height="1868" loading="lazy" decoding="async" alt="Phone chat view of a Claude Code pane." /><figcaption>Chat</figcaption></figure>
+              <figure><img src="assets/mobile-terminal.png" width="960" height="1868" loading="lazy" decoding="async" alt="Phone terminal view with the Esc, Tab, Ctrl, arrow and Ctrl+C key bar." /><figcaption>Terminal and key bar</figcaption></figure>
+              <figure><img src="assets/mobile-sessions.png" width="960" height="1868" loading="lazy" decoding="async" alt="Phone session list with Claude Code, Codex, gjc, omo and shell panes and their live status." /><figcaption>Sessions</figcaption></figure>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="compare" id="compare" aria-labelledby="compare-title">
+        <div class="wrap">
+          <h2 id="compare-title">Compared with other phone clients for herdr</h2>
+          <p class="intro">All four are in the <a href="https://herdr.dev/plugins/">herdr plugin marketplace</a>. Each is described here in the words of its own README and docs, and each does something this app does not.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col"></th>
+                  <th scope="col" class="us">herdr web ui</th>
+                  <th scope="col"><a href="https://github.com/AltanS/collie">collie</a></th>
+                  <th scope="col"><a href="https://github.com/powerfooI/roamgate">roamgate</a></th>
+                  <th scope="col"><a href="https://github.com/dcolinmorgan/herdr-remote">herdr-remote</a></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Runs as</th>
+                  <td class="us">A herdr plugin. herdr builds it, starts it and it updates itself.</td>
+                  <td>Its own bridge, from a curl installer or as a herdr plugin.</td>
+                  <td>Its own server, from a curl installer.</td>
+                  <td>A macOS menu-bar app, plus a Python relay for the phone.</td>
+                </tr>
+                <tr>
+                  <th scope="row">Drives</th>
+                  <td class="us">herdr</td>
+                  <td>herdr, tmux or zellij</td>
+                  <td>herdr</td>
+                  <td>herdr</td>
+                </tr>
+                <tr>
+                  <th scope="row">What you read</th>
+                  <td class="us">The agent's own transcript as a chat, with the work folded per turn and the todo list pinned. The live terminal for everything else.</td>
+                  <td>Pane output, with a dashboard led by what needs your input.</td>
+                  <td>Terminals, agent sessions, files and diffs.</td>
+                  <td>An agent timeline and terminal output.</td>
+                </tr>
+                <tr>
+                  <th scope="row">Answering</th>
+                  <td class="us">Prompt cards checked against the live menu, or the terminal.</td>
+                  <td>Prompts as tappable buttons, quick replies, voice input.</td>
+                  <td class="dim">Not in its docs</td>
+                  <td>One-tap approvals from the phone, the menu bar or Telegram.</td>
+                </tr>
+                <tr>
+                  <th scope="row">Reaching your phone</th>
+                  <td class="us">Your Tailscale, SSH tunnel or HTTPS proxy. Nothing is published for you.</td>
+                  <td>Tailscale serve, or your own ingress.</td>
+                  <td>Its own server on your LAN with a token, native HTTPS, web push.</td>
+                  <td>A free Cloudflare tunnel, and Telegram.</td>
+                </tr>
+                <tr>
+                  <th scope="row">Other machines</th>
+                  <td class="us">Linux and macOS PCs over SSH, added from the sidebar.</td>
+                  <td>Crews: one collie per machine behind one URL.</td>
+                  <td class="dim">Not in its docs</td>
+                  <td>The relay collects several machines.</td>
+                </tr>
+                <tr>
+                  <th scope="row">Also</th>
+                  <td class="us">A viewer for the files agents make, web push, remote-PC bridges kept current with the app.</td>
+                  <td>Six UI languages, device pairing, output search.</td>
+                  <td>A file explorer with diff annotations, and it can install herdr for you.</td>
+                  <td>A daily digest, a TUI, Windows support.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="legend">Read as of September 2026. If you want tmux or zellij, diffs, Telegram or a tunnel out of the box, one of the others is the better fit.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <nav aria-label="Links">
+          <a href="https://github.com/devswha/herdr-web-ui">GitHub</a>
+          <a href="https://github.com/devswha/herdr-web-ui/releases">Releases</a>
+          <a href="https://github.com/devswha/herdr-web-ui/blob/main/CHANGELOG.md">Changelog</a>
+          <a href="https://github.com/devswha/herdr-web-ui#faq">FAQ</a>
+          <a href="https://herdr.dev">herdr</a>
+        </nav>
+        <p>MIT license. An independent plugin for <a href="https://github.com/herdrdev/herdr">herdr</a>, which is a separate project.</p>
+      </div>
+    </footer>
+
+    <script>
+      (() => {
+        const button = document.querySelector(".copy");
+        const idle = button.textContent;
+        let timer;
+        button.addEventListener("click", async () => {
+          const text = button.dataset.copy;
+          try {
+            await navigator.clipboard.writeText(text);
+            button.textContent = "Copied";
+            button.classList.add("is-done");
+            clearTimeout(timer);
+            timer = setTimeout(() => { button.textContent = idle; button.classList.remove("is-done"); }, 1600);
+          } catch {
+            const range = document.createRange();
+            range.selectNodeContents(document.querySelector(".cmd code"));
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
+        });
+        if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          for (const video of document.querySelectorAll("video")) { video.removeAttribute("autoplay"); video.pause(); }
+        }
+      })();
+    </script>
+  </body>
+</html>
