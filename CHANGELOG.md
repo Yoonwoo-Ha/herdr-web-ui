@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.12] - 2026-09-26
+
 ### Added
 - The website has a demo, <https://devswha.github.io/herdr-web-ui/demo/>: the app itself on a
   fictional session, no server. Its five panes, chats and Codex approval are the README media's;
@@ -297,7 +299,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.11...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.12...HEAD
+[0.3.12]: https://github.com/devswha/herdr-web-ui/compare/v0.3.11...v0.3.12
 [0.3.11]: https://github.com/devswha/herdr-web-ui/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/devswha/herdr-web-ui/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/devswha/herdr-web-ui/compare/v0.3.8...v0.3.9
