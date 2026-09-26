@@ -1,12 +1,12 @@
 /*
- * Token gate for TokenGate.tsx: one card centered on the base surface, shown
- * instead of the shell while the server wants a token. Only tokens from the
+ * Token gate for AccessGate.tsx: one card centered on the base surface, shown
+ * instead of the shell while the server wants a pairing code or a token. Only tokens from the
  * styles.css :root block. The card's content column is exactly one sidebar wide
  * (--sidebar-w) so the input and button sit at a width the rest of the UI already
  * uses, and there is no entrance animation: the system only moves on state changes.
  */
 
-.token-gate-screen {
+.access-gate-screen {
   display: grid;
   place-items: center;
   min-height: 100%;
@@ -19,7 +19,7 @@
   background: var(--bg);
 }
 
-.token-gate {
+.access-gate {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -31,14 +31,14 @@
   border-radius: var(--radius-md);
 }
 
-.token-gate-mark {
+.access-gate-mark {
   display: block;
   width: calc(var(--mark-size) * 2);
   height: calc(var(--mark-size) * 2);
   margin-bottom: var(--space-4);
 }
 
-.token-gate-title {
+.access-gate-title {
   margin: 0 0 var(--space-1);
   font-size: var(--fs-lg);
   font-weight: var(--fw-bold);
@@ -47,13 +47,13 @@
   color: var(--text-strong);
 }
 
-.token-gate-copy {
+.access-gate-copy {
   margin: 0 0 var(--space-5);
   font-size: var(--fs-md);
   color: var(--text-dim);
 }
 
-.token-gate-label {
+.access-gate-label {
   margin-bottom: var(--space-1);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
@@ -61,7 +61,7 @@
 }
 
 /* focus is the global --ring rule; the border only changes to name an invalid value */
-.token-gate-input {
+.access-gate-input {
   appearance: none;
   width: 100%;
   height: var(--control-h);
@@ -75,7 +75,7 @@
   transition: border-color var(--dur-fast) var(--ease-out);
 }
 
-.token-gate-input[aria-invalid="true"] {
+.access-gate-input[aria-invalid="true"] {
   border-color: var(--status-blocked);
 }
 
@@ -83,7 +83,7 @@
  * The system's one filled control. Hover and press are the accent mixed with the
  * bright and base surface tokens: no new colors, the hue stays the accent's.
  */
-.token-gate-submit {
+.access-gate-submit {
   margin-top: var(--space-3);
   height: var(--control-h);
   padding: 0 var(--space-4);
@@ -100,22 +100,22 @@
     opacity var(--dur-fast) var(--ease-out);
 }
 
-.token-gate-submit:hover {
+.access-gate-submit:hover {
   background: color-mix(in srgb, var(--accent) 88%, var(--text-strong));
   border-color: color-mix(in srgb, var(--accent) 88%, var(--text-strong));
 }
 
-.token-gate-submit:active {
+.access-gate-submit:active {
   background: color-mix(in srgb, var(--accent) 80%, var(--bg));
   border-color: color-mix(in srgb, var(--accent) 80%, var(--bg));
 }
 
-.token-gate-submit:disabled {
+.access-gate-submit:disabled {
   opacity: 0.6;
   cursor: progress;
 }
 
-.token-gate-error {
+.access-gate-error {
   margin: var(--space-3) 0 0;
   padding: var(--space-2) var(--space-3);
   border: var(--hairline) solid var(--status-blocked);
@@ -128,15 +128,49 @@
 
 /* fingers: the two controls grow to the touch target */
 @media (pointer: coarse) {
-  .token-gate-input,
-  .token-gate-submit {
+  .access-gate-input,
+  .access-gate-submit {
     height: var(--touch-target);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .token-gate-input,
-  .token-gate-submit {
+  .access-gate-input,
+  .access-gate-submit {
     transition: none;
   }
+}
+
+/* the six-digit code: wide, spaced, no autocomplete look */
+.access-gate-input[inputmode="numeric"] {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xl);
+  letter-spacing: 0.25em;
+  text-align: center;
+}
+
+.access-gate-alt {
+  margin-top: var(--space-4);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
+.access-gate-alt summary {
+  cursor: pointer;
+  color: var(--text);
+}
+
+.access-gate-alt .access-gate-label {
+  display: block;
+  margin-top: var(--space-3);
+}
+
+.access-gate-refused {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: var(--hairline) solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  font-size: var(--fs-sm);
+  color: var(--text);
 }

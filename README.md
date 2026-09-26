@@ -185,20 +185,24 @@ More in [remote PCs](docs/remote-pcs.md).
 
 ## Access and safety
 
-Anyone who can reach the server can type into your terminals, so what matters is who can reach it. It listens on `127.0.0.1` by default, which means only this computer.
+Anyone who can reach the server can type into your terminals, so what matters is who gets in. It listens on `127.0.0.1` by default, which means only this computer. From anywhere else, a request gets in in one of three ways:
 
-| How you reach it | Token (`HERDR_WEB_TOKEN`) |
+- **It is you, says Tailscale.** `tailscale serve` states the requesting device's Tailscale login in a header it strips from anything incoming. A login that matches this PC's own gets in; another login is refused. Nothing to set up.
+- **It is a paired device.** **Settings → Devices**, on the PC (or on a device already paired), shows a six-digit code that lives ten minutes and a QR code that carries it. The other device enters it once and keeps its own credential in an HttpOnly cookie; the list shows it, and **Revoke** ends it at its next request.
+- **It holds the token.** `HERDR_WEB_TOKEN`, for scripts and proxies, as a cookie after sign-in or as `Authorization: Bearer <token>`. When a token is set it gates everything, this computer included, as before.
+
+| How you reach it | What gets you in |
 | --- | --- |
-| This computer only (default) | Not needed |
-| SSH tunnel (`ssh -L 7317:127.0.0.1:7317 host`) | Not needed |
-| `tailscale serve`, and every device in the tailnet is yours | Not needed |
-| `tailscale serve` on a tailnet you share with others | Needed, or limit the port with Tailscale ACLs |
-| Your LAN (`HOST=0.0.0.0` or a LAN address) | Needed |
-| A public domain or reverse proxy | Needed, with HTTPS |
+| This computer only (default) | Nothing needed |
+| SSH tunnel (`ssh -L 7317:127.0.0.1:7317 host`) | Nothing needed |
+| `tailscale serve`, your own devices | Nothing needed: your login |
+| `tailscale serve` on a tailnet you share with others | Your devices: your login. Theirs: refused unless you pair them |
+| Your LAN (`HOST=0.0.0.0` or a LAN address) | Pair each device, or set a token |
+| A public domain or reverse proxy | Pair each device, or set a token, with HTTPS. The proxy must send `X-Forwarded-For`. Never `tailscale funnel` it |
 
-The server warns on startup when it listens beyond loopback without a token.
+Until the first device is paired, and with no token set, a LAN or proxied address is open to anyone who reaches it, as it always was: the server warns on startup. Pairing the first device closes it for good; revoking every device does not reopen it. This computer itself stays in whatever happens, so you can never lock yourself out: revoke everything and pair again from `http://localhost:7317`.
 
-With a token set, the API and WebSockets require sign-in. Browsers get an HttpOnly, SameSite=Strict cookie, and scripts can send `Authorization: Bearer <token>`. A TLS proxy should send `x-forwarded-proto: https` so the cookie is marked Secure.
+A TLS proxy should send `x-forwarded-proto: https` so cookies are marked Secure. The pairing code is a one-time secret: five wrong tries spend it.
 
 Nothing is typed without you:
 - Input typed while disconnected waits as a draft for you to send or discard.

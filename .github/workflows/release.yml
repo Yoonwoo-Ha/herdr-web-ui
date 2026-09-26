@@ -30,7 +30,7 @@ jobs:
       - run: |
           git config --global user.email ci@example.invalid
           git config --global user.name CI
-          bun test src/lib server/updater.test.ts server/tailscale.test.ts
+          bun test src/lib server/updater.test.ts server/tailscale.test.ts server/access.test.ts server/devices.test.ts
       - name: Release notes from CHANGELOG.md
         env:
           TAG: ${{ github.ref_name }}

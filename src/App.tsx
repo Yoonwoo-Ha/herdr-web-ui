@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, FolderOpen, Lock, Menu, MessageSquare, PanelLeft, Search, Settings, SquareTerminal, X } from "lucide-react";
 
-import type { AgentStatus, ClientRole, ServerMessage } from "../shared/protocol.ts";
-import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
+import type { AgentStatus, ClientRole, ServerMessage, AccessRefusal, HealthAuth } from "../shared/protocol.ts";
+import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, pairDevice, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
+import { deviceLabel, takePairCode } from "./lib/phone.ts";
 import { displayPaneTitle, paneTitle } from "./components/Sidebar.tsx";
 import { PaneTerminal } from "./components/PaneTerminal.tsx";
-import { TokenGate } from "./components/TokenGate.tsx";
+import { AccessGate } from "./components/AccessGate.tsx";
 import { AgentMark } from "./components/AgentMark.tsx";
 import { NewSessionDialog } from "./components/NewSessionDialog.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
@@ -124,6 +125,17 @@ export function App() {
   // null until the server has said whether it wants a token: the shell, and with it
   // the WebSocket, never mounts before that is known
   const [locked, setLocked] = useState<boolean | null>(null);
+  const [lockReason, setLockReason] = useState<AccessRefusal | null>(null);
+  /** the code a scanned QR brought along (`?pair=CODE`), taken off the address at once */
+  const [pairCode] = useState(() => takePairCode());
+  const [auth, setAuth] = useState<HealthAuth | null>(null);
+  // a device that is in only because nothing is paired yet still pairs from the QR code's address
+  const pairedFromAddress = useRef(false);
+  useEffect(() => {
+    if (locked !== false || pairCode === "" || pairedFromAddress.current || auth?.via === "device") return;
+    pairedFromAddress.current = true;
+    pairDevice(pairCode, deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0)).then(() => loadHealth()).catch(() => { /* the gate, if any, reports it */ });
+  }, [locked, pairCode, auth]); // eslint-disable-line react-hooks/exhaustive-deps
   const updates = useUpdates(locked === false);
   const [selectedPaneId, setSelectedPaneId] = useState<string | null>(() => {
     if (paneFromUrl()) return paneFromUrl();
@@ -157,7 +169,7 @@ export function App() {
   snapshotRef.current = snapshot;
 
   const loadHealth = useCallback(async () => {
-    try { const next = await fetchBridgeHealth(); setLocked(next.auth.required && !next.auth.authenticated); }
+    try { const next = await fetchBridgeHealth(); setLocked(next.auth.required && !next.auth.authenticated); setLockReason(next.auth.reason ?? null); setAuth(next.auth); }
     catch { /* retain the gate while the connection server restarts */ }
     try { const next = await fetchHealth(); setHealth((previous) => sameData(previous, next) ? previous : next); } catch { setHealth(null); }
   }, []);
@@ -479,7 +491,7 @@ export function App() {
       </div>
     );
   }
-  if (locked) return <TokenGate onUnlocked={unlock} />;
+  if (locked) return <AccessGate reason={lockReason} initialCode={pairCode} onUnlocked={unlock} />;
 
   return (
     <MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
@@ -622,7 +634,7 @@ export function App() {
         }}
       /></MachineContext.Provider>
       {machineDialog && <MachineDialog updateRemote={updateRemote} machine={machineDialog === "new" ? undefined : machineDialog} onClose={() => setMachineDialog(null)} onConnected={(id) => { setMachineDialog(null); selectTarget(id, null); void load(); }} />}
-      <SettingsDialog open={settingsOpen} onClose={closeSettings} actions={actions} updates={updates} />
+      <SettingsDialog auth={auth} open={settingsOpen} onClose={closeSettings} actions={actions} updates={updates} />
       {filesOpen && selectedPane && (
         <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} onOpenFile={setViewing} onClose={() => setFilesOpen(false)} />
       )}

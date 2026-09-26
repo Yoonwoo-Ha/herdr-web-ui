@@ -7,8 +7,10 @@ import type { ServerWebSocket } from "bun";
 import type { AgentKind, ClientMessage, ClientRole, HealthAuth, HerdrPane, ServerFeature, ServerMessage } from "../shared/protocol.ts";
 import { paneTitle } from "../shared/notify-policy.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import { handleAuthRequest, isAuthenticated, requiresAuth, unauthorizedJson } from "./auth.ts";
-import { remoteAccess } from "./tailscale.ts";
+import { DEVICE_COOKIE, handleAuthRequest, isAuthenticated, parseCookies, requiresAuth, unauthorizedJson } from "./auth.ts";
+import { decideAccess, isLoopbackAddress } from "./access.ts";
+import { DeviceStore, handleDeviceRequest } from "./devices.ts";
+import { remoteAccess, tailscaleOwner } from "./tailscale.ts";
 import { paneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
 import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
@@ -173,6 +175,8 @@ export function createServer(
     token?: string;
     /** where VAPID keys and push subscriptions persist; tests pass a temp dir */
     stateDir?: string;
+    /** the PC's own Tailscale login, for the identity check; tests set it, otherwise `tailscale status` says */
+    tailscaleOwner?: string | null;
     /** Native Codex store; defaults to CODEX_HOME. Tests use an isolated store. */
     codexHome?: string;
     updates?: UpdateService;
@@ -198,6 +202,10 @@ export function createServer(
   const hostname = options.hostname ?? process.env["HOST"] ?? "127.0.0.1";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
   const token = options.token ?? process.env["HERDR_WEB_TOKEN"] ?? "";
+  /** paired devices (server/devices.ts) and the PC's Tailscale login: the two ways in besides the token and this PC itself */
+  const devices = new DeviceStore(options.stateDir ?? defaultStateDir());
+  const ownerOf = options.tailscaleOwner !== undefined ? () => options.tailscaleOwner ?? null : tailscaleOwner;
+  ownerOf();
 
   /**
    * Runs `task` after everything queued for the pane. While a composer message is in
@@ -527,11 +535,23 @@ export function createServer(
       let { pathname } = url;
       const bridgeAuthorized = isAuthenticated(request, bridgeToken);
       const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === "/api/agents" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/fs/") || pathname === "/ws";
-      const authenticated = isAuthenticated(request, token) || (bridgePath && bridgeAuthorized);
+      const ip = bunServer.requestIP(request);
+      const access = decideAccess({
+        loopback: ip !== null && isLoopbackAddress(ip.address),
+        forwarded: request.headers.has("x-forwarded-for"),
+        funnel: request.headers.has("tailscale-funnel-request"),
+        tailscaleLogin: request.headers.get("tailscale-user-login"),
+        tokenMatched: token !== "" && isAuthenticated(request, token),
+        device: devices.match(parseCookies(request.headers.get("cookie")).get(DEVICE_COOKIE)),
+        owner: ownerOf(),
+        tokenConfigured: token !== "",
+        gated: devices.gated,
+      });
+      const authenticated = access.level === "full" || (bridgePath && bridgeAuthorized);
 
       if (requiresAuth(pathname) && !authenticated) {
         // The WS client never parses a body, so the upgrade refusal stays plain text.
-        return pathname === "/ws" ? new Response("unauthorized", { status: 401 }) : unauthorizedJson();
+        return pathname === "/ws" ? new Response("unauthorized", { status: 401 }) : unauthorizedJson(access.level === "none" ? access.reason : "token_required");
       }
 
       if (pathname === "/api/bridge") {
@@ -557,7 +577,7 @@ export function createServer(
         if (!sameOrigin(request)) return new Response("invalid origin", { status: 403 });
         const machineId = url.searchParams.get("machine_id");
         if (machineId && machineId !== "local") {
-          if (!isAuthenticated(request, token)) return unauthorizedJson();
+          if (access.level === "none") return unauthorizedJson(access.reason);
           if (!machines?.endpoint(machineId)) return jsonResponse({ error: { code: "machine_offline", message: "This PC is disconnected" } }, 503);
           let relay: MachineRelay | undefined;
           try {
@@ -575,6 +595,7 @@ export function createServer(
       }
 
       if (pathname === "/api/auth") return handleAuthRequest(request, token);
+      if (pathname === "/api/devices" || pathname.startsWith("/api/devices/")) return handleDeviceRequest(request, pathname, devices, access);
 
       if (pathname === "/api/updates" || pathname.startsWith("/api/updates/")) {
         return handleUpdateRequest(request, pathname, options.updates);
@@ -590,7 +611,9 @@ export function createServer(
       }
 
       if (pathname === "/api/health") {
-        const auth: HealthAuth = { required: token !== "", authenticated };
+        const auth: HealthAuth = access.level === "full"
+          ? { required: false, authenticated: true, via: access.via, role: access.role }
+          : { required: true, authenticated, ...(authenticated ? {} : { reason: access.reason }) };
         if (url.searchParams.get("scope") === "bridge") return jsonResponse({ ok: true, auth, bridge_protocol: BRIDGE_PROTOCOL });
         try {
           const info = await ping();
@@ -1142,7 +1165,7 @@ if (import.meta.main) {
   console.log(`herdr-web-ui listening on http://${instance.hostname}:${instance.port}`);
   if ((process.env["HERDR_WEB_TOKEN"] ?? "") === "" && !LOOPBACK_HOSTNAMES.has(instance.hostname)) {
     console.error(
-      `WARNING: listening on ${instance.hostname} without HERDR_WEB_TOKEN - anyone who can reach this address can type into your terminals; set HERDR_WEB_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
+      `WARNING: listening on ${instance.hostname} without HERDR_WEB_TOKEN - until a device is paired (Settings → Devices, on this PC) anyone who can reach this address can type into your terminals; pair your devices, set HERDR_WEB_TOKEN=<token>, or keep HOST=127.0.0.1 and reach it through Tailscale or an SSH tunnel.`,
     );
   }
 }

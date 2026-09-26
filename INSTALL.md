@@ -118,11 +118,23 @@ Tell the user to open <http://127.0.0.1:7317>.
 
 ## 5. Optional: phone or remote access
 
-**Ask** the user first. This exposes their terminals over the network. Also ask who else can reach
-the address: with Tailscale, whether every device in their tailnet is their own. If yes, skip step 1
-(no token) and go to step 2. Otherwise, and for any LAN or public address, create the token.
+**Ask** the user first. This exposes their terminals over the network. Then serve it over HTTPS.
+Without HTTPS, a phone can view the app but cannot install it or receive alerts. With Tailscale:
 
-1. Create a token and store it without printing it. For the plugin:
+```bash
+tailscale serve --bg --https=443 http://127.0.0.1:7317
+```
+
+**Settings → Phone** in the app shows this step's state: the address that already works as a QR
+code, or the exact command still to run. Who gets in:
+
+- The user's own Tailscale devices get in as the user: `tailscale serve` states the login, and the
+  server compares it with this PC's. Nothing to configure.
+- Any other device (someone else's, or a LAN or public address) is paired: **Settings → Devices**
+  on the PC shows a six-digit code and a QR code; the device enters it once. Do this with the user
+  present; never read a code aloud into a log.
+- A token (`HERDR_WEB_TOKEN`) is for scripts and proxies. Only when the user asks for one, create it
+  without printing it. For the plugin:
 
    ```bash
    CONFIG_ENV="$(herdr plugin config-dir devswha.herdr-web-ui)/env"
@@ -132,20 +144,10 @@ the address: with Tailscale, whether every device in their tailnet is their own.
 
    For a source install, write the same line to a file only the user can read (for example
    `~/.config/herdr-web-ui/token.env`, mode `600`) and start with
-   `env $(cat ~/.config/herdr-web-ui/token.env) bun run start`.
-   Restart herdr web ui either way.
-2. Serve it over HTTPS. Without HTTPS, a phone can view the app but cannot install it or receive
-   alerts. With Tailscale:
+   `env $(cat ~/.config/herdr-web-ui/token.env) bun run start`. Restart herdr web ui either way.
 
-   ```bash
-   tailscale serve --bg --https=443 http://127.0.0.1:7317
-   ```
-
-3. With a token, verify that `curl -s http://127.0.0.1:7317/api/health` now reports
-   `"auth":{"required":true,...}`.
-4. Tell the user the HTTPS address, and where the token is stored if there is one. They enter the
-   token once per browser address; keep to one address (the HTTPS one), since each address keeps
-   its own sign-in.
+Tell the user the HTTPS address. Until a device is paired, and with no token set, a LAN or proxied
+address is open to anyone who reaches it, as before; the server warns on startup.
 
 Other PCs over SSH are added from the web UI (**Add PC**), not by an install step here.
 

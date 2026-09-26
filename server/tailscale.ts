@@ -20,7 +20,7 @@ export interface TailscaleOutput {
   serve: string | null;
 }
 
-interface StatusJson { BackendState?: string; Self?: { DNSName?: string } }
+interface StatusJson { BackendState?: string; Self?: { DNSName?: string; UserID?: number | string }; User?: Record<string, { LoginName?: string }> }
 interface ServeJson {
   TCP?: Record<string, { HTTPS?: boolean; HTTP?: boolean }>;
   /** "host:port" -> handlers by path */
@@ -100,4 +100,33 @@ export async function readTailscale(binary: string | null = tailscaleBinary()): 
 
 export async function remoteAccess(port: number): Promise<RemoteAccess> {
   return { port, tailscale: parseTailscale(await readTailscale(), port) };
+}
+
+/** The login this PC's Tailscale node belongs to, from `tailscale status --json`; null when it does not say. */
+export function parseTailscaleOwner(status: string | null): string | null {
+  const parsed = parseJson<StatusJson>(status);
+  const id = parsed?.Self?.UserID;
+  if (id === undefined || id === null) return null;
+  return parsed?.User?.[String(id)]?.LoginName || null;
+}
+
+const OWNER_TTL_MS = 5 * 60_000;
+let ownerCache: { login: string | null; at: number } | null = null;
+let ownerRefresh: Promise<void> | null = null;
+
+/**
+ * The PC's own Tailscale login, cached five minutes. A stale value is answered at once and
+ * refreshed in the background, so a request never waits on the tailscale CLI; the first
+ * lookup is what `createServer` starts, so the answer is usually there before any request.
+ */
+export function tailscaleOwner(): string | null {
+  const now = Date.now();
+  if ((ownerCache === null || now - ownerCache.at >= OWNER_TTL_MS) && ownerRefresh === null) {
+    ownerRefresh = (async () => {
+      const binary = tailscaleBinary();
+      const status = binary === null ? null : await run(binary, ["status", "--json"]);
+      ownerCache = { login: parseTailscaleOwner(status), at: Date.now() };
+    })().finally(() => { ownerRefresh = null; });
+  }
+  return ownerCache?.login ?? null;
 }
