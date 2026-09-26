@@ -43,9 +43,10 @@ The website takes the same two uploads from the README, so a new recording needs
 
 <https://devswha.github.io/herdr-web-ui/> is `site/index.html`, a static page. `bun run build:site`
 assembles it into `_site/` with the icons, social preview and screenshots it references, the two demo
-videos (the local `docs/screenshots/*.mp4` when present, otherwise the README's uploads) and, when
-ffmpeg is installed, a poster frame for each video. `.github/workflows/pages.yml` runs the same build
-and deploys it to GitHub Pages on every push to `main` that touches the site or its sources.
+videos (the local `docs/screenshots/*.mp4` when present, otherwise the README's uploads) and, with
+ffmpeg, a poster frame for each video and smaller stills; without ffmpeg the page has no posters.
+`.github/workflows/pages.yml` installs ffmpeg, runs the same build and deploys it to GitHub Pages on
+every push to `main` that touches the site or its sources.
 
 ## Releasing
 
