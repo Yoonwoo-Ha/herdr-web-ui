@@ -1,6 +1,6 @@
 id = "devswha.herdr-web-ui"
 name = "herdr web ui"
-version = "0.3.13"
+version = "0.3.14"
 min_herdr_version = "0.9.0"
 description = "Browser and phone client for herdr: chat and live terminal for every agent pane, remote PCs over SSH, web push alerts"
 platforms = ["linux", "macos"]

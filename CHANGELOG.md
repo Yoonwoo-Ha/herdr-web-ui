@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.14] - 2026-09-26
+
 ### Added
 - **Who gets in, without a token.** From anywhere but this PC, a request now gets in as the PC's
   own Tailscale login (which `tailscale serve` states in a header nobody else can set), as a
@@ -318,7 +320,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.13...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.14...HEAD
+[0.3.14]: https://github.com/devswha/herdr-web-ui/compare/v0.3.13...v0.3.14
 [0.3.13]: https://github.com/devswha/herdr-web-ui/compare/v0.3.12...v0.3.13
 [0.3.12]: https://github.com/devswha/herdr-web-ui/compare/v0.3.11...v0.3.12
 [0.3.11]: https://github.com/devswha/herdr-web-ui/compare/v0.3.10...v0.3.11
