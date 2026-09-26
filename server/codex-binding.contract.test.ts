@@ -16,12 +16,14 @@ const threads = {
   matched: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc02",
   other: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc03",
   fresh: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc04",
+  hinted: "01a0c7a1-56d9-7e20-9f08-f7a2d973bc05",
 };
 const answers = {
   resumed: "The resumed thread answers from its own rollout, found by the id on the command line without any screen match.",
   matched: "The matched thread was recognised on screen once, and stays bound while tool output scrolls its answer away.",
   other: "Another pane in the same repository started this thread later, and it is that pane's own conversation entirely.",
   fresh: "A third Codex pane started this fresh thread in the repository, and only the pane that typed its question owns it.",
+  hinted: "Only herdr names this thread for its pane, and nothing on that pane's screen or in any other pane contradicts it.",
 };
 const workspaces: string[] = [];
 let server: ReturnType<typeof createServer>;
@@ -92,6 +94,9 @@ const floodedAway = async (paneId: string, answer: string): Promise<void> => {
   }
   throw new Error(`the answer is still on screen in ${paneId}`);
 };
+/** What Codex's SessionStart hook tells herdr: the pane (from the hook's environment) runs this thread. */
+const reportThread = (paneId: string, thread: string) =>
+  herdrRpc("pane.report_agent_session", { pane_id: paneId, source: "herdr:codex", agent: "codex", seq: Date.now(), agent_session_id: thread });
 const lastAnswer = (conversation: ConversationResponse) =>
   conversation.turns.at(-1)?.parts.map((part) => part.kind === "text" ? part.text : "").join("") ?? null;
 
@@ -231,4 +236,32 @@ it("claims nothing for a pane whose screen matches this pane's thread as well, n
   } finally {
     remove();
   }
+}, 40_000);
+
+it("takes the thread herdr has for a Codex pane as a hint: the shared daemon reports every TUI's thread to the pane that started it", async () => {
+  const codex = join(root, "bin", "codex");
+  const remove = newerThread("cli", threads.other, rollout("other"), "question for other");
+  try {
+    // the daemon's pane shows its own thread; a TUI resumed later reported its thread there
+    const daemon = await pane("daemon", `${codex} --say other`);
+    const resumed = await pane("resumer", `${codex} resume ${threads.resumed}`);
+    await onScreen(daemon, answers.other);
+    await reportThread(daemon, threads.resumed);
+    expect((await herdrRpc<{ agent: { agent_session?: { value?: string } } }>("agent.get", { target: daemon })).agent.agent_session?.value).toBe(threads.resumed);
+    expect(lastAnswer(await read(daemon))).toBe(answers.other);
+    expect(lastAnswer(await read(resumed))).toBe(answers.resumed);
+    // with nothing on screen, the thread another pane was resumed on is not this pane's
+    const silent = await pane("silent", codex);
+    await reportThread(silent, threads.resumed);
+    expect((await read(silent)).source).toBe("scrollback");
+  } finally {
+    remove();
+  }
+  // and a thread nothing else owns is still read from the id alone, before any answer shows
+  const db = new Database(join(codexHome, "state_5.sqlite"));
+  db.query("INSERT INTO threads VALUES (?, ?, ?, 0, NULL, 1, 1, 'cli', ?)").run(threads.hinted, rollout("hinted"), root, "question for hinted");
+  db.close();
+  const alone = await pane("hinted", codex);
+  await reportThread(alone, threads.hinted);
+  expect(lastAnswer(await read(alone))).toBe(answers.hinted);
 }, 40_000);

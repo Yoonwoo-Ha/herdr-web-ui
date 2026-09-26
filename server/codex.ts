@@ -577,9 +577,29 @@ async function claimedByOtherPanes(paneId: string, cwd: string, threads: string[
   return claimed;
 }
 
+/** Whether another Codex pane in this cwd was started as `codex resume <thread>`. */
+async function resumedElsewhere(paneId: string, cwd: string, thread: string, sessionPanes?: HerdrPane[]): Promise<boolean> {
+  const panes = (sessionPanes ?? (await sessionSnapshot()).panes)
+    .filter((pane) => pane.pane_id !== paneId && pane.cwd === cwd && (pane.agent ?? pane.agent_session?.agent) === "codex");
+  for (const pane of panes) {
+    try {
+      if (resumedThread((await codexProcessesOf(pane.pane_id)).list.map((process) => process.argv ?? [])) === thread) return true;
+    } catch { /* a pane closed meanwhile */ }
+  }
+  return false;
+}
+
 /**
  * The rollout a pane's Codex writes, or null when nothing tells. `panes`: the session's
  * panes, when the caller has them (saves a snapshot, and closed panes' bindings go).
+ *
+ * The thread id herdr has for a Codex pane is a hint, not proof: Codex's SessionStart
+ * hook reports it, and since Codex 0.157 that hook runs in the app-server daemon every
+ * Codex TUI shares. The daemon keeps the environment of the TUI that started it, so each
+ * TUI's thread is reported to that first pane (live-verified 2026-09-26 with Codex
+ * 0.157.1: a pane resumed on thread A left the daemon's own pane holding A). What
+ * shows on screen decides first; the id is used only when nothing does and no other
+ * pane owns that thread.
  */
 export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[]): Promise<string | null> {
   if (panes !== undefined) {
@@ -632,11 +652,15 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   const bound = boundRollouts.get(paneId);
   const boundHere = bound !== undefined && bound.processes === processes && processes !== "" ? bound : undefined;
   let boundNewer: string[] = [];
+  /** the rollout of the thread herdr has for this pane */
+  let reported: string | null = null;
   try {
     db = new Database(join(home, "state_5.sqlite"), { readonly: true, create: false });
     if (session?.value && UUID.test(session.value)) {
-      const row = db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ?").get(session.value);
-      return row ? codexRolloutPath(row.rollout_path, home) : null;
+      const first = db.query("SELECT 1 FROM pragma_table_info('threads') WHERE name = 'first_user_message'").get() !== null ? ", first_user_message" : "";
+      const row = db.query<{ rollout_path: string; first_user_message?: string | null }, [string]>(`SELECT rollout_path${first} FROM threads WHERE id = ?`).get(session.value);
+      reported = row ? codexRolloutPath(row.rollout_path, home) : null;
+      if (reported !== null && typeof row?.first_user_message === "string") firsts.set(reported, row.first_user_message);
     }
     if (resumed !== null) {
       const row = db.query<{ rollout_path: string }, [string]>("SELECT rollout_path FROM threads WHERE id = ?").get(resumed);
@@ -659,7 +683,7 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
       // a burst of `codex exec` runs must not push the pane's own thread out of the 32
       `SELECT rollout_path FROM threads WHERE cwd = ? AND archived = 0 AND agent_role IS NULL${interactive(db)} ORDER BY updated_at DESC LIMIT 32`,
     ).all(cwd);
-    paths = [...new Set([...paths, ...rows.flatMap((row) => {
+    paths = [...new Set([...paths, ...(reported !== null ? [reported] : []), ...rows.flatMap((row) => {
       const path = codexRolloutPath(row.rollout_path, home);
       return path ? [path] : [];
     })])];
@@ -681,13 +705,16 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   // rollout it was last matched to, while no thread begun since in this cwd leaves it
   // unsure: one another Codex pane here shows is that pane's. The binding is kept even
   // when unsure, so it holds again once that thread turns out to be another pane's.
-  // Failing that, the thread it was resumed on, under the same rule.
-  const unsure = [...new Set([...boundNewer, ...(resumedPath !== null ? resumedNewer : [])])];
+  // Failing that, the thread herdr has for this pane, unless another pane shows it, is
+  // bound to it, or was resumed on it. Failing that, the thread it was resumed on, under
+  // the same rule as the binding.
+  const unsure = [...new Set([...boundNewer, ...(resumedPath !== null ? resumedNewer : []), ...(reported !== null ? [reported] : [])])];
   if (unsure.length > 0) {
     const own = [boundHere?.path, resumedPath].filter((path): path is string => typeof path === "string");
     const claimed = await claimedByOtherPanes(paneId, cwd, unsure, own, firsts, home, panes);
     boundNewer = theirs(boundNewer, paneId, claimed);
     resumedNewer = theirs(resumedNewer, paneId, claimed);
+    if (reported !== null && (theirs([reported], paneId, claimed).length === 0 || await resumedElsewhere(paneId, cwd, session!.value!, panes))) reported = null;
   }
   if (boundHere !== undefined && boundNewer.length === 0 && codexRolloutPath(boundHere.path, home) !== null) {
     // a pane in use stays among the kept ones
@@ -695,5 +722,6 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     boundRollouts.set(paneId, boundHere);
     return boundHere.path;
   }
+  if (reported !== null) return reported;
   return resumedNewer.length === 0 ? resumedPath : null;
 }

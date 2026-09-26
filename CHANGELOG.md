@@ -7,6 +7,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- With two or more Codex panes, one pane's chat could show another pane's conversation. Since
+  Codex 0.157 every Codex TUI shares one app-server daemon, and that daemon reports each TUI's
+  thread to herdr as the thread of the pane that started it. That report is now only a fallback:
+  what the pane shows on screen decides, and a thread another pane shows, is bound to, or was
+  resumed on is never taken for it.
+
 ## [0.3.12] - 2026-09-26
 
 ### Added
