@@ -128,7 +128,9 @@ export async function stage() {
   }
   await Bun.sleep(800);
   for (const p of panes) {
-    await herdrRpc("pane.send_text", { pane_id: p.pane, text: `PS1='\\[\\e[38;5;214m\\]${p.label}\\[\\e[0m\\] \\$ '; printf '\\033]0;${p.title}\\007'; clear\n` });
+    await herdrRpc("pane.send_text", { pane_id: p.pane, text: `PS1='\\[\\e[38;5;214m\\]${p.label}\\[\\e[0m\\] \\$ '; clear\n` });
+    // the pane's label is its title everywhere, whatever the program in it sets
+    await herdrRpc("pane.rename", { pane_id: p.pane, label: p.title });
     if (p.agent) await herdrRpc("pane.report_agent", { pane_id: p.pane, source: "manual", agent: p.agent, state: p.state ?? "idle" });
   }
   // the resident workspace test-herdr keeps must not show

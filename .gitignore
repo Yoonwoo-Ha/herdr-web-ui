@@ -8,3 +8,6 @@ evidence/
 .herdr-web-ui/
 
 remote-bundles/
+
+# README demo videos: uploaded to GitHub, not committed (docs/development.md)
+docs/screenshots/*.mp4
