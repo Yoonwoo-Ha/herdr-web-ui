@@ -46,6 +46,8 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  GET    /api/health                    -> { ok: true, herdr: { version, protocol }, auth: HealthAuth,
  *                                          web_ui: { boot_id: string | null, revision: string | null } }
  *  GET    /api/session                   -> { snapshot: SessionSnapshot }
+ *  GET    /api/access                    -> RemoteAccess (how a phone can reach this server: what
+ *         Tailscale on this PC already serves, or the command to run), no-store
  *  GET    /api/updates                   -> UpdateStatus (shared/update.ts), no-store
  *  POST   /api/updates/check             -> 202 { accepted: true }
  *  POST   /api/updates/install           -> 202 { accepted: true }
@@ -97,6 +99,27 @@ export interface ApiError {
 export interface HealthAuth {
   readonly required: boolean;
   readonly authenticated: boolean;
+}
+
+/** GET /api/access: how a phone can reach this server, as far as the server can tell (Settings → Phone). */
+export interface RemoteAccess {
+  /** the port this server listens on; the tailscale command names it */
+  readonly port: number;
+  readonly tailscale: TailscaleAccess;
+}
+
+/** Read from `tailscale status --json` and `tailscale serve status --json`, never by changing anything. */
+export interface TailscaleAccess {
+  /** missing: no tailscale CLI on this PC; stopped: the CLI is there but the daemon is not running or not logged in */
+  readonly state: "missing" | "stopped" | "running";
+  /** this PC's MagicDNS name, without the trailing dot */
+  readonly dns_name: string | null;
+  /** the HTTPS address Tailscale already proxies to this server, when there is one */
+  readonly serving_url: string | null;
+  /** otherwise, the command that publishes it on the lowest free of the usual HTTPS ports ... */
+  readonly serve_command: string | null;
+  /** ... and the address that command gives, when the DNS name is known */
+  readonly serve_url: string | null;
 }
 
 /** GET /api/push: base64url VAPID public key, the `applicationServerKey` a browser subscribes with. */
