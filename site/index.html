@@ -149,6 +149,8 @@
         .cmd { align-items: flex-start; }
         .cmd code { white-space: pre-wrap; overflow-wrap: anywhere; }
       }
+      .try { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 14px; font-size: 15px; color: var(--text-dim); }
+      .btn-try { border-color: var(--border-strong); color: var(--accent); }
       .after { margin-top: 12px; font-size: 15px; color: var(--text-dim); }
       .after code { color: var(--text); }
 
@@ -243,6 +245,7 @@
 
           <div class="install" id="install">
             <pre class="cmd"><code><span class="prompt" aria-hidden="true">$</span>herdr plugin install devswha/herdr-web-ui<span class="cursor" aria-hidden="true"></span></code><button type="button" class="btn copy" data-copy="herdr plugin install devswha/herdr-web-ui">Copy</button></pre>
+            <p class="try"><a class="btn btn-try" href="demo/">Try it in your browser first</a><span>The app on a fictional session, no install. Nothing in it is live.</span></p>
             <p class="after">Then open <code>http://localhost:7317</code>. It needs a running herdr 0.9.0+, Bun 1.4+ and Node 18+, and it starts with herdr from then on. <a href="https://github.com/devswha/herdr-web-ui#quick-start">Run it from a checkout instead</a>, or hand <a href="https://github.com/devswha/herdr-web-ui/blob/main/INSTALL.md">INSTALL.md</a> to a coding agent.</p>
           </div>
 

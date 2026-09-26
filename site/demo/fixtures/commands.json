@@ -1,0 +1,94 @@
+{
+  "commands": [
+    {
+      "name": "clear",
+      "description": "Clear the conversation",
+      "source": "builtin"
+    },
+    {
+      "name": "compact",
+      "description": "Compact conversation context",
+      "source": "builtin"
+    },
+    {
+      "name": "config",
+      "description": "Open configuration",
+      "source": "builtin"
+    },
+    {
+      "name": "cost",
+      "description": "Show token usage and cost",
+      "source": "builtin"
+    },
+    {
+      "name": "doctor",
+      "description": "Check the installation",
+      "source": "builtin"
+    },
+    {
+      "name": "help",
+      "description": "Show available commands",
+      "source": "builtin"
+    },
+    {
+      "name": "init",
+      "description": "Initialize project instructions",
+      "source": "builtin"
+    },
+    {
+      "name": "login",
+      "description": "Sign in",
+      "source": "builtin"
+    },
+    {
+      "name": "logout",
+      "description": "Sign out",
+      "source": "builtin"
+    },
+    {
+      "name": "memory",
+      "description": "Edit agent memory",
+      "source": "builtin"
+    },
+    {
+      "name": "model",
+      "description": "Choose a model",
+      "source": "builtin"
+    },
+    {
+      "name": "permissions",
+      "description": "Manage tool permissions",
+      "source": "builtin"
+    },
+    {
+      "name": "pr-comments",
+      "description": "Fetch pull request comments",
+      "source": "builtin"
+    },
+    {
+      "name": "release-notes",
+      "description": "Show release notes",
+      "source": "builtin"
+    },
+    {
+      "name": "review",
+      "description": "Review changes",
+      "source": "builtin"
+    },
+    {
+      "name": "status",
+      "description": "Show session status",
+      "source": "builtin"
+    },
+    {
+      "name": "terminal-setup",
+      "description": "Configure terminal integration",
+      "source": "builtin"
+    },
+    {
+      "name": "vim",
+      "description": "Toggle Vim mode",
+      "source": "builtin"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>herdr web ui demo</title>
+    <meta name="description" content="herdr web ui running in your browser on a fictional session: read the chats, answer the Codex approval, type into the terminal. Nothing here is live." />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="../favicon.ico" sizes="32x32" />
+    <link rel="icon" type="image/png" href="../favicon.png" sizes="64x64" />
+    <meta name="theme-color" content="#12100e" />
+    <style>
+      :root { color-scheme: dark; --bg: #12100e; --panel: #181613; --border: #2d2924; --text: #d8d0c3; --dim: #9b9183; --strong: #f2ebdf; --accent: #f0a830; }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body { display: flex; flex-direction: column; height: 100dvh; background: var(--bg); color: var(--text); font: 14px/1.4 "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      .bar { display: flex; align-items: center; gap: 16px; padding: 0 16px; min-height: 40px; background: var(--panel); border-bottom: 1px solid var(--border); border-top: 3px solid var(--accent); flex: 0 0 auto; }
+      .bar b { color: var(--strong); font-weight: 600; }
+      .bar span { color: var(--dim); }
+      .bar nav { margin-left: auto; display: flex; gap: 16px; white-space: nowrap; }
+      .bar a { color: var(--accent); text-decoration: none; }
+      .bar a:hover { text-decoration: underline; text-underline-offset: 0.15em; }
+      iframe { flex: 1 1 auto; width: 100%; border: 0; background: var(--bg); }
+      @media (max-width: 560px) { .bar span { display: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="bar" role="banner">
+      <b>Demo</b>
+      <span>A fictional session with made-up agents. Nothing here is live, and nothing you type reaches a machine.</span>
+      <nav aria-label="Demo links">
+        <a href="../#install">Install it for real</a>
+        <a href="https://github.com/devswha/herdr-web-ui">GitHub</a>
+      </nav>
+    </div>
+    <iframe src="app/" title="herdr web ui, running on the demo session" allow="clipboard-write; fullscreen"></iframe>
+  </body>
+</html>

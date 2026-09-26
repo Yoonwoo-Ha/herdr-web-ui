@@ -1,0 +1,408 @@
+{
+  "machines": [
+    {
+      "id": "local",
+      "name": "workstation",
+      "kind": "local",
+      "enabled": true,
+      "state": "connected",
+      "error": null,
+      "snapshot": {
+        "version": "0.9.0",
+        "protocol": 22,
+        "focused_workspace_id": "w1C",
+        "focused_tab_id": "w1C:t1",
+        "focused_pane_id": "w1C:p1",
+        "workspaces": [
+          {
+            "workspace_id": "w1C",
+            "number": 1,
+            "label": "checkout-api",
+            "focused": true,
+            "pane_count": 1,
+            "tab_count": 1,
+            "active_tab_id": "w1C:t1",
+            "agent_status": "working"
+          },
+          {
+            "workspace_id": "w1D",
+            "number": 2,
+            "label": "web-dashboard",
+            "focused": false,
+            "pane_count": 1,
+            "tab_count": 1,
+            "active_tab_id": "w1D:t1",
+            "agent_status": "blocked"
+          },
+          {
+            "workspace_id": "w1E",
+            "number": 3,
+            "label": "infra",
+            "focused": false,
+            "pane_count": 1,
+            "tab_count": 1,
+            "active_tab_id": "w1E:t1",
+            "agent_status": "idle"
+          },
+          {
+            "workspace_id": "w1F",
+            "number": 4,
+            "label": "docs-site",
+            "focused": false,
+            "pane_count": 1,
+            "tab_count": 1,
+            "active_tab_id": "w1F:t1",
+            "agent_status": "idle"
+          },
+          {
+            "workspace_id": "w1G",
+            "number": 5,
+            "label": "release",
+            "focused": false,
+            "pane_count": 1,
+            "tab_count": 1,
+            "active_tab_id": "w1G:t1",
+            "agent_status": "unknown"
+          }
+        ],
+        "tabs": [
+          {
+            "tab_id": "w1C:t1",
+            "workspace_id": "w1C",
+            "number": 1,
+            "label": "1",
+            "focused": true,
+            "pane_count": 1,
+            "agent_status": "working"
+          },
+          {
+            "tab_id": "w1D:t1",
+            "workspace_id": "w1D",
+            "number": 1,
+            "label": "1",
+            "focused": false,
+            "pane_count": 1,
+            "agent_status": "blocked"
+          },
+          {
+            "tab_id": "w1E:t1",
+            "workspace_id": "w1E",
+            "number": 1,
+            "label": "1",
+            "focused": false,
+            "pane_count": 1,
+            "agent_status": "idle"
+          },
+          {
+            "tab_id": "w1F:t1",
+            "workspace_id": "w1F",
+            "number": 1,
+            "label": "1",
+            "focused": false,
+            "pane_count": 1,
+            "agent_status": "idle"
+          },
+          {
+            "tab_id": "w1G:t1",
+            "workspace_id": "w1G",
+            "number": 1,
+            "label": "1",
+            "focused": false,
+            "pane_count": 1,
+            "agent_status": "unknown"
+          }
+        ],
+        "panes": [
+          {
+            "pane_id": "w1C:p1",
+            "terminal_id": "term_65c5f082009162c",
+            "workspace_id": "w1C",
+            "tab_id": "w1C:t1",
+            "focused": true,
+            "cwd": "/tmp/herdr-demo/checkout-api",
+            "foreground_cwd": "/tmp/herdr-demo/checkout-api",
+            "label": "Idempotent payments",
+            "agent": "claude",
+            "terminal_title": "exec env -i HOME=/tmp/herdr-demo/checkout-api TERM=xterm-256color PATH=$PATH ",
+            "terminal_title_stripped": "exec env -i HOME=/tmp/herdr-demo/checkout-api TERM=xterm-256color PATH=$PATH",
+            "agent_status": "working",
+            "scroll": {
+              "offset_from_bottom": 0,
+              "max_offset_from_bottom": 0,
+              "viewport_rows": 40
+            },
+            "revision": 2
+          },
+          {
+            "pane_id": "w1D:p1",
+            "terminal_id": "term_65c5f082012c52d",
+            "workspace_id": "w1D",
+            "tab_id": "w1D:t1",
+            "focused": false,
+            "cwd": "/tmp/herdr-demo/web-dashboard",
+            "foreground_cwd": "/tmp/herdr-demo/web-dashboard",
+            "label": "Guard the export button",
+            "agent": "codex",
+            "terminal_title": "exec env -i HOME=/tmp/herdr-demo/web-dashboard TERM=xterm-256color PATH=$PATH",
+            "terminal_title_stripped": "exec env -i HOME=/tmp/herdr-demo/web-dashboard TERM=xterm-256color PATH=$PATH",
+            "agent_status": "blocked",
+            "scroll": {
+              "offset_from_bottom": 0,
+              "max_offset_from_bottom": 0,
+              "viewport_rows": 40
+            },
+            "revision": 2
+          },
+          {
+            "pane_id": "w1E:p1",
+            "terminal_id": "term_65c5f08201c362e",
+            "workspace_id": "w1E",
+            "tab_id": "w1E:t1",
+            "focused": false,
+            "cwd": "/tmp/herdr-demo/infra",
+            "foreground_cwd": "/tmp/herdr-demo/infra",
+            "label": "Why did the backup fail?",
+            "agent": "gjc",
+            "terminal_title": "exec env -i HOME=/tmp/herdr-demo/infra TERM=xterm-256color PATH=$PATH bash  ",
+            "terminal_title_stripped": "exec env -i HOME=/tmp/herdr-demo/infra TERM=xterm-256color PATH=$PATH bash",
+            "agent_status": "idle",
+            "scroll": {
+              "offset_from_bottom": 0,
+              "max_offset_from_bottom": 0,
+              "viewport_rows": 40
+            },
+            "revision": 2
+          },
+          {
+            "pane_id": "w1F:p1",
+            "terminal_id": "term_65c5f082025a12f",
+            "workspace_id": "w1F",
+            "tab_id": "w1F:t1",
+            "focused": false,
+            "cwd": "/tmp/herdr-demo/docs-site",
+            "foreground_cwd": "/tmp/herdr-demo/docs-site",
+            "label": "Proofread the guide",
+            "agent": "omo",
+            "terminal_title": "exec env -i HOME=/tmp/herdr-demo/docs-site TERM=xterm-256color PATH=$PATH bas",
+            "terminal_title_stripped": "exec env -i HOME=/tmp/herdr-demo/docs-site TERM=xterm-256color PATH=$PATH bas",
+            "agent_status": "idle",
+            "scroll": {
+              "offset_from_bottom": 0,
+              "max_offset_from_bottom": 0,
+              "viewport_rows": 40
+            },
+            "revision": 2
+          },
+          {
+            "pane_id": "w1G:p1",
+            "terminal_id": "term_65c5f082580d930",
+            "workspace_id": "w1G",
+            "tab_id": "w1G:t1",
+            "focused": false,
+            "cwd": "/tmp/herdr-demo/release",
+            "foreground_cwd": "/tmp/herdr-demo/release",
+            "label": "Tag v1.4.0",
+            "terminal_title": "demo@workstation:/tmp/herdr-demo/release",
+            "terminal_title_stripped": "demo@workstation:/tmp/herdr-demo/release",
+            "agent_status": "unknown",
+            "scroll": {
+              "offset_from_bottom": 0,
+              "max_offset_from_bottom": 0,
+              "viewport_rows": 40
+            },
+            "revision": 1
+          }
+        ],
+        "layouts": [
+          {
+            "workspace_id": "w1C",
+            "tab_id": "w1C:t1",
+            "zoomed": false,
+            "area": {
+              "x": 0,
+              "y": 0,
+              "width": 120,
+              "height": 40
+            },
+            "focused_pane_id": "w1C:p1",
+            "panes": [
+              {
+                "pane_id": "w1C:p1",
+                "focused": true,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 120,
+                  "height": 40
+                }
+              }
+            ],
+            "splits": []
+          },
+          {
+            "workspace_id": "w1D",
+            "tab_id": "w1D:t1",
+            "zoomed": false,
+            "area": {
+              "x": 0,
+              "y": 0,
+              "width": 120,
+              "height": 40
+            },
+            "focused_pane_id": "w1D:p1",
+            "panes": [
+              {
+                "pane_id": "w1D:p1",
+                "focused": true,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 120,
+                  "height": 40
+                }
+              }
+            ],
+            "splits": []
+          },
+          {
+            "workspace_id": "w1E",
+            "tab_id": "w1E:t1",
+            "zoomed": false,
+            "area": {
+              "x": 0,
+              "y": 0,
+              "width": 120,
+              "height": 40
+            },
+            "focused_pane_id": "w1E:p1",
+            "panes": [
+              {
+                "pane_id": "w1E:p1",
+                "focused": true,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 120,
+                  "height": 40
+                }
+              }
+            ],
+            "splits": []
+          },
+          {
+            "workspace_id": "w1F",
+            "tab_id": "w1F:t1",
+            "zoomed": false,
+            "area": {
+              "x": 0,
+              "y": 0,
+              "width": 120,
+              "height": 40
+            },
+            "focused_pane_id": "w1F:p1",
+            "panes": [
+              {
+                "pane_id": "w1F:p1",
+                "focused": true,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 120,
+                  "height": 40
+                }
+              }
+            ],
+            "splits": []
+          },
+          {
+            "workspace_id": "w1G",
+            "tab_id": "w1G:t1",
+            "zoomed": false,
+            "area": {
+              "x": 0,
+              "y": 0,
+              "width": 120,
+              "height": 40
+            },
+            "focused_pane_id": "w1G:p1",
+            "panes": [
+              {
+                "pane_id": "w1G:p1",
+                "focused": true,
+                "rect": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 120,
+                  "height": 40
+                }
+              }
+            ],
+            "splits": []
+          }
+        ],
+        "agents": [
+          {
+            "terminal_id": "term_65c5f082009162c",
+            "agent": "claude",
+            "terminal_title": "exec env -i HOME=/tmp/herdr-demo/checkout-api TERM=xterm-256color PATH=$PATH ",
+            "terminal_title_stripped": "exec env -i HOME=/tmp/herdr-demo/checkout-api TERM=xterm-256color PATH=$PATH",
+            "agent_status": "working",
+            "workspace_id": "w1C",
+            "tab_id": "w1C:t1",
+            "pane_id": "w1C:p1",
+            "focused": true,
+            "state_change_seq": 41,
+            "cwd": "/tmp/herdr-demo/checkout-api",
+            "foreground_cwd": "/tmp/herdr-demo/checkout-api",
+            "revision": 2
+          },
+          {
+            "terminal_id": "term_65c5f082012c52d",
+            "agent": "codex",
+            "terminal_title": "exec env -i HOME=/tmp/herdr-demo/web-dashboard TERM=xterm-256color PATH=$PATH",
+            "terminal_title_stripped": "exec env -i HOME=/tmp/herdr-demo/web-dashboard TERM=xterm-256color PATH=$PATH",
+            "agent_status": "blocked",
+            "workspace_id": "w1D",
+            "tab_id": "w1D:t1",
+            "pane_id": "w1D:p1",
+            "focused": false,
+            "state_change_seq": 42,
+            "cwd": "/tmp/herdr-demo/web-dashboard",
+            "foreground_cwd": "/tmp/herdr-demo/web-dashboard",
+            "revision": 2
+          },
+          {
+            "terminal_id": "term_65c5f08201c362e",
+            "agent": "gjc",
+            "terminal_title": "exec env -i HOME=/tmp/herdr-demo/infra TERM=xterm-256color PATH=$PATH bash  ",
+            "terminal_title_stripped": "exec env -i HOME=/tmp/herdr-demo/infra TERM=xterm-256color PATH=$PATH bash",
+            "agent_status": "idle",
+            "workspace_id": "w1E",
+            "tab_id": "w1E:t1",
+            "pane_id": "w1E:p1",
+            "focused": false,
+            "state_change_seq": 43,
+            "cwd": "/tmp/herdr-demo/infra",
+            "foreground_cwd": "/tmp/herdr-demo/infra",
+            "revision": 2
+          },
+          {
+            "terminal_id": "term_65c5f082025a12f",
+            "agent": "omo",
+            "terminal_title": "exec env -i HOME=/tmp/herdr-demo/docs-site TERM=xterm-256color PATH=$PATH bas",
+            "terminal_title_stripped": "exec env -i HOME=/tmp/herdr-demo/docs-site TERM=xterm-256color PATH=$PATH bas",
+            "agent_status": "idle",
+            "workspace_id": "w1F",
+            "tab_id": "w1F:t1",
+            "pane_id": "w1F:p1",
+            "focused": false,
+            "state_change_seq": 44,
+            "cwd": "/tmp/herdr-demo/docs-site",
+            "foreground_cwd": "/tmp/herdr-demo/docs-site",
+            "revision": 2
+          }
+        ]
+      }
+    }
+  ]
+}

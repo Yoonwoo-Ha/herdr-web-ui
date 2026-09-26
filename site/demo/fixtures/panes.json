@@ -1,0 +1,7 @@
+{
+  "api": "w1C:p1",
+  "web": "w1D:p1",
+  "infra": "w1E:p1",
+  "docs": "w1F:p1",
+  "shell": "w1G:p1"
+}

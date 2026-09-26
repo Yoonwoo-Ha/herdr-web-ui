@@ -46,7 +46,20 @@ assembles it into `_site/` with the icons, social preview and screenshots it ref
 videos (the local `docs/screenshots/*.mp4` when present, otherwise the README's uploads) and, with
 ffmpeg, a poster frame for each video and smaller stills; without ffmpeg the page has no posters.
 `.github/workflows/pages.yml` installs ffmpeg, runs the same build and deploys it to GitHub Pages on
-every push to `main` that touches the site or its sources.
+every push to `main`.
+
+### The browser demo
+
+<https://devswha.github.io/herdr-web-ui/demo/> is the real client on a fictional session, no server.
+`build-site.ts` builds the client a second time with `vite build --base ./` into `_site/demo/app/`,
+bundles `site/demo/transport.ts` in front of it and frames it with `site/demo/index.html`. The
+transport answers the app's `fetch("/api/…")`, the machines event stream and the `/ws` terminal
+socket from `site/demo/fixtures/`: the chats and the Codex approval are the README's
+(`site/demo/fixtures.ts`, shared with `scripts/readme-media/stage.ts`), and `machines.json`,
+`agents.json`, `commands.json` and the shell pane's `terminal.json` are captured from that staged
+session by `bun scripts/demo-fixtures.ts` (needs herdr; it uses the `herdr-web-ui-demo` session and
+scrubs the hostname and login). Recapture them after a herdr upgrade changes the snapshot shapes, or
+after changing the staged session. Files, images, push and remote PCs are not part of the demo.
 
 ## Releasing
 

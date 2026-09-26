@@ -1,0 +1,31 @@
+{
+  "pane": "shell",
+  "cols": 80,
+  "rows": 24,
+  "frames": [
+    {
+      "at": 230,
+      "data": "\u001b[?1006l\u001b[?1016l\u001b[?1015l\u001b[?1005l\u001b[?1003l\u001b[?1002l\u001b[?1000l\u001b[?1049h\u001b[?1006l\u001b[?1016l\u001b[?1015l\u001b[?1005l\u001b[?1003l\u001b[?1002l\u001b[?1000l\u001b[?2031l\u001b[?1006l\u001b[?1016l\u001b[?1015l\u001b[?1005l\u001b[?1003l\u001b[?1002l\u001b[?1000l\u001b[?1000h\u001b[?1002h\u001b[?1003h\u001b[?1015h\u001b[?1006h\u001b[?2004h\u001b[?7l\u001b[?2026h\u001b[?25l\u001b]8;;\u001b\\\u001b[2J\u001b[1;1H\u001b[0;38;5;214;49mrelease\u001b[0;39;49m $                                                                       \u001b[2;1H                                                                                \u001b[3;1H                                                                                \u001b[4;1H                                                                                \u001b[5;1H                                                                                \u001b[6;1H                                                                                \u001b[7;1H                                                                                \u001b[8;1H                                                                                \u001b[9;1H                                                                                \u001b[10;1H                                                                                \u001b[11;1H                                                                                \u001b[12;1H                                                                                \u001b[13;1H                                                                                \u001b[14;1H                                                                                \u001b[15;1H                                                                                \u001b[16;1H                                                                                \u001b[17;1H                                                                                \u001b[18;1H                                                                                \u001b[19;1H                                                                                \u001b[20;1H                                                                                \u001b[21;1H                                                                                \u001b[22;1H                                                                                \u001b[23;1H                                                                                \u001b[24;1H                                                                                \u001b[0m\u001b[1;11H\u001b[?25h\u001b[?2026l\u001b[1;11H\u001b[?25h"
+    },
+    {
+      "at": 703,
+      "data": "\u001b[?2026h\u001b[?25l\u001b]8;;\u001b\\\u001b[1;11H\u001b[0;39;49mgit\u001b[1;15Hlog\u001b[1;19H--oneline\u001b[1;29H--graph\u001b[1;37H--\u001b[0m\u001b[1;39H\u001b[?25h\u001b[?2026l\u001b[1;39H\u001b[?25h"
+    },
+    {
+      "at": 720,
+      "data": "\u001b[?2026h\u001b[?25l\u001b]8;;\u001b\\\u001b[1;39H\u001b[0;39;49mdecorate\u001b[1;48H|\u001b[1;50Hhead\u001b[1;55H-8\u001b[2;1H*\u001b[2;3Hb645172\u001b[2;11H(HEAD\u001b[2;17H->\u001b[2;20Hmain,\u001b[2;26Htag:\u001b[2;31Hv1.4.0)\u001b[2;39Hchore(release):\u001b[2;55H1.4.0\u001b[3;1H*\u001b[3;5Hc1067b6\u001b[3;13HMerge\u001b[3;19Hbranch\u001b[3;26Hfeat/idempotency\u001b[4;1H|\\\u001b[5;1H|\u001b[5;3H*\u001b[5;5Hd7e045c\u001b[5;13H(feat/idempotency)\u001b[5;32Htest(payments):\u001b[5;48Hconcurrent\u001b[5;59Hretries\u001b[6;1H|\u001b[6;3H*\u001b[6;5Hc85ca17\u001b[6;13Hfeat(payments):\u001b[6;29Hreplay\u001b[6;36Hthe\u001b[6;40Hfirst\u001b[6;46Hresponse\u001b[6;55Hfor\u001b[6;59Ha\u001b[6;61Hrepeated\u001b[6;70Hkey\u001b[7;1H|/\u001b[8;1H*\u001b[8;3H7419d61\u001b[8;11Htest:\u001b[8;17Hcover\u001b[8;23Hmoney\u001b[8;29Hhelpers\u001b[9;1H*\u001b[9;3H090e06c\u001b[9;11Hfeat:\u001b[9;17Hmoney\u001b[9;23Hhelpers\u001b[10;1H\u001b[0;38;5;214;49mrelease\u001b[10;9H\u001b[0;39;49m$\u001b[0m\u001b[10;11H\u001b[?25h\u001b[?2026l\u001b[10;11H\u001b[?25h"
+    },
+    {
+      "at": 1903,
+      "data": "\u001b[?2026h\u001b[?25l\u001b]8;;\u001b\\\u001b[10;11H\u001b[0;39;49mbun\u001b[10;15Htest\u001b[0m\u001b[11;1H\u001b[?25h\u001b[?2026l\u001b[11;1H\u001b[?25h"
+    },
+    {
+      "at": 1919,
+      "data": "\u001b[?2026h\u001b[?25l\u001b]8;;\u001b\\\u001b[11;1H\u001b[0;1;39;49mbun test \u001b[0;2;39;49mv1.4.2 (744846f84)\u001b[0m\u001b[12;1H\u001b[?25h\u001b[?2026l\u001b[12;1H\u001b[?25h"
+    },
+    {
+      "at": 1937,
+      "data": "\u001b[?2026h\u001b[?25l\u001b]8;;\u001b\\\u001b[13;1H\u001b[0;39;49msrc/money.test.ts:\u001b[14;1H\u001b[0;38;5;2;49m✓\u001b[14;2H\u001b[0;1;39;49m parses amounts to cents\u001b[14;27H\u001b[0;2;39;49m[0.11ms]\u001b[15;1H\u001b[0;38;5;2;49m✓\u001b[15;2H\u001b[0;1;39;49m rounds half a cent\u001b[15;22H\u001b[0;2;39;49m[0.02ms]\u001b[16;1H\u001b[0;38;5;2;49m✓\u001b[16;2H\u001b[0;1;39;49m formats cents\u001b[16;17H\u001b[0;2;39;49m[0.05ms]\u001b[17;1H\u001b[0;38;5;2;49m✓\u001b[17;2H\u001b[0;1;39;49m formats zero\u001b[17;16H\u001b[0;2;39;49m[0.01ms]\u001b[19;1H\u001b[0;38;5;2;49m 4 pass\u001b[20;1H\u001b[0;2;39;49m 0 fail\u001b[21;2H\u001b[0;39;49m4\u001b[21;4Hexpect()\u001b[21;13Hcalls\u001b[22;1HRan\u001b[22;5H4\u001b[22;7Htests\u001b[22;13Hacross\u001b[22;20H1\u001b[22;22Hfile.\u001b[22;28H\u001b[0;2;39;49m[\u001b[0;1;2;39;49m28.00ms\u001b[0;2;39;49m]\u001b[23;1H\u001b[0;38;5;214;49mrelease\u001b[23;9H\u001b[0;39;49m$\u001b[0m\u001b[23;11H\u001b[?25h\u001b[?2026l\u001b[23;11H\u001b[?25h"
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "agents": [
+    {
+      "kind": "agy",
+      "label": "agy"
+    },
+    {
+      "kind": "amp",
+      "label": "Amp"
+    },
+    {
+      "kind": "claude",
+      "label": "Claude Code"
+    },
+    {
+      "kind": "cline",
+      "label": "cline"
+    },
+    {
+      "kind": "codex",
+      "label": "Codex"
+    },
+    {
+      "kind": "cursor",
+      "label": "Cursor"
+    },
+    {
+      "kind": "devin",
+      "label": "devin"
+    },
+    {
+      "kind": "droid",
+      "label": "droid"
+    },
+    {
+      "kind": "gemini",
+      "label": "Gemini CLI"
+    },
+    {
+      "kind": "copilot",
+      "label": "GitHub Copilot"
+    },
+    {
+      "kind": "grok",
+      "label": "grok"
+    },
+    {
+      "kind": "hermes",
+      "label": "hermes"
+    },
+    {
+      "kind": "kilo",
+      "label": "kilo"
+    },
+    {
+      "kind": "kimi",
+      "label": "Kimi"
+    },
+    {
+      "kind": "kiro",
+      "label": "kiro"
+    },
+    {
+      "kind": "maki",
+      "label": "maki"
+    },
+    {
+      "kind": "muse",
+      "label": "muse"
+    },
+    {
+      "kind": "omp",
+      "label": "Oh My Pi"
+    },
+    {
+      "kind": "opencode",
+      "label": "OpenCode"
+    },
+    {
+      "kind": "pi",
+      "label": "pi"
+    },
+    {
+      "kind": "qodercli",
+      "label": "qodercli"
+    },
+    {
+      "kind": "qwen",
+      "label": "qwen"
+    }
+  ]
+}
