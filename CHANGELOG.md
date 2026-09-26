@@ -7,6 +7,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- A chat link to a local file (`[report](/repo/output/REPORT.md)`, as Codex writes them) showed
+  only its label, so a sentence like "results and evidence" ended with nothing after it. The label
+  now opens the file in the viewer, and where no viewer is available the path shows after it.
+
 ## [0.3.14] - 2026-09-26
 
 ### Added

@@ -2,7 +2,9 @@ export type InlineNode =
   | { type: "text"; value: string }
   | { type: "code"; value: string }
   | { type: "strong" | "em" | "del"; children: InlineNode[] }
-  | { type: "link"; href: string; children: InlineNode[] };
+  | { type: "link"; href: string; children: InlineNode[] }
+  /** a link to a local file (`[report](/repo/out/REPORT.md)`): its label opens the path */
+  | { type: "file"; path: string; children: InlineNode[] };
 
 export interface ListItem {
   content: InlineNode[];
@@ -27,6 +29,18 @@ export type MarkdownBlock =
 export function safeMarkdownHref(href: string): string | null {
   const value = href.trim();
   return /^(?:https?:\/\/|mailto:)/i.test(value) ? value : null;
+}
+
+/**
+ * The file a link names, when its target is a path rather than an address: agents link
+ * files they wrote (`[report](/repo/out/REPORT.md)`, `[x](src/x.ts#L12)`). A line anchor
+ * (`#L12`, `:12`) is dropped; the viewer opens the file.
+ */
+export function markdownFileTarget(href: string): string | null {
+  const value = href.trim();
+  if (value === "" || /^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("#")) return null;
+  const path = value.replace(/#.*$/, "").replace(/(?::\d+){1,2}$/, "");
+  return path === "" ? null : path;
 }
 
 /** A bare URL without the punctuation that closes the sentence around it (GFM's autolink rule). */
@@ -70,8 +84,12 @@ export function parseInline(source: string, links = true): InlineNode[] {
     } else if (token.startsWith("[")) {
       const split = token.lastIndexOf("](");
       const label = token.slice(1, split);
-      const href = safeMarkdownHref(token.slice(split + 2, -1));
-      nodes.push(href === null ? { type: "text", value: label } : { type: "link", href, children: parseInline(label, false) });
+      const target = token.slice(split + 2, -1);
+      const href = safeMarkdownHref(target);
+      const file = href === null ? markdownFileTarget(target) : null;
+      nodes.push(href !== null ? { type: "link", href, children: parseInline(label, false) }
+        : file !== null ? { type: "file", path: file, children: parseInline(label, false) }
+        : { type: "text", value: label });
     } else if (token.startsWith("**") || token.startsWith("__")) {
       nodes.push({ type: "strong", children: parseInline(token.slice(2, -2), links) });
     } else if (token.startsWith("~~")) {

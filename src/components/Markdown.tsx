@@ -23,6 +23,13 @@ function Inline({ nodes }: { nodes: InlineNode[] }) {
       case "em": return <em key={key}><Inline nodes={node.children} /></em>;
       case "del": return <del key={key}><Inline nodes={node.children} /></del>;
       case "link": return <a key={key} href={node.href} target="_blank" rel="noopener noreferrer"><Inline nodes={node.children} /></a>;
+      // the label opens the file; where nothing can open one, the path shows after it, as Codex's terminal does
+      case "file": {
+        const label = <OpenFileContext.Provider value={null}><Inline nodes={node.children} /></OpenFileContext.Provider>;
+        return open !== null
+          ? <button key={key} type="button" className="markdown-file" title={`Open ${node.path}`} onClick={() => open(node.path)}>{label}</button>
+          : <span key={key}>{label} (<code>{node.path}</code>)</span>;
+      }
     }
   })}</>;
 }

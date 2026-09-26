@@ -38,6 +38,21 @@ describe("inline markdown", () => {
     ]);
   });
 
+  it("keeps a link to a local file as that file, not only its label", () => {
+    expect(parseInline("근거: [실험 결과](/home/u/repo/output/REPORT.md)")).toEqual([
+      { type: "text", value: "근거: " },
+      { type: "file", path: "/home/u/repo/output/REPORT.md", children: [{ type: "text", value: "실험 결과" }] },
+    ]);
+    expect(parseInline("[x](src/x.ts#L12) [y](~/y.md:3:1)")).toMatchObject([
+      { type: "file", path: "src/x.ts" },
+      { type: "text", value: " " },
+      { type: "file", path: "~/y.md" },
+    ]);
+    for (const target of ["javascript:bad", "data:text/html,x", "#section"]) {
+      expect(parseInline(`[label](${target})`)).toEqual([{ type: "text", value: "label" }]);
+    }
+  });
+
   it("parses inline code, bold, italic, and strikethrough", () => {
     expect(parseInline("`code` **bold** *italic* ~~gone~~").map((node) => node.type)).toEqual([
       "code", "text", "strong", "text", "em", "text", "del",
