@@ -302,6 +302,16 @@ describe("Codex rollout resolution", () => {
     expect(matchCodexTranscript("Done", [{ path: "short", text: jsonl(message("assistant", "Done")) }])).toBeNull();
   });
 
+  it("matches an answer that links a file, which Codex shows as the label and a path relative to the cwd", () => {
+    const linked = `${answer} [The report](/home/user/repo/output/test/REPORT.md)`;
+    const candidates = [{ path: "linked", text: jsonl(message("assistant", linked, "final_answer")) }];
+    expect(matchCodexTranscript(`• ${answer} The report (output/test/REPORT.md)`, candidates)).toBe("linked");
+    // a link in the middle: the end after it is what is looked for
+    const middle = `See [the report](/home/user/repo/REPORT.md) for the numbers. ${answer}`;
+    expect(matchCodexTranscript(`• See the report (REPORT.md) for the numbers. ${answer}`, [{ path: "middle", text: jsonl(message("assistant", middle)) }])).toBe("middle");
+    expect(matchCodexTranscript("• The report (output/test/REPORT.md)", candidates)).toBeNull();
+  });
+
   it("does not bind using user context, tool output or a previous session above the welcome card", () => {
     expect(matchCodexTranscript(answer, [{ path: "user", text: jsonl(message("user", answer)) }])).toBeNull();
     expect(matchCodexTranscript(`${answer}\nOpenAI Codex (v1.0)\nNew session`, [{ path: "old", text: jsonl(message("assistant", answer)) }])).toBeNull();

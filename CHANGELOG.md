@@ -7,6 +7,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- A Codex chat whose last answer ends with a file link said "Conversation unavailable" while the
+  terminal was open. Codex shows such a link as its label and a path relative to the repo, not
+  the absolute path the session file keeps, so that answer was never found on screen. Answers are
+  now looked for up to their last link target.
+
 ## [0.3.14] - 2026-09-26
 
 ### Added

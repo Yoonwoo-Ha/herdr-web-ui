@@ -431,6 +431,21 @@ export function codexHistoryTail(path: string, budget: number, home = defaultCod
 
 const normalizeDisplay = (text: string): string => text.normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "");
 
+/**
+ * What of an answer to look for on screen: its last 160 letters and digits. Codex shows a
+ * markdown link as its label and the target relative to the cwd ("label (docs/x.md)" for
+ * `[label](/repo/docs/x.md)`), so the text is cut at link targets, and the anchor is the end of
+ * the last piece long enough. Without links, that is the end of the whole text.
+ */
+function answerAnchor(text: string): string | null {
+  const pieces = text.split(/\]\([^)\s]*\)/);
+  for (let index = pieces.length - 1; index >= 0; index--) {
+    const anchor = normalizeDisplay(pieces[index]!).slice(-160);
+    if (anchor.length >= 64 && new Set(anchor).size >= 12) return anchor;
+  }
+  return null;
+}
+
 /** Shared app-server TUIs do not hold rollout descriptors. For read-only display,
  * require a unique substantial assistant-message match in this pane's output.
  * Directory recency alone is never evidence: multiple panes can share a cwd. */
@@ -442,8 +457,8 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
     const prose = parseCodexTranscript(candidate.text).filter((turn) => turn.role === "assistant")
       .flatMap((turn) => turn.parts).filter((part) => part.kind === "text").slice(-8);
     if (prose.some((part) => {
-      const anchor = normalizeDisplay(part.text).slice(-160);
-      return anchor.length >= 64 && new Set(anchor).size >= 12 && display.includes(anchor);
+      const anchor = answerAnchor(part.text);
+      return anchor !== null && display.includes(anchor);
     })) matching.add(candidate.path);
   }
   return matching.size === 1 ? [...matching][0]! : null;
