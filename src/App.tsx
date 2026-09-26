@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Lock, Menu, MessageSquare, PanelLeft, Search, Settings, SquareTerminal, X } from "lucide-react";
+import { Bell, FolderOpen, Lock, Menu, MessageSquare, PanelLeft, Search, Settings, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ClientRole, ServerMessage } from "../shared/protocol.ts";
 import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
@@ -30,6 +30,9 @@ import {
 import { ensurePushSubscription, pushSupported, removePushSubscription } from "./lib/push.ts";
 import { useUpdates } from "./lib/updates.ts";
 import { UpdateNotice } from "./components/UpdateControls.tsx";
+import { FilesDialog } from "./components/FilesDialog.tsx";
+import { FileViewer } from "./components/FileViewer.tsx";
+import { OpenFileContext } from "./lib/filePaths.ts";
 
 const APP_TITLE = "herdr web ui";
 const POLL_MS = 5000;
@@ -130,6 +133,9 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [view, setViewState] = useState<PaneView>("terminal");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [viewing, setViewing] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -440,6 +446,7 @@ export function App() {
       lock: health?.auth?.required ? () => void lock() : null,
       enableNotifications: bellVisible && !bell.disabled ? () => void enableNotifications() : null,
       refresh: () => void load(),
+      openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); setFilesOpen(true); } : null,
     }),
     [selectPane, selectedPaneId, selectedMachineId, setView, view, updateSettings, resolvedTheme, health, lock, bellVisible, bell.disabled, enableNotifications, load],
   );
@@ -541,6 +548,11 @@ export function App() {
             <span className="conn-text">{connected ? "live" : outputStopped ? "disconnected" : "reconnecting"}</span>
           </span>
           {!targetHerdr && <span className="pill pill-offline">herdr offline</span>}
+          {selectedPane && (
+            <button type="button" className="icon-button files-button" aria-label="Browse files" title="Browse files" onClick={() => setFilesOpen(true)}>
+              <FolderOpen />
+            </button>
+          )}
           <button type="button" className="icon-button" aria-label="Command palette" title="Command palette (⌘⇧K)" onClick={() => setPaletteOpen(true)}>
             <Search />
           </button>
@@ -577,6 +589,8 @@ export function App() {
 
         {drawerOpen && <div className="scrim" aria-hidden="true" onClick={() => setDrawerOpen(false)} />}
 
+        {/* a file path in the chat opens in the viewer, relative to the selected pane's folder */}
+        <OpenFileContext.Provider value={selectedPaneId !== null ? setViewing : null}>
         <main className="terminal-host">
           <PaneTerminal
             key={selectedMachineId}
@@ -592,6 +606,7 @@ export function App() {
             onServerMessage={handleServerMessage}
           />
         </main>
+        </OpenFileContext.Provider>
       </div>
 
       <MachineContext.Provider value={newSessionMachineId}><NewSessionDialog
@@ -608,6 +623,10 @@ export function App() {
       /></MachineContext.Provider>
       {machineDialog && <MachineDialog updateRemote={updateRemote} machine={machineDialog === "new" ? undefined : machineDialog} onClose={() => setMachineDialog(null)} onConnected={(id) => { setMachineDialog(null); selectTarget(id, null); void load(); }} />}
       <SettingsDialog open={settingsOpen} onClose={closeSettings} actions={actions} updates={updates} />
+      {filesOpen && selectedPane && (
+        <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} onOpenFile={setViewing} onClose={() => setFilesOpen(false)} />
+      )}
+      {viewing !== null && <FileViewer path={viewing} paneId={selectedPaneId} onClose={() => setViewing(null)} />}
       <CommandPalette key={selectedMachineId} open={paletteOpen} onClose={() => setPaletteOpen(false)} snapshot={snapshot} selectedPaneId={selectedPaneId} view={view} actions={actions} />
     </div></MachineContext.Provider>
   );

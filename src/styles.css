@@ -986,3 +986,8 @@ button {
     animation: none;
   }
 }
+
+/* a narrow phone header has no room for it: the command palette offers Browse files */
+@media (max-width: 480px) {
+  .files-button { display: none; }
+}

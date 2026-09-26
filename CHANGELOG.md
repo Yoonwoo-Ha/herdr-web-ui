@@ -7,6 +7,14 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- Open the files your agents write, from any device. A file path in a chat answer
+  (`docs/demo.mp4`, `~/out/shot.png`) opens in a viewer: images, video and audio that play and
+  seek at once, PDFs, and the start of a text file, each with Open in new tab and Download.
+  **Browse files** (in the header, or the command palette on a phone) lists the pane's folder
+  and any other. Files stream from disk with ranges, so a large video costs the server no memory;
+  HTML and SVG open sandboxed and text as plain text, never as script on the app's origin.
+
 ## [0.3.8] - 2026-09-26
 
 ### Added

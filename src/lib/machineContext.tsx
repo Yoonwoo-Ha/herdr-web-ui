@@ -18,7 +18,9 @@ export function useMachineApi() {
     renameWorkspace: (workspace: string, label: string) => api.renameWorkspace(workspace, label, id),
     moveWorkspace: (workspace: string, index: number) => api.moveWorkspace(workspace, index, id),
     fetchAgentKinds: () => api.fetchAgentKinds(id),
-    fetchDirectories: (path: string, hidden: boolean) => api.fetchDirectories(path, hidden, id),
+    fetchDirectories: (path: string, hidden: boolean, files = false) => api.fetchDirectories(path, hidden, id, files),
+    fetchFileInfo: (path: string, pane: string | null) => api.fetchFileInfo(path, pane, id),
+    fileUrl: (path: string, pane: string | null, download = false) => api.fileUrl(path, pane, id, download),
     createWorkspace: (request: api.CreateWorkspaceRequest) => api.createWorkspace(request, id),
   }), [id]);
 }

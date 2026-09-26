@@ -156,6 +156,22 @@ export interface DirectoryListing {
   directories: string[];
   /** more folders than the list holds */
   truncated: boolean;
+  /** the files beside the folders, when asked for (`files=1`), sorted, within the same cap */
+  files?: { name: string; size: number }[];
+}
+
+/** How the file viewer shows a file. */
+export type FileKind = "image" | "video" | "audio" | "pdf" | "text" | "binary";
+
+/** GET /api/fs/stat: a file the viewer can open (GET /api/fs/file streams it). */
+export interface FileInfo {
+  path: string;
+  name: string;
+  size: number;
+  /** ISO time of the last change */
+  modified: string;
+  mime: string;
+  kind: FileKind;
 }
 
 export interface AgentKind {

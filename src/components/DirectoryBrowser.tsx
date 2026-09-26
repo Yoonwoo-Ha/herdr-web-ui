@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, Folder, House } from "lucide-react";
+import { ArrowUp, FileText, Folder, House } from "lucide-react";
+
+import "./DirectoryBrowser.css";
 
 import type { DirectoryListing } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
+import { formatBytes } from "../lib/bridgeProgress.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 
 export interface DirectoryBrowserProps {
   /** where to open: the path typed so far (absolute, `~` or `~/…`); empty or unreadable opens home */
   start: string;
-  /** the folder chosen, in the dialog's own syntax (`~/…` inside home) */
-  onPick: (path: string) => void;
+  /** the folder chosen, in the dialog's own syntax (`~/…` inside home); without it there is no "Use this folder" */
+  onPick?: (path: string) => void;
+  /** lists files too, and opens the one clicked (its absolute path) */
+  onOpenFile?: (path: string) => void;
 }
 
 /** `~/…` for a path inside home, as the directory field is usually typed. */
@@ -26,7 +31,7 @@ function childPath(parent: string, name: string): string {
  * A folder browser for the new-session dialog: one directory at a time, fetched from the
  * PC the session starts on. Nothing is kept but the folder shown now.
  */
-export function DirectoryBrowser({ start, onPick }: DirectoryBrowserProps) {
+export function DirectoryBrowser({ start, onPick, onOpenFile }: DirectoryBrowserProps) {
   const { fetchDirectories } = useMachineApi();
   const [listing, setListing] = useState<DirectoryListing | null>(null);
   const [hidden, setHidden] = useState(false);
@@ -39,7 +44,7 @@ export function DirectoryBrowser({ start, onPick }: DirectoryBrowserProps) {
     const id = ++request.current;
     setLoading(true);
     try {
-      const next = await fetchDirectories(path, showHidden);
+      const next = await fetchDirectories(path, showHidden, onOpenFile !== undefined);
       if (id !== request.current) return;
       setListing(next);
       setError(null);
@@ -82,7 +87,16 @@ export function DirectoryBrowser({ start, onPick }: DirectoryBrowserProps) {
               </button>
             </li>
           ))}
-          {listing !== null && listing.directories.length === 0 && <li className="dir-browser-note">No folders here</li>}
+          {onOpenFile !== undefined && listing?.files?.map((file) => (
+            <li key={`file:${file.name}`}>
+              <button type="button" className="dir-browser-item is-file" disabled={loading} onClick={() => onOpenFile(childPath(path, file.name))}>
+                <FileText aria-hidden="true" />
+                <span>{file.name}</span>
+                <span className="dir-browser-size">{formatBytes(file.size)}</span>
+              </button>
+            </li>
+          ))}
+          {listing !== null && listing.directories.length === 0 && (listing.files ?? []).length === 0 && <li className="dir-browser-note">{onOpenFile ? "Nothing here" : "No folders here"}</li>}
           {listing?.truncated && <li className="dir-browser-note">Showing the first {listing.directories.length} folders; type the rest of the path to go further.</li>}
         </ul>
       )}
@@ -91,9 +105,9 @@ export function DirectoryBrowser({ start, onPick }: DirectoryBrowserProps) {
           <input type="checkbox" checked={hidden} disabled={loading && listing === null} onChange={(event) => { setHidden(event.target.checked); if (listing) void open(listing.path, event.target.checked, false); }} />
           Show hidden
         </label>
-        <button type="button" className="btn btn-primary" disabled={listing === null || loading} onClick={() => listing && onPick(homeRelative(listing.path, listing.home))}>
+        {onPick && <button type="button" className="btn btn-primary" disabled={listing === null || loading} onClick={() => listing && onPick(homeRelative(listing.path, listing.home))}>
           Use this folder
-        </button>
+        </button>}
       </div>
     </div>
   );

@@ -16,6 +16,7 @@ import { startStatusCollector } from "./collector.ts";
 import { ConversationUnavailable, HistoryChanged, labelOmoPanes, paneConversation } from "./conversation.ts";
 import { completions } from "./completion.ts";
 import { listDirectories } from "./directories.ts";
+import { fileInfo, fileResponse, resolveFilePath } from "./file-view.ts";
 import {
   agentManifests,
   agentPrompt,
@@ -524,7 +525,7 @@ export function createServer(
       const url = new URL(request.url);
       let { pathname } = url;
       const bridgeAuthorized = isAuthenticated(request, bridgeToken);
-      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === "/api/agents" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname === "/ws";
+      const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === "/api/agents" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/fs/") || pathname === "/ws";
       const authenticated = isAuthenticated(request, token) || (bridgePath && bridgeAuthorized);
 
       if (requiresAuth(pathname) && !authenticated) {
@@ -622,9 +623,22 @@ export function createServer(
         }
       }
 
+      if (pathname === "/api/fs/stat" || pathname === "/api/fs/file") {
+        if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
+        const paneId = url.searchParams.get("pane_id");
+        let cwd: string | null = null;
+        if (paneId) {
+          try { cwd = (await paneContext(paneId)).cwd; } catch { /* an absolute path still opens */ }
+        }
+        const path = resolveFilePath(url.searchParams.get("path") ?? "", cwd);
+        const info = path === null ? null : fileInfo(path);
+        if (info === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
+        return pathname === "/api/fs/stat" ? jsonResponse(info) : fileResponse(info, url.searchParams.get("download") === "1");
+      }
+
       if (pathname === "/api/workspace/directories") {
         if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
-        const listing = listDirectories(url.searchParams.get("path") ?? "", url.searchParams.get("hidden") === "1");
+        const listing = listDirectories(url.searchParams.get("path") ?? "", url.searchParams.get("hidden") === "1", url.searchParams.get("files") === "1");
         return listing === null ? badRequest("invalid_cwd", "path must be a directory this user can read") : jsonResponse(listing);
       }
 
