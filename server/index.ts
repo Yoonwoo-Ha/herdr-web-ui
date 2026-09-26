@@ -16,7 +16,7 @@ import { startStatusCollector } from "./collector.ts";
 import { ConversationUnavailable, HistoryChanged, labelOmoPanes, paneConversation } from "./conversation.ts";
 import { completions } from "./completion.ts";
 import { listDirectories } from "./directories.ts";
-import { fileInfo, fileResponse, resolveFilePath } from "./file-view.ts";
+import { fileResponse, locateFile } from "./file-view.ts";
 import {
   agentManifests,
   agentPrompt,
@@ -630,10 +630,11 @@ export function createServer(
         if (paneId) {
           try { cwd = (await paneContext(paneId)).cwd; } catch { /* an absolute path still opens */ }
         }
-        const path = resolveFilePath(url.searchParams.get("path") ?? "", cwd);
-        const info = path === null ? null : fileInfo(path);
-        if (info === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
-        return pathname === "/api/fs/stat" ? jsonResponse(info) : fileResponse(info, url.searchParams.get("download") === "1");
+        const found = locateFile(url.searchParams.get("path") ?? "", cwd);
+        if (found === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
+        // several files end in that name: the viewer lists them to choose from
+        if ("candidates" in found) return jsonResponse({ error: { code: "ambiguous_path", message: "several files have that name", candidates: found.candidates } }, 409);
+        return pathname === "/api/fs/stat" ? jsonResponse(found.info) : fileResponse(found.info, url.searchParams.get("download") === "1");
       }
 
       if (pathname === "/api/workspace/directories") {

@@ -124,3 +124,19 @@
   .file-viewer-media { max-height: calc(100dvh - 120px); }
   .file-viewer-pdf { height: calc(100dvh - 120px); }
 }
+
+.file-viewer-choices ul {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-viewer-choices .btn {
+  max-width: 100%;
+  height: auto;
+  min-height: var(--control-h);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: left;
+  overflow-wrap: anywhere;
+}

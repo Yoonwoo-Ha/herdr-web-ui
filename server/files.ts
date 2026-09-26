@@ -81,6 +81,25 @@ export async function paneFiles(cwd: string, query = "", limit = 20): Promise<st
     .map((item) => item.path);
 }
 
+const walked = new Map<string, { expires: number; files: string[] }>();
+
+/**
+ * The files under `cwd` whose path ends in `name` (a bare `demo.mp4`, or `screenshots/demo.mp4`),
+ * for a path an agent wrote without its folders. Walks the folder itself, since the git
+ * inventory leaves out ignored files (build output, recordings), within the same bounds.
+ */
+export function filesNamed(cwd: string, name: string, limit = 10): string[] {
+  const suffix = name.replace(/^\.\//, "");
+  let hit = walked.get(cwd);
+  if (!hit || hit.expires <= Date.now()) {
+    hit = { expires: Date.now() + CACHE_MS, files: walkFiles(cwd) };
+    walked.set(cwd, hit);
+    if (walked.size > 16) walked.delete(walked.keys().next().value!);
+  }
+  return hit.files.filter((path) => path === suffix || path.endsWith(`/${suffix}`)).slice(0, limit);
+}
+
 export function clearFileCache(): void {
   cache.clear();
+  walked.clear();
 }

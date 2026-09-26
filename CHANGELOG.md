@@ -7,6 +7,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- A file named without its folders in a chat answer (`demo.mp4` for `docs/screenshots/demo.mp4`)
+  opens: the viewer finds it under the pane's folder, ignored files included, and lists the
+  files to choose from when several have that name. It used to say "No readable file".
+
 ## [0.3.9] - 2026-09-26
 
 ### Added

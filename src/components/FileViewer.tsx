@@ -24,21 +24,27 @@ export interface FileViewerProps {
  * A file an agent wrote, opened in the browser: images, video and audio (streamed, so they
  * play and seek at once), PDFs, and the start of a text file. Anything can be downloaded.
  */
-export function FileViewer({ path, paneId, onClose }: FileViewerProps) {
+export function FileViewer({ path: asked, paneId, onClose }: FileViewerProps) {
   const { fetchFileInfo, fileUrl } = useMachineApi();
+  // the path as given, until a choice among files of that name replaces it
+  const [path, setPath] = useState(asked);
   const [info, setInfo] = useState<FileInfo | null>(null);
+  const [candidates, setCandidates] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
 
+  useEffect(() => setPath(asked), [asked]);
+
   useEffect(() => {
     let cancelled = false;
-    setInfo(null); setError(null); setText(null);
+    setInfo(null); setCandidates(null); setError(null); setText(null);
     fetchFileInfo(path, paneId).then(async (next) => {
       if (cancelled) return;
+      if ("candidates" in next) { setCandidates(next.candidates); return; }
       setInfo(next);
       if (next.kind !== "text") return;
       // only the first part of a text file travels: a range, whatever the file's size
-      const response = await fetch(fileUrl(path, paneId), { headers: { range: `bytes=0-${TEXT_PREVIEW_BYTES - 1}` } });
+      const response = await fetch(fileUrl(next.path, paneId), { headers: { range: `bytes=0-${TEXT_PREVIEW_BYTES - 1}` } });
       const body = await response.text();
       if (!cancelled) setText(body);
     }).catch((reason: unknown) => {
@@ -54,9 +60,14 @@ export function FileViewer({ path, paneId, onClose }: FileViewerProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const url = fileUrl(path, paneId);
+  // the file found (a bare name may have been found deeper in the folder), else as asked
+  const url = fileUrl(info?.path ?? path, paneId);
   const body = (() => {
     if (error !== null) return <p className="file-viewer-note" role="alert">{error}</p>;
+    if (candidates !== null) return <div className="file-viewer-choices">
+      <p className="file-viewer-note">Several files are named {path.split("/").pop()}:</p>
+      <ul>{candidates.map((candidate) => <li key={candidate}><button type="button" className="btn btn-ghost" onClick={() => setPath(candidate)}>{candidate}</button></li>)}</ul>
+    </div>;
     if (info === null) return <p className="file-viewer-note">Opening…</p>;
     switch (info.kind) {
       case "image":
@@ -91,7 +102,7 @@ export function FileViewer({ path, paneId, onClose }: FileViewerProps) {
             </p>
           </div>
           <a className="icon-button" href={url} target="_blank" rel="noopener" aria-label="Open in a new tab" title="Open in a new tab"><ExternalLink aria-hidden="true" /></a>
-          <a className="icon-button" href={fileUrl(path, paneId, true)} download={info?.name ?? true} aria-label="Download" title="Download"><Download aria-hidden="true" /></a>
+          <a className="icon-button" href={fileUrl(info?.path ?? path, paneId, true)} download={info?.name ?? true} aria-label="Download" title="Download"><Download aria-hidden="true" /></a>
           <button type="button" className="icon-button" aria-label="Close file" onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="file-viewer-body">{body}</div>
