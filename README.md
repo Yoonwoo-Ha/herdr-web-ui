@@ -155,6 +155,8 @@ tailscale serve --bg --https=443 http://127.0.0.1:7317
 
 Only devices in your tailnet can open that address. If they are all yours, that is the whole setup; otherwise, see [Access and safety](#access-and-safety).
 
+**Settings → Phone** in the app does this step for you as far as it can: it shows the address Tailscale already serves for this PC as a QR code, or the exact command still to run, and the address it will give.
+
 1. Open the address.
 2. Install the app: in Safari, choose **Share → Add to Home Screen**; in Chrome, choose **Install app**.
 3. Tap the bell to turn on alerts for that device. iPhone needs iOS 16.4+ and the home-screen app.
@@ -284,7 +286,11 @@ No. Both attach to the same terminals at the same time. Use the TUI at your desk
 <details>
 <summary><b>Do I need Tailscale?</b></summary>
 
-No. Tailscale is just the easiest way to get HTTPS on a phone, which installing the app and push alerts both require. An SSH tunnel works too, and so do a LAN address or your own HTTPS reverse proxy, as long as you set a token. See [Access and safety](#access-and-safety).
+No, but a phone needs two things Tailscale gives at once: a way to reach the PC from outside your network, and HTTPS, which installing the app and push alerts both require. Without it:
+
+- **An SSH tunnel from the phone** (Termux, Blink): `ssh -L 7317:127.0.0.1:7317 <pc>`, then open `http://localhost:7317` on the phone. Browsers treat localhost as secure, so installing and alerts should work while the tunnel is up (not verified on iOS yet). The phone still has to reach the PC over SSH.
+- **A VPN into your home** (WireGuard, ZeroTier, a router VPN): the LAN address works in the browser, but a plain `http://` address can neither install the app nor receive alerts.
+- **A reverse proxy with a real certificate** on a domain you own, with a token set. This exposes the server to the internet, so read [Access and safety](#access-and-safety) first.
 </details>
 
 <details>

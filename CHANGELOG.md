@@ -8,6 +8,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- **Settings → Phone**: how to get the app onto a phone from this PC. When the page is already on
+  an HTTPS address, or Tailscale on the PC already serves the app, it shows that address as a QR
+  code. Otherwise it shows the one `tailscale serve` command still to run, on the first free of the
+  usual HTTPS ports, with a Copy button and the address it will give, or says that Tailscale is
+  not connected or not installed. The server reads `tailscale status` and `tailscale serve status`
+  only (`GET /api/access`); it never changes the tailnet.
 - **Star on GitHub** in Settings → About, next to a link to the website.
 - A website, <https://devswha.github.io/herdr-web-ui/>: the demos, the install command, the phone
   setup and how it compares with other herdr phone clients. GitHub Pages builds it from `site/`

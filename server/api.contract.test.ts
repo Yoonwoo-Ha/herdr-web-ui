@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { createServer } from "./index.ts";
-import type { AgentKind, AgentStatus, ApiError, HealthAuth, PushKey, SessionSnapshot, PaneReadResult, WorkspaceCreated } from "../shared/protocol.ts";
+import type { AgentKind, AgentStatus, ApiError, HealthAuth, PushKey, RemoteAccess, SessionSnapshot, PaneReadResult, WorkspaceCreated } from "../shared/protocol.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import { startFakePushService, type FakePushService } from "./push.fake.ts";
 
@@ -57,6 +57,32 @@ describe("update API", () => {
         });
         expect(response.status).toBe(401);
       }
+    } finally { protectedServer.stop(); rmSync(protectedState, { recursive: true, force: true }); }
+  });
+});
+
+describe("phone access", () => {
+  it("says how a phone can reach this server, whatever Tailscale is doing on this machine", async () => {
+    const response = await fetch(`${base()}/api/access`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const access = (await response.json()) as RemoteAccess;
+    expect(access.port).toBe(server.port);
+    expect(["missing", "stopped", "running"]).toContain(access.tailscale.state);
+    if (access.tailscale.state !== "running") {
+      expect(access.tailscale).toEqual({ state: access.tailscale.state, dns_name: null, serving_url: null, serve_command: null, serve_url: null });
+    } else {
+      // either an address already works, or there is a command to make one
+      expect((access.tailscale.serving_url === null) !== (access.tailscale.serve_command === null)).toBe(true);
+      if (access.tailscale.serve_command !== null) expect(access.tailscale.serve_command).toContain(`http://127.0.0.1:${server.port}`);
+    }
+  });
+
+  it("stays behind the token gate", async () => {
+    const protectedState = mkdtempSync(join(tmpdir(), "herdr-access-auth-"));
+    const protectedServer = createServer({ port: 0, stateDir: protectedState, token: "test-access-token" });
+    try {
+      expect((await fetch(`http://localhost:${protectedServer.port}/api/access`)).status).toBe(401);
     } finally { protectedServer.stop(); rmSync(protectedState, { recursive: true, force: true }); }
   });
 });

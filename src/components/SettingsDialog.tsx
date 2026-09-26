@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Minus, Plus, Star, X } from "lucide-react";
 
 import "./SettingsDialog.css";
@@ -9,7 +9,10 @@ import { SHORTCUTS, formatKeys } from "../lib/shortcuts.ts";
 import { CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, useSettings } from "../lib/settings.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
 import type { MachineSettings } from "../../shared/machines.ts";
-import { machineRequest } from "../lib/api.ts";
+import { fetchRemoteAccess, machineRequest } from "../lib/api.ts";
+import { phonePlan } from "../lib/phone.ts";
+import type { RemoteAccess } from "../../shared/protocol.ts";
+import { PhonePanel } from "./PhonePanel.tsx";
 import { UpdateControls } from "./UpdateControls.tsx";
 
 export interface SettingsDialogProps {
@@ -38,6 +41,15 @@ export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) 
     if (!open) return;
     machineRequest<MachineSettings>("/settings").then(setPcSettings, () => setPcSettings(null));
   }, [open]);
+  // Settings → Phone asks the server what Tailscale on its PC already serves
+  const [access, setAccess] = useState<RemoteAccess | null | undefined>(undefined);
+  const loadAccess = useCallback(() => {
+    setAccess(undefined);
+    fetchRemoteAccess().then(setAccess, () => setAccess(null));
+  }, []);
+  useEffect(() => { if (open) loadAccess(); }, [open, loadAccess]);
+  const plan = phonePlan({ protocol: window.location.protocol, hostname: window.location.hostname, origin: window.location.origin, secure: window.isSecureContext }, access ?? null);
+
   const updatePcSettings = async (patch: Partial<MachineSettings>) => {
     try { setPcSettings(await machineRequest<MachineSettings>("/settings", "PATCH", patch)); setPcSettingsError(null); }
     catch (e) { setPcSettingsError(e instanceof Error ? e.message : String(e)); }
@@ -128,6 +140,11 @@ export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) 
                 <tr key={shortcut.id}><th scope="row">{shortcut.label}</th><td>{formatKeys(shortcut.keys).map((key) => <kbd className="kbd" key={key}>{key}</kbd>)}</td></tr>
               ))}</tbody>
             </table>
+          </section>
+
+          <section className="settings-section">
+            <h3>Phone</h3>
+            <PhonePanel plan={plan} loading={access === undefined} onRefresh={loadAccess} />
           </section>
 
           <section className="settings-section">

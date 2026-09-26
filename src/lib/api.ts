@@ -9,11 +9,17 @@ import type {
   PaneReadResult,
   PromptAnswer,
   PushKey,
+  RemoteAccess,
   SessionSnapshot,
   SlashCommand,
   WorkspaceCreated,
 } from "../../shared/protocol.ts";
 import type { UpdateCommand, UpdateStatus } from "../../shared/update.ts";
+
+/** Settings → Phone: what Tailscale on the server's PC already serves, or the command to run. */
+export function fetchRemoteAccess(): Promise<RemoteAccess> {
+  return getJson<RemoteAccess>("/api/access");
+}
 
 export function fetchUpdateStatus(): Promise<UpdateStatus> {
   return getJson<UpdateStatus>("/api/updates");
