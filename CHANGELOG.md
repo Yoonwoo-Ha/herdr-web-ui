@@ -7,6 +7,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-09-26
+
 ### Fixed
 - A file named without its folders in a chat answer (`demo.mp4` for `docs/screenshots/demo.mp4`)
   opens: the viewer finds it under the pane's folder, ignored files included, and lists the
@@ -265,7 +267,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.9...HEAD
+[Unreleased]: https://github.com/devswha/herdr-web-ui/compare/v0.3.10...HEAD
+[0.3.10]: https://github.com/devswha/herdr-web-ui/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/devswha/herdr-web-ui/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/devswha/herdr-web-ui/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/devswha/herdr-web-ui/compare/v0.3.6...v0.3.7
