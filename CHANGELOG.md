@@ -13,6 +13,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   setup and how it compares with other herdr phone clients. GitHub Pages builds it from `site/`
   on every push to `main`; `bun run build:site` builds it locally.
 
+### Fixed
+- A link styled as a button (**Reconnect** after a PC drops, **Star on GitHub**) is no longer
+  underlined.
+
 ## [0.3.10] - 2026-09-26
 
 ### Fixed
