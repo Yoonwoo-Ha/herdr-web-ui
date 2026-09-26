@@ -6,7 +6,8 @@
  * demo videos: they are not committed (docs/development.md, "README media"), so a build uses the
  * local docs/screenshots/*.mp4 when they exist and otherwise downloads the uploads the README links
  * under "Watch the demos in HD", desktop first, then phone. Poster frames are cut from the videos
- * with ffmpeg when it is installed (it is on the GitHub runner); without it the videos have none and the stills stay full size.
+ * with ffmpeg when it is installed (the workflow installs it); without it the page drops the
+ * poster attributes and the stills stay full size.
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -84,8 +85,11 @@ for (const [index, video] of videos.entries()) {
     if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
     writeFileSync(target, new Uint8Array(await response.arrayBuffer()));
   }
-  if (hasFfmpeg) {
-    await run(["ffmpeg", "-v", "error", "-y", "-ss", video.at, "-i", target, "-frames:v", "1", "-q:v", "3", join(out, "media", video.poster)]);
+  const poster = join(out, "media", video.poster);
+  if (!hasFfmpeg || !(await run(["ffmpeg", "-v", "error", "-y", "-ss", video.at, "-i", target, "-frames:v", "1", "-q:v", "3", poster]))) {
+    // no poster file: the page must not ask for one
+    const page = join(out, "index.html");
+    writeFileSync(page, readFileSync(page, "utf8").replace(` poster="media/${video.poster}"`, ""));
   }
 }
 
