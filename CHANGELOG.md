@@ -7,6 +7,16 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- **Who gets in, without a token.** From anywhere but this PC, a request now gets in as the PC's
+  own Tailscale login (which `tailscale serve` states in a header nobody else can set), as a
+  paired device, or with the token. **Settings → Devices** pairs a device: a six-digit code that
+  lives ten minutes, or the QR code that carries it, entered once on the other device, which then
+  keeps its own credential; the list shows every device with its last visit, and **Revoke** ends
+  one at its next request. Another Tailscale user's device is refused with a message. Until the
+  first device is paired, and with no token set, a LAN or proxied address stays open as before.
+  The sign-in screen asks for the code first and keeps the token as the other way.
+
 ## [0.3.13] - 2026-09-26
 
 ### Fixed

@@ -79,26 +79,62 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  POST   /api/workspace/move   { workspace_id, insert_index } -> { ok: true } (sidebar reorder)
  *  POST   /api/workspace/close  { workspace_id } -> { ok: true }
  *  POST   /api/auth        { token }     -> 204 + Set-Cookie herdr_web_token (401 invalid_token on mismatch)
- *  DELETE /api/auth                      -> 204 + Set-Cookie herdr_web_token=; Max-Age=0
+ *  DELETE /api/auth                      -> 204, clears the token and the device cookies
+ *  GET    /api/devices                   -> { devices: PairedDevice[] } (the paired devices; `current` marks the caller's)
+ *  POST   /api/devices/pair/start        -> PairingCode: a six-digit code good for ten minutes, replacing any pending one
+ *         (X-Herdr-Machine: 1 + same origin, from a client with full access)
+ *  POST   /api/devices/pair { code, label? } -> 204 + Set-Cookie herdr_web_device (public, like /api/auth;
+ *         401 invalid_code when the code is wrong, spent after five tries, or expired)
+ *  PATCH  /api/devices/:id  { label }    -> PairedDevice;  DELETE /api/devices/:id -> 204 (revoked at its next request)
  *  GET    /api/push                      -> PushKey (the VAPID application server key)
  *  POST   /api/push/subscribe { subscription }  -> 204 (a browser PushSubscription JSON; upsert by endpoint)
  *  DELETE /api/push/subscribe { endpoint }      -> 204
  *  POST   /api/push/test      { endpoint }      -> 204 | 404 subscription_not_found | 502 push_failed
  *  Errors: non-2xx with { error: { code, message } }
  *
- *  Auth (only when the server was started with HERDR_WEB_TOKEN / token): every route
- *  above except /api/health and /api/auth, plus the /ws upgrade, needs the cookie or
- *  an `Authorization: Bearer <token>` header; without it HTTP answers 401
- *  `unauthorized` and the upgrade is refused. Static files are always public.
+ *  Access: every route above except /api/health, /api/auth and /api/devices/pair, plus the
+ *  /ws upgrade, needs the request to be one of: from this PC itself (no proxy in front);
+ *  the PC's own Tailscale login, as `tailscale serve` states it; a paired device's cookie;
+ *  the shared token (HERDR_WEB_TOKEN) as cookie or `Authorization: Bearer <token>`. With a
+ *  token configured, only the last three count, this PC included. Without one, and while no
+ *  device is paired, anything that reaches the server is let in as before (the startup
+ *  warning says so). Refusals answer 401 `unauthorized` (403 `other_user` for another Tailscale
+ *  login); the upgrade is refused. Static files are always public.
  */
 export interface ApiError {
   error: { code: string; message: string };
 }
 
-/** GET /api/health `auth`: `required` is false when no token is configured, and then `authenticated` is true. */
+/** How a request got in, when it did. */
+export type AccessVia = "local" | "tailscale" | "device" | "token" | "open";
+/** Why a request did not. */
+export type AccessRefusal = "other_user" | "pairing_required" | "token_required";
+/** What a paired device may do: drive (type, answer, manage) or only watch. */
+export type DeviceRole = "drive" | "watch";
+
+/** GET /api/health `auth`: `authenticated` is whether this request got in; `required` is the opposite, kept for older clients. */
 export interface HealthAuth {
   readonly required: boolean;
   readonly authenticated: boolean;
+  readonly via?: AccessVia;
+  readonly role?: DeviceRole;
+  readonly reason?: AccessRefusal;
+}
+
+export interface PairedDevice {
+  readonly id: string;
+  readonly label: string;
+  readonly role: DeviceRole;
+  readonly created_at: string;
+  readonly last_seen_at: string | null;
+  /** the device this request came from */
+  readonly current: boolean;
+}
+
+/** POST /api/devices/pair/start */
+export interface PairingCode {
+  readonly code: string;
+  readonly expires_at: string;
 }
 
 /** GET /api/access: how a phone can reach this server, as far as the server can tell (Settings → Phone). */

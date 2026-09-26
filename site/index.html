@@ -365,7 +365,7 @@
                   </div>
                 </li>
               </ol>
-              <p class="more">If other people share your tailnet, or you use a LAN address, a public domain or a reverse proxy, set a token first. <a href="https://github.com/devswha/herdr-web-ui#access-and-safety">Access and safety</a> lists what each route needs.</p>
+              <p class="more">Your own Tailscale devices get in as you. Anyone else's device, or a LAN address, a public domain or a reverse proxy, is paired once with a code from Settings → Devices. <a href="https://github.com/devswha/herdr-web-ui#access-and-safety">Access and safety</a> has the details.</p>
             </div>
             <div class="shots">
               <figure><img src="assets/mobile-chat.png" width="960" height="1868" loading="lazy" decoding="async" alt="Phone chat view of a Claude Code pane." /><figcaption>Chat</figcaption></figure>
@@ -423,7 +423,7 @@
                 </tr>
                 <tr>
                   <th scope="row">Reaching your phone</th>
-                  <td class="us" data-client="herdr web ui">Your Tailscale, SSH tunnel or HTTPS proxy. Nothing is published for you.</td>
+                  <td class="us" data-client="herdr web ui">Your Tailscale, SSH tunnel or HTTPS proxy. Your Tailscale login gets in; other devices are paired with a code.</td>
                   <td data-client="collie">Tailscale serve, or your own ingress.</td>
                   <td data-client="roamgate">Its own server on your LAN with a token, native HTTPS, web push.</td>
                   <td data-client="herdr-remote">A free Cloudflare tunnel, and Telegram.</td>

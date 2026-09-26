@@ -103,7 +103,7 @@ async function start(): Promise<number> {
     if (await health()) {
       process.stdout.write(`herdr web ui listening at ${origin}\n`);
       if ((env["HERDR_WEB_TOKEN"] ?? "") === "") {
-        process.stdout.write(`no token set: put HERDR_WEB_TOKEN=<token> in ${join(CONFIG_DIR, "env")} before exposing it\n`);
+        process.stdout.write(`no token set: your own Tailscale devices get in as you; pair any other device in Settings → Devices, or put HERDR_WEB_TOKEN=<token> in ${join(CONFIG_DIR, "env")}\n`);
       }
       return 0;
     }

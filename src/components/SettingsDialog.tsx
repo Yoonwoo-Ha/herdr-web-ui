@@ -10,8 +10,9 @@ import { CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, TERMINAL_FONT_MAX, TERMINAL
 import type { UpdatesModel } from "../lib/updates.ts";
 import type { MachineSettings } from "../../shared/machines.ts";
 import { fetchRemoteAccess, machineRequest } from "../lib/api.ts";
-import { phonePlan } from "../lib/phone.ts";
-import type { RemoteAccess } from "../../shared/protocol.ts";
+import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
+import type { HealthAuth, RemoteAccess } from "../../shared/protocol.ts";
+import { DevicesPanel } from "./DevicesPanel.tsx";
 import { PhonePanel } from "./PhonePanel.tsx";
 import { UpdateControls } from "./UpdateControls.tsx";
 
@@ -20,6 +21,8 @@ export interface SettingsDialogProps {
   onClose: () => void;
   actions: AppActions;
   updates: UpdatesModel;
+  /** how this browser got in, from the last health check */
+  auth: HealthAuth | null;
 }
 
 function Toggle({ checked, label, onChange }: { checked: boolean; label: string; onChange: (checked: boolean) => void }) {
@@ -30,7 +33,7 @@ function Toggle({ checked, label, onChange }: { checked: boolean; label: string;
   );
 }
 
-export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) {
+export function SettingsDialog({ open, onClose, updates, auth }: SettingsDialogProps) {
   const { settings, update } = useSettings();
   const installPrompt = useInstallPrompt();
   const firstControlRef = useRef<HTMLButtonElement>(null);
@@ -49,6 +52,8 @@ export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) 
   }, []);
   useEffect(() => { if (open) loadAccess(); }, [open, loadAccess]);
   const plan = phonePlan({ protocol: window.location.protocol, hostname: window.location.hostname, origin: window.location.origin, secure: window.isSecureContext }, access ?? null);
+  // where a phone can open this app now, for the pairing QR code: the served address, else this one when it is not loopback
+  const pairUrl = plan.kind === "here" || plan.kind === "served" ? plan.url : isLoopbackHost(window.location.hostname) ? null : window.location.origin;
 
   const updatePcSettings = async (patch: Partial<MachineSettings>) => {
     try { setPcSettings(await machineRequest<MachineSettings>("/settings", "PATCH", patch)); setPcSettingsError(null); }
@@ -145,6 +150,11 @@ export function SettingsDialog({ open, onClose, updates }: SettingsDialogProps) 
           <section className="settings-section">
             <h3>Phone</h3>
             <PhonePanel plan={plan} loading={access === undefined} onRefresh={loadAccess} />
+          </section>
+
+          <section className="settings-section">
+            <h3>Devices</h3>
+            <DevicesPanel pairUrl={pairUrl} auth={auth} />
           </section>
 
           <section className="settings-section">

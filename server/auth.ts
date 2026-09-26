@@ -7,8 +7,10 @@
  * SameSite=Strict cookie so page JavaScript can never read it back, and a `Secure`
  * flag whenever the request arrived over TLS or through a TLS-terminating proxy.
  *
- * An empty token disables the gate entirely - that is the loopback default, and
- * index.ts is the one that warns when it is combined with a public bind address.
+ * An empty token disables this gate; server/access.ts then decides by where a request comes
+ * from, what Tailscale says about it, and whether it holds a paired device's cookie (the
+ * helpers for that cookie live here too), and index.ts warns when a public bind address is
+ * combined with neither.
  */
 
 import { timingSafeEqual } from "node:crypto";
@@ -16,6 +18,8 @@ import { timingSafeEqual } from "node:crypto";
 import { badRequest, jsonResponse } from "./http.ts";
 
 const COOKIE_NAME = "herdr_web_token";
+/** a paired device's own credential; the same flags as the token cookie */
+export const DEVICE_COOKIE = "herdr_web_device";
 const COOKIE_MAX_AGE_SECONDS = 31536000;
 const BEARER_PREFIX = "bearer ";
 const encoder = new TextEncoder();
@@ -54,18 +58,19 @@ export function isAuthenticated(request: Request, token: string): boolean {
   return matches(authorization.slice(BEARER_PREFIX.length), token);
 }
 
-/** /api/health and /api/auth stay open so a client can discover the gate and pass it. */
+/** /api/health, /api/auth and /api/devices/pair stay open so a client can discover the gate and pass it. */
 export function requiresAuth(pathname: string): boolean {
   if (pathname === "/ws") return true;
   if (!pathname.startsWith("/api/")) return false;
-  return pathname !== "/api/health" && pathname !== "/api/auth";
+  return pathname !== "/api/health" && pathname !== "/api/auth" && pathname !== "/api/devices/pair";
 }
 
-export function unauthorizedJson(): Response {
-  return jsonResponse({ error: { code: "unauthorized", message: "token required" } }, 401);
+export function unauthorizedJson(reason: "other_user" | "pairing_required" | "token_required" = "token_required"): Response {
+  if (reason === "other_user") return jsonResponse({ error: { code: "other_user", message: "this PC belongs to another Tailscale user" } }, 403);
+  return jsonResponse({ error: { code: "unauthorized", message: reason === "pairing_required" ? "pair this device, or use the token" : "token required" } }, 401);
 }
 
-function isSecureRequest(request: Request): boolean {
+export function isSecureRequest(request: Request): boolean {
   if (request.headers.get("x-forwarded-proto") === "https") return true;
   return new URL(request.url).protocol === "https:";
 }
@@ -75,13 +80,20 @@ function sessionCookie(token: string, secure: boolean): string {
   return `${COOKIE_NAME}=${encodeURIComponent(token)}; ${attributes}${secure ? "; Secure" : ""}`;
 }
 
-function noContent(setCookie?: string): Response {
-  return new Response(null, { status: 204, ...(setCookie ? { headers: { "set-cookie": setCookie } } : {}) });
+export function deviceCookie(token: string, secure: boolean): string {
+  return `${DEVICE_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_SECONDS}${secure ? "; Secure" : ""}`;
+}
+
+export function noContent(...setCookies: string[]): Response {
+  const headers = new Headers();
+  for (const cookie of setCookies) headers.append("set-cookie", cookie);
+  return new Response(null, { status: 204, headers });
 }
 
 export async function handleAuthRequest(request: Request, token: string): Promise<Response> {
   if (request.method === "DELETE") {
-    return noContent(`${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
+    // signing out drops both credentials this browser may hold
+    return noContent(`${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`, `${DEVICE_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
   }
   if (request.method !== "POST") return badRequest("method_not_allowed", "use POST or DELETE");
   // Gate off: answering 204 without a cookie lets one client flow work either way.

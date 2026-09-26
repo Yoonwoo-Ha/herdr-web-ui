@@ -6,6 +6,8 @@ import type {
   ConversationResponse,
   HealthAuth,
   InteractivePrompt,
+  PairedDevice,
+  PairingCode,
   PaneReadResult,
   PromptAnswer,
   PushKey,
@@ -154,7 +156,29 @@ export async function authenticate(token: string): Promise<void> {
   if (!response.ok) throw await errorFrom("/api/auth", response);
 }
 
-/** DELETE /api/auth: clears the session cookie, so the next health check reports the gate again. */
+/** POST /api/devices/pair: the code shown on the PC, once; the server answers with this device's own HttpOnly cookie. */
+export async function pairDevice(code: string, label: string): Promise<void> {
+  const response = await fetch("/api/devices/pair", { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ code, label }) });
+  if (!response.ok) throw await errorFrom("/api/devices/pair", response);
+}
+
+export async function fetchDevices(): Promise<PairedDevice[]> {
+  return (await getJson<{ devices: PairedDevice[] }>("/api/devices")).devices;
+}
+
+export async function startPairing(): Promise<PairingCode> {
+  return (await sendJson("/api/devices/pair/start", "POST", {})).json();
+}
+
+export async function renameDevice(id: string, label: string): Promise<PairedDevice> {
+  return (await sendJson(`/api/devices/${encodeURIComponent(id)}`, "PATCH", { label })).json();
+}
+
+export async function revokeDevice(id: string): Promise<void> {
+  await sendJson(`/api/devices/${encodeURIComponent(id)}`, "DELETE", {});
+}
+
+/** DELETE /api/auth: clears the session and device cookies, so the next health check reports the gate again. */
 export async function signOut(): Promise<void> {
   const response = await fetch("/api/auth", { method: "DELETE" });
   if (!response.ok) throw await errorFrom("/api/auth", response);
@@ -186,7 +210,7 @@ export async function uploadPaneImage(paneId: string, image: Blob, machineId = "
   return ((await response.json()) as { path: string }).path;
 }
 
-async function sendJson(url: string, method: "POST" | "DELETE", body: unknown): Promise<Response> {
+async function sendJson(url: string, method: "POST" | "PATCH" | "DELETE", body: unknown): Promise<Response> {
   const response = await fetch(url, {
     method,
     headers: { "content-type": "application/json", "x-herdr-machine": "1" },

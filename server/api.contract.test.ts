@@ -1009,6 +1009,98 @@ describe("web push", () => {
   }, 60_000);
 });
 
+describe("pairing and identity", () => {
+  /** no token: the gate is where the request comes from, who Tailscale says it is, or a paired device's cookie */
+  const OWNER = "owner@example.com";
+  let open: { port: number; stop: () => void };
+  const openState = mkdtempSync(join(tmpdir(), "herdr-pairing-"));
+  beforeAll(() => { open = createServer({ port: 0, stateDir: openState, tailscaleOwner: OWNER }); });
+  afterAll(() => { open?.stop(); rmSync(openState, { recursive: true, force: true }); });
+  const base = () => `http://127.0.0.1:${open.port}`;
+  /** as if `tailscale serve` or a reverse proxy had forwarded it: the test client is on loopback, like a proxy */
+  const proxied = (login?: string, extra: Record<string, string> = {}) => ({ "x-forwarded-for": "100.64.0.9", ...(login ? { "tailscale-user-login": login } : {}), ...extra });
+  const auth = async (headers: Record<string, string> = {}) => ((await (await fetch(`${base()}/api/health?scope=bridge`, { headers })).json()) as { auth: HealthAuth }).auth;
+  const guard = { "content-type": "application/json", "x-herdr-machine": "1" };
+  let cookie = "";
+  let deviceId = "";
+
+  it("lets this PC in, and lets a proxied stranger in only while nothing is paired", async () => {
+    expect(await auth()).toMatchObject({ authenticated: true, via: "local" });
+    expect(await auth(proxied())).toMatchObject({ authenticated: true, via: "open" });
+    expect((await fetch(`${base()}/api/session`, { headers: proxied() })).status).toBe(200);
+  });
+
+  it("trusts the PC's own Tailscale login and refuses another", async () => {
+    expect(await auth(proxied(OWNER))).toMatchObject({ authenticated: true, via: "tailscale" });
+    expect(await auth(proxied("Owner@Example.com"))).toMatchObject({ authenticated: true, via: "tailscale" });
+    expect(await auth(proxied("someone@example.com"))).toMatchObject({ authenticated: false, reason: "other_user" });
+    const refused = await fetch(`${base()}/api/session`, { headers: proxied("someone@example.com") });
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as ApiError).error.code).toBe("other_user");
+  });
+
+  it("never treats a Funnel request as open", async () => {
+    expect(await auth(proxied(undefined, { "tailscale-funnel-request": "?1" }))).toMatchObject({ authenticated: false, reason: "pairing_required" });
+  });
+
+  it("pairs a device with a code from this PC, and the gate closes for strangers", async () => {
+    expect((await fetch(`${base()}/api/devices/pair/start`, { method: "POST" })).status).toBe(403); // the mutation guard
+    const started = await fetch(`${base()}/api/devices/pair/start`, { method: "POST", headers: guard });
+    expect(started.status).toBe(200);
+    const { code } = (await started.json()) as { code: string; expires_at: string };
+    expect(code).toMatch(/^\d{6}$/);
+    const wrong = await fetch(`${base()}/api/devices/pair`, { method: "POST", headers: { ...guard, ...proxied() }, body: JSON.stringify({ code: code === "000000" ? "111111" : "000000", label: "x" }) });
+    expect(wrong.status).toBe(401);
+    expect(((await wrong.json()) as ApiError).error.code).toBe("invalid_code");
+    const paired = await fetch(`${base()}/api/devices/pair`, { method: "POST", headers: { ...guard, ...proxied() }, body: JSON.stringify({ code, label: "  Test  phone " }) });
+    expect(paired.status).toBe(204);
+    const setCookie = paired.headers.get("set-cookie") ?? "";
+    expect(setCookie).toMatch(/^herdr_web_device=[0-9a-f]{64}; Path=\/; HttpOnly; SameSite=Strict; Max-Age=/);
+    cookie = setCookie.split(";")[0]!;
+    // the device is in, from anywhere; a stranger no longer is; this PC still is
+    expect(await auth({ ...proxied(), cookie })).toMatchObject({ authenticated: true, via: "device" });
+    expect(await auth(proxied())).toMatchObject({ authenticated: false, reason: "pairing_required" });
+    expect((await fetch(`${base()}/api/session`, { headers: proxied() })).status).toBe(401);
+    expect(await auth()).toMatchObject({ authenticated: true, via: "local" });
+    expect(await auth(proxied(OWNER))).toMatchObject({ authenticated: true, via: "tailscale" });
+    const list = (await (await fetch(`${base()}/api/devices`, { headers: { ...proxied(), cookie } })).json()) as { devices: Array<{ id: string; label: string; current: boolean }> };
+    expect(list.devices.map((d) => [d.label, d.current])).toEqual([["Test phone", true]]);
+    deviceId = list.devices[0]!.id;
+    expect(readFileSync(join(openState, "devices.json"), "utf8")).not.toContain(cookie.split("=")[1]);
+  });
+
+  it("renames and revokes a device; signing out drops its cookie", async () => {
+    const renamed = await fetch(`${base()}/api/devices/${deviceId}`, { method: "PATCH", headers: guard, body: JSON.stringify({ label: "Kitchen iPad" }) });
+    expect(((await renamed.json()) as { label: string }).label).toBe("Kitchen iPad");
+    const out = await fetch(`${base()}/api/auth`, { method: "DELETE", headers: { cookie } });
+    expect(out.headers.get("set-cookie") ?? "").toContain("herdr_web_device=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
+    expect((await fetch(`${base()}/api/devices/${deviceId}`, { method: "DELETE", headers: guard })).status).toBe(204);
+    expect((await fetch(`${base()}/api/devices/${deviceId}`, { method: "DELETE", headers: guard })).status).toBe(404);
+    // the revoked device is out, and so are strangers: revoking the last device never reopens the gate
+    expect(await auth({ ...proxied(), cookie })).toMatchObject({ authenticated: false, reason: "pairing_required" });
+    expect(await auth(proxied())).toMatchObject({ authenticated: false, reason: "pairing_required" });
+    expect(await auth()).toMatchObject({ authenticated: true, via: "local" });
+  });
+
+  it("a configured token still gates this PC, and identity and devices get past it", async () => {
+    const state = mkdtempSync(join(tmpdir(), "herdr-pairing-token-"));
+    const secured = createServer({ port: 0, stateDir: state, token: "t0k3n", tailscaleOwner: OWNER });
+    const at = (headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${secured.port}/api/health?scope=bridge`, { headers }).then((r) => r.json() as Promise<{ auth: HealthAuth }>).then((b) => b.auth);
+    try {
+      expect(await at()).toMatchObject({ authenticated: false, reason: "token_required" });
+      expect(await at({ authorization: "Bearer t0k3n" })).toMatchObject({ authenticated: true, via: "token" });
+      expect(await at(proxied(OWNER))).toMatchObject({ authenticated: true, via: "tailscale" });
+      expect(await at(proxied("someone@example.com"))).toMatchObject({ authenticated: false, reason: "other_user" });
+      // a pairing started with the token lets a device in without it
+      const started = await fetch(`http://127.0.0.1:${secured.port}/api/devices/pair/start`, { method: "POST", headers: { ...guard, authorization: "Bearer t0k3n" } });
+      const { code } = (await started.json()) as { code: string };
+      const paired = await fetch(`http://127.0.0.1:${secured.port}/api/devices/pair`, { method: "POST", headers: guard, body: JSON.stringify({ code }) });
+      expect(paired.status).toBe(204);
+      expect(await at({ cookie: (paired.headers.get("set-cookie") ?? "").split(";")[0]! })).toMatchObject({ authenticated: true, via: "device" });
+    } finally { secured.stop(); rmSync(state, { recursive: true, force: true }); }
+  });
+});
+
 describe("token auth", () => {
   /**
    * A second server with the gate ON: the default instance above stays open so the
@@ -1057,7 +1149,7 @@ describe("token auth", () => {
     const res = await fetch(`${securedBase()}/api/health`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; auth: HealthAuth };
-    expect(body.auth).toEqual({ required: true, authenticated: false });
+    expect(body.auth).toEqual({ required: true, authenticated: false, reason: "token_required" });
   });
 
   it("refuses a token that does not match", async () => {
@@ -1211,7 +1303,7 @@ describe("PC management API", () => {
     try {
       for (const path of ["/api/machines", "/api/machines/events", "/api/machines/setup", "/api/bridge"]) expect((await fetch(`http://localhost:${gated.port}${path}`)).status).toBe(401);
       const health = await fetch(`http://localhost:${gated.port}/api/health?scope=bridge`).then((r) => r.json()) as { auth: HealthAuth };
-      expect(health.auth).toEqual({ required: true, authenticated: false });
+      expect(health.auth).toEqual({ required: true, authenticated: false, reason: "token_required" });
     } finally { gated.stop(); rmSync(stateDir, { recursive: true, force: true }); }
   });
 });

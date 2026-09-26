@@ -97,5 +97,5 @@ function Command({ command }: { command: string }) {
 }
 
 function Sharing() {
-  return <p className="settings-hint">Other people in your tailnet, or a LAN or public address? Set a token first: <a href={README_SAFETY} target="_blank" rel="noreferrer">Access and safety</a>.</p>;
+  return <p className="settings-hint">Your own Tailscale devices get in as you. Anyone else's device, or a LAN or public address, needs pairing: Devices, below. Details in <a href={README_SAFETY} target="_blank" rel="noreferrer">Access and safety</a>.</p>;
 }
