@@ -8,6 +8,11 @@
  * under "Watch the demos in HD", desktop first, then phone. Poster frames are cut from the videos
  * with ffmpeg when it is installed (the workflow installs it); without it the page drops the
  * poster attributes and the stills stay full size.
+ *
+ * demo/ is the app itself, built by Vite with relative asset paths into demo/app/, loaded behind
+ * site/demo/transport.ts (bundled to demo-transport.js and injected before the app's scripts) so it
+ * runs on the fixtures in site/demo/ instead of a server; site/demo/index.html frames it with a
+ * banner. Building it needs node_modules (`bun install`).
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -92,6 +97,37 @@ for (const [index, video] of videos.entries()) {
     writeFileSync(page, readFileSync(page, "utf8").replace(` poster="media/${video.poster}"`, ""));
   }
 }
+
+// the demo: the real client, relative paths, the transport in front of it
+const demoApp = join(out, "demo", "app");
+if (!(await run([join(root, "node_modules/.bin/vite"), "build", "--base", "./", "--outDir", demoApp, "--emptyOutDir", "--logLevel", "warn"]))) throw new Error("vite build for the demo failed");
+const version = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version;
+const bundle = await Bun.build({
+  entrypoints: [join(root, "site/demo/transport.ts")],
+  outdir: demoApp,
+  naming: "demo-transport.js",
+  target: "browser",
+  minify: true,
+  define: { __APP_VERSION__: JSON.stringify(version) },
+});
+if (!bundle.success) throw new Error(`demo transport bundle failed:\n${bundle.logs.map(String).join("\n")}`);
+const appPage = join(demoApp, "index.html");
+let html = readFileSync(appPage, "utf8");
+// Vite leaves the PWA links root-absolute; on Pages the root is another site. The manifest goes:
+// the demo is not an app to install (its scope and start_url name a root that is not it).
+html = html.replace(/\s*<link rel="manifest"[^>]*>/, "");
+html = html.replace(/(href|src)="\/(?!\/)/g, '$1="./');
+html = html.replace(/<meta name="viewport"/, '<meta name="robots" content="noindex" />\n    <meta name="viewport"');
+if (!/<script type="module"/.test(html)) throw new Error("the built app has no module script to load the demo transport before");
+html = html.replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script type="module"');
+writeFileSync(appPage, html);
+// the brand mark is <img src="/icons/…"> in the client (src/App.tsx, TokenGate.tsx): root-absolute,
+// which is right for the app at its own origin and wrong under demo/app/
+for (const script of new Bun.Glob("assets/*.js").scanSync({ cwd: demoApp })) {
+  const file = join(demoApp, script);
+  writeFileSync(file, readFileSync(file, "utf8").replaceAll('"/icons/', '"./icons/'));
+}
+copyFileSync(join(root, "site/demo/index.html"), join(out, "demo", "index.html"));
 
 const files = new Bun.Glob("**/*").scanSync({ cwd: out, dot: true });
 let bytes = 0;

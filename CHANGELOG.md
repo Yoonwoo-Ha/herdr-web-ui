@@ -7,6 +7,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- The website has a demo, <https://devswha.github.io/herdr-web-ui/demo/>: the app itself on a
+  fictional session, no server. Its five panes, chats and Codex approval are the README media's;
+  answering the approval, sending a message and typing into the shell pane all get demo answers.
+
 ## [0.3.11] - 2026-09-26
 
 ### Added

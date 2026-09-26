@@ -1,17 +1,11 @@
 name: Website
 # Builds site/ into the GitHub Pages site (https://devswha.github.io/herdr-web-ui/) on every push to
-# main that touches the page or what it shows. README.md is a source too: the demo videos come from
-# the uploads it links (docs/development.md, "README media").
+# main: the page, and the browser demo, which is the app itself, so any client change is a site
+# change. README.md is a source too: the demo videos come from the uploads it links
+# (docs/development.md, "README media").
 on:
   push:
     branches: [main]
-    paths:
-      - 'site/**'
-      - 'scripts/build-site.ts'
-      - 'public/**'
-      - 'docs/screenshots/**'
-      - 'README.md'
-      - '.github/workflows/pages.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -28,6 +22,8 @@ jobs:
           bun-version: 1.4.2
       # poster frames and scaled stills (scripts/build-site.ts); the runner image has no ffmpeg
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      # the demo is a Vite build of the client
+      - run: bun install --frozen-lockfile
       - run: bun scripts/build-site.ts
       - uses: actions/upload-pages-artifact@v3
         with:
