@@ -42,3 +42,28 @@ describe("file view", () => {
     expect(await response.text()).toBe("<script>alert(1)</script>");
   });
 });
+
+describe("locateFile", () => {
+  const roots: string[] = [];
+  afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+  it("finds a bare name deeper in the pane's folder, and lists several of that name", async () => {
+    const { mkdirSync } = await import("node:fs");
+    const { locateFile } = await import("./file-view.ts");
+    const { clearFileCache } = await import("./files.ts");
+    const root = mkdtempSync(join(tmpdir(), "herdr-locate-")); roots.push(root);
+    mkdirSync(join(root, "docs/screenshots"), { recursive: true });
+    mkdirSync(join(root, "a"), { recursive: true });
+    mkdirSync(join(root, "b"), { recursive: true });
+    writeFileSync(join(root, "docs/screenshots/demo.mp4"), "x");
+    writeFileSync(join(root, "a/notes.md"), "a");
+    writeFileSync(join(root, "b/notes.md"), "b");
+    clearFileCache();
+    expect(locateFile("demo.mp4", root)).toMatchObject({ info: { path: join(root, "docs/screenshots/demo.mp4") } });
+    expect(locateFile("screenshots/demo.mp4", root)).toMatchObject({ info: { name: "demo.mp4" } });
+    expect(locateFile("notes.md", root)).toEqual({ candidates: [join(root, "a/notes.md"), join(root, "b/notes.md")] });
+    expect(locateFile("missing.txt", root)).toBeNull();
+    // an absolute or ~ path is taken as written, never searched for
+    expect(locateFile("/nowhere/demo.mp4", root)).toBeNull();
+  });
+});

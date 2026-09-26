@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, isAbsolute, resolve } from "node:path";
 
 import type { FileInfo, FileKind } from "../shared/protocol.ts";
+import { filesNamed } from "./files.ts";
 
 /**
  * Opening a file from the browser: the files agents write (a screenshot, a demo video, a
@@ -50,6 +51,25 @@ function kindOf(mime: string, path: string): FileKind {
   } finally {
     if (fd !== null) closeSync(fd);
   }
+}
+
+/**
+ * The file a path means: as written, or — for a relative path that is not there — the one
+ * file under the pane's folder whose path ends in it (agents often name `demo.mp4` without
+ * `docs/screenshots/`). Several such files come back as candidates to choose from.
+ */
+export function locateFile(input: string, cwd: string | null): { info: FileInfo } | { candidates: string[] } | null {
+  const path = resolveFilePath(input, cwd);
+  const info = path === null ? null : fileInfo(path);
+  if (info !== null) return { info };
+  const relative = input.trim();
+  if (cwd === null || relative === "" || isAbsolute(relative) || relative.startsWith("~") || relative.startsWith("../")) return null;
+  const found = filesNamed(cwd, relative).map((match) => resolve(cwd, match));
+  if (found.length === 1) {
+    const only = fileInfo(found[0]!);
+    return only === null ? null : { info: only };
+  }
+  return found.length > 1 ? { candidates: found } : null;
 }
 
 /** What the viewer needs to know about a file, or null when it is not a readable file. */

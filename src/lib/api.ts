@@ -219,9 +219,19 @@ function fileQuery(path: string, paneId: string | null): string {
   return new URLSearchParams({ path, ...(paneId ? { pane_id: paneId } : {}) }).toString();
 }
 
-/** GET /api/fs/stat: a file to open; `path` is absolute, `~/…` or relative to the pane's folder. */
-export async function fetchFileInfo(path: string, paneId: string | null, machineId = "local"): Promise<FileInfo> {
-  return getJson<FileInfo>(machinePath(machineId, `fs/stat?${fileQuery(path, paneId)}`));
+/**
+ * GET /api/fs/stat: a file to open; `path` is absolute, `~/…` or relative to the pane's
+ * folder. A bare name that several files under the folder end in answers with them.
+ */
+export async function fetchFileInfo(path: string, paneId: string | null, machineId = "local"): Promise<FileInfo | { candidates: string[] }> {
+  const url = machinePath(machineId, `fs/stat?${fileQuery(path, paneId)}`);
+  const response = await fetch(url);
+  if (response.status === 409) {
+    const body = (await response.json().catch(() => null)) as { error?: { candidates?: unknown } } | null;
+    if (Array.isArray(body?.error?.candidates)) return { candidates: body.error.candidates.map(String) };
+  }
+  if (!response.ok) throw await errorFrom(url, response);
+  return (await response.json()) as FileInfo;
 }
 
 /** GET /api/fs/file: the file itself, streamed (ranges for media); `download` saves it instead. */
