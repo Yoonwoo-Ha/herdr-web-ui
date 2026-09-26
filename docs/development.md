@@ -22,7 +22,14 @@ bun run test:ui                 # browser regression against isolated test serve
 bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun scripts/output-browser-qa.ts # terminal output flow control end to end
 bun run test:ssh                # remote-PC integration over SSH
+bun scripts/fresh-install-docker.ts [owner/repo] [ref]  # a new user's install in a bare Ubuntu (Docker)
 ```
+
+`fresh-install-docker.ts` is the check for "does a new user get a working install": a disposable
+Ubuntu 24.04 with only curl, git and the distro's Node 18, a normal user, herdr and Bun from their
+installers, a headless herdr, then `herdr plugin install` of a pushed ref (default: the current
+branch), the start action, `/api/health`, the PTY smoke test on the box's Node, and the startup hook
+after a herdr restart. It prints the time each step took. `KEEP=1` leaves the container for a look.
 
 Tests run against a herdr session of their own, `herdr-web-ui-test`. The first run starts a headless `herdr --session herdr-web-ui-test server` and later runs reuse it, so test workspaces never show in the herdr you work in (`scripts/test-herdr.ts`). Stop it with `herdr --session herdr-web-ui-test server stop`. `HERDR_TEST_SESSION` picks another name, and `HERDR_TEST_LIVE=1` runs against `HERDR_SOCKET` or your default session instead.
 
