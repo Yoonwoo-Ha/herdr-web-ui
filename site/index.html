@@ -71,6 +71,7 @@
       }
 
       * { box-sizing: border-box; }
+      .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
       html { -webkit-text-size-adjust: 100%; scroll-padding-top: 72px; }
       body {
         margin: 0;
@@ -185,19 +186,32 @@
       tbody th { color: var(--text-strong); font-weight: 600; white-space: nowrap; }
       td { color: var(--text); }
       td.dim { color: var(--text-dim); }
-      .compare th, .compare td { padding-right: 18px; min-width: 150px; }
-      .compare tbody th { min-width: 120px; }
-      .compare .us { background: var(--accent-tint); }
-      .compare thead .us { color: var(--accent); }
-      .compare td.us { color: var(--text-strong); padding-left: 12px; padding-right: 12px; }
-      .compare tbody th.us { padding-left: 12px; }
-      @media (max-width: 800px) {
-        .compare tbody th { position: sticky; left: 0; background: var(--bg); min-width: 0; white-space: normal; padding-right: 12px; }
-      }
+
+      /* the comparison: every data cell has the same inset, so the column we highlight lines up */
+      .compare col.label { width: 15%; }
+      .compare col.us { width: 27%; }
+      .compare th, .compare td { padding: 14px 16px; }
+      .compare tbody th { padding-left: 0; white-space: normal; }
+      .compare thead th:first-child { padding-left: 0; }
+      .compare .us { background: var(--bg-panel); }
+      .compare thead th.us { color: var(--accent); border-top: 3px solid var(--accent); padding-top: 11px; }
+      .compare td.us { color: var(--text-strong); }
       .compare thead th a { color: inherit; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 0.15em; }
       .compare thead th a:hover { color: var(--text-strong); text-decoration-color: currentColor; }
-      .compare tbody tr:last-child th, .compare tbody tr:last-child td { border-bottom: 0; }
       .legend { margin-top: 14px; font-size: 14px; color: var(--text-dim); }
+      @media (max-width: 720px) {
+        /* one block per row: the label, then each client's answer on its own line */
+        .compare .table-wrap { overflow: visible; }
+        .compare table, .compare tbody, .compare tr, .compare th, .compare td { display: block; }
+        .compare colgroup, .compare thead { display: none; }
+        .compare tbody tr { padding: 16px 0 6px; border-bottom: 1px solid var(--border); }
+        .compare tbody tr:last-child { border-bottom: 0; }
+        .compare tbody th { padding: 0 0 10px; border: 0; font-size: 16px; }
+        .compare td { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; padding: 8px 0; border: 0; }
+        .compare td::before { content: attr(data-client); color: var(--text-dim); font-size: 13px; font-weight: 600; padding-top: 2px; }
+        .compare td.us { background: none; }
+        .compare td.us::before { color: var(--accent); }
+      }
 
       /* phone */
       .phone .cols { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: clamp(28px, 4vw, 56px); margin-top: 36px; align-items: start; }
@@ -368,9 +382,10 @@
           <p class="intro">All four are in the <a href="https://herdr.dev/plugins/">herdr plugin marketplace</a>. Each is described here in the words of its own README and docs, and each does something this app does not.</p>
           <div class="table-wrap">
             <table>
+              <colgroup><col class="label" /><col class="us" /><col /><col /><col /></colgroup>
               <thead>
                 <tr>
-                  <th scope="col"></th>
+                  <th scope="col"><span class="visually-hidden">What</span></th>
                   <th scope="col" class="us">herdr web ui</th>
                   <th scope="col"><a href="https://github.com/AltanS/collie">collie</a></th>
                   <th scope="col"><a href="https://github.com/powerfooI/roamgate">roamgate</a></th>
@@ -380,52 +395,52 @@
               <tbody>
                 <tr>
                   <th scope="row">Runs as</th>
-                  <td class="us">A herdr plugin. herdr builds it, starts it and it updates itself.</td>
-                  <td>Its own bridge, from a curl installer or as a herdr plugin.</td>
-                  <td>Its own server, from a curl installer.</td>
-                  <td>A macOS menu-bar app, plus a Python relay for the phone.</td>
+                  <td class="us" data-client="herdr web ui">A herdr plugin. herdr builds it, starts it and it updates itself.</td>
+                  <td data-client="collie">Its own bridge, from a curl installer or as a herdr plugin.</td>
+                  <td data-client="roamgate">Its own server, from a curl installer.</td>
+                  <td data-client="herdr-remote">A macOS menu-bar app, plus a Python relay for the phone.</td>
                 </tr>
                 <tr>
                   <th scope="row">Drives</th>
-                  <td class="us">herdr</td>
-                  <td>herdr, tmux or zellij</td>
-                  <td>herdr</td>
-                  <td>herdr</td>
+                  <td class="us" data-client="herdr web ui">herdr</td>
+                  <td data-client="collie">herdr, tmux or zellij</td>
+                  <td data-client="roamgate">herdr</td>
+                  <td data-client="herdr-remote">herdr</td>
                 </tr>
                 <tr>
                   <th scope="row">What you read</th>
-                  <td class="us">The agent's own transcript as a chat, with the work folded per turn and the todo list pinned. The live terminal for everything else.</td>
-                  <td>Pane output, with a dashboard led by what needs your input.</td>
-                  <td>Terminals, agent sessions, files and diffs.</td>
-                  <td>An agent timeline and terminal output.</td>
+                  <td class="us" data-client="herdr web ui">The agent's own transcript as a chat, with the work folded per turn and the todo list pinned. The live terminal for everything else.</td>
+                  <td data-client="collie">Pane output, with a dashboard led by what needs your input.</td>
+                  <td data-client="roamgate">Terminals, agent sessions, files and diffs.</td>
+                  <td data-client="herdr-remote">An agent timeline and terminal output.</td>
                 </tr>
                 <tr>
                   <th scope="row">Answering</th>
-                  <td class="us">Prompt cards checked against the live menu, or the terminal.</td>
-                  <td>Prompts as tappable buttons, quick replies, voice input.</td>
-                  <td class="dim">Not in its docs</td>
-                  <td>One-tap approvals from the phone, the menu bar or Telegram.</td>
+                  <td class="us" data-client="herdr web ui">Prompt cards checked against the live menu, or the terminal.</td>
+                  <td data-client="collie">Prompts as tappable buttons, quick replies, voice input.</td>
+                  <td class="dim" data-client="roamgate">Not in its docs</td>
+                  <td data-client="herdr-remote">One-tap approvals from the phone, the menu bar or Telegram.</td>
                 </tr>
                 <tr>
                   <th scope="row">Reaching your phone</th>
-                  <td class="us">Your Tailscale, SSH tunnel or HTTPS proxy. Nothing is published for you.</td>
-                  <td>Tailscale serve, or your own ingress.</td>
-                  <td>Its own server on your LAN with a token, native HTTPS, web push.</td>
-                  <td>A free Cloudflare tunnel, and Telegram.</td>
+                  <td class="us" data-client="herdr web ui">Your Tailscale, SSH tunnel or HTTPS proxy. Nothing is published for you.</td>
+                  <td data-client="collie">Tailscale serve, or your own ingress.</td>
+                  <td data-client="roamgate">Its own server on your LAN with a token, native HTTPS, web push.</td>
+                  <td data-client="herdr-remote">A free Cloudflare tunnel, and Telegram.</td>
                 </tr>
                 <tr>
                   <th scope="row">Other machines</th>
-                  <td class="us">Linux and macOS PCs over SSH, added from the sidebar.</td>
-                  <td>Crews: one collie per machine behind one URL.</td>
-                  <td class="dim">Not in its docs</td>
-                  <td>The relay collects several machines.</td>
+                  <td class="us" data-client="herdr web ui">Linux and macOS PCs over SSH, added from the sidebar.</td>
+                  <td data-client="collie">Crews: one collie per machine behind one URL.</td>
+                  <td class="dim" data-client="roamgate">Not in its docs</td>
+                  <td data-client="herdr-remote">The relay collects several machines.</td>
                 </tr>
                 <tr>
                   <th scope="row">Also</th>
-                  <td class="us">A viewer for the files agents make, web push, remote-PC bridges kept current with the app.</td>
-                  <td>Six UI languages, device pairing, output search.</td>
-                  <td>A file explorer with diff annotations, and it can install herdr for you.</td>
-                  <td>A daily digest, a TUI, Windows support.</td>
+                  <td class="us" data-client="herdr web ui">A viewer for the files agents make, web push, remote-PC bridges kept current with the app.</td>
+                  <td data-client="collie">Six UI languages, device pairing, output search.</td>
+                  <td data-client="roamgate">A file explorer with diff annotations, and it can install herdr for you.</td>
+                  <td data-client="herdr-remote">A daily digest, a TUI, Windows support.</td>
                 </tr>
               </tbody>
             </table>
