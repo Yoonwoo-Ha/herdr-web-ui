@@ -7,6 +7,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- A video playing next to the app stuttered while an agent worked. The working dot (the RUN badge,
+  a live work block, a reconnecting connection) faded in and out smoothly, so the browser drew a
+  new frame at every display refresh, 60 or more a second, for as long as the agent ran. It now
+  jumps between its two looks: about one frame a second (600 to 13 frames in 10 s in the chat
+  view, measured in Chrome).
+
 ## [0.3.27] - 2026-09-27
 
 ### Fixed

@@ -73,7 +73,7 @@
 .machine-dot.is-connecting,
 .machine-dot.is-reconnecting {
   background: var(--status-working);
-  animation: pulse var(--dur-pulse) var(--ease-out) infinite;
+  animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
 }
 
 .machine-state {
