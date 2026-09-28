@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { ensurePushSubscription } from "./push.ts";
+import { ensurePushSubscription, removePushSubscription } from "./push.ts";
 
 /**
  * The device-side subscription flow against a stand-in browser whose PushManager, like
@@ -35,6 +35,7 @@ function standIn(endpoint: string, key: ArrayBuffer): StandInSubscription {
     unsubscribed: false,
     async unsubscribe() {
       this.unsubscribed = true;
+      if (live === this) live = null;
       return true;
     },
     toJSON: () => ({ endpoint, keys: { p256dh: "p", auth: "a" } }),
@@ -56,7 +57,7 @@ beforeEach(() => {
   };
   Object.defineProperty(globalThis.navigator, "serviceWorker", {
     configurable: true,
-    value: { ready: Promise.resolve({ pushManager }) },
+    value: { ready: Promise.resolve({ pushManager }), getRegistration: async () => ({ pushManager }) },
   });
   Object.assign(globalThis, { PushManager: class {}, Notification: { permission: "granted" } });
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -65,6 +66,7 @@ beforeEach(() => {
       registered.push((JSON.parse(String(init.body)) as { subscription: { endpoint: string } }).subscription.endpoint);
       return new Response(null, { status: 204 });
     }
+    if (url === "/api/push/subscribe" && init?.method === "DELETE") return new Response(null, { status: 204 });
     return new Response(null, { status: 404 });
   }) as typeof fetch;
 });
@@ -107,4 +109,55 @@ describe("ensurePushSubscription", () => {
     expect(issued).toBe(0);
     expect(registered).toEqual([]);
   });
+});
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((yes) => { resolve = yes; });
+  return { promise, resolve };
+}
+
+it("removes a registration still in flight when the bell is turned off", async () => {
+  const entered = deferred(), release = deferred();
+  const fetch = globalThis.fetch;
+  globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+    if (args[0] === "/api/push") { entered.resolve(); await release.promise; }
+    return fetch(...args);
+  }) as typeof fetch;
+  const enable = ensurePushSubscription();
+  await entered.promise;
+  const disable = removePushSubscription();
+  release.resolve();
+  await Promise.all([enable, disable]);
+  expect(registered).toEqual(["https://push.example/1"]);
+  expect(live).toBeNull();
+});
+
+it("still cleans up the browser subscription when registration fails", async () => {
+  const entered = deferred(), release = deferred();
+  const fetch = globalThis.fetch;
+  globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+    if (args[0] === "/api/push/subscribe" && args[1]?.method === "POST") {
+      entered.resolve(); await release.promise; return new Response(null, { status: 503 });
+    }
+    return fetch(...args);
+  }) as typeof fetch;
+  const enable = ensurePushSubscription().catch(() => null);
+  await entered.promise;
+  const subscription = live!;
+  const disable = removePushSubscription();
+  release.resolve();
+  await Promise.all([enable, disable]);
+  expect(subscription.unsubscribed).toBe(true);
+  expect(live).toBeNull();
+});
+
+it("preserves a rapid on-off-on sequence instead of reusing a subscription being removed", async () => {
+  const enable = ensurePushSubscription();
+  const disable = removePushSubscription();
+  const reenable = ensurePushSubscription();
+  await Promise.all([enable, disable, reenable]);
+  expect(issued).toBe(2);
+  expect(await reenable).toBe(live!.endpoint);
+  expect(live!.unsubscribed).toBe(false);
 });
