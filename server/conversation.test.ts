@@ -216,21 +216,12 @@ describe("gjc sessions", () => {
     return path;
   };
 
-  it("finds a pane's session by the cwd its directory is for, v2 scope file or older header", async () => {
+  it("does not infer a session from cwd, even if there is only one file", async () => {
     const home = mkdtempSync(join(tmpdir(), "herdr-gjc-")); roots.push(home);
-    const store = join(home, ".gjc", "agent", "sessions");
-    const v2 = join(store, "v2-abc");
-    session(v2, "old.jsonl", "/home/u/project", "2026-09-20T00:00:00.000Z");
-    const live = session(v2, "live.jsonl", "/home/u/project", "2026-09-21T00:00:00.000Z");
-    writeFileSync(join(v2, ".gjc-managed-session-scope.v2.json"), JSON.stringify({ canonicalPath: "/home/u/project" }));
-    const other = join(store, "v2-def");
-    session(other, "newer.jsonl", "/home/u/elsewhere", "2026-09-22T00:00:00.000Z");
-    writeFileSync(join(other, ".gjc-managed-session-scope.v2.json"), JSON.stringify({ canonicalPath: "/home/u/elsewhere" }));
-    const legacy = session(join(store, "-legacy"), "a.jsonl", "/home/u/legacy", "2026-09-19T00:00:00.000Z");
-    // a pane herdr does not know has no process to follow: the cwd decides
-    expect(await gjcTranscriptPath("w9999:p9999", "/home/u/project", home)).toBe(live);
-    expect(await gjcTranscriptPath("w9999:p9999", "/home/u/legacy", home)).toBe(legacy);
-    await expect(gjcTranscriptPath("w9999:p9999", "/home/u/never-opened", home)).rejects.toThrow(ConversationUnavailable);
+    const dir = join(home, ".gjc", "agent", "sessions", "v2-abc");
+    session(dir, "only.jsonl", "/home/u/project", "2026-09-20T00:00:00.000Z");
+    writeFileSync(join(dir, ".gjc-managed-session-scope.v2.json"), JSON.stringify({ canonicalPath: "/home/u/project" }));
+    await expect(gjcTranscriptPath("w9999:p9999", "/home/u/project", home)).rejects.toThrow(ConversationUnavailable);
   });
 
   it("shows a failed request's error instead of an empty answer", () => {

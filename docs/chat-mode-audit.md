@@ -171,3 +171,15 @@ The existing real-herdr Codex HTTP test also checks the additive history identit
 Large-output chunk APIs and a broader provider abstraction remain deferred:
 whole-output reads retain their existing 2,000,000-character response cap and
 still read the native file on demand. This change does not alter the input path.
+
+### GJC pane binding (2026-09-28)
+
+GJC resolution requires a unique open JSONL file under the canonical
+`~/.gjc/agent/sessions/` store, belonging to the requested pane's GJC process and
+matching the pane cwd in its session header. Directory descriptors, cwd matches,
+and modification times do not establish ownership. Missing, unreadable or
+ambiguous evidence returns `no_session_path`; this includes macOS without `/proc`
+and GJC versions that only hold the session directory open. The terminal remains
+available. `server/gjc.contract.test.ts` exercises distinct open files in two
+same-cwd panes against an isolated herdr session, changes recency, and checks
+ambiguous and directory-only descriptors.

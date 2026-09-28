@@ -13,6 +13,15 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   new frame at every display refresh, 60 or more a second, for as long as the agent ran. It now
   jumps between its two looks: about one frame a second (600 to 13 frames in 10 s in the chat
   view, measured in Chrome).
+- Android's system Back button closes a file or video preview and returns to the
+  chat instead of leaving the app. Closing with X, Escape or the backdrop also
+  consumes the preview's history entry; Forward restores the original file target.
+- GJC chat only selects a unique transcript file held open by the pane's process.
+  Panes sharing a working directory no longer follow whichever session was modified
+  last. When exact file evidence is unavailable (including directory-only descriptors
+  and platforms without `/proc`), chat reports unavailable instead of guessing.
+- Machine polling no longer overwrites newer streamed pane statuses or machine rosters.
+  Superseded HTTP responses and errors are ignored; subsequent polls still catch up.
 
 ## [0.3.27] - 2026-09-27
 

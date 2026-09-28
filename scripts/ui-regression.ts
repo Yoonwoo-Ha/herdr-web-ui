@@ -66,6 +66,40 @@ try {
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   await composer.waitFor();
 
+  // Hold a real machines response, then deliver a newer status through herdr/SSE.
+  const badge = page.locator(".pane-item.is-selected .badge");
+  await herdrRpc("pane.report_agent", { pane_id: paneA, source: "manual", agent: "claude", state: "blocked" });
+  await until(async () => await badge.getAttribute("data-status") === "blocked", "blocked baseline");
+  let releasePoll!: () => void;
+  const heldPoll = new Promise<void>((resolve) => { releasePoll = resolve; });
+  releases.push(releasePoll);
+  let pollCaptured = false;
+  let pollFinished = false;
+  await page.route("**/api/machines", async (route) => {
+    const response = await route.fetch();
+    if (!pollCaptured) {
+      pollCaptured = true;
+      await heldPoll;
+      await route.fulfill({ response });
+      pollFinished = true;
+    } else await route.fulfill({ response });
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await until(() => pollCaptured, "held machines snapshot");
+  await herdrRpc("pane.report_agent", { pane_id: paneA, source: "manual", agent: "claude", state: "working" });
+  await until(async () => await badge.getAttribute("data-status") === "working", "working event before poll");
+  releasePoll();
+  await until(() => pollFinished, "stale machines response released");
+  await page.waitForTimeout(300);
+  assert.equal(await badge.getAttribute("data-status"), "working", "stale poll must not revert RUN to INPUT");
+  if (process.env.UI_EVIDENCE_DIR) {
+    mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+    await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "pane-status-poll.png") });
+  }
+  await page.unroute("**/api/machines");
+  await herdrRpc("pane.report_agent", { pane_id: paneA, source: "manual", agent: "claude", state: "idle" });
+  console.log("PASS delayed machines poll preserves newer streamed pane status");
+
   // Use a real browser paste: keydown must not send Ctrl+V (0x16) to the agent,
   // where it can trigger image paste against the server's unrelated clipboard.
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
