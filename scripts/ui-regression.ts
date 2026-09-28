@@ -105,6 +105,20 @@ try {
   await page.getByRole("button", { name: "Close settings", exact: true }).click();
   console.log("PASS settings shortcut and theme");
 
+  // the bell turns this device's alerts on, and off again (it stayed disabled once on)
+  await context.grantPermissions(["notifications"], { origin });
+  const bell = page.locator(".bell-button");
+  await bell.click();
+  await until(async () => await bell.getAttribute("aria-pressed") === "true", "bell on");
+  await bell.click();
+  await until(async () => await bell.getAttribute("aria-pressed") === "false", "bell off");
+  assert.equal(await bell.getAttribute("aria-label"), "Alerts off");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}").alertsOn), false);
+  assert.equal(await page.evaluate(async () => (await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription()) ?? null), null, "turning alerts off drops the push subscription");
+  await bell.click();
+  await until(async () => await bell.getAttribute("aria-pressed") === "true", "bell on again");
+  console.log("PASS the bell turns alerts off and on again");
+
   const report = (state: string) => herdrRpc("pane.report_agent", {
     pane_id: paneA, source: "manual", agent: "claude", state,
   });

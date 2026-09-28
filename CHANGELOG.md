@@ -7,6 +7,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- Alerts could be turned on but not off: once on, the bell was disabled. It is now a switch for
+  this device. Off drops the device's push subscription (the server forgets it) and silences the
+  page's own alerts; on subscribes again. The choice is kept per device.
+
 ## [0.3.27] - 2026-09-27
 
 ### Fixed

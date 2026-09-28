@@ -26,6 +26,8 @@ export interface Settings {
   showThinking: boolean;
   /** UI language; `system` follows the browser (src/lib/i18n.ts) */
   language: LanguageSetting;
+  /** alerts on this device at all: the bell turns them off (push subscription dropped) and on */
+  alertsOn: boolean;
   /** alert this device when an agent waits on the user (shared/notify-policy.ts AlertPrefs) */
   alertInput: boolean;
   /** alert this device when a turn finishes: never, after a long one, or every one */
@@ -44,6 +46,7 @@ export const DEFAULT_SETTINGS: Settings = {
   enterSends: true,
   showThinking: false,
   language: "system",
+  alertsOn: true,
   alertInput: true,
   alertDone: "long",
   quickReplies: ["continue", "yes", "no", "commit and push", "retry"],
@@ -98,6 +101,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     enterSends: typeof record["enterSends"] === "boolean" ? record["enterSends"] : DEFAULT_SETTINGS.enterSends,
     showThinking: typeof record["showThinking"] === "boolean" ? record["showThinking"] : DEFAULT_SETTINGS.showThinking,
     language: record["language"] === "en" || record["language"] === "ko" || record["language"] === "system" ? record["language"] : DEFAULT_SETTINGS.language,
+    alertsOn: typeof record["alertsOn"] === "boolean" ? record["alertsOn"] : DEFAULT_SETTINGS.alertsOn,
     alertInput: typeof record["alertInput"] === "boolean" ? record["alertInput"] : DEFAULT_SETTINGS.alertInput,
     alertDone: record["alertDone"] === "off" || record["alertDone"] === "long" || record["alertDone"] === "always" ? record["alertDone"] : DEFAULT_SETTINGS.alertDone,
     // kept as typed (a trailing space is the next word being started), only bounded

@@ -16,6 +16,13 @@ describe("chat font size", () => {
 });
 
 describe("alert choices", () => {
+  it("keep alerts on unless this device turned them off with the bell", () => {
+    expect(DEFAULT_SETTINGS.alertsOn).toBe(true);
+    expect(sanitizeSettings({}).alertsOn).toBe(true);
+    expect(sanitizeSettings({ alertsOn: false }).alertsOn).toBe(false);
+    expect(sanitizeSettings({ alertsOn: "no" }).alertsOn).toBe(true);
+  });
+
   it("default to questions and long turns, and drop anything unknown to the default", () => {
     expect(alertPrefs(DEFAULT_SETTINGS)).toEqual({ input: true, done: "long" });
     expect(alertPrefs(sanitizeSettings({ alertInput: false, alertDone: "always" }))).toEqual({ input: false, done: "always" });

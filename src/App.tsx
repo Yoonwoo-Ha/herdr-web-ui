@@ -115,6 +115,10 @@ export function App() {
   const alerts = useMemo(() => alertPrefs(settings), [settings.alertInput, settings.alertDone]);
   const alertsRef = useRef(alerts);
   alertsRef.current = alerts;
+  // the bell's switch for this device: off drops its push subscription and silences tab alerts
+  const alertsOn = settings.alertsOn;
+  const alertsOnRef = useRef(alertsOn);
+  alertsOnRef.current = alertsOn;
   const [machines, setMachines] = useState<Machine[]>([]);
   const [selectedMachineId, setSelectedMachineId] = useState(() => {
     const query = new URLSearchParams(window.location.search);
@@ -258,7 +262,7 @@ export function App() {
         const previous = statusRef.current.get(key);
         statusRef.current.set(key, message.agent_status);
         const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
-        if (pane && shouldNotifyStatus(previous, message.agent_status) && !pushOnRef.current && alertsAllow(alertsRef.current, message.agent_status)) showPaneStatusNotification(message.pane_id, `${machine.name} · ${paneTitle(pane)}`, message.agent_status, () => selectTargetRef.current(machine.id, message.pane_id), machine.id);
+        if (pane && shouldNotifyStatus(previous, message.agent_status) && alertsOnRef.current && !pushOnRef.current && alertsAllow(alertsRef.current, message.agent_status)) showPaneStatusNotification(message.pane_id, `${machine.name} · ${paneTitle(pane)}`, message.agent_status, () => selectTargetRef.current(machine.id, message.pane_id), machine.id);
         setMachines((list) => {
           let changed = false;
           const next = list.map((m) => {
@@ -271,7 +275,7 @@ export function App() {
           return changed ? next : list;
         });
       }
-      if (message.type === "pane-exited" && !pushOnRef.current && alertsRef.current.done !== "off") {
+      if (message.type === "pane-exited" && alertsOnRef.current && !pushOnRef.current && alertsRef.current.done !== "off") {
         const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
         if (pane) showPaneEndedNotification(message.pane_id, `${machine.name} · ${paneTitle(pane)}`, () => selectTargetRef.current(machine.id, message.pane_id), machine.id);
       }
@@ -288,6 +292,7 @@ export function App() {
     const next = notificationState() === "granted" ? "granted" : await requestNotificationPermission();
     setNotifications(next);
     if (next !== "granted") return;
+    updateSettings({ alertsOn: true });
     try {
       const endpoint = await ensurePushSubscription(alertsRef.current);
       setPushOn(endpoint !== null);
@@ -296,13 +301,21 @@ export function App() {
     } catch (err) {
       console.warn("web push unavailable, alerts stay tab-only", err);
     }
-  }, []);
+  }, [updateSettings]);
+
+  // The browser's permission cannot be taken back from the page: turning alerts off drops
+  // this device's push subscription (the server forgets it) and silences the tab's own.
+  const disableNotifications = useCallback(async () => {
+    updateSettings({ alertsOn: false });
+    setPushOn(false);
+    await removePushSubscription().catch((err) => console.warn("could not drop the push subscription", err));
+  }, [updateSettings]);
 
   // a device that already allowed alerts re-registers on every load: idempotent, and it
   // brings the device back if the server lost its subscriptions; a changed choice of
   // alerts goes the same way
   useEffect(() => {
-    if (locked !== false || notifications !== "granted" || !pushSupported()) return;
+    if (locked !== false || notifications !== "granted" || !alertsOn || !pushSupported()) return;
     let cancelled = false;
     ensurePushSubscription(alerts)
       .then((endpoint) => {
@@ -314,7 +327,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [locked, notifications, alerts]);
+  }, [locked, notifications, alerts, alertsOn]);
 
   const unlock = useCallback(() => {
     setLocked(false);
@@ -430,17 +443,21 @@ export function App() {
     [selectedPaneId, selectedMachineId],
   );
 
-  const bell =
+  const bell: { label: string; title: string; on: boolean; run: () => Promise<void> } =
     notifications !== "granted"
-      ? { label: t("Enable notifications"), title: t("Notify me when a pane needs input or finishes"), disabled: false }
-      : pushOn
-        ? { label: t("Alerts on"), title: t("Alerts on — pushed to this device, even with the app closed"), disabled: true }
-        : pushSupported()
-          ? { label: t("Alerts on in this tab"), title: t("Alerts on while this tab is open — tap to get them with the app closed too"), disabled: false }
+      ? { label: t("Enable notifications"), title: t("Notify me when a pane needs input or finishes"), on: false, run: enableNotifications }
+      : !alertsOn
+        ? { label: t("Alerts off"), title: t("Alerts off on this device — tap to turn them on"), on: false, run: enableNotifications }
+        : pushOn
+          ? { label: t("Alerts on"), title: t("Alerts on — pushed to this device, even with the app closed. Tap to turn them off"), on: true, run: disableNotifications }
           : {
               label: t("Alerts on in this tab"),
-              title: t("Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app)"),
-              disabled: true,
+              // turning them off and on again retries the push subscription
+              title: pushSupported()
+                ? t("Alerts on while this tab is open. Tap to turn them off")
+                : t("Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app). Tap to turn them off"),
+              on: true,
+              run: disableNotifications,
             };
   const bellVisible = notifications !== "unsupported" && notifications !== "denied";
 
@@ -476,11 +493,11 @@ export function App() {
       },
       toggleTheme: () => updateSettings({ theme: resolvedTheme === "dark" ? "light" : "dark" }),
       lock: canSignOut ? () => void lock() : null,
-      enableNotifications: bellVisible && !bell.disabled ? () => void enableNotifications() : null,
+      enableNotifications: bellVisible && !bell.on ? () => void enableNotifications() : null,
       refresh: () => void load(),
       openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); setFilesOpen(true); } : null,
     }),
-    [selectPane, selectedPaneId, selectedMachineId, setView, view, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.disabled, enableNotifications, load],
+    [selectPane, selectedPaneId, selectedMachineId, setView, view, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.on, enableNotifications, load],
   );
 
   useShortcuts(actions, locked === false);
@@ -591,11 +608,11 @@ export function App() {
           {bellVisible && (
             <button
               type="button"
-              className={`icon-button bell-button${notifications === "granted" ? " is-on" : ""}`}
+              className={`icon-button bell-button${bell.on ? " is-on" : ""}`}
               aria-label={bell.label}
+              aria-pressed={bell.on}
               title={bell.title}
-              disabled={bell.disabled}
-              onClick={() => void enableNotifications()}
+              onClick={() => void bell.run()}
             >
               <Bell />
             </button>
