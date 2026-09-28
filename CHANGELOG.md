@@ -7,6 +7,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- On iPhone (iOS 26 and later) the top of the home-screen app was blurred: the status bar area
+  and the header below it. The page no longer draws under the status bar, where iOS now lays its
+  Liquid Glass edge blur; the status bar takes the app's theme color instead. An app already on the
+  home screen may need to be added again to pick this up.
+
 ## [0.3.27] - 2026-09-27
 
 ### Fixed

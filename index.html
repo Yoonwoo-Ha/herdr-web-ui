@@ -23,7 +23,10 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=ram1" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- No apple-mobile-web-app-status-bar-style: "black-translucent" drew the page under the iOS
+         status bar, and since iOS 26 the system covers that inset with its Liquid Glass edge blur,
+         which reaches well into the header below it. There is no opt-out, so the web view starts
+         below the status bar instead (env(safe-area-inset-top) is then 0), which theme-color paints. -->
     <meta name="apple-mobile-web-app-title" content="herdr" />
     <title>herdr web ui</title>
   </head>
