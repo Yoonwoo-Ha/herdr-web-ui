@@ -376,7 +376,7 @@
   height: 6px;
   border-radius: var(--radius-pill);
   background: currentColor;
-  animation: pulse var(--dur-pulse) var(--ease-out) infinite;
+  animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
 }
 
 .work-block-summary {

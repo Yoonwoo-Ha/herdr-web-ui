@@ -45,6 +45,8 @@ async function workerRegistration(): Promise<ServiceWorkerRegistration | null> {
 
 /** The subscription being made right now, shared by every caller that arrives meanwhile. */
 let pending: Promise<string | null> | null = null;
+// Preserve click order across registration/removal, even when a prior operation fails.
+let operations: Promise<unknown> = Promise.resolve();
 
 /**
  * Subscribes this device (reusing a live subscription) and registers it with the server.
@@ -57,10 +59,13 @@ let pending: Promise<string | null> | null = null;
  * dead endpoint. Concurrent callers therefore share one attempt.
  */
 export function ensurePushSubscription(alerts?: AlertPrefs): Promise<string | null> {
-  pending ??= subscribeDevice(alerts).finally(() => {
-    pending = null;
+  if (pending) return pending;
+  const request = operations.catch(() => undefined).then(() => subscribeDevice(alerts)).finally(() => {
+    if (pending === request) pending = null;
   });
-  return pending;
+  pending = request;
+  operations = request;
+  return request;
 }
 
 async function subscribeDevice(alerts?: AlertPrefs): Promise<string | null> {
@@ -80,7 +85,15 @@ async function subscribeDevice(alerts?: AlertPrefs): Promise<string | null> {
 }
 
 /** Stops pushes to this device: the server forgets it first, then the browser drops it. */
-export async function removePushSubscription(): Promise<void> {
+export function removePushSubscription(): Promise<void> {
+  // A later enable must enqueue a new registration after this removal, not join the old one.
+  pending = null;
+  const request = operations.catch(() => undefined).then(unsubscribeDevice);
+  operations = request;
+  return request;
+}
+
+async function unsubscribeDevice(): Promise<void> {
   if (!pushSupported()) return;
   const registration = await navigator.serviceWorker.getRegistration();
   const subscription = await registration?.pushManager.getSubscription();

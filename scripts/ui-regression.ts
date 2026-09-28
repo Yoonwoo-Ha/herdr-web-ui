@@ -66,6 +66,40 @@ try {
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   await composer.waitFor();
 
+  // Hold a real machines response, then deliver a newer status through herdr/SSE.
+  const badge = page.locator(".pane-item.is-selected .badge");
+  await herdrRpc("pane.report_agent", { pane_id: paneA, source: "manual", agent: "claude", state: "blocked" });
+  await until(async () => await badge.getAttribute("data-status") === "blocked", "blocked baseline");
+  let releasePoll!: () => void;
+  const heldPoll = new Promise<void>((resolve) => { releasePoll = resolve; });
+  releases.push(releasePoll);
+  let pollCaptured = false;
+  let pollFinished = false;
+  await page.route("**/api/machines", async (route) => {
+    const response = await route.fetch();
+    if (!pollCaptured) {
+      pollCaptured = true;
+      await heldPoll;
+      await route.fulfill({ response });
+      pollFinished = true;
+    } else await route.fulfill({ response });
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await until(() => pollCaptured, "held machines snapshot");
+  await herdrRpc("pane.report_agent", { pane_id: paneA, source: "manual", agent: "claude", state: "working" });
+  await until(async () => await badge.getAttribute("data-status") === "working", "working event before poll");
+  releasePoll();
+  await until(() => pollFinished, "stale machines response released");
+  await page.waitForTimeout(300);
+  assert.equal(await badge.getAttribute("data-status"), "working", "stale poll must not revert RUN to INPUT");
+  if (process.env.UI_EVIDENCE_DIR) {
+    mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+    await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "pane-status-poll.png") });
+  }
+  await page.unroute("**/api/machines");
+  await herdrRpc("pane.report_agent", { pane_id: paneA, source: "manual", agent: "claude", state: "idle" });
+  console.log("PASS delayed machines poll preserves newer streamed pane status");
+
   // Use a real browser paste: keydown must not send Ctrl+V (0x16) to the agent,
   // where it can trigger image paste against the server's unrelated clipboard.
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
@@ -104,6 +138,20 @@ try {
   assert.equal(await page.locator("html").getAttribute("data-theme"), "light");
   await page.getByRole("button", { name: "Close settings", exact: true }).click();
   console.log("PASS settings shortcut and theme");
+
+  // the bell turns this device's alerts on, and off again (it stayed disabled once on)
+  await context.grantPermissions(["notifications"], { origin });
+  const bell = page.locator(".bell-button");
+  await bell.click();
+  await until(async () => await bell.getAttribute("aria-pressed") === "true", "bell on");
+  await bell.click();
+  await until(async () => await bell.getAttribute("aria-pressed") === "false", "bell off");
+  assert.equal(await bell.getAttribute("aria-label"), "Alerts off");
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}").alertsOn), false);
+  assert.equal(await page.evaluate(async () => (await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription()) ?? null), null, "turning alerts off drops the push subscription");
+  await bell.click();
+  await until(async () => await bell.getAttribute("aria-pressed") === "true", "bell on again");
+  console.log("PASS the bell turns alerts off and on again");
 
   const report = (state: string) => herdrRpc("pane.report_agent", {
     pane_id: paneA, source: "manual", agent: "claude", state,

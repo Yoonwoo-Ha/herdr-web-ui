@@ -86,10 +86,12 @@ export const KO: Record<string, string> = {
   "Enable notifications": "알림 켜기",
   "Notify me when a pane needs input or finishes": "패널이 입력을 기다리거나 끝나면 알려줍니다",
   "Alerts on": "알림 켜짐",
-  "Alerts on — pushed to this device, even with the app closed": "알림 켜짐. 앱을 닫아도 이 기기로 옵니다",
+  "Alerts on — pushed to this device, even with the app closed. Tap to turn them off": "알림 켜짐. 앱을 닫아도 이 기기로 옵니다. 누르면 꺼집니다",
+  "Alerts off": "알림 꺼짐",
+  "Alerts off on this device — tap to turn them on": "이 기기에서 알림이 꺼져 있습니다. 누르면 켜집니다",
   "Alerts on in this tab": "이 탭에서 알림 켜짐",
-  "Alerts on while this tab is open — tap to get them with the app closed too": "이 탭이 열려 있는 동안 알림이 옵니다. 앱을 닫아도 받으려면 누르세요",
-  "Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app)": "이 탭이 열려 있는 동안 알림이 옵니다 (앱을 닫은 뒤의 알림은 https가 필요하고, iPhone에서는 홈 화면 앱이어야 합니다)",
+  "Alerts on while this tab is open. Tap to turn them off": "이 탭이 열려 있는 동안 알림이 옵니다. 누르면 꺼집니다",
+  "Alerts on while this tab is open (closed-app alerts need https, and on iPhone the home-screen app). Tap to turn them off": "이 탭이 열려 있는 동안 알림이 옵니다 (앱을 닫은 뒤의 알림은 https가 필요하고, iPhone에서는 홈 화면 앱이어야 합니다). 누르면 꺼집니다",
 
   // ---- sidebar ----
   "Herdr workspaces": "herdr 워크스페이스",
