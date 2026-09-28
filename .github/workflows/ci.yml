@@ -73,6 +73,7 @@ jobs:
           bun node_modules/playwright-core/cli.js install --with-deps chromium
           bun -e 'console.log("CHROME_PATH=" + require("playwright-core").chromium.executablePath())' >> "$GITHUB_ENV"
       - run: bun scripts/ui-regression.ts
+      - run: bun scripts/file-viewer-regression.ts
       - name: Stop the owned test session
         if: always()
         run: |

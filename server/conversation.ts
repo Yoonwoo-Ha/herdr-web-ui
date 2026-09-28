@@ -13,7 +13,7 @@
  *   tree routes it and process/session evidence selects a unique transcript
  *   under ~/.omo/agent/sessions/<cwd-slug>/. It writes omp's session shape, so
  *   parseOmpTranscript reads it.
- * - gjc: open descriptors or its cwd-scoped store, also in omp session format.
+ * - gjc: a unique open session file belonging to its process, also in omp session format.
  *
  * This module turns those files into the conversation the chat lens renders;
  * the pty stays the input path. Pure parsing lives in parseClaudeTranscript /
@@ -22,7 +22,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ConversationMetadata, ConversationPart, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
@@ -719,69 +719,39 @@ function transcriptCwd(path: string): string | null {
   }
 }
 
-/** A gjc session directory's cwd, by directory: one directory holds one cwd's sessions, for good. */
-const gjcDirCwds = new Map<string, string | null>();
-
-function gjcDirCwd(dir: string): string | null {
-  if (gjcDirCwds.has(dir)) return gjcDirCwds.get(dir)!;
-  let cwd: string | null = null;
-  try {
-    // v2 directories are named by a digest of the cwd, and say which in their scope file
-    const scope = JSON.parse(readFileSync(join(dir, ".gjc-managed-session-scope.v2.json"), "utf8")) as { canonicalPath?: unknown };
-    if (typeof scope.canonicalPath === "string") cwd = scope.canonicalPath;
-  } catch {
-    // an older, slug-named directory: its sessions' header names the cwd
-    const newest = newestJsonl(dir)[0];
-    cwd = newest === undefined ? null : transcriptCwd(newest);
-  }
-  if (cwd !== null) gjcDirCwds.set(dir, cwd);
-  return cwd;
-}
-
-function newestJsonl(dir: string): string[] {
-  let entries: string[];
-  try { entries = readdirSync(dir); } catch { return []; }
-  return entries.filter((entry) => entry.endsWith(".jsonl"))
-    .map((entry) => ({ path: join(dir, entry), mtimeMs: statSync(join(dir, entry), { throwIfNoEntry: false })?.mtimeMs ?? -1 }))
-    .filter((file) => file.mtimeMs >= 0)
-    .sort((left, right) => right.mtimeMs - left.mtimeMs)
-    .map((file) => file.path);
-}
-
 /**
- * gjc's transcript. herdr labels the pane `gjc` but names no session, and gjc writes
- * omp's session shape into one directory per cwd (`~/.gjc/agent/sessions/v2-<digest>`,
- * older ones slug-named), which it keeps open while it runs: the pane's gjc process
- * points at it through /proc (live-verified, gjc 0.17). Without /proc (macOS) the
- * directory is the one whose cwd is the pane's. The newest session in it is the live one.
+ * A directory descriptor or cwd proves only the store, not the active session.
+ * Require one exact open transcript; recency changes when a sibling pane writes.
+ * Without readable descriptors (including macOS), fail closed rather than guess.
  */
 export async function gjcTranscriptPath(paneId: string, cwd: string, home = process.env["HOME"] ?? ""): Promise<string> {
-  const root = join(home, ".gjc", "agent", "sessions");
+  let root: string;
+  try { root = realpathSync(join(home, ".gjc", "agent", "sessions")); }
+  catch { throw new ConversationUnavailable("no_session_path"); }
   const info = await herdrRpc<{ process_info?: { foreground_processes?: { pid?: unknown; argv?: unknown }[] } }>(
     "pane.process_info",
     { pane_id: paneId },
   ).catch(() => null);
-  const dirs = new Set<string>();
+  const paths = new Set<string>();
   for (const process of info?.process_info?.foreground_processes ?? []) {
     const argv = Array.isArray(process.argv) ? process.argv.map(String) : [];
-    if (typeof process.pid !== "number" || !/(^|\/)gjc$/.test(argv[0] ?? "")) continue;
-    let fds: string[] = [];
+    // Native gjc and interpreter-launched gjc scripts both occur in process_info.
+    const executable = /(^|\/)gjc(?:\.[cm]?js)?$/;
+    const isGjc = executable.test(argv[0] ?? "") ||
+      (/(^|\/)(?:bun|node)(?:\.exe)?$/.test(argv[0] ?? "") && executable.test(argv[1] ?? ""));
+    if (typeof process.pid !== "number" || !isGjc) continue;
+    let fds: string[];
     try { fds = readdirSync(`/proc/${process.pid}/fd`); } catch { continue; }
     for (const fd of fds) {
-      let target = "";
-      try { target = readlinkSync(`/proc/${process.pid}/fd/${fd}`); } catch { continue; }
-      if (target.startsWith(`${root}/`) && !target.slice(root.length + 1).includes("/")) dirs.add(target);
+      try {
+        const target = realpathSync(readlinkSync(`/proc/${process.pid}/fd/${fd}`));
+        if (target.startsWith(`${root}/`) && target.endsWith(".jsonl") &&
+            statSync(target).isFile() && transcriptCwd(target) === cwd) paths.add(target);
+      } catch { /* closed, deleted or unreadable descriptor */ }
     }
   }
-  if (dirs.size === 0) {
-    let entries: string[] = [];
-    try { entries = readdirSync(root); } catch { /* no store */ }
-    for (const entry of entries) if (gjcDirCwd(join(root, entry)) === cwd) dirs.add(join(root, entry));
-  }
-  const newest = [...dirs].flatMap((dir) => newestJsonl(dir).slice(0, 1))
-    .sort((left, right) => (statSync(right, { throwIfNoEntry: false })?.mtimeMs ?? 0) - (statSync(left, { throwIfNoEntry: false })?.mtimeMs ?? 0))[0];
-  if (newest === undefined) throw new ConversationUnavailable("no_session_path");
-  return newest;
+  if (paths.size !== 1) throw new ConversationUnavailable("no_session_path");
+  return [...paths][0]!;
 }
 
 /**

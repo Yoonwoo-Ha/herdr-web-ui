@@ -11,6 +11,20 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Alerts could be turned on but not off: once on, the bell was disabled. It is now a switch for
   this device. Off drops the device's push subscription (the server forgets it) and silences the
   page's own alerts; on subscribes again. The choice is kept per device.
+- A video playing next to the app stuttered while an agent worked. The working dot (the RUN badge,
+  a live work block, a reconnecting connection) faded in and out smoothly, so the browser drew a
+  new frame at every display refresh, 60 or more a second, for as long as the agent ran. It now
+  jumps between its two looks: about one frame a second (600 to 13 frames in 10 s in the chat
+  view, measured in Chrome).
+- Android's system Back button closes a file or video preview and returns to the
+  chat instead of leaving the app. Closing with X, Escape or the backdrop also
+  consumes the preview's history entry; Forward restores the original file target.
+- GJC chat only selects a unique transcript file held open by the pane's process.
+  Panes sharing a working directory no longer follow whichever session was modified
+  last. When exact file evidence is unavailable (including directory-only descriptors
+  and platforms without `/proc`), chat reports unavailable instead of guessing.
+- Machine polling no longer overwrites newer streamed pane statuses or machine rosters.
+  Superseded HTTP responses and errors are ignored; subsequent polls still catch up.
 
 ## [0.3.27] - 2026-09-27
 

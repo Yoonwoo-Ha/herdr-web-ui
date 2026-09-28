@@ -341,7 +341,8 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | Micro | `--dur-fast` | `120ms` | Hover, active, toggle and control state |
 | Standard | `--dur-base` | `180ms` | Drawer slide; reserved dialog timing token |
 | Pulse | `--dur-pulse` | `1600ms` | Working and reconnecting dots (trough opacity 0.35; text never pulses) |
-| Easing | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | All tokenized motion |
+| Easing | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | Finite transitions |
+| Pulse easing | `--ease-pulse` | `steps(2, jump-none)` | Endless working and reconnecting dots; avoids drawing every display refresh |
 
 ### Rules
 - Only state changes move: hover/press, the drawer, settings switches, working and reconnecting.

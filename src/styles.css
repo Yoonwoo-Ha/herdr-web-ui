@@ -122,6 +122,10 @@
   --dur-base: 180ms;
   --dur-pulse: 1600ms;
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  /* the pulse jumps between its two looks: a smooth one has the browser draw a new frame at
+     every display refresh for as long as an agent works (60+ a second), which stutters a
+     video playing beside the app; two steps draw about one frame a second */
+  --ease-pulse: steps(2, jump-none);
 
   /* layers */
   --z-banner: 5;
@@ -420,7 +424,7 @@ button {
 
 .conn-reconnecting .conn-dot {
   background: var(--status-working);
-  animation: pulse var(--dur-pulse) var(--ease-out) infinite;
+  animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
 }
 
 /* the bell while notifications are live: the accent reads as "on"; a plain
@@ -613,7 +617,7 @@ button {
   height: 5px;
   border-radius: var(--radius-pill);
   background: currentColor;
-  animation: pulse var(--dur-pulse) var(--ease-out) infinite;
+  animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
 }
 
 .badge-blocked {
