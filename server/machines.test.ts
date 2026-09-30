@@ -8,7 +8,7 @@ import { paneNotificationTag } from "../shared/notify-policy.ts";
 import { machinePath, paneStorageId } from "../shared/machines.ts";
 import { canSendSecret, sameOrigin, shellQuote, validateTarget } from "./machine-security.ts";
 import { handleMachineRequest, MACHINE_PROXY_PATH } from "./machine-api.ts";
-import { MachineManager } from "./machines.ts";
+import { hostProbeError, MachineManager, UNSUPPORTED_HOST } from "./machines.ts";
 import { CompletionTracker } from "./completion.ts";
 import type { PushService } from "./push.ts";
 import { recentSshOutput } from "./ssh.ts";
@@ -153,5 +153,19 @@ describe("SSH output during setup", () => {
     expect(recentSshOutput("\x1b[31mred\x1b[0m\r\n\n  \nspinner\rdone\x07\n")).toBe("red\nspinner\ndone");
     expect(recentSshOutput("x".repeat(5000)).length).toBe(2048);
     expect(recentSshOutput("")).toBe("");
+  });
+});
+
+describe("host probe", () => {
+  it("names Windows hosts as unsupported when cmd or PowerShell cannot find sh", () => {
+    const cmd = "'sh' is not recognized as an internal or external command,\r\noperable program or batch file.";
+    const pwsh = "sh : The term 'sh' is not recognized as a name of a cmdlet, function, script file, or executable program.";
+    expect(hostProbeError(new Error(cmd)).message).toBe(UNSUPPORTED_HOST);
+    expect(hostProbeError(new Error(pwsh)).message).toBe(UNSUPPORTED_HOST);
+    expect(UNSUPPORTED_HOST).toContain("Windows hosts are not supported yet");
+  });
+  it("keeps any other probe failure as it was", () => {
+    const error = new Error("ssh: connect to host pc port 22: Connection refused");
+    expect(hostProbeError(error)).toBe(error);
   });
 });

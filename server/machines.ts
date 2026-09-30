@@ -65,6 +65,14 @@ export class MachineActionRequired extends Error {
   constructor(message: string, readonly action: MachineAction) { super(message); }
 }
 
+export const UNSUPPORTED_HOST = "Only Linux and macOS PCs (x64 or arm64) are supported. Windows hosts are not supported yet.";
+
+/** Windows OpenSSH runs the probe in cmd or PowerShell, which answer that `sh` "is not recognized". */
+export function hostProbeError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bsh\b.*is not recognized/is.test(message) ? new Error(UNSUPPORTED_HOST) : error instanceof Error ? error : new Error(message);
+}
+
 export class MachineManager {
   private machines = new Map<string, Runtime>();
   private jobs = new Map<string, JobState>();
@@ -311,9 +319,10 @@ export class MachineManager {
     const generation = runtime.generation;
     const ssh = runtime.ssh!;
     const session = runtime.machine.target!.session;
-    const inspection = await ssh.run(REMOTE_PATH + `printf '%s\\n' "$(uname -s)" "$(uname -m)" "$(cd -P "$HOME" && pwd -P)" "\${XDG_CONFIG_HOME:-$HOME/.config}" "$(command -v herdr || true)"; test -x "$HOME/${BUNDLE_DIR}/bin/bun" && printf 'bundle-ready\\n' || true; for d in "$HOME/.local/share/herdr-web-ui/remote-v"*; do if test -x "$d/bin/bun"; then printf 'bundle-older\\n'; break; fi; done; for f in "$HOME/.config/herdr-web-ui/bridges/"*.json; do test ! -f "$f" || cat "$f"; printf '\\n'; done`);
+    const inspection = await ssh.run(REMOTE_PATH + `printf '%s\\n' "$(uname -s)" "$(uname -m)" "$(cd -P "$HOME" && pwd -P)" "\${XDG_CONFIG_HOME:-$HOME/.config}" "$(command -v herdr || true)"; test -x "$HOME/${BUNDLE_DIR}/bin/bun" && printf 'bundle-ready\\n' || true; for d in "$HOME/.local/share/herdr-web-ui/remote-v"*; do if test -x "$d/bin/bun"; then printf 'bundle-older\\n'; break; fi; done; for f in "$HOME/.config/herdr-web-ui/bridges/"*.json; do test ! -f "$f" || cat "$f"; printf '\\n'; done`).catch((error: unknown) => { throw hostProbeError(error); });
     const [os, arch, home, xdgConfig, herdrPath, ...lines] = inspection.split("\n");
-    if (!home?.startsWith("/") || !["Linux", "Darwin"].includes(os ?? "") || !["x86_64", "aarch64", "arm64"].includes(arch ?? "")) throw new Error("Only Linux/macOS x64 and arm64 PCs are supported");
+    if (!["Linux", "Darwin"].includes(os ?? "") || !["x86_64", "aarch64", "arm64"].includes(arch ?? "")) throw new Error(UNSUPPORTED_HOST);
+    if (!home?.startsWith("/")) throw new Error("The SSH account's home directory ($HOME) could not be read on this PC");
     const platform = `${os === "Darwin" ? "darwin" : "linux"}-${arch === "x86_64" ? "x64" : "arm64"}`;
     if (herdrPath) {
       const version = await ssh.run(`${shellQuote(herdrPath)} --version`);
