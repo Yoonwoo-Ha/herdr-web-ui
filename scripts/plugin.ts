@@ -225,7 +225,8 @@ async function stop(): Promise<number> {
       return 1;
     }
   }
-  rmSync(PID_FILE, { force: true });
+  // a start that ran meanwhile may have recorded its own server: leave that one's pid file alone
+  if (recordedPid() === pid) rmSync(PID_FILE, { force: true });
   process.stdout.write(`stopped herdr web ui (pid ${pid})${killed ? `; it was still running after ${STOP_TIMEOUT_MS / 1000}s, so it was killed` : ""}\n`);
   return 0;
 }
