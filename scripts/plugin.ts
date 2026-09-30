@@ -43,6 +43,8 @@ const LOG_FILE = join(STATE_DIR, "server.log");
 const READY_TIMEOUT_MS = 20_000;
 /** the supervisor gives its bridge 6 s to exit before it kills it */
 const STOP_TIMEOUT_MS = 15_000;
+/** how long a killed server gets to disappear before `stop` reports that it could not stop it */
+const KILL_WAIT_MS = 3_000;
 /** `tailscale serve` waits while the user turns HTTPS on for the tailnet at the link it prints */
 const SERVE_TIMEOUT_MS = 180_000;
 /** how to come back to `phone` once Tailscale is set up: an action's output goes to herdr's log, not a terminal */
@@ -215,6 +217,13 @@ async function stop(): Promise<number> {
   const killed = running();
   if (killed) {
     try { process.kill(target, "SIGKILL"); } catch { /* gone meanwhile */ }
+    // SIGKILL only asks: the lock is free, and a start can follow, once the group is gone
+    const killDeadline = Date.now() + KILL_WAIT_MS;
+    while (running() && Date.now() < killDeadline) await Bun.sleep(100);
+    if (running()) {
+      process.stderr.write(`herdr web ui (pid ${pid}) is still running after SIGKILL; its pid file is kept\n`);
+      return 1;
+    }
   }
   rmSync(PID_FILE, { force: true });
   process.stdout.write(`stopped herdr web ui (pid ${pid})${killed ? `; it was still running after ${STOP_TIMEOUT_MS / 1000}s, so it was killed` : ""}\n`);
