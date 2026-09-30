@@ -352,7 +352,13 @@ export async function fetchPaneFiles(paneId: string, query: string, limit = 20, 
 
 /** GET /api/pane/prompt: the agent's interactive menu currently on screen, or null. */
 export async function fetchPanePrompt(paneId: string, machineId = "local"): Promise<InteractivePrompt | null> {
-  return (await getJson<{ prompt: InteractivePrompt | null }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`))).prompt;
+  return (await fetchPanePromptState(paneId, machineId)).prompt;
+}
+
+/** The waiting prompt, and with none, the next prompt the agent suggests (older servers send no suggestion). */
+export async function fetchPanePromptState(paneId: string, machineId = "local"): Promise<{ prompt: InteractivePrompt | null; suggestion: string | null }> {
+  const body = await getJson<{ prompt: InteractivePrompt | null; suggestion?: string | null }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`));
+  return { prompt: body.prompt, suggestion: typeof body.suggestion === "string" && body.suggestion !== "" ? body.suggestion : null };
 }
 
 /** POST /api/pane/prompt/answer: ApiError 409 `prompt_changed` when the menu moved on. */

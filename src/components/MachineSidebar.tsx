@@ -8,7 +8,7 @@ import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { Sidebar } from "./Sidebar.tsx";
 import { NeedsInput } from "./NeedsInput.tsx";
-import { UsageMeters } from "./UsageMeters.tsx";
+import { UsageMeters, UsagePanel } from "./UsageMeters.tsx";
 import "./Machines.css";
 import { useT } from "../lib/i18n.ts";
 
@@ -35,6 +35,7 @@ export function MachineSidebar(props: Props) {
       <button className="btn sidebar-new-session" disabled={target !== undefined && target.state !== "connected"} title={target ? t("New session on {name}", { name: target.name }) : t("New session")} onClick={props.actions.openNewSession}><Plus aria-hidden="true" />{t("New session")}</button>
       <button className="btn btn-ghost sidebar-add-pc" onClick={props.onAdd}><Monitor aria-hidden="true" />{t("Add PC")}</button>
     </div>
+    <UsagePanel />
     <div className="machine-list" aria-label={t("PCs and workspaces")}>
       <NeedsInput machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} onSelect={props.onSelect} />
       {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} />)}

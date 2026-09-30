@@ -200,4 +200,39 @@ describe("an attach classified as held", () => {
       } finally { client.ws.close(); }
     });
   }, 30_000);
+
+  it("is not pane output that shows herdr's refusal: a live attach whose screen has it is painted and resumes", async () => {
+    const paneId = await pane();
+    // the pane waited for another bridge; its next attach takes, and its screen shows the refusal
+    // (an agent's log, say) with more output after it
+    const shown = HELD.replace("; exit 1", "");
+    const herdr = scriptedHerdr([HELD, `${shown}; printf 'more pane output\\r\\n'; sleep 10`]);
+    await withHerdr(herdr.path, async () => {
+      const client = connect(third.port, paneId);
+      try {
+        await client.open;
+        client.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
+        await until(() => client.state.resumed === 1, "the live attach resumes", 5_000);
+        await until(() => client.state.tail.includes("more pane output"), "the live attach paints", 5_000);
+        expect(client.state.errors).toEqual(["attach_held"]);
+        expect(client.state.exits).toBe(0);
+      } finally { client.ws.close(); }
+    });
+  }, 30_000);
+
+  it("paints a live attach whose output so far ends like herdr's refusal, once that refusal's exit is overdue", async () => {
+    const paneId = await pane();
+    const herdr = scriptedHerdr([`${HELD.replace("; exit 1", "")}; sleep 10`]);
+    await withHerdr(herdr.path, async () => {
+      const client = connect(third.port, paneId);
+      try {
+        await client.open;
+        client.send({ type: "attach", pane_id: paneId, cols: 100, rows: 30 });
+        await until(() => client.state.frames > 0, "the live attach paints", 5_000);
+        expect(client.state.tail).toContain("already has an attached client");
+        expect(client.state.errors).toEqual([]);
+        expect(client.state.exits).toBe(0);
+      } finally { client.ws.close(); }
+    });
+  }, 30_000);
 });

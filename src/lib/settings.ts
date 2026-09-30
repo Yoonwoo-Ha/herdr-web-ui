@@ -14,6 +14,8 @@ export type ResolvedTheme = "dark" | "light";
 export type Density = "compact" | "comfortable";
 /** what the plan meters count: the share of a limit used, or what is left of it */
 export type UsageCount = "used" | "left";
+/** where the plan meters sit: chips beside Settings, or a panel at the top of the sidebar */
+export type UsagePlacement = "footer" | "top";
 
 export interface Settings {
   theme: ThemeSetting;
@@ -43,6 +45,7 @@ export interface Settings {
   /** the plan meters beside Settings in the sidebar (GET /api/usage); off until chosen, as it sends this PC's sign-ins out */
   showUsage: boolean;
   usageCount: UsageCount;
+  usagePlacement: UsagePlacement;
   /** the plan meters' order by ProviderUsage.key; accounts not in it follow, the one nearest a limit first */
   usageOrder: string[];
   /** accounts left out of the plan meters, strip and popover alike, by ProviderUsage.key */
@@ -65,6 +68,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showQuickReplies: false,
   showUsage: false,
   usageCount: "used",
+  usagePlacement: "footer",
   usageOrder: [],
   usageHidden: [],
 };
@@ -136,6 +140,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     showQuickReplies: typeof record["showQuickReplies"] === "boolean" ? record["showQuickReplies"] : DEFAULT_SETTINGS.showQuickReplies,
     showUsage: typeof record["showUsage"] === "boolean" ? record["showUsage"] : DEFAULT_SETTINGS.showUsage,
     usageCount: record["usageCount"] === "used" || record["usageCount"] === "left" ? record["usageCount"] : DEFAULT_SETTINGS.usageCount,
+    usagePlacement: record["usagePlacement"] === "top" || record["usagePlacement"] === "footer" ? record["usagePlacement"] : DEFAULT_SETTINGS.usagePlacement,
     usageOrder: usageKeys(record["usageOrder"]),
     usageHidden: usageKeys(record["usageHidden"]),
   };
