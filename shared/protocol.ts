@@ -77,8 +77,9 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *         commands: built-ins per agent kind + the user's and the project's custom commands)
  *  GET    /api/pane/files?pane_id=&q=&limit=  -> { files: string[] } (paths relative to the pane
  *         cwd matching q, for @-mentions; git ls-files when the cwd is a repo, bounded walk otherwise)
- *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null } (the agent's TUI
- *         question/approval menu currently on screen, parsed from the visible pane text)
+ *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null, unreadable: UnreadablePrompt | null }
+ *         (the agent's TUI question/approval menu currently on screen, parsed from the visible pane
+ *         text; with none, a dialog no parser reads, as its rows and the keys they name)
  *  POST   /api/pane/prompt/answer { pane_id, prompt_id, option_index?, option_indices?, custom_text? }
  *         -> { ok: true } | 409 prompt_changed (the screen no longer shows that prompt)
  *  POST   /api/workspace/create { cwd?, label?, agent?: { kind, name?, args? } }
@@ -368,13 +369,35 @@ export interface InteractivePromptOption {
   description: string | null;
 }
 
-/** POST /api/pane/prompt/answer body. Exactly one of option_index / option_indices / custom_text. */
+/**
+ * A dialog no parser recognizes (server/unreadable-prompt.ts): its last rows as shown, and
+ * what they say to press, for a fallback card. Only when there is no InteractivePrompt.
+ */
+export interface UnreadablePrompt {
+  id: string;
+  lines: string[];
+  actions: UnreadablePromptAction[];
+}
+
+/** One press: named keys (herdr's names: `enter`, `esc`, `up`, `ctrl+c`…) or literal text (`1`, `y`). */
+export interface UnreadablePromptAction {
+  id: string;
+  label: string;
+  keys?: string[];
+  text?: string;
+}
+
+/**
+ * POST /api/pane/prompt/answer body. Exactly one of option_index / option_indices / custom_text,
+ * or, for an UnreadablePrompt (`prompt_id` is its id), `action`: one of its action ids.
+ */
 export interface PromptAnswer {
   pane_id: string;
   prompt_id: string;
   option_index?: number;
   option_indices?: number[];
   custom_text?: string;
+  action?: string;
 }
 
 /**

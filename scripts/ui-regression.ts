@@ -448,6 +448,51 @@ try {
   await startupPrompt.waitFor({ state: "hidden" });
   console.log("PASS a typed pick answered in the terminal does not wait on the same menu asked again");
 
+  // A dialog no parser reads still gets a card: its rows, its options and the keys it names.
+  // A tap, or the option's number typed in the composer, is that key press; the X hides it.
+  const paintUnknownDialog = async (): Promise<void> => {
+    await herdrRpc("pane.send_text", {
+      pane_id: paneB,
+      text: "printf '\\033[2J\\033[HPick a deployment target\\n\\n❯ 1. Staging\\n  2. Production\\n\\nEnter to select · Esc to cancel\\n'; bash -c 'read -r -n 1 qa_pick; echo; echo \"picked:$qa_pick\"'",
+    });
+    await herdrRpc("pane.send_keys", { pane_id: paneB, keys: ["Enter"] });
+    await until(async () => {
+      const result = await herdrRpc<{ read: { text: string } }>("pane.read", { pane_id: paneB, source: "visible", format: "text" });
+      return result.read.text.includes("Enter to select · Esc to cancel") && !result.read.text.includes("picked:");
+    }, "unknown dialog painted");
+  };
+  const screenOfB = async (): Promise<string> => (await herdrRpc<{ read: { text: string } }>("pane.read", { pane_id: paneB, source: "visible", format: "text" })).read.text;
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "blocked" });
+  await paintUnknownDialog();
+  const unreadableCard = page.locator(".prompt-card.is-unreadable");
+  await unreadableCard.waitFor();
+  assert.match(await unreadableCard.locator(".prompt-card-body").innerText(), /Pick a deployment target[\s\S]*2\. Production/);
+  assert.deepEqual(await unreadableCard.locator(".prompt-card-key").allInnerTexts(), ["Enter", "Esc"]);
+  assert.equal(await composer.getAttribute("placeholder"), "Tap an option above, or type its number…");
+  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "unreadable-card.png") });
+  await unreadableCard.getByRole("button", { name: "1. Staging" }).click();
+  await until(async () => (await screenOfB()).includes("picked:1"), "a tap presses the option's number");
+  await unreadableCard.waitFor({ state: "hidden" });
+  // the option's number typed in the composer is the same press, not a message
+  await paintUnknownDialog();
+  await unreadableCard.waitFor();
+  await composer.fill("2");
+  await composer.press("Enter");
+  await until(async () => (await screenOfB()).includes("picked:2"), "a typed number presses the option");
+  await until(async () => await composer.inputValue() === "", "the typed number leaves the box");
+  // hidden with its X, the same dialog stays hidden; the composer is a message box again
+  await paintUnknownDialog();
+  await unreadableCard.waitFor();
+  await unreadableCard.getByRole("button", { name: "Hide" }).click();
+  await unreadableCard.waitFor({ state: "hidden" });
+  await page.waitForTimeout(2500);
+  assert.equal(await unreadableCard.count(), 0, "a hidden dialog stays hidden");
+  assert.notEqual(await composer.getAttribute("placeholder"), "Tap an option above, or type its number…");
+  await herdrRpc("pane.send_keys", { pane_id: paneB, keys: ["1"] });
+  await until(async () => (await screenOfB()).includes("picked:1"), "dialog closed");
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "idle" });
+  console.log("PASS a dialog no parser reads shows its rows and keys; a tap or its number presses, and the X hides it");
+
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await mobile.addInitScript(() => {
     Storage.prototype.getItem = () => { throw new DOMException("Storage unavailable", "SecurityError"); };

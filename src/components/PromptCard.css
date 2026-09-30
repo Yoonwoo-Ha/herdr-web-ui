@@ -233,7 +233,35 @@
   font-size: var(--fs-xs);
 }
 
+/* the fallback card: the terminal's own rows, and the keys they name as small buttons */
+.prompt-card-dismiss {
+  margin-left: auto;
+}
+
+.prompt-card.is-unreadable .prompt-card-body {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prompt-card-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.prompt-card-key {
+  min-width: 3rem;
+  justify-content: center;
+  font-family: var(--font-mono);
+}
+
 @media (pointer: coarse) {
+  .prompt-card-key {
+    min-height: var(--touch-target);
+  }
+
   .prompt-card-option {
     min-height: var(--touch-target);
   }

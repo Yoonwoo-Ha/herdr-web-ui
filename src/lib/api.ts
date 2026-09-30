@@ -11,6 +11,7 @@ import type {
   PaneReadResult,
   PromptAnswer,
   PushKey,
+  UnreadablePrompt,
   RemoteAccess,
   SessionSnapshot,
   SlashCommand,
@@ -352,7 +353,13 @@ export async function fetchPaneFiles(paneId: string, query: string, limit = 20, 
 
 /** GET /api/pane/prompt: the agent's interactive menu currently on screen, or null. */
 export async function fetchPanePrompt(paneId: string, machineId = "local"): Promise<InteractivePrompt | null> {
-  return (await getJson<{ prompt: InteractivePrompt | null }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`))).prompt;
+  return (await fetchPanePromptState(paneId, machineId)).prompt;
+}
+
+/** The waiting prompt, and with none, a dialog no parser reads (older servers send none). */
+export async function fetchPanePromptState(paneId: string, machineId = "local"): Promise<{ prompt: InteractivePrompt | null; unreadable: UnreadablePrompt | null }> {
+  const body = await getJson<{ prompt: InteractivePrompt | null; unreadable?: UnreadablePrompt | null }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`));
+  return { prompt: body.prompt, unreadable: body.prompt === null && body.unreadable ? body.unreadable : null };
 }
 
 /** POST /api/pane/prompt/answer: ApiError 409 `prompt_changed` when the menu moved on. */

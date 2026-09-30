@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -22,7 +22,7 @@ import { SecretInput } from "./SecretInput.tsx";
 import { secretPrompt } from "../../shared/secret-prompt.ts";
 import { ChatView } from "./ChatView.tsx";
 import { Composer } from "./Composer.tsx";
-import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, ServerMessage } from "../../shared/protocol.ts";
+import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, ServerMessage, UnreadablePrompt } from "../../shared/protocol.ts";
 import type { PaneView } from "../lib/actions.ts";
 import { terminalTheme, type ResolvedTheme } from "../lib/settings.ts";
 import { useT } from "../lib/i18n.ts";
@@ -159,6 +159,11 @@ export function PaneTerminal({
   // The prompt the chat shows: while it waits, a message from the composer answers it.
   const [chatPrompt, setChatPrompt] = useState<{ pane: string; value: InteractivePrompt } | null>(null);
   const [promptRefresh, setPromptRefresh] = useState(0);
+  // a dialog no parser reads, while the chat shows its card: a typed option number answers it
+  const [chatUnreadable, setChatUnreadable] = useState<{ pane: string; value: UnreadablePrompt } | null>(null);
+  const onChatUnreadable = useCallback((pane: string, value: UnreadablePrompt | null) => {
+    setChatUnreadable((current) => value !== null ? { pane, value } : current?.pane === pane ? null : current);
+  }, []);
   // a typed pick of an approval's option, shown in the card until Confirm or Cancel
   const [pendingAnswer, setPendingAnswer] = useState<{ pane: string; promptId: string; answer: TypedAnswer } | null>(null);
   const clearPendingAnswer = useCallback(() => setPendingAnswer(null), []);
@@ -943,6 +948,8 @@ export function PaneTerminal({
   const answering = chatView && chatPrompt !== null && chatPrompt.pane === paneId && !chatPrompt.value.queued ? chatPrompt.value : null;
   // ...and while it is open in the terminal it holds the input: nothing is sent into it
   const heldByOpenQueue = chatView && chatPrompt !== null && chatPrompt.pane === paneId && chatPrompt.value.queued === "open";
+  const unreadable = chatView && answering === null && chatUnreadable !== null && chatUnreadable.pane === paneId ? chatUnreadable.value : null;
+  const unreadableOptions = useMemo(() => unreadable?.actions.filter((action) => action.id.startsWith("option-")) ?? [], [unreadable]);
   const busy = agent !== null && agentStatus === "working" && answering === null;
   const readyForQueue = agentStatus !== undefined && QUEUE_READY_STATUS[agentStatus] === true;
 
@@ -970,13 +977,24 @@ export function PaneTerminal({
           },
         );
       }
+      // an option's number, typed while the fallback card shows, is that option's key press
+      const picked = unreadable === null ? undefined : unreadableOptions.find((option) => option.text === text.trim());
+      if (pane !== null && unreadable !== null && picked !== undefined) {
+        return answerPanePrompt({ pane_id: pane, prompt_id: unreadable.id, action: picked.id }).then(
+          () => { setPromptRefresh((key) => key + 1); return true; },
+          (cause: unknown) => {
+            setPromptRefresh((key) => key + 1);
+            return cause instanceof ApiError && cause.status === 409 ? t("The screen changed; check it and press again.") : String(cause instanceof Error ? cause.message : cause);
+          },
+        );
+      }
       if (pane !== null && agent !== null && agentStatus === "working") {
         queueStore.add(paneStorageId(machineId, pane), text);
         return true; // the composer may clear its box: the text lives in the queue card
       }
       return sendComposerText(text);
     },
-    [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, sendComposerText, queueStore, machineId],
+    [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, sendComposerText, queueStore, machineId, unreadable, unreadableOptions],
   );
 
 
@@ -1072,6 +1090,7 @@ export function PaneTerminal({
             agentStatus={agentStatus}
             onMetadata={onChatMetadata}
             onPrompt={onChatPrompt}
+            onUnreadable={onChatUnreadable}
             promptRefreshKey={promptRefresh}
             pendingAnswer={pendingAnswer !== null && pendingAnswer.pane === paneId ? pendingAnswer : null}
             onPendingAnswerDone={clearPendingAnswer}
@@ -1141,7 +1160,7 @@ export function PaneTerminal({
           metadata={chatMetadata?.pane === paneId ? chatMetadata.value : null}
           connected={connected && !held}
           queueMode={busy}
-          answerHint={answering === null ? null
+          answerHint={answering === null ? (unreadableOptions.length > 0 ? t("Tap an option above, or type its number…") : null)
             : pendingAnswer?.promptId === answering.id ? t("Confirm your answer in the card above, or type another…") : answerHint(answering)}
           onSend={composerSend}
           onAbort={abortTurn}

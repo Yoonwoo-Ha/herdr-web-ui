@@ -8,7 +8,7 @@ import "./ChatView.css";
 
 import { AgentMark } from "./AgentMark.tsx";
 import { Markdown } from "./Markdown.tsx";
-import { PromptCard } from "./PromptCard.tsx";
+import { PromptCard, UnreadablePromptCard } from "./PromptCard.tsx";
 import { useWholeOutput as useScopedOutput } from "../lib/useWholeOutput.ts";
 import { turnSkills } from "../lib/skillActivity.ts";
 import { ApiError } from "../lib/api.ts";
@@ -32,7 +32,7 @@ import { formatTokens } from "../lib/compose.ts";
 const ChatPaneContext = createContext<string | null>(null);
 const ChatHistoryContext = createContext("");
 import type { TypedAnswer } from "../lib/promptAnswer.ts";
-import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationTurn, InteractivePrompt } from "../../shared/protocol.ts";
+import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationTurn, InteractivePrompt, UnreadablePrompt } from "../../shared/protocol.ts";
 import { currentLocale, useT } from "../lib/i18n.ts";
 
 const TRANSCRIPT_LINES = 400;
@@ -52,6 +52,8 @@ export interface ChatViewProps {
   onMetadata?: (paneId: string, metadata: ConversationMetadata | null) => void;
   /** the agent's waiting prompt, for the composer to answer too */
   onPrompt?: (paneId: string, prompt: InteractivePrompt | null) => void;
+  /** with no prompt parsed, a dialog no parser reads, while its card shows: its numbers answer it too */
+  onUnreadable?: (paneId: string, prompt: UnreadablePrompt | null) => void;
   /** bumped after the composer answered: read the prompt again now */
   promptRefreshKey?: number;
   /** a typed pick of an approval's option, waiting in the card for Confirm */
@@ -394,9 +396,9 @@ function FallbackTurn({ paneId, message }: { paneId: string; message: Transcript
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onPrompt, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onPrompt, onUnreadable, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone }: ChatViewProps) {
   const t = useT();
-  const { fetchPaneConversation, fetchPanePrompt, fetchPaneTranscript } = useMachineApi();
+  const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
   // polls pause while the page is hidden and pick up at once when it is back
   const visible = usePageVisible();
@@ -411,6 +413,9 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
   /** the first answer for this pane arrived (or failed): until then an empty chat is only loading */
   const [loaded, setLoaded] = useState(false);
   const [prompt, setPrompt] = useState<InteractivePrompt | null>(null);
+  // a dialog no parser reads, with the pane it was read from; one hidden with its X stays hidden
+  const [unreadable, setUnreadable] = useState<{ pane: string; value: UnreadablePrompt } | null>(null);
+  const [dismissedUnreadable, setDismissedUnreadable] = useState<string | null>(null);
   const [promptPollKey, setPromptPollKey] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -610,24 +615,36 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
   // idle. The visible prompt, not the status badge, decides whether to offer answers.
   const pollPrompt = connected && !ended && agent !== null;
   useEffect(() => {
-    if (!pollPrompt) { setPrompt(null); return; }
+    if (!pollPrompt) { setPrompt(null); setUnreadable(null); return; }
     if (!visible) return;
     let cancelled = false;
     let timer = 0;
     const readPrompt = async (): Promise<void> => {
       // the same prompt keeps its object: the composer and the card only change with it
-      try { const next = await fetchPanePrompt(paneId); if (!cancelled) setPrompt((current) => current?.id === next?.id ? current : next); }
-      catch { if (!cancelled) setPrompt(null); }
+      try {
+        const next = await fetchPanePromptState(paneId);
+        if (cancelled) return;
+        setPrompt((current) => current?.id === next.prompt?.id ? current : next.prompt);
+        setUnreadable((current) => next.unreadable === null ? null
+          : current?.pane === paneId && current.value.id === next.unreadable.id ? current : { pane: paneId, value: next.unreadable });
+      }
+      catch { if (!cancelled) { setPrompt(null); setUnreadable(null); } }
       finally { if (!cancelled) timer = window.setTimeout(() => void readPrompt(), POLL_MS); }
     };
     void readPrompt();
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [pollPrompt, paneId, promptPollKey, promptRefreshKey, fetchPanePrompt, visible]);
+  }, [pollPrompt, paneId, promptPollKey, promptRefreshKey, fetchPanePromptState, visible]);
 
   useEffect(() => {
     onPrompt?.(paneId, prompt);
     return () => onPrompt?.(paneId, null);
   }, [onPrompt, paneId, prompt]);
+
+  const shownUnreadable = prompt === null && unreadable !== null && unreadable.pane === paneId && unreadable.value.id !== dismissedUnreadable ? unreadable.value : null;
+  useEffect(() => {
+    onUnreadable?.(paneId, shownUnreadable);
+    return () => onUnreadable?.(paneId, null);
+  }, [onUnreadable, paneId, shownUnreadable]);
 
   // away from the page, the prompt is not read: it can be answered in the terminal and asked
   // again unseen, so a typed pick waiting for Confirm does not outlive the page being hidden
@@ -695,6 +712,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
       {!loaded && error === null && <p className="chat-inline-state" role="status">{t("Loading conversation…")}</p>}
       {loaded && empty && error === null && prompt === null && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>{t("No conversation yet — say something below")}</p></div>}
       {prompt !== null && <PromptCard paneId={paneId} prompt={prompt} typedAnswer={pendingAnswer?.promptId === prompt.id ? pendingAnswer.answer : null} onTypedAnswerDone={onPendingAnswerDone} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={() => { setPrompt(null); onPendingAnswerDone?.(); }} />}
+      {shownUnreadable !== null && <UnreadablePromptCard paneId={paneId} prompt={shownUnreadable} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={() => { setUnreadable(null); setPromptPollKey((key) => key + 1); }} onDismiss={() => setDismissedUnreadable(shownUnreadable.id)} />}
       {ended && <p className="chat-endcap">{t("terminal ended")}</p>}
     </div>
     {newMessages ? <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>

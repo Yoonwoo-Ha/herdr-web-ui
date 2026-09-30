@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
-import type { InteractivePrompt, PromptAnswer } from "../shared/protocol.ts";
+import type { InteractivePrompt, PromptAnswer, UnreadablePrompt } from "../shared/protocol.ts";
 import { codexTranscriptPath, unansweredCodexQuestions, type QueuedQuestion } from "./codex.ts";
 import { HerdrError, paneRead, paneSendKeys, paneSendText, sessionSnapshot } from "./herdr/client.ts";
 import { badRequest, errorResponse, jsonResponse } from "./http.ts";
+import { parseUnreadablePrompt } from "./unreadable-prompt.ts";
 
 const ANSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const SELECTED_RE = /^[❯›>]\s*/;
@@ -770,15 +771,27 @@ const queueFronts = new Map<string, QueueFront & { rollout: string }>();
 const queueRollouts = new Map<string, { path: string | null; at: number }>();
 const QUEUE_ROLLOUT_MS = 15_000;
 
-async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: string; prompt: InteractivePrompt | null }> {
+/**
+ * With no card, a dialog on screen that no parser reads: its rows and the keys they name. For any
+ * agent (or none): a numbered menu above a select/cancel footer counts whatever herdr reports; a
+ * screen's key hints alone count only while herdr reports the pane blocked. `read` is readPrompt's
+ * result, whose screen is used again when it read one.
+ */
+async function readUnreadable(paneId: string, read: { screen: string | null; blocked: boolean }): Promise<UnreadablePrompt | null> {
+  const screen = read.screen ?? (await paneRead({ paneId, source: "visible", format: "text" })).text;
+  return parseUnreadablePrompt(screen, read.blocked);
+}
+
+async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: string; prompt: InteractivePrompt | null; screen: string | null; blocked: boolean }> {
   const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
   if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
   const agent = pane.agent ?? "";
-  if (agent !== "claude" && agent !== "omp" && agent !== "codex") return { agent, prompt: null };
+  const blocked = pane.agent_status === "blocked";
+  if (agent !== "claude" && agent !== "omp" && agent !== "codex") return { agent, prompt: null, screen: null, blocked };
   const screen = await paneRead({ paneId, source: "visible", format: "text" });
   const prompt = parseInteractivePrompt(agent, screen.text);
   const count = agent === "codex" && prompt === null ? queuedQuestionCount(screen.text) : 0;
-  if (count === 0 || !pane.cwd) return { agent, prompt };
+  if (count === 0 || !pane.cwd) return { agent, prompt, screen: screen.text, blocked };
   let rollout = queueRollouts.get(paneId);
   if (!rollout || Date.now() - rollout.at > QUEUE_ROLLOUT_MS) {
     rollout = { path: await codexTranscriptPath(paneId, pane.cwd, codexHome), at: Date.now() };
@@ -792,9 +805,11 @@ async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: 
     return {
       agent,
       prompt: rollout.path ? codexQueuedPrompt(screen.text, await unansweredCodexQuestions(rollout.path), front?.rollout === rollout.path ? front : null) : null,
+      screen: screen.text,
+      blocked,
     };
   } catch {
-    return { agent, prompt: null }; // the rollout went away
+    return { agent, prompt: null, screen: screen.text, blocked }; // the rollout went away
   }
 }
 
@@ -896,7 +911,8 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       if (request.method !== "GET") return badRequest("method_not_allowed", "GET is required.");
       const paneId = url.searchParams.get("pane_id")?.trim();
       if (!paneId) return badRequest("missing_pane_id", "pane_id is required.");
-      return jsonResponse({ prompt: (await readPrompt(paneId, options.codexHome)).prompt });
+      const read = await readPrompt(paneId, options.codexHome);
+      return jsonResponse({ prompt: read.prompt, unreadable: read.prompt === null ? await readUnreadable(paneId, read) : null });
     }
 
     if (request.method !== "POST") return badRequest("method_not_allowed", "POST is required.");
@@ -914,6 +930,18 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     // one sent meanwhile waits until the queue is opened, answered and closed again
     const serialize = options.serialize ?? (<T>(_paneId: string, task: () => Promise<T>) => task());
     return await serialize(body.pane_id, async () => {
+      if (body.action !== undefined) {
+        // a press on the fallback card: only while the same dialog shows, and only a key it names
+        if (typeof body.action !== "string") return badRequest("invalid_answer", "action must be a string.");
+        const read = await readPrompt(body.pane_id, options.codexHome);
+        const unreadable = read.prompt === null ? await readUnreadable(body.pane_id, read) : null;
+        if (!unreadable || unreadable.id !== body.prompt_id) return promptChanged();
+        const action = unreadable.actions.find((candidate) => candidate.id === body.action);
+        if (!action) return badRequest("invalid_answer", "That key is not offered by the dialog on screen.");
+        if (action.keys) await paneSendKeys(body.pane_id, action.keys);
+        else if (action.text !== undefined) await paneSendText(body.pane_id, action.text);
+        return jsonResponse({ ok: true });
+      }
       const { prompt } = await readPrompt(body.pane_id, options.codexHome);
       if (!prompt || prompt.id !== body.prompt_id) return promptChanged();
       // checked against the card before anything is sent: an invalid answer never opens the queue

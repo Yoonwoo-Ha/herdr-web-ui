@@ -1,11 +1,11 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Send } from "lucide-react";
+import { Send, X } from "lucide-react";
 
 import "./PromptCard.css";
 
 import { ApiError } from "../lib/api.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
-import type { InteractivePrompt, PromptAnswer } from "../../shared/protocol.ts";
+import type { InteractivePrompt, PromptAnswer, UnreadablePrompt, UnreadablePromptAction } from "../../shared/protocol.ts";
 import type { TypedAnswer } from "../lib/promptAnswer.ts";
 import { useT } from "../lib/i18n.ts";
 
@@ -143,6 +143,84 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
           <span>{t("Send {answer}?", { answer: `${typedAnswer.option_index + 1}. ${prompt.options[typedAnswer.option_index]?.label ?? ""}` })}</span>
           <button type="button" className="btn btn-primary" disabled={pending} onClick={() => void answer(typedAnswer).finally(() => onTypedAnswerDone?.())}>{t("Confirm")}</button>
           <button type="button" className="btn" disabled={pending} onClick={() => onTypedAnswerDone?.()}>{t("Cancel")}</button>
+        </div>
+      )}
+      {error !== null && <p className="prompt-card-error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+export interface UnreadablePromptCardProps {
+  paneId: string;
+  prompt: UnreadablePrompt;
+  onPromptChanged(): void;
+  onAnswered(): void;
+  onDismiss(): void;
+}
+
+/**
+ * A dialog the parsers do not read (server/unreadable-prompt.ts): its last rows as the terminal
+ * shows them, with its numbered options and the keys the rows name as one-tap presses. Each press
+ * is checked against the dialog still on screen before it is sent.
+ */
+export function UnreadablePromptCard({ paneId, prompt, onPromptChanged, onAnswered, onDismiss }: UnreadablePromptCardProps) {
+  const t = useT();
+  const { answerPanePrompt } = useMachineApi();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPending(false);
+    setError(null);
+  }, [prompt.id]);
+
+  const press = async (action: UnreadablePromptAction): Promise<void> => {
+    setPending(true);
+    setError(null);
+    try {
+      await answerPanePrompt({ pane_id: paneId, prompt_id: prompt.id, action: action.id });
+      onAnswered();
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 409 && cause.code === "prompt_changed") {
+        setError(t("The screen changed; check it and press again."));
+        onPromptChanged();
+      } else {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const options = prompt.actions.filter((action) => action.id.startsWith("option-"));
+  const keys = prompt.actions.filter((action) => !action.id.startsWith("option-"));
+
+  return (
+    <section className="prompt-card is-unreadable" role="region" aria-label={t("The terminal is waiting")} aria-busy={pending}>
+      <header className="prompt-card-header">
+        <span className="badge badge-blocked">{t("input needed")}</span>
+        <h2>{t("The terminal is waiting")}</h2>
+        <button type="button" className="icon-button prompt-card-dismiss" aria-label={t("Hide")} title={t("Hide")} onClick={onDismiss}>
+          <X aria-hidden="true" />
+        </button>
+      </header>
+      <p className="prompt-card-hint">{t("This dialog can't be read as a card. Its last rows, and the keys they name:")}</p>
+      <pre className="prompt-card-body">{prompt.lines.join("\n")}</pre>
+      {options.length > 0 && (
+        <div className="prompt-card-options">
+          {options.map((option) => (
+            <button key={option.id} type="button" className="prompt-card-option" disabled={pending} onClick={() => void press(option)}>
+              <span className="prompt-card-number">{option.text}.</span>{" "}
+              <span className="prompt-card-option-text"><span className="prompt-card-option-label">{option.label.replace(/^\d+[.)]\s*/, "")}</span></span>
+            </button>
+          ))}
+        </div>
+      )}
+      {keys.length > 0 && (
+        <div className="prompt-card-keys" role="group" aria-label={t("Keys")}>
+          {keys.map((key) => (
+            <button key={key.id} type="button" className="btn prompt-card-key" disabled={pending} onClick={() => void press(key)}>{key.label}</button>
+          ))}
         </div>
       )}
       {error !== null && <p className="prompt-card-error" role="alert">{error}</p>}

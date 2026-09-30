@@ -7,6 +7,13 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- A dialog the chat cannot read as a card no longer leaves only the terminal (#140). While herdr
+  reports the pane waiting, the chat shows a fallback card with the dialog's last rows, its
+  numbered options and the keys the rows name (Enter, Esc, Tab, arrows, y/n, Ctrl chords) as
+  one-tap buttons; an option's number typed in the message box presses it too. Each press is
+  checked against the dialog still on screen, and the card can be hidden.
+
 ## [0.3.35] - 2026-09-30
 
 ### Added
