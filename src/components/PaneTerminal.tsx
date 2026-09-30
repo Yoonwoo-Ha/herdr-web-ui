@@ -950,6 +950,16 @@ export function PaneTerminal({
   const heldByOpenQueue = chatView && chatPrompt !== null && chatPrompt.pane === paneId && chatPrompt.value.queued === "open";
   const unreadable = chatView && answering === null && chatUnreadable !== null && chatUnreadable.pane === paneId ? chatUnreadable.value : null;
   const unreadableOptions = useMemo(() => unreadable?.actions.filter((action) => action.id.startsWith("option-")) ?? [], [unreadable]);
+  // Escape in the empty composer presses the fallback card's Esc, when the dialog names one
+  const unreadableEscape = unreadable !== null && unreadable.actions.some((action) => action.id === "esc");
+  const pressUnreadableEscape = useCallback((): boolean => {
+    const pane = paneRef.current;
+    if (pane === null || unreadable === null || !unreadableEscape) return false;
+    void answerPanePrompt({ pane_id: pane, prompt_id: unreadable.id, action: "esc" })
+      .catch(() => undefined)
+      .finally(() => setPromptRefresh((key) => key + 1));
+    return true;
+  }, [answerPanePrompt, unreadable, unreadableEscape]);
   // a card waiting (parsed or not) means the pane waits on an answer, whatever status arrived last
   const busy = agent !== null && agentStatus === "working" && answering === null && unreadable === null;
   const readyForQueue = agentStatus !== undefined && QUEUE_READY_STATUS[agentStatus] === true;
@@ -1163,6 +1173,7 @@ export function PaneTerminal({
           queueMode={busy}
           answerHint={answering === null ? (unreadableOptions.length > 0 ? t("Tap an option above, or type its number…") : null)
             : pendingAnswer?.promptId === answering.id ? t("Confirm your answer in the card above, or type another…") : answerHint(answering)}
+          onEscape={unreadableEscape ? pressUnreadableEscape : undefined}
           onSend={composerSend}
           onAbort={abortTurn}
           onUploadImage={uploadImage}

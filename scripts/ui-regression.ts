@@ -487,6 +487,17 @@ try {
   await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "working" });
   await unreadableCard.waitFor({ state: "hidden" });
   await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "blocked" });
+  // Escape in the empty composer is the dialog's own Esc
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "blocked" });
+  await page.locator('.composer-status[data-status="blocked"]').waitFor();
+  await paintUnknownDialog();
+  await unreadableCard.waitFor();
+  await composer.focus();
+  await page.keyboard.press("Escape");
+  await until(async () => (await screenOfB()).includes("picked:"), "Escape presses the dialog's Esc");
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "working" });
+  await unreadableCard.waitFor({ state: "hidden" });
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "blocked" });
   // hidden with its X, the same dialog stays hidden; the composer is a message box again
   await paintUnknownDialog();
   await unreadableCard.waitFor();

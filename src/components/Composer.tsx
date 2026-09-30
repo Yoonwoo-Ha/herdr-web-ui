@@ -46,6 +46,8 @@ export interface ComposerProps {
   queueMode?: boolean;
   /** replaces the placeholder: how a message answers the agent's waiting prompt */
   answerHint?: string | null;
+  /** Escape in the empty box, when a waiting dialog takes it: true when it was pressed there */
+  onEscape?: () => boolean;
   /** true: sent, clear the box; a string: keep the text and say why; a promise settles to either */
   onSend: (text: string) => boolean | string | Promise<boolean | string>;
   onAbort: () => void;
@@ -177,6 +179,7 @@ export function Composer({
   metadata,
   queueMode = false,
   answerHint = null,
+  onEscape,
   onSend,
   onAbort,
   onUploadImage,
@@ -562,6 +565,11 @@ export function Composer({
         setMenuDismissed(true);
         return;
       }
+      // with nothing typed, Escape is the waiting dialog's own Esc (the card's key)
+      if (event.key === "Escape" && textRef.current === "" && onEscape?.()) {
+        event.preventDefault();
+        return;
+      }
       if (event.key !== "Enter") return;
       const shouldSend = settings.enterSends
         ? !event.shiftKey && !event.metaKey && !event.ctrlKey
@@ -570,7 +578,7 @@ export function Composer({
       event.preventDefault();
       send();
     },
-    [choices, menuOpen, selectCompletion, selectedIndex, send, settings.enterSends, trigger],
+    [choices, menuOpen, onEscape, selectCompletion, selectedIndex, send, settings.enterSends, trigger],
   );
 
   const onPaste = useCallback(
