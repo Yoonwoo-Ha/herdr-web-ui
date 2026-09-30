@@ -362,6 +362,9 @@ export interface InteractivePrompt {
    * a message typed in the chat still goes to Codex; open in the terminal, the queue holds the
    * input, so the chat sends nothing until it is answered or closed */
   queued?: "collapsed" | "open";
+  /** the last-resort card for a blocked pane no reader knows: answered with its own buttons only,
+   * so a message typed in the chat still goes to the agent as typed */
+  fallback?: true;
 }
 
 export interface InteractivePromptOption {

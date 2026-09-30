@@ -13,6 +13,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   screen a dashed chip above the box does the same. Nothing is sent until you send it.
 
 ### Fixed
+- A pane herdr reports waiting for input gets a card in the chat even when no reader knows its
+  screen (Codex's collapsed question queue keeps its own handling). A numbered menu that still
+  takes the answer is offered as its options, each answered by typing its number; anything
+  else shows the screen's last lines with Enter and Esc, plus Yes and No for a `(y/n)` prompt
+  and arrows when its hint names them. An answer to a changed screen is refused. Each such
+  wait is logged once.
 - **Add PC** on a Windows host now says that Windows hosts are not supported yet, instead of
   failing with the host shell's "'sh' is not recognized" (#189).
 

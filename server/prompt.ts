@@ -58,7 +58,9 @@ type Responder =
   | "omp-approval"
   | "claude-approval"
   | "claude-plan"
-  | "claude-confirm";
+  | "claude-confirm"
+  | "fallback-menu"
+  | "fallback-keys";
 
 type ParsedPrompt = InteractivePrompt & {
   responder: Responder;
@@ -67,6 +69,8 @@ type ParsedPrompt = InteractivePrompt & {
   checkedOptionIndices: number[];
   customMenuIndex: number | null;
   rejectWithEscapeIndex: number | null;
+  /** each option's own steps, for a card whose options are not rows of a menu */
+  optionSteps?: AnswerStep[][];
 };
 
 type AnswerStep = { keys?: string[]; text?: string };
@@ -194,6 +198,7 @@ function publicPrompt(parsed: ParsedPrompt): InteractivePrompt {
     multi_select: parsed.multi_select,
     custom_option_index: parsed.custom_option_index,
     ...(parsed.queued ? { queued: parsed.queued } : {}),
+    ...(parsed.fallback ? { fallback: true as const } : {}),
   };
   parsedByPublicPrompt.set(prompt, parsed);
   return prompt;
@@ -756,9 +761,130 @@ export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer,
   if (!Number.isInteger(index) || index! < 0 || index! >= parsed.options.length || parsed.multi_select) {
     throw new InvalidAnswer("A valid option index is required.");
   }
+  if (parsed.optionSteps) return parsed.optionSteps[index!]!;
   if (parsed.rejectWithEscapeIndex === index) return keySteps([KEY.escape]);
   return keySteps([...navigationKeys(index! - parsed.selectedIndex), KEY.enter]);
 }
+
+/**
+ * The last resort, for a pane herdr reports blocked that none of the readers above know (a
+ * menu a new agent version draws differently, an agent without a reader): the chat must never
+ * leave the user without a way to answer. It guesses as little as it can. Only a numbered menu
+ * that still owns the screen's end becomes options, each answered by typing its number, so no
+ * cursor position is guessed. Anything else shows the screen's last lines with the keys its
+ * hint lines name, plus Enter and Esc.
+ */
+/** a question, allowing a trailing choice hint such as "(y/n)" */
+const ASKED_RE = /\?\s*(?:[([][^)\]]*[)\]])?\s*$/;
+/** a (y/n) hint ending its line, as a prompt does; a mention mid-sentence or quoted does not */
+const YES_NO_RE = /[([]\s*y(?:es)?\s*\/\s*n(?:o)?\s*[)\]]\s*[:?]?\s*$/i;
+const ARROWS_RE = /[↑↓]|\barrow keys\b/i;
+/** what a menu's hint lines say to do with it */
+const MENU_HINT_RE = /\b(?:enter|select|choose|pick|number|esc)\b/i;
+/** a line that is an input box or quoted output rather than a prompt's own text */
+const NOT_PROMPT_TEXT_RE = /^(?:[❯›>"'“]|\$ )/;
+/** what may follow a menu that still takes the answer: its hint lines, never a new prompt */
+const MENU_TAIL_LINES = 3;
+
+export function parseFallbackPrompt(agent: string, screen: string): InteractivePrompt {
+  const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
+  const shown = lines.flatMap((line, index) => cleanLine(line) && !isDivider(line) ? [index] : []);
+  const menu = fallbackMenu(lines, shown);
+  if (menu) {
+    const above = shown.filter((index) => index < menu.start).map((index) => cleanLine(lines[index]!));
+    const question = [...above].reverse().find((line) => ASKED_RE.test(line)) ?? above.at(-1);
+    return screenCard(lines, shown, finishPrompt(agent, {
+      // the body is every other line above the rows, so a changed command above a same-looking
+      // menu is another card; the display cap applies after the hash
+      kind: "menu", fallback: true, title: "Waiting for your answer", question: question ?? "The agent is waiting for your answer.",
+      body: withoutLine(above, question),
+      options: menu.rows.map((row) => ({ label: row.label, description: null })),
+      multi_select: false, custom_option_index: null,
+    }, {
+      responder: "fallback-menu", menuLabels: menu.rows.map((row) => row.label), selectedIndex: 0,
+      checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
+      optionSteps: menu.rows.map((row) => [{ text: String(row.number) }]),
+    }));
+  }
+  const last = shown.slice(-16).map((index) => cleanLine(lines[index]!));
+  // letters and arrows only for the prompt's own last lines, never while an input box ends the
+  // screen (the agent's composer owns the keys then) or for a line of quoted output
+  const hints = NOT_PROMPT_TEXT_RE.test(last.at(-1) ?? "") ? [] : last.slice(-2).filter((line) => !NOT_PROMPT_TEXT_RE.test(line));
+  const question = [...last].reverse().find((line) => ASKED_RE.test(line)) ?? last.at(-1);
+  // a (y/n) letter is offered only for the prompt at the screen's end, never for a mention
+  // above it; it is typed without an Enter: a program reading a whole line still waits for
+  // one, and the card that follows offers it
+  const choices: { label: string; steps: AnswerStep[] }[] = [
+    ...(hints.some((line) => YES_NO_RE.test(line)) ? [{ label: "Yes (y)", steps: [{ text: "y" }] }, { label: "No (n)", steps: [{ text: "n" }] }] : []),
+    ...(hints.some((line) => ARROWS_RE.test(line)) ? [{ label: "↑", steps: keySteps([KEY.up]) }, { label: "↓", steps: keySteps([KEY.down]) }] : []),
+    { label: "Enter", steps: keySteps([KEY.enter]) },
+    { label: "Esc", steps: keySteps([KEY.escape]) },
+  ];
+  return screenCard(lines, shown, finishPrompt(agent, {
+    kind: "menu", fallback: true, title: "Waiting for input", question: question ?? "The agent is waiting for input.",
+    body: withoutLine(last, question),
+    options: choices.map(({ label }) => ({ label, description: null })),
+    multi_select: false, custom_option_index: null,
+  }, {
+    responder: "fallback-keys", menuLabels: choices.map(({ label }) => label), selectedIndex: 0,
+    checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
+    optionSteps: choices.map(({ steps }) => steps),
+  }));
+}
+
+/**
+ * A fallback card's id covers the whole visible screen, not just the lines it shows: a changed
+ * command, footer or wrapped label anywhere on it makes an answer to the old card stale.
+ */
+function screenCard(lines: string[], shown: number[], parsed: ParsedPrompt): InteractivePrompt {
+  const screen = shown.map((index) => cleanLine(lines[index]!)).join("\n");
+  parsed.id = createHash("sha256").update(JSON.stringify({ card: parsed.id, screen })).digest("hex").slice(0, 12);
+  return publicPrompt(parsed);
+}
+
+/** the screen lines shown under the card's question, without the question itself */
+function withoutLine(lines: string[], question: string | undefined): string | null {
+  const at = question === undefined ? -1 : lines.lastIndexOf(question);
+  return lines.filter((_, index) => index !== at).join("\n") || null;
+}
+
+/**
+ * A numbered menu (`1.` … `n.`, 2 to 9 rows, at most one marked) whose last row is followed only
+ * by a few hint lines: nothing that reads as a new prompt, an input box or another numbered row.
+ * A wrapped label is no guess here, since every row starts with its own number.
+ */
+function fallbackMenu(lines: string[], shown: number[]): { start: number; rows: NumberedRow[] } | null {
+  const lastRow = [...shown].reverse().find((index) => NUMBERED_OPTION_RE.test(cleanLine(lines[index]!)));
+  if (lastRow === undefined) return null;
+  const after = shown.filter((index) => index > lastRow).map((index) => cleanLine(lines[index]!));
+  if (after.length > MENU_TAIL_LINES || after.some((line) => SELECTED_RE.test(line) || NUMBERED_OPTION_RE.test(line))) return null;
+  // a hint that says to choose, and no input field after it ("Password:", "Choice: 2"): a
+  // numbered list in the agent's output is not a menu
+  if (!after.some((line) => MENU_HINT_RE.test(line)) || /:\s*\S{0,3}$/.test(after.at(-1)!)) return null;
+  // up from the last row, through rows and the lines they wrap onto, to a blank line or a rule
+  let start = lastRow;
+  while (start > 0 && cleanLine(lines[start - 1]!) && !isDivider(lines[start - 1]!)) start -= 1;
+  while (start < lastRow && !NUMBERED_OPTION_RE.test(cleanLine(lines[start]!))) start += 1;
+  const rows = parseNumberedRows(lines, start, lastRow + 1);
+  if (!sequentialRows(rows) || rows.length < 2 || rows.length > 9 || rows.filter((row) => row.selected).length > 1) return null;
+  // the lines a row wraps onto belong to its label; an input box or quote between rows, or a
+  // row with its own letter key ("Read only (r)"), means the number may not be the key
+  for (const [at, row] of rows.entries()) {
+    const wrapped = lines.slice(row.lineIndex + 1, rows[at + 1]?.lineIndex ?? lastRow + 1).map(cleanLine).filter(Boolean);
+    if (wrapped.some((line) => NOT_PROMPT_TEXT_RE.test(line))) return null;
+    row.label = [row.label, ...wrapped].join(" ");
+    if (/\(\w\)$/.test(row.label)) return null;
+  }
+  return { start, rows };
+}
+
+/**
+ * The panes whose current wait on an unknown screen is logged: once per wait, not per screen,
+ * so a screen that keeps changing (a clock, a spinner) cannot log on every poll.
+ */
+const fallbackLogged = new Set<string>();
+/** panes whose wait is logged at most; past it a new wait goes unlogged rather than relogging one */
+const FALLBACK_LOGGED_MAX = 256;
 
 /**
  * The question each pane's queue opened on when that was not the card's (a skipped
@@ -837,14 +963,43 @@ export function parseClaudeSuggestion(ansi: string): string | null {
 }
 
 async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: string; prompt: InteractivePrompt | null }> {
-  const pane = (await sessionSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
+  const { panes } = await sessionSnapshot();
+  // a closed pane's wait has ended too
+  for (const logged of fallbackLogged) if (!panes.some((candidate) => candidate.pane_id === logged)) fallbackLogged.delete(logged);
+  const pane = panes.find((candidate) => candidate.pane_id === paneId);
   if (!pane) throw new HerdrError("pane_not_found", `pane ${paneId} not found`);
   const agent = pane.agent ?? "";
-  if (agent !== "claude" && agent !== "omp" && agent !== "codex") return { agent, prompt: null };
+  const known = await readKnownPrompt(paneId, pane, agent, codexHome);
+  if (known.prompt !== null || pane.agent_status !== "blocked" || !agent) {
+    fallbackLogged.delete(paneId);
+    return { agent, prompt: known.prompt };
+  }
+  // herdr says the agent waits on the user and no reader knows the screen: the fallback card
+  const screen = known.screen ?? (await paneRead({ paneId, source: "visible", format: "text" })).text;
+  // Codex's collapsed question queue reads blocked while its main prompt takes a message
+  if (agent === "codex" && codexQuestionsCollapsed(screen)) {
+    fallbackLogged.delete(paneId);
+    return { agent, prompt: null };
+  }
+  const prompt = parseFallbackPrompt(agent, screen);
+  if (!fallbackLogged.has(paneId) && fallbackLogged.size < FALLBACK_LOGGED_MAX) {
+    fallbackLogged.add(paneId);
+    console.warn(`prompt: ${agent} pane ${paneId} is blocked on a screen no reader knows; fallback card (${prompt.options.length} options)`);
+  }
+  return { agent, prompt };
+}
+
+async function readKnownPrompt(
+  paneId: string,
+  pane: { cwd?: string | null },
+  agent: string,
+  codexHome?: string,
+): Promise<{ prompt: InteractivePrompt | null; screen?: string }> {
+  if (agent !== "claude" && agent !== "omp" && agent !== "codex") return { prompt: null };
   const screen = await paneRead({ paneId, source: "visible", format: "text" });
   const prompt = parseInteractivePrompt(agent, screen.text);
   const count = agent === "codex" && prompt === null ? queuedQuestionCount(screen.text) : 0;
-  if (count === 0 || !pane.cwd) return { agent, prompt };
+  if (count === 0 || !pane.cwd) return { prompt, screen: screen.text };
   let rollout = queueRollouts.get(paneId);
   if (!rollout || Date.now() - rollout.at > QUEUE_ROLLOUT_MS) {
     rollout = { path: await codexTranscriptPath(paneId, pane.cwd, codexHome), at: Date.now() };
@@ -856,11 +1011,11 @@ async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: 
     const front = queueFronts.get(paneId);
     if (front && front.rollout !== rollout.path) queueFronts.delete(paneId);
     return {
-      agent,
       prompt: rollout.path ? codexQueuedPrompt(screen.text, await unansweredCodexQuestions(rollout.path), front?.rollout === rollout.path ? front : null) : null,
+      screen: screen.text,
     };
   } catch {
-    return { agent, prompt: null }; // the rollout went away
+    return { prompt: null, screen: screen.text }; // the rollout went away
   }
 }
 
