@@ -413,7 +413,10 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
   /** the first answer for this pane arrived (or failed): until then an empty chat is only loading */
   const [loaded, setLoaded] = useState(false);
   const [prompt, setPrompt] = useState<InteractivePrompt | null>(null);
-  const [suggestion, setSuggestion] = useState<string | null>(null);
+  // the suggestion is handed up from each read, with the pane that read it: never kept here,
+  // where a pane switch or a send upstream could leave it stale
+  const onSuggestionRef = useRef(onSuggestion);
+  onSuggestionRef.current = onSuggestion;
   const [promptPollKey, setPromptPollKey] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -613,7 +616,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
   // idle. The visible prompt, not the status badge, decides whether to offer answers.
   const pollPrompt = connected && !ended && agent !== null;
   useEffect(() => {
-    if (!pollPrompt) { setPrompt(null); setSuggestion(null); return; }
+    if (!pollPrompt) { setPrompt(null); onSuggestionRef.current?.(paneId, null); return; }
     if (!visible) return;
     let cancelled = false;
     let timer = 0;
@@ -621,9 +624,9 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
       // the same prompt keeps its object: the composer and the card only change with it
       try {
         const next = await fetchPanePromptState(paneId);
-        if (!cancelled) { setPrompt((current) => current?.id === next.prompt?.id ? current : next.prompt); setSuggestion(next.suggestion); }
+        if (!cancelled) { setPrompt((current) => current?.id === next.prompt?.id ? current : next.prompt); onSuggestionRef.current?.(paneId, next.suggestion); }
       }
-      catch { if (!cancelled) { setPrompt(null); setSuggestion(null); } }
+      catch { if (!cancelled) { setPrompt(null); onSuggestionRef.current?.(paneId, null); } }
       finally { if (!cancelled) timer = window.setTimeout(() => void readPrompt(), POLL_MS); }
     };
     void readPrompt();
@@ -635,10 +638,8 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
     return () => onPrompt?.(paneId, null);
   }, [onPrompt, paneId, prompt]);
 
-  useEffect(() => {
-    onSuggestion?.(paneId, suggestion);
-    return () => onSuggestion?.(paneId, null);
-  }, [onSuggestion, paneId, suggestion]);
+  // a pane left behind keeps no suggestion
+  useEffect(() => () => onSuggestionRef.current?.(paneId, null), [paneId]);
 
   // away from the page, the prompt is not read: it can be answered in the terminal and asked
   // again unseen, so a typed pick waiting for Confirm does not outlive the page being hidden
