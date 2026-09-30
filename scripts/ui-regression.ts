@@ -472,14 +472,21 @@ try {
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "unreadable-card.png") });
   await unreadableCard.getByRole("button", { name: "1. Staging" }).click();
   await until(async () => (await screenOfB()).includes("picked:1"), "a tap presses the option's number");
+  // answered, an agent is no longer blocked: the menu's rows left on screen are no card
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "working" });
   await unreadableCard.waitFor({ state: "hidden" });
   // the option's number typed in the composer is the same press, not a message
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "blocked" });
+  await page.locator('.composer-status[data-status="blocked"]').waitFor();
   await paintUnknownDialog();
   await unreadableCard.waitFor();
   await composer.fill("2");
   await composer.press("Enter");
   await until(async () => (await screenOfB()).includes("picked:2"), "a typed number presses the option");
   await until(async () => await composer.inputValue() === "", "the typed number leaves the box");
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "working" });
+  await unreadableCard.waitFor({ state: "hidden" });
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "blocked" });
   // hidden with its X, the same dialog stays hidden; the composer is a message box again
   await paintUnknownDialog();
   await unreadableCard.waitFor();

@@ -772,10 +772,9 @@ const queueRollouts = new Map<string, { path: string | null; at: number }>();
 const QUEUE_ROLLOUT_MS = 15_000;
 
 /**
- * With no card, a dialog on screen that no parser reads: its rows and the keys they name. For any
- * agent (or none): a numbered menu above a select/cancel footer counts whatever herdr reports; a
- * screen's key hints alone count only while herdr reports the pane blocked. `read` is readPrompt's
- * result, whose screen is used again when it read one.
+ * With no card, while herdr reports the pane blocked: a dialog on screen that no parser reads, as
+ * its rows and the keys they name, for any agent. `read` is readPrompt's result, whose screen is
+ * used again when it read one.
  */
 async function readUnreadable(paneId: string, read: { screen: string | null; blocked: boolean }): Promise<UnreadablePrompt | null> {
   const screen = read.screen ?? (await paneRead({ paneId, source: "visible", format: "text" })).text;

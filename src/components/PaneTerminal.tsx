@@ -950,7 +950,8 @@ export function PaneTerminal({
   const heldByOpenQueue = chatView && chatPrompt !== null && chatPrompt.pane === paneId && chatPrompt.value.queued === "open";
   const unreadable = chatView && answering === null && chatUnreadable !== null && chatUnreadable.pane === paneId ? chatUnreadable.value : null;
   const unreadableOptions = useMemo(() => unreadable?.actions.filter((action) => action.id.startsWith("option-")) ?? [], [unreadable]);
-  const busy = agent !== null && agentStatus === "working" && answering === null;
+  // a card waiting (parsed or not) means the pane waits on an answer, whatever status arrived last
+  const busy = agent !== null && agentStatus === "working" && answering === null && unreadable === null;
   const readyForQueue = agentStatus !== undefined && QUEUE_READY_STATUS[agentStatus] === true;
 
   const composerSend = useCallback(
