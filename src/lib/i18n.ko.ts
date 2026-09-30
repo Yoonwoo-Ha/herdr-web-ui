@@ -497,6 +497,7 @@ export const KO: Record<string, string> = {
   "Quick reply {number}": "빠른 답장 {number}",
   "Remove quick reply {number}": "빠른 답장 {number} 삭제",
   "Add reply": "답장 추가",
+  "Use the suggestion": "제안 사용",
   "Send “{reply}”": "“{reply}” 보내기",
   "Show above the message box": "입력창 위에 표시",
   "Restore defaults": "기본값으로 되돌리기",

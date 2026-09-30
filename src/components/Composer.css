@@ -647,6 +647,19 @@
   }
 }
 
+/* the agent's suggestion: a dashed chip, on touch screens only (a keyboard takes it with Tab) */
+.composer-suggestion {
+  max-width: 100%;
+  border-style: dashed;
+  color: var(--text-dim);
+}
+
+@media (pointer: fine) {
+  .composer-suggestion-row {
+    display: none;
+  }
+}
+
 .composer-queue-heading { display: grid; gap: var(--space-1); font-size: var(--fs-sm); }
 .composer-queue-list { margin: 0; padding: 0; list-style: none; }
 .composer-queue-item { display: grid; gap: var(--space-1); padding: var(--space-2) 0; }

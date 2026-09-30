@@ -501,6 +501,7 @@ export const ZH: Record<string, string> = {
   "Quick reply {number}": "快捷回复 {number}",
   "Remove quick reply {number}": "删除快捷回复 {number}",
   "Add reply": "添加回复",
+  "Use the suggestion": "使用建议",
   "Send “{reply}”": "发送“{reply}”",
   "Show above the message box": "显示在输入框上方",
   "Restore defaults": "恢复默认值",

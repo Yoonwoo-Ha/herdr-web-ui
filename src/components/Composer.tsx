@@ -46,6 +46,8 @@ export interface ComposerProps {
   queueMode?: boolean;
   /** replaces the placeholder: how a message answers the agent's waiting prompt */
   answerHint?: string | null;
+  /** what the agent suggests typing next (Claude's grey input text): the placeholder, taken with Tab */
+  suggestion?: string | null;
   /** true: sent, clear the box; a string: keep the text and say why; a promise settles to either */
   onSend: (text: string) => boolean | string | Promise<boolean | string>;
   onAbort: () => void;
@@ -177,6 +179,7 @@ export function Composer({
   metadata,
   queueMode = false,
   answerHint = null,
+  suggestion = null,
   onSend,
   onAbort,
   onUploadImage,
@@ -230,9 +233,11 @@ export function Composer({
   const trigger = useMemo(() => activeTrigger(text, caret, { skills: agent === "codex" }), [agent, caret, text]);
   const uploading = attachments.some((attachment) => attachment.state === "uploading");
   const agentLabel = agentDisplayLabel(agent);
+  // the agent's suggestion stands in the empty box as it does in its own input, until anything is typed
+  const offered = connected && answerHint === null && suggestion !== null ? suggestion : null;
   const placeholder = !connected
     ? t("Reconnecting… message held here, never queued")
-    : answerHint ?? t("Message {agent}…", { agent: agentLabel });
+    : answerHint ?? offered ?? t("Message {agent}…", { agent: agentLabel });
 
   useEffect(() => {
     let live = true;
@@ -562,6 +567,12 @@ export function Composer({
         setMenuDismissed(true);
         return;
       }
+      // Tab takes the suggestion into the empty box, as in Claude's own input
+      if (event.key === "Tab" && !event.shiftKey && offered !== null && textRef.current === "") {
+        event.preventDefault();
+        setTextAndCaret(offered, offered.length);
+        return;
+      }
       if (event.key !== "Enter") return;
       const shouldSend = settings.enterSends
         ? !event.shiftKey && !event.metaKey && !event.ctrlKey
@@ -570,7 +581,7 @@ export function Composer({
       event.preventDefault();
       send();
     },
-    [choices, menuOpen, selectCompletion, selectedIndex, send, settings.enterSends, trigger],
+    [choices, menuOpen, offered, selectCompletion, selectedIndex, send, setTextAndCaret, settings.enterSends, trigger],
   );
 
   const onPaste = useCallback(
@@ -622,6 +633,15 @@ export function Composer({
           <Bug aria-hidden="true" /><span>{t("Report a problem")}</span>
         </button>
       </div>
+
+      {/* no Tab key on a phone: the suggestion is a chip there that fills the box */}
+      {offered !== null && text === "" && (
+        <div className="composer-quick composer-suggestion-row">
+          <button type="button" className="composer-quick-reply composer-suggestion" title={t("Use the suggestion")} onClick={() => setTextAndCaret(offered, offered.length)}>
+            <span aria-hidden="true">↹ </span>{offered}
+          </button>
+        </div>
+      )}
 
       {quickOpen && quickReplies.length > 0 && (
         <div className="composer-quick" role="group" aria-label={t("Quick replies")}>

@@ -159,6 +159,13 @@ export function PaneTerminal({
   // The prompt the chat shows: while it waits, a message from the composer answers it.
   const [chatPrompt, setChatPrompt] = useState<{ pane: string; value: InteractivePrompt } | null>(null);
   const [promptRefresh, setPromptRefresh] = useState(0);
+  // what the agent suggests typing next (Claude's grey input text), for the composer's placeholder
+  const [chatSuggestion, setChatSuggestion] = useState<{ pane: string; value: string } | null>(null);
+  const onChatSuggestion = useCallback((pane: string, value: string | null) => {
+    setChatSuggestion((current) => value !== null
+      ? (current?.pane === pane && current.value === value ? current : { pane, value })
+      : current?.pane === pane ? null : current);
+  }, []);
   // a typed pick of an approval's option, shown in the card until Confirm or Cancel
   const [pendingAnswer, setPendingAnswer] = useState<{ pane: string; promptId: string; answer: TypedAnswer } | null>(null);
   const clearPendingAnswer = useCallback(() => setPendingAnswer(null), []);
@@ -974,9 +981,11 @@ export function PaneTerminal({
         queueStore.add(paneStorageId(machineId, pane), text);
         return true; // the composer may clear its box: the text lives in the queue card
       }
+      // a message went out: the agent's suggestion was for the turn before it
+      if (pane !== null) onChatSuggestion(pane, null);
       return sendComposerText(text);
     },
-    [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, sendComposerText, queueStore, machineId],
+    [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, onChatSuggestion, sendComposerText, queueStore, machineId],
   );
 
 
@@ -1072,6 +1081,7 @@ export function PaneTerminal({
             agentStatus={agentStatus}
             onMetadata={onChatMetadata}
             onPrompt={onChatPrompt}
+            onSuggestion={onChatSuggestion}
             promptRefreshKey={promptRefresh}
             pendingAnswer={pendingAnswer !== null && pendingAnswer.pane === paneId ? pendingAnswer : null}
             onPendingAnswerDone={clearPendingAnswer}
@@ -1143,6 +1153,7 @@ export function PaneTerminal({
           queueMode={busy}
           answerHint={answering === null ? null
             : pendingAnswer?.promptId === answering.id ? t("Confirm your answer in the card above, or type another…") : answerHint(answering)}
+          suggestion={answering === null && chatSuggestion?.pane === paneId ? chatSuggestion.value : null}
           onSend={composerSend}
           onAbort={abortTurn}
           onUploadImage={uploadImage}

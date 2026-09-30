@@ -499,6 +499,7 @@ export const JA: Record<string, string> = {
   "Quick reply {number}": "クイック返信 {number}",
   "Remove quick reply {number}": "クイック返信 {number} を削除",
   "Add reply": "返信を追加",
+  "Use the suggestion": "提案を使う",
   "Send “{reply}”": "「{reply}」を送信",
   "Show above the message box": "入力欄の上に表示",
   "Restore defaults": "デフォルトに戻す",
