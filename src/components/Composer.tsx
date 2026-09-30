@@ -11,7 +11,7 @@ import {
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { Bug, Clock, FileText, Paperclip, SendHorizontal, Square, X } from "lucide-react";
+import { Bug, Clock, FileText, KeyboardOff, Paperclip, SendHorizontal, Square, X } from "lucide-react";
 
 import "./Composer.css";
 
@@ -34,6 +34,7 @@ import { quickReplyButtons, useSettings } from "../lib/settings.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { ReportDialog } from "./ReportDialog.tsx";
 import { useT } from "../lib/i18n.ts";
+import { dismissKeyboard } from "../lib/keyboard.ts";
 
 export interface ComposerProps {
   connected: boolean;
@@ -628,6 +629,12 @@ export function Composer({
             <span aria-hidden="true">·</span> {t(uploading ? "Uploading file…" : "Reconnecting… message held here, never queued")}
           </span>
         )}
+        {/* shown only while a phone's keyboard is up (Composer.css); the draft stays. Before the
+            report action, so that one keeps its place at the end as the keyboard comes and goes */}
+        <button type="button" className="btn btn-ghost composer-hide-keyboard" aria-label={t("Hide keyboard")} title={t("Hide keyboard")}
+          onPointerDown={(event) => event.preventDefault()} onClick={dismissKeyboard}>
+          <KeyboardOff aria-hidden="true" /><span>{t("Hide keyboard")}</span>
+        </button>
         {/* while problems are being chased: a report of this pane's chat, one tap away */}
         <button type="button" className="btn btn-ghost composer-report" aria-label={t("Report a problem")} title={t("Report a problem")} onClick={() => setReporting(true)}>
           <Bug aria-hidden="true" /><span>{t("Report a problem")}</span>

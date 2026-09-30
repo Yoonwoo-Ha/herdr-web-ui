@@ -534,6 +534,7 @@ export const KO: Record<string, string> = {
   "Not sent: the terminal is disconnected.": "보내지 못했습니다: 터미널 연결이 끊겼습니다.",
   "Type straight into the terminal": "터미널에 직접 입력",
   "Report a problem": "문제 보고",
+  "Hide keyboard": "키보드 내리기",
   "Close": "닫기",
   "What went wrong?": "무엇이 이상한가요?",
   "e.g. the list numbers read 1. 1. 1.": "예: 목록 번호가 1. 1. 1.로 나와요",

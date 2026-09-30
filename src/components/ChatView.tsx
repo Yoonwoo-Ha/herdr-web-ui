@@ -20,6 +20,7 @@ import { isTodoTool, parseTodoAnswer, todoCallSummary, type TodoItem, type TodoS
 import { useSettings } from "../lib/settings.ts";
 import { statusEdgeRead } from "../lib/status.ts";
 import { usePageVisible } from "../lib/visibility.ts";
+import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { patchText } from "../../shared/patch.ts";
 import { machinePath } from "../../shared/machines.ts";
@@ -671,6 +672,11 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
     });
     observer.observe(node);
     return () => observer.disconnect();
+  }, []);
+  // a tap or a drag down the transcript puts a phone's keyboard away to read (lib/keyboard.ts)
+  useEffect(() => {
+    const node = scroller.current;
+    return node === null ? undefined : dismissKeyboardOn(node);
   }, []);
 
   const onScroll = (): void => {

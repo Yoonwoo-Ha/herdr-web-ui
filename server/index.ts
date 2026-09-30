@@ -81,6 +81,13 @@ const ATTACH_RETRY_MAX_MS = 500;
 const ATTACH_HOLD_MS = 100;
 /** how often a terminal another web bridge holds is tried again, while clients here still want it */
 const ATTACH_HELD_RETRY_MS = 3_000;
+/**
+ * herdr refusing an attach, its line (maybe not all of it yet) the last output, before the
+ * exit has come. The same words earlier in the pane's own output, with more after them, are not it.
+ */
+const ATTACH_REFUSING_RE = /terminal attach failed[^\r\n]*\s*$/;
+/** how long a refusal's exit is waited for before its output is taken for the pane's own */
+const ATTACH_REFUSAL_EXIT_MS = 2_000;
 const ATTACH_HELD_MESSAGE = "Another web bridge has this pane open. It connects here as soon as that bridge lets go.";
 /** The gap between a composer message's text and its Enter (see submitText). */
 export const SUBMIT_DELAY_MS = 120;
@@ -479,6 +486,7 @@ export function createServer(
       // its first bytes wait ATTACH_HOLD_MS: a refusal (herdr's setup, teardown and message)
       // is dropped then, never painted into the clients' terminal
       let held: string | null = "";
+      let heldSince = 0;
       let holdTimer: ReturnType<typeof setTimeout> | undefined;
       const release = (): void => {
         clearTimeout(holdTimer);
@@ -486,6 +494,24 @@ export function createServer(
         const data = held;
         held = null;
         if (data) forward(data);
+      };
+      const took = (): void => {
+        // a closed attachment's kill skips onExit, which would clear this timer: a newer
+        // attachment on the pane must not hear this one's resume
+        if (attachments.get(paneId) !== attachment) return;
+        // a refusal whose exit comes late (a busy PC) is not an attach: onExit handles it, and
+        // resuming here would free the input, then report attach_held a second time. A pane
+        // whose own output only ends like one is painted once that exit is overdue.
+        if (ATTACH_REFUSING_RE.test(output) && Date.now() - heldSince < ATTACH_REFUSAL_EXIT_MS) {
+          holdTimer = setTimeout(took, ATTACH_HOLD_MS);
+          return;
+        }
+        // the attach took: a pane that waited for another bridge is this bridge's again
+        if (attachment.held) {
+          attachment.held = false;
+          broadcast(paneId, { type: "attach-resumed", pane_id: paneId });
+        }
+        release();
       };
       return new PtySession({
         command: process.env["HERDR_WEB_HERDR_BIN"] || "herdr",
@@ -500,17 +526,10 @@ export function createServer(
           if (attachments.get(paneId) !== attachment) return;
           output = (output + data).slice(-1024);
           if (held === null) return forward(data);
-          if (held === "") holdTimer = setTimeout(() => {
-            // a closed attachment's kill skips onExit, which would clear this timer: a newer
-            // attachment on the pane must not hear this one's resume
-            if (attachments.get(paneId) !== attachment) return;
-            // the attach took: a pane that waited for another bridge is this bridge's again
-            if (attachment.held) {
-              attachment.held = false;
-              broadcast(paneId, { type: "attach-resumed", pane_id: paneId });
-            }
-            release();
-          }, ATTACH_HOLD_MS);
+          if (held === "") {
+            heldSince = Date.now();
+            holdTimer = setTimeout(took, ATTACH_HOLD_MS);
+          }
           held += data;
         },
         onExit: (code) => {

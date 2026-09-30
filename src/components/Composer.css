@@ -116,9 +116,35 @@
   .composer-report { min-height: calc(var(--touch-target) + var(--space-1)); }
 }
 
-.composer-report svg {
+.composer-report svg,
+.composer-hide-keyboard svg {
   width: 14px;
   height: 14px;
+}
+
+/* iOS gives a textarea's keyboard no dismiss key: this one shows while the keyboard is up,
+   just before the report action. It takes the free space instead of the report action, so
+   the report action never moves under a finger when a tap on it puts the keyboard away. */
+.composer-hide-keyboard {
+  display: none;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  width: auto;
+  height: var(--control-h);
+  min-height: calc(var(--touch-target) + var(--space-1));
+  padding-inline: var(--space-2);
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+[data-keyboard] .composer-hide-keyboard {
+  display: inline-flex;
+}
+
+[data-keyboard] .composer-hide-keyboard + .composer-report {
+  margin-left: 0;
 }
 
 .composer-status .agent-mark {

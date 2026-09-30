@@ -538,6 +538,7 @@ export const ZH: Record<string, string> = {
   "Not sent: the terminal is disconnected.": "未发送：终端已断开连接。",
   "Type straight into the terminal": "直接在终端中输入",
   "Report a problem": "报告问题",
+  "Hide keyboard": "收起键盘",
   "Close": "关闭",
   "What went wrong?": "出了什么问题？",
   "e.g. the list numbers read 1. 1. 1.": "例如：列表编号显示为 1. 1. 1.",

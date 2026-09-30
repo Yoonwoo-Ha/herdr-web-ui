@@ -536,6 +536,7 @@ export const JA: Record<string, string> = {
   "Not sent: the terminal is disconnected.": "未送信: ターミナルが切断されています。",
   "Type straight into the terminal": "ターミナルに直接入力",
   "Report a problem": "問題を報告",
+  "Hide keyboard": "キーボードを閉じる",
   "Close": "閉じる",
   "What went wrong?": "何が問題でしたか?",
   "e.g. the list numbers read 1. 1. 1.": "例: リストの番号が 1. 1. 1. と表示される",
