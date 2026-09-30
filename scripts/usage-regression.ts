@@ -156,4 +156,51 @@ export async function checkUsageMeters(browser: Browser, origin: string): Promis
     await phone.close();
   }
   console.log("PASS plan meters beside Settings: accounts, order, hiding, used or left, overflow, popover, refresh, Escape, off switch and phone fit");
+
+  // at the top of the list on a phone: one poller, each account told apart, the PCs still in reach
+  const top = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, locale: "en-US" });
+  try {
+    const asked = await staged(top);
+    await top.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ showUsage: true, usagePlacement: "top" })));
+    const page = await top.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(origin);
+    await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+    const panel = page.getByRole("region", { name: "Subscription usage", exact: true });
+    await panel.waitFor();
+    assert.equal(await page.locator(".usage-strip").count(), 0, "the strip beside Settings gives way to the panel");
+    assert.equal(asked.length, 1, "only the panel asks for usage");
+    const rows = panel.locator(".usage-panel-row");
+    assert.equal(await rows.count(), 7);
+    assert.match(await rows.nth(0).textContent() ?? "", /me@work\.example/, "two Codex accounts are told apart");
+    assert.match(await rows.nth(2).textContent() ?? "", /me@example\.com/);
+    assert.equal(await rows.evaluateAll((all) => all.every((row) => row.scrollWidth <= row.clientWidth)), true, "each row fits the phone");
+
+    const toggle = panel.locator(".usage-panel-rows");
+    await toggle.click();
+    assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+    const detail = page.locator(`[id="${await toggle.getAttribute("aria-controls")}"]`);
+    assert.equal(await detail.getByRole("meter").count(), 9);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    const list = await page.locator(".machine-list").boundingBox();
+    assert.ok(list && list.height >= 200, `the PCs keep room under the open panel (${list?.height}px)`);
+    if (process.env.UI_EVIDENCE_DIR) {
+      mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+      await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-panel-phone-open.png") });
+    }
+    await toggle.click();
+    if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "usage-panel-phone.png") });
+
+    // back beside Settings: the panel stops asking and the strip takes over
+    await page.locator(".sidebar-footer-row .sidebar-footer-action").click();
+    await page.getByRole("button", { name: "Beside Settings", exact: true }).click();
+    await page.keyboard.press("Escape");
+    await page.locator(".usage-strip").waitFor();
+    assert.equal(await page.locator(".usage-panel").count(), 0);
+    assert.deepEqual(errors, []);
+  } finally {
+    await top.close();
+  }
+  console.log("PASS plan meters at the top of the list: one poller, accounts apart, phone fit, open panel leaves the PCs room, back beside Settings");
 }

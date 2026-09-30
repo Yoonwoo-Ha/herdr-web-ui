@@ -275,6 +275,18 @@ export function SettingsDialog({ open, onClose, updates, auth, onEnableNotificat
                 </div>
               </div>
             )}
+            {settings.showUsage && (
+              <div className="settings-row">
+                <span className="settings-label">{t("Where")}</span>
+                <div className="segmented" aria-label={t("Where")}>
+                  {(["footer", "top"] as const).map((usagePlacement) => (
+                    <button key={usagePlacement} type="button" aria-pressed={settings.usagePlacement === usagePlacement} onClick={() => update({ usagePlacement })}>
+                      {t(usagePlacement === "top" ? "Top of the list" : "Beside Settings")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {settings.showUsage && usage.report && usage.report.providers.length > 0 && <UsageAccounts providers={usage.report.providers} />}
           </section>
 

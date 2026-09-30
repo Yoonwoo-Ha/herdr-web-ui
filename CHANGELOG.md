@@ -7,11 +7,30 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- The chat's message box offers the prompt Claude Code suggests next, the grey text in its
+  empty input. It stands as the box's placeholder, and Tab takes it into the box; on a touch
+  screen a dashed chip above the box does the same. Nothing is sent until you send it.
+- Settings → Plan limits → Where puts the plan meters at the top of the sidebar instead of
+  beside Settings: a row per account with its plan, the limit closest to running out, a bar
+  and when it resets. A tap opens every limit.
+
 ### Fixed
 - A table an agent indents under a list item shows as a table in the chat. It was read as the
   item's text, so its rows ran together on one line with their pipes.
+- `stop` (herdr's Stop action, `bun scripts/plugin.ts stop`) returns once the server is gone.
+  It returned at once, while the old supervisor still held the checkout's lock, so a `start`
+  right after it found that lock and gave up: nothing ran, and it reported no answer after 20s.
+- A pane herdr reports waiting for input gets a card in the chat even when no reader knows its
+  screen (Codex's collapsed question queue keeps its own handling). A numbered menu that still
+  takes the answer is offered as its options, each answered by typing its number; anything
+  else shows the screen's last lines with Enter and Esc, plus Yes and No for a `(y/n)` prompt
+  and arrows when its hint names them. An answer to a changed screen is refused. Each such
+  wait is logged once.
 - **Add PC** on a Windows host now says that Windows hosts are not supported yet, instead of
   failing with the host shell's "'sh' is not recognized" (#189).
+- A pane waiting for another web bridge no longer frees its input for a moment and reports the
+  wait twice when herdr's refusal of a retry arrives slowly (a busy PC).
 
 ## [0.3.35] - 2026-09-30
 
@@ -55,6 +74,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [0.3.34] - 2026-09-30
 
 ### Added
+- On a phone, a swipe in from the left edge opens the workspace list and a swipe to the left
+  closes it.
+- While typing in the chat on a phone, a tap on the transcript, a drag down it, or the new
+  **Hide keyboard** button puts the keyboard away to read; the draft stays in the composer.
 - A pane herdr could not restore after a restart (herdr 0.9.3+, e.g. its folder was
   removed) is marked NOT RESTORED in the sidebar, and selecting it shows herdr's reason
   instead of a terminal that ends at once. The server no longer tries to attach it.

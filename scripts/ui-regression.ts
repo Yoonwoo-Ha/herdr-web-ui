@@ -448,6 +448,62 @@ try {
   await startupPrompt.waitFor({ state: "hidden" });
   console.log("PASS a typed pick answered in the terminal does not wait on the same menu asked again");
 
+  // Claude's grey suggestion in its empty input box stands in the composer. A send drops it,
+  // and the same text suggested again comes back; a pane switch never shows the last pane's.
+  const paintSuggestion = async (pane: string, suggestion: string): Promise<void> => {
+    await herdrRpc("pane.send_text", {
+      pane_id: pane,
+      text: `printf '\\033[2J\\033[H%s\\n\\342\\235\\257 \\033[2m%s\\033[0m\\n%s\\n' "$(printf '\\342\\224\\200%.0s' $(seq 40))" '${suggestion}' "$(printf '\\342\\224\\200%.0s' $(seq 40))"; read -r qa_suggest; clear`,
+    });
+    await herdrRpc("pane.send_keys", { pane_id: pane, keys: ["Enter"] });
+    await until(async () => {
+      const result = await herdrRpc<{ read: { text: string } }>("pane.read", { pane_id: pane, source: "visible", format: "text" });
+      return result.read.text.includes(`❯ ${suggestion}`);
+    }, "suggestion painted");
+  };
+  await selectPane(paneA);
+  await composer.fill("");
+  await herdrRpc("pane.report_agent", { pane_id: paneA, source: "manual", agent: "claude", state: "idle" });
+  await paintSuggestion(paneA, "run the tests");
+  await until(async () => await composer.getAttribute("placeholder") === "run the tests", "suggestion as placeholder");
+  await composer.focus();
+  await page.keyboard.press("Tab");
+  assert.equal(await composer.inputValue(), "run the tests", "Tab takes the suggestion");
+  // a prompt read made before the send answers after it: its suggestion was for the turn before
+  let readBeforeSend = false;
+  await page.route(`**/api/pane/prompt?pane_id=${encodeURIComponent(paneA)}`, async (route) => {
+    const response = await route.fetch();
+    readBeforeSend = true;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.fulfill({ response });
+  });
+  await until(async () => readBeforeSend, "a prompt read in flight");
+  await composer.press("Enter");
+  await until(async () => await composer.getAttribute("placeholder") !== "run the tests", "a send drops the suggestion");
+  await until(async () => await composer.inputValue() === "", "the sent box clears");
+  for (let check = 0; check < 16; check++) {
+    assert.notEqual(await composer.getAttribute("placeholder"), "run the tests", "a read from before the send does not bring the suggestion back");
+    await page.waitForTimeout(150);
+  }
+  await page.unroute(`**/api/pane/prompt?pane_id=${encodeURIComponent(paneA)}`);
+  // the same text suggested again after the turn shows again
+  await paintSuggestion(paneA, "run the tests");
+  await until(async () => await composer.getAttribute("placeholder") === "run the tests", "the same suggestion again");
+  // pane B answers its first prompt read late: meanwhile it must not show pane A's suggestion
+  await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "claude", state: "idle" });
+  await page.route(`**/api/pane/prompt?pane_id=${encodeURIComponent(paneB)}`, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  await selectPane(paneB);
+  for (let check = 0; check < 8; check++) {
+    assert.notEqual(await composer.getAttribute("placeholder"), "run the tests", "another pane's suggestion never shows");
+    await page.waitForTimeout(150);
+  }
+  await page.unroute(`**/api/pane/prompt?pane_id=${encodeURIComponent(paneB)}`);
+  await herdrRpc("pane.send_keys", { pane_id: paneA, keys: ["Enter"] });
+  console.log("PASS Claude's suggestion fills the composer with Tab, returns after a send, and stays with its pane");
+
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await mobile.addInitScript(() => {
     Storage.prototype.getItem = () => { throw new DOMException("Storage unavailable", "SecurityError"); };

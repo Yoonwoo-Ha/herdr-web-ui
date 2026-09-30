@@ -195,7 +195,7 @@ describe("workspace and discovery endpoints", () => {
 
     const prompt = await fetch(`${base()}/api/pane/prompt?pane_id=${encodeURIComponent(paneId)}`);
     expect(prompt.status).toBe(200);
-    expect(await prompt.json()).toEqual({ prompt: null });
+    expect(await prompt.json()).toEqual({ prompt: null, suggestion: null });
 
     for (const [path, body] of [
       ["/api/workspace/rename", { workspace_id: workspaceId, label: `${label}-renamed` }],

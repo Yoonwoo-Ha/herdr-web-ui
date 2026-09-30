@@ -40,6 +40,7 @@ import { OpenFileContext } from "./lib/filePaths.ts";
 import { useFileViewer } from "./lib/useFileViewer.ts";
 import { useT } from "./lib/i18n.ts";
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
+import { watchDrawerSwipe } from "./lib/edgeSwipe.ts";
 
 const APP_TITLE = "herdr web ui";
 const POLL_MS = 5000;
@@ -161,6 +162,9 @@ export function App() {
   // phone's keyboard (over the drawer the close was tapped in) until the user picks a pane or lens
   const [autoSelected, setAutoSelected] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerOpenRef = useRef(drawerOpen); drawerOpenRef.current = drawerOpen;
+  // on a phone the drawer follows a swipe in from the left edge, and a swipe back (lib/edgeSwipe.ts)
+  useEffect(() => watchDrawerSwipe(() => drawerOpenRef.current, setDrawerOpen), []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [view, setViewState] = useState<PaneView>("terminal");
   const [paletteOpen, setPaletteOpen] = useState(false);
