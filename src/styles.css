@@ -265,10 +265,9 @@ button {
     calc(var(--space-3) + env(safe-area-inset-left, 0px));
   background: var(--bg-panel);
   border-bottom: var(--hairline) solid var(--border);
-  /* Sticky, though nothing scrolls it: an iOS 26+ home-screen app lays its Liquid Glass edge
-     blur over the top of the page, reaching into this bar, unless a fixed or sticky box with a
-     background covers that edge; then iOS takes the box's color instead (no CSS or meta
-     switch turns the blur off, and an opaque status bar does not stop it either). */
+  /* Sticky, though nothing scrolls it: in a home-screen app added before the status bar went
+     opaque (index.html), iOS 26+ takes this box's color for the status bar, not a sampled one.
+     The blur over the header's text is only gone once the app is added again. */
   position: sticky;
   top: 0;
 }
