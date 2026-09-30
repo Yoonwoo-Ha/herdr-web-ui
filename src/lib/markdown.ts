@@ -138,12 +138,15 @@ function cells(line: string): string[] {
 function lineAt(lines: string[], index: number): string {
   return lines[index] ?? "";
 }
+function startsTable(lines: string[], index: number): boolean {
+  return lineAt(lines, index).includes("|") && tableSeparator.test(lineAt(lines, index + 1));
+}
 
 
 function startsBlock(lines: string[], index: number): boolean {
   const line = lines[index] ?? "";
   return /^\s*\\\[/.test(line) || /^\s{0,3}```/.test(line) || /^#{1,6}\s+/.test(line) || /^\s*>/.test(line) || /^(?:\s*[-*_]){3,}\s*$/.test(line) || listLine.test(line)
-    || (line.includes("|") && tableSeparator.test(lines[index + 1] ?? ""));
+    || startsTable(lines, index);
 }
 
 function parseList(lines: string[], start: number): { block: ListBlock; next: number } {
@@ -156,7 +159,8 @@ function parseList(lines: string[], start: number): { block: ListBlock; next: nu
   let index = start;
   while (index < lines.length) {
     // between items: blank lines (a loose list, as agents often write one) and an item's own
-    // indented lines, which read on as its text; anything else ends the list
+    // indented lines, which read on as its text; anything else ends the list, and so does an
+    // indented fence or table, which shows as its own block
     if (block.items.length > 0 && !listLine.test(lineAt(lines, index))) {
       let ahead = index;
       while (ahead < lines.length && lineAt(lines, ahead).trim() === "") ahead += 1;
@@ -164,7 +168,7 @@ function parseList(lines: string[], start: number): { block: ListBlock; next: nu
       const indent = /^\s*/.exec(line)?.[0].length ?? 0;
       const sibling = listLine.exec(line);
       if (sibling !== null && (sibling[1] ?? "").length === baseIndent && /\d/.test(sibling[2] ?? "") === ordered) { index = ahead; continue; }
-      if (ahead < lines.length && sibling === null && indent >= baseIndent + 2 && !/^\s*```/.test(line)) {
+      if (ahead < lines.length && sibling === null && indent >= baseIndent + 2 && !/^\s*```/.test(line) && !startsTable(lines, ahead)) {
         const item = block.items.at(-1)!;
         item.content = [...item.content, { type: "text", value: " " }, ...parseInline(line.trim())];
         index = ahead + 1;
@@ -274,7 +278,7 @@ export function parseMarkdown(source: string): MarkdownBlock[] {
       continue;
     }
 
-    if (line.includes("|") && tableSeparator.test(lines[index + 1] ?? "")) {
+    if (startsTable(lines, index)) {
       const header = cells(line).map((cell) => parseInline(cell));
       index += 2;
       const rows: InlineNode[][][] = [];

@@ -221,4 +221,13 @@ describe("numbered lists as agents write them", () => {
     expect(fenced.map((block) => block.type)).toEqual(["list", "code", "list"]);
     expect(fenced[1]).toEqual({ type: "code", language: "sh", value: "bun test" });
   });
+
+  it("shows a table indented under an item as a table, not as the item's text", () => {
+    const blocks = parseMarkdown("1. **Two ways**\n   - Example:\n\n     | Way | Box |\n     |---|---|\n     | a | `[0,1]` |\n     | b | `[2,3]` |\n\n   - after it\n\n2. second");
+    expect(blocks.map((block) => block.type)).toEqual(["list", "table", "list", "list"]);
+    const item = (blocks[0] as Extract<ReturnType<typeof parseMarkdown>[number], { type: "list" }>).items[0]!;
+    expect(item.children?.items[0]?.content).toEqual([{ type: "text", value: "Example:" }]);
+    expect(blocks[1]).toMatchObject({ type: "table", header: [[{ value: "Way" }], [{ value: "Box" }]], rows: [[[{ value: "a" }], [{ type: "code", value: "[0,1]" }]], [[{ value: "b" }], [{ type: "code", value: "[2,3]" }]]] });
+    expect(blocks[3]).toMatchObject({ type: "list", ordered: true, start: 2 });
+  });
 });
