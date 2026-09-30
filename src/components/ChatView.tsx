@@ -417,6 +417,9 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
   // where a pane switch or a send upstream could leave it stale
   const onSuggestionRef = useRef(onSuggestion);
   onSuggestionRef.current = onSuggestion;
+  // a read begun before the latest send answers for the turn before it: its suggestion is dropped
+  const sentKeyRef = useRef(sentKey);
+  sentKeyRef.current = sentKey;
   const [promptPollKey, setPromptPollKey] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
@@ -622,9 +625,13 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
     let timer = 0;
     const readPrompt = async (): Promise<void> => {
       // the same prompt keeps its object: the composer and the card only change with it
+      const sent = sentKeyRef.current;
       try {
         const next = await fetchPanePromptState(paneId);
-        if (!cancelled) { setPrompt((current) => current?.id === next.prompt?.id ? current : next.prompt); onSuggestionRef.current?.(paneId, next.suggestion); }
+        if (!cancelled) {
+          setPrompt((current) => current?.id === next.prompt?.id ? current : next.prompt);
+          if (sentKeyRef.current === sent) onSuggestionRef.current?.(paneId, next.suggestion);
+        }
       }
       catch { if (!cancelled) { setPrompt(null); onSuggestionRef.current?.(paneId, null); } }
       finally { if (!cancelled) timer = window.setTimeout(() => void readPrompt(), POLL_MS); }
