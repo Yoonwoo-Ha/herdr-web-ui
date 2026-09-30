@@ -1154,7 +1154,8 @@ export function PaneTerminal({
           queueMode={busy}
           answerHint={answering === null ? null
             : pendingAnswer?.promptId === answering.id ? t("Confirm your answer in the card above, or type another…") : answerHint(answering)}
-          suggestion={answering === null && chatSuggestion?.pane === paneId ? chatSuggestion.value : null}
+          // no suggestion under any card, a fallback or queued one included
+          suggestion={chatPrompt?.pane !== paneId && chatSuggestion?.pane === paneId ? chatSuggestion.value : null}
           onSend={composerSend}
           onAbort={abortTurn}
           onUploadImage={uploadImage}
