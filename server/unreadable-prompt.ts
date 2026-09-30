@@ -102,10 +102,11 @@ export function parseUnreadablePrompt(screen: string, blocked: boolean): Unreada
     for (let taken = 0; from > 0 && rows[from - 1]!.trim() !== "" && taken < 4; taken += 1) from -= 1;
   }
   const to = menu ? menu.footer + 1 : rows.length;
-  const lines = rows.slice(from, to)
-    .filter((row) => row.trim() !== "" && !RULE_RE.test(row))
-    .slice(-SHOWN_ROWS)
-    .map((row) => row.length > ROW_CHARS ? `${row.slice(0, ROW_CHARS)}…` : row);
-  const id = createHash("sha256").update(JSON.stringify([lines, actions.map((action) => action.id)])).digest("hex").slice(0, 12);
+  const region = rows.slice(from, to).filter((row) => row.trim() !== "" && !RULE_RE.test(row));
+  const lines = region.slice(-SHOWN_ROWS).map((row) => row.length > ROW_CHARS ? `${row.slice(0, ROW_CHARS)}…` : row);
+  // the id covers the whole dialog and every press it offers, not only what the card shows: a
+  // change past a cut row, or above the rows shown, is another dialog, and a press for the old
+  // one must not reach it
+  const id = createHash("sha256").update(JSON.stringify([region, actions])).digest("hex").slice(0, 12);
   return { id, lines, actions };
 }

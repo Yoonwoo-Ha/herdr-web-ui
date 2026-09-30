@@ -952,12 +952,17 @@ export function PaneTerminal({
   const unreadableOptions = useMemo(() => unreadable?.actions.filter((action) => action.id.startsWith("option-")) ?? [], [unreadable]);
   // Escape in the empty composer presses the fallback card's Esc, when the dialog names one
   const unreadableEscape = unreadable !== null && unreadable.actions.some((action) => action.id === "esc");
+  // one Escape at a time: a second one while the first is on its way would check against the
+  // same unchanged screen, and reach the agent after the dialog closed
+  const escapeInFlight = useRef(false);
   const pressUnreadableEscape = useCallback((): boolean => {
     const pane = paneRef.current;
     if (pane === null || unreadable === null || !unreadableEscape) return false;
+    if (escapeInFlight.current) return true;
+    escapeInFlight.current = true;
     void answerPanePrompt({ pane_id: pane, prompt_id: unreadable.id, action: "esc" })
       .catch(() => undefined)
-      .finally(() => setPromptRefresh((key) => key + 1));
+      .finally(() => { escapeInFlight.current = false; setPromptRefresh((key) => key + 1); });
     return true;
   }, [answerPanePrompt, unreadable, unreadableEscape]);
   // a card waiting (parsed or not) means the pane waits on an answer, whatever status arrived last

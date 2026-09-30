@@ -58,6 +58,15 @@ describe("a dialog no parser reads", () => {
     expect(ids("", true)).toBeNull();
   });
 
+  test("the id covers what the card leaves out: a cut row's end, and rows above those shown", () => {
+    const long = (end: string) => `Pick one: ${"x".repeat(250)} ${end}\n1. Yes\n2. No\nEsc to cancel`;
+    expect(parseUnreadablePrompt(long("keep"), true)!.lines).toEqual(parseUnreadablePrompt(long("drop"), true)!.lines);
+    expect(parseUnreadablePrompt(long("keep"), true)!.id).not.toBe(parseUnreadablePrompt(long("drop"), true)!.id);
+    const tall = (first: string) => [first, ...Array.from({ length: 15 }, (_, row) => `note ${row}`), "Press Enter"].join("\n");
+    expect(parseUnreadablePrompt(tall("alpha"), true)!.lines).toEqual(parseUnreadablePrompt(tall("beta"), true)!.lines);
+    expect(parseUnreadablePrompt(tall("alpha"), true)!.id).not.toBe(parseUnreadablePrompt(tall("beta"), true)!.id);
+  });
+
   test("long rows are cut and rules are left out", () => {
     const parsed = parseUnreadablePrompt(`${"x".repeat(300)}\n${"─".repeat(40)}\nPress Enter`, true)!;
     expect(parsed.lines).toEqual([`${"x".repeat(200)}…`, "Press Enter"]);
