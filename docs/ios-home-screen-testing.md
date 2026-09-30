@@ -34,8 +34,9 @@ padding.
 The independent `default` result is a separate control, not an exact-source
 test of #199's absent metadata. Do not infer a universal zero top inset, a fixed
 blur-band height, or success on all iOS 26 and later builds. Record the exact
-served source and build for future captures; the earlier baseline's build is
-not identified here. Desktop and Safari-tab tests do not validate installed-app
+served source and build for future captures; the earlier baseline's served
+application commit/build is not identified here. Its OS build is 24A434.
+Desktop and Safari-tab tests do not validate installed-app
 native blur.
 
 ## Native comparison matrix
@@ -53,7 +54,7 @@ HEAD alone does not identify an already-running server or cached install.
 | Independent control | explicit `default` | owned reference source | Visible software keyboard; data lifecycle |
 | #199 candidate | absent | candidate integrated with `66328ef` | Exact-source native comparison and acceptance |
 | Composer-gap comparison | `black-translucent` | #186 | Test separately from the metadata change |
-| Combined comparison | absent | #186 | Optional follow-up; outside #199's implementation |
+| Combined comparison | absent | #186 | Required for combined #199/#186 acceptance; implementations remain separate |
 
 For dark and light themes, capture portrait idle, visibly open software keyboard,
 composer typing and dismissal, xterm direct typing, landscape and return to

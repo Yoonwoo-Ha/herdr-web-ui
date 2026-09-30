@@ -18,7 +18,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   keep running while it updates.
 
 ### Fixed
-- Home-screen installs use the normal iOS status-bar layout instead of drawing beneath it,
+- Fresh home-screen installs use the normal iOS status-bar layout instead of drawing beneath it,
   addressing the portrait header blur reported on iOS 27.0 (#164). Existing-install and
   viewport compatibility checks are described in [the testing guide](docs/ios-home-screen-testing.md);
   preserve local drafts, queued messages and device setup before considering an install change.
