@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,10 +14,14 @@ let scratch: string;
 let configDir: string;
 
 async function status(): Promise<{ out: string; err: string; exitCode: number }> {
+  return run("status");
+}
+
+async function run(command: string): Promise<{ out: string; err: string; exitCode: number }> {
   const bin = join(scratch, "bin");
   const env: Record<string, string | undefined> = { ...process.env, PATH: `${bin}:${process.env["PATH"] ?? ""}`, HOME: scratch, HERDR_PLUGIN_STATE_DIR: join(scratch, "state") };
   for (const key of ["HERDR_PLUGIN_CONFIG_DIR", "PORT", "HOST", "HERDR_WEB_TOKEN"]) delete env[key];
-  const child = Bun.spawn(["bun", "scripts/plugin.ts", "status"], { cwd: ROOT, env, stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["bun", "scripts/plugin.ts", command], { cwd: ROOT, env, stdout: "pipe", stderr: "pipe" });
   const [out, err, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { out, err, exitCode };
 }
@@ -62,5 +67,22 @@ describe("plugin settings files", () => {
   it("says where settings go when there are none", async () => {
     const run = await status();
     expect(run.out).toContain(`config: none (settings go in ${join(scratch, ".config", "herdr-web-ui", "env")})`);
+  });
+});
+
+describe("stop", () => {
+  it("returns only once the server's process group is gone", async () => {
+    // a server that takes a second to exit, as the supervisor does while its bridge shuts down
+    const server = spawn("sh", ["-c", "trap 'sleep 1; exit 0' TERM; while :; do sleep 0.1; done"], { detached: true, stdio: "ignore" });
+    const pid = server.pid!;
+    mkdirSync(join(scratch, "state"));
+    writeFileSync(join(scratch, "state", "server.pid"), `${pid}\n`);
+    const started = Date.now();
+    const stopped = await run("stop");
+    expect(stopped.exitCode, stopped.err).toBe(0);
+    expect(stopped.out).toContain(`stopped herdr web ui (pid ${pid})`);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(900);
+    expect(() => process.kill(-pid, 0)).toThrow();
+    expect(existsSync(join(scratch, "state", "server.pid"))).toBe(false);
   });
 });

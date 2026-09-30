@@ -8,6 +8,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Fixed
+- `stop` (herdr's Stop action, `bun scripts/plugin.ts stop`) returns once the server is gone.
+  It returned at once, while the old supervisor still held the checkout's lock, so a `start`
+  right after it found that lock and gave up: nothing ran, and it reported no answer after 20s.
 - **Add PC** on a Windows host now says that Windows hosts are not supported yet, instead of
   failing with the host shell's "'sh' is not recognized" (#189).
 
