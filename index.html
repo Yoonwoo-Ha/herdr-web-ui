@@ -26,11 +26,9 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=ram1" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <!-- No apple-mobile-web-app-status-bar-style: with "black-translucent" the page ran under the
-         iOS status bar, and since iOS 26 the home-screen app lays its Liquid Glass edge blur over
-         the top ~110 px of such a page, header text included, in either theme (#164). With the
-         default style the web view starts below an opaque status bar tinted from theme-color, and
-         nothing is blurred. iOS reads this once, when the app is added to the Home Screen. -->
+    <!-- Leave apple-mobile-web-app-status-bar-style unset to use the normal home-screen
+         status-bar layout instead of drawing beneath it (#164). Existing installs and
+         viewport behavior need separate checks; see docs/ios-home-screen-testing.md. -->
     <meta name="apple-mobile-web-app-title" content="herdr" />
     <title>herdr web ui</title>
   </head>

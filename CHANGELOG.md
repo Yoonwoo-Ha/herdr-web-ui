@@ -18,13 +18,19 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   keep running while it updates.
 
 ### Fixed
-- On iPhone the header of the home-screen app is no longer blurred (iOS 26 and later, dark and
-  light themes, #164). The app now starts below the status bar instead of drawing under it,
-  where iOS lays its Liquid Glass edge blur; the status bar takes the app's theme color. iOS
-  reads this when the app is added, so remove the app from the Home Screen and add it again.
+- Home-screen installs use the normal iOS status-bar layout instead of drawing beneath it,
+  addressing the portrait header blur reported on iOS 27.0 (#164). Existing-install and
+  viewport compatibility checks are described in [the testing guide](docs/ios-home-screen-testing.md);
+  preserve local drafts, queued messages and device setup before considering an install change.
+- A Codex pane no longer reads RUN for good after its first turn. herdr reports Codex as
+  `unknown` at rest, and that was taken for more work; the agent that worked reading `unknown`
+  is now a finish (DONE until seen, with its done alert). Late session snapshots no longer
+  end a newer turn, and DONE follows the agent that finished.
 - Subscription usage no longer lists Copilot for everyone signed in to the GitHub CLI. GitHub
   gives every account Copilot Free, so a Free plan found only through `gh` is left out; a
   Copilot sign-in in an editor, or a paid plan, still shows.
+- A local or remote PC refresh no longer replaces a newer pane status with an older
+  snapshot. Status and session changes received during a refresh queue a fresh load.
 
 ## [0.3.34] - 2026-09-30
 

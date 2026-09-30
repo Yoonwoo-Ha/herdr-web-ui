@@ -1017,6 +1017,92 @@ describe("web push", () => {
     expect(pushed!.vapidValid).toBe(true);
   }, 40_000);
 
+  it("reports a Codex unknown after work as done over WS and HTTP and delivers its completion push", async () => {
+    // Exercise the real collector -> CompletionTracker -> PushService path using
+    // manually reported statuses in owned panes. No Codex request or real device.
+    let created: Awaited<ReturnType<typeof workspaceCreate>> | undefined;
+    let probe: Awaited<ReturnType<typeof workspaceCreate>> | undefined;
+    let dir: string | undefined;
+    let cleanupDevice: FakePushService | undefined;
+    let bridge: ReturnType<typeof createServer> | undefined;
+    let watcher: RecordingSocket | undefined;
+    try {
+      created = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-codex-finish" });
+      probe = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-codex-probe" });
+      const paneId = created.root_pane.pane_id;
+      const probeId = probe.root_pane.pane_id;
+      dir = mkdtempSync(join(tmpdir(), "herdr-web-ui-codex-finish-"));
+      const device = await startFakePushService();
+      cleanupDevice = device;
+      await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "codex", state: "unknown" });
+      bridge = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: dir, machines: false,
+        alertTiming: { short: 0, long: 0, longTurn: 0 } });
+      const origin = `http://127.0.0.1:${bridge.port}`;
+      watcher = await RecordingSocket.connect(`ws://127.0.0.1:${bridge.port}/ws`);
+      const subscribe = await fetch(`${origin}/api/push/subscribe`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ subscription: device.subscription, alerts: { input: false, done: "always" } }),
+      });
+      expect(subscribe.status).toBe(204);
+
+      // Prove the subscription is live before changing the watched pane exactly
+      // once. Alternating a separate probe does not fabricate its work history.
+      let live = false;
+      for (let attempt = 0; attempt < 8 && !live; attempt++) {
+        const state = attempt % 2 === 0 ? "working" : "blocked";
+        await herdrRpc("pane.report_agent", { pane_id: probeId, source: "manual", agent: "claude", state });
+        live = await watcher.waitFor((message) => message.type === "pane-status" && message.pane_id === probeId && message.agent_status === state,
+          "Codex regression probe", 2_500).then(() => true).catch(() => false);
+      }
+      expect(live).toBe(true);
+
+      const report = async (agent: string, state: string, expected: string) => {
+        watcher!.seen.length = 0;
+        await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent, state });
+        await watcher!.waitFor((message) => message.type === "pane-status" && message.pane_id === paneId && message.agent_status === expected,
+          `${agent}/${state} presented as ${expected}`, 5_000);
+        const raw = (await herdrRpc<{ snapshot: SessionSnapshot }>("session.snapshot", {})).snapshot;
+        // herdr itself may promote an unfocused idle after work to done.
+        const rawStatus = raw.panes.find((pane) => pane.pane_id === paneId)?.agent_status;
+        if (state === "idle") expect(rawStatus === "idle" || rawStatus === "done").toBe(true);
+        else expect(rawStatus).toBe(state);
+        const shown = await (await fetch(`${origin}/api/session`)).json() as { snapshot: SessionSnapshot };
+        expect(shown.snapshot.panes.find((pane) => pane.pane_id === paneId)?.agent_status).toBe(expected);
+        expect(shown.snapshot.agents.find((pane) => pane.pane_id === paneId)?.agent_status).toBe(expected);
+      };
+
+      for (let turn = 0; turn < 2; turn++) {
+        await report("codex", "working", "working");
+        await report("codex", "unknown", "done");
+        await device.waitFor((message) => message.payload.pane_id === paneId &&
+          device.received.filter((received) => received.payload.pane_id === paneId).length === turn + 1,
+          "Codex completion push", 5_000);
+      }
+      const finishes = () => device.received.filter((message) => message.payload.pane_id === paneId);
+      expect(finishes()).toHaveLength(2);
+      expect(finishes().every((message) => message.payload.body === "work finished" && message.vapidValid)).toBe(true);
+
+      // The same unknown status after an identity handoff is still ongoing work.
+      await report("pi", "working", "working");
+      await report("claude", "unknown", "working");
+      expect(finishes()).toHaveLength(2);
+      await report("claude", "idle", "done");
+      await device.waitFor((message) => message.payload.pane_id === paneId && finishes().length === 3, "handoff completion push", 5_000);
+      expect(finishes()).toHaveLength(3);
+    } finally {
+      if (bridge && cleanupDevice) await fetch(`http://127.0.0.1:${bridge.port}/api/push/subscribe`, {
+        method: "DELETE", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: cleanupDevice.subscription.endpoint }),
+      }).catch(() => undefined);
+      watcher?.close();
+      bridge?.stop();
+      cleanupDevice?.stop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+      if (created) await workspaceClose(created.workspace.workspace_id).catch(() => undefined);
+      if (probe) await workspaceClose(probe.workspace.workspace_id).catch(() => undefined);
+    }
+  }, 40_000);
+
   it("alerts on the very first change after a restart, measured against herdr's snapshot", async () => {
     // A server restart must not cost the first alert: the collector seeds each pane's
     // status from its startup snapshot. Pane `watched` is already working when the new

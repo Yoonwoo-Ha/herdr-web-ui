@@ -265,9 +265,8 @@ button {
     calc(var(--space-3) + env(safe-area-inset-left, 0px));
   background: var(--bg-panel);
   border-bottom: var(--hairline) solid var(--border);
-  /* Sticky, though nothing scrolls it: in a home-screen app added before the status bar went
-     opaque (index.html), iOS 26+ takes this box's color for the status bar, not a sampled one.
-     The blur over the header's text is only gone once the app is added again. */
+  /* Keep the header's painted background at the top of the app. The home-screen
+     status-bar layout is controlled by index.html; see docs/ios-home-screen-testing.md. */
   position: sticky;
   top: 0;
 }
