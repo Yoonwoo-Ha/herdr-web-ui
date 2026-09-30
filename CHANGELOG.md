@@ -18,10 +18,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   keep running while it updates.
 
 ### Fixed
-- Fresh home-screen installs use the normal iOS status-bar layout instead of drawing beneath it,
-  addressing the portrait header blur reported on iOS 27.0 (#164). Existing-install and
-  viewport compatibility checks are described in [the testing guide](docs/ios-home-screen-testing.md);
-  preserve local drafts, queued messages and device setup before considering an install change.
+- The iPhone home-screen app starts below the status bar instead of drawing beneath it, so the
+  header text is no longer blurred on iOS 27 (#164). iOS reads this when the app is added, so an
+  existing install keeps the blur until it is removed from the Home Screen and added again; send
+  or copy unsent drafts and queued messages first. See [the testing guide](docs/ios-home-screen-testing.md).
 - A Codex pane no longer reads RUN for good after its first turn. herdr reports Codex as
   `unknown` at rest, and that was taken for more work; the agent that worked reading `unknown`
   is now a finish (DONE until seen, with its done alert). Late session snapshots no longer

@@ -31,6 +31,17 @@ padding.
   checks passed for that reference. Its software-keyboard visibility remains
   unverified: finding off-screen accessibility keys does not prove it is shown.
 
+- Combined #199/#186 acceptance, 2026-09-30: Xcode 27.0 (27A266a), iPhone 17 Pro
+  Simulator, iOS 27.0 (24A434), main `da484de` merged with #186 `8bf88fc` and
+  #199 `ce0f2bf`, fresh **Add to Home Screen** install on a test herdr session. With
+  hardware-keyboard simulation off (DeviceHub setting *Always simulate hardware keyboard*;
+  `defaults write com.apple.dt.Devices alwaysSimulateHardwareKeyboard -bool false`, then
+  reboot the device), the software keyboard was visible. Header text and clock stayed sharp
+  in portrait idle, composer focus with the keyboard open, typing, dismissal with Done,
+  xterm direct typing, drawer open/close and relaunch. The composer and key bar sat directly
+  above the keyboard's accessory bar and returned to the bottom edge, without a gap, after
+  dismissal. Dark theme only; rotation and data lifecycle were not re-run here.
+
 The independent `default` result is a separate control, not an exact-source
 test of #199's absent metadata. Do not infer a universal zero top inset, a fixed
 blur-band height, or success on all iOS 26 and later builds. Record the exact
