@@ -468,6 +468,7 @@ try {
   await unreadableCard.waitFor();
   assert.match(await unreadableCard.locator(".prompt-card-body").innerText(), /Pick a deployment target[\s\S]*2\. Production/);
   assert.deepEqual(await unreadableCard.locator(".prompt-card-key").allInnerTexts(), ["Enter", "Esc"]);
+  assert.equal(await unreadableCard.getByRole("button", { name: "Hide" }).count(), 1);
   assert.equal(await composer.getAttribute("placeholder"), "Tap an option above, or type its number…");
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "unreadable-card.png") });
   await unreadableCard.getByRole("button", { name: "1. Staging" }).click();

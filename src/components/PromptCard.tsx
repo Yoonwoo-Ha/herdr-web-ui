@@ -154,9 +154,13 @@ export interface UnreadablePromptCardProps {
   paneId: string;
   prompt: UnreadablePrompt;
   onPromptChanged(): void;
-  onAnswered(): void;
+  /** `moved`: a key that moves within the dialog (arrows, Tab, Space), which keeps it up */
+  onAnswered(moved: boolean): void;
   onDismiss(): void;
 }
+
+/** keys that move within a dialog rather than answer it: the card stays, with the screen read again */
+const MOVING_KEYS = new Set(["up", "down", "left", "right", "tab", "space"]);
 
 /**
  * A dialog the parsers do not read (server/unreadable-prompt.ts): its last rows as the terminal
@@ -179,7 +183,7 @@ export function UnreadablePromptCard({ paneId, prompt, onPromptChanged, onAnswer
     setError(null);
     try {
       await answerPanePrompt({ pane_id: paneId, prompt_id: prompt.id, action: action.id });
-      onAnswered();
+      onAnswered(MOVING_KEYS.has(action.id));
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 409 && cause.code === "prompt_changed") {
         setError(t("The screen changed; check it and press again."));

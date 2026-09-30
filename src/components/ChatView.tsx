@@ -712,7 +712,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
       {!loaded && error === null && <p className="chat-inline-state" role="status">{t("Loading conversation…")}</p>}
       {loaded && empty && error === null && prompt === null && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>{t("No conversation yet — say something below")}</p></div>}
       {prompt !== null && <PromptCard paneId={paneId} prompt={prompt} typedAnswer={pendingAnswer?.promptId === prompt.id ? pendingAnswer.answer : null} onTypedAnswerDone={onPendingAnswerDone} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={() => { setPrompt(null); onPendingAnswerDone?.(); }} />}
-      {shownUnreadable !== null && <UnreadablePromptCard paneId={paneId} prompt={shownUnreadable} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={() => { setUnreadable(null); setPromptPollKey((key) => key + 1); }} onDismiss={() => setDismissedUnreadable(shownUnreadable.id)} />}
+      {shownUnreadable !== null && <UnreadablePromptCard paneId={paneId} prompt={shownUnreadable} onPromptChanged={() => setPromptPollKey((key) => key + 1)} onAnswered={(moved) => { if (!moved) setUnreadable(null); setPromptPollKey((key) => key + 1); }} onDismiss={() => setDismissedUnreadable(shownUnreadable.id)} />}
       {ended && <p className="chat-endcap">{t("terminal ended")}</p>}
     </div>
     {newMessages ? <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
