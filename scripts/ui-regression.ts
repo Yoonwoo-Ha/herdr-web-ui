@@ -13,7 +13,7 @@ import { checkWakeLock } from "./wake-lock-regression.ts";
 import { checkNeedsInput } from "./needs-input-regression.ts";
 import { checkSecretInput } from "./secret-input-regression.ts";
 import { checkTerminalCopy } from "./terminal-copy-regression.ts";
-import { checkUsageMeters } from "./usage-regression.ts";
+import { checkStatusUsage, checkUsageMeters } from "./usage-regression.ts";
 import { checkNotificationStartup } from "./notification-startup-regression.ts";
 import { checkMobileViewport } from "./mobile-viewport-regression.ts";
 import { checkMobileTabs } from "./mobile-tabs-regression.ts";
@@ -896,6 +896,8 @@ try {
   await page.unroute(`**/api/pane/prompt?pane_id=${encodeURIComponent(paneB)}`);
   await herdrRpc("pane.send_keys", { pane_id: paneA, keys: ["Enter"] });
   console.log("PASS Claude's suggestion fills the composer with Tab, returns after a send, and stays with its pane");
+  await checkStatusUsage(browser!, origin, { claude: paneA, codex: paneB },
+    (pane, agent) => herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent, state: "idle" }));
 
   // "Send now" on a queued message is a send too: the suggestion goes at once, not at the next read
   await selectPane(paneA);

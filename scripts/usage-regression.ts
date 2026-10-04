@@ -36,6 +36,69 @@ async function staged(context: BrowserContext): Promise<string[]> {
   return asked;
 }
 
+/**
+ * The chat's status line: a Claude pane shows its plan's session and week, a Codex pane the first
+ * Codex account's, red from 80%; Show plan limits off hides them; the line takes its own size.
+ */
+export async function checkStatusUsage(
+  browser: Browser, origin: string, panes: { claude: string; codex: string },
+  reportAgent: (pane: string, agent: "claude" | "codex") => Promise<unknown>,
+): Promise<void> {
+  // herdr drops an agent reported by hand once its pane is back at an idle shell: report them here
+  await reportAgent(panes.claude, "claude");
+  await reportAgent(panes.codex, "codex");
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
+  try {
+    await staged(context);
+    await context.addInitScript((ids) => {
+      if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ showUsage: true }));
+      for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
+    }, [panes.claude, panes.codex]);
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const usage = page.locator(".composer-status .composer-usage");
+    const windows = () => usage.locator(".composer-usage-window").allTextContents();
+
+    await page.goto(`${origin}/?pane=${encodeURIComponent(panes.claude)}`);
+    await usage.waitFor();
+    assert.deepEqual(await windows(), ["Session 42%", "Weekly 63%"], "a Claude pane shows its plan-wide session and week, not a model's own");
+    assert.match(await usage.getAttribute("title") ?? "", /^Claude · me@example\.com\nSession 42% · Resets in 2h \d+m\nWeekly 63% · Resets in 3d \d+h$/);
+    assert.equal(await usage.locator(".is-high").count(), 0);
+
+    await reportAgent(panes.codex, "codex");
+    await page.goto(`${origin}/?pane=${encodeURIComponent(panes.codex)}`);
+    await page.locator(".composer-status .composer-usage-window.is-high").waitFor();
+    assert.deepEqual(await windows(), ["Session 12%", "Weekly 91%"], "a Codex pane shows the first Codex account's limits");
+    assert.equal(await usage.locator(".is-high").textContent(), "Weekly 91%", "a limit at 80% or more is red");
+    const status = page.locator(".composer-status");
+    assert.equal(await status.evaluate((line) => line.scrollWidth <= line.clientWidth), true, "the status line stays one row");
+    if (process.env.UI_EVIDENCE_DIR) {
+      mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+      await page.locator(".composer").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "status-usage.png") });
+    }
+
+    // its own size, the mark and ring with it; then Show plan limits off takes the limits away
+    assert.equal(await status.evaluate((line) => getComputedStyle(line).fontSize), "12px", "it follows the chat's size until it has its own");
+    await page.evaluate(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ showUsage: true, statusFontSize: 16 })));
+    await page.reload();
+    await usage.waitFor();
+    assert.equal(await status.evaluate((line) => getComputedStyle(line).fontSize), "16px");
+    const mark = await page.locator(".composer-status .agent-mark svg").first().evaluate((svg) => svg.getBoundingClientRect().width);
+    assert.ok(Math.abs(mark - 16 * 1.2) < 0.1, `the agent mark grows with the line (${mark}px)`);
+    if (process.env.UI_EVIDENCE_DIR) await page.locator(".composer").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "status-usage-16px.png") });
+    await page.evaluate(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ showUsage: false })));
+    await page.reload();
+    await status.waitFor();
+    await page.waitForTimeout(500);
+    assert.equal(await usage.count(), 0, "off in Settings, the status line has no limits either");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+  console.log("PASS the chat's status line shows its own agent's plan limits, red near the limit, at its own size, and none when turned off");
+}
+
 export async function checkUsageMeters(browser: Browser, origin: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
   try {
