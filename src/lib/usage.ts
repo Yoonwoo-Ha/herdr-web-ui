@@ -26,6 +26,26 @@ export const WINDOW_LABEL: Readonly<Record<UsageWindow["kind"], string>> = {
   month: "Monthly",
 };
 
+/** The provider whose plan an agent's pane runs on, when the app reads that plan: the inverse of PROVIDER_MARK. */
+export function providerForAgent(agent: string | null | undefined): UsageProviderId | null {
+  if (agent === undefined || agent === null) return null;
+  const found = (Object.keys(PROVIDER_MARK) as UsageProviderId[]).find((id) => PROVIDER_MARK[id] === agent);
+  return found ?? null;
+}
+
+/**
+ * The limits the chat's status line shows for a plan: the plan-wide session and week, those a
+ * pane's next turns spend first. A plan with neither shows its limit closest to running out.
+ */
+export function statusWindows(usage: ProviderUsage): UsageWindow[] {
+  const planWide = (["session", "week"] as const)
+    .map((kind) => usage.windows.find((window) => window.kind === kind && window.scope === null))
+    .filter((window): window is UsageWindow => window !== undefined);
+  if (planWide.length > 0) return planWide;
+  const tightest = tightestWindow(usage);
+  return tightest === null ? [] : [tightest];
+}
+
 /** The limit closest to running out: what a chip shows when the plan has no limit of the chosen kind. */
 export function tightestWindow(usage: ProviderUsage): UsageWindow | null {
   return usage.windows.reduce<UsageWindow | null>((tightest, window) => tightest === null || window.used_percent > tightest.used_percent ? window : tightest, null);

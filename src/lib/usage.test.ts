@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ProviderUsage, UsageWindow } from "../../shared/protocol.ts";
-import { formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, orderProviders, tightestWindow, usageName, windowLabel } from "./usage.ts";
+import { formatPercent, formatResetIn, glanceWindow, meterPercent, meterText, moveInOrder, orderProviders, providerForAgent, statusWindows, tightestWindow, usageName, windowLabel } from "./usage.ts";
 
 const NOW = Date.parse("2026-09-29T12:00:00Z");
 const window = (used_percent: number, kind: UsageWindow["kind"] = "week", scope: string | null = null): UsageWindow => ({ kind, scope, used_percent, resets_at: null });
@@ -9,6 +9,23 @@ const provider = (id: ProviderUsage["id"], windows: UsageWindow[], account: stri
 });
 
 describe("usage meters", () => {
+  it("finds the plan an agent's pane runs on", () => {
+    expect(providerForAgent("claude")).toBe("claude");
+    expect(providerForAgent("codex")).toBe("codex");
+    expect(providerForAgent("agy")).toBe("antigravity");
+    expect(providerForAgent("pi")).toBeNull();
+    expect(providerForAgent(null)).toBeNull();
+    expect(providerForAgent(undefined)).toBeNull();
+  });
+
+  it("puts the plan-wide session and week in the status line, else the limit closest to running out", () => {
+    const claude = provider("claude", [window(30), window(95, "week", "Sonnet"), window(12, "session")]);
+    expect(statusWindows(claude)).toEqual([window(12, "session"), window(30)]);
+    expect(statusWindows(provider("codex", [window(40)]))).toEqual([window(40)]);
+    expect(statusWindows(provider("cursor", [window(20, "month"), window(60, "month", "Premium")]))).toEqual([window(60, "month", "Premium")]);
+    expect(statusWindows(provider("grok", []))).toEqual([]);
+  });
+
   it("shows the limit closest to running out", () => {
     expect(tightestWindow(provider("codex", [window(12, "session"), window(77)]))).toEqual(window(77));
     expect(tightestWindow(provider("claude", []))).toBeNull();

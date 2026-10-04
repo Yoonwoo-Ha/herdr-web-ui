@@ -32,6 +32,7 @@ import {
 } from "../lib/compose.ts";
 import { activeTrigger, applyCompletion, type ActiveTrigger } from "../lib/mentions.ts";
 import { quickReplyButtons, useSettings } from "../lib/settings.ts";
+import { formatResetIn, HIGH_PERCENT, meterText, orderProviders, providerForAgent, statusWindows, usageName, useUsage, windowLabel } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { BackgroundTasks } from "./BackgroundTasks.tsx";
 import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
@@ -170,6 +171,37 @@ function ContextRing({ context }: { context: NonNullable<ConversationMetadata["c
       </svg>
       {shown && <span className="composer-context-text">{label}</span>}
     </button>
+  );
+}
+
+/**
+ * The plan limits of the pane's own agent, as the meters beside Settings read them: its session
+ * and week, so how much a next turn may spend shows where it is typed. Off with Settings → Show
+ * plan limits, or for an account hidden there; the first account in the order set there wins.
+ */
+function StatusUsage({ agent }: { agent: string | null | undefined }) {
+  const t = useT();
+  const { settings } = useSettings();
+  const provider = providerForAgent(agent);
+  const { report } = useUsage(settings.showUsage && provider !== null);
+  if (!settings.showUsage || provider === null || report === null) return null;
+  const usage = orderProviders(report.providers, settings.usageOrder)
+    .find((candidate) => candidate.id === provider && !settings.usageHidden.includes(candidate.key));
+  const windows = usage === undefined ? [] : statusWindows(usage);
+  if (usage === undefined || windows.length === 0) return null;
+  const now = Date.now();
+  const detail = windows.map((window) => {
+    const reset = formatResetIn(window.resets_at, now);
+    return `${windowLabel(window)} ${meterText(window, settings.usageCount)}${reset ? ` · ${t("Resets in {time}", { time: reset })}` : ""}`;
+  }).join("\n");
+  return (
+    <span className={`composer-usage${usage.problem ? " has-problem" : ""}`} title={`${usageName(usage)}\n${detail}`} aria-label={`${usageName(usage)}: ${detail.replaceAll("\n", ", ")}`}>
+      {windows.map((window, index) => (
+        <span key={index} className={`composer-usage-window${window.used_percent >= HIGH_PERCENT ? " is-high" : ""}`}>
+          <span className="composer-usage-label">{windowLabel(window)}</span> {meterText(window, settings.usageCount)}
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -658,6 +690,7 @@ export function Composer({
           </span>
         </span>}
         {metadata?.context && <ContextRing context={metadata.context} />}
+        <StatusUsage agent={agent} />
         {(uploading || !connected) && (
           <span className="composer-status-hint">
             <span aria-hidden="true">·</span> {t(uploading ? "Uploading file…" : "Reconnecting… message held here, never queued")}

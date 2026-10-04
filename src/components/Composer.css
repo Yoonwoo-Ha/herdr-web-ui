@@ -42,9 +42,16 @@
   min-height: var(--chip-h);
   padding: 0 var(--space-2) var(--space-1);
   color: var(--text-dim);
-  font-size: var(--fs-xs);
+  /* the chat's text size (Settings → Chat font size) sizes this line too, marks and ring with it */
+  font-size: calc(var(--fs-xs) * var(--chat-scale, 1));
   white-space: nowrap;
   overflow: hidden;
+}
+
+.composer-status .agent-mark svg,
+.composer-status .agent-mark img {
+  width: 1.2em;
+  height: 1.2em;
 }
 
 .composer-model-info {
@@ -95,9 +102,33 @@
 }
 
 .composer-context svg {
-  width: 14px;
-  height: 14px;
+  width: 1.2em;
+  height: 1.2em;
   flex: none;
+}
+
+/* the agent's own plan limits, after the ring: whole, while the model's name, the reasoning level and a hint give way */
+.composer-usage {
+  display: inline-flex;
+  flex: none;
+  min-width: 0;
+  gap: var(--space-2);
+  overflow: hidden;
+  padding-left: var(--space-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-usage-window {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-usage-window.is-high {
+  color: var(--status-blocked);
+}
+
+.composer-usage.has-problem {
+  opacity: 0.6;
 }
 
 .composer-context-text {
@@ -133,7 +164,6 @@
 .composer-status strong {
   flex: none;
   color: var(--text-strong);
-  font-size: var(--fs-xs);
   letter-spacing: var(--tracking-caps);
 }
 

@@ -7,6 +7,15 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- With **Show plan limits** on, the chat's status line shows the plan limits of the pane's own
+  agent beside its context ring: the session and the week, used or left as the meters beside
+  Settings count them, with their reset times on hover. A limit at 80% or more shows in the
+  blocked color.
+
+### Changed
+- The chat's status line follows **Chat font size**, its agent mark and context ring with it.
+
 ### Fixed
 - Switching to another pane no longer shows the previous pane's chat for a moment before the
   new one loads.
