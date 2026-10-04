@@ -43,6 +43,8 @@ export interface Settings {
   terminalFontFamily: string;
   /** chat text size in px (its body text; the rest scales with it); null follows the density */
   chatFontSize: number | null;
+  /** the chat's status line (agent, model, context, plan limits) in px; null follows the chat's size */
+  statusFontSize: number | null;
   /** fonts tried before the UI font in the chat's prose (code stays mono), as a CSS font-family list; "" keeps the UI font */
   chatFontFamily: string;
   /** true: Enter sends in the composer, Shift+Enter breaks the line; false: Ctrl/Cmd+Enter sends */
@@ -97,6 +99,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalWheelSpeed: 1,
   terminalFontFamily: "",
   chatFontSize: null,
+  statusFontSize: null,
   chatFontFamily: "",
   enterSends: true,
   showThinking: false,
@@ -162,6 +165,16 @@ export function chatFontSize(settings: Settings): number {
   return settings.chatFontSize ?? CHAT_BASE_FONT[settings.density];
 }
 
+export const STATUS_FONT_MIN = 9;
+export const STATUS_FONT_MAX = 20;
+/** each density's --fs-xs in src/styles.css: the status line's size at the density's chat size */
+const STATUS_BASE_FONT: Record<Density, number> = { comfortable: 12, compact: 11 };
+
+/** The chat's status line size in px: the chosen one, or --fs-xs scaled as the chat's text is. */
+export function statusFontSize(settings: Settings): number {
+  return settings.statusFontSize ?? Math.round(STATUS_BASE_FONT[settings.density] * chatFontSize(settings) / CHAT_BASE_FONT[settings.density]);
+}
+
 /** Only known keys with the right type survive: a stale or hand-edited record never breaks the UI. */
 export function sanitizeSettings(raw: unknown): Settings {
   const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
@@ -183,6 +196,9 @@ export function sanitizeSettings(raw: unknown): Settings {
     chatFontSize: typeof chatFont === "number" && Number.isFinite(chatFont)
       ? Math.min(CHAT_FONT_MAX, Math.max(CHAT_FONT_MIN, Math.round(chatFont)))
       : DEFAULT_SETTINGS.chatFontSize,
+    statusFontSize: typeof record["statusFontSize"] === "number" && Number.isFinite(record["statusFontSize"])
+      ? Math.min(STATUS_FONT_MAX, Math.max(STATUS_FONT_MIN, Math.round(record["statusFontSize"])))
+      : DEFAULT_SETTINGS.statusFontSize,
     terminalFontFamily: sanitizeFontFamily(record["terminalFontFamily"]),
     chatFontFamily: sanitizeFontFamily(record["chatFontFamily"]),
     enterSends: typeof record["enterSends"] === "boolean" ? record["enterSends"] : DEFAULT_SETTINGS.enterSends,
@@ -278,6 +294,8 @@ function applyToDocument(settings: Settings, resolved: ResolvedTheme, language: 
   root.dataset["palette"] = settings.palette;
   // ChatView.css scales its type tokens by this: the chosen size over the density's
   root.style.setProperty("--chat-scale", String(chatFontSize(settings) / CHAT_BASE_FONT[settings.density]));
+  // Composer.css sizes the chat's status line by this
+  root.style.setProperty("--status-fs", `${statusFontSize(settings)}px`);
   // ChatView.css sets the transcript's prose in this, and falls back to --font-ui without it
   const chatFont = chatFontStack(settings.chatFontFamily);
   if (chatFont === null) root.style.removeProperty("--font-chat");

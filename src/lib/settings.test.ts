@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
-import { alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews } from "./settings.ts";
+import { alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, STATUS_FONT_MAX, statusFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews } from "./settings.ts";
 
 it("keeps the screen wake lock off until this device explicitly enables it", () => {
   expect(DEFAULT_SETTINGS.keepScreenOn).toBe(false);
@@ -34,6 +34,12 @@ describe("chat font size", () => {
     expect(chatFontSize(sanitizeSettings({ density: "compact" }))).toBe(13);
     expect(chatFontSize(sanitizeSettings({ density: "compact", chatFontSize: 17 }))).toBe(17);
     expect(sanitizeSettings({ chatFontSize: 99 }).chatFontSize).toBe(CHAT_FONT_MAX);
+    // the status line follows the chat's size until it has its own
+    expect(statusFontSize(DEFAULT_SETTINGS)).toBe(12);
+    expect(statusFontSize(sanitizeSettings({ chatFontSize: 21 }))).toBe(18);
+    expect(statusFontSize(sanitizeSettings({ chatFontSize: 21, statusFontSize: 13 }))).toBe(13);
+    expect(sanitizeSettings({ statusFontSize: 99 }).statusFontSize).toBe(STATUS_FONT_MAX);
+    expect(sanitizeSettings({ statusFontSize: "big" }).statusFontSize).toBeNull();
     expect(sanitizeSettings({ chatFontSize: 2 }).chatFontSize).toBe(CHAT_FONT_MIN);
     expect(sanitizeSettings({ chatFontSize: 15.6 }).chatFontSize).toBe(16);
     expect(sanitizeSettings({ chatFontSize: "18" }).chatFontSize).toBeNull();

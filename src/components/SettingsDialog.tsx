@@ -6,7 +6,7 @@ import "./SettingsDialog.css";
 import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, formatKeys, shortcutKeys, shortcutConflict } from "../lib/shortcuts.ts";
-import { CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, useSettings, forgetPaneViews } from "../lib/settings.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, chatFontSize, STATUS_FONT_MAX, STATUS_FONT_MIN, statusFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, useSettings, forgetPaneViews } from "../lib/settings.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useT } from "../lib/i18n.ts";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "../lib/fontFamily.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
@@ -402,6 +402,14 @@ export function SettingsDialog({ open, onClose, actions, updates, auth, onEnable
                 <button type="button" className="icon-button" aria-label={t("Decrease chat font size")} disabled={chatFontSize(settings) <= CHAT_FONT_MIN} onClick={() => update({ chatFontSize: chatFontSize(settings) - 1 })}><Minus /></button>
                 <output aria-live="polite">{chatFontSize(settings)}px</output>
                 <button type="button" className="icon-button" aria-label={t("Increase chat font size")} disabled={chatFontSize(settings) >= CHAT_FONT_MAX} onClick={() => update({ chatFontSize: chatFontSize(settings) + 1 })}><Plus /></button>
+              </div>
+            </div>
+            <div className="settings-row">
+              <div><span className="settings-label">{t("Status line font size")}</span><span className="settings-description">{t("The agent, model, context and plan limits above the message box. Follows the chat font size until changed.")}</span></div>
+              <div className="settings-stepper" aria-label={t("Status line font size")}>
+                <button type="button" className="icon-button" aria-label={t("Decrease status line font size")} disabled={statusFontSize(settings) <= STATUS_FONT_MIN} onClick={() => update({ statusFontSize: statusFontSize(settings) - 1 })}><Minus /></button>
+                <output aria-live="polite">{statusFontSize(settings)}px</output>
+                <button type="button" className="icon-button" aria-label={t("Increase status line font size")} disabled={statusFontSize(settings) >= STATUS_FONT_MAX} onClick={() => update({ statusFontSize: statusFontSize(settings) + 1 })}><Plus /></button>
               </div>
             </div>
             <div className="settings-row">

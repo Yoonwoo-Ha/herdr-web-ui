@@ -42,8 +42,8 @@
   min-height: var(--chip-h);
   padding: 0 var(--space-2) var(--space-1);
   color: var(--text-dim);
-  /* the chat's text size (Settings → Chat font size) sizes this line too, marks and ring with it */
-  font-size: calc(var(--fs-xs) * var(--chat-scale, 1));
+  /* Settings → Status line font size, which follows Chat font size until it is set; marks and ring with it */
+  font-size: var(--status-fs, calc(var(--fs-xs) * var(--chat-scale, 1)));
   white-space: nowrap;
   overflow: hidden;
 }

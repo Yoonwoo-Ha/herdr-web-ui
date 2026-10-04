@@ -14,7 +14,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   blocked color.
 
 ### Changed
-- The chat's status line follows **Chat font size**, its agent mark and context ring with it.
+- The chat's status line has its own size, **Settings → Status line font size**. Until it is set,
+  the line follows **Chat font size**; its agent mark and context ring scale with it.
 
 ### Fixed
 - Switching to another pane no longer shows the previous pane's chat for a moment before the
