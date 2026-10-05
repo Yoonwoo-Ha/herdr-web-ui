@@ -198,7 +198,7 @@ function StatusUsage({ agent }: { agent: string | null | undefined }) {
     <span className={`composer-usage${usage.problem ? " has-problem" : ""}`} title={`${usageName(usage)}\n${detail}`} aria-label={`${usageName(usage)}: ${detail.replaceAll("\n", ", ")}`}>
       {windows.map((window, index) => (
         <span key={index} className={`composer-usage-window${window.used_percent >= HIGH_PERCENT ? " is-high" : ""}`}>
-          <span className="composer-usage-label">{windowLabel(window)}</span> {meterText(window, settings.usageCount)}
+          <span className="composer-usage-label">{windowLabel(window)}</span>{" "}<span className="composer-usage-value">{meterText(window, settings.usageCount)}</span>
         </span>
       ))}
     </span>

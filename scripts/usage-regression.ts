@@ -96,7 +96,32 @@ export async function checkStatusUsage(
   } finally {
     await context.close();
   }
-  console.log("PASS the chat's status line shows its own agent's plan limits, red near the limit, at its own size, and none when turned off");
+
+  // a phone at the largest status size: the limits' names give way, their numbers stay on the line
+  const phone = await browser.newContext({ viewport: { width: 360, height: 800 }, hasTouch: true, isMobile: true, locale: "en-US" });
+  try {
+    await staged(phone);
+    await phone.addInitScript((id) => {
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ showUsage: true, statusFontSize: 20 }));
+      localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
+    }, panes.claude);
+    await reportAgent(panes.claude, "claude");
+    const page = await phone.newPage();
+    await page.goto(`${origin}/?pane=${encodeURIComponent(panes.claude)}`);
+    await page.locator(".composer-status .composer-usage").waitFor();
+    const fit = await page.locator(".composer-status").evaluate((line) => {
+      const edge = line.getBoundingClientRect().right;
+      return [...line.querySelectorAll(".composer-usage-value")].map((value) => {
+        const box = value.getBoundingClientRect();
+        return `${value.textContent} ${box.width > 0 && box.right <= edge + 0.5 ? "shown" : "clipped"}`;
+      });
+    });
+    assert.deepEqual(fit, ["42% shown", "63% shown"], "both numbers stay on a 360px line at 20px");
+    if (process.env.UI_EVIDENCE_DIR) await page.locator(".composer-status").screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "status-usage-phone-20px.png") });
+  } finally {
+    await phone.close();
+  }
+  console.log("PASS the chat's status line shows its own agent's plan limits, red near the limit, at its own size, none when turned off, and its numbers whole on a phone");
 }
 
 export async function checkUsageMeters(browser: Browser, origin: string): Promise<void> {

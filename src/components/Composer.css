@@ -107,11 +107,11 @@
   flex: none;
 }
 
-/* the agent's own plan limits, after the ring: whole, while the model's name, the reasoning level and a hint give way */
+/* the agent's own plan limits, after the ring. On a narrow line the model's name, the reasoning
+   level and a hint give way first; then the limits' names, never their numbers */
 .composer-usage {
   display: inline-flex;
-  flex: none;
-  min-width: 0;
+  flex: 0 1 auto;
   gap: var(--space-2);
   overflow: hidden;
   padding-left: var(--space-1);
@@ -119,8 +119,19 @@
 }
 
 .composer-usage-window {
+  display: inline-flex;
+  gap: 0.3em;
+  min-width: 0;
+}
+
+.composer-usage-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.composer-usage-value {
+  flex: none;
 }
 
 .composer-usage-window.is-high {
