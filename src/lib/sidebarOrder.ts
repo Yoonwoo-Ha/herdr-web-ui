@@ -191,10 +191,19 @@ export function loadSeen(machineId: string): SeenRecord | null {
   }
 }
 
-/** Whether this browser has a record for any PC: the setting was turned on here before. */
+/**
+ * Whether this browser has a record for any PC: the setting was turned on here before. Only a
+ * record `loadSeen` accepts counts, so a damaged one does not keep the first use from starting quiet.
+ */
 export function anySeen(): boolean {
   try {
-    for (let index = 0; index < localStorage.length; index++) if (localStorage.key(index)?.startsWith(seenKey(""))) return true;
+    const prefix = seenKey("");
+    const ids: string[] = [];
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(prefix)) ids.push(key.slice(prefix.length));
+    }
+    return ids.some((machineId) => loadSeen(machineId) !== null);
   } catch { /* storage blocked */ }
   return false;
 }

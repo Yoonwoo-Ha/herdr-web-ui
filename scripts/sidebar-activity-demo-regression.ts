@@ -27,12 +27,18 @@ const waitStatus = (page: Page, title: string, status: string) => agent(page, ti
 const waitAgentAt = (page: Page, index: number, title: string) => page.waitForFunction(([at, name]) =>
   [...document.querySelectorAll(".agents-sidebar .agent-item .agent-title")][at as number]?.textContent === name, [index, title] as const, { timeout: 5_000 });
 
-async function withPage(browser: Browser, settings: object, run: (page: Page) => Promise<void>): Promise<void> {
+/**
+ * `seen`: a record already in this browser, so first-use seeding does not run. Seeding counts what
+ * is open at the first roster as opened, and a page slower than the demo's 4.5s self-finish would
+ * count that finish too (#529 review): a record there already makes the run independent of load time.
+ */
+async function withPage(browser: Browser, settings: object, run: (page: Page) => Promise<void>, seen?: Record<string, number>): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
   try {
-    await context.addInitScript((stored) => {
+    await context.addInitScript(([stored, record]) => {
       localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", defaultView: "chat", ...stored }));
-    }, settings);
+      if (record && localStorage.getItem("herdr-web-ui:seen:local") === null) localStorage.setItem("herdr-web-ui:seen:local", JSON.stringify(record));
+    }, [settings, seen] as const);
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -105,8 +111,18 @@ try {
         await waitStatus(page, INFRA, "idle");
         assert.equal(await workspaceStatus(page, "infra"), "idle", "its workspace row reads ready too");
         assert.equal(await agentStatus(page, API), "done", "a finish never opened keeps its dot");
+        // the run starts from an empty record: the opened finish is in it at herdr's counter for that
+        // finish (a look made at a stand-in is saved once a roster read brings the counter), the
+        // unopened one is not
+        const finishSeq = await page.evaluate(async (paneId) => {
+          const { snapshot } = await (await fetch("/api/session")).json() as { snapshot: { agents: { pane_id: string; state_change_seq?: number }[] } };
+          return snapshot.agents.find((entry) => entry.pane_id === paneId)?.state_change_seq;
+        }, panes.infra);
+        assert.ok(Number.isSafeInteger(finishSeq), `the finished agent carries a counter: ${finishSeq}`);
+        await page.waitForFunction(([paneId, seq]) => (JSON.parse(localStorage.getItem("herdr-web-ui:seen:local") ?? "{}") as Record<string, number>)[paneId] === seq,
+          [panes.infra, finishSeq!] as const, { timeout: 10_000 });
         const record = JSON.parse(await page.evaluate(() => localStorage.getItem("herdr-web-ui:seen:local") ?? "{}")) as Record<string, number>;
-        assert.ok(record[panes.infra]! > record[panes.api]!, `the opened finish is recorded past the unopened one: ${JSON.stringify(record)}`);
+        assert.equal(record[panes.api], undefined, `the unopened finish is not recorded: ${JSON.stringify(record)}`);
 
         // a finish watched on screen stays quiet after another pane is opened before the roster
         // read brings herdr's counter for it (#529 review): the look follows the counter. Roster
@@ -137,8 +153,24 @@ try {
           assert.equal(await agentStatus(page, INFRA), "idle", "a finish watched on screen does not get its dot back");
           await page.waitForTimeout(100);
         }
-      });
+      }, {});
       console.log("PASS Activity pins blocked and follows recency; an opened DONE reads as ready in both lists, an unopened one keeps its dot");
+
+      // the demo keeps its agent template after its last agent closes (#529 review): a workspace
+      // made in an emptied demo still lists its agent with herdr's counter
+      await withPage(browser, { agentOrder: "activity" }, async (page) => {
+        const made = await page.evaluate(async () => {
+          const post = (path: string, body: object) => fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+          const session = async () => (await (await fetch("/api/session")).json()).snapshot as { workspaces: { workspace_id: string }[]; agents: { pane_id: string; state_change_seq?: number }[] };
+          for (const { workspace_id } of (await session()).workspaces) await post("/api/workspace/close", { workspace_id, close_group: true });
+          const created = await (await post("/api/workspace/create", { cwd: "/home/demo/fresh", agent: { kind: "claude" } })).json() as { pane_id: string };
+          return { created: created.pane_id, agents: (await session()).agents };
+        });
+        const entry = made.agents.find((candidate) => candidate.pane_id === made.created);
+        assert.ok(entry && Number.isSafeInteger(entry.state_change_seq), `the new agent carries a counter: ${JSON.stringify(made)}`);
+        await agent(page, "fresh").waitFor();
+      });
+      console.log("PASS a workspace made after the demo's last agent closed is listed with herdr's counter");
     } finally {
       await browser.close();
     }

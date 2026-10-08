@@ -28,6 +28,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - macOS Safari direct terminal input preserves Korean syllables when the input method
   replaces text without emitting composition events, including after switching from English.
   ([#524](https://github.com/devswha/herdr-web-ui/pull/524) by @suho-han)
+- **Quiet opened finishes** starts quiet the first time it is turned on in a browser even when a
+  damaged record of opened finishes is left in that browser's storage; before, such a record made
+  every finished agent keep its dot. In the demo, an agent started after every workspace was closed
+  carries the counter that Activity order and Quiet opened finishes read.
+  ([#603](https://github.com/devswha/herdr-web-ui/pull/603) by @phirschybar)
 - A chat message with an invisible character in it (a zero-width space, a joiner, a byte-order
   mark, often in pasted text) no longer seems lost. Claude Code 2.1.294 takes such characters out
   and keeps the message in its input for review instead of sending it, while the chat had already

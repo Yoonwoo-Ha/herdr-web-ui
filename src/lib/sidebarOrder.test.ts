@@ -223,6 +223,15 @@ describe("records in storage", () => {
     expect(data.has("herdr-web-ui:settings")).toBe(true);
   });
 
+  it("counts only a record it can read as the setting having been on here (#529 review)", () => {
+    const data = fake();
+    data.set("herdr-web-ui:seen:local", "not json");
+    data.set("herdr-web-ui:seen:box", "[1, 2]");
+    expect(anySeen()).toBe(false);
+    data.set("herdr-web-ui:seen:box", "{}");
+    expect(anySeen()).toBe(true);
+  });
+
   it("reads a damaged record as none, keeping only numbers", () => {
     const data = fake();
     data.set("herdr-web-ui:seen:local", "not json");
