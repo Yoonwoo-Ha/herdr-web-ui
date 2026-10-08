@@ -361,9 +361,16 @@ export function PaneTerminal({
 
   // also when the callback itself changes: the other half of a split, made active, hands its
   // connection to callbacks that were no-ops and would otherwise hear of it only at a change
+  // a stalled output this terminal reported while its callbacks were no-ops, told to the live ones
+  const stalledRef = useRef<ServerMessage | null>(null);
   useEffect(() => {
+    // a connection made again has its output back: the stall it reported is over
+    if (connected) stalledRef.current = null;
     onConnectionChangeRef.current?.(connected);
   }, [connected, onConnectionChange]);
+  useEffect(() => {
+    if (stalledRef.current !== null) onServerMessageRef.current?.(stalledRef.current);
+  }, [onServerMessage]);
   const lastRoleAckRef = useRef<ClientRole | null>(null);
   useEffect(() => {
     if (lastRoleAckRef.current !== null) onRoleAckRef.current?.(lastRoleAckRef.current);
@@ -856,6 +863,7 @@ export function PaneTerminal({
     socketRef.current = socket;
     let outputGeneration = 0;
     const off = socket.on((message) => {
+      if (message.type === "error" && message.code === "output_stalled") stalledRef.current = message;
       onServerMessageRef.current?.(message);
       if (message.type === "snapshot" && pendingScopeRef.current === null) pendingScopeRef.current = `${Date.now()}-${Math.random()}`;
       if (message.type === "pending-messages" && pendingScopeRef.current !== null) {
