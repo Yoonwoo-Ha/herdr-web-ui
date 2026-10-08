@@ -359,9 +359,15 @@ export function PaneTerminal({
   onServerMessageRef.current = onServerMessage;
   onRoleAckRef.current = onRoleAck;
 
+  // also when the callback itself changes: the other half of a split, made active, hands its
+  // connection to callbacks that were no-ops and would otherwise hear of it only at a change
   useEffect(() => {
     onConnectionChangeRef.current?.(connected);
-  }, [connected]);
+  }, [connected, onConnectionChange]);
+  const lastRoleAckRef = useRef<ClientRole | null>(null);
+  useEffect(() => {
+    if (lastRoleAckRef.current !== null) onRoleAckRef.current?.(lastRoleAckRef.current);
+  }, [onRoleAck]);
 
   const noteClipboard = useCallback((note: string) => {
     if (clipboardTimerRef.current !== null) window.clearTimeout(clipboardTimerRef.current);
@@ -922,6 +928,7 @@ export function PaneTerminal({
         observeRef.current = nowObserving;
         setObserving(nowObserving);
         term.options.disableStdin = nowObserving || secretRef.current !== null || heldRef.current;
+        lastRoleAckRef.current = message.mode;
         onRoleAckRef.current?.(message.mode);
         if (!nowObserving && !fixedGridRef.current && !chatViewRef.current && inUse()) {
           try {

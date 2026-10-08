@@ -471,6 +471,11 @@ export function App() {
     return () => events.close();
   }, [locked, scheduleRefetch, dropIn, chime]);
 
+  // stable: a terminal reports its connection again when this callback changes (PaneTerminal)
+  const handleConnectionChange = useCallback((next: boolean) => {
+    setConnected(next);
+    if (next) setOutputStopped(false);
+  }, []);
   const handleServerMessage = useCallback((message: ServerMessage) => {
     if (message.type === "error" && message.code === "output_stalled") setOutputStopped(true);
   }, []);
@@ -566,7 +571,6 @@ export function App() {
     const open = splitRef.current;
     const current = selectionRef.current;
     if (open && paneId !== null && current.paneId !== null && sameTarget(open.other, { machineId, paneId })) {
-      setConnected(true);
       setSplit({ other: { machineId: current.machineId, paneId: current.paneId }, bSide: open.bSide, active: otherSlot(open.active) });
     }
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setAutoSelected(false); setDrawerOpen(false);
@@ -1100,7 +1104,7 @@ export function App() {
                     palette={settings.palette}
                     role={role}
                     onRoleAck={active ? setRole : NO_OP}
-                    onConnectionChange={active ? (next) => { setConnected(next); if (next) setOutputStopped(false); } : NO_OP}
+                    onConnectionChange={active ? handleConnectionChange : NO_OP}
                     onServerMessage={active ? handleServerMessage : NO_OP}
                   />
                   </div>
