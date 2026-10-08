@@ -2695,11 +2695,16 @@ function claudeGreyInput(ansi: string): string | null {
  * message for a moment (sent or cleared in the terminal), over a box that is empty again and shows
  * its tip or a suggested prompt: Enter there sends Claude's suggestion and Ctrl+C asks to leave
  * Claude. A read that fails or shows no box says nothing, and the card stays.
+ * herdr gives colors for the viewport alone (an ANSI read of "detection", the live screen the card
+ * is read from, carries no escapes: measured on 0.9.3), and a viewport scrolled into the history
+ * can show an older box. So the grey text counts only when it is the very text the card took for
+ * the message.
  */
 export async function claudeHeldIsGrey(paneId: string, prompt: InteractivePrompt): Promise<boolean> {
   if (parsedByPublicPrompt.get(prompt)?.responder !== "claude-held") return false;
+  const same = (text: string | null): boolean => text !== null && normalizeText(text) === normalizeText(prompt.body ?? "");
   return paneRead({ paneId, source: "visible", format: "ansi", timeoutMs: SUGGESTION_READ_MS })
-    .then((read) => claudeGreyInput(read.text) !== null, () => false);
+    .then((read) => same(claudeGreyInput(read.text)), () => false);
 }
 
 async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: string; status: string; prompt: InteractivePrompt | null; pane: HerdrPane; panes: HerdrPane[] }> {

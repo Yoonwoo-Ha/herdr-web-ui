@@ -2732,6 +2732,8 @@ describe("an answer and the menu it was made for", () => {
     onRead?: () => void;
     /** herdr never answers what it is asked about the pane's agent */
     agentUnanswered?: boolean;
+    /** what an ANSI read shows instead of `screen`: the pane's viewport, scrolled off its live screen */
+    viewport?: string;
     /** the next screen read alone answers with this, that much later */
     nextRead?: { text: string; delay: number };
     /** herdr presses this key and its reply is lost on the way */
@@ -2757,7 +2759,7 @@ describe("an answer and the menu it was made for", () => {
       socket.on("data", (chunk) => {
         input += chunk.toString();
         if (!input.includes("\n")) return;
-        const request = JSON.parse(input.split("\n")[0]!) as { id: string; method: string; params: { keys?: string[]; text?: string } };
+        const request = JSON.parse(input.split("\n")[0]!) as { id: string; method: string; params: { keys?: string[]; text?: string; format?: string } };
         const answer = (result: unknown) => socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
         const snapshotDelay = request.method === "session.snapshot" ? pane.nextSnapshotDelay : undefined;
         if (snapshotDelay !== undefined) pane.nextSnapshotDelay = undefined;
@@ -2767,7 +2769,7 @@ describe("an answer and the menu it was made for", () => {
           const once = pane.nextRead;
           pane.nextRead = undefined;
           if (once) return void setTimeout(() => answer({ read: { text: once.text } }), once.delay);
-          return void setTimeout(() => answer({ read: { text: pane.screen } }), pane.readDelay ?? 0);
+          return void setTimeout(() => answer({ read: { text: request.params.format === "ansi" ? pane.viewport ?? pane.screen : pane.screen } }), pane.readDelay ?? 0);
         }
         if (request.method === "pane.process_info") return answer({ process_info: { foreground_processes: pane.omo?.live ? [{ pid: pane.omo.pid, argv: ["omo"] }] : [] } });
         if (request.method === "agent.get" && pane.agentUnanswered) return;
@@ -2929,6 +2931,11 @@ ${heldRule}
       // typed text is not grey: a message of the same words is a held message
       pane.screen = heldScreen("❯ run the tests");
       expect((await card())?.body).toBe("run the tests");
+      // a pane scrolled into its history: the viewport's older box and its grey text say nothing
+      // about the message the live screen holds
+      pane.screen = heldScreen("❯ helloworld test");
+      pane.viewport = heldScreen(grey("run the tests"));
+      expect((await card())?.body).toBe("helloworld test");
     });
   });
 
