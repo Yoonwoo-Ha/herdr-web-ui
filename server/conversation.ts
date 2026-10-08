@@ -109,8 +109,7 @@ function localCommandOutput(content: unknown): string {
     if (text.length > 0) streams.push(text);
     at = next;
   }
-  const text = streams.join("\n");
-  return text.length > LOCAL_COMMAND_MAX_CHARS ? `${text.slice(0, LOCAL_COMMAND_MAX_CHARS)}\u2026` : text;
+  return capNotice(streams.join("\n"));
 }
 
 /** Lines of one notice Claude Code writes as separate entries, a moment apart. */
@@ -124,6 +123,28 @@ function noticeText(raw: string): string {
 /** A notice is not a log: past the cap the rest stays in the terminal, also for lines joined into one. */
 function capNotice(text: string): string {
   return text.length > LOCAL_COMMAND_MAX_CHARS ? `${text.slice(0, LOCAL_COMMAND_MAX_CHARS)}\u2026` : text;
+}
+
+/** The notice a turn is, when it is nothing else. */
+function loneNotice(turn: ConversationTurn | undefined): Extract<ConversationPart, { kind: "notice" }> | null {
+  const part = turn?.parts.length === 1 ? turn.parts[0] : undefined;
+  return part?.kind === "notice" ? part : null;
+}
+
+/** Were these two entries written together? Never when either has no readable time. */
+function writtenTogether(a: string | null | undefined, b: string | null | undefined): boolean {
+  return a != null && b != null && Math.abs(Date.parse(a) - Date.parse(b)) <= NOTICE_JOIN_MS;
+}
+
+/**
+ * Claude Code versions differ in where a refused command goes: a `local_command` answer, an
+ * `informational` entry, and nothing says one never writes both. The same words from the other
+ * kind, written together, are one answer; a notice repeating its own kind is kept.
+ */
+function saidByOtherKind(turn: ConversationTurn | undefined, text: string, ts: string | null, kind: "local-command" | "informational"): boolean {
+  const said = loneNotice(turn);
+  if (said === null || said.source === kind || (said.source !== "local-command" && said.source !== "informational")) return false;
+  return writtenTogether(turn?.ts, ts) && (said.text === text || said.text.split("\n").includes(text));
 }
 
 /**
@@ -190,7 +211,7 @@ interface TranscriptEntry {
   uuid?: string;
   isMeta?: boolean;
   isCompactSummary?: boolean;
-  message?: { role?: string; content?: unknown };
+  message?: { role?: string; content?: unknown; stop_reason?: unknown };
   attachment?: { type?: unknown; prompt?: unknown; commandMode?: unknown; origin?: { kind?: unknown } };
 }
 
@@ -212,6 +233,8 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): Conve
   const turns: ConversationTurn[] = [];
   /** tool parts still waiting for their result, by tool_use id */
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
+  /** the agent's last entry called a tool: its turn is not over, whatever is written meanwhile */
+  let atWork = false;
 
   const assistantTurn = (ts?: string): ConversationTurn => {
     const last = turns[turns.length - 1];
@@ -256,7 +279,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): Conve
     // only here. It is the runtime speaking in the user's seat, so it reads as a notice.
     if (entry.type === "system" && entry.subtype === "local_command") {
       const output = localCommandOutput(entry.content);
-      if (output.length > 0) turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "notice", text: output, source: "local-command" }] });
+      if (output.length > 0 && !saidByOtherKind(turns.at(-1), output, entry.timestamp ?? null, "local-command")) turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "notice", text: output, source: "local-command" }] });
       continue;
     }
 
@@ -264,15 +287,20 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): Conve
     // writes these here, not as a local_command), a usage limit reached or reset. The message
     // that drew one is not recorded, so without it a refused command just vanished from the chat.
     // Lines written together read as one notice.
+    // Claude Code also writes them while the agent works (a message another session held, a
+    // stopped response): about half of the real ones. Such a notice does not end the turn: it
+    // goes before the turn it was written in, so the turn stays whole and stays the last one,
+    // which is what the chat reads as the turn still running.
     if (entry.type === "system" && entry.subtype === "informational") {
       const text = typeof entry.content === "string" ? noticeText(entry.content) : "";
       if (text.length === 0) continue;
       const ts = entry.timestamp ?? null;
-      const last = turns.at(-1);
-      const lastNotice = last?.parts.length === 1 && last.parts[0]?.kind === "notice" && last.parts[0].source === "informational" ? last.parts[0] : null;
-      const near = last?.ts != null && ts !== null && Math.abs(Date.parse(ts) - Date.parse(last.ts)) <= NOTICE_JOIN_MS;
-      if (last && lastNotice && near) turns[turns.length - 1] = { ...last, parts: [{ ...lastNotice, text: capNotice(`${lastNotice.text}\n${text}`) }] };
-      else turns.push({ role: "user", ts, parts: [{ kind: "notice", text, source: "informational" }] });
+      const at = atWork && turns.at(-1)?.role === "assistant" ? turns.length - 1 : turns.length;
+      const before = turns[at - 1];
+      if (saidByOtherKind(before, text, ts, "informational")) continue;
+      const said = loneNotice(before);
+      if (before && said?.source === "informational" && writtenTogether(before.ts, ts)) turns[at - 1] = { ...before, parts: [{ ...said, text: capNotice(`${said.text}\n${text}`) }] };
+      else turns.splice(at, 0, { role: "user", ts, parts: [{ kind: "notice", text, source: "informational" }] });
       continue;
     }
 
@@ -311,6 +339,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): Conve
 
     if (entry.type === "assistant" && Array.isArray(content)) {
       const turn = assistantTurn(entry.timestamp);
+      atWork = entry.message?.stop_reason === "tool_use";
       if (entry.timestamp) turn.end_ts = entry.timestamp;
       for (const block of content) {
         if (typeof block !== "object" || block === null) continue;

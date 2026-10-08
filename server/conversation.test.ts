@@ -104,6 +104,45 @@ describe("parseClaudeTranscript", () => {
     expect(text.endsWith("\u2026")).toBe(true);
   });
 
+  it("keeps a turn whole when Claude Code writes a notice while the agent works", () => {
+    // a cross-session notice between a tool's result and the next call: about half of the notices in real transcripts
+    const assistant = (block: object, stop: string, ts: string) => JSON.stringify({ type: "assistant", timestamp: ts, message: { role: "assistant", stop_reason: stop, content: [block] } });
+    const info = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "informational", content, level: "warning", timestamp: ts });
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", timestamp: "2026-10-08T08:00:00.000Z", message: { role: "user", content: "run it" } }),
+      assistant({ type: "tool_use", id: "t1", name: "Bash", input: { command: "sleep 60" } }, "tool_use", "2026-10-08T08:00:01.000Z"),
+      info("Cross-session message held by the receiving session", "2026-10-08T08:00:20.000Z"),
+      JSON.stringify({ type: "user", timestamp: "2026-10-08T08:01:01.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] } }),
+      info("Cross-session message expired without approval", "2026-10-08T08:01:02.500Z"),
+      assistant({ type: "text", text: "Done." }, "end_turn", "2026-10-08T08:01:03.000Z"),
+      info("Unknown command: /xyzabc", "2026-10-08T08:02:00.000Z"),
+    ].join("\n"));
+    expect(turns.map((turn) => [turn.role, turn.parts.map((part) => part.kind === "notice" ? part.text : part.kind)])).toEqual([
+      ["user", ["text"]],
+      // written inside the turn: shown before it, and the turn is still the last one while it runs
+      ["user", ["Cross-session message held by the receiving session"]],
+      ["user", ["Cross-session message expired without approval"]],
+      ["assistant", ["tool", "text"]],
+      // written after the answer: shown after it
+      ["user", ["Unknown command: /xyzabc"]],
+    ]);
+    expect(turns[3]!.end_ts).toBe("2026-10-08T08:01:03.000Z");
+  });
+
+  it("shows a refusal once when Claude Code records it both as a command's answer and as a notice", () => {
+    const info = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "informational", content, level: "warning", timestamp: ts });
+    const local = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "local_command", timestamp: ts, content });
+    const notices = (lines: string[]) => parseClaudeTranscript(lines.join("\n")).flatMap((turn) => turn.parts).filter((part) => part.kind === "notice").map((part) => (part as { text: string }).text);
+    const stderr = "<local-command-stderr>\u001b[31mUnknown command: /gaol\u001b[39m</local-command-stderr>";
+    expect(notices([local(stderr, "2026-10-08T08:06:31.117Z"), info("Unknown command: /gaol", "2026-10-08T08:06:31.118Z"), info("Args from unknown skill: x", "2026-10-08T08:06:31.119Z")]))
+      .toEqual(["Unknown command: /gaol", "Args from unknown skill: x"]);
+    expect(notices([info("Unknown command: /gaol", "2026-10-08T08:06:31.117Z"), info("Args from unknown skill: x", "2026-10-08T08:06:31.118Z"), local(stderr, "2026-10-08T08:06:31.119Z")]))
+      .toEqual(["Unknown command: /gaol\nArgs from unknown skill: x"]);
+    // the same words a minute later are another answer, and a notice's own repeat is kept
+    expect(notices([local(stderr, "2026-10-08T08:06:31.117Z"), info("Unknown command: /gaol", "2026-10-08T08:07:31.118Z")])).toEqual(["Unknown command: /gaol", "Unknown command: /gaol"]);
+    expect(notices([info("Message expired", "2026-10-08T08:06:31.117Z"), info("Message expired", "2026-10-08T08:06:31.118Z")])).toEqual(["Message expired\nMessage expired"]);
+  });
+
   it("shows a slash command's answer only as the whole entry, as text, and not past its length", () => {
     const local = (content: string) => JSON.stringify({ type: "system", subtype: "local_command", timestamp: "2026-10-07T19:00:00.000Z", content });
     const notices = (lines: string[]) => parseClaudeTranscript(lines.join("\n")).flatMap((turn) => turn.parts).filter((part) => part.kind === "notice").map((part) => (part as { text: string }).text);

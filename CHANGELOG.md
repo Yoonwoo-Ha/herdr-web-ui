@@ -28,8 +28,6 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - macOS Safari direct terminal input preserves Korean syllables when the input method
   replaces text without emitting composition events, including after switching from English.
   ([#524](https://github.com/devswha/herdr-web-ui/pull/524) by @suho-han)
-
-### Fixed
 - A message starting with `/` that Claude Code does not know no longer just vanishes from the
   chat: Claude Code's own answer ("Unknown command: /…", and the arguments it dropped) shows as a
   notice, as a usage limit reached or reset does. Claude Code 2.1.29x records these as
