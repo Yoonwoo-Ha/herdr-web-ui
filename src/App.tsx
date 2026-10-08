@@ -229,7 +229,12 @@ export function App() {
   // two panes side by side (lib/split.ts): the other half's pane, its side, and the active slot.
   // Only drawn where the sidebar stands beside the pane; a narrower window shows the active half
   const [split, setSplitState] = useState<SplitState | null>(storedSplit);
-  const setSplit = useCallback((next: SplitState | null) => { setSplitState(next); storeSplit(next); }, []);
+  const setSplit = useCallback((next: SplitState | null) => {
+    setSplitState(next);
+    storeSplit(next);
+    // the second half's next socket starts over, as the first did
+    if (next === null) setRoles((current) => current.b === "interact" ? current : { ...current, b: "interact" });
+  }, []);
   const splitRef = useRef(split); splitRef.current = split;
   // whether the other half is drawn: a narrow window keeps the split but shows the active half alone
   const splitShownRef = useRef(false);
@@ -276,8 +281,14 @@ export function App() {
   const [newTab, setNewTab] = useState<NewTabTarget | null>(null);
   const [connected, setConnected] = useState(false);
   const [outputStopped, setOutputStopped] = useState(false);
-  // the connection's role: the server's role-ack confirms it (no UI control today)
-  const [role, setRole] = useState<ClientRole>("interact");
+  // each connection's role, per half of the pane area (lib/split.ts): the server's role-ack
+  // confirms it (no UI control today). A half is a socket of its own, so one half made watch-only
+  // must not ask the other's socket to watch too
+  const [roles, setRoles] = useState<Record<SplitSlot, ClientRole>>({ a: "interact", b: "interact" });
+  const roleAcks = useMemo<Record<SplitSlot, (mode: ClientRole) => void>>(() => ({
+    a: (mode) => setRoles((current) => current.a === mode ? current : { ...current, a: mode }),
+    b: (mode) => setRoles((current) => current.b === mode ? current : { ...current, b: mode }),
+  }), []);
   const [notifications, setNotifications] = useState<NotificationState>(() => notificationState());
   // this device has a server-side push subscription: alerts come from the server, not the tab
   const [pushOn, setPushOn] = useState(false);
@@ -1098,8 +1109,8 @@ export function App() {
                     terminalFontFamily={settings.terminalFontFamily}
                     theme={resolvedTheme}
                     palette={settings.palette}
-                    role={role}
-                    onRoleAck={active ? setRole : NO_OP}
+                    role={roles[slot]}
+                    onRoleAck={roleAcks[slot]}
                     onConnectionChange={active ? handleConnectionChange : NO_OP}
                     onServerMessage={active ? handleServerMessage : NO_OP}
                   />
