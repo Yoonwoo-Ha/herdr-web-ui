@@ -143,6 +143,21 @@ describe("parseClaudeTranscript", () => {
     ]);
   });
 
+  it("shows a refusal recorded both ways once also while the agent works, and keeps the turn whole", () => {
+    const at = "2026-10-08T08:00:10.000Z";
+    const info = JSON.stringify({ type: "system", subtype: "informational", timestamp: at, content: "Message held" });
+    const local = JSON.stringify({ type: "system", subtype: "local_command", timestamp: at, content: "<local-command-stderr>Message held</local-command-stderr>" });
+    const around = (notices: string[]) => parseClaudeTranscript([
+      JSON.stringify({ type: "user", timestamp: "2026-10-08T08:00:00.000Z", message: { role: "user", content: "run" } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-10-08T08:00:01.000Z", message: { role: "assistant", stop_reason: "tool_use", content: [{ type: "tool_use", id: "t", name: "Bash", input: { command: "sleep 60" } }] } }),
+      ...notices,
+      JSON.stringify({ type: "user", timestamp: "2026-10-08T08:01:00.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "ok" }] } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-10-08T08:01:01.000Z", message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "Done" }] } }),
+    ].join("\n")).map((turn) => [turn.role, turn.parts.map((part) => part.kind === "notice" ? `${part.source}: ${part.text}` : part.kind)]);
+    expect(around([info, local])).toEqual([["user", ["text"]], ["user", ["informational: Message held"]], ["assistant", ["tool", "text"]]]);
+    expect(around([local, info])).toEqual([["user", ["text"]], ["user", ["local-command: Message held"]], ["assistant", ["tool", "text"]]]);
+  });
+
   it("shows a refusal once when Claude Code records it both as a command's answer and as a notice", () => {
     const info = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "informational", content, level: "warning", timestamp: ts });
     const local = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "local_command", timestamp: ts, content });

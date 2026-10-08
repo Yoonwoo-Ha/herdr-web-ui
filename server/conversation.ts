@@ -235,6 +235,8 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): Conve
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
   /** the agent's last entry called a tool: its turn is not over, whatever is written meanwhile */
   let atWork = false;
+  /** where a notice goes: before the turn at work it was written in, else at the end */
+  const noticeAt = (): number => atWork && turns.at(-1)?.role === "assistant" ? turns.length - 1 : turns.length;
 
   const assistantTurn = (ts?: string): ConversationTurn => {
     const last = turns[turns.length - 1];
@@ -279,7 +281,8 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): Conve
     // only here. It is the runtime speaking in the user's seat, so it reads as a notice.
     if (entry.type === "system" && entry.subtype === "local_command") {
       const output = localCommandOutput(entry.content);
-      if (output.length > 0 && !saidByOtherKind(turns.at(-1), output, entry.timestamp ?? null, "local-command")) turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "notice", text: output, source: "local-command" }] });
+      const at = noticeAt();
+      if (output.length > 0 && !saidByOtherKind(turns[at - 1], output, entry.timestamp ?? null, "local-command")) turns.splice(at, 0, { role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "notice", text: output, source: "local-command" }] });
       continue;
     }
 
@@ -295,7 +298,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): Conve
       const text = typeof entry.content === "string" ? noticeText(entry.content) : "";
       if (text.length === 0) continue;
       const ts = entry.timestamp ?? null;
-      const at = atWork && turns.at(-1)?.role === "assistant" ? turns.length - 1 : turns.length;
+      const at = noticeAt();
       const before = turns[at - 1];
       if (saidByOtherKind(before, text, ts, "informational")) continue;
       const said = loneNotice(before);
