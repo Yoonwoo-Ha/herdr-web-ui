@@ -129,6 +129,20 @@ describe("parseClaudeTranscript", () => {
     expect(turns[3]!.end_ts).toBe("2026-10-08T08:01:03.000Z");
   });
 
+  it("keeps a turn whole around a notice when the tool call's entry names no stop reason", () => {
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", message: { role: "user", content: "run" } }),
+      JSON.stringify({ type: "assistant", message: { role: "assistant", stop_reason: null, content: [{ type: "tool_use", id: "t", name: "Bash", input: { command: "sleep 60" } }] } }),
+      JSON.stringify({ type: "system", subtype: "informational", content: "Message held" }),
+      JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "ok" }] } }),
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Done" }] } }),
+      JSON.stringify({ type: "system", subtype: "informational", content: "After the answer" }),
+    ].join("\n"));
+    expect(turns.map((turn) => [turn.role, turn.parts.map((part) => part.kind === "notice" ? part.text : part.kind)])).toEqual([
+      ["user", ["text"]], ["user", ["Message held"]], ["assistant", ["tool", "text"]], ["user", ["After the answer"]],
+    ]);
+  });
+
   it("shows a refusal once when Claude Code records it both as a command's answer and as a notice", () => {
     const info = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "informational", content, level: "warning", timestamp: ts });
     const local = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "local_command", timestamp: ts, content });

@@ -339,7 +339,9 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): Conve
 
     if (entry.type === "assistant" && Array.isArray(content)) {
       const turn = assistantTurn(entry.timestamp);
-      atWork = entry.message?.stop_reason === "tool_use";
+      // an entry that names no stop reason is still at work when it calls a tool
+      const stop = entry.message?.stop_reason;
+      atWork = stop === "tool_use" || (stop == null && content.some((block: unknown) => typeof block === "object" && block !== null && (block as { type?: unknown }).type === "tool_use"));
       if (entry.timestamp) turn.end_ts = entry.timestamp;
       for (const block of content) {
         if (typeof block !== "object" || block === null) continue;
