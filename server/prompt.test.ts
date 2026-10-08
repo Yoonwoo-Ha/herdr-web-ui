@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InteractivePrompt } from "../shared/protocol.ts";
 
-import { answerKeys, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded } from "./prompt.ts";
+import { answerKeys, removedInvisible, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded } from "./prompt.ts";
 
 const labels = (prompt: InteractivePrompt | null) => prompt?.options.map((option) => option.label);
 
@@ -989,6 +989,65 @@ ${rows}
 
   test("does not take a rule of another program under the panel for Claude's own", () => {
     expect(parseInteractivePrompt("claude", question + "\n⏺ Done.\n──── user@host:~/project ─\n")).toBeNull();
+  });
+});
+
+describe("Claude's held message", () => {
+  // Claude Code 2.1.294, live: a pasted message with a zero-width space, after its Enter
+  const rule = "─".repeat(80);
+  const held = (box: string, footer = "  [Haiku 4.5] │ project\n  ⏸ manual mode on") => `
+ ▐▛███▜▌   Claude Code v2.1.294
+${" ".repeat(40)}Removed 1 invisible character · review and press Enter to send
+${rule}
+${box}
+${rule}
+${footer}
+`;
+
+  test("shows the message Claude holds, with Send and Discard", () => {
+    const prompt = parseInteractivePrompt("claude", held("❯ helloworld test"))!;
+    expect(prompt).not.toBeNull();
+    expect(prompt.title).toBe("Claude Code removed 1 invisible character");
+    expect(prompt.body).toBe("helloworld test");
+    expect(prompt.options.map((option) => option.label)).toEqual(["Send", "Discard"]);
+    expect(answerKeys(prompt, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
+    expect(answerKeys(prompt, { option_index: 1 })).toEqual([{ keys: ["ctrl+c"] }]);
+  });
+
+  test("keeps a held message of several lines whole, and counts the characters", () => {
+    const screen = held("❯ first line\n  second line").replace("Removed 1 invisible character", "Removed 3 invisible characters");
+    const prompt = parseInteractivePrompt("claude", screen)!;
+    expect(prompt.title).toBe("Claude Code removed 3 invisible characters");
+    expect(prompt.body).toBe("first line\nsecond line");
+  });
+
+  test("knows a held message without the hint, by what the chat just sent", () => {
+    // a turn's status line took the hint's row: only the box says it, and only to the one who sent it
+    const screen = held("\u276f timingtest").replace(/.*Removed 1 invisible character.*\n/, "  \u273b Cooked for 1s \u00b7 done 5:23 PM\n");
+    expect(parseInteractivePrompt("claude", screen)).toBeNull();
+    const prompt = parseInteractivePrompt("claude", screen, null, true, [], "timing\u200btest")!;
+    expect(prompt.title).toBe("Claude Code removed 1 invisible character");
+    expect(prompt.body).toBe("timingtest");
+    // a box that differs in anything visible is the user's own draft
+    expect(parseInteractivePrompt("claude", screen, null, true, [], "timing\u200btests")).toBeNull();
+    expect(parseInteractivePrompt("claude", screen, null, true, [], "timingtest")).toBeNull();
+  });
+
+  test("counts only invisible characters as removed, a wrapped box aside", () => {
+    expect(removedInvisible("a\u200bb\u2060c\ufeff", "abc")).toBe(3);
+    expect(removedInvisible("long message here", "long mess\nage here")).toBe(0);
+    expect(removedInvisible("abc", "abd")).toBe(0);
+    expect(removedInvisible("ab\u200bc", "ab")).toBe(0);
+    expect(removedInvisible("\ud55c\u3164\uae00", "\ud55c\uae00")).toBe(1);
+  });
+
+  test("is gone once the input is empty, and never reads the hint off a quoted screen", () => {
+    // sent or discarded: the hint stays over an empty input
+    expect(parseInteractivePrompt("claude", held("❯"))).toBeNull();
+    // output under the box is not Claude's footer: the hint is quoted, not live
+    expect(parseInteractivePrompt("claude", held("❯ hi", `  footer\n${rule}\n❯ another box`))).toBeNull();
+    // the same words not over an input box
+    expect(parseInteractivePrompt("claude", "Removed 1 invisible character · review and press Enter to send\nsome output\n")).toBeNull();
   });
 });
 

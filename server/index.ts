@@ -54,7 +54,7 @@ import {
   worktreeRemove,
 } from "./herdr/client.ts";
 import { type AlertTiming, createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
-import { codexQuestionsCollapsed, handlePromptRequest, modelListWaits, parseInteractivePrompt, promptWaitEnded } from "./prompt.ts";
+import { codexQuestionsCollapsed, handlePromptRequest, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded } from "./prompt.ts";
 import { secretPrompt, validSecret } from "../shared/secret-prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
@@ -449,6 +449,7 @@ export function createServer(
     // answer into an open menu included, where agent.prompt would refuse
     if (!fromTerminal) try {
       await agentPrompt(paneId, text);
+      noteSubmitted(paneId, text);
       return;
     } catch (error) {
       if (!(error instanceof HerdrError)) throw error;
@@ -465,6 +466,7 @@ export function createServer(
     await Bun.sleep(options.submitDelayMs ?? SUBMIT_DELAY_MS);
     authorize();
     await paneSendKeys(paneId, ["Enter"]);
+    noteSubmitted(paneId, text);
   }
 
   function authorizeSocket(client: Client): void {
