@@ -1220,8 +1220,11 @@ function parseClaudeApproval(screen: string): ParsedPrompt | null {
  * message as Claude now holds it and sends it (Enter) or drops it (Ctrl+C clears the input).
  * The hint does not stay (a turn's status line takes its row), so the box counts on its own too:
  * when it still holds what the chat last sent here less only invisible characters (`sent`).
+ * `working`: Claude is under a turn. Ctrl+C then interrupts the turn and leaves the box as it was
+ * (live, 2.1.294: "Interrupted · What should Claude do instead?"), so the card offers Send alone
+ * until the turn ends; Enter under a turn queues the message as it does from the terminal.
  */
-function parseClaudeHeld(screen: string, sent: string | null): ParsedPrompt | null {
+function parseClaudeHeld(screen: string, sent: string | null, working: boolean): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   // the input box: the last rule with only Claude's footer under it, the rule above it, and a ❯ line first
   const bottom = findLastIndex(lines, (line) => isDivider(line));
@@ -1242,15 +1245,17 @@ function parseClaudeHeld(screen: string, sent: string | null): ParsedPrompt | nu
   const removed = hint ? Number(hint[1]) : sent !== null ? removedInvisible(sent, message) : 0;
   if (removed <= 0) return null;
   const title = removed === 1 ? "Claude Code removed 1 invisible character" : `Claude Code removed ${removed} invisible characters`;
+  // the choices are part of the card's id: a Discard tapped on a card read before the turn began is refused
+  const choices = [{ label: "Send", steps: keySteps([KEY.enter]) }, ...(working ? [] : [{ label: "Discard", steps: keySteps(["ctrl+c"]) }])];
   return finishPrompt("claude", {
     kind: "approval", title, question: "The message waits in its input. Send it as it is now?",
     body: message,
-    options: [{ label: "Send", description: null }, { label: "Discard", description: null }],
+    options: choices.map(({ label }) => ({ label, description: null })),
     multi_select: false, custom_option_index: null,
   }, {
-    responder: "claude-held", menuLabels: ["Send", "Discard"], selectedIndex: -1,
+    responder: "claude-held", menuLabels: choices.map(({ label }) => label), selectedIndex: -1,
     checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
-    optionSteps: [keySteps([KEY.enter]), keySteps(["ctrl+c"])],
+    optionSteps: choices.map(({ steps }) => steps),
   });
 }
 
@@ -2127,7 +2132,7 @@ function parsePiDialog(screen: string, moved = false): ParsedPrompt | null {
   });
 }
 
-function parsePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null, omoTrusted = true, omoOpen: OmoAsk[] = [], sent: string | null = null): ParsedPrompt | null {
+function parsePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null, omoTrusted = true, omoOpen: OmoAsk[] = [], sent: string | null = null, working = false): ParsedPrompt | null {
   const omo = () => {
     const forms = (ask: OmoAsk | null, trusted: boolean) => [parseOmoQuestion(screen, ask, trusted), parseOmoTyping(screen, ask, trusted), parseOmoReview(screen, ask, trusted)];
     const matched = omoOpen.flatMap((ask) => forms(ask, false)).filter((form) => form !== null);
@@ -2142,7 +2147,7 @@ function parsePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null
       // `pi` reads pi's own dialogs first: pi's hint is its own, so an omo form never matches
       // it and falls through to omo()'s parsers.
       : agent === "claude"
-        ? [parseClaudeQuestion(screen), parseClaudeSubmit(screen), parseClaudeApproval(screen), parseClaudeConfirm(screen), parseClaudeModel(screen), parseClaudeEffort(screen), parseClaudeHeld(screen, sent), ...omo()]
+        ? [parseClaudeQuestion(screen), parseClaudeSubmit(screen), parseClaudeApproval(screen), parseClaudeConfirm(screen), parseClaudeModel(screen), parseClaudeEffort(screen), parseClaudeHeld(screen, sent, working), ...omo()]
         : agent === "pi"
           ? [parsePiModel(screen), parsePiDialog(screen), ...omo()]
         : agent === "omo" || agent === ""
@@ -2176,9 +2181,9 @@ export function codexQueuedPrompt(screen: string, unanswered: QueuedQuestion[], 
  * `omoOpen`: every question the session has open (openOmoAsks), for omo's widget of the ones
  * asked without waiting.
  */
-/** `sent`: what the chat last sent to the pane, for a message Claude Code holds back (parseClaudeHeld) */
-export function parseInteractivePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null, omoTrusted = true, omoOpen: OmoAsk[] = [], sent: string | null = null): InteractivePrompt | null {
-  const parsed = parsePrompt(agent, screen, omoAsk, omoTrusted, omoOpen, sent);
+/** `sent`: what the chat last sent to the pane, and `working`: whether its agent is under a turn, for a message Claude Code holds back (parseClaudeHeld) */
+export function parseInteractivePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null, omoTrusted = true, omoOpen: OmoAsk[] = [], sent: string | null = null, working = false): InteractivePrompt | null {
+  const parsed = parsePrompt(agent, screen, omoAsk, omoTrusted, omoOpen, sent, working);
   return parsed ? publicPrompt(parsed) : null;
 }
 
@@ -2749,7 +2754,7 @@ async function readKnownPrompt(
   // a pane herdr names claude, or not at all, is omo's only on evidence: herdr reports it waiting
   // on the user, or the session's pending call is the form on screen
   const omoTrusted = (agent !== "claude" && agent !== "") || pane.agent_status === "blocked";
-  const prompt = parseInteractivePrompt(agent, screen, omoAsks[0] ?? null, omoTrusted, omoAsks, agent === "claude" ? heldCandidate(paneId) : null);
+  const prompt = parseInteractivePrompt(agent, screen, omoAsks[0] ?? null, omoTrusted, omoAsks, agent === "claude" ? heldCandidate(paneId) : null, pane.agent_status === "working");
   if (!prompt && agent === "gjc") {
     const fallback = parseFallbackPrompt(agent, screen);
     if (parsedByPublicPrompt.get(fallback)?.responder === "fallback-gjc-menu") return { prompt: fallback, screen };

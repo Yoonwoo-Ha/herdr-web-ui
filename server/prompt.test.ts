@@ -1041,6 +1041,15 @@ ${footer}
     expect(removedInvisible("\ud55c\u3164\uae00", "\ud55c\uae00")).toBe(1);
   });
 
+  test("offers no Discard while Claude works: its Ctrl+C would interrupt the turn", () => {
+    // Claude Code 2.1.294, live: Ctrl+C under a running turn answers "Interrupted" and leaves the box as it was
+    const prompt = parseInteractivePrompt("claude", held("❯ helloworld test"), null, true, [], null, true)!;
+    expect(prompt.body).toBe("helloworld test");
+    expect(prompt.options.map((option) => option.label)).toEqual(["Send"]);
+    expect(answerKeys(prompt, { option_index: 0 })).toEqual([{ keys: ["enter"] }]);
+    expect(() => answerKeys(prompt, { option_index: 1 })).toThrow();
+  });
+
   test("is gone once the input is empty, and never reads the hint off a quoted screen", () => {
     // sent or discarded: the hint stays over an empty input
     expect(parseInteractivePrompt("claude", held("❯"))).toBeNull();
@@ -2840,6 +2849,52 @@ ${omoRule}
       finally { child.kill(); await child.exited; }
     });
   }
+
+  // Claude Code 2.1.294, live: a message it holds back for an invisible character
+  const heldRule = "─".repeat(80);
+  const heldScreen = (box: string, over = `${" ".repeat(40)}Removed 1 invisible character · review and press Enter to send`) => `
+ ▐▛███▜▌   Claude Code v2.1.294
+${over}
+${heldRule}
+${box}
+${heldRule}
+  [Haiku 4.5] │ project
+`;
+
+  test("sends Claude's held message only as the card showed it: a box edited in the terminal refuses the answer", async () => {
+    await withPane("claude", "idle", heldScreen("❯ helloworld test"), async (pane) => {
+      const shown = (await card())!;
+      expect(shown.body).toBe("helloworld test");
+      // edited in the terminal after the card was read: the hint stays, the message is another one
+      pane.screen = heldScreen("❯ helloworld test and more");
+      expect(await answer(shown.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
+      // sent from the terminal meanwhile: the hint lingers over an empty input
+      pane.screen = heldScreen("❯");
+      expect(await answer(shown.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(await answer(shown.id, { option_index: 1 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual([]);
+      // the card as the screen shows it now is answered with one Enter
+      pane.screen = heldScreen("❯ helloworld test");
+      const again = (await card())!;
+      expect(await answer(again.id, { option_index: 0 })).toEqual({ status: 200, code: undefined });
+      expect(pane.sent).toEqual(["enter"]);
+    });
+  });
+
+  test("never presses Ctrl+C for a Discard tapped before Claude went to work", async () => {
+    await withPane("claude", "idle", heldScreen("❯ helloworld test"), async (pane) => {
+      const shown = (await card())!;
+      expect(labels(shown)).toEqual(["Send", "Discard"]);
+      // a turn began under the card: Ctrl+C would interrupt it and leave the message where it is
+      pane.status = "working";
+      expect(await answer(shown.id, { option_index: 1 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual([]);
+      const working = (await card())!;
+      expect(labels(working)).toEqual(["Send"]);
+      expect((await answer(working.id, { option_index: 1 })).status).toBe(400);
+      expect(pane.sent).toEqual([]);
+    });
+  });
 
   test.skipIf(process.platform !== "linux")("opens the pending OmO form, navigates to a non-default row and confirms after redraw", async () => {
     for (const box of ["❯", "❯ ", "❯\n ", "❯│"]) await withOmo(async (pane) => {
