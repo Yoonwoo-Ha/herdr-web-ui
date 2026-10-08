@@ -83,6 +83,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [0.4.2] - 2026-10-09
 
 ### Added
+- On a desktop two panes can stand side by side, as a window snapped to half the screen: drag a
+  tab or a sidebar row over the pane area and drop it on the left or right half. The two share
+  the area beside the sidebar, or the whole window with the sidebar hidden. Each half has its own
+  tab strip, chat or terminal, and a bar with its pane's name, its lens and a close; a press in a
+  half makes it the active one, which the header, the palette and the shortcuts act on. The split
+  is kept across a reload, and a narrower window shows the active half alone.
 - Devin CLI panes with an explicitly identified native session show their active conversation
   branch and tool activity in Chat. Unresolved or unreadable sessions keep the terminal-text
   fallback. ([#438](https://github.com/devswha/herdr-web-ui/pull/438) by @Haeminway1)

@@ -953,6 +953,7 @@ try {
   assert.equal(await composer.inputValue(), "draft for A");
   console.log("PASS drafts stay with their panes");
 
+
   // A real successful send waits on its acknowledgement while its composer unmounts.
   for (const returnBeforeAck of [false, true]) {
     await composer.fill("# confirmed draft");
@@ -1480,6 +1481,35 @@ try {
   workspaces.splice(workspaces.indexOf(pendingWorkspace.workspace.workspace_id), 1);
   await selectPane(paneA);
   console.log("PASS Send now on a server-owned pending message drops Claude's suggestion");
+
+  // Split view (lib/split.ts): a sidebar row dragged to the right half opens its pane there beside
+  // the one open, each half with its own conversation; a press in the other half makes it the
+  // active one without moving either pane, and closing a half leaves one pane
+  // (after the steps that take the newest socket for the page's own: the other half opens one)
+  {
+    await selectPane(paneA);
+    const area = page.locator(".pane-split");
+    const box = (await area.boundingBox())!;
+    await page.locator(`.pane-select[title^="${paneB} —"]`).dragTo(area, { targetPosition: { x: box.width * 0.8, y: box.height / 2 } });
+    await until(async () => await page.locator(".pane-slot").count() === 2, "two halves after the drop");
+    const half = (side: string) => page.locator(`.pane-slot[data-side="${side}"]`);
+    await half("left").getByRole("log", { name: `conversation of ${paneA}`, exact: true }).waitFor();
+    await half("right").getByRole("log", { name: `conversation of ${paneB}`, exact: true }).waitFor();
+    assert.equal(await half("right").evaluate((slot) => slot.classList.contains("is-active")), true, "the dropped pane's half is active");
+    assert.equal(await page.locator(".pane-select[aria-current=\"true\"]").getAttribute("title").then((title) => title?.startsWith(`${paneB} —`)), true, "and its pane is the selected one");
+    const [left, right] = await Promise.all([half("left").boundingBox(), half("right").boundingBox()]);
+    assert.ok(left && right && Math.abs(left.width - right.width) <= 2 && left.x + left.width <= right.x + 1, "the halves share the pane area side by side");
+    await half("left").locator(".terminal-host").click({ position: { x: 40, y: 40 } });
+    await until(async () => await half("left").evaluate((slot) => slot.classList.contains("is-active")), "a press makes the left half active");
+    await half("left").getByRole("log", { name: `conversation of ${paneA}`, exact: true }).waitFor();
+    await half("right").getByRole("log", { name: `conversation of ${paneB}`, exact: true }).waitFor();
+    assert.match(await page.evaluate(() => localStorage.getItem("herdr-web-ui:split") ?? ""), /"active":"a"/, "the split is kept for a reload");
+    await half("right").getByRole("button", { name: "Close this half", exact: true }).click();
+    await until(async () => await page.locator(".pane-slot").count() === 1, "one pane after closing a half");
+    assert.equal(await page.evaluate(() => localStorage.getItem("herdr-web-ui:split")), null);
+    await page.getByRole("log", { name: `conversation of ${paneA}`, exact: true }).waitFor();
+  }
+  console.log("PASS a dragged row opens its pane beside the open one; a press switches the active half; a half closes");
 
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   await mobile.addInitScript(() => {
