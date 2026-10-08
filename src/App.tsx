@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import { Bell, Ellipsis, FolderOpen, Lock, Menu, MessageSquare, PanelLeft, Plus, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ClientRole, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
@@ -57,8 +57,10 @@ import { Droplet } from "./components/Droplet.tsx";
 import { dropletAllows, endedTurn, seedStatuses, showDroplet, trackTurn, type DropletKind } from "./lib/droplet.ts";
 import { canPlayAlertSound, playAlertSound, unlockAlertSound, type AlertSoundKind } from "./lib/alertSound.ts";
 import { createAlertTurnPlayer } from "./lib/alertTurns.ts";
+import { dockPane, draggedPane, dropSide, otherSlot, PANE_DRAG_TYPE, sameTarget, slotSide, storedSplit, storeSplit, type SplitSide, type SplitSlot, type SplitState, type SplitTarget } from "./lib/split.ts";
 
 const APP_TITLE = "herdr web ui";
+const NO_OP = (): void => {};
 const POLL_MS = 5000;
 
 /**
@@ -123,6 +125,21 @@ function storedView(paneId: string, machineId: string, hasAgent: boolean | null,
   if (defaultView === "chat") return hasAgent !== false ? "chat" : "terminal";
   if (defaultView === "terminal") return "terminal";
   return hasAgent !== false && window.matchMedia?.("(pointer: coarse)").matches === true ? "chat" : "terminal";
+}
+
+/** a split view needs the side-by-side layout: from 769px, where the sidebar stands beside the pane */
+const WIDE_QUERY = "(min-width: 769px)";
+
+function useWide(): boolean {
+  const [wide, setWide] = useState(() => window.matchMedia?.(WIDE_QUERY).matches ?? true);
+  useEffect(() => {
+    const media = window.matchMedia?.(WIDE_QUERY);
+    if (!media) return;
+    const onChange = (): void => setWide(media.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
+  return wide;
 }
 
 function Brand() {
@@ -210,6 +227,17 @@ export function App() {
   // the width the sidebar's edge was dragged to on this device; null is the density's own
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
   const [lens, setLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
+  // two panes side by side (lib/split.ts): the other half's pane, its side, and the active slot.
+  // Only drawn where the sidebar stands beside the pane; a narrower window shows the active half
+  const [split, setSplitState] = useState<SplitState | null>(storedSplit);
+  const setSplit = useCallback((next: SplitState | null) => { setSplitState(next); storeSplit(next); }, []);
+  const splitRef = useRef(split); splitRef.current = split;
+  const wide = useWide();
+  // the other half's lens, remembered per pane as the active one's is
+  const [otherLens, setOtherLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
+  // the half a dragged pane would open in, while one is dragged over the pane area
+  const [dropAt, setDropAt] = useState<SplitSide | null>(null);
+  const paneAreaRef = useRef<HTMLDivElement>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // the header's More menu: its button, and whether it opened on a phone-width screen
   const [more, setMore] = useState<{ anchor: HTMLElement; phone: boolean } | null>(null);
@@ -339,6 +367,7 @@ export function App() {
     if (!alertsOnRef.current || !alertInAppRef.current || document.visibilityState !== "visible") return;
     const open = selectionRef.current;
     if (open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
+    if (sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
     showDroplet({
       machineId: machine.id,
       paneId: pane.pane_id,
@@ -363,6 +392,7 @@ export function App() {
     if (!alertsOnRef.current || !alertSoundRef.current || !canPlayAlertSound()) return;
     const open = selectionRef.current;
     if (document.visibilityState === "visible" && open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
+    if (document.visibilityState === "visible" && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
     alertTurns.current?.chime(JSON.stringify([machine.id, pane.pane_id, kind]), kind);
   }, []);
 
@@ -532,6 +562,13 @@ export function App() {
     // on the same PC keeps the connected socket, which never reports again: resetting here
     // left the header on "reconnecting" after every pane switch.
     if (machineId !== selectedMachineRef.current) setConnected(false);
+    // the pane open in the other half is picked by making that half active: it is not opened twice
+    const open = splitRef.current;
+    const current = selectionRef.current;
+    if (open && paneId !== null && current.paneId !== null && sameTarget(open.other, { machineId, paneId })) {
+      setConnected(true);
+      setSplit({ other: { machineId: current.machineId, paneId: current.paneId }, bSide: open.bSide, active: otherSlot(open.active) });
+    }
     setSelectedMachineId(machineId); setSelectedPaneId(paneId); setAutoSelected(false); setDrawerOpen(false);
     setOutputStopped(false);
     setNotificationViewTarget(view && paneId !== null ? { machine_id: machineId, pane_id: paneId, view } : null);
@@ -560,6 +597,11 @@ export function App() {
   }, [selectedMachineId, selectedPaneId]);
 
   const selectPane = useCallback((paneId: string) => {
+    const open = splitRef.current;
+    const current = selectionRef.current;
+    if (open && current.paneId !== null && sameTarget(open.other, { machineId: current.machineId, paneId })) {
+      setSplit({ other: { machineId: current.machineId, paneId: current.paneId }, bSide: open.bSide, active: otherSlot(open.active) });
+    }
     setSelectedPaneId(paneId);
     setNotificationViewTarget(null);
     setAutoSelected(false);
@@ -618,6 +660,99 @@ export function App() {
     },
     [selectedPaneId, selectedMachineId],
   );
+
+  // The split view (lib/split.ts): drawn only where the sidebar stands beside the pane, and only
+  // while a pane is selected; a narrower window shows the active half alone and keeps the split
+  const splitOn = split !== null && wide && selectedPaneId !== null;
+  const otherMachine = split ? machines.find((m) => m.id === split.other.machineId) : undefined;
+  const otherPane = split ? otherMachine?.snapshot?.panes.find((pane) => pane.pane_id === split.other.paneId) ?? null : null;
+  const otherWorkspace = otherPane ? otherMachine?.snapshot?.workspaces.find((workspace) => workspace.workspace_id === otherPane.workspace_id) ?? null : null;
+  const otherHerdr = split?.other.machineId === "local" ? health?.herdr : otherMachine?.herdr;
+  const otherAttach = otherHerdr?.terminal_attach !== false || otherHerdr?.terminal_mirror === true;
+  const otherLensKey = JSON.stringify([split?.other.paneId ?? null, split?.other.machineId ?? null, otherPane !== null, (otherPane?.agent ?? null) !== null, otherAttach, settings.defaultView]);
+  let otherView = otherLens.view;
+  if (split && otherLens.key !== otherLensKey) {
+    otherView = storedView(split.other.paneId, split.other.machineId, otherPane ? (otherPane.agent ?? null) !== null : null, otherAttach, settings.defaultView);
+    setOtherLens({ key: otherLensKey, view: otherView });
+  }
+  const setOtherView = useCallback((next: PaneView) => {
+    setOtherLens((current) => ({ ...current, view: next }));
+    const other = splitRef.current?.other;
+    if (!other) return;
+    try {
+      window.localStorage.setItem(`herdr-web-ui:view:${paneStorageId(other.machineId, other.paneId)}`, next);
+    } catch {
+      /* private mode: the lens just stops being remembered */
+    }
+  }, []);
+
+  // the other half's pane closed (or is the one now selected): back to one pane. An offline PC's
+  // cached roster cannot say so, as for the selection itself
+  useEffect(() => {
+    if (!split) return;
+    if (selectedPaneId !== null && sameTarget(split.other, { machineId: selectedMachineId, paneId: selectedPaneId })) { setSplit(null); return; }
+    if (!otherMachine?.snapshot || otherMachine.state !== "connected") return;
+    if (!otherMachine.snapshot.panes.some((pane) => pane.pane_id === split.other.paneId)) setSplit(null);
+  }, [split, otherMachine, selectedMachineId, selectedPaneId, setSplit]);
+
+  /** A split change and the pane it selects. The half that becomes active keeps its terminal: only
+   *  a half whose pane moves to another PC attaches again and reports its connection. */
+  const applySplit = (next: SplitState | null, select: SplitTarget): void => {
+    const was = splitOn ? split : null;
+    const current: SplitTarget | null = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
+    // what the slot that shows the selected pane afterwards (slot a once there is one pane) showed before
+    const slot: SplitSlot = next?.active ?? "a";
+    const before = was ? (was.active === slot ? current : was.other) : slot === "a" ? current : null;
+    if (before === null || before.machineId !== select.machineId) setConnected(false);
+    setSplit(next);
+    setSelectedMachineId(select.machineId); setSelectedPaneId(select.paneId); setAutoSelected(false); setOutputStopped(false);
+    storeSelection(select.machineId, select.paneId);
+  };
+  const activateSlot = (slot: SplitSlot): void => {
+    if (!splitOn || split.active === slot || selectedPaneId === null) return;
+    applySplit({ other: { machineId: selectedMachineId, paneId: selectedPaneId }, bSide: split.bSide, active: slot }, split.other);
+  };
+  const closeSlot = (slot: SplitSlot): void => {
+    if (!splitOn) return;
+    if (slot !== split.active) { setSplit(null); return; }
+    applySplit(null, split.other);
+  };
+  const selectInSlot = (slot: SplitSlot, machineId: string, paneId: string): void => {
+    const open = splitRef.current;
+    if (!open || !splitOn || open.active === slot) { selectTarget(machineId, paneId); return; }
+    if (paneId === selectedPaneId && machineId === selectedMachineId) return;
+    setSplit({ ...open, other: { machineId, paneId } });
+  };
+  const paneDragOver = (event: DragEvent<HTMLDivElement>): void => {
+    if (!wide || selectedPaneId === null || !event.dataTransfer.types.includes(PANE_DRAG_TYPE)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const box = paneAreaRef.current?.getBoundingClientRect();
+    if (box) setDropAt(dropSide(event.clientX, box.left, box.width));
+  };
+  const paneDragLeave = (event: DragEvent<HTMLDivElement>): void => {
+    if (!(event.relatedTarget instanceof Node) || !paneAreaRef.current?.contains(event.relatedTarget)) setDropAt(null);
+  };
+  const paneDrop = (event: DragEvent<HTMLDivElement>): void => {
+    if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) return;
+    // the composer and the terminal take dropped files: a dropped pane is not one
+    event.preventDefault();
+    event.stopPropagation();
+    setDropAt(null);
+    const dragged = draggedPane(event.dataTransfer.getData(PANE_DRAG_TYPE));
+    const box = paneAreaRef.current?.getBoundingClientRect();
+    if (!dragged || !box || !wide) return;
+    const current = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
+    const result = dockPane(splitOn ? split : null, current, dragged, dropSide(event.clientX, box.left, box.width));
+    if (result) applySplit(result.split, result.select);
+  };
+  // a drag that ends anywhere (Escape, or a drop outside) takes the halves' outline with it
+  useEffect(() => {
+    const clear = (): void => setDropAt(null);
+    window.addEventListener("dragend", clear);
+    window.addEventListener("drop", clear);
+    return () => { window.removeEventListener("dragend", clear); window.removeEventListener("drop", clear); };
+  }, []);
 
   // The Alerts item says what this device does, whatever the browser's permission: in-app alerts
   // need none, so they count as on. A device that has not answered the permission question is
@@ -897,39 +1032,91 @@ export function App() {
         <UpdateNotice updates={updates} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
         <TelemetryNotice enabled={locked === false} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
         <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />
-        {snapshot && selectedPane && selectedWorkspace && (
-          <TabStrip snapshot={snapshot} workspace={selectedWorkspace} selectedPane={selectedPane} onSelectPane={selectPane} onNewTab={() => actions.openNewTab()} />
-        )}
-        {/* the tab strip's panel: its id is what each tab's aria-controls points at. No tabIndex -
-            the terminal (PaneTerminal) and the composer are the focusable things inside it. */}
-        <main className="terminal-host">
-          {/* the panel sits inside main, so the page keeps its main landmark; it draws no box */}
-          <div id={PANE_TABPANEL_ID} className="terminal-tabpanel" role={tabPanelLabel === null ? undefined : "tabpanel"} aria-label={tabPanelLabel ?? undefined}>
-          <PaneTerminal
-            key={selectedMachineId}
-            title={selectedTitle}
-            paneId={selectedPane?.restore_error ? null : selectedPaneId}
-            restoreError={selectedPane?.restore_error ?? null}
-            agent={selectedAgent}
-            agentStatus={selectedPane?.agent_status}
-            backgroundTasks={(selectedPane as HerdrPane | null)?.background_tasks ?? 0}
-            backgroundWait={(selectedPane as HerdrPane | null)?.background_wait === true}
-            cwd={selectedPane?.cwd ?? null}
-            machineName={selectedMachine?.name ?? selectedMachineId}
-            view={view}
-            autoSelected={autoSelected}
-            terminalFontSize={settings.terminalFontSize}
-            terminalWheelSpeed={settings.terminalWheelSpeed}
-            terminalFontFamily={settings.terminalFontFamily}
-            theme={resolvedTheme}
-            palette={settings.palette}
-            role={role}
-            onRoleAck={setRole}
-            onConnectionChange={(next) => { setConnected(next); if (next) setOutputStopped(false); }}
-            onServerMessage={handleServerMessage}
-          />
-          </div>
-        </main>
+        {/* the pane, or two side by side (lib/split.ts): a tab or a sidebar row dragged over this area
+            opens its pane in the half it is dropped on */}
+        <div ref={paneAreaRef} className={`pane-split${splitOn ? " is-split" : ""}`} onDragOverCapture={paneDragOver} onDragLeave={paneDragLeave} onDropCapture={paneDrop}>
+          {(["a", "b"] as const).map((slot) => {
+            if (slot === "b" && !splitOn) return null;
+            const active = !splitOn || split.active === slot;
+            const machineId = active ? selectedMachineId : split.other.machineId;
+            const paneId = active ? selectedPaneId : split.other.paneId;
+            const machine = active ? selectedMachine : otherMachine;
+            const pane = active ? selectedPane : otherPane;
+            const workspace = active ? selectedWorkspace : otherWorkspace;
+            const slotSnapshot = machine?.snapshot ?? null;
+            const slotView = active ? view : otherView;
+            const slotPanelId = slot === "a" ? PANE_TABPANEL_ID : `${PANE_TABPANEL_ID}-${slot}`;
+            const slotPanelLabel = active ? tabPanelLabel : paneTabPanelLabel(slotSnapshot, pane, t);
+            const toggleSlotView = (): void => (active ? setView : setOtherView)(slotView === "chat" ? "terminal" : "chat");
+            return (
+              <MachineContext.Provider key={slot} value={machineId}>
+              <OpenFileContext.Provider value={paneId !== null ? (path: string) => openFile({ path, paneId, machineId }) : null}>
+              <div
+                className={`pane-slot${showsChat(pane, slotView) ? " is-chat" : ""}${splitOn ? active ? " is-active" : " is-inactive" : ""}`}
+                data-slot={slot}
+                data-side={splitOn ? slotSide(split, slot) : undefined}
+                // a press or the focus in the other half makes it the active one, before the press acts;
+                // its own bar's buttons (its lens, its close) act on it as it is
+                onPointerDownCapture={active ? undefined : (event) => { if (!(event.target as Element).closest(".pane-slot-action")) activateSlot(slot); }}
+                onFocusCapture={active ? undefined : (event) => { if (!(event.target as Element).closest(".pane-slot-action")) activateSlot(slot); }}
+              >
+                {splitOn && (
+                  <div className="pane-slot-bar">
+                    {pane?.agent && <AgentMark agent={pane.agent} size={14} />}
+                    <span className="pane-slot-title" title={pane ? displayPaneTitle(pane) : undefined}>{pane ? displayPaneTitle(pane) : t("Pane closed")}</span>
+                    {machines.length > 1 && <span className="pane-slot-machine">{machine?.name ?? machineId}</span>}
+                    <button type="button" className="icon-button pane-slot-action" aria-label={t(slotView === "chat" ? "Show the terminal" : "Show the chat")} title={t(slotView === "chat" ? "Show the terminal" : "Show the chat")} onClick={toggleSlotView}>
+                      {slotView === "chat" ? <SquareTerminal /> : <MessageSquare />}
+                    </button>
+                    <button type="button" className="icon-button pane-slot-action" aria-label={t("Close this half")} title={t("Close this half")} onClick={() => closeSlot(slot)}>
+                      <X />
+                    </button>
+                  </div>
+                )}
+                {slotSnapshot && pane && workspace && (
+                  <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} onSelectPane={(id) => selectInSlot(slot, machineId, id)} onNewTab={() => actions.openNewTab({ machineId, workspaceId: workspace.workspace_id })} />
+                )}
+                {/* the tab strip's panel: its id is what each tab's aria-controls points at, one per half */}
+                <main className="terminal-host">
+                  <div id={slotPanelId} className="terminal-tabpanel" role={slotPanelLabel === null ? undefined : "tabpanel"} aria-label={slotPanelLabel ?? undefined}>
+                  <PaneTerminal
+                    key={machineId}
+                    title={pane ? displayPaneTitle(pane) : null}
+                    paneId={pane?.restore_error ? null : paneId}
+                    restoreError={pane?.restore_error ?? null}
+                    agent={pane?.agent ?? null}
+                    agentStatus={pane?.agent_status}
+                    backgroundTasks={(pane as HerdrPane | null)?.background_tasks ?? 0}
+                    backgroundWait={(pane as HerdrPane | null)?.background_wait === true}
+                    cwd={pane?.cwd ?? null}
+                    machineName={machine?.name ?? machineId}
+                    view={slotView}
+                    // the other half never takes the keyboard by itself: a press in it makes it active first
+                    autoSelected={active ? autoSelected : true}
+                    terminalFontSize={settings.terminalFontSize}
+                    terminalWheelSpeed={settings.terminalWheelSpeed}
+                    terminalFontFamily={settings.terminalFontFamily}
+                    theme={resolvedTheme}
+                    palette={settings.palette}
+                    role={role}
+                    onRoleAck={active ? setRole : NO_OP}
+                    onConnectionChange={active ? (next) => { setConnected(next); if (next) setOutputStopped(false); } : NO_OP}
+                    onServerMessage={active ? handleServerMessage : NO_OP}
+                  />
+                  </div>
+                </main>
+              </div>
+              </OpenFileContext.Provider>
+              </MachineContext.Provider>
+            );
+          })}
+          {dropAt !== null && (
+            <div className="split-drop" aria-hidden="true">
+              <div className={`split-drop-half${dropAt === "left" ? " is-target" : ""}`} />
+              <div className={`split-drop-half${dropAt === "right" ? " is-target" : ""}`} />
+            </div>
+          )}
+        </div>
         </div>
         </OpenFileContext.Provider>
       </div>

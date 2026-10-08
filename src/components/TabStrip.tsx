@@ -31,6 +31,7 @@ import { AgentMark } from "./AgentMark.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
+import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 
 const said = (reason: unknown): string => reason instanceof ApiError ? reason.detail : reason instanceof Error ? reason.message : String(reason);
 
@@ -43,9 +44,11 @@ export interface TabStripProps {
   selectedPane: PaneInfo;
   onSelectPane: (paneId: string) => void;
   onNewTab: () => void;
+  /** the panel the tabs control: each half of a split view has its own (lib/split.ts) */
+  panelId?: string;
 }
 
-export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab }: TabStripProps) {
+export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab, panelId = PANE_TABPANEL_ID }: TabStripProps) {
   const t = useT();
   const machineId = useMachineId();
   const { closeTab, renameTab } = useMachineApi();
@@ -258,7 +261,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   // the pane region every tab governs, as App names it. App gives that region the tabpanel role
   // only while the pane's own tab is in this snapshot (paneTabPanelLabel); the same call answers
   // here, so a tab never claims to control a panel that is not standing there as one.
-  const panePanel = paneTabPanelLabel(snapshot, selectedPane, t) !== null ? PANE_TABPANEL_ID : undefined;
+  const panePanel = paneTabPanelLabel(snapshot, selectedPane, t) !== null ? panelId : undefined;
   return (
     <>
       <div ref={strip} className="tab-strip" role="tablist" aria-label={t("Tabs of {workspace}", { workspace: workspace.label })} onKeyDown={onKeyDown} onScroll={onScroll}>
@@ -306,6 +309,14 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
                     if (pane && pane.pane_id !== selectedPane.pane_id) onSelectPane(pane.pane_id);
                   }}
                   onDoubleClick={() => beginRename(tab)}
+                  // dragged over the pane area, the tab opens its pane in half of it (lib/split.ts)
+                  draggable
+                  onDragStart={(event) => {
+                    const pane = paneFor(tab);
+                    if (!pane) { event.preventDefault(); return; }
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId, paneId: pane.pane_id }));
+                  }}
                   onContextMenu={(event) => { event.preventDefault(); openPicker(event, tab); }}
                   // the middle button closes a tab, as it does a browser's
                   onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); requestClose(tab); } }}
