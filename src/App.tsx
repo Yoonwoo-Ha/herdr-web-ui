@@ -231,6 +231,8 @@ export function App() {
   const [split, setSplitState] = useState<SplitState | null>(storedSplit);
   const setSplit = useCallback((next: SplitState | null) => { setSplitState(next); storeSplit(next); }, []);
   const splitRef = useRef(split); splitRef.current = split;
+  // whether the other half is drawn: a narrow window keeps the split but shows the active half alone
+  const splitShownRef = useRef(false);
   const wide = useWide();
   // the other half's lens, remembered per pane as the active one's is
   const [otherLens, setOtherLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
@@ -366,7 +368,7 @@ export function App() {
     if (!alertsOnRef.current || !alertInAppRef.current || document.visibilityState !== "visible") return;
     const open = selectionRef.current;
     if (open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
-    if (sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
+    if (splitShownRef.current && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
     showDroplet({
       machineId: machine.id,
       paneId: pane.pane_id,
@@ -391,7 +393,7 @@ export function App() {
     if (!alertsOnRef.current || !alertSoundRef.current || !canPlayAlertSound()) return;
     const open = selectionRef.current;
     if (document.visibilityState === "visible" && open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
-    if (document.visibilityState === "visible" && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
+    if (document.visibilityState === "visible" && splitShownRef.current && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
     alertTurns.current?.chime(JSON.stringify([machine.id, pane.pane_id, kind]), kind);
   }, []);
 
@@ -661,6 +663,7 @@ export function App() {
   // The split view (lib/split.ts): drawn only where the sidebar stands beside the pane, and only
   // while a pane is selected; a narrower window shows the active half alone and keeps the split
   const splitOn = split !== null && wide && selectedPaneId !== null;
+  splitShownRef.current = splitOn;
   const otherMachine = split ? machines.find((m) => m.id === split.other.machineId) : undefined;
   const otherPane = split ? otherMachine?.snapshot?.panes.find((pane) => pane.pane_id === split.other.paneId) ?? null : null;
   const otherWorkspace = otherPane ? otherMachine?.snapshot?.workspaces.find((workspace) => workspace.workspace_id === otherPane.workspace_id) ?? null : null;
@@ -694,7 +697,9 @@ export function App() {
 
   /** A split change and the pane it selects. The half that becomes active keeps its terminal: only
    *  a half whose pane moves to another PC attaches again and reports its connection. */
-  const applySplit = (next: SplitState | null, select: SplitTarget): void => {
+  // `keepFocus`: the focus already went somewhere in the half made active (a Tab onto one of its
+  // buttons): the half's terminal and composer must not take the keyboard from it (autoSelected)
+  const applySplit = (next: SplitState | null, select: SplitTarget, keepFocus = false): void => {
     const was = splitOn ? split : null;
     const current: SplitTarget | null = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
     // what the slot that shows the selected pane afterwards (slot a once there is one pane) showed before
@@ -702,12 +707,12 @@ export function App() {
     const before = was ? (was.active === slot ? current : was.other) : slot === "a" ? current : null;
     if (before === null || before.machineId !== select.machineId) setConnected(false);
     setSplit(next);
-    setSelectedMachineId(select.machineId); setSelectedPaneId(select.paneId); setAutoSelected(false); setOutputStopped(false);
+    setSelectedMachineId(select.machineId); setSelectedPaneId(select.paneId); setAutoSelected(keepFocus); setOutputStopped(false);
     storeSelection(select.machineId, select.paneId);
   };
-  const activateSlot = (slot: SplitSlot): void => {
+  const activateSlot = (slot: SplitSlot, keepFocus = false): void => {
     if (!splitOn || split.active === slot || selectedPaneId === null) return;
-    applySplit({ other: { machineId: selectedMachineId, paneId: selectedPaneId }, bSide: split.bSide, active: slot }, split.other);
+    applySplit({ other: { machineId: selectedMachineId, paneId: selectedPaneId }, bSide: split.bSide, active: slot }, split.other, keepFocus);
   };
   const closeSlot = (slot: SplitSlot): void => {
     if (!splitOn) return;
@@ -1055,7 +1060,7 @@ export function App() {
                 // a press or the focus in the other half makes it the active one, before the press acts;
                 // its own bar's buttons (its lens, its close) act on it as it is
                 onPointerDownCapture={active ? undefined : (event) => { if (!(event.target as Element).closest(".pane-slot-action")) activateSlot(slot); }}
-                onFocusCapture={active ? undefined : (event) => { if (!(event.target as Element).closest(".pane-slot-action")) activateSlot(slot); }}
+                onFocusCapture={active ? undefined : (event) => { if (!(event.target as Element).closest(".pane-slot-action")) activateSlot(slot, true); }}
               >
                 {splitOn && (
                   <div className="pane-slot-bar">
