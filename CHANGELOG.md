@@ -33,6 +33,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   every finished agent keep its dot. In the demo, an agent started after every workspace was closed
   carries the counter that Activity order and Quiet opened finishes read.
   ([#603](https://github.com/devswha/herdr-web-ui/pull/603) by @phirschybar)
+- A message starting with `/` that Claude Code does not know no longer just vanishes from the
+  chat: Claude Code's own answer ("Unknown command: /…", and the arguments it dropped) shows as a
+  notice, as a usage limit reached or reset does. Claude Code 2.1.29x records these as
+  informational entries, which the chat left out.
+  ([#600](https://github.com/devswha/herdr-web-ui/pull/600) by @Yoonwoo-Ha)
 - A chat message with an invisible character in it (a zero-width space, a joiner, a byte-order
   mark, often in pasted text) no longer seems lost. Claude Code 2.1.294 takes such characters out
   and keeps the message in its input for review instead of sending it, while the chat had already
