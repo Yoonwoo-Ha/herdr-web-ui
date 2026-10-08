@@ -249,6 +249,21 @@ describe("connection-owned pending input", () => {
     expect(f.bytes()).toBe(before);
   }, 30_000);
 
+  it("queues past Claude's hint left over an empty box that shows its grey suggestion", async () => {
+    const f = await setup("held-grey");
+    // the held message was sent from the terminal: the hint outlasts it over a box that is empty again
+    const rule = "\u2500".repeat(60);
+    const hint = `${" ".repeat(20)}Removed 1 invisible character \u00b7 review and press Enter to send`;
+    const footer = "[Haiku 4.5] \u2502 project";
+    await f.showScreen(`${hint}\n${rule}\n\u276f \u001b[0m\u001b[2mrun the tests\u001b[0m\n${rule}\n  ${footer}\n`, footer);
+    // grey text is Claude's own, no message waiting for an answer: the chat's message is queued as ever
+    await f.queue(1, "next message");
+    // typed text in the same place is a held message, and a card to answer first
+    await f.showScreen(`${hint}\n${rule}\n\u276f run the tests\n${rule}\n  ${footer} \n`, `${footer} `);
+    f.socket.send({ type: "submit", id: 2, pane_id: f.pane, text: "another", payload: "unused\r", delivery: "queue" });
+    expect(await f.socket.result(2)).toMatchObject({ ok: false, code: "agent_blocked" });
+  }, 30_000);
+
   it("sends the same words again after a held message was dealt with: its own paste is no held message", async () => {
     // a long pause between paste and Enter, so the screen below is drawn before the check ahead of the Enter
     const f = await setup("held-again", "claude", "› Message\n", { submitDelayMs: 3_000 });

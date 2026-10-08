@@ -54,7 +54,7 @@ import {
   worktreeRemove,
 } from "./herdr/client.ts";
 import { type AlertTiming, createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
-import { codexQuestionsCollapsed, handlePromptRequest, heldCandidate, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded } from "./prompt.ts";
+import { claudeHeldIsGrey, codexQuestionsCollapsed, handlePromptRequest, heldCandidate, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded } from "./prompt.ts";
 import { secretPrompt, validSecret } from "../shared/secret-prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
@@ -548,7 +548,10 @@ export function createServer(
     // Not so with this delivery's own paste in the box (`pasted`): the same words as the message noted
     // before, sent again without the characters, would be taken for that one, still held
     const held = !pasted && current.agent === "claude" ? heldCandidate(paneId) : null;
-    if (current.agent && (parseInteractivePrompt(current.agent, screen, null, true, [], held) !== null || modelListWaits(current.agent, screen) || (pane.agent_status === "blocked" && !collapsed))) {
+    const prompt = current.agent ? parseInteractivePrompt(current.agent, screen, null, true, [], held) : null;
+    // as the card's own reader decides it: Claude's grey text under a hint left behind is no held message
+    const waits = prompt !== null && !(await claudeHeldIsGrey(paneId, prompt));
+    if (current.agent && (waits || modelListWaits(current.agent, screen) || (pane.agent_status === "blocked" && !collapsed))) {
       throw new HerdrError("agent_blocked", "The agent is waiting for an answer in the terminal");
     }
     if (current.agent && !["working", "idle", "done"].includes(pane.agent_status) && !collapsed) {

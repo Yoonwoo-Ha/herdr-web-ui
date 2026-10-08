@@ -2690,6 +2690,18 @@ function claudeGreyInput(ansi: string): string | null {
   return suggestion === "" ? null : suggestion;
 }
 
+/**
+ * Whether a held-message card was read off Claude's own grey text. Claude's hint outlasts the
+ * message for a moment (sent or cleared in the terminal), over a box that is empty again and shows
+ * its tip or a suggested prompt: Enter there sends Claude's suggestion and Ctrl+C asks to leave
+ * Claude. A read that fails or shows no box says nothing, and the card stays.
+ */
+export async function claudeHeldIsGrey(paneId: string, prompt: InteractivePrompt): Promise<boolean> {
+  if (parsedByPublicPrompt.get(prompt)?.responder !== "claude-held") return false;
+  return paneRead({ paneId, source: "visible", format: "ansi", timeoutMs: SUGGESTION_READ_MS })
+    .then((read) => claudeGreyInput(read.text) !== null, () => false);
+}
+
 async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: string; status: string; prompt: InteractivePrompt | null; pane: HerdrPane; panes: HerdrPane[] }> {
   const { panes } = await sessionSnapshot();
   // a closed pane's wait has ended too
@@ -2766,14 +2778,7 @@ async function readKnownPrompt(
   // on the user, or the session's pending call is the form on screen
   const omoTrusted = (agent !== "claude" && agent !== "") || pane.agent_status === "blocked";
   const prompt = parseInteractivePrompt(agent, screen, omoAsks[0] ?? null, omoTrusted, omoAsks, agent === "claude" ? heldCandidate(paneId) : null, pane.agent_status === "working");
-  // Claude's hint outlasts the message for a moment (sent or cleared in the terminal), over a box
-  // that is empty again and shows its own grey text: Enter there sends Claude's suggestion and
-  // Ctrl+C asks to leave Claude. A read that fails or shows no box says nothing, and the card stays.
-  if (prompt && parsedByPublicPrompt.get(prompt)?.responder === "claude-held") {
-    const grey = await paneRead({ paneId, source: "visible", format: "ansi", timeoutMs: SUGGESTION_READ_MS })
-      .then((read) => claudeGreyInput(read.text) !== null, () => false);
-    if (grey) return { prompt: null, screen };
-  }
+  if (prompt && await claudeHeldIsGrey(paneId, prompt)) return { prompt: null, screen };
   if (!prompt && agent === "gjc") {
     const fallback = parseFallbackPrompt(agent, screen);
     if (parsedByPublicPrompt.get(fallback)?.responder === "fallback-gjc-menu") return { prompt: fallback, screen };
