@@ -7,6 +7,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- A message starting with `/` that Claude Code does not know no longer just vanishes from the
+  chat: Claude Code's own answer ("Unknown command: /…", and the arguments it dropped) shows as a
+  notice, as a usage limit reached or reset does. Claude Code 2.1.29x records these as
+  informational entries, which the chat left out.
+
 ### Changed
 - **Settings → Terminal → Clipboard from a pane** is on again: vim, tmux and Claude Code copy to
   your clipboard from a pane without a trip to Settings. It is also on for anyone 0.4.1 left off

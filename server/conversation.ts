@@ -113,6 +113,15 @@ function localCommandOutput(content: unknown): string {
   return text.length > LOCAL_COMMAND_MAX_CHARS ? `${text.slice(0, LOCAL_COMMAND_MAX_CHARS)}\u2026` : text;
 }
 
+/** Lines of one notice Claude Code writes as separate entries, a moment apart. */
+const NOTICE_JOIN_MS = 1000;
+
+/** A notice Claude Code writes as plain text: no terminal codes, and not past a notice's length. */
+function noticeText(raw: string): string {
+  const text = stripTerminalControls(raw).trim();
+  return text.length > LOCAL_COMMAND_MAX_CHARS ? `${text.slice(0, LOCAL_COMMAND_MAX_CHARS)}\u2026` : text;
+}
+
 /**
  * The text of terminal output without its escape codes (colours, links, cursor moves, charset
  * switches) and other controls, in one pass: a sequence cut off by the end swallows the rest,
@@ -244,6 +253,22 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): Conve
     if (entry.type === "system" && entry.subtype === "local_command") {
       const output = localCommandOutput(entry.content);
       if (output.length > 0) turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "notice", text: output, source: "local-command" }] });
+      continue;
+    }
+
+    // Claude Code's own notices: an unknown slash command and the arguments it dropped (2.1.29x
+    // writes these here, not as a local_command), a usage limit reached or reset. The message
+    // that drew one is not recorded, so without it a refused command just vanished from the chat.
+    // Lines written together read as one notice.
+    if (entry.type === "system" && entry.subtype === "informational") {
+      const text = typeof entry.content === "string" ? noticeText(entry.content) : "";
+      if (text.length === 0) continue;
+      const ts = entry.timestamp ?? null;
+      const last = turns.at(-1);
+      const lastNotice = last?.parts.length === 1 && last.parts[0]?.kind === "notice" && last.parts[0].source === "informational" ? last.parts[0] : null;
+      const near = last?.ts != null && ts !== null && Math.abs(Date.parse(ts) - Date.parse(last.ts)) <= NOTICE_JOIN_MS;
+      if (last && lastNotice && near) turns[turns.length - 1] = { ...last, parts: [{ ...lastNotice, text: `${lastNotice.text}\n${text}` }] };
+      else turns.push({ role: "user", ts, parts: [{ kind: "notice", text, source: "informational" }] });
       continue;
     }
 

@@ -75,6 +75,23 @@ describe("parseClaudeTranscript", () => {
     ]);
   });
 
+  it("shows Claude Code's own notices, an unknown command's lines joined as one", () => {
+    // Claude Code 2.1.294: an unknown command and its dropped arguments, 1ms apart, and no user turn
+    const info = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "informational", content, level: "warning", timestamp: ts });
+    const turns = parseClaudeTranscript([
+      info("Unknown command: /xyzabc", "2026-10-08T08:06:31.117Z"),
+      info("Args from unknown skill: hello there", "2026-10-08T08:06:31.118Z"),
+      info("Usage limit reached · continuing automatically at 4am · esc to cancel", "2026-10-08T09:00:00.000Z"),
+      info("\u001b[2mUsage limit reset · continuing automatically\u001b[22m", "2026-10-08T13:00:00.000Z"),
+      info("", "2026-10-08T13:00:01.000Z"),
+    ].join("\n"));
+    expect(turns).toEqual([
+      { role: "user", ts: "2026-10-08T08:06:31.117Z", parts: [{ kind: "notice", text: "Unknown command: /xyzabc\nArgs from unknown skill: hello there", source: "informational" }] },
+      { role: "user", ts: "2026-10-08T09:00:00.000Z", parts: [{ kind: "notice", text: "Usage limit reached · continuing automatically at 4am · esc to cancel", source: "informational" }] },
+      { role: "user", ts: "2026-10-08T13:00:00.000Z", parts: [{ kind: "notice", text: "Usage limit reset · continuing automatically", source: "informational" }] },
+    ]);
+  });
+
   it("shows a slash command's answer only as the whole entry, as text, and not past its length", () => {
     const local = (content: string) => JSON.stringify({ type: "system", subtype: "local_command", timestamp: "2026-10-07T19:00:00.000Z", content });
     const notices = (lines: string[]) => parseClaudeTranscript(lines.join("\n")).flatMap((turn) => turn.parts).filter((part) => part.kind === "notice").map((part) => (part as { text: string }).text);
