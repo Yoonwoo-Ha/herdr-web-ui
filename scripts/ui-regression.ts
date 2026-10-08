@@ -1501,6 +1501,8 @@ try {
     assert.ok(left && right && Math.abs(left.width - right.width) <= 2 && left.x + left.width <= right.x + 1, "the halves share the pane area side by side");
     await half("left").locator(".terminal-host").click({ position: { x: 40, y: 40 } });
     await until(async () => await half("left").evaluate((slot) => slot.classList.contains("is-active")), "a press makes the left half active");
+    // the header speaks for the active half's connection, handed over by a terminal that was already connected
+    await page.locator(".conn.conn-live").waitFor();
     await half("left").getByRole("log", { name: `conversation of ${paneA}`, exact: true }).waitFor();
     await half("right").getByRole("log", { name: `conversation of ${paneB}`, exact: true }).waitFor();
     assert.match(await page.evaluate(() => localStorage.getItem("herdr-web-ui:split") ?? ""), /"active":"a"/, "the split is kept for a reload");
