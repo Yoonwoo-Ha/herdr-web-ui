@@ -60,11 +60,12 @@ const replying = new Set(snapshot().panes.filter((pane) => pane.agent && pane.ag
 let stateSeq = Math.max(0, ...(local.snapshot?.agents ?? []).map((agent) => agent.state_change_seq ?? 0));
 const nextStateSeq = (): number => ++stateSeq;
 /** herdr lists an agent pane under `agents` too, with the counter the sidebar's Activity order reads */
+// taken once, as the pane, tab and workspace templates are: the last agent can be closed in a demo
+const agentTemplate = local.snapshot?.agents[0] ? structuredClone(local.snapshot.agents[0]) : null;
 function addAgent(pane: Pane): void {
   const snap = snapshot();
-  const template = snap.agents[0];
-  if (!pane.agent || !template || snap.agents.some((agent) => agent.pane_id === pane.pane_id)) return;
-  snap.agents.push({ ...structuredClone(template), pane_id: pane.pane_id, tab_id: pane.tab_id, workspace_id: pane.workspace_id, terminal_id: pane.terminal_id,
+  if (!pane.agent || !agentTemplate || snap.agents.some((agent) => agent.pane_id === pane.pane_id)) return;
+  snap.agents.push({ ...structuredClone(agentTemplate), pane_id: pane.pane_id, tab_id: pane.tab_id, workspace_id: pane.workspace_id, terminal_id: pane.terminal_id,
     agent: pane.agent, agent_status: pane.agent_status, cwd: pane.cwd, foreground_cwd: pane.foreground_cwd, state_change_seq: nextStateSeq() });
 }
 
