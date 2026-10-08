@@ -221,7 +221,8 @@
     --strip-bg: var(--term-bg);
   }
 
-  .pane-column.is-chat .tab-strip {
+  .pane-column.is-chat .tab-strip,
+  .pane-slot.is-chat .tab-strip {
     --strip-bg: var(--bg);
   }
 }

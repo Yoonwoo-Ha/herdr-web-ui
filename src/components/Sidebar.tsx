@@ -21,6 +21,7 @@ import { useSettings } from "../lib/settings.ts";
 import { useWorktreeBranches } from "../lib/useWorktreeBranches.ts";
 import { worktreeLabel } from "../lib/worktreeName.ts";
 import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
+import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 
 const ERROR_NOTE_MS = 5000;
 
@@ -415,10 +416,12 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
     });
   };
 
-  const onDragStart = (event: DragEvent<HTMLElement>, workspaceId: string): void => {
+  const onDragStart = (event: DragEvent<HTMLElement>, workspaceId: string, paneId: string): void => {
     setDragWorkspaceId(workspaceId);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("application/x-herdr-workspace", JSON.stringify({ machine_id: machineId, workspace_id: workspaceId }));
+    // dropped on the pane area instead, the row opens its pane in half of it (lib/split.ts)
+    event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId, paneId }));
   };
 
   const onDrop = (event: DragEvent<HTMLElement>, targetWorkspaceId: string): void => {
@@ -522,7 +525,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions }: SidebarPr
           role="button"
           tabIndex={0}
           draggable={!editingWorkspace && !editingPane}
-          onDragStart={(event) => { if (!editingWorkspace && !editingPane) onDragStart(event, workspace.workspace_id); }}
+          onDragStart={(event) => { if (!editingWorkspace && !editingPane) onDragStart(event, workspace.workspace_id, pane.pane_id); }}
           onDragEnd={() => setDragWorkspaceId(null)}
           aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
           aria-description={`${t("Reorder workspace {name}", { name: workspace.label })} · ${t("Drag to reorder · Alt+↑/↓")}`}

@@ -665,6 +665,106 @@ button {
   padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
 }
 
+/* the pane area: one pane, or two side by side (lib/split.ts). Each half is a pane slot with its
+   own tab strip and terminal; slot b exists only while split, and the halves keep their slots
+   when they trade sides, drawn by order */
+.pane-split {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-slot {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-slot[data-side="left"] {
+  order: 0;
+  border-right: var(--hairline) solid var(--border-strong);
+}
+
+.pane-slot[data-side="right"] {
+  order: 1;
+}
+
+/* a half's own bar: its pane's mark and title, its lens, and its close. The active half's bar
+   carries the accent, as the pane the header, the palette and the shortcuts act on */
+.pane-slot-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-bottom: var(--hairline) solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.pane-slot.is-active .pane-slot-bar {
+  color: var(--text);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.pane-slot-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-slot-machine {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.pane-slot-bar .pane-slot-action {
+  width: 24px;
+  height: 24px;
+}
+
+.pane-slot-bar .pane-slot-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* the inactive half is a step quieter, so the one keys go to reads at a glance */
+.pane-slot.is-inactive .terminal-host {
+  opacity: 0.88;
+}
+
+/* while a pane is dragged over the area: the two halves it can open in, the one under the
+   pointer filled. Drawn over the panes without taking the drag from them (App handles it) */
+.split-drop {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-popover);
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  pointer-events: none;
+}
+
+.split-drop-half {
+  flex: 1 1 0;
+  border: 2px dashed transparent;
+  border-radius: var(--radius-md);
+  transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
+}
+
+.split-drop-half.is-target {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 /* the chat's composer takes the home-indicator inset itself (Composer.css): kept here as
    well, it stacked under the composer's own padding as a band of another colour */
 .terminal-host:has(.composer) {
