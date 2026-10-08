@@ -2655,6 +2655,16 @@ function sgrRuns(line: string): [string, boolean, boolean][] {
  * one line.
  */
 export function parseClaudeSuggestion(ansi: string): string | null {
+  const grey = claudeGreyInput(ansi);
+  return grey === null || CLAUDE_TIP_RE.test(grey) ? null : grey;
+}
+
+/**
+ * What Claude Code's input box shows in grey while it is empty (a suggested prompt, or the
+ * new-session tip), null when the box holds typed text or nothing. Only an ANSI read tells grey
+ * text from a message: as plain text both are `❯ words`.
+ */
+function claudeGreyInput(ansi: string): string | null {
   const lines = ansi.split("\n").map((line) => line.replace(/\r$/, ""));
   const plain = lines.map((line) => line.replace(ANSI_RE, "").replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, ""));
   let index = plain.length - 1;
@@ -2677,7 +2687,7 @@ export function parseClaudeSuggestion(ansi: string): string | null {
   // a cursor over typed text has nothing grey after it
   if (cursor && !sgrRuns(lines[index]!).some(([run, dim]) => dim && run.trim() !== "")) return null;
   const suggestion = text.replace(/\u00a0/g, " ").trim();
-  return suggestion === "" || CLAUDE_TIP_RE.test(suggestion) ? null : suggestion;
+  return suggestion === "" ? null : suggestion;
 }
 
 async function readPrompt(paneId: string, codexHome?: string): Promise<{ agent: string; status: string; prompt: InteractivePrompt | null; pane: HerdrPane; panes: HerdrPane[] }> {
@@ -2755,6 +2765,14 @@ async function readKnownPrompt(
   // on the user, or the session's pending call is the form on screen
   const omoTrusted = (agent !== "claude" && agent !== "") || pane.agent_status === "blocked";
   const prompt = parseInteractivePrompt(agent, screen, omoAsks[0] ?? null, omoTrusted, omoAsks, agent === "claude" ? heldCandidate(paneId) : null, pane.agent_status === "working");
+  // Claude's hint outlasts the message for a moment (sent or cleared in the terminal), over a box
+  // that is empty again and shows its own grey text: Enter there sends Claude's suggestion and
+  // Ctrl+C asks to leave Claude. A read that fails or shows no box says nothing, and the card stays.
+  if (prompt && parsedByPublicPrompt.get(prompt)?.responder === "claude-held") {
+    const grey = await paneRead({ paneId, source: "visible", format: "ansi", timeoutMs: SUGGESTION_READ_MS })
+      .then((read) => claudeGreyInput(read.text) !== null, () => false);
+    if (grey) return { prompt: null, screen };
+  }
   if (!prompt && agent === "gjc") {
     const fallback = parseFallbackPrompt(agent, screen);
     if (parsedByPublicPrompt.get(fallback)?.responder === "fallback-gjc-menu") return { prompt: fallback, screen };

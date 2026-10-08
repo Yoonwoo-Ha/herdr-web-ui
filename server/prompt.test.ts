@@ -2896,6 +2896,27 @@ ${heldRule}
     });
   });
 
+  test("takes no grey placeholder or suggestion in Claude's empty box for a held message", async () => {
+    // Claude Code 2.1.294, live: the empty box's own grey text (SGR 2), as herdr's ANSI read gives it
+    const grey = (text: string) => `❯ \u001b[0m\u001b[2m${text}\u001b[0m`;
+    await withPane("claude", "idle", heldScreen("❯ helloworld test"), async (pane) => {
+      const shown = (await card())!;
+      expect(labels(shown)).toEqual(["Send", "Discard"]);
+      // sent or cleared in the terminal: the hint lingers a moment over a box that is empty again
+      for (const empty of [grey('Try "how does <filepath> work?"'), grey("run the tests")]) {
+        pane.screen = heldScreen(empty);
+        expect(await card()).toBeNull();
+        // Enter there would send Claude's suggestion, Ctrl+C would ask to leave Claude
+        expect(await answer(shown.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
+        expect(await answer(shown.id, { option_index: 1 })).toEqual({ status: 409, code: "prompt_changed" });
+      }
+      expect(pane.sent).toEqual([]);
+      // typed text is not grey: a message of the same words is a held message
+      pane.screen = heldScreen("❯ run the tests");
+      expect((await card())?.body).toBe("run the tests");
+    });
+  });
+
   test.skipIf(process.platform !== "linux")("opens the pending OmO form, navigates to a non-default row and confirms after redraw", async () => {
     for (const box of ["❯", "❯ ", "❯\n ", "❯│"]) await withOmo(async (pane) => {
       pane.screen = omoWidget(box);
