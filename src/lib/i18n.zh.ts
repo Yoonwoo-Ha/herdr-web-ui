@@ -832,4 +832,13 @@ export const ZH: Record<string, string> = {
   "It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.": "这是 {workspace} 的最后一个标签页：工作区会随之关闭，其中的代理和 shell 会停止。",
   "Tabs of {workspace}": "{workspace} 的标签页",
   "{n} panes": "{n} 个窗格",
+  "herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. Nothing else.": "herdr web ui 会在安装和更新时发送一次匿名统计：仅包含版本、操作系统和一个随机 ID。",
+  "What is sent": "发送的内容",
+  "Turn off": "关闭统计",
+  "Could not turn it off. Try again.": "未能关闭，请重试。",
+  "Anonymous usage counts": "匿名使用统计",
+  "Turned off on this PC by HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK or a CI environment.": "此电脑因 HERDR_WEB_TELEMETRY=0、DO_NOT_TRACK 或 CI 环境而已关闭。",
+  "Send install and update counts": "发送安装和更新统计",
+  "Once when the app is installed and once per update. No IP address is stored, and nothing about your terminals, agents or files is sent.": "安装应用时发送一次，每次更新再发送一次。不保存 IP 地址，也不发送任何关于终端、代理或文件的内容。",
+  "This version has already been counted. The next event is sent after an update.": "此版本已统计。下一次发送在更新之后。",
 };

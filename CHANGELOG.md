@@ -7,12 +7,14 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
-### Fixed
-- A chat message with an invisible character in it (a zero-width space, a joiner, a byte-order
-  mark, often in pasted text) no longer seems lost. Claude Code 2.1.294 takes such characters out
-  and keeps the message in its input for review instead of sending it, while the chat had already
-  cleared its box. The chat now shows a card with the message as Claude holds it: **Send** sends
-  it, **Discard** clears Claude's input.
+### Added
+- The app sends an anonymous count when it is installed and each time it is updated: the version,
+  the OS, how it was installed and a random ID, nothing about your terminals or files, and no IP
+  address is stored. A line says so the first time you open the app, and
+  **Settings → About → Anonymous usage counts** shows what is sent and turns it off;
+  `HERDR_WEB_TELEMETRY=0` or `DO_NOT_TRACK=1` turns it off on the server.
+  ([Anonymous usage counts](docs/guide.md#anonymous-usage-counts),
+  [#599](https://github.com/devswha/herdr-web-ui/pull/599))
 
 ### Changed
 - **Settings → Terminal → Clipboard from a pane** is on again: vim, tmux and Claude Code copy to
@@ -21,6 +23,17 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   you do not trust.
 - A GitHub release opens with its patch notes, short lines under New features, Improvements and
   Bug fixes as an install shows them, with the full changelog folded underneath.
+
+### Fixed
+- macOS Safari direct terminal input preserves Korean syllables when the input method
+  replaces text without emitting composition events, including after switching from English.
+  ([#524](https://github.com/devswha/herdr-web-ui/pull/524) by @suho-han)
+- A chat message with an invisible character in it (a zero-width space, a joiner, a byte-order
+  mark, often in pasted text) no longer seems lost. Claude Code 2.1.294 takes such characters out
+  and keeps the message in its input for review instead of sending it, while the chat had already
+  cleared its box. The chat now shows a card with the message as Claude holds it: **Send** sends
+  it, **Discard** clears Claude's input.
+  ([#601](https://github.com/devswha/herdr-web-ui/pull/601) by @Yoonwoo-Ha)
 
 ## [0.4.1] - 2026-10-08
 

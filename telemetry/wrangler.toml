@@ -1,0 +1,14 @@
+name = "herdr-web-ui-telemetry"
+main = "worker.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+# Workers Logs would keep each request, the visitor's address with it: off.
+[observability]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "herdr-web-ui-telemetry"
+# from `wrangler d1 create herdr-web-ui-telemetry` (README.md); an id, not a secret
+database_id = "5cbb96eb-11e1-466c-a811-d1abbeea3980"

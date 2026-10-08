@@ -27,6 +27,7 @@ import { PhonePanel } from "./PhonePanel.tsx";
 import { PushTestControls } from "./PushTestControls.tsx";
 import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
+import { TelemetryControls } from "./TelemetryControls.tsx";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -545,6 +546,7 @@ function AboutPage({ updates, herdrVersion, bridgesFollow }: { updates: UpdatesM
     <>
       <UpdateControls updates={updates} bridgesFollow={bridgesFollow} />
       <HerdrUpdateControls enabled herdrVersion={herdrVersion} />
+      <TelemetryControls />
       <SettingsGroup title={t("About")} className="settings-about">
         <div className="settings-row">
           <div className="settings-row-text">

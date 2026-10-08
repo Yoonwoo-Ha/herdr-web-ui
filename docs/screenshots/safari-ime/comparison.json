@@ -1,0 +1,76 @@
+{
+  "captured": "2026-10-07",
+  "method": "Chromium replay of Safari event ordering; real WS/attach delivery into owned local raw PTY; not native Safari IME verification",
+  "results": {
+    "before": {
+      "revision": "54e5a1f67090cb09552d182e7e30dd0ecc314918",
+      "cases": [
+        {
+          "name": "English -> Korean + Space",
+          "expected": "abc한글 ",
+          "actual": "abcㅎㄱ ",
+          "pass": false
+        },
+        {
+          "name": "Korean -> English + Space",
+          "expected": "한글abc ",
+          "actual": "ㅎㄱabc ",
+          "pass": false
+        },
+        {
+          "name": "Final consonant: 값 + 아 -> 갑사",
+          "expected": "갑사 ",
+          "actual": "ㄱ사 ",
+          "pass": false
+        },
+        {
+          "name": "Backspace preedit, then retype",
+          "expected": "한 ",
+          "actual": "ㅎㅎ ",
+          "pass": false
+        },
+        {
+          "name": "English -> Korean + Enter",
+          "expected": "abc한글\r",
+          "actual": "abcㅎㄱ\r",
+          "pass": false
+        }
+      ]
+    },
+    "after": {
+      "revision": "7666d173fe43aef7ac6ba2b2543ef1637cdf57ad",
+      "cases": [
+        {
+          "name": "English -> Korean + Space",
+          "expected": "abc한글 ",
+          "actual": "abc한글 ",
+          "pass": true
+        },
+        {
+          "name": "Korean -> English + Space",
+          "expected": "한글abc ",
+          "actual": "한글abc ",
+          "pass": true
+        },
+        {
+          "name": "Final consonant: 값 + 아 -> 갑사",
+          "expected": "갑사 ",
+          "actual": "갑사 ",
+          "pass": true
+        },
+        {
+          "name": "Backspace preedit, then retype",
+          "expected": "한 ",
+          "actual": "한 ",
+          "pass": true
+        },
+        {
+          "name": "English -> Korean + Enter",
+          "expected": "abc한글\r",
+          "actual": "abc한글\r",
+          "pass": true
+        }
+      ]
+    }
+  }
+}

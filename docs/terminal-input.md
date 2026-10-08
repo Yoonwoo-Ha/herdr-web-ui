@@ -98,6 +98,9 @@ The new readiness frame is also implemented in the website demo transport.
   contract tests separately verify real delivery.
 - `bun run test:ui`: includes those checks plus the existing mobile, clipboard, secret-entry,
   reconnect, prompt, queue and viewport checks. `UI_EVIDENCE_DIR` saves screenshots.
+- `bun run build && bun scripts/terminal-safari-ime-regression.ts`: replays Safari's recorded
+  non-composition Hangul replacement events in Chromium, including commit keys, final-consonant
+  movement, deletion, paste, blur and pane reset. Also included in `bun run test:ui`.
 - `bun run build && bun scripts/terminal-command-arrows-regression.ts`: Cmd+Left/Right line
   movement, exact bytes and real readline cursor positions, IME ordering, repeat, modifier,
   unchanged Ctrl+arrows, Windows and Linux checks.
@@ -141,6 +144,116 @@ trips and pane changes on those keyboards before claiming universal IME compatib
   a separate reconciliation design; it does not repair text lost before transmission.
 
 ### Native Safari check
+
+#### Replacement events without composition events (#432)
+
+Updated: 2026-10-06
+
+Native Safari 26.6.2 reproduced `abc` → Korean `한글` → Space as `abcㅎㄱ\x20` in xterm's
+`onData`, outgoing WS frames and the owned local PTY. A plain textarea and Chrome's native
+composition path preserved the Korean text. Safari emitted `insertText("ㅎ")`, then
+`insertReplacementText("하")` and `insertReplacementText("한")`, with `isComposing:false`
+and no composition events; its keydown 229 arrived after each DOM edit. Stock xterm handling
+sent the first jamo and ignored subsequent replacements.
+
+The 5.5.0 source patch treats a single Hangul insertion on macOS Safari as local preedit,
+tracks the corrected DOM range through replacements and deletion, and commits it before the
+next syllable, ordinary key, paste or blur. Reset cancels pending text before a pane change.
+Native composition events and screen-reader mode retain their existing paths. The recorded
+event replay failed before the patch and passes after it; this is distinct from native IME QA.
+
+The patched build was physically retested on macOS 27.2 with Safari 27.2 and the Korean
+2-set input source. In an isolated raw-mode PTY, switching from ABC and typing `abc한글\x20`
+delivered that text once and in order. While composing `한`, Backspace changed it to `하`;
+typing the final consonant again and Space delivered `한\x20` without a DEL byte or duplicate.
+The captured browser events were trusted native events and the terminal's `onData`, outgoing
+WebSocket text and PTY bytes agreed for the text input. Safari 27.2 used ordinary composition
+events for this run, while the replay above retains the no-composition replacement sequence
+captured from Safari 26.6.2. During the Backspace case Safari 27.2 emitted a composing
+`keydown` with `keyCode:229` after changing `한` to `하`; its later `keyup` reported
+`keyCode:8`. The key Safari 26.6.2 reports for Backspace on its replacement path was not
+recorded, so the replay also covers Backspace and Delete reporting their own key codes, before
+or after Safari's edit, and punctuation whose keydown 229 arrives before its insertion.
+
+The replay also verifies that changing panes cancels a pending syllable instead of sending it
+to the newly selected pane. This pane-change case has not been repeated with the physical IME,
+and iPadOS Safari has not been tested. The older remote shell/Codex/omp matrix from #432 was
+not rerun, so this evidence is limited to the local owned raw-mode PTY path.
+
+#### Before/after PTY screenshots
+
+Updated: 2026-10-07
+
+The same five event sequences were replayed against the pre-fix client (`54e5a1f`) and patched
+client (`7666d17`). Input travels through the real WS/attach path into an owned raw-mode PTY
+process. That process prints the expected string and the bytes it actually receives; the
+screenshots capture its terminal output. The first baseline failure matches the earlier native
+Safari capture. These are fresh Chromium replay captures, not original native Safari screenshots.
+In these examples, `\x20` denotes one trailing space byte.
+
+| Case | Before: received | After: received |
+| --- | --- | --- |
+| English → Korean + Space | `abcㅎㄱ\x20` | `abc한글\x20` |
+| Korean → English + Space | `ㅎㄱabc\x20` | `한글abc\x20` |
+| Final consonant: 값 + 아 | `ㄱ사\x20` | `갑사\x20` |
+| Backspace preedit, then retype | `ㅎㅎ\x20` | `한\x20` |
+| English → Korean + Enter | `abcㅎㄱ\r` | `abc한글\r` |
+
+**Before — all five cases fail:**
+
+![Before: five incorrect PTY results](screenshots/safari-ime/safari-ime-before.png)
+
+**After — all five cases pass:**
+
+![After: five correct PTY results](screenshots/safari-ime/safari-ime-after.png)
+
+The [comparison data](screenshots/safari-ime/comparison.json) retains the expected and actual
+strings with their build revisions. To regenerate after building each checkout:
+
+```sh
+UI_EVIDENCE_DIR=evidence/safari-ime \
+  bun scripts/terminal-safari-ime-evidence.ts /path/to/before/dist /path/to/after/dist
+```
+
+The command asserts the known baseline failure and all five patched outcomes, saves PNG/JSON
+artifacts, and closes its owned workspaces and servers. It refuses `HERDR_TEST_LIVE=1`.
+
+#### Recording a native English-to-Korean transition (#432)
+
+Updated: 2026-10-06
+
+```sh
+bun scripts/terminal-ime-diagnostic.ts
+```
+
+Open the printed loopback URL in Safari. In **Native IME control**, type `abc`, switch to
+the macOS Korean input source, type `한글`, then Space. Repeat in **Terminal input**.
+Use the actual keyboard/IME: pasted Korean, WebDriver text insertion and synthetic composition
+events do not exercise the input-source transition. Record the input-source switching method
+(Caps Lock, Control+Space or the input menu) with the result. Chrome is a useful control.
+
+The command builds the real client into a temporary directory with diagnostic-only hooks. It
+creates a raw-byte capture process in an isolated `herdr-web-ui-test-ime` workspace; it never
+attaches to a user's pane. `HERDR_TEST_SESSION` may select another isolated session and
+`HERDR_TEST_LIVE=1` is refused. The ordinary app build has no trace hooks or recording endpoint.
+
+The printed artifact directory contains `events.ndjson` (DOM composition/key/input events,
+textarea values and selections, xterm `onData`, and outgoing WS `input` frames), `received.bin`
+(the bytes delivered to the owned local PTY), and `run.json`. Ctrl+C or the 15-minute deadline
+closes the owned workspace and servers and writes `summary.json`, comparing `onData`, WS text
+and received bytes. Artifacts are retained for inspection. The test herdr session can then be
+stopped with `herdr --session herdr-web-ui-test-ime server stop` (use the override if set).
+
+Compare the intended text with every boundary, not just the final equality flags: all three
+boundaries can agree on already-corrupted input. Mouse reports and bracketed-paste delimiters
+may be consumed by the attach layer, so raw equality can also fail for correctly delivered text.
+The summary deliberately does not certify native IME correctness. A local recording also does
+not certify the remote-PC relay; if local
+Safari reproduces the corruption before WS transmission, it isolates a client defect. Otherwise
+the remote reproduction still needs its own trace. Do not adopt an input workaround from an
+unrelated IME issue without matching the event sequence.
+
+#### Earlier synthetic check
 
 On 2026-10-03, Safari 26.2 on an EA MacBook Air (macOS 26.2), reached through an SSH tunnel
 inside Tailscale, passed Unicode text entry, draft reload, direct/line mode switching and the
