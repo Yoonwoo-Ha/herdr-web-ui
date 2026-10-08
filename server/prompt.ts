@@ -1286,7 +1286,8 @@ export function noteSubmitted(paneId: string, text: string): void {
   else heldCandidates.delete(paneId);
 }
 
-function heldCandidate(paneId: string): string | null {
+/** What the chat sent a pane that Claude Code may be holding, for the readers that ask whether it waits. */
+export function heldCandidate(paneId: string): string | null {
   const entry = heldCandidates.get(paneId);
   if (!entry) return null;
   if (Date.now() - entry.at > HELD_WINDOW_MS) { heldCandidates.delete(paneId); return null; }

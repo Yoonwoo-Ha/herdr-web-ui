@@ -54,7 +54,7 @@ import {
   worktreeRemove,
 } from "./herdr/client.ts";
 import { type AlertTiming, createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
-import { codexQuestionsCollapsed, handlePromptRequest, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded } from "./prompt.ts";
+import { codexQuestionsCollapsed, handlePromptRequest, heldCandidate, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded } from "./prompt.ts";
 import { secretPrompt, validSecret } from "../shared/secret-prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
@@ -541,7 +541,9 @@ export function createServer(
       throw new HerdrError("agent_blocked", "The terminal is waiting for masked input; answer it with the secret-input form first");
     }
     const collapsed = current.agent === "codex" && codexQuestionsCollapsed(screen);
-    if (current.agent && (parseInteractivePrompt(current.agent, screen) !== null || modelListWaits(current.agent, screen) || (pane.agent_status === "blocked" && !collapsed))) {
+    // a message Claude Code holds for its invisible characters is a card to answer first, also once its hint has gone
+    const held = current.agent === "claude" ? heldCandidate(paneId) : null;
+    if (current.agent && (parseInteractivePrompt(current.agent, screen, null, true, [], held) !== null || modelListWaits(current.agent, screen) || (pane.agent_status === "blocked" && !collapsed))) {
       throw new HerdrError("agent_blocked", "The agent is waiting for an answer in the terminal");
     }
     if (current.agent && !["working", "idle", "done"].includes(pane.agent_status) && !collapsed) {
@@ -580,6 +582,8 @@ export function createServer(
       authorizePending(owner, paneId, lease);
       committing(!automatic && beforeEnter.working);
       await paneSendKeys(paneId, ["Enter"]);
+      // after the checks above: they would take this very message, pasted, for a held one
+      noteSubmitted(paneId, text);
       return { ok: true };
     } catch (error) {
       const fault = wrote ? { code: "submit_changed", message: "Pending-message delivery could not be confirmed. Check the terminal before sending again." } : pendingFault(error);

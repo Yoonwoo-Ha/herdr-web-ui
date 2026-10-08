@@ -230,6 +230,25 @@ describe("connection-owned pending input", () => {
     expect(f.bytes()).toBe(`${paste("first")}\r${paste("second")}\r${paste("third")}\r`);
   }, 30_000);
 
+  it("waits behind a message Claude Code holds for its invisible characters, with no hint left on screen", async () => {
+    const f = await setup("held");
+    // the first queued message, with a zero-width space, goes at the next turn as usual
+    await f.queue(1, "first\u200bmessage");
+    await f.state("idle");
+    await f.waitBytes(`${paste("first\u200bmessage")}\r`);
+    // Claude took the character out and kept the message in its box; its hint has gone
+    const rule = "\u2500".repeat(60);
+    await f.state("working");
+    await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f firstmessage\n${rule}\n  [Haiku 4.5] \u2502 project\n`, "[Haiku 4.5] \u2502 project");
+    const before = f.bytes();
+    // the held message is a card to answer first, as a menu is: nothing is queued or pasted over it
+    f.socket.send({ type: "submit", id: 2, pane_id: f.pane, text: "second", payload: "unused\r", delivery: "queue" });
+    expect(await f.socket.result(2)).toMatchObject({ ok: false, code: "agent_blocked" });
+    await f.state("idle");
+    await Bun.sleep(500);
+    expect(f.bytes()).toBe(before);
+  }, 30_000);
+
   it("reads the pane's live screen: a menu drawn below a scrolled viewport still stops Send now", async () => {
     const f = await setup("scrolled", "codex"); const message = await f.queue(1, "after the menu");
     const history = Array.from({ length: 150 }, (_, index) => `line ${index + 1}`).join("\n");
