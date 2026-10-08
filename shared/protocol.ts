@@ -57,6 +57,9 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  POST   /api/updates/install           -> 202 { accepted: true }
  *         Update POSTs require X-Herdr-Update: 1, same-origin browser requests,
  *         and the usual token gate. Managed starts only; status is polled during restart.
+ *  GET    /api/telemetry                 -> TelemetryStatus (shared/telemetry.ts), no-store
+ *  POST   /api/telemetry                 -> TelemetryStatus; body { enabled?, notice_seen?: true },
+ *         X-Herdr-Update: 1 and same-origin. 404 from a server that sends no telemetry.
  *  GET    /api/agents                    -> { agents: AgentKind[] } (herdr's agent manifests: the
  *         kinds `agent.start` accepts, plus omo and gjc when they are on this server's PATH,
  *         for the new-session dialog)

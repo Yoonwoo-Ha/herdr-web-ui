@@ -7,11 +7,14 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
-### Fixed
-- A message starting with `/` that Claude Code does not know no longer just vanishes from the
-  chat: Claude Code's own answer ("Unknown command: /…", and the arguments it dropped) shows as a
-  notice, as a usage limit reached or reset does. Claude Code 2.1.29x records these as
-  informational entries, which the chat left out.
+### Added
+- The app sends an anonymous count when it is installed and each time it is updated: the version,
+  the OS, how it was installed and a random ID, nothing about your terminals or files, and no IP
+  address is stored. A line says so the first time you open the app, and
+  **Settings → About → Anonymous usage counts** shows what is sent and turns it off;
+  `HERDR_WEB_TELEMETRY=0` or `DO_NOT_TRACK=1` turns it off on the server.
+  ([Anonymous usage counts](docs/guide.md#anonymous-usage-counts),
+  [#599](https://github.com/devswha/herdr-web-ui/pull/599))
 
 ### Changed
 - **Settings → Terminal → Clipboard from a pane** is on again: vim, tmux and Claude Code copy to
@@ -20,6 +23,18 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   you do not trust.
 - A GitHub release opens with its patch notes, short lines under New features, Improvements and
   Bug fixes as an install shows them, with the full changelog folded underneath.
+
+### Fixed
+- macOS Safari direct terminal input preserves Korean syllables when the input method
+  replaces text without emitting composition events, including after switching from English.
+  ([#524](https://github.com/devswha/herdr-web-ui/pull/524) by @suho-han)
+
+### Fixed
+- A message starting with `/` that Claude Code does not know no longer just vanishes from the
+  chat: Claude Code's own answer ("Unknown command: /…", and the arguments it dropped) shows as a
+  notice, as a usage limit reached or reset does. Claude Code 2.1.29x records these as
+  informational entries, which the chat left out.
+  ([#600](https://github.com/devswha/herdr-web-ui/pull/600) by @Yoonwoo-Ha)
 
 ## [0.4.1] - 2026-10-08
 

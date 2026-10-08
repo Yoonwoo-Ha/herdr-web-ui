@@ -830,4 +830,13 @@ export const JA: Record<string, string> = {
   "It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.": "{workspace} の最後のタブです。ワークスペースも一緒に閉じ、その中のエージェントとシェルが停止します。",
   "Tabs of {workspace}": "{workspace} のタブ",
   "{n} panes": "{n} 個のペイン",
+  "herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. Nothing else.": "herdr web ui はインストール時と更新時に匿名の集計を送ります。送るのはバージョン、OS、ランダムな ID だけです。",
+  "What is sent": "送信内容",
+  "Turn off": "オフにする",
+  "Could not turn it off. Try again.": "オフにできませんでした。もう一度お試しください。",
+  "Anonymous usage counts": "匿名の利用集計",
+  "Turned off on this PC by HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK or a CI environment.": "この PC では HERDR_WEB_TELEMETRY=0、DO_NOT_TRACK または CI 環境によりオフになっています。",
+  "Send install and update counts": "インストールと更新の集計を送る",
+  "Once when the app is installed and once per update. No IP address is stored, and nothing about your terminals, agents or files is sent.": "アプリのインストール時に 1 回、更新のたびに 1 回送ります。IP アドレスは保存せず、ターミナル、エージェント、ファイルについては何も送りません。",
+  "This version has already been counted. The next event is sent after an update.": "このバージョンは集計済みです。次の送信は更新の後です。",
 };

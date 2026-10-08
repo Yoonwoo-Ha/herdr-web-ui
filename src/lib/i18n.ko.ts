@@ -828,4 +828,13 @@ export const KO: Record<string, string> = {
   "It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.": "{workspace}의 마지막 탭입니다. 워크스페이스도 함께 닫히고, 그 안의 에이전트와 셸이 멈춥니다.",
   "Tabs of {workspace}": "{workspace}의 탭",
   "{n} panes": "패널 {n}개",
+  "herdr web ui sends an anonymous count when it is installed and updated: the version, the OS and a random ID. Nothing else.": "herdr web ui는 설치와 업데이트 때 익명 집계를 보냅니다. 버전, OS, 무작위 ID뿐이며 그 밖에는 보내지 않습니다.",
+  "What is sent": "보내는 내용",
+  "Turn off": "끄기",
+  "Could not turn it off. Try again.": "이 설정을 끄지 못했습니다. 다시 시도하세요.",
+  "Anonymous usage counts": "익명 사용 집계",
+  "Turned off on this PC by HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK or a CI environment.": "이 PC에서는 HERDR_WEB_TELEMETRY=0, DO_NOT_TRACK 또는 CI 환경 때문에 꺼져 있습니다.",
+  "Send install and update counts": "설치·업데이트 집계 보내기",
+  "Once when the app is installed and once per update. No IP address is stored, and nothing about your terminals, agents or files is sent.": "앱을 설치할 때 한 번, 업데이트할 때마다 한 번 보냅니다. IP 주소는 저장하지 않으며 터미널, 에이전트, 파일에 관한 내용은 보내지 않습니다.",
+  "This version has already been counted. The next event is sent after an update.": "이 버전은 이미 집계되었습니다. 다음 전송은 업데이트 후입니다.",
 };
