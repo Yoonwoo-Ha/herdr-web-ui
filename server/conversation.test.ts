@@ -92,6 +92,18 @@ describe("parseClaudeTranscript", () => {
     ]);
   });
 
+  it("keeps a notice joined from long lines within the notice's length", () => {
+    const info = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "informational", content, timestamp: ts });
+    const [turn] = parseClaudeTranscript([
+      info("a".repeat(4000), "2026-10-08T08:06:31.117Z"),
+      info("b".repeat(4000), "2026-10-08T08:06:31.118Z"),
+    ].join("\n"));
+    const text = (turn!.parts[0] as { text: string }).text;
+    expect(turn!.parts).toHaveLength(1);
+    expect(text.length).toBe(4001);
+    expect(text.endsWith("\u2026")).toBe(true);
+  });
+
   it("shows a slash command's answer only as the whole entry, as text, and not past its length", () => {
     const local = (content: string) => JSON.stringify({ type: "system", subtype: "local_command", timestamp: "2026-10-07T19:00:00.000Z", content });
     const notices = (lines: string[]) => parseClaudeTranscript(lines.join("\n")).flatMap((turn) => turn.parts).filter((part) => part.kind === "notice").map((part) => (part as { text: string }).text);

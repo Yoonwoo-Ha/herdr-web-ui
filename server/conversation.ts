@@ -118,7 +118,11 @@ const NOTICE_JOIN_MS = 1000;
 
 /** A notice Claude Code writes as plain text: no terminal codes, and not past a notice's length. */
 function noticeText(raw: string): string {
-  const text = stripTerminalControls(raw).trim();
+  return capNotice(stripTerminalControls(raw).trim());
+}
+
+/** A notice is not a log: past the cap the rest stays in the terminal, also for lines joined into one. */
+function capNotice(text: string): string {
   return text.length > LOCAL_COMMAND_MAX_CHARS ? `${text.slice(0, LOCAL_COMMAND_MAX_CHARS)}\u2026` : text;
 }
 
@@ -267,7 +271,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS): Conve
       const last = turns.at(-1);
       const lastNotice = last?.parts.length === 1 && last.parts[0]?.kind === "notice" && last.parts[0].source === "informational" ? last.parts[0] : null;
       const near = last?.ts != null && ts !== null && Math.abs(Date.parse(ts) - Date.parse(last.ts)) <= NOTICE_JOIN_MS;
-      if (last && lastNotice && near) turns[turns.length - 1] = { ...last, parts: [{ ...lastNotice, text: `${lastNotice.text}\n${text}` }] };
+      if (last && lastNotice && near) turns[turns.length - 1] = { ...last, parts: [{ ...lastNotice, text: capNotice(`${lastNotice.text}\n${text}`) }] };
       else turns.push({ role: "user", ts, parts: [{ kind: "notice", text, source: "informational" }] });
       continue;
     }
