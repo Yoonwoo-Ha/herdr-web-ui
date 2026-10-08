@@ -54,7 +54,7 @@ import {
   worktreeRemove,
 } from "./herdr/client.ts";
 import { type AlertTiming, createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
-import { claudeHeldIsGrey, codexQuestionsCollapsed, handlePromptRequest, heldCandidate, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded } from "./prompt.ts";
+import { claudeHeldIsGrey, codexQuestionsCollapsed, handlePromptRequest, isClaudeHeld, heldCandidate, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded } from "./prompt.ts";
 import { secretPrompt, validSecret } from "../shared/secret-prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
 import { PtySession } from "./pty/session.ts";
@@ -545,12 +545,13 @@ export function createServer(
     }
     const collapsed = current.agent === "codex" && codexQuestionsCollapsed(screen);
     // a message Claude Code holds for its invisible characters is a card to answer first, also once its hint has gone.
-    // Not so with this delivery's own paste in the box (`pasted`): the same words as the message noted
-    // before, sent again without the characters, would be taken for that one, still held
+    // Not so with this delivery's own paste in the box (`pasted`), which the check before the paste found
+    // free of a held message: the same words as the message noted before would be taken for that one,
+    // and so would any paste under a hint left up from it (typing does not take Claude's hint down)
     const held = !pasted && current.agent === "claude" ? heldCandidate(paneId) : null;
     const prompt = current.agent ? parseInteractivePrompt(current.agent, screen, null, true, [], held) : null;
     // as the card's own reader decides it: Claude's grey text under a hint left behind is no held message
-    const waits = prompt !== null && !(await claudeHeldIsGrey(paneId, prompt));
+    const waits = prompt !== null && !(pasted && isClaudeHeld(prompt)) && !(await claudeHeldIsGrey(paneId, prompt));
     if (current.agent && (waits || modelListWaits(current.agent, screen) || (pane.agent_status === "blocked" && !collapsed))) {
       throw new HerdrError("agent_blocked", "The agent is waiting for an answer in the terminal");
     }

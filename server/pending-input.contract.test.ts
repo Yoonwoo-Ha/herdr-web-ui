@@ -282,6 +282,23 @@ describe("connection-owned pending input", () => {
     await f.waitBytes(`${paste("samemessage")}\r`);
   }, 30_000);
 
+  it("sends its own paste under Claude's hint left from the message before", async () => {
+    // a long pause between paste and Enter, so the screen below is drawn before the check ahead of the Enter
+    const f = await setup("held-hint-left", "claude", "\u203a Message\n", { submitDelayMs: 3_000 });
+    const rule = "\u2500".repeat(60);
+    const hint = `${" ".repeat(20)}Removed 1 invisible character \u00b7 review and press Enter to send`;
+    const footer = "[Haiku 4.5] \u2502 project";
+    // the held message was sent from the terminal: its hint is still up over an empty box
+    await f.showScreen(`${hint}\n${rule}\n\u276f\n${rule}\n  ${footer}\n`, footer);
+    const message = await f.queue(1, "next message");
+    await f.state("idle");
+    await f.waitBytes(paste("next message"));
+    // typing does not take the hint down (Claude Code 2.1.294): the box under it now holds this delivery's paste
+    await f.showScreen(`${hint}\n${rule}\n\u276f next message\n${rule}\n  ${footer} \n`, `${footer} `);
+    await f.removed(message.id);
+    await f.waitBytes(`${paste("next message")}\r`);
+  }, 30_000);
+
   it("reads the pane's live screen: a menu drawn below a scrolled viewport still stops Send now", async () => {
     const f = await setup("scrolled", "codex"); const message = await f.queue(1, "after the menu");
     const history = Array.from({ length: 150 }, (_, index) => `line ${index + 1}`).join("\n");

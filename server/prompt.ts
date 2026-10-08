@@ -2690,6 +2690,11 @@ function claudeGreyInput(ansi: string): string | null {
   return suggestion === "" ? null : suggestion;
 }
 
+/** Whether a card is the one for a message Claude Code holds back (parseClaudeHeld). */
+export function isClaudeHeld(prompt: InteractivePrompt): boolean {
+  return parsedByPublicPrompt.get(prompt)?.responder === "claude-held";
+}
+
 /**
  * Whether a held-message card was read off Claude's own grey text. Claude's hint outlasts the
  * message for a moment (sent or cleared in the terminal), over a box that is empty again and shows
@@ -2701,7 +2706,7 @@ function claudeGreyInput(ansi: string): string | null {
  * the message.
  */
 export async function claudeHeldIsGrey(paneId: string, prompt: InteractivePrompt): Promise<boolean> {
-  if (parsedByPublicPrompt.get(prompt)?.responder !== "claude-held") return false;
+  if (!isClaudeHeld(prompt)) return false;
   const same = (text: string | null): boolean => text !== null && normalizeText(text) === normalizeText(prompt.body ?? "");
   return paneRead({ paneId, source: "visible", format: "ansi", timeoutMs: SUGGESTION_READ_MS })
     .then((read) => same(claudeGreyInput(read.text)), () => false);
