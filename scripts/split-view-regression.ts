@@ -88,6 +88,53 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
+  }
+
+  // each half keeps its own connection's role: the active half's socket told to watch (a forged
+  // role-ack, as a watch-only answer) leaves the other half's open socket interactive
+  const watched = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
+  try {
+    const [openPane, otherPane] = await (async () => {
+      const ids: string[] = [];
+      for (const suffix of ["watch-open", "watch-other"]) {
+        const cwd = join(root, suffix);
+        mkdirSync(cwd);
+        const created = await workspaceCreate({ cwd, label: `herdr-web-ui-test-split-${suffix}` });
+        workspaces.push(created.workspace.workspace_id);
+        ids.push(created.root_pane.pane_id);
+      }
+      return ids as [string, string];
+    })();
+    for (const pane of [openPane, otherPane]) await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "claude", state: "idle" });
+    await watched.addInitScript((ids) => {
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertDone: "off" }));
+      for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
+    }, [openPane, otherPane]);
+    let sockets = 0;
+    await watched.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
+      const second = sockets++ === 1;
+      const upstream = socket.connectToServer();
+      upstream.onMessage((raw) => {
+        const message = JSON.parse(String(raw));
+        socket.send(second && message.type === "role-ack" ? JSON.stringify({ ...message, mode: "observe" }) : raw);
+      });
+    });
+    const page = await watched.newPage();
+    await page.goto(`${origin}/?pane=${encodeURIComponent(openPane)}`);
+    await page.locator(".conn-live").waitFor();
+    const area = page.locator(".pane-split");
+    const box = (await area.boundingBox())!;
+    await page.locator(`.pane-select[title^="${otherPane} —"]`).dragTo(area, { targetPosition: { x: box.width * 0.8, y: box.height / 2 } });
+    // the dropped pane's half is active, and its socket (the second) is told to watch
+    const right = page.locator('.pane-slot[data-side="right"]');
+    const left = page.locator('.pane-slot[data-side="left"]');
+    await right.locator(".terminal-banner-observe").waitFor();
+    await page.waitForTimeout(800);
+    assert.equal(await left.locator(".terminal-banner-observe").count(), 0, "the other half's socket stays interactive");
+    await left.locator(".composer textarea").waitFor();
+    console.log("PASS each half keeps its own connection's role");
+  } finally {
+    await watched.close();
     for (const id of workspaces) await workspaceClose(id).catch(() => undefined);
     rmSync(root, { recursive: true, force: true });
   }
