@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InteractivePrompt } from "../shared/protocol.ts";
 
-import { answerKeys, removedInvisible, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded } from "./prompt.ts";
+import { answerKeys, removedInvisible, noteSubmitted, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded } from "./prompt.ts";
 
 const labels = (prompt: InteractivePrompt | null) => prompt?.options.map((option) => option.label);
 
@@ -2893,6 +2893,21 @@ ${heldRule}
       expect(labels(working)).toEqual(["Send"]);
       expect((await answer(working.id, { option_index: 1 })).status).toBe(400);
       expect(pane.sent).toEqual([]);
+    });
+  });
+
+  test("forgets what the chat sent once its held message is answered: the same words after it are a new message", async () => {
+    // the hint has gone: only the chat's own send says the box holds a held message
+    const box = heldScreen("❯ samemessage", "  ✻ Cooked for 1s · done");
+    await withPane("claude", "idle", box, async (pane) => {
+      expect(await card()).toBeNull();
+      noteSubmitted("p_1", "same\u200bmessage");
+      const shown = (await card())!;
+      expect(shown.body).toBe("samemessage");
+      expect(await answer(shown.id, { option_index: 0 })).toEqual({ status: 200, code: undefined });
+      expect(pane.sent).toEqual(["enter"]);
+      // typed or pasted again, without the character: nothing was taken out of this one
+      expect(await card()).toBeNull();
     });
   });
 

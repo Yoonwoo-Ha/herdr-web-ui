@@ -249,6 +249,24 @@ describe("connection-owned pending input", () => {
     expect(f.bytes()).toBe(before);
   }, 30_000);
 
+  it("sends the same words again after a held message was dealt with: its own paste is no held message", async () => {
+    // a long pause between paste and Enter, so the screen below is drawn before the check ahead of the Enter
+    const f = await setup("held-again", "claude", "› Message\n", { submitDelayMs: 3_000 });
+    const first = await f.queue(1, "same\u200bmessage");
+    await f.state("idle"); await f.removed(first.id);
+    await f.waitBytes(`${paste("same\u200bmessage")}\r`);
+    // dealt with in the terminal; the message goes out once more, the character taken out by hand
+    await f.state("working");
+    const second = await f.queue(2, "samemessage");
+    await f.state("idle");
+    await f.waitBytes(paste("samemessage"));
+    // Claude's box holds the paste, as it does for any message between its paste and its Enter
+    const rule = "\u2500".repeat(60);
+    await f.showScreen(`  \u273b Cooked for 1s\n${rule}\n\u276f samemessage\n${rule}\n  [Haiku 4.5] \u2502 project\n`, "[Haiku 4.5] \u2502 project");
+    await f.removed(second.id);
+    await f.waitBytes(`${paste("samemessage")}\r`);
+  }, 30_000);
+
   it("reads the pane's live screen: a menu drawn below a scrolled viewport still stops Send now", async () => {
     const f = await setup("scrolled", "codex"); const message = await f.queue(1, "after the menu");
     const history = Array.from({ length: 150 }, (_, index) => `line ${index + 1}`).join("\n");

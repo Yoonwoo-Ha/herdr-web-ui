@@ -527,7 +527,7 @@ export function createServer(
     if (attachment !== lease.attachment || attachment.pty !== lease.pty || !owner.data.attached.has(paneId)
       || !attachment.clients.has(owner) || !attachment.ready) throw new HerdrError("input_not_ready", "The pending message's pane connection changed");
   }
-  async function pendingContext(owner: Client, paneId: string, lease: PendingLease, identity?: PendingIdentity): Promise<{ pane: HerdrPane; identity: PendingIdentity; working: boolean }> {
+  async function pendingContext(owner: Client, paneId: string, lease: PendingLease, identity?: PendingIdentity, pasted = false): Promise<{ pane: HerdrPane; identity: PendingIdentity; working: boolean }> {
     authorizePending(owner, paneId, lease);
     // The same normalized snapshot the client sees includes a known Codex finish that
     // herdr reports as unknown. Nothing is inferred from a bare unknown state.
@@ -544,8 +544,10 @@ export function createServer(
       throw new HerdrError("agent_blocked", "The terminal is waiting for masked input; answer it with the secret-input form first");
     }
     const collapsed = current.agent === "codex" && codexQuestionsCollapsed(screen);
-    // a message Claude Code holds for its invisible characters is a card to answer first, also once its hint has gone
-    const held = current.agent === "claude" ? heldCandidate(paneId) : null;
+    // a message Claude Code holds for its invisible characters is a card to answer first, also once its hint has gone.
+    // Not so with this delivery's own paste in the box (`pasted`): the same words as the message noted
+    // before, sent again without the characters, would be taken for that one, still held
+    const held = !pasted && current.agent === "claude" ? heldCandidate(paneId) : null;
     if (current.agent && (parseInteractivePrompt(current.agent, screen, null, true, [], held) !== null || modelListWaits(current.agent, screen) || (pane.agent_status === "blocked" && !collapsed))) {
       throw new HerdrError("agent_blocked", "The agent is waiting for an answer in the terminal");
     }
@@ -580,12 +582,11 @@ export function createServer(
       wrote = true;
       await paneSendText(paneId, `\u001b[200~${text}\u001b[201~`);
       await Bun.sleep(options.submitDelayMs ?? SUBMIT_DELAY_MS);
-      const beforeEnter = await pendingContext(owner, paneId, lease, identity);
+      const beforeEnter = await pendingContext(owner, paneId, lease, identity, true);
       if (automatic && beforeEnter.working) throw new HerdrError("pending_wait", "The agent started another turn before this queued message could be committed");
       authorizePending(owner, paneId, lease);
       committing(!automatic && beforeEnter.working);
       await paneSendKeys(paneId, ["Enter"]);
-      // after the checks above: they would take this very message, pasted, for a held one
       noteSubmitted(paneId, text);
       return { ok: true };
     } catch (error) {
