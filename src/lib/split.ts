@@ -4,8 +4,9 @@
  * one already open. The selected pane (App's) is the active half's; the other half keeps its own.
  *
  * The halves are two slots, `a` and `b`, that keep their panes when the active one changes or the
- * halves trade sides, so neither terminal attaches again for a click. Slot `a` is the one a single
- * pane is shown in; `b` exists only while split, on `bSide`, and `a` takes the other side.
+ * halves trade sides, so neither terminal attaches again for a click. A single pane is shown in
+ * one of them (App's solo slot, `a` at first); split, `b` is on `bSide` and `a` on the other side.
+ * The half left when a split ends stays in its slot, so its terminal keeps its connection.
  */
 
 export type SplitSide = "left" | "right";
@@ -56,7 +57,7 @@ export function dropSide(x: number, left: number, width: number): SplitSide {
  * A pane dropped on one half: the split after it, and the pane to select (the dropped one, which
  * becomes the active half). Null when nothing changes: a pane dropped where it already is, or
  * onto a single pane that is itself.
- * - Single pane: it stays in its slot, on the other side, and the dropped pane opens beside it.
+ * - Single pane: it stays in its slot (`solo`), on the other side, and the dropped pane opens beside it.
  * - Onto the active half: the dropped pane opens there. The other half's own pane, dropped there,
  *   trades sides with it.
  * - Onto the other half: the dropped pane opens there and that half becomes active. The active
@@ -67,11 +68,13 @@ export function dockPane(
   active: SplitTarget | null,
   dragged: SplitTarget,
   side: SplitSide,
+  solo: SplitSlot = "a",
 ): { split: SplitState; select: SplitTarget } | null {
   if (active === null) return null;
   if (state === null) {
     if (sameTarget(dragged, active)) return null;
-    return { split: { other: active, bSide: side, active: "b" }, select: dragged };
+    const opened = otherSlot(solo);
+    return { split: { other: active, bSide: opened === "b" ? side : otherSide(side), active: opened }, select: dragged };
   }
   const slot: SplitSlot = side === state.bSide ? "b" : "a";
   if (slot === state.active) {

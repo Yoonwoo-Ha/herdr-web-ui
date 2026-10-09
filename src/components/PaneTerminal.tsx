@@ -145,6 +145,17 @@ export function PaneTerminal({
   const wheelSpeedRef = useRef(terminalWheelSpeed);
   wheelSpeedRef.current = terminalWheelSpeed;
   const hostRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Whether the grid may take the keyboard by itself, later than the user's own action (an upload
+   * that finished, a dropped text): the focus is nowhere, or already in this terminal's own half.
+   * The other half of a split view keeps the focus the user put there (lib/split.ts).
+   */
+  const mayTakeFocus = (): boolean => {
+    const focused = document.activeElement;
+    if (focused === null || focused === document.body) return true;
+    const half = focused.closest(".pane-slot");
+    return half === null || (hostRef.current !== null && half.contains(hostRef.current));
+  };
   const stackRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -1121,7 +1132,7 @@ export function PaneTerminal({
         // An upload can finish after the user has switched panes or lost input access.
         if (paneRef.current !== pane || chatViewRef.current || !socket.connected || term.options.disableStdin) return;
         pasteText(paths.map((path) => `'${path.replaceAll("'", "'\\''")}'`).join(" ") + " ");
-        term.focus();
+        if (mayTakeFocus()) term.focus();
       } catch (error) {
         if (paneRef.current === pane) noteClipboard(error instanceof Error ? error.message : String(error));
       }
@@ -1153,7 +1164,7 @@ export function PaneTerminal({
       const text = event.dataTransfer.getData("text/plain");
       if (text) {
         pasteText(text);
-        term.focus();
+        if (mayTakeFocus()) term.focus();
       }
     };
     host.addEventListener("paste", onFilePaste, { capture: true });

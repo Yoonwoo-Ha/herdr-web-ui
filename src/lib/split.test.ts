@@ -13,6 +13,14 @@ describe("split view", () => {
     expect(slotSide({ other: A, bSide: "left", active: "b" }, "a")).toBe("right");
   });
 
+  it("opens a dropped pane in the other slot when the single pane is in slot b", () => {
+    // a split closed from its left half leaves its pane in slot b: dropping again keeps it there
+    const next = dockPane(null, A, B, "right", "b")!;
+    expect(next).toEqual({ split: { other: A, bSide: "left", active: "a" }, select: B });
+    expect(slotSide(next.split, "a")).toBe("right");
+    expect(slotSide(next.split, "b")).toBe("left");
+  });
+
   it("does nothing for a pane dropped onto itself, or with nothing open", () => {
     expect(dockPane(null, A, A, "left")).toBeNull();
     expect(dockPane(null, null, B, "left")).toBeNull();

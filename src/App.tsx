@@ -61,6 +61,8 @@ import { dockPane, draggedPane, dropSide, otherSlot, PANE_DRAG_TYPE, sameTarget,
 
 const APP_TITLE = "herdr web ui";
 const NO_OP = (): void => {};
+/** how soon after a key press a focus counts as the user's own (lastKeyAtRef) */
+const KEY_FOCUS_MS = 1000;
 const POLL_MS = 5000;
 
 /**
@@ -233,12 +235,28 @@ export function App() {
   const setSplit = useCallback((next: SplitState | null) => {
     setSplitState(next);
     storeSplit(next);
-    // the second half's next socket starts over, as the first did
-    if (next === null) setRoles((current) => current.b === "interact" ? current : { ...current, b: "interact" });
   }, []);
+  // the slot a single pane is drawn in: the half left when a split ends keeps its slot, and with it
+  // its terminal's connection and the messages that connection holds for the agent
+  const [soloSlot, setSoloSlot] = useState<SplitSlot>(() => storedSplit()?.active ?? "a");
+  const endSplit = useCallback((remaining: SplitSlot) => {
+    setSplit(null);
+    setSoloSlot(remaining);
+    // the closed half's next socket starts over, as a first one does
+    const closed = otherSlot(remaining);
+    setRoles((current) => current[closed] === "interact" ? current : { ...current, [closed]: "interact" });
+  }, [setSplit]);
   const splitRef = useRef(split); splitRef.current = split;
   // whether the other half is drawn: a narrow window keeps the split but shows the active half alone
   const splitShownRef = useRef(false);
+  // when a key was last pressed: a focus moving into the other half makes it active only right after
+  // one (a Tab), never when the app's own code moves the focus (an upload that finished)
+  const lastKeyAtRef = useRef(0);
+  useEffect(() => {
+    const onKey = (): void => { lastKeyAtRef.current = Date.now(); };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
   const wide = useWide();
   // the other half's lens, remembered per pane as the active one's is
   const [otherLens, setOtherLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
@@ -708,10 +726,10 @@ export function App() {
   // cached roster cannot say so, as for the selection itself
   useEffect(() => {
     if (!split) return;
-    if (selectedPaneId !== null && sameTarget(split.other, { machineId: selectedMachineId, paneId: selectedPaneId })) { setSplit(null); return; }
+    if (selectedPaneId !== null && sameTarget(split.other, { machineId: selectedMachineId, paneId: selectedPaneId })) { endSplit(split.active); return; }
     if (!otherMachine?.snapshot || otherMachine.state !== "connected") return;
-    if (!otherMachine.snapshot.panes.some((pane) => pane.pane_id === split.other.paneId)) setSplit(null);
-  }, [split, otherMachine, selectedMachineId, selectedPaneId, setSplit]);
+    if (!otherMachine.snapshot.panes.some((pane) => pane.pane_id === split.other.paneId)) endSplit(split.active);
+  }, [split, otherMachine, selectedMachineId, selectedPaneId, endSplit]);
 
   /** A split change and the pane it selects. The half that becomes active keeps its terminal: only
    *  a half whose pane moves to another PC attaches again and reports its connection. */
@@ -720,11 +738,11 @@ export function App() {
   const applySplit = (next: SplitState | null, select: SplitTarget, keepFocus = false): void => {
     const was = splitOn ? split : null;
     const current: SplitTarget | null = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
-    // what the slot that shows the selected pane afterwards (slot a once there is one pane) showed before
-    const slot: SplitSlot = next?.active ?? "a";
-    const before = was ? (was.active === slot ? current : was.other) : slot === "a" ? current : null;
+    // the slot that shows the selected pane afterwards, and what it showed before
+    const after: SplitSlot = next ? next.active : was && sameTarget(select, was.other) ? otherSlot(was.active) : was ? was.active : soloSlot;
+    const before = was ? (was.active === after ? current : was.other) : after === soloSlot ? current : null;
     if (before === null || before.machineId !== select.machineId) setConnected(false);
-    setSplit(next);
+    if (next === null) endSplit(after); else setSplit(next);
     setSelectedMachineId(select.machineId); setSelectedPaneId(select.paneId); setAutoSelected(keepFocus); setOutputStopped(false);
     storeSelection(select.machineId, select.paneId);
   };
@@ -734,7 +752,7 @@ export function App() {
   };
   const closeSlot = (slot: SplitSlot): void => {
     if (!splitOn) return;
-    if (slot !== split.active) { setSplit(null); return; }
+    if (slot !== split.active) { endSplit(split.active); return; }
     applySplit(null, split.other);
   };
   const selectInSlot = (slot: SplitSlot, machineId: string, paneId: string): void => {
@@ -763,7 +781,7 @@ export function App() {
     const box = paneAreaRef.current?.getBoundingClientRect();
     if (!dragged || !box || !wide) return;
     const current = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
-    const result = dockPane(splitOn ? split : null, current, dragged, dropSide(event.clientX, box.left, box.width));
+    const result = dockPane(splitOn ? split : null, current, dragged, dropSide(event.clientX, box.left, box.width), soloSlot);
     if (result) applySplit(result.split, result.select);
   };
   // a drag that ends anywhere (Escape, or a drop outside) takes the halves' outline with it
@@ -1056,7 +1074,8 @@ export function App() {
             opens its pane in the half it is dropped on */}
         <div ref={paneAreaRef} className={`pane-split${splitOn ? " is-split" : ""}`} onDragOverCapture={paneDragOver} onDragLeave={paneDragLeave} onDropCapture={paneDrop}>
           {(["a", "b"] as const).map((slot) => {
-            if (slot === "b" && !splitOn) return null;
+            // one pane: the solo slot, or a split's active half where the window is too narrow for both
+            if (!splitOn && slot !== (split ? split.active : soloSlot)) return null;
             const active = !splitOn || split.active === slot;
             const machineId = active ? selectedMachineId : split.other.machineId;
             const paneId = active ? selectedPaneId : split.other.paneId;
@@ -1065,7 +1084,8 @@ export function App() {
             const workspace = active ? selectedWorkspace : otherWorkspace;
             const slotSnapshot = machine?.snapshot ?? null;
             const slotView = active ? view : otherView;
-            const slotPanelId = slot === "a" ? PANE_TABPANEL_ID : `${PANE_TABPANEL_ID}-${slot}`;
+            // one pane's panel keeps the page's own id, whichever slot draws it
+            const slotPanelId = !splitOn || slot === "a" ? PANE_TABPANEL_ID : `${PANE_TABPANEL_ID}-${slot}`;
             const slotPanelLabel = active ? tabPanelLabel : paneTabPanelLabel(slotSnapshot, pane, t);
             const toggleSlotView = (): void => (active ? setView : setOtherView)(slotView === "chat" ? "terminal" : "chat");
             return (
@@ -1074,11 +1094,12 @@ export function App() {
               <div
                 className={`pane-slot${showsChat(pane, slotView) ? " is-chat" : ""}${splitOn ? active ? " is-active" : " is-inactive" : ""}`}
                 data-slot={slot}
+                data-role={roles[slot]}
                 data-side={splitOn ? slotSide(split, slot) : undefined}
                 // a press or the focus in the other half makes it the active one, before the press acts;
                 // its own bar's buttons (its lens, its close) act on it as it is
                 onPointerDownCapture={active ? undefined : (event) => { if (!(event.target as Element).closest(".pane-slot-action")) activateSlot(slot); }}
-                onFocusCapture={active ? undefined : (event) => { if (!(event.target as Element).closest(".pane-slot-action")) activateSlot(slot, true); }}
+                onFocusCapture={active ? undefined : (event) => { if (Date.now() - lastKeyAtRef.current < KEY_FOCUS_MS && !(event.target as Element).closest(".pane-slot-action")) activateSlot(slot, true); }}
               >
                 {splitOn && (
                   <div className="pane-slot-bar">
