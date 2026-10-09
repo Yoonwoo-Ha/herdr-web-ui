@@ -629,6 +629,17 @@ One set for both themes: the card is island black wherever it shows.
   its accessible text and in its tooltip. While live the chip takes no room and stays in the
   document as a `role="status"` a screen reader can read (`.conn-live`; never `display: none`).
 
+### Split drag preview
+- A desktop pane drag shows two labelled drop guides immediately, even while the pointer is
+  still over its sidebar row. The guide is an overlay with no pointer events or layout effect.
+- Hovering the pane area fills one half with `--accent-tint` and an `--accent` outline. One
+  highlight slides between halves with `--dur-fast` / `--ease-out`; entry and exit fade at the
+  same speed. A 12px band either side of the midpoint keeps a small hand movement from switching
+  the target repeatedly. The eventual drop uses that same target.
+- Leaving the pane area clears the target but keeps the guides until the drag ends. A drop,
+  Escape or window blur clears them. No split is committed by hover alone.
+- Reduced motion removes these transitions. Narrow screens keep their single-pane behaviour.
+
 ### Chat turn (`.chat-turn`)
 - The chat lens is a centered `--chat-w` transcript over the still-attached terminal surface.
   At the Default chat width the lane follows the pane: min 820px, max 60rem (960px at a 16px

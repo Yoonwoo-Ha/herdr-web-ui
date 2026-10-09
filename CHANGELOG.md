@@ -7,6 +7,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Changed
+- Split guides appear when a pane drag starts, with left and right labels. The preview moves
+  between halves without flickering at their boundary, fades on entry and exit, and follows
+  reduced-motion preferences. Dropping uses the same side that the preview shows.
+
 ### Added
 - On a desktop two panes can stand side by side, as a window snapped to half the screen: drag a
   tab or a sidebar row over the pane area and drop it on the left or right half. The two share

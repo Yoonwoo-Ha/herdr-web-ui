@@ -741,30 +741,6 @@ button {
   opacity: 0.88;
 }
 
-/* while a pane is dragged over the area: the two halves it can open in, the one under the
-   pointer filled. Drawn over the panes without taking the drag from them (App handles it) */
-.split-drop {
-  position: absolute;
-  inset: 0;
-  z-index: var(--z-popover);
-  display: flex;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  pointer-events: none;
-}
-
-.split-drop-half {
-  flex: 1 1 0;
-  border: 2px dashed transparent;
-  border-radius: var(--radius-md);
-  transition: background var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
-}
-
-.split-drop-half.is-target {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-}
-
 /* the chat's composer takes the home-indicator inset itself (Composer.css): kept here as
    well, it stacked under the composer's own padding as a band of another colour */
 .terminal-host:has(.composer) {

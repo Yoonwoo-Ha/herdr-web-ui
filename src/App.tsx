@@ -11,6 +11,7 @@ import { AccessGate } from "./components/AccessGate.tsx";
 import { AgentMark } from "./components/AgentMark.tsx";
 import { NewSessionDialog, type NewTabTarget } from "./components/NewSessionDialog.tsx";
 import { TabStrip } from "./components/TabStrip.tsx";
+import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
 import { onSettingsHistory, recordSettings } from "./lib/settingsHistory.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
@@ -259,8 +260,18 @@ export function App() {
   const wide = useWide();
   // the other half's lens, remembered per pane as the active one's is
   const [otherLens, setOtherLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
-  // the half a dragged pane would open in, while one is dragged over the pane area
+  // the guide appears as soon as a pane is picked up; a target is chosen only over the area
+  const [paneDragging, setPaneDragging] = useState(false);
   const [dropAt, setDropAt] = useState<SplitSide | null>(null);
+  const dropAtRef = useRef<SplitSide | null>(null);
+  const showDropTarget = useCallback((side: SplitSide | null): void => {
+    dropAtRef.current = side;
+    setDropAt(side);
+  }, []);
+  const clearDropPreview = useCallback((): void => {
+    setPaneDragging(false);
+    showDropTarget(null);
+  }, [showDropTarget]);
   const paneAreaRef = useRef<HTMLDivElement>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // the header's More menu: its button, and whether it opened on a phone-width screen
@@ -758,32 +769,55 @@ export function App() {
     if (!wide || selectedPaneId === null || !event.dataTransfer.types.includes(PANE_DRAG_TYPE)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
+    setPaneDragging(true);
     const box = paneAreaRef.current?.getBoundingClientRect();
-    if (box) setDropAt(dropSide(event.clientX, box.left, box.width));
+    if (box) showDropTarget(dropSide(event.clientX, box.left, box.width, dropAtRef.current));
   };
   const paneDragLeave = (event: DragEvent<HTMLDivElement>): void => {
-    if (!(event.relatedTarget instanceof Node) || !paneAreaRef.current?.contains(event.relatedTarget)) setDropAt(null);
+    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    // Some browsers omit relatedTarget when crossing a child. The pointer still being inside
+    // the area must not clear the preview (or its stable side at the centre).
+    const box = event.currentTarget.getBoundingClientRect();
+    if (event.relatedTarget === null && event.clientX >= box.left && event.clientX < box.right && event.clientY >= box.top && event.clientY < box.bottom) return;
+    showDropTarget(null);
   };
   const paneDrop = (event: DragEvent<HTMLDivElement>): void => {
     if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) return;
     // the composer and the terminal take dropped files: a dropped pane is not one
     event.preventDefault();
     event.stopPropagation();
-    setDropAt(null);
     const dragged = draggedPane(event.dataTransfer.getData(PANE_DRAG_TYPE));
     const box = paneAreaRef.current?.getBoundingClientRect();
-    if (!dragged || !box || !wide) return;
+    const side = box ? dropSide(event.clientX, box.left, box.width, dropAtRef.current) : null;
+    clearDropPreview();
+    if (!dragged || side === null || !wide) return;
     const current = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
-    const result = dockPane(splitOn ? split : null, current, dragged, dropSide(event.clientX, box.left, box.width), soloSlot);
+    const result = dockPane(splitOn ? split : null, current, dragged, side, soloSlot);
     if (result) applySplit(result.split, result.select);
   };
-  // a drag that ends anywhere (Escape, or a drop outside) takes the halves' outline with it
+  // Bubble phase: the tab or sidebar has put its pane type into DataTransfer by then.
   useEffect(() => {
-    const clear = (): void => setDropAt(null);
-    window.addEventListener("dragend", clear);
-    window.addEventListener("drop", clear);
-    return () => { window.removeEventListener("dragend", clear); window.removeEventListener("drop", clear); };
-  }, []);
+    if (!wide || selectedPaneId === null) { clearDropPreview(); return; }
+    const start = (event: globalThis.DragEvent): void => {
+      if (event.dataTransfer?.types.includes(PANE_DRAG_TYPE)) {
+        showDropTarget(null);
+        setPaneDragging(true);
+      }
+    };
+    const cancel = (event: KeyboardEvent): void => { if (event.key === "Escape") clearDropPreview(); };
+    window.addEventListener("dragstart", start);
+    window.addEventListener("dragend", clearDropPreview);
+    window.addEventListener("drop", clearDropPreview);
+    window.addEventListener("blur", clearDropPreview);
+    window.addEventListener("keydown", cancel);
+    return () => {
+      window.removeEventListener("dragstart", start);
+      window.removeEventListener("dragend", clearDropPreview);
+      window.removeEventListener("drop", clearDropPreview);
+      window.removeEventListener("blur", clearDropPreview);
+      window.removeEventListener("keydown", cancel);
+    };
+  }, [wide, selectedPaneId, clearDropPreview, showDropTarget]);
 
   // The Alerts item says what this device does, whatever the browser's permission: in-app alerts
   // need none, so they count as on. A device that has not answered the permission question is
@@ -1142,12 +1176,7 @@ export function App() {
               </MachineContext.Provider>
             );
           })}
-          {dropAt !== null && (
-            <div className="split-drop" aria-hidden="true">
-              <div className={`split-drop-half${dropAt === "left" ? " is-target" : ""}`} />
-              <div className={`split-drop-half${dropAt === "right" ? " is-target" : ""}`} />
-            </div>
-          )}
+          <SplitDropPreview visible={wide && paneDragging} side={dropAt} />
         </div>
         </div>
         </OpenFileContext.Provider>

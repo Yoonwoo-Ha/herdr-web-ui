@@ -122,6 +122,8 @@ export const ZH: Record<string, string> = {
   "Show the terminal": "显示终端",
   "Show the chat": "显示聊天",
   "Close this half": "关闭这一半",
+  "Drop on the left": "放到左侧",
+  "Drop on the right": "放到右侧",
   "Toggle sidebar (⌘⇧B)": "切换侧边栏 (⌘⇧B)",
   "Chat transcript (⌘⇧J)": "聊天记录 (⌘⇧J)",
   "Live terminal (⌘⇧J)": "实时终端 (⌘⇧J)",

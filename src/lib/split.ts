@@ -48,9 +48,13 @@ export function slotSide(state: SplitState, slot: SplitSlot): SplitSide {
   return slot === "b" ? state.bSide : otherSide(state.bSide);
 }
 
-/** The half of the pane area a point is over. */
-export function dropSide(x: number, left: number, width: number): SplitSide {
-  return x < left + width / 2 ? "left" : "right";
+/** Keep the preview's side near the midpoint; a first entry uses the exact half. */
+export function dropSide(x: number, left: number, width: number, previous: SplitSide | null = null): SplitSide {
+  const middle = left + width / 2;
+  const margin = Math.min(12, width / 4);
+  if (previous === "left" && x <= middle + margin) return "left";
+  if (previous === "right" && x >= middle - margin) return "right";
+  return x < middle ? "left" : "right";
 }
 
 /**
