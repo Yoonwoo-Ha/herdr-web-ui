@@ -198,6 +198,116 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       console.log("PASS each half keeps its own connection's role");
       assert.deepEqual(errors, []);
     }
+
+    // 6. The guide starts with the pane drag, keeps a stable side around the centre, and leaves
+    //    the pane alone when cancelled. Synthetic events let the check visit exact pixel edges.
+    {
+      const [opened, dragged] = await panesFor("preview-open", "preview-dragged") as [string, string];
+      const { page, errors } = await open([opened, dragged], "chat");
+      const area = page.locator(".pane-split");
+      const guide = page.locator(".split-drop");
+      const source = page.locator(`.pane-select[title^="${dragged} —"]`);
+      await source.waitFor();
+      await guide.waitFor({ state: "attached" });
+      const box = (await area.boundingBox())!;
+      const middle = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      const data = await page.evaluateHandle(() => new DataTransfer());
+      const preview = async (visible: boolean, side: "left" | "right" | null): Promise<void> => {
+        await settled(page);
+        await page.waitForFunction(([shown, target]) => {
+          const element = document.querySelector(".split-drop");
+          return element?.classList.contains("is-visible") === shown && element.getAttribute("data-side") === target;
+        }, [visible, side] as const);
+      };
+      const start = async (): Promise<void> => {
+        // The sidebar's own handler fills the transfer before App's window listener reads it.
+        await source.dispatchEvent("dragstart", { dataTransfer: data });
+        await preview(true, null);
+      };
+      const hover = async (x: number, side: "left" | "right"): Promise<void> => {
+        await area.dispatchEvent("dragover", { dataTransfer: data, clientX: x, clientY: y });
+        await preview(true, side);
+      };
+      const unchanged = async (): Promise<void> => {
+        await preview(false, null);
+        assert.equal(await page.locator(".pane-slot").count(), 1, "cancelling does not create a half");
+        await page.getByRole("log", { name: `conversation of ${opened}`, exact: true }).waitFor();
+        assert.equal(await page.evaluate(() => localStorage.getItem("herdr-web-ui:split")), null, "cancelling does not save a split");
+      };
+
+      await preview(false, null);
+      assert.equal(await guide.locator(".split-drop-half").count(), 2, "both drop guides stay mounted");
+      assert.equal(await guide.locator(".split-drop-target").count(), 1, "one indicator moves between the guides");
+      const indicator = (await guide.locator(".split-drop-target").elementHandle())!;
+      await start();
+      await hover(middle + 40, "right");
+      await area.locator(".pane-slot").first().dispatchEvent("dragleave", {
+        dataTransfer: data, relatedTarget: null, clientX: middle + 40, clientY: y,
+      });
+      await preview(true, "right");
+      await area.dispatchEvent("dragleave", { dataTransfer: data, relatedTarget: null, clientX: box.x - 1, clientY: y });
+      await preview(true, null);
+      await hover(middle - 40, "left");
+      assert.equal(await indicator.evaluate((element) => element.isConnected), true, "the indicator is not replaced when the side changes");
+      await source.dispatchEvent("dragend", { dataTransfer: data });
+      await unchanged();
+
+      for (const cancel of ["outside-drop", "blur", "Escape"] as const) {
+        await start();
+        await hover(middle + 40, "right");
+        if (cancel === "outside-drop") await page.locator("body").dispatchEvent("drop", { dataTransfer: data });
+        else if (cancel === "blur") await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+        else await page.keyboard.press("Escape");
+        await unchanged();
+      }
+
+      // Text and files still belong to their existing input handlers, not the split guide.
+      for (const kind of ["text", "file"] as const) {
+        const otherData = await page.evaluateHandle((type) => {
+          const transfer = new DataTransfer();
+          if (type === "text") transfer.setData("text/plain", "selected text");
+          else transfer.items.add(new File(["preview"], "preview.txt", { type: "text/plain" }));
+          return transfer;
+        }, kind);
+        await page.locator("body").dispatchEvent("dragstart", { dataTransfer: otherData });
+        await area.dispatchEvent("dragover", { dataTransfer: otherData, clientX: middle + 40, clientY: y });
+        await unchanged();
+        await page.locator("body").dispatchEvent("dragend", { dataTransfer: otherData });
+        await otherData.dispose();
+      }
+
+      await page.setViewportSize({ width: 768, height: 800 });
+      await source.dispatchEvent("dragstart", { dataTransfer: data });
+      await area.dispatchEvent("dragover", { dataTransfer: data, clientX: 500, clientY: y });
+      await unchanged();
+      await source.dispatchEvent("dragend", { dataTransfer: data });
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await start();
+      await hover(middle - 40, "left");
+      const durations = await guide.evaluate((element) => [element, element.querySelector(".split-drop-target")!]
+        .flatMap((node) => getComputedStyle(node).transitionDuration.split(",").map((value) => Number.parseFloat(value))));
+      assert.equal(durations.every((duration) => duration === 0), true, "reduced motion removes guide and indicator transitions");
+      await source.dispatchEvent("dragend", { dataTransfer: data });
+      await unchanged();
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+
+      await start();
+      await hover(middle - 40, "left");
+      await hover(middle + 1, "left");
+      await hover(middle + 40, "right");
+      await hover(middle - 1, "right");
+      // Drop just to the left of the centre while the stable preview still points right.
+      await area.dispatchEvent("drop", { dataTransfer: data, clientX: middle - 1, clientY: y });
+      await preview(false, null);
+      await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
+      await half(page, "right").getByRole("log", { name: `conversation of ${dragged}`, exact: true }).waitFor();
+      await isActive(page, "right");
+      await data.dispose();
+      console.log("PASS split preview starts early, survives child leaves, cancels cleanly and matches the drop side");
+      assert.deepEqual(errors, []);
+    }
   } finally {
     for (const context of contexts) await context.close();
     for (const id of workspaces) await workspaceClose(id).catch(() => undefined);

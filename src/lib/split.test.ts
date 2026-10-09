@@ -57,4 +57,59 @@ describe("split view", () => {
     expect(draggedPane("{\"workspace_id\":\"w1\"}")).toBeNull();
     expect(draggedPane("not json")).toBeNull();
   });
+
+  it("uses the exact midpoint on first entry, including an offset pane area", () => {
+    expect(dropSide(299, 100, 400)).toBe("left");
+    expect(dropSide(300, 100, 400)).toBe("right");
+    expect(dropSide(301, 100, 400, null)).toBe("right");
+  });
+
+  it("keeps either preview side until the pointer crosses the 12px band", () => {
+    expect(dropSide(212, 0, 400, "left")).toBe("left");
+    expect(dropSide(213, 0, 400, "left")).toBe("right");
+    expect(dropSide(188, 0, 400, "right")).toBe("right");
+    expect(dropSide(187, 0, 400, "right")).toBe("left");
+  });
+
+  it("keeps the preview steady while the pointer moves back and forth around the middle", () => {
+    let previous = dropSide(199, 0, 400);
+    for (const x of [201, 198, 204, 212, 190]) {
+      previous = dropSide(x, 0, 400, previous);
+      expect(previous).toBe("left");
+    }
+    previous = dropSide(213, 0, 400, previous);
+    expect(previous).toBe("right");
+    for (const x of [205, 199, 201, 188]) {
+      previous = dropSide(x, 0, 400, previous);
+      expect(previous).toBe("right");
+    }
+  });
+
+  it("shrinks the band for narrow areas and caps it for wide ones", () => {
+    expect(dropSide(30, 0, 40, "left")).toBe("left");
+    expect(dropSide(31, 0, 40, "left")).toBe("right");
+    expect(dropSide(10, 0, 40, "right")).toBe("right");
+    expect(dropSide(9, 0, 40, "right")).toBe("left");
+    expect(dropSide(1_012, 0, 2_000, "left")).toBe("left");
+    expect(dropSide(1_013, 0, 2_000, "left")).toBe("right");
+  });
+
+  it("measures the band relative to an area with negative viewport coordinates", () => {
+    expect(dropSide(-301, -500, 400)).toBe("left");
+    expect(dropSide(-300, -500, 400)).toBe("right");
+    expect(dropSide(-288, -500, 400, "left")).toBe("left");
+    expect(dropSide(-287, -500, 400, "left")).toBe("right");
+    expect(dropSide(-312, -500, 400, "right")).toBe("right");
+    expect(dropSide(-313, -500, 400, "right")).toBe("left");
+  });
+
+  it("commits to the previewed half when released inside the band", () => {
+    const preview = dropSide(205, 0, 400, "left");
+    expect(preview).toBe("left");
+    expect(dropSide(205, 0, 400)).toBe("right");
+    const committed = dropSide(208, 0, 400, preview);
+    const result = dockPane(null, A, B, committed)!;
+    expect(slotSide(result.split, result.split.active)).toBe(preview);
+    expect(result.select).toEqual(B);
+  });
 });
