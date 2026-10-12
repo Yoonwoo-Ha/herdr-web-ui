@@ -69,6 +69,32 @@ export function isLoopbackAddress(address: string): boolean {
   return address === "::1" || address.startsWith("127.") || address.startsWith("::ffff:127.");
 }
 
+/**
+ * Is this bind address one only this machine can reach, so an unset token is nobody else's
+ * business? Any spelling of loopback counts: `127.0.0.2`, `[::1]`, `LOCALHOST`, `::ffff:127.0.0.1`.
+ * A name that merely resolves to loopback is not recognised; the bind address is what Bun was
+ * given, not what DNS says of it.
+ */
+export function isLoopbackBind(hostname: string): boolean {
+  const name = hostname.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1");
+  // the address tests apply to an address: a DNS name such as 127.devbox.example may point anywhere
+  const literal = /^[\d.]+$/.test(name) || name.includes(":");
+  return name === "localhost" || name.endsWith(".localhost") || (literal && isLoopbackAddress(name));
+}
+
+/**
+ * Is the server answering on an address beyond this PC while no access token is set and no
+ * device has ever been paired? Every client that can reach that address is let in as `open`
+ * (see `decideAccess`), so this is the state a warning belongs to — told to whoever already
+ * got in, never used to change a default.
+ *
+ * `hostname` is the address the server is bound to, not the one the request arrived on: a
+ * loopback bind with an unset token is unreachable from the network however it is addressed.
+ */
+export function lanExposed(input: { hostname: string; tokenConfigured: boolean; gated: boolean }): boolean {
+  return !isLoopbackBind(input.hostname) && !input.tokenConfigured && !input.gated;
+}
+
 /** Headers a proxy adds and a browser or CLI on this PC has no reason to send; a Tailscale login is stated by a proxy too. */
 const PROXY_HEADERS = ["x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "forwarded", "via", "tailscale-user-login"];
 

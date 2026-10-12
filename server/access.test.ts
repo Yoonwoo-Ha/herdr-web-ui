@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackHost, type AccessInput } from "./access.ts";
+import { cameThroughProxy, decideAccess, isLoopbackAddress, isLoopbackBind, isLoopbackHost, lanExposed, type AccessInput } from "./access.ts";
 
 const device = { id: "d1", label: "Phone", role: "drive" as const };
 const base: AccessInput = { loopback: true, forwarded: false, funnel: false, tailscaleLogin: null, host: null, tokenMatched: false, device: null, owner: null, tagged: false, soleLogin: null, dnsName: null, tailnetIp: null, serveOnly: false, tokenConfigured: false, gated: false };
@@ -132,5 +132,31 @@ describe("decideAccess", () => {
   it("knows loopback addresses in every spelling", () => {
     for (const address of ["127.0.0.1", "127.1.2.3", "::1", "::ffff:127.0.0.1"]) expect(isLoopbackAddress(address)).toBe(true);
     for (const address of ["192.168.0.10", "100.64.0.2", "::ffff:192.168.0.10", "fd7a::1"]) expect(isLoopbackAddress(address)).toBe(false);
+  });
+});
+
+describe("lanExposed", () => {
+  const open = { hostname: "0.0.0.0", tokenConfigured: false, gated: false };
+  const warned = (over: Partial<typeof open>): boolean => lanExposed({ ...open, ...over });
+
+  it("names the one state a warning belongs to: bound past this PC, no token, nothing paired", () => {
+    expect(lanExposed(open)).toBe(true);
+    // every address, the LAN, the tailnet, a name: all reachable beyond this PC
+    for (const hostname of ["::", "[::]", "192.168.0.10", "100.64.0.2", "fd7a::1", "my-pc.local", "127.devbox.example", "localhost.example"]) {
+      expect(isLoopbackBind(hostname)).toBe(false);
+      expect(warned({ hostname })).toBe(true);
+    }
+  });
+
+  it("is quiet whenever one of the three is not the case", () => {
+    // a loopback bind is unreachable from the network however it is addressed or spelt
+    for (const hostname of ["127.0.0.1", "localhost", "::1", "127.0.0.2", "[::1]", "LOCALHOST", "::ffff:127.0.0.1", "app.localhost", " localhost "]) {
+      expect(isLoopbackBind(hostname)).toBe(true);
+      expect(warned({ hostname })).toBe(false);
+    }
+    // a token means a stranger is asked for it, and a paired device means the gate is closed
+    expect(warned({ tokenConfigured: true })).toBe(false);
+    expect(warned({ gated: true })).toBe(false);
+    expect(warned({ tokenConfigured: true, gated: true })).toBe(false);
   });
 });

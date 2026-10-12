@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { ConversationMonitor } from "./conversation-monitor.ts";
 import { createServer } from "./index.ts";
-import type { AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
+import type { AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, LanExposure, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
 import { noInstalledNotes, unmanagedUpdateStatus, type HerdrUpdateStatus, type InstalledNotes, type UpdateNotes } from "../shared/update.ts";
 import { USAGE_PROVIDERS, UsageService } from "./usage.ts";
 import { VoiceService } from "./voice.ts";
@@ -2668,6 +2668,48 @@ describe("token auth", () => {
     expect(body.auth).toEqual({ required: true, authenticated: false, reason: "token_required" });
     // a Unix herdr attaches terminals; Windows PCs report false and open in the chat lens
     expect(body.herdr.terminal_attach).toBe(true);
+  });
+
+  it("tells a client that got in when this server is open to the network, and nobody else", async () => {
+    // the health body is JSON off the wire; LanExposure is the shape this endpoint adds to it
+    type HealthBody = { auth: HealthAuth; lan_exposure?: LanExposure };
+    const health = async (port: number, headers: Record<string, string> = {}): Promise<HealthBody> =>
+      (await (await fetch(`http://127.0.0.1:${port}/api/health`, { headers })).json()) as HealthBody;
+    // no token and nothing paired, pinned so an inherited HERDR_WEB_TOKEN cannot gate the case
+    const bound = (hostname: string) => {
+      const stateDir = mkdtempSync(join(tmpdir(), "herdr-lan-"));
+      const instance = createServer({ port: 0, hostname, token: "", stateDir });
+      return { port: instance.port, stop: () => { instance.stop(); rmSync(stateDir, { recursive: true, force: true }); } };
+    };
+    const open = bound("0.0.0.0");
+    try {
+      // bound past this PC, no token, nothing paired: the one state the warning is for
+      expect((await health(open.port)).lan_exposure).toEqual({ host: "0.0.0.0" });
+      // a request that did not get in is told nothing, whatever the server's state: Funnel is the
+      // public internet, which is never "open" (server/access.ts)
+      const refused = await health(open.port, { "x-forwarded-for": "100.64.0.9", "tailscale-funnel-request": "?1" });
+      expect(refused.auth).toMatchObject({ required: true, authenticated: false, reason: "pairing_required" });
+      expect(refused.lan_exposure).toBeUndefined();
+      // pairing one device closes the gate to strangers, and the warning leaves with the state
+      const guard = { "content-type": "application/json", "x-herdr-machine": "1" };
+      const { code } = (await (await fetch(`http://127.0.0.1:${open.port}/api/devices/pair/start`, { method: "POST", headers: guard })).json()) as { code: string };
+      const paired = await fetch(`http://127.0.0.1:${open.port}/api/devices/pair`, { method: "POST", headers: { ...guard, "x-forwarded-for": "100.64.0.9" }, body: JSON.stringify({ code, label: "Phone" }) });
+      expect(paired.status).toBe(204);
+      expect((await health(open.port)).auth).toMatchObject({ authenticated: true, via: "local" });
+      expect((await health(open.port)).lan_exposure).toBeUndefined();
+    } finally {
+      open.stop();
+    }
+    // the same empty configuration on a loopback bind is unreachable from the network
+    const loopback = bound("127.0.0.1");
+    try {
+      expect((await health(loopback.port)).lan_exposure).toBeUndefined();
+    } finally {
+      loopback.stop();
+    }
+    // and a token is a closed gate, which this endpoint already reported
+    const securedBody = await (await fetch(`${securedBase()}/api/health`)).json() as HealthBody;
+    expect(securedBody.lan_exposure).toBeUndefined();
   });
 
   it("refuses a token that does not match", async () => {

@@ -17,7 +17,8 @@
     "scripts/chat-fallback-fixture.tsx",
     "scripts/grok-chat-browser-qa.ts",
     "scripts/file-preview-text-browser-qa.ts",
-    "scripts/file-preview-text-fixture.tsx"
+    "scripts/file-preview-text-fixture.tsx",
+    "scripts/lan-exposure-notice-regression.ts"
   ],
   "include": []
 }

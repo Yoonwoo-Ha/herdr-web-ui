@@ -170,6 +170,7 @@ export const ZH: Record<string, string> = {
   "Live terminal is coming to Windows PCs: herdr cannot attach a terminal there yet. The chat lens works now.": "Windows PC 的实时终端即将推出：herdr 目前还不能在 Windows 上附加终端。聊天视图现在即可使用。",
   "Terminal": "终端",
   "Terminal for {title}": "{title} 终端",
+  "Anyone who can reach {host} on your network can type into every pane: no access token is set and no device is paired yet.": "同一网络上任何能访问 {host} 的人都可以在每个窗格中输入：尚未设置访问 Token，也还没有配对任何设备。",
   "locked — the token gate is asking again": "已锁定 — 令牌门再次要求验证",
   "herdr {version} · protocol {protocol}": "herdr {version} · 协议 {protocol}",
   "live": "已连接",

@@ -21,6 +21,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   **Settings → Chat → File viewer** controls line wrapping and Markdown width; previews inherit
   the chat's font and, in the viewer, the opening pane's chat width.
   ([#429](https://github.com/devswha/herdr-web-ui/pull/429) by @aNNdii)
+- A line over the panes says when the server can be reached from the network with no access
+  token set and no device paired, and what to do about it. Nothing about who is let in changes:
+  pairing a device or setting a token is still the owner's call.
+  ([#698](https://github.com/devswha/herdr-web-ui/pull/698) by @pt-act)
 - **Shared settings and pins.** The browsers of one server, a PC's and a phone's, keep the same
   pinned agents and the same settings that do not depend on the device: theme and colors, language,
   the sidebar's rows, order, cards and pins, chat and usage-meter choices. A

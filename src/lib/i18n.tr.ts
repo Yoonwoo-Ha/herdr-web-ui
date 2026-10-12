@@ -155,6 +155,7 @@ export const TR: Record<string, string> = {
   "Live terminal is coming to Windows PCs: herdr cannot attach a terminal there yet. The chat lens works now.": "Canlı terminal Windows bilgisayarlara geliyor: herdr orada henüz terminal bağlayamıyor. Sohbet görünümü şimdiden çalışıyor.",
   "Terminal": "Terminal",
   "Terminal for {title}": "{title} için terminal",
+  "Anyone who can reach {host} on your network can type into every pane: no access token is set and no device is paired yet.": "Ağınızda {host} adresine ulaşabilen herkes her panele yazabilir: erişim anahtarı ayarlanmamış ve henüz eşleştirilmiş bir cihaz yok.",
   "locked — the token gate is asking again": "kilitli — token kapısı yeniden soruyor",
   "herdr {version} · protocol {protocol}": "herdr {version} · protokol {protocol}",
   "live": "canlı",

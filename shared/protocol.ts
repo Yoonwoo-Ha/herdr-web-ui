@@ -315,6 +315,20 @@ export interface HealthAuth {
   readonly reason?: AccessRefusal;
 }
 
+/**
+ * GET /api/health, authenticated requests only: this server answers on an address beyond this
+ * PC while no access token is set and no device has ever been paired, so anything that can
+ * reach that address is let in (`open` in `server/access.ts`). It is a warning, never a gate:
+ * nothing about who is let in changes because this field exists.
+ *
+ * Never sent to a request that did not get in. "This host runs herdr-web-ui with no token"
+ * is reconnaissance for whoever is asking, not help.
+ */
+export interface LanExposure {
+  /** the address the server is bound to, so the warning can name where it is reachable */
+  readonly host: string;
+}
+
 export interface PairedDevice {
   readonly id: string;
   readonly label: string;
