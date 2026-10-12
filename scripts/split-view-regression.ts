@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, BrowserContext, Page, Route, WebSocket } from "playwright-core";
-import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { herdrRpc, paneSplit, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 
 /**
  * The split view's edges (lib/split.ts), each on a browser context of its own: the other half's
@@ -151,7 +151,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       assert.deepEqual(errors, []);
     }
 
-    // 4. Closing the other half leaves the active pane on its own connection.
+    // 4. Closing the other half leaves the active half's pane mounted, on the PC's one connection.
     {
       const [left, right] = await panesFor("keep-left", "keep-right") as [string, string];
       const sockets: WebSocket[] = [];
@@ -159,17 +159,18 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
         context.on("page", (opened) => opened.on("websocket", (socket) => sockets.push(socket)));
       });
       await splitRight(page, right);
+      const kept = (await half(page, "right").locator(".pane-terminal").elementHandle())!;
       await half(page, "right").getByRole("log", { name: `conversation of ${right}`, exact: true }).waitFor();
-      assert.equal(sockets.length, 2, "one socket per half");
-      const [first, second] = sockets as [WebSocket, WebSocket];
-      // the right half is active: closing the left one must not move its pane to the left's socket
+      // both halves are on this PC: they share its connection (lib/machineSession.ts)
+      assert.equal(sockets.length, 1, "one socket for the PC, whatever the halves");
+      // the right half is active: closing the left one must not mount its pane again
       await half(page, "left").getByRole("button", { name: "Close this half", exact: true }).click();
       await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 1);
-      await until(page, () => first.isClosed() || second.isClosed(), "a half's socket closes");
-      assert.equal(second.isClosed(), false, "the active half keeps its connection");
-      assert.equal(first.isClosed(), true, "the closed half's connection goes");
+      await settled(page);
+      assert.equal(await kept.evaluate((element) => element.isConnected), true, "the active half's terminal stays mounted");
+      assert.equal(sockets[0]!.isClosed(), false, "the PC's connection stays open");
       await page.getByRole("log", { name: `conversation of ${right}`, exact: true }).waitFor();
-      console.log("PASS closing the other half leaves the active pane on its own connection");
+      console.log("PASS closing the other half leaves the active pane mounted on its connection");
       assert.deepEqual(errors, []);
     }
 
@@ -280,6 +281,56 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       await isActive(page, "right");
       await data.dispose();
       console.log("PASS split preview starts early, survives child leaves, cancels cleanly and matches the drop side");
+      assert.deepEqual(errors, []);
+    }
+
+    // 6. A tab dragged down out of its strip opens in a half; the strip keeps its sideways reorder.
+    //    Each half draws its tab at herdr's own layout, and a tab is never drawn in both halves.
+    {
+      const [first] = await panesFor("tabs") as [string];
+      const workspaceId = workspaces[workspaces.length - 1]!;
+      const second = (await tabCreate({ workspaceId })).root_pane.pane_id;
+      await herdrRpc("pane.report_agent", { pane_id: second, source: "manual", agent: "claude", state: "idle" });
+      const beside = (await paneSplit(first, "right", false)).pane_id;
+      const { page, errors } = await open([first, second, beside], "terminal");
+      const area = page.locator(".pane-split");
+      await page.waitForFunction(() => document.querySelectorAll(".pane-split .pane-terminal").length === 2);
+      const tabs = page.locator(".tab-strip [role=tab]");
+      await tabs.nth(1).waitFor();
+      const box = (await area.boundingBox())!;
+      const tab = (await tabs.nth(1).boundingBox())!;
+      await page.mouse.move(tab.x + tab.width / 2, tab.y + tab.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(tab.x + tab.width / 2 + 8, tab.y + tab.height / 2 + 4, { steps: 2 });
+      // the guide shows as soon as the drag starts, with no half chosen over the strip
+      await page.waitForFunction(() => { const guide = document.querySelector(".split-drop"); return guide?.classList.contains("is-visible") && !guide.hasAttribute("data-side"); });
+      await page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, { steps: 8 });
+      await page.waitForFunction(() => document.querySelector(".split-drop")?.getAttribute("data-side") === "right");
+      await page.mouse.up();
+      await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
+      await isActive(page, "right");
+      assert.equal(await half(page, "left").locator(".pane-terminal").count(), 2, "the left half draws herdr's split of its tab");
+      assert.equal(await half(page, "right").locator(".pane-terminal").count(), 1);
+      // the other half's tab, picked in the active half's strip, makes that half active: not drawn twice
+      await half(page, "right").locator(".tab-strip [role=tab]").nth(0).click();
+      await isActive(page, "left");
+      assert.equal(await page.locator(".pane-slot").count(), 2);
+      assert.equal(await page.locator(".pane-split .pane-terminal").count(), 3, "no tab drawn in both halves");
+      // Escape drops a tab drag (from the other half's strip) with nothing changed
+      const again = (await half(page, "right").locator(".tab-strip [role=tab]").nth(1).boundingBox())!;
+      await page.mouse.move(again.x + again.width / 2, again.y + again.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width * 0.2, box.y + box.height / 2, { steps: 8 });
+      await page.waitForFunction(() => document.querySelector(".split-drop")?.getAttribute("data-side") === "left");
+      await page.keyboard.press("Escape");
+      await page.waitForFunction(() => document.querySelector(".split-drop")?.classList.contains("is-visible") === false);
+      await page.mouse.up();
+      await settled(page);
+      // the press made its half active, as any press in the other half does; the drag changed nothing
+      await isActive(page, "right");
+      assert.equal(await page.locator(".pane-slot").count(), 2);
+      assert.equal(await half(page, "left").locator(".pane-terminal").count(), 2, "a cancelled drag leaves the halves alone");
+      console.log("PASS a tab dragged out of its strip opens in a half, at herdr's layout, never in both");
       assert.deepEqual(errors, []);
     }
   } finally {
