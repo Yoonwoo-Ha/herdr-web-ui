@@ -49,3 +49,27 @@ test("a 206 cut at the budget names the whole size, and a 200 of exactly the bud
   const longer = new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("abcd")); controller.enqueue(new TextEncoder().encode("e")); } }));
   expect(await readFilePreviewText(longer, 4)).toEqual({ text: "abcd", truncated: true });
 });
+
+test("an empty range is an empty file, but other 416 responses remain errors", async () => {
+  let cancelled = false;
+  const empty = new Response(new ReadableStream({ cancel() { cancelled = true; } }), { status: 416, headers: { "content-range": "bytes */0" } });
+  expect(await readFilePreviewText(empty, 10))
+    .toEqual({ text: "", truncated: false, total: 0 });
+  expect(cancelled).toBe(true);
+  for (const headers of [new Headers(), new Headers({ "content-range": "bytes */99" })]) {
+    await expect(readFilePreviewText(new Response(null, { status: 416, headers }), 10)).rejects.toThrow("could not be opened");
+  }
+});
+
+test("a partial file ends at its last whole line without trimming a complete file", async () => {
+  const part = new Response("a\nb\nhal", { status: 206, headers: { "content-range": "bytes 0-6/100" } });
+  expect(await readFilePreviewText(part, 7)).toEqual({ text: "a\nb\n", truncated: true, total: 100 });
+  expect(await readFilePreviewText(new Response("a\nb\nhal"), 7)).toEqual({ text: "a\nb\nhal", truncated: false });
+  const complete = new Response("one\ntwo", { status: 206, headers: { "content-range": "bytes 0-6/7" } });
+  expect(await readFilePreviewText(complete, 10)).toEqual({ text: "one\ntwo", truncated: false, total: 7 });
+});
+
+test("a short range retains the body total and drops an incomplete UTF-8 sequence", async () => {
+  const part = new Response(new TextEncoder().encode("xä").slice(0, 2), { status: 206, headers: { "content-range": "bytes 0-1/4096" } });
+  expect(await readFilePreviewText(part, 10)).toEqual({ text: "x", truncated: true, total: 4096 });
+});

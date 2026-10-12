@@ -13,6 +13,8 @@ export interface SshTarget {
   session?: string;
 }
 export interface Machine {
+  /** Read-only identity inherited from the local herdr catalog. */
+  herdr_profile_id?: string;
   id: string;
   name: string;
   kind: "local" | "ssh";
@@ -41,7 +43,7 @@ export interface HerdrIdentity {
   /** without attach, the terminal lens shows the pane's screen repainted a few times a second (server/mirror.ts) */
   terminal_mirror?: boolean;
 }
-export type MachineAction = "update_bridge" | "setup" | "bridge_conflict";
+export type MachineAction = "connect" | "update_bridge" | "setup" | "bridge_conflict";
 export interface MachineUpdate { job_id: string; step: string; progress: SetupProgress | null }
 /**
  * Where a bridge install is. download (the web server fetching the bundle) and upload (the

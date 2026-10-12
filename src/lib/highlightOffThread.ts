@@ -7,7 +7,7 @@ import { createOffThreadQueue, type OffThreadJob, type WorkerLike } from "./offT
  */
 export const HIGHLIGHT_BUDGET_MS = 2_000;
 
-/** The colored texts kept, by the characters of their sources: a chat's code blocks. */
+/** The colored texts kept, by the characters of their sources: a chat's code blocks and an open file. */
 const CACHE_CHARACTERS = 4 * 1024 * 1024;
 
 /**

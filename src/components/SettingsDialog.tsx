@@ -7,7 +7,7 @@ import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, formatKeys, isMacPlatform, shortcutDisplayKeys, shortcutKeys, shortcutConflict } from "../lib/shortcuts.ts";
 import { isReservedShortcutKey } from "../lib/shortcutBindings.ts";
-import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, TERMINAL_CURSOR_STYLES, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, type DictationLanguage, type TerminalCursorStyle, type VoiceButton } from "../lib/settings.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, TERMINAL_CURSOR_STYLES, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, type DictationLanguage, type TerminalCursorStyle, type VoiceButton } from "../lib/settings.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
@@ -183,6 +183,9 @@ function AppearancePage() {
       <SettingsRow label={t("Quiet opened finishes")} description={t("A finished agent you have opened here loses its dot, as herdr's own view would clear it; remembered per PC on this browser")}>
         <Toggle label={t("Quiet opened finishes")} checked={settings.quietOpenedDone} onChange={(quietOpenedDone) => update({ quietOpenedDone })} />
       </SettingsRow>
+      <SettingsRow label={t("Agent logos")} description={t("Draw each agent's logo in its brand colors, or without color")} wide>
+        <Segmented label={t("Agent logos")} value={settings.agentMarks} onChange={(agentMarks) => update({ agentMarks })} options={[{ value: "color", label: t("Color") }, { value: "mono", label: t("Mono") }]} />
+      </SettingsRow>
     </SettingsGroup>
   );
 }
@@ -259,6 +262,16 @@ function ChatPage() {
             <button type="button" className="btn btn-ghost" onClick={() => update({ quickReplies: [...DEFAULT_SETTINGS.quickReplies] })}>{t("Restore defaults")}</button>
           </div>
         </div>
+      </SettingsGroup>
+
+      <SettingsGroup title={t("File viewer")}>
+        <SettingsRow label={t("Wrap long lines")}>
+          <Toggle label={t("Wrap long lines")} checked={settings.wrapCode} onChange={(wrapCode) => update({ wrapCode })} />
+        </SettingsRow>
+        <SettingsRow label={t("Markdown width")}>
+          {/* literal keys, so the i18n check finds them */}
+          <Segmented label={t("Markdown width")} value={settings.markdownWidth} onChange={(markdownWidth) => update({ markdownWidth })} options={MARKDOWN_WIDTHS.map((markdownWidth) => ({ value: markdownWidth, label: markdownWidth === "full" ? t("Full width") : t("Default") }))} />
+        </SettingsRow>
       </SettingsGroup>
     </>
   );

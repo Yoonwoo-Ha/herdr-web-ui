@@ -24,13 +24,15 @@ export function readerFromSearch(search: string): ReaderTarget | null {
  * its home is, and it expands the path.
  */
 export function resolveFromDocument(document: string, target: string): string {
-  if (target.startsWith("/") || target.startsWith("~/") || /^[A-Za-z]:[\\/]/.test(target)) return target;
+  if (/^(?:[\\/]|~\/|[A-Za-z]:[\\/])/.test(target)) return target;
   const folder = document.replace(/\\/g, "/").split("/").slice(0, -1);
   const home = folder[0] === "~";
+  // a Windows share (//server/share) is a root as a whole: `..` never climbs above it
+  const root = folder[0] === "" && folder[1] === "" && folder.length >= 4 ? 4 : 1;
   for (const part of target.replace(/\\/g, "/").split("/")) {
     if (part === "" || part === ".") continue;
     if (part === "..") {
-      if (folder.length > 1 && folder[folder.length - 1] !== "..") folder.pop();
+      if (folder.length > root && folder[folder.length - 1] !== "..") folder.pop();
       else if (home) folder.push("..");
     } else folder.push(part);
   }

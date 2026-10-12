@@ -55,7 +55,7 @@ export class SshConnection {
   }
   /** the options ssh and sftp share; the port flag differs (`-p` is sftp's preserve-times) */
   private options(): string[] {
-    const args = ["-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "PermitLocalCommand=no", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"];
+    const args = ["-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "PermitLocalCommand=no", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"];
     if (this.keyOnly) args.push("-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none");
     if (this.target.port) args.push("-o", `Port=${this.target.port}`);
     if (this.target.identity_file) args.push("-i", this.target.identity_file.replace(/^~\//, homedir() + "/"));
@@ -145,7 +145,10 @@ export class SshConnection {
     await this.exec(["sftp", ...this.options(), "-o", `ControlPath=${this.control}`, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-b", "-", this.target.destination], new TextEncoder().encode(`put "${localPath}" "${remote}"\n`), timeout);
   }
   async forward(port: number, remotePort: number): Promise<void> {
-    await this.exec([...this.base(), "-O", "forward", "-L", `127.0.0.1:${port}:127.0.0.1:${remotePort}`, this.target.destination]);
+    // Mux commands read SSH config too: even a master with ClearAllForwardings
+    // would accept those extra tunnels here. -O uses only our existing control
+    // socket, so no host config is needed; ClearAllForwardings would erase our -L.
+    await this.exec(["ssh", "-F", "none", "-S", this.control, "-O", "forward", "-L", `127.0.0.1:${port}:127.0.0.1:${remotePort}`, this.target.destination]);
   }
   private async exec(args: string[], input?: Uint8Array | StreamInput, timeout = 30_000): Promise<string> {
     const stream = input !== undefined && !(input instanceof Uint8Array) ? input : undefined;

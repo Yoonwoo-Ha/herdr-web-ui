@@ -1,3 +1,4 @@
+import { readHerdrProfiles, type HerdrMachineProfile } from "./herdr-profiles.ts";
 import { randomBytes } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -35,7 +36,7 @@ import { CompletionTracker, type OmoRest } from "./completion.ts";
 import { freeAgentName } from "./agent-name.ts";
 import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent } from "./shell-agent.ts";
 import { listDirectories } from "./directories.ts";
-import { fileResponse, locateFile } from "./file-view.ts";
+import { fileResponse, locateFile, crossSiteFileRead } from "./file-view.ts";
 import {
   agentManifests,
   agentPrompt,
@@ -435,6 +436,8 @@ export function createServer(
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
     voice?: VoiceService;
     machines?: boolean;
+    /** Read-only saved profiles from the local herdr client; tests supply their own catalog. */
+    herdrProfiles?: () => Promise<HerdrMachineProfile[]>;
     registerBridge?: boolean;
     /** PLUGIN_ACTION_WAIT_MS; a test shortens it to see a run that outlasts the wait */
     pluginActionWaitMs?: number;
@@ -1053,6 +1056,7 @@ export function createServer(
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
     ({ type: "pane-status", pane_id: paneId, agent_status: status, ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
   const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot);
+  if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
   const bridgeToken = randomBytes(32).toString("hex");
 
   function broadcast(paneId: string, message: ServerMessage): void {
@@ -1822,6 +1826,7 @@ export function createServer(
 
       if (pathname === "/api/fs/stat" || pathname === "/api/fs/file") {
         if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
+        if (crossSiteFileRead(request)) return jsonResponse({ error: { code: "cross_site", message: "A file is read from this app or opened in a tab, not loaded by another page" } }, 403);
         const paneId = url.searchParams.get("pane_id");
         let cwd: string | null = null;
         if (paneId) {
@@ -1831,7 +1836,7 @@ export function createServer(
         if (found === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
         // several files end in that name: the viewer lists them to choose from
         if ("candidates" in found) return jsonResponse({ error: { code: "ambiguous_path", message: "several files have that name", candidates: found.candidates } }, 409);
-        return pathname === "/api/fs/stat" ? jsonResponse(found.info) : fileResponse(found.info, url.searchParams.get("download") === "1");
+        return pathname === "/api/fs/stat" ? jsonResponse(found.info) : fileResponse(found.info, url.searchParams.get("download") === "1", url.searchParams.get("render") === "1");
       }
 
       if (pathname === "/api/workspace/directories") {
@@ -3242,7 +3247,7 @@ if (import.meta.main) {
   const updates = connectUpdater();
   const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
   const telemetry = new Telemetry({ stateDir: defaultStateDir(), version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version });
-  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, registerBridge: true });
+  const instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), telemetry, registerBridge: true, herdrProfiles: readHerdrProfiles });
   telemetry.start();
   let stopping = false;
   const shutdown = () => {

@@ -56,12 +56,16 @@ it("opens a PC's file from a navigation another site started, and keeps every ot
   // Chrome on Android shows a PDF in the viewer's frame as an "Open" button; its navigation is cross-site
   const file = "http://127.0.0.1/api/machines/pc1/fs/file?path=%2Ftmp%2Freport.pdf";
   for (const site of ["cross-site", "same-site"]) {
-    const response = await handleMachineRequest(new Request(file, { headers: { "sec-fetch-site": site } }), manager);
+    const response = await handleMachineRequest(new Request(file, { headers: { "sec-fetch-site": site, "sec-fetch-mode": "navigate" } }), manager);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/pdf");
     expect(await response.text()).toBe("%PDF-1.7");
   }
-  const head = await handleMachineRequest(new Request(file, { method: "HEAD", headers: { "sec-fetch-site": "cross-site" } }), manager);
+  const head = await handleMachineRequest(new Request(file, { method: "HEAD", headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" } }), manager);
+  // another page loading the file as a picture (a rendered HTML page probing which files exist) is not a navigation
+  const probe = await handleMachineRequest(new Request(file, { headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" } }), manager);
+  expect(probe.status).toBe(403);
+  expect((await probe.json()).error.code).toBe("cross_site");
   expect(head.status).toBe(200);
   expect(head.headers.get("content-type")).toBe("application/pdf");
   const crossSite = { "sec-fetch-site": "cross-site" };

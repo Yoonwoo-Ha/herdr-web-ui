@@ -52,6 +52,8 @@
   --status-done-tint: rgba(147, 195, 107, 0.14);
   --danger-tint: rgba(255, 123, 112, 0.12);
   --danger-text: #ffd9d4;
+  /* a note that the view is partial (a file cut short, code left plain): warning yellow */
+  --notice: #e8c55c;
 
   /* overlays */
   --scrim: rgba(8, 6, 4, 0.55);
@@ -77,6 +79,8 @@
 
   /* syntax highlighting (components/HighlightedCode.css): the four derived roles follow the
      palette because they are resolved on <html>, where data-theme and data-palette sit */
+  /* the file viewer's line numbers: tertiary text, quieter than the code beside them */
+  --line-number: var(--text-dim);
   --syntax-comment: var(--text-dim);
   --syntax-function: var(--accent);
   --syntax-inserted: var(--status-done);
@@ -152,7 +156,8 @@
   --content-w: 820px;
   /* the chat lane: transcript, composer column, held list (Settings → Chat width, lib/settings.ts).
      At the Default step PaneTerminal writes the pane's own lane on .terminal-stack, as one
-     length (chatLaneLength: 71.43% of the pane in px, min 820px, max 60rem); this is that rule's floor, for a
+     length (chatLaneLength: 71.43% of the pane in px, min 820px, max 60rem), and a file viewer
+     writes the lane of the pane that opened it on itself; this is that rule's floor, for a
      pane not measured yet. Never a percentage here: each column would resolve it against its
      own box and the columns would differ by their gutters */
   --chat-w: var(--content-w);
@@ -168,9 +173,11 @@
   --dur-fast: 120ms;
   --dur-base: 180ms;
   --dur-pulse: 1600ms;
-  /* one turn of the working arc: a stepped rotation draws its steps and nothing else, so the
-     step count in Sidebar.css is the frame rate and this only sets how fast it looks */
+  /* one turn of a stepped spinner: it draws its steps and nothing else, so the step count is
+     the frame rate and this only sets how fast it looks */
   --dur-spin: 1600ms;
+  /* one breath of the sidebar's working dot: held full, dimmed, held, back (Sidebar.css) */
+  --dur-breathe: 2000ms;
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
   --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
   /* the pulse jumps between its two looks: a smooth one has the browser draw a new frame at
@@ -230,6 +237,7 @@
   --status-done-tint: rgba(47, 99, 23, 0.12);
   --danger-tint: rgba(168, 35, 35, 0.1);
   --danger-text: #8f1d1d;
+  --notice: #7a5a00;
   --scrim: rgba(40, 32, 22, 0.35);
   --shadow-drawer: 0 0 40px rgba(40, 32, 22, 0.22);
   --shadow-pop: 0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border);
@@ -260,6 +268,7 @@
 }
 
 [data-theme="dark"][data-palette="report"] {
+  --notice: #f5b544;
   --bg: #0a0d12;
   --bg-panel: #0f1319;
   --bg-elevated: #141922;
@@ -303,6 +312,7 @@
 /* Report and charcoal share plain paper in light; charcoal's own light block below
    swaps the blue for ink */
 [data-theme="light"]:is([data-palette="report"], [data-palette="charcoal"]) {
+  --notice: #8a5300;
   --bg: #f2f2f0;
   --bg-panel: #fafaf9;
   --bg-elevated: #efefed;
@@ -339,6 +349,7 @@
    chrome hue - selection, focus, cursor and the user's action are near-white; agent
    states are muted as in the terminal palette. Light keeps the base paper with ink. */
 [data-theme="dark"][data-palette="charcoal"] {
+  --notice: #d9b26a;
   --bg: #0f0f0f;
   --bg-panel: #171717;
   --bg-elevated: #1f1f1f;
@@ -396,6 +407,9 @@
    surfaces, so the style guide's "legibility first" applies: each keeps its hue and is
    darkened until it passes AA (Mauve 17%, Red 18%, Blue 22%, Green 37%). */
 [data-theme="dark"][data-palette="catppuccin"] {
+  --notice: #f9e2af;
+  /* overlay2: --text-dim (subtext1) is nearly --text here */
+  --line-number: #9399b2;
   --bg: #1e1e2e;
   --bg-panel: #181825;
   --bg-elevated: #181825;
@@ -439,6 +453,9 @@
 }
 
 [data-theme="light"][data-palette="catppuccin"] {
+  --notice: #8a5710;
+  /* subtext0, darkened to 4.5:1 on --bg */
+  --line-number: #64677d;
   --bg: #eff1f5;
   --bg-panel: #e6e9ef;
   --bg-elevated: #e6e9ef;

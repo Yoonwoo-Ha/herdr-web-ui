@@ -351,6 +351,11 @@ try {
   await herdrRpc("pane.report_agent", { pane_id: paneA, source: "manual", agent: "claude", state: "working" });
   await until(async () => await badge.getAttribute("data-status") === "working", "working event before poll");
   await agentRow(paneA).locator('.badge[data-status="working"]').waitFor();
+  // RUN is a working-coloured dot that breathes in opacity steps, no arc (Sidebar.css)
+  const runDot = agentRow(paneA).locator('.badge[data-status="working"] .sidebar-status-dot');
+  assert.equal(await runDot.count(), 1, "RUN draws a dot");
+  assert.equal(await agentRow(paneA).locator('.badge[data-status="working"] svg').count(), 0, "RUN draws no arc");
+  assert.equal(await runDot.evaluate((dot) => getComputedStyle(dot).animationName), "sidebar-breathe", "the dot breathes");
   releasePoll();
   await until(() => pollFinished, "stale machines response released");
   await page.waitForTimeout(300);
@@ -457,7 +462,11 @@ try {
   await waitingBadge.waitFor();
   assert.equal((await waitingBadge.textContent())?.trim(), "BG");
   assert.equal(await waitingBadge.getAttribute("title"), "Agent waiting on background work");
-  assert.equal(await waitingBadge.locator("svg").count(), 1, "BG draws the running arc, held still");
+  // BG is a still ring in the working colour; RUN is a dot of it that breathes (Sidebar.css)
+  assert.equal(await waitingBadge.locator("svg").count(), 0, "BG draws no arc any more");
+  const ring = waitingBadge.locator(".sidebar-status-dot");
+  assert.equal(await ring.count(), 1, "BG draws a ring");
+  assert.deepEqual(await ring.evaluate((dot) => { const style = getComputedStyle(dot); return { hollow: style.backgroundColor === "rgba(0, 0, 0, 0)", bordered: parseFloat(style.borderTopWidth) > 0, animation: style.animationName }; }), { hollow: true, bordered: true, animation: "none" }, "the ring is hollow, bordered and still");
   await page.locator('.composer-status[data-status="waiting"] strong.visually-hidden', { hasText: "BG" }).waitFor();
   for (const peer of ["working", "done", "blocked", "idle"] as const) {
     backgroundPeer = peer;

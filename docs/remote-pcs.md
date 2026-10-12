@@ -2,6 +2,30 @@
 
 Use **Add PC** in Settings → Remote PCs (the command palette has it too) to connect a Linux or macOS computer (x64 or arm64) or a Windows PC (x64) running OpenSSH Server. Enter an SSH alias or `user@hostname`; the name defaults to that address. Advanced settings accept a port, a key path on the **web server**, and a named herdr session. Each registration selects one herdr socket. The sidebar groups PC → workspace → pane, and the header and new-session dialog show the destination PC.
 
+**Machines already saved in herdr appear automatically.** The connection server reads its account's
+`herdr machine list --json` at startup and every five seconds after the previous read finishes. Failed reads back off up to five minutes and
+log only a changed failure; a successful read resets the delay. It
+preserves SSH aliases, explicit URI ports and named sessions (normalizing herdr’s `default` to
+the unnamed socket), follows renames and enabled state,
+and removes inherited rows when their profiles disappear. A failed catalog read keeps the previous
+roster. Exact destinations/sessions already added manually keep their existing web UI registration.
+
+Discovery only reads the local catalog; it does not open SSH connections. Choose **Connect** on
+an inherited PC to use the saved address and session. A successful connection remembers permission
+to reconnect to that exact destination, explicit port and session. Installation, key registration
+and bridge startup still show a separate approval step. Connecting to an already running bridge
+does not grant permission to start or update it later. After approving bridge setup, the web UI can
+restart that bridge after a reboot and honor the automatic bridge-update setting. A changed
+destination, port or session clears both permissions, cached panes and the generated local SSH key;
+the new target needs **Connect** again. Rename, disable and remove
+inherited PCs in herdr. These rows are derived from herdr rather than copied into `machines.json`;
+their stable IDs preserve browser selections and drafts across web UI restarts. Only web-owned
+connection permission, setup approval and cached snapshots are stored separately in `herdr-profile-state.json`, written
+atomically with mode `0600`. Removing a source profile clears that state and its generated local
+key; the remote authorized public-key entry is left for explicit cleanup. Previously configured
+inherited PCs without this state need one successful explicit setup to record approval. Unsupported SSH
+addresses/sessions appear with an error and do not connect.
+
 The connection server uses its own operating-system account’s OpenSSH configuration and ssh-agent. The browser never opens SSH itself. Existing keys are tried first; unknown host fingerprints and password/key-passphrase prompts appear in the setup dialog. Secret entry requires HTTPS or localhost. Verify a new fingerprint against the target PC. A changed host key fails closed; correcting trust is a deliberate administrator action, not an automatic reset.
 
 After inspection, **Install and connect** lists the proposed changes. The installer uses a private runtime bundle containing Bun, Node and native node-pty, plus a pinned herdr fallback. It uses an existing herdr where available, starts a daemon only when its socket is absent, and never stops/replaces a running herdr daemon. Agent CLI installation and login remain the remote account’s responsibility. Cancelling a setup closes its SSH processes; already-created remote work is preserved.
@@ -58,6 +82,10 @@ The update path never takes over a terminal or stops herdr sessions.
 
 PC registrations and last snapshots persist in `<stateDir>/machines.json`; `HERDR_WEB_STATE_DIR` chooses the state directory. A disconnected PC retains its last roster with controls disabled. Retries back off from 1 second to 60 seconds. Other PCs keep working. Reconnection never changes a non-empty selection or sends held input. Composer drafts, held messages, terminal drafts, lenses, recent panes and notification identities include both machine and pane. Held messages have an explicit **Send now** action.
 
+SSH commands ignore configured `LocalForward`, `RemoteForward` and `DynamicForward`
+tunnels. The app adds only its own loopback forward through the existing control socket, without
+rereading host config for that forwarding request.
+
 **Disconnect** closes that PC’s observer, forwards and terminal attachments, preserving remote processes. **Remove PC** additionally forgets its local registration/key; the public key line on the remote account remains visible for manual removal (`herdr-web-ui:<machine-id>`). No unrelated authorized keys are removed.
 
 **Updating a bridge.** A bridge from another bundle version is refused, and the PC waits instead of retrying. With **Settings → Remote PCs → Update PC bridges automatically** on (the default), the connection server then updates it in the background: installing the app update was the approval, and SSH uses the PC's saved key only (`BatchMode`). A PC that needs a password or passphrase fails with the reason and waits; its **Sign in and update…** button opens the dialog. An update that cannot reach the PC (switched off, asleep, off the network, or gone in the middle) says nothing about its bridge: the PC shows **Reconnecting…** and keeps retrying, and the version check, with its update, runs again once the PC answers. A cancelled update (its **Cancel update**, a closed dialog, the setup's time limit) also sends the PC back to reconnecting; if the bridge is still out of date when the PC answers, it shows the **Update bridge** button and does not start the cancelled update again by itself until the PC has connected. With the setting off, the PC's **Update bridge** button starts the same background update, and the tap is the approval. A first install still asks for approval in the dialog.
@@ -102,3 +130,18 @@ The default manifest is `https://github.com/devswha/herdr-web-ui/releases/downlo
 - `bun run test:ui`: existing composer/session/mobile browser regressions.
 
 macOS Codex discovery uses `lsof` for open rollout files instead of `/proc`; canonical-store validation and the unambiguous transcript matching rules are unchanged. Platform jobs must run on their corresponding runners before all-platform release readiness can be claimed. The Docker password test can run locally without sudo; macOS/arm64 binaries still require their corresponding runners.
+
+### Saved-machine SSH lifecycle fixture
+
+The saved-machine desktop/phone regression runs in the regular browser CI lane. To run it
+alone, use `bun run check run --build bun scripts/herdr-profiles-browser-qa.ts` with
+`CHROME_PATH` pointing to an installed Chromium. Set `EVIDENCE_DIR` to save roster and
+installation-approval screenshots for both viewports.
+
+Build `docker build -t herdr-profile-ssh-qa scripts/fixtures/herdr-ssh`, then run
+`HERDR_SSH_QA_BUNDLE=/path/to/verified/linux-bundle.tgz bun scripts/herdr-profiles-ssh-qa.ts`.
+The Docker host and bundle architecture must match. The fixture uses a temporary container,
+a loopback-only SSH port, disposable password/key credentials and temporary manager state.
+It exercises discovery without SSH, connection consent, installation approval, reuse of an existing default Herdr session,
+terminal attach/input/resize, manager and bridge restart, source disable/re-enable, named-session
+retargeting and removal cleanup. It never changes the user's SSH config or Herdr catalog.

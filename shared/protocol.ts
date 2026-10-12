@@ -46,6 +46,8 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  * GET /api/health?scope=bridge -> BridgeHealth, never waits for herdr
  * GET /api/bridge -> authenticated BridgeIdentity (socket + runtime compatibility)
  * GET /api/machines -> { machines: Machine[] }; GET /api/machines/events -> MachineEvent SSE
+ * Machine action_required=connect: a saved herdr PC awaits explicit POST /api/machines/setup before SSH.
+ * Connection permission survives successful setup; installation/startup approval remains separate.
  * SetupJob/Machine action_required=bridge_conflict: align app versions, then retry setup without update_remote.
  * POST /api/machines/setup -> SetupJob; GET/POST/DELETE /api/machines/setup/:job_id
  * PATCH /api/machines/:id { name?, enabled? }; DELETE /api/machines/:id
@@ -611,7 +613,11 @@ export interface DirectoryListing {
 /** How the file viewer shows a file. */
 export type FileKind = "image" | "video" | "audio" | "pdf" | "text" | "binary";
 
-/** GET /api/fs/stat: a file the viewer can open (GET /api/fs/file streams it). */
+/**
+ * GET /api/fs/stat: a file the viewer can open (GET /api/fs/file streams it). An HTML page is
+ * `text` with `mime` "text/html": `/api/fs/file` serves it as plain text, and as the page itself
+ * only with `render=1`, in a sandbox with no origin and no network of its own.
+ */
 export interface FileInfo {
   path: string;
   name: string;

@@ -22,5 +22,10 @@ describe("file reader links", () => {
     expect(resolveFromDocument("~/README.md", "../shared.md")).toBe("~/../shared.md");
     expect(resolveFromDocument("~/docs/guide.md", "../README.md")).toBe("~/README.md");
     expect(resolveFromDocument("~/README.md", "../../x.md")).toBe("~/../../x.md");
+    // a Windows drive or share keeps its root, and a share's server and name are never climbed over
+    expect(resolveFromDocument("C:\\repo\\docs\\a.md", "../b.md")).toBe("C:/repo/b.md");
+    expect(resolveFromDocument("\\\\server\\share\\docs\\guide.md", "../notes.txt")).toBe("//server/share/notes.txt");
+    expect(resolveFromDocument("\\\\server\\share\\guide.md", "../../x.md")).toBe("//server/share/x.md");
+    expect(resolveFromDocument("/repo/README.md", "\\\\server\\share\\x.md")).toBe("\\\\server\\share\\x.md");
   });
 });

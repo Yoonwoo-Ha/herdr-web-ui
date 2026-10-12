@@ -21,12 +21,17 @@ const fidelitySources = ["const last = 7;\n\n", "first\n", "first\n\nlast", "\n"
 writeFileSync(transcript, [
   { type: "session_meta", payload: { id: thread, cwd: root } },
   { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Show me the demo video." }] } },
-  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}\n\n\`\`\`ts\nconst answer = 42;\n\nexport { answer };\n\`\`\`` }] } },
+  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [guide](./docs/guide.md) or [big](./big.txt) or [big code](./big.ts) or [deep quotes](./deep.md) or [empty](./empty.txt) or [slow preview](./slow.md) or [long notes](./long.md) or [many lines](./lines.txt) or [long list](./list.md) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}\n\n\`\`\`ts\nconst answer = 42;\n\nexport { answer };\n\`\`\`` }] } },
   // a block the highlighter is quadratic on (a line of dashes in YAML): seconds on the page
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Dashes:\n\n\`\`\`yaml\n${"-".repeat(90_000)}\n\`\`\`` }] } },
   // more lines than are drawn one element each (LINE_ELEMENT_LIMIT): 30 000 elements held the page
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Lines:\n\n\`\`\`\n${"x\n".repeat(30_000)}\`\`\`` }] } },
   ...fidelitySources.map((source, index) => ({ type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `\`\`\`${index === 0 ? "ts" : "text"}\n${source}\n\`\`\`` }] } })),
+  // a tool's output and a log in a plain code block name the files they wrote
+  { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Take the screenshots." }] } },
+  { type: "response_item", payload: { type: "function_call", name: "exec_command", call_id: "shoot", arguments: JSON.stringify({ cmd: "python3 shoot.py --out shots/report.html" }) } },
+  { type: "response_item", payload: { type: "function_call_output", call_id: "shoot", output: `${join(root, "shots", "t00000.png")} (1600, 1000) -> (1255, 960)\nsaved shots/report.html\ndisplay image 1: [image/png]` } },
+  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Shots:\n\n\`\`\`\n${join(root, "shots", "t00000.png")} (1600, 1000) -> (1255, 960)\n\`\`\`` }] } },
 ].map((row) => JSON.stringify(row)).join("\n"));
 const db = new Database(join(codexHome, "state_5.sqlite"));
 db.exec("CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, archived INTEGER, agent_role TEXT, created_at INTEGER, updated_at INTEGER, source TEXT, first_user_message TEXT)");
@@ -37,8 +42,40 @@ writeFileSync(standIn, "#!/bin/sh\nsleep 600\n");
 chmodSync(standIn, 0o755);
 copyFileSync(join(import.meta.dir, "fixtures", "file-preview.webm"), join(root, "preview.webm"));
 writeFileSync(join(root, "notes.txt"), "File preview history regression\n");
+// in a subfolder, so a link is resolved from the file's folder (../notes.txt), not the pane's
+mkdirSync(join(root, "docs"));
+writeFileSync(join(root, "docs", "guide.md"), "# Guide\n\nSee [notes](../notes.txt).\n\n```ts\nconst x = 1;\n```\n");
+// the viewer loads the first 256 KB of a text file (TEXT_PREVIEW_BYTES in src/lib/filePreviewText.ts)
+const TEXT_LOAD_LIMIT = 256 * 1024;
+writeFileSync(join(root, "big.txt"), "a line of plain text, 0123456789\n".repeat(Math.ceil(TEXT_LOAD_LIMIT / 30)).slice(0, TEXT_LOAD_LIMIT + 10));
+// code past the load limit: its first 256 KB, still highlighted
+writeFileSync(join(root, "big.ts"), "export const value = 1;\n".repeat(Math.ceil((TEXT_LOAD_LIMIT + 1024) / 24)));
+// 20 KB of nested quotes: parsed one level per `>`, they overflowed the stack and blanked the app
+writeFileSync(join(root, "deep.md"), `${">".repeat(20_000)} deepest\n`);
+// a YAML block of dashes in a Markdown file: seconds for the highlighter in Chromium as in Bun (8 s at
+// 64 KB), while the Markdown parser reads it in a millisecond. A line of "[a" is slow in Bun alone:
+// Chromium highlights 256 KB of it in under half a second, within the worker's budget.
+writeFileSync(join(root, "slow.md"), `Notes on a slow file.\n\n\`\`\`yaml\n${"-".repeat(90_000)}\n\`\`\`\n`);
+// ordinary Markdown past the load limit: its start is previewed
+writeFileSync(join(root, "long.md"), "# Notes\n\nA paragraph of ordinary notes, with *emphasis* and a [link](./notes.txt).\n\n".repeat(4_000));
+// more lines than are drawn one element each (LINE_ELEMENT_LIMIT): 256 KB of line breaks held the page 4 s
+writeFileSync(join(root, "lines.txt"), "\n".repeat(TEXT_LOAD_LIMIT));
+// more list items than a Preview draws (PREVIEW_ELEMENT_LIMIT): 65 536 of them held the page 1.6 s
+writeFileSync(join(root, "list.md"), "- a\n".repeat(TEXT_LOAD_LIMIT / 4));
+// an empty file has no first byte: its range answers 416, which is not an error
+writeFileSync(join(root, "empty.txt"), "");
+mkdirSync(join(root, "shots"));
+// a 1x1 PNG
+writeFileSync(join(root, "shots", "t00000.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64"));
+// a page whose script runs, and reports what it may not reach: the network and this app's storage
+writeFileSync(join(root, "shots", "report.html"), `<!doctype html><meta charset="utf-8"><title>Report</title><body><h1 id="ran">static</h1><p id="net">waiting</p><p id="store"></p><img id="shot" alt="shot" src="t00000.png"><p id="pic">no picture</p><script>
+document.getElementById("shot").decode().then(() => { document.getElementById("pic").textContent = "picture drawn"; }, () => {});
+document.getElementById("ran").textContent = "script ran";
+try { localStorage.length; document.getElementById("store").textContent = "storage reachable"; } catch { document.getElementById("store").textContent = "no storage"; }
+fetch("/api/health").then(() => { document.getElementById("net").textContent = "network reachable"; }, () => { document.getElementById("net").textContent = "network blocked"; });
+</script></body>`);
 const markdownPath = join(root, "preview #1 & 한글.MD");
-const markdownSource = "<p align=\"center\">\n  <img src=\"./preview.svg\" alt=\"Logo\" width=\"64\">\n</p>\n\n<p align=\"center\"><a href=\"https://example.com/\">website</a> &middot; <strong>bold</strong></p>\n\n# Markdown preview\n\n한글 문서도 새 탭에서 읽을 수 있습니다.\n\n| Item | State |\n| --- | --- |\n| Preview | Ready |\n\n- [x] Rendered\n\nSee [the other notes](other.md).\n\n```ts\nconst answer = 42;\n```\n\n![Local image](./preview.svg)\n";
+const markdownSource = "<p align=\"center\">\n  <img src=\"./preview.svg\" alt=\"Logo\" width=\"64\">\n</p>\n\n<p align=\"center\"><a href=\"https://example.com/\">website</a> &middot; <strong>bold</strong></p>\n\n# Markdown preview\n\n한글 문서도 새 탭에서 읽을 수 있습니다.\n\n| Item | State |\n| --- | --- |\n| Preview | Ready |\n\n- [x] Rendered\n\nSee [the other notes](other.md).\n\n```ts\nconst answer = 42;\n```\n\n![Local image](./preview.svg)\n\n```mermaid\ngraph LR\n  A[Read] --> B[Preview]\n```\n";
 writeFileSync(markdownPath, markdownSource);
 writeFileSync(join(root, "other.md"), "# Other notes\n\nLinked from the preview.\n");
 writeFileSync(join(root, "preview.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="teal"/></svg>');
@@ -63,10 +100,13 @@ try {
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
-  // seeded once: a later step changes a setting and reloads. Long tasks are recorded from the first
-  // paint: nothing an agent writes may hold the page for a second
+  // seeded once: a later step changes a setting and reloads. The chat's own font size and
+  // family are set, so a Markdown preview can be shown to take them over. Long tasks are recorded
+  // from the first paint: nothing an agent writes may hold the page for a second
   await page.addInitScript(() => {
-    if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+    // the app's own document only: a sandboxed HTML page the viewer frames has no storage to seed
+    if (window.top !== window) return;
+    if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", chatFontSize: 17, chatFontFamily: "Georgia" }));
     const record = window as unknown as { longTasks: number[] };
     record.longTasks = [];
     new PerformanceObserver((list) => { for (const entry of list.getEntries()) record.longTasks.push(entry.duration); }).observe({ type: "longtask" });
@@ -343,12 +383,183 @@ try {
   await page.locator(".file-viewer-text").waitFor();
   assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
   console.log("PASS Chat folder URI opens directory browser through touch");
-  await page.locator(".file-viewer-header button").click();
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: new URL(`file://${join(root, "notes.txt")}`).href, exact: true }).tap();
   await page.locator(".file-viewer-text").waitFor();
   assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
   console.log("PASS Chat plain file URI opens content through touch");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+
+  // Markdown: Show source, reader tab, Open raw file, Download, Copy; no Wrap (a setting)
+  const guide = page.getByRole("dialog", { name: "guide.md", exact: true });
+  await page.getByRole("button", { name: "guide", exact: true }).click();
+  await guide.getByRole("heading", { name: "Guide", exact: true }).waitFor();
+  await guide.locator(".hl-keyword", { hasText: "const" }).waitFor();
+  assert.equal(await guide.getByRole("button", { name: "Show source", exact: true }).getAttribute("aria-pressed"), "false");
+  // a new tab is an in-app view in an installed app on a phone, where saving is not always offered
+  const download = guide.getByRole("link", { name: "Download", exact: true });
+  assert.equal(await download.getAttribute("download"), "guide.md", "the file can be saved from the viewer");
+  assert.match(await download.getAttribute("href") ?? "", /\/api\/fs\/file\?.*download=1/);
+  assert.equal(await guide.getByRole("button", { name: "Wrap long lines", exact: true }).count(), 0, "Wrap is for code, not the rendered Markdown");
+  console.log("PASS Markdown opens as a Preview with a highlighted code block");
+  // the preview reads as the chat does: its font size and family, and at most its lane's width
+  const textStyle = (selector: string) => page.locator(selector).first().evaluate((element) => {
+    const style = getComputedStyle(element);
+    const heading = element.querySelector(".markdown-h1");
+    return { fontSize: style.fontSize, fontFamily: style.fontFamily, headingSize: heading === null ? null : getComputedStyle(heading).fontSize };
+  });
+  const chatText = await textStyle(".chat-transcript .chat-turn-agent .markdown");
+  const previewText = await textStyle(".file-viewer-markdown");
+  // --fs-chat (15px), the size of prose read at length, at the chat's scale, 17 / 14
+  assert.ok(Math.abs(Number.parseFloat(chatText.fontSize) - 15 * 17 / 14) < 0.05, `the chat font size is applied in the chat: ${chatText.fontSize}`);
+  assert.match(chatText.fontFamily, /^Georgia,/);
+  assert.equal(previewText.fontSize, chatText.fontSize, "the preview's text has the chat's font size");
+  assert.equal(previewText.fontFamily, chatText.fontFamily, "the preview's text has the chat's font");
+  // --fs-xl (18px) at the chat's scale, 17 / 14
+  assert.ok(Math.abs(Number.parseFloat(previewText.headingSize ?? "") - 18 * 17 / 14) < 0.05, `its headings scale with it: ${previewText.headingSize}`);
+  assert.equal(await page.locator(".file-viewer-markdown").evaluate((element) => getComputedStyle(element).maxWidth), "820px", "Default is the chat's Default lane");
+  // on a wide screen the Default lane follows the pane (71.43% of it, up to 60rem): the preview
+  // follows with it, as wide as the chat beside it, not the 820px floor
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.waitForFunction(() => {
+    const preview = document.querySelector(".file-viewer-markdown");
+    const chat = document.querySelector(".chat-transcript");
+    return preview !== null && chat !== null && getComputedStyle(preview).maxWidth === `${chat.getBoundingClientRect().width}px`;
+  });
+  assert.equal(await page.locator(".file-viewer-markdown").evaluate((element) => getComputedStyle(element).maxWidth), "960px", "Default is as wide as the chat's lane");
+  // the lane is the opening pane's, written on the viewer: one length on the document would be
+  // shared, and overwritten, by two panes side by side
+  assert.deepEqual(await page.evaluate(() => ({
+    root: document.documentElement.style.getPropertyValue("--chat-w"),
+    viewer: document.querySelector<HTMLElement>(".file-viewer")?.style.getPropertyValue("--chat-w") !== "",
+  })), { root: "", viewer: true }, "the viewer carries the lane, not the document");
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.match(await guide.locator(".file-viewer-markdown pre, .file-viewer-markdown .hl-code").first().evaluate((element) => getComputedStyle(element).fontFamily), /monospace/, "its code stays monospace");
+  console.log("PASS A Markdown preview takes the chat's font size, font and width");
+  await guide.getByRole("button", { name: "Show source", exact: true }).click();
+  await guide.locator(".file-viewer-text .hl-line").first().waitFor();
+  // seven lines and the empty one after the final newline, which the source keeps (#710)
+  assert.equal(await guide.locator(".file-viewer-text .hl-line").count(), 8);
+  assert.match(await guide.locator(".file-viewer-text").innerText(), /# Guide/);
+  // the gutter is drawn: every line counts itself in a box of its own, which the text leaves out
+  assert.equal(await guide.locator(".file-viewer-text[data-line-numbers]").count(), 1, "a gutter");
+  assert.match(await guide.locator(".file-viewer-text").evaluate((pre) => getComputedStyle(pre).counterReset), /\bline\b/);
+  const gutter = await guide.locator(".file-viewer-text .hl-line").evaluateAll((lines) => lines.map((line) => {
+    const before = getComputedStyle(line, "::before");
+    return { content: before.content, width: parseFloat(before.width) || 0 };
+  }));
+  assert.ok(gutter.every((line) => line.content === "counter(line)" && line.width > 0), `numbers drawn: ${JSON.stringify(gutter)}`);
+  assert.doesNotMatch(await guide.locator(".file-viewer-text").innerText(), /^1/);
+  if (process.env.UI_EVIDENCE_DIR) await guide.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "code-line-numbers.png") });
+  console.log("PASS Code shows the Markdown source, one numbered line each");
+  const raw = guide.getByRole("link", { name: "Open raw file", exact: true });
+  assert.equal(await raw.getAttribute("target"), "_blank");
+  assert.match(await raw.getAttribute("href") ?? "", /\/api\/fs\/file/);
+  await guide.getByRole("button", { name: "Copy file", exact: true }).waitFor();
+  console.log("PASS Open raw file opens the original bytes in a new tab; Copy is offered");
+  assert.equal(await guide.getByRole("button", { name: "Wrap long lines", exact: true }).count(), 0, "wrapping is a setting, not a header action");
+  assert.equal(await guide.locator(".file-viewer-text[data-wrap]").count(), 0, "lines do not wrap by default");
+  await guide.getByRole("button", { name: "Show source", exact: true }).click();
+  // When nothing can copy (no clipboard API on plain-HTTP LAN, and the browser's copy command
+  // refused) Copy selects the source: from a Preview it switches to Code first
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: () => Promise.reject(new Error("no clipboard")) }, configurable: true });
+    document.execCommand = () => false;
+  });
+  await guide.getByRole("button", { name: "Copy file", exact: true }).click();
+  await guide.locator(".file-viewer-text .hl-line").first().waitFor();
+  assert.equal(await guide.getByRole("button", { name: "Show source", exact: true }).getAttribute("aria-pressed"), "true");
+  const sourceText = await guide.locator(".file-viewer-text").innerText();
+  assert.match(sourceText, /See \[notes\]\(\.\.\/notes\.txt\)\./);
+  assert.ok(sourceText.endsWith("\n"), "the Markdown source keeps its final newline");
+  assert.equal(await guide.locator(".file-viewer-text code").textContent(), sourceText, "the source DOM keeps its final newline");
+  // Chromium omits the final newline from Selection.toString() even for a plain pre/code.
+  const selected = await page.evaluate((source) => {
+    const selection = window.getSelection()!;
+    const actual = selection.toString();
+    const baseline = document.createElement("pre");
+    const code = document.createElement("code"); code.textContent = source;
+    baseline.append(code); document.body.append(baseline);
+    const range = document.createRange(); range.selectNodeContents(baseline);
+    selection.removeAllRanges(); selection.addRange(range);
+    const expected = selection.toString();
+    baseline.remove(); selection.removeAllRanges();
+    return { actual, expected };
+  }, sourceText);
+  assert.equal(selected.actual, selected.expected, "the selection matches a native pre/code of the Markdown source");
+  await guide.getByRole("button", { name: "Copy file", exact: true }).click();
+  assert.equal(await page.evaluate(() => window.getSelection()?.toString()), selected.expected, "from Code, Copy selects the source in place");
+  console.log("PASS When nothing can copy, Copy selects the Markdown source (switching a Preview to Code)");
+  await guide.getByRole("button", { name: "Show source", exact: true }).click();
+  await guide.getByRole("button", { name: "notes", exact: true }).click();
+  const linked = page.getByRole("dialog", { name: "notes.txt", exact: true });
+  await linked.waitFor();
+  assert.doesNotMatch(await linked.locator(".file-viewer-meta").getAttribute("title") ?? "", /\/docs\//);
+  console.log("PASS A link in a Markdown preview opens the file it names");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+
+  // a text file past the load limit: shown in part, so it cannot be copied whole
+  await page.getByRole("button", { name: "big", exact: true }).click();
+  const big = page.getByRole("dialog", { name: "big.txt", exact: true });
+  // the note is the header's size, where it is seen before the text: "256 KB of …"
+  const cut = big.locator(".file-viewer-meta .file-viewer-notice");
+  await cut.waitFor();
+  assert.match(await cut.innerText(), /^256 KB of \d/);
+  assert.match(await cut.getAttribute("title") ?? "", /^Showing the first 256 KB/);
+  assert.equal(await big.getByRole("button", { name: "Copy file", exact: true }).count(), 0);
+  assert.equal(await big.getByText("Too long to highlight").count(), 0, "plain text is never too long to highlight");
+  console.log("PASS A text file past the load limit says so in its header and has no Copy");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+
+  // code past the load limit: its first 256 KB, highlighted (in the worker), and the header says it is cut
+  await page.evaluate(() => {
+    const settings = JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}") as Record<string, unknown>;
+    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ ...settings, wrapCode: true }));
+  });
+  await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
+  await page.locator(".conn-live").waitFor();
+  await page.getByRole("button", { name: "big code", exact: true }).click();
+  const bigCode = page.getByRole("dialog", { name: "big.ts", exact: true });
+  await bigCode.locator(".file-viewer-text .hl-keyword", { hasText: "export" }).first().waitFor();
+  assert.match(await bigCode.locator(".file-viewer-meta .file-viewer-notice").getAttribute("title") ?? "", /^Showing the first 256 KB of /);
+  assert.equal(await bigCode.getByRole("button", { name: "Copy file", exact: true }).count(), 0);
+  console.log("PASS Code past the load limit shows its first 256 KB, highlighted");
+  await bigCode.locator(".file-viewer-text[data-wrap]").waitFor();
+  console.log("PASS Settings → Wrap long lines wraps the code");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+
+  // a quote nested 20 000 deep renders as a quote nested to the parser's limit, the rest its text
+  await page.getByRole("button", { name: "deep quotes", exact: true }).click();
+  const deep = page.getByRole("dialog", { name: "deep.md", exact: true });
+  // one paragraph, in the innermost quote: the markers past the limit, then the text. At 390px the
+  // quotes' padding and rails leave it no width, as the same quote does in the chat, so the step
+  // checks that it is there and how deep, not that it can be read.
+  const deepest = deep.locator(".file-viewer-markdown blockquote p", { hasText: "> deepest" });
+  await deepest.waitFor({ state: "attached" });
+  const quoteDepth = await deepest.evaluate((element) => {
+    let depth = 0;
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) if (parent.tagName === "BLOCKQUOTE") depth += 1;
+    return depth;
+  });
+  // the parser nests 32 levels (MAX_QUOTE_DEPTH in src/lib/markdown.ts); the 33rd holds the rest as text
+  assert.equal(quoteDepth, 33, "the quote nests to the parser's limit");
+  assert.equal(await deep.getByRole("alert").count(), 0, "the preview renders, not its fallback");
+  console.log("PASS A Markdown file of 20 000 nested quotes renders, and the app stays");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+
+  // an empty file opens empty, whole, with Copy: not as an error
+  await page.getByRole("button", { name: "empty", exact: true }).click();
+  const empty = page.getByRole("dialog", { name: "empty.txt", exact: true });
+  await empty.getByRole("button", { name: "Copy file", exact: true }).waitFor();
+  assert.equal(await empty.getByRole("alert").count(), 0);
+  assert.equal(await empty.locator(".file-viewer-notice").count(), 0, "an empty file is not cut short");
+  console.log("PASS An empty file opens as an empty file, not as an error");
   await page.getByRole("button", { name: "Close file", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
@@ -364,6 +575,8 @@ try {
       const markdown = page.locator(".file-viewer-markdown");
       await markdown.getByRole("heading", { name: "Markdown preview", exact: true }).waitFor();
       await markdown.getByRole("cell", { name: "Ready", exact: true }).waitFor();
+      await markdown.locator(".markdown-mermaid svg").waitFor();
+      await markdown.getByRole("button", { name: "Enlarge diagram", exact: true }).waitFor();
       // a README's HTML header is drawn, centered, never shown as tags
       assert.equal((await markdown.innerText()).includes("<p"), false, "HTML tags are not shown as text");
       assert.equal(await markdown.locator('.markdown-center img[alt="Logo"]').getAttribute("width"), "64");
@@ -386,10 +599,17 @@ try {
       const rendered = popup.locator(".file-viewer-markdown");
       await rendered.getByRole("heading", { name: "Markdown preview", exact: true }).waitFor();
       await rendered.getByRole("cell", { name: "Ready", exact: true }).waitFor();
+      const sourceToggle = popup.getByRole("button", { name: "Show source", exact: true });
+      await sourceToggle.click();
+      await popup.locator(".file-viewer-text[data-line-numbers] .hl-line").first().waitFor();
+      assert.equal(await popup.locator(".file-viewer-text code").textContent(), markdownSource);
+      await popup.getByRole("button", { name: "Copy file", exact: true }).waitFor();
+      await sourceToggle.click();
       await popup.waitForFunction(() => {
         const image = document.querySelector<HTMLImageElement>(".file-viewer-markdown img");
         return image?.complete && image.naturalWidth === 240;
       });
+      await rendered.locator(".markdown-mermaid svg").waitFor();
       const raw = await popup.getByRole("link", { name: "Open raw file", exact: true }).getAttribute("href");
       assert.ok(raw);
       assert.equal(await (await context.request.get(`${origin}${raw}`)).text(), markdownSource);
@@ -400,6 +620,7 @@ try {
       assert.equal(await saved.text(), markdownSource);
       await popup.reload();
       await rendered.getByRole("heading", { name: "Markdown preview", exact: true }).waitFor();
+      await rendered.locator(".markdown-mermaid svg").waitFor();
       await popup.waitForFunction(() => {
         const image = document.querySelector<HTMLImageElement>(".file-viewer-markdown img");
         return image?.complete && image.naturalWidth === 240;
@@ -502,7 +723,117 @@ try {
   assert.deepEqual(await frozen(), [], "no task held the page for a second");
   console.log("PASS A chat code block of 30 000 lines opens as one text, and the page never freezes");
 
-  // Settings → Highlight code, off: code in the chat is plain text
+  // a Markdown file the highlighter is slow on: its Preview shows, and its source stays plain with a
+  // notice, while the page runs on
+  await page.getByRole("button", { name: "slow preview", exact: true }).click();
+  const slow = page.getByRole("dialog", { name: "slow.md", exact: true });
+  await slow.locator(".file-viewer-markdown p").first().waitFor({ timeout: 15_000 });
+  await slow.getByRole("button", { name: "Show source", exact: true }).click();
+  const slowNote = slow.locator(".file-viewer-meta .file-viewer-notice");
+  await page.waitForFunction(() => document.querySelector(".file-viewer-notice")?.getAttribute("title") === "Too long to highlight", undefined, { timeout: 15_000 });
+  assert.equal(await slowNote.locator(".visually-hidden").innerText(), "Too long to highlight", "a screen reader still hears it");
+  assert.equal(await slow.locator(".hl-note").count(), 0, "the note is not repeated under the code");
+  await slow.locator(".file-viewer-text .hl-line").first().waitFor();
+  assert.equal(await slow.locator(".file-viewer-text code span:not(.hl-line)").count(), 0, "the source is plain");
+  assert.deepEqual(await frozen(), [], "no task held the page for a second");
+  console.log("PASS A Markdown file the highlighter is slow on previews, its source stays plain, and the page never freezes");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+
+  // a Markdown file past the load limit: its first 256 KB, previewed, and the header says it is cut
+  await page.getByRole("button", { name: "long notes", exact: true }).click();
+  const long = page.getByRole("dialog", { name: "long.md", exact: true });
+  await long.locator(".file-viewer-markdown .markdown-h1").first().waitFor();
+  assert.match(await long.locator(".file-viewer-meta .file-viewer-notice").getAttribute("title") ?? "", /^Showing the first 256 KB of /);
+  await long.getByRole("button", { name: "Show source", exact: true }).waitFor();
+  console.log("PASS A Markdown file past the load limit previews its first 256 KB and says it is cut");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+
+  // a file of more lines than are numbered shows as one text, and a Markdown file of more than a
+  // Preview draws opens as its source; neither holds the page, and the header says why
+  await page.getByRole("button", { name: "many lines", exact: true }).click();
+  const manyLines = page.getByRole("dialog", { name: "lines.txt", exact: true });
+  await page.waitForFunction(() => document.querySelector(".file-viewer-notice")?.getAttribute("title") === "Too many lines to number");
+  await manyLines.locator(".file-viewer-text").waitFor();
+  assert.equal(await manyLines.locator(".file-viewer-text .hl-line").count(), 0, "no element per line");
+  assert.equal(await manyLines.locator(".file-viewer-text[data-line-numbers]").count(), 0, "and no gutter");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "long list", exact: true }).click();
+  const longList = page.getByRole("dialog", { name: "list.md", exact: true });
+  await page.waitForFunction(() => (document.querySelector(".file-viewer-notice")?.getAttribute("title") ?? "").includes("Too long to preview"), undefined, { timeout: 15_000 });
+  await longList.locator(".file-viewer-text").waitFor();
+  assert.equal(await longList.locator(".file-viewer-markdown").count(), 0, "the Preview is not drawn");
+  assert.deepEqual(await frozen(), [], "no task held the page for a second");
+  console.log("PASS A file of too many lines shows as one text, a Markdown file of too many elements as its source, and the page never freezes");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+
+  // a path in a tool's output opens the file it names; the rest of the output stays its text
+  const shotPath = join(root, "shots", "t00000.png");
+  await page.locator(".work-block-head").last().click();
+  await page.locator(".work-row-head", { hasText: "shoot.py" }).click();
+  const output = page.locator(".chat-tool-output pre").last();
+  assert.equal(await output.innerText(), `${shotPath} (1600, 1000) -> (1255, 960)\nsaved shots/report.html\ndisplay image 1: [image/png]`, "the output reads as it was written");
+  assert.equal(await output.getByRole("button", { name: "image/png" }).count(), 0, "a MIME type is not a file");
+  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "tool-output-links.png") });
+  await output.getByRole("button", { name: shotPath, exact: true }).tap();
+  const shot = page.getByRole("dialog", { name: "t00000.png", exact: true });
+  await shot.locator("img.file-viewer-media").waitFor();
+  assert.equal(await shot.locator("img.file-viewer-media").evaluate((image: HTMLImageElement) => image.naturalWidth), 1);
+  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "tool-output-image-open.png") });
+  await shot.getByRole("button", { name: "Close file", exact: true }).click();
+  await shot.waitFor({ state: "hidden" });
+  console.log("PASS A file path in a tool's output opens the picture through touch");
+  // the command names one too; a relative path is found from the pane's folder
+  await page.locator(".work-row-detail .chat-tool-io pre").getByRole("button", { name: "shots/report.html", exact: true }).first().tap();
+  const report = page.getByRole("dialog", { name: "report.html", exact: true });
+  const frame = page.frameLocator(".file-viewer-page");
+  await frame.getByText("script ran", { exact: true }).waitFor();
+  await frame.getByText("network blocked", { exact: true }).waitFor();
+  await frame.getByText("no storage", { exact: true }).waitFor();
+  // a picture beside the page is put into it, so it draws though the page may ask this server for nothing
+  await frame.getByText("picture drawn", { exact: true }).waitFor();
+  assert.equal(await report.locator(".file-viewer-page").getAttribute("sandbox"), "allow-scripts");
+  assert.equal(await report.getByRole("button", { name: "Show source", exact: true }).count(), 0, "HTML uses only Page | Source");
+  assert.equal(await report.getByRole("button", { name: "Page", exact: true }).getAttribute("aria-pressed"), "true");
+  assert.equal(await report.getByRole("link", { name: "Open in a new tab" }).getAttribute("href").then((href) => href?.includes("render=1")), true, "the page opens as the page");
+  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "tool-output-html-page.png") });
+  await report.getByRole("button", { name: "Source", exact: true }).click();
+  await report.locator(".file-viewer-text[data-line-numbers] .hl-line").first().waitFor();
+  await report.locator(".file-viewer-text .hl-string").first().waitFor();
+  assert.equal(await report.locator(".file-viewer-text button").count(), 0, "file source paths remain text");
+  await report.getByRole("button", { name: "Copy file", exact: true }).waitFor();
+  assert.equal(await report.getByRole("link", { name: "Download", exact: true }).getAttribute("download"), "report.html");
+  assert.match(await report.locator(".file-viewer-text").innerText(), /<h1 id="ran">static<\/h1>/);
+  assert.equal(await report.getByRole("link", { name: "Open in a new tab" }).getAttribute("href").then((href) => href?.includes("render=1")), false, "the source opens as the source");
+  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "tool-output-html-source.png") });
+  await report.getByRole("button", { name: "Page", exact: true }).click();
+  await frame.getByText("script ran", { exact: true }).waitFor();
+  // Copy from a page has no source element yet: a refused clipboard must reveal and select it.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: () => Promise.reject(new Error("no clipboard")) }, configurable: true });
+    document.execCommand = () => false;
+  });
+  await report.getByRole("button", { name: "Copy file", exact: true }).click();
+  await report.locator(".file-viewer-text[data-line-numbers]").waitFor();
+  assert.equal(await report.getByRole("button", { name: "Source", exact: true }).getAttribute("aria-pressed"), "true");
+  assert.match(await page.evaluate(() => window.getSelection()?.toString() ?? ""), /<h1 id="ran">static<\/h1>/);
+  await report.getByRole("button", { name: "Close file", exact: true }).click();
+  await report.waitFor({ state: "hidden" });
+  console.log("PASS An HTML file a command names opens as its page, sandboxed with no network or storage, and as its source");
+  // a log in a plain code block: its paths open as well
+  const log = page.locator(".markdown-code").last();
+  await log.getByRole("button", { name: shotPath, exact: true }).tap();
+  await shot.locator("img.file-viewer-media").waitFor();
+  await shot.getByRole("button", { name: "Close file", exact: true }).click();
+  await shot.waitFor({ state: "hidden" });
+  assert.equal(await log.locator(".hl-code").innerText(), `${shotPath} (1600, 1000) -> (1255, 960)`, "a copy of the block is still its text");
+  assert.deepEqual(errors, []);
+  console.log("PASS A file path in a plain code block opens the file, and the block's text is unchanged");
+
+  // Settings → Highlight code, off: code is plain text, in the chat and the viewer
   await page.evaluate(() => {
     const settings = JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}") as Record<string, unknown>;
     localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ ...settings, highlightCode: false }));
@@ -513,7 +844,27 @@ try {
   assert.equal(await page.locator(".markdown-code .hl-keyword, .markdown-code .hl-number").count(), 0, "chat code is plain");
   assert.equal(await page.locator(".markdown-code .hl-note").count(), 0, "plain by choice is not too long");
   await checkCodeFidelity("highlight-off");
-  console.log("PASS Settings → Highlight code off shows chat code plain");
+  await page.getByRole("button", { name: "guide", exact: true }).click();
+  const plainGuide = page.getByRole("dialog", { name: "guide.md", exact: true });
+  await plainGuide.getByRole("heading", { name: "Guide", exact: true }).waitFor();
+  await plainGuide.getByRole("button", { name: "Show source", exact: true }).click();
+  await plainGuide.locator(".file-viewer-text .hl-line").first().waitFor();
+  assert.equal(await plainGuide.locator(".hl-keyword, .hl-function").count(), 0, "the viewer's code is plain");
+  assert.equal(await plainGuide.locator(".file-viewer-notice").count(), 0, "and no notice says it is too long");
+  console.log("PASS Settings → Highlight code off shows code plain, in the chat and the viewer");
+  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+
+  // the file found, then its body refused (the file gone since, a remote PC dropped): the error's
+  // JSON must never show as the file's text
+  await page.route("**/api/fs/file?**", (route) => route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: { code: "machine_unavailable", message: "The PC connection was interrupted" } }) }), { times: 1 });
+  await page.getByRole("button", { name: "notes", exact: true }).click();
+  const refused = page.getByRole("dialog", { name: "notes.txt", exact: true });
+  await refused.getByRole("alert").waitFor();
+  assert.equal(await refused.getByRole("alert").innerText(), "The file could not be opened.");
+  assert.equal(await refused.getByText("machine_unavailable").count(), 0);
+  assert.equal(await refused.locator(".file-viewer-text").count(), 0);
+  console.log("PASS A file whose body is refused shows an error, not the error's JSON");
   assert.deepEqual(errors, []);
 } finally {
   await browser?.close();

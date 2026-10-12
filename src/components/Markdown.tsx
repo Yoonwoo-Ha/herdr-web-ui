@@ -1,8 +1,9 @@
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Copy, Maximize2 } from "lucide-react";
 
 import { foldCode, mathNestsTooDeep, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../lib/markdown.ts";
 import { codeIsFilePath, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
+import { FilePathLink } from "./FilePathLink.tsx";
 import { fileUriPath } from "../lib/terminalFileLinks.ts";
 import { CHAT_HIGHLIGHT_LIMIT, languageForFence } from "../lib/highlight.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
@@ -126,13 +127,6 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive }: { sr
   return interactive ? <a href={preview.downloadUrl} download>{message}</a> : <span>{message}</span>;
 }
 
-/** A file path the viewer opens: a button that reads as the text or code it replaced. */
-function FilePath({ path, code, open }: { path: string; code: boolean; open: (path: string) => void }) {
-  const t = useT();
-  const label = code ? <code>{path}</code> : path;
-  return <button type="button" className={`markdown-file${code ? " is-code" : ""}`} title={t("Open {path}", { path })} onClick={() => open(path)}>{label}</button>;
-}
-
 /** `interactive` is false inside a link or file label: nothing clickable nests in another. */
 function Inline({ nodes, interactive = true }: { nodes: InlineNode[]; interactive?: boolean }) {
   const context = useContext(OpenFileContext);
@@ -144,13 +138,13 @@ function Inline({ nodes, interactive = true }: { nodes: InlineNode[]; interactiv
     switch (node.type) {
       case "text":
         if (open === null) return <span key={key}>{node.value}</span>;
-        return <span key={key}>{splitFilePaths(node.value).map((part, n) => typeof part === "string" ? part : <FilePath key={n} path={part.path} code={false} open={open} />)}</span>;
+        return <span key={key}>{splitFilePaths(node.value).map((part, n) => typeof part === "string" ? part : <FilePathLink key={n} path={part.path} code={false} open={open} />)}</span>;
       case "code": {
         const file = fileUriPath(node.value);
-        if (open !== null && file !== null) return <FilePath key={key} path={file} code open={open} />;
+        if (open !== null && file !== null) return <FilePathLink key={key} path={file} code open={open} />;
         // agents often put an address in backticks: it stays code to the eye, and opens
         if (interactive && /^https?:\/\/\S+$/i.test(node.value)) return <a key={key} className="markdown-code-link" href={node.value} target="_blank" rel="noopener noreferrer"><code>{node.value}</code></a>;
-        return open !== null && codeIsFilePath(node.value) ? <FilePath key={key} path={node.value} code open={open} /> : <code key={key}>{node.value}</code>;
+        return open !== null && codeIsFilePath(node.value) ? <FilePathLink key={key} path={node.value} code open={open} /> : <code key={key}>{node.value}</code>;
       }
       case "math": return <MathExpression key={key} value={node.value} />;
       case "image": {
@@ -195,8 +189,15 @@ function List({ block }: { block: ListBlock }) {
   );
 }
 
+/** A fence in no language, or in one that says plain output (a log, a command's answer): the files it names open. */
+const PLAIN_FENCE = /^(?:|text|txt|plain|plaintext|log|console|output|shell-session)$/i;
+
 function CodeBlock({ language, value }: { language: string; value: string }) {
   const t = useT();
+  const open = useContext(OpenFileContext);
+  const grammar = languageForFence(language);
+  // the tag decides, not the grammar: code in a language with no grammar here is still code
+  const plain = PLAIN_FENCE.test(language.trim().split(/\s+/)[0] ?? "");
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -232,7 +233,8 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
         </button>
       </div>
       {copyFailed && <p className="markdown-code-error" role="alert">{t("Couldn't copy. Select the text and copy it manually.")}</p>}
-      <HighlightedCode code={fold !== null && !expanded ? fold.head : value} language={languageForFence(language)} limit={CHAT_HIGHLIGHT_LIMIT} />
+      {/* a block in no language is output (a log, a command's answer): the files it names open */}
+      <HighlightedCode code={fold !== null && !expanded ? fold.head : value} language={grammar} limit={CHAT_HIGHLIGHT_LIMIT} open={plain ? open : null} />
       {fold !== null && (
         <button type="button" className="markdown-code-more" aria-expanded={expanded} onClick={toggle}>
           {expanded ? t("Show less") : t("Show all {n} lines", { n: fold.lines })}
@@ -271,8 +273,19 @@ function Blocks({ blocks }: { blocks: MarkdownBlock[] }) {
   })}</>;
 }
 
-/** `html`: a markdown file's HTML blocks (a README's centered logo and badges) are drawn as markdown */
-export function Markdown({ children, className, html = false }: { children: string; className?: string; html?: boolean }) {
+/**
+ * Markdown rendered. Its props are primitive values, so `memo` skips a parent's re-render: a long plan in
+ * the file viewer is not rendered again every time the app polls.
+ */
+export const Markdown = memo(function Markdown({ children, className, html = false }: { children: string; className?: string; html?: boolean }) {
   const blocks = useMemo(() => parseMarkdown(children, 0, html), [children, html]);
+  return <ParsedMarkdown blocks={blocks} className={className} />;
+});
+
+/**
+ * Markdown parsed elsewhere, rendered as `Markdown` renders its text: the file viewer parses a file
+ * in a worker, so a file the parser is slow on cannot hold the page.
+ */
+export const ParsedMarkdown = memo(function ParsedMarkdown({ blocks, className }: { blocks: MarkdownBlock[]; className?: string }) {
   return <div className={className === undefined ? "markdown" : `markdown ${className}`}><Blocks blocks={blocks} /></div>;
-}
+});

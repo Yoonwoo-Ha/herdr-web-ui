@@ -8,8 +8,8 @@ const light: Settings = { ...DEFAULT_SETTINGS, theme: "light" };
 describe("preferences sync", () => {
   it("sends only the shared settings that changed, and the pins only when they did", () => {
     const known = base(DEFAULT_SETTINGS, ["local:w1:p1"]);
-    expect(preferencesChange(known, { settings: { ...DEFAULT_SETTINGS, terminalFontSize: 20, alertsOn: false }, pins: ["local:w1:p1"] })).toBeNull();
-    expect(preferencesChange(known, { settings: { ...light, terminalFontSize: 20 }, pins: ["local:w1:p1"] })).toEqual({ settings: { theme: "light" } });
+    expect(preferencesChange(known, { settings: { ...DEFAULT_SETTINGS, terminalFontSize: 20, alertsOn: false, wrapCode: true, markdownWidth: "full" }, pins: ["local:w1:p1"] })).toBeNull();
+    expect(preferencesChange(known, { settings: { ...light, terminalFontSize: 20, wrapCode: true, markdownWidth: "full" }, pins: ["local:w1:p1"] })).toEqual({ settings: { theme: "light" } });
     expect(preferencesChange(known, { settings: DEFAULT_SETTINGS, pins: [] })).toEqual({ settings: {}, pins: [] });
     expect(preferencesChange(known, { settings: { ...DEFAULT_SETTINGS, usageOrder: ["claude"] }, pins: ["local:w1:p1"] })).toEqual({ settings: { usageOrder: ["claude"] } });
   });
@@ -21,7 +21,7 @@ describe("preferences sync", () => {
   });
 
   it("takes the shared settings the server holds and leaves the device's own", () => {
-    const mine: Settings = { ...light, terminalFontSize: 20, alertsOn: false };
+    const mine: Settings = { ...light, terminalFontSize: 20, alertsOn: false, wrapCode: true, markdownWidth: "full" };
     const taken = takePreferences(base(mine, null), { settings: mine, pins: [] }, { revision: 3, settings: { theme: "dark", palette: "forest" } }, null);
     expect(taken.patch).toEqual({ theme: "dark", palette: "forest" });
     expect(taken.pins).toBeNull();

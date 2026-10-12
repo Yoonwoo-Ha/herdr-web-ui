@@ -15,7 +15,12 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   with its own tab strip and a bar with its lens and a close, and a tab is never shown in both
   halves. A press in a half makes it the one the header, the palette and the shortcuts act on.
   The split is kept across a reload, and a narrower window shows the active half alone. Drag
-  guide by @flam-ing.
+  guide by @flam-ing. ([#861](https://github.com/devswha/herdr-web-ui/pull/861) by @Yoonwoo-Ha)
+- The file viewer and Markdown reader page offer **Show source**, highlighted source with
+  CSS-counter line numbers, and **Copy file**, which selects the source when copying is unavailable.
+  **Settings → Chat → File viewer** controls line wrapping and Markdown width; previews inherit
+  the chat's font and, in the viewer, the opening pane's chat width.
+  ([#429](https://github.com/devswha/herdr-web-ui/pull/429) by @aNNdii)
 - **Shared settings and pins.** The browsers of one server, a PC's and a phone's, keep the same
   pinned agents and the same settings that do not depend on the device: theme and colors, language,
   the sidebar's rows, order, cards and pins, chat and usage-meter choices. A
@@ -24,6 +29,40 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   overwrites anything: a server that holds no shared settings yet takes them from the first change,
   and the browser that shares first brings its pins along. A page that lost its connection catches up
   when it is back. A watching device follows the shared settings and cannot change them for everyone. ([#854](https://github.com/devswha/herdr-web-ui/pull/854))
+- **Settings → Appearance → Agent logos: Color | Mono.** Mono draws the logos without color:
+  Claude's in the text color without its orange tile, the other logos with brand colors in grey,
+  so a sidebar where nearly every agent is the same one is not a column of colored tiles. Color,
+  today's look, stays the default. ([#850](https://github.com/devswha/herdr-web-ui/pull/850) by @phirschybar)
+- File paths in a tool call's command and output, and in a code block with no language (a log
+  an agent pasted), open in the file viewer like the paths in its prose: a line such as
+  `/tmp/shot/t0.png (1600, 1000) -> (1255, 960)` opens the picture, from a phone or another PC
+  as well, since the server reads the file. An HTML file now shows as its page, with a switch to
+  its source: its own script runs in a sandbox with no origin, storage or network (not the web
+  either), and the pictures, stylesheet and script it takes from its own folder are put into it,
+  so an agent's report with its screenshots draws whole. Files outside that folder, hidden ones such as `.env`,
+  and anything of another kind than the tag asks for are never put in.
+  ([#691](https://github.com/devswha/herdr-web-ui/pull/691) by @MovieHolic-Plex)
+- PCs saved in herdr appear automatically. Connect once per PC to enable automatic reconnection;
+  installing or starting a bridge still needs separate approval. Changing the address, port or
+  session clears both permissions and cached panes.
+  ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
+
+### Changed
+- Markdown file previews are parsed in a worker with a 2 s budget and a 60 000-element limit,
+  keeping the existing HTML blocks, images and reader-page navigation. A preview that cannot
+  be drawn offers its source. Partial text and preview, highlighting or line-number limits are
+  reported beside the file size with a warning icon and tooltip. **Open in a new tab**,
+  **Open raw file** and **Download** retain their existing destinations without a duplicate Raw action.
+  ([#429](https://github.com/devswha/herdr-web-ui/pull/429) by @aNNdii)
+- The sidebar's RUN mark is a working-colored dot that breathes, as T3 Code's does, instead of a
+  spinning arc that read as flicker beside the rows: it holds full most of a 2-second cycle and
+  dims to half in a few steps, and every running row breathes in step. BG is a still ring in the
+  same color, so the two read apart without motion; it breathes under reduced motion too.
+  ([#860](https://github.com/devswha/herdr-web-ui/pull/860))
+
+### Fixed
+- Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
+  ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
 
 ## [0.4.8] - 2026-10-12
 

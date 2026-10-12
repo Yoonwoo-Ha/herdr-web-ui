@@ -39,7 +39,8 @@ import { Composer } from "./Composer.tsx";
 import { PendingMessages } from "./PendingMessages.tsx";
 import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, PlanSummary, ServerMessage } from "../../shared/protocol.ts";
 import type { PaneView } from "../lib/actions.ts";
-import { chatLaneLength, useSettings, terminalTheme, type Palette, type ResolvedTheme, type TerminalCursorStyle } from "../lib/settings.ts";
+import { usePaneLane } from "../lib/chatLane.ts";
+import { useSettings, terminalTheme, type Palette, type ResolvedTheme, type TerminalCursorStyle } from "../lib/settings.ts";
 import { loadFontStack, TERMINAL_FONT_STACK, terminalFontStack } from "../lib/fontFamily.ts";
 import { useT } from "../lib/i18n.ts";
 import { isAppShortcut } from "../lib/shortcuts.ts";
@@ -316,24 +317,8 @@ export function PaneTerminal({
   const narrowFontRef = useRef(narrowFont);
   narrowFontRef.current = narrowFont;
   const narrowFontFitted = useRef(narrowFont);
-  // Settings → Chat width, Default: the lane follows this pane. One length on the stack, which
-  // the transcript, the composer column, the held list and the menus all inherit: a percentage
-  // would resolve against each one's own box and leave them a gutter apart. The other steps are
-  // fixed and stay with the stylesheet (styles.css). The lane's ceiling stays 60rem inside the
-  // length, so a change of the browser's font size moves it at once, as it moves Wide's 72rem
-  useLayoutEffect(() => {
-    const stack = stackRef.current;
-    if (!stack) return;
-    if (settings.chatWidth !== "default") {
-      stack.style.removeProperty("--chat-w");
-      return;
-    }
-    const apply = (): void => stack.style.setProperty("--chat-w", chatLaneLength(stack.clientWidth));
-    apply();
-    const observer = new ResizeObserver(apply);
-    observer.observe(stack);
-    return () => observer.disconnect();
-  }, [settings.chatWidth]);
+  // Settings → Chat width, Default: the lane follows this pane, on the stack its columns share
+  usePaneLane(stackRef);
   const directTyping = settings.terminalInputMode === "direct" || (settings.terminalInputMode === "auto" && (!coarse || storedDirectTyping()));
   const inputLine = !directTyping && !chatView;
   const inputLineRef = useRef(inputLine);

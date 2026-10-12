@@ -7,6 +7,7 @@ import {
   countLines,
   languageForFence,
   LINE_ELEMENT_LIMIT,
+  languageForPath,
   linesFromRuns,
   normalizeCode,
   plainLines,
@@ -40,6 +41,39 @@ describe("languageForFence", () => {
   });
   it("maps the Markdown spellings to markdown", () => {
     for (const word of ["md", "markdown", "mkd", "mdown", "mkdn"]) expect(languageForFence(word)).toBe("markdown");
+  });
+});
+
+describe("languageForPath", () => {
+  it.each([
+    ["/r/Dockerfile", "dockerfile"], ["/r/Dockerfile.dev", "dockerfile"], ["/r/app.dockerfile", "dockerfile"],
+    ["/r/.gitignore", "toml"], ["/r/.env.local", "env"], ["/r/.env", "env"], ["/r/x.tsx", "tsx"], ["/r/x.ts", "ts"],
+    ["/r/x.mjs", "js"], ["/r/README.md", "markdown"], ["/r/a.toml", "toml"], ["/r/a.ini", "toml"], ["/r/a.svg", "html"],
+    ["/r/a.py", "python"], ["C:\\r\\a.go", "go"], ["/r/a.", null], ["/r/.bashrc", "shell"], ["/r.d/LICENSE", null],
+    ["/r/CMakeLists.txt", "cmake"], ["/r/a.json", "json"], ["/r/a.yml", "yaml"], ["/r/a.vue", "vue"], ["/r/a.c", "cpp"],
+  ])("%s → %s", (path, language) => expect(languageForPath(path)).toBe(language));
+  it("takes only a Dockerfile, or one with a suffix, as a Dockerfile", () => {
+    expect(languageForPath("/r/dockerfile.txt")).toBe("dockerfile");
+    expect(languageForPath("/r/dockerfiles.json")).toBe("json");
+    expect(languageForPath("/r/dockerfiles")).toBeNull();
+  });
+  it("decides what is Markdown, by name only and ignoring case", () => {
+    expect(languageForPath("/r/notes.MARKDOWN")).toBe("markdown");
+    expect(languageForPath("/r/x.mdx")).toBeNull();
+    expect(languageForPath("/r/x.mkd")).toBe("markdown");
+    expect(languageForPath("/r/x.mdown")).toBe("markdown");
+  });
+  it("lets a Markdown extension win over a Dockerfile name", () => {
+    expect(languageForPath("/r/Dockerfile.md")).toBe("markdown");
+    expect(languageForPath("/r/Dockerfile.dev")).toBe("dockerfile");
+  });
+  it("has no language for plain-text files", () => {
+    for (const name of ["a.txt", "a.text"]) expect(languageForPath(`/r/${name}`)).toBeNull();
+  });
+  it("returns null for the unknown", () => {
+    expect(languageForPath("/r/notes.xyz")).toBeNull();
+    expect(languageForPath("/r/LICENSE")).toBeNull();
+    expect(languageForPath("/r/Makefile")).toBeNull();
   });
 });
 

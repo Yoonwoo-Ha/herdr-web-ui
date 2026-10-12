@@ -1,5 +1,5 @@
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
-import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, Layers, ListChecks, LoaderCircle, Pencil, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type AnimationEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, Layers, ListChecks, Pencil, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 
 import "./Sidebar.css";
 
@@ -68,16 +68,22 @@ export function RestoreErrorBadge({ reason }: { reason: string }) {
   );
 }
 
+/** Every breathing dot keeps the document clock's phase, so a row that starts working breathes in step with the rest. */
+function alignBreath(event: AnimationEvent<HTMLSpanElement>) {
+  if (event.animationName !== "sidebar-breathe") return;
+  for (const animation of event.currentTarget.getAnimations()) animation.startTime = 0;
+}
+
 export function StatusBadge({ status, compact = false }: { status?: AgentStatus; compact?: boolean }) {
   const t = useT();
   const value = knownStatus(status);
   const label = t(STATUS_WORD[value]);
   const description = value === "waiting" ? t("Agent waiting on background work") : t("Agent {status}", { status: label });
   // a compact cell draws only the states that ask for a look: a red question mark while the agent
-  // waits for an answer, a green dot once it has finished and was not looked at, a dim arc while
-  // it runs, the same arc held still in the working colour while its turn waits on background work.
-  // Ready and unknown keep the cell, its label and its tooltip
-  const Icon = { idle: null, working: LoaderCircle, blocked: null, done: null, waiting: LoaderCircle, unknown: null }[value];
+  // waits for an answer, a green dot once it has finished and was not looked at, a working-coloured
+  // dot that breathes while it runs, a working-coloured ring held still while its turn waits on
+  // background work. Ready and unknown keep the cell, its label and its tooltip
+  const dot = value === "working" || value === "done" || value === "waiting";
   return (
     <span
       className={`badge badge-${value}${compact ? " sidebar-status" : ""}`}
@@ -86,9 +92,8 @@ export function StatusBadge({ status, compact = false }: { status?: AgentStatus;
       aria-label={compact ? description : undefined}
       title={description}
     >
-      {compact && Icon && <Icon aria-hidden="true" />}
       {compact && value === "blocked" && <span className="sidebar-status-mark" aria-hidden="true">?</span>}
-      {compact && value === "done" && <span className="sidebar-status-dot" aria-hidden="true" />}
+      {compact && dot && <span className="sidebar-status-dot" aria-hidden="true" onAnimationStart={value === "working" ? alignBreath : undefined} />}
       <span className={compact ? "visually-hidden" : undefined}>{label}</span>
     </span>
   );

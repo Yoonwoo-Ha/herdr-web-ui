@@ -9,7 +9,7 @@ export function noticeKey(machine: Pick<Machine, "id" | "action_required">): str
 
 /** The PCs the app-wide line still speaks for. */
 export function waitingMachines(machines: Machine[], dismissed: readonly string[]): Machine[] {
-  return machines.filter((machine) => machine.action_required && !dismissed.includes(noticeKey(machine)));
+  return machines.filter((machine) => machine.action_required && machine.action_required !== "connect" && !dismissed.includes(noticeKey(machine)));
 }
 
 /**

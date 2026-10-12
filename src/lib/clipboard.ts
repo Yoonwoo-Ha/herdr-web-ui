@@ -1,3 +1,12 @@
+/** Selects everything inside `node`, so the user can long-press or Ctrl+C it. */
+export function selectContents(node: HTMLElement): void {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
 /**
  * Copies text. The clipboard API exists only in secure contexts (HTTPS or localhost), so on a
  * plain-HTTP LAN address it tries the browser's copy command. If copying is refused, it
@@ -49,11 +58,7 @@ export async function copyText(text: string, fallback?: HTMLElement | null): Pro
     fallback.focus();
     fallback.select();
   } else if (fallback) {
-    const range = document.createRange();
-    range.selectNodeContents(fallback);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    selectContents(fallback);
   }
   return false;
 }

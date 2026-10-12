@@ -2,6 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { loadKatex, Markdown } from "../components/Markdown.tsx";
+import { FILE_LINK_COUNT, FILE_LINK_LIMIT, linkFilePaths } from "../components/FilePathLink.tsx";
+import { HighlightedCode } from "../components/HighlightedCode.tsx";
+import { OpenFileContext } from "./filePaths.ts";
 import { SettingsProvider } from "./settings.ts";
 import { FOLD_CODE_AFTER_LINES, FOLDED_CODE_LINES, foldCode, inlineMarks, isTableSeparator, mathNestsTooDeep, parseInline, parseMarkdown, safeMarkdownHref, trimUrl, type InlineNode, type ListBlock } from "./markdown.ts";
 
@@ -532,5 +535,59 @@ describe("quotes nested beyond reason", () => {
       { type: "text", value: " now" },
     ]);
     expect(parseInline("![x](https://a.dev/x.png)")[0]).toMatchObject({ type: "image", fallback: [{ type: "text", value: "!" }, { type: "link", href: "https://a.dev/x.png" }] });
+  });
+});
+
+describe("file paths in output", () => {
+  const LOG = "/tmp/editor-shot/t00000.png (1600, 1000) -> (1255, 960)\ndisplay image 1: [image/png]";
+  const render = (element: ReturnType<typeof createElement>, open: ((path: string) => void) | null): string => {
+    const languages = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    // a code block folds itself in a layout effect, which a static render warns it skips
+    const error = console.error;
+    console.error = (...args: unknown[]) => { if (!String(args[0]).includes("useLayoutEffect")) error(...args); };
+    try {
+      return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(OpenFileContext.Provider, { value: open, children: element }) }));
+    } finally {
+      console.error = error;
+      if (languages) Object.defineProperty(navigator, "languages", languages);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+  const opener = (): void => {};
+
+  it("opens the files a log in a plain code block names, and leaves code in a language alone", () => {
+    const plain = render(createElement(Markdown, { children: `\`\`\`\n${LOG}\n\`\`\`` }), opener);
+    expect(plain).toContain(`<button type="button" class="markdown-file" title="Open /tmp/editor-shot/t00000.png">/tmp/editor-shot/t00000.png</button> (1600, 1000)`);
+    // a MIME type has no extension: it is not a file
+    expect(plain).not.toContain("Open image/png");
+    const code = render(createElement(Markdown, { children: "```ts\nimport { a } from \"./lib/a.ts\";\n```" }), opener);
+    expect(code).not.toContain("markdown-file");
+    // a language with no grammar here is still a language; a tag that says plain output is not
+    expect(render(createElement(Markdown, { children: "```rust\ninclude_str!(\"./private/key.pem\");\n```" }), opener)).not.toContain("markdown-file");
+    expect(render(createElement(Markdown, { children: `\`\`\`log\n${LOG}\n\`\`\`` }), opener)).toContain("markdown-file");
+    // nothing to open them with: the text stays as it was
+    expect(render(createElement(Markdown, { children: `\`\`\`\n${LOG}\n\`\`\`` }), null)).not.toContain("markdown-file");
+  });
+
+  it("links a tool output's paths, keeping its text, and leaves a huge output plain", () => {
+    const html = render(createElement("pre", null, linkFilePaths(LOG, opener)), opener);
+    expect(html).toBe(`<pre><button type="button" class="markdown-file" title="Open /tmp/editor-shot/t00000.png">/tmp/editor-shot/t00000.png</button> (1600, 1000) -&gt; (1255, 960)\ndisplay image 1: [image/png]</pre>`);
+    expect(linkFilePaths("no paths here", opener)).toBe("no paths here");
+    const huge = `${"x".repeat(FILE_LINK_LIMIT)} /tmp/a/b.png`;
+    expect(linkFilePaths(huge, opener)).toBe(huge);
+    expect(linkFilePaths(LOG, null)).toBe(LOG);
+    // a listing of thousands is not thousands of buttons
+    const listing = Array.from({ length: FILE_LINK_COUNT + 1 }, (_, i) => `/tmp/a/${i}.png`).join(" ");
+    expect(linkFilePaths(listing, opener)).toBe(listing);
+  });
+
+  it("measures a code block's links by the whole block, not line by line", () => {
+    const dense = Array.from({ length: 20 }, () => "/tmp/a.png ".repeat(1_500).trim()).join("\n");
+    expect(dense.length).toBeGreaterThan(FILE_LINK_LIMIT);
+    const html = render(createElement(HighlightedCode, { code: dense, language: null, open: opener }), opener);
+    expect(html).not.toContain("markdown-file");
+    const few = render(createElement(HighlightedCode, { code: "/tmp/a.png\n/tmp/b.png", language: null, open: opener }), opener);
+    expect(few.match(/markdown-file/g)).toHaveLength(2);
   });
 });

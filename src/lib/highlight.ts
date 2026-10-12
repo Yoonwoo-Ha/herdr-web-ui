@@ -28,6 +28,7 @@ import { tsx } from "@tanstack/highlight/languages/tsx";
 import { vue } from "@tanstack/highlight/languages/vue";
 import { yaml } from "@tanstack/highlight/languages/yaml";
 
+import { pathParts } from "./filePaths.ts";
 
 /** What a token means, independent of any theme; CSS maps each role to a token color. */
 export type SyntaxRole =
@@ -100,7 +101,7 @@ const highlighter = createHighlighter({
 });
 const REGISTERED = new Set(highlighter.listLanguages());
 
-// a fence word to its registered language, beyond the aliases TanStack knows
+// a fence word or a file extension to its registered language, beyond the aliases TanStack knows
 // itself (javascript, typescript, bash, sh, zsh, yml, py, md, xml, golang, patch, docker, …)
 const LANGUAGE_ALIASES: Record<string, string> = {
   mts: "ts", cts: "ts",
@@ -123,7 +124,7 @@ function languageForWord(word: string): string | null {
   return REGISTERED.has(language) ? language : null;
 }
 
-/** Whether `language` is one this module highlights (a name `languageForFence` gives). */
+/** Whether `language` is one this module highlights (a name `languageForFence`/`languageForPath` give). */
 export function canHighlight(language: string | null): language is string {
   return language !== null && REGISTERED.has(language);
 }
@@ -134,6 +135,25 @@ export function canHighlight(language: string | null): language is string {
  */
 export function languageForFence(info: string): string | null {
   return languageForWord(info.trim().split(/\s+/)[0]?.toLowerCase() ?? "");
+}
+
+/**
+ * The registered language for a file path (either separator), from its name alone, or `null` when
+ * there is none. This is the only place that maps file names to languages: "is this file Markdown"
+ * is `languageForPath(path) === "markdown"`.
+ */
+export function languageForPath(path: string): string | null {
+  const { stem, extension } = pathParts(path.toLowerCase());
+  const name = stem + extension;
+  // before the name rules: Dockerfile.md is a document about a Dockerfile
+  if (name.endsWith(".md") || name.endsWith(".markdown")) return "markdown";
+  if (name === "dockerfile" || name.startsWith("dockerfile.") || name.endsWith(".dockerfile") || name === "containerfile") return "dockerfile";
+  if (name === "cmakelists.txt") return "cmake";
+  if (name === "nginx.conf") return "nginx";
+  if ([".bashrc", ".zshrc", ".profile", ".bash_profile"].includes(name)) return "shell";
+  if (name === ".env" || name.startsWith(".env.")) return "env";
+  if (name === ".gitignore" || name === ".editorconfig") return "toml";
+  return languageForWord(extension.slice(1));
 }
 
 // TanStack's semantic classes to roles; an unlisted class (`operator`) is plain

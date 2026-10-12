@@ -16,7 +16,8 @@
   /* Only the body may shrink/scroll: large media must not collapse the controls. */
   flex: none;
   min-width: 0;
-  gap: var(--space-1);
+  /* name, actions and Close: the groups stand apart by space alone, no dividers */
+  gap: var(--space-4);
 }
 
 .file-viewer-title {
@@ -24,10 +25,17 @@
   min-width: 0;
 }
 
+/* the extension never gives way: a long name is cut inside its stem ("2026-10-04-file-vie….md") */
 .file-viewer-title .modal-title {
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.file-viewer-stem {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .file-viewer-meta {
@@ -42,8 +50,30 @@
 
 .file-viewer-size { flex: none; }
 
-/* the folder part of a long path gives way first */
+.file-viewer-dot { margin-inline-end: var(--space-2); }
+
+/* a partial view (cut short, left plain) in place of the bare size: the warning color with an icon,
+   so it is not missed and not told by color alone; the notes themselves are its tooltip. It never
+   yields to the folder. */
+.file-viewer-notice {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: help;
+  color: var(--notice);
+  font-weight: var(--fw-medium);
+}
+
+.file-viewer-notice svg {
+  flex: none;
+  width: 1.1em;
+  height: 1.1em;
+}
+
+/* the folder (the name is the title already) gets only the room left, so it gives way first, from its start */
 .file-viewer-path {
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   direction: rtl;
@@ -51,15 +81,43 @@
   text-overflow: ellipsis;
 }
 
-.file-viewer-header .icon-button {
-  flex: none;
+/* a folder cut to a letter or two says nothing: below that it is left out (the full path is the tooltip) */
+.file-viewer-path { container-type: inline-size; }
+
+@container (max-width: 64px) {
+  .file-viewer-path > span { visibility: hidden; }
 }
 
-.file-viewer-header a.icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+/* the header's actions stay quiet beside the name: dim until pointed at, pressed or on. One class
+   over the .icon-button primitive, which comes first, so its :active still shows a press */
+.file-viewer-action {
+  flex: none;
   color: var(--text-dim);
+}
+
+@media (hover: hover) {
+  .file-viewer-action:hover {
+    color: var(--text-strong);
+  }
+}
+
+.file-viewer-actions,
+.file-viewer-group {
+  display: flex;
+  align-items: center;
+}
+
+.file-viewer-actions {
+  flex: none;
+  gap: var(--space-4);
+}
+
+.file-viewer-group { gap: var(--space-1); }
+
+/* an "on" toggle (Show source) carries the accent on its glyph */
+.file-viewer-action[aria-pressed="true"] {
+  background: var(--bg-hover);
+  color: var(--accent);
 }
 
 .file-viewer-body {
@@ -99,26 +157,82 @@
   background: var(--pdf-page);
 }
 
-.file-viewer-markdown {
-  align-self: stretch;
-  min-width: 0;
-  padding: var(--space-3);
+/* an HTML page as it draws: on the page colour the PDF viewer uses, as pages assume white */
+.file-viewer-page {
+  flex: none;
+  width: 100%;
+  height: 78vh;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--pdf-page);
 }
 
+/* Page | Source above an HTML file */
+.file-viewer-modes {
+  flex: none;
+  align-self: flex-start;
+  margin-bottom: var(--space-2);
+}
 .file-viewer-text {
   align-self: stretch;
   margin: 0;
   padding: var(--space-3);
   overflow: auto;
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-panel);
   color: var(--text);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   line-height: var(--lh-base);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+}
+
+/* wrapping follows the Wrap setting (data-wrap in HighlightedCode.css); the gutter sits in the code's own padding, inside this one */
+.file-viewer-content {
+  align-self: stretch;
+  min-width: 0;
+}
+
+/*
+ * A rendered document reads on the viewer's own background, like a page: no panel around it. Its
+ * size and font are the chat's (ChatView.css). The Markdown width setting keeps it to the chat's
+ * lane (--chat-w, whatever Settings → Chat width makes it: the Default lane that follows the pane
+ * is measured from the pane that opened the viewer and written on it, lib/chatLane.ts), centered as an image or a PDF is and narrower
+ * with the viewer, or lets it fill the viewer (then its text starts on the title's edge).
+ */
+.file-viewer-markdown {
+  align-self: stretch;
+  min-width: 0;
+  margin-inline: auto;
+  padding: var(--space-2);
+}
+
+.file-viewer-markdown-readable { max-width: var(--chat-w); }
+
+/*
+ * On a narrow screen two or more actions leave the name and its notes no room. The name and Close
+ * keep the first row, so Close stays in its corner for every file; the actions take the second,
+ * under Close, where they are on a wider screen.
+ */
+@media (max-width: 600px) {
+  .file-viewer-header-stacked {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "title close" "actions actions";
+    row-gap: var(--space-2);
+  }
+
+  .file-viewer-header-stacked .file-viewer-title { grid-area: title; }
+  /* in the corner, however many lines the name's block takes */
+  .file-viewer-header-stacked .file-viewer-close {
+    grid-area: close;
+    align-self: start;
+  }
+  .file-viewer-header-stacked .file-viewer-actions {
+    grid-area: actions;
+    justify-content: flex-end;
+  }
+
+  .file-reader-header {
+    grid-template-areas: "title title" "actions actions";
+  }
 }
 
 .file-viewer-note {
@@ -126,6 +240,11 @@
   color: var(--text-dim);
   font-size: var(--fs-sm);
   text-align: center;
+}
+
+/* a Preview that could not be drawn: the note, and its source a button below it */
+.file-viewer-note > p {
+  margin: 0 0 var(--space-2);
 }
 
 @media (pointer: coarse) {
@@ -147,13 +266,14 @@
       env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   }
 
-  .file-viewer-header .icon-button {
+  .file-viewer-action {
     width: max(44px, var(--touch-target));
     height: max(44px, var(--touch-target));
   }
 
   .file-viewer-media { max-height: max(0px, calc(var(--app-height, 100dvh) - 120px)); }
   .file-viewer-pdf { height: max(0px, calc(var(--app-height, 100dvh) - 120px)); }
+  .file-viewer-page { height: max(0px, calc(var(--app-height, 100dvh) - 170px)); }
 }
 
 .file-viewer-choices ul {

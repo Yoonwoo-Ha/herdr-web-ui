@@ -29,6 +29,7 @@ import { usePageVisible } from "../lib/visibility.ts";
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useFacesArrived } from "../lib/fontFaces.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
+import { linkFilePaths } from "./FilePathLink.tsx";
 import { patchText } from "../../shared/patch.ts";
 import { toolVerb } from "../lib/toolVerbs.ts";
 import { machinePath } from "../../shared/machines.ts";
@@ -217,6 +218,7 @@ function PatchView({ patch }: { patch: string }) {
 }
 
 function ToolInputView({ part }: { part: ToolPartType }) {
+  const open = useContext(OpenFileContext);
   const t = useT();
   if (part.arguments_omitted) return <pre className="chat-tool-io">{t("Arguments omitted (too large)")}</pre>;
   // a todo call shows the list as it stood after it, when the agent answered with it
@@ -236,7 +238,7 @@ function ToolInputView({ part }: { part: ToolPartType }) {
   </li>)}</ol>;
   const str = (key: string): string | undefined => typeof parsed[key] === "string" ? parsed[key] : undefined;
   const command = str("command") ?? str("cmd");
-  if (command !== undefined) return <div className="chat-tool-io"><pre>{command}</pre>{(str("cwd") ?? str("description")) !== undefined && <p className="chat-tool-io-meta">{str("cwd") ?? str("description")}</p>}</div>;
+  if (command !== undefined) return <div className="chat-tool-io"><pre>{linkFilePaths(command, open)}</pre>{(str("cwd") ?? str("description")) !== undefined && <p className="chat-tool-io-meta">{str("cwd") ?? str("description")}</p>}</div>;
   const oldString = str("old_string");
   const newString = str("new_string");
   if (oldString !== undefined || newString !== undefined) return <div className="chat-tool-io">{str("file_path") !== undefined && <ToolFile path={str("file_path")!} />}<EditDiff before={oldString ?? ""} after={newString ?? ""} /></div>;
@@ -295,6 +297,8 @@ function ToolImages({ paneId, part }: { paneId: string; part: ToolPartType }) {
  */
 function WorkRow({ paneId, part }: { paneId: string; part: ToolPartType }) {
   const t = useT();
+  // the files an output names open from it ("saved /tmp/shot/t0.png")
+  const openFile = useContext(OpenFileContext);
   const [open, setOpen] = useState(false);
   const whole = useWholeOutput(part.output_ref);
   const summary = part.arguments_omitted ? t("Arguments omitted (too large)") : todoCallSummary(part) ?? part.summary;
@@ -312,7 +316,7 @@ function WorkRow({ paneId, part }: { paneId: string; part: ToolPartType }) {
       {/* after a verb the word follows the object: "Ran pnpm test failed", not "Ran failed pnpm test" */}
       {part.error && verb !== null && <>{" "}<span className="work-row-failed">{t("failed")}</span></>}
     </button>
-    {open && <div className="work-row-detail">{verb !== null && <p className="work-row-tool">{part.name}</p>}<ToolInputView part={part} /><ToolImages paneId={paneId} part={part} />{output.length > 0 && <section className="chat-tool-output"><h4>{t(part.error ? "Error" : "Output")}</h4><pre className={`chat-tool-io${whole.text !== null ? " is-whole" : ""}`}>{output}</pre>
+    {open && <div className="work-row-detail">{verb !== null && <p className="work-row-tool">{part.name}</p>}<ToolInputView part={part} /><ToolImages paneId={paneId} part={part} />{output.length > 0 && <section className="chat-tool-output"><h4>{t(part.error ? "Error" : "Output")}</h4><pre className={`chat-tool-io${whole.text !== null ? " is-whole" : ""}`}>{linkFilePaths(output, openFile)}</pre>
       {part.output_ref !== undefined && whole.text === null && <button type="button" className="btn btn-ghost chat-tool-more" disabled={whole.state === "loading"} onClick={whole.load}>
         {t(whole.state === "loading" ? "Loading the whole output…" : whole.state === "failed" ? "Couldn't load the whole output — retry" : "Show the whole output ({size} characters)", { size: formatTokens(part.output_size ?? 0) })}
       </button>}</section>}</div>}

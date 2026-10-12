@@ -9,6 +9,7 @@ const pc = (id: string, patch: Partial<Machine> = {}): Machine => ({
 
 describe("dismissed PC notices", () => {
   it("leaves out a dismissed PC, and shows it again when it waits for something else", () => {
+    expect(waitingMachines([pc("saved", { action_required: "connect" })], [])).toEqual([]);
     const a = pc("a"), b = pc("b");
     expect(waitingMachines([a, b], [])).toEqual([a, b]);
     expect(waitingMachines([a, b], [noticeKey(a)])).toEqual([b]);

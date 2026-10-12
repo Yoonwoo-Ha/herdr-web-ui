@@ -392,17 +392,21 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   height: var(--space-4);
 }
 
-/* a stepped rotation draws its steps and nothing else, so the count is the frame rate: at this
-   arc's 6px radius, 48 steps over --dur-spin move it under a pixel every 33ms, which the eye
-   reads as a turn rather than a tick */
-.sidebar-status[data-status="working"] svg {
-  animation: sidebar-working var(--dur-spin) steps(48, end) infinite;
+/* A question mark asks for an answer; a dot, as an unread mark is, has finished and was not
+   looked at; a working-coloured dot runs and a ring of it waits on background work. Every state
+   keeps the color it has on every other surface. */
+
+/* Running breathes rather than spins: the dot holds full for most of the cycle and dims in a few
+   steps, so it reads as alive at a glance without tugging at the eye, and the browser draws only
+   those steps. Every dot shares one phase (alignBreath), so several runs breathe together. */
+.sidebar-status[data-status="working"] .sidebar-status-dot {
+  animation: sidebar-breathe var(--dur-breathe) steps(6) infinite;
 }
 
-/* A question mark asks for an answer; a dot, as an unread mark is, has finished and was not
-   looked at; running moves, so it needs no color. Waiting and done keep the colors they have
-   on every other surface. */
-.sidebar-status[data-status="working"] { color: var(--text-dim); }
+.sidebar-status[data-status="waiting"] .sidebar-status-dot {
+  border: calc(var(--hairline) * 2) solid currentColor;
+  background: transparent;
+}
 
 .sidebar-status-mark {
   font-size: var(--fs-sm);
@@ -419,8 +423,12 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 
 .sidebar-status.badge-restore-error { color: var(--status-blocked); }
 
-@keyframes sidebar-working {
-  to { transform: rotate(360deg); }
+@keyframes sidebar-breathe {
+  0%,
+  40% { opacity: 1; }
+  50%,
+  90% { opacity: 0.5; }
+  100% { opacity: 1; }
 }
 
 /* background tasks still running, and a pane's plan: a number beside the state, quieter than it */
@@ -538,9 +546,6 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   .workspace-header {
     transition: none;
   }
-
-  /* no turn, but RUN still has to read apart from BG, the same arc held still: it fades in steps */
-  .sidebar-status[data-status="working"] svg { animation: pulse var(--dur-pulse) var(--ease-pulse) infinite; }
 }
 
 /* a finger presses a row as an iPhone list row is pressed: it fills, it does not dim (styles.css) */

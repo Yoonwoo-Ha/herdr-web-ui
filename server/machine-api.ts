@@ -3,6 +3,7 @@ import type { SharedPreferences } from "../shared/preferences.ts";
 import { MachineManager } from "./machines.ts";
 import { canSendSecret, sameOrigin } from "./machine-security.ts";
 import { isJsonObject, jsonResponse } from "./http.ts";
+import { crossSiteFileRead } from "./file-view.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
 export const MACHINE_PROXY_PATH = /^(?:session|agents|integrations|pane\/(?:read|scroll|find|selection|conversation(?:\/image|\/tool-output)?|commands|files|omo-tasks|plan|prompt|prompt\/answer|input|keys|close|rename|image|split|zoom|swap|resize|clear|move|focus)|workspace\/(?:create|rename|move|close|directories)|worktree\/(?:create|list|open|remove)|tab\/(?:create|rename|close|move)|layout\/ratio|agent\/rename|plugins\/actions|plugin\/action|fs\/(?:stat|file))$/;
@@ -30,6 +31,8 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
   // navigation is cross-site. Every other PC route still answers only this app.
   const fileRead = ["GET", "HEAD"].includes(request.method) && /^\/api\/machines\/[^/]+\/fs\/file$/.test(url.pathname);
   if (!fileRead && !sameOrigin(request)) return fail("invalid_origin", "Use PC controls from this app", 403);
+  // a navigation may open a PC's file from anywhere; another page loading it as a picture may not
+  if (fileRead && crossSiteFileRead(request)) return fail("cross_site", "A file is read from this app or opened in a tab, not loaded by another page", 403);
   if (!["GET", "HEAD"].includes(request.method) && request.headers.get("x-herdr-machine") !== "1") return fail("invalid_machine_request", "Use PC controls from this app", 403);
   // an empty segment is never a route: dropping it would forward `<id>//fs/file` as `fs/file`
   if (url.pathname.includes("//")) return fail("not_found", "not found", 404);

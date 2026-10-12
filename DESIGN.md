@@ -58,6 +58,7 @@ Only tokens overridden by `[data-theme="light"]` have a light value. Both column
 | Done/tint | `--status-done-tint` | `rgba(147, 195, 107, 0.14)` | `rgba(47, 99, 23, 0.12)` |
 | Danger/tint | `--danger-tint` | `rgba(255, 123, 112, 0.12)` | `rgba(168, 35, 35, 0.1)` |
 | Danger/text | `--danger-text` | `#ffd9d4` | `#8f1d1d` |
+| Notice | `--notice` | `#e8c55c` | `#7a5a00` |
 | Overlay/scrim | `--scrim` | `rgba(8, 6, 4, 0.55)` | `rgba(40, 32, 22, 0.35)` |
 | Glass bar | `--bar-bg` | `color-mix(in srgb, var(--bg-panel) 72%, transparent)` | same expression |
 | Glass card | `--card-glass` | `color-mix(in srgb, var(--bg-elevated) 80%, transparent)` | same expression |
@@ -148,9 +149,9 @@ CSS tokens verbatim for each resolved theme and palette (`settings.test.ts` chec
 
 ### Syntax highlighting
 
-Code in the chat is colored by `--syntax-*` tokens. Four follow the palette: `--syntax-comment` is
-`--text-dim`, `--syntax-function` is `--accent`, `--syntax-inserted` is `--status-done` and
-`--syntax-deleted` is `--status-blocked`. The other six are literals per block
+Code in the chat and in the file viewer is colored by `--syntax-*` tokens. Four follow the
+palette: `--syntax-comment` is `--text-dim`, `--syntax-function` is `--accent`,
+`--syntax-inserted` is `--status-done` and `--syntax-deleted` is `--status-blocked`. The other six are literals per block
 (each at least 4.5:1 on `--bg-panel` and `--bg-elevated`); light charcoal uses the light report
 column. Catppuccin follows Catppuccin's own mapping: keywords are mauve, so `--syntax-function` is
 blue there instead of `--accent`, and Latte's colors are darkened to stay readable.
@@ -168,6 +169,18 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 | Light forest | `#9c4f15` | `#225f32` | `#865d13` | `#166578` | `#20352a` | `#68489c` |
 
 `--syntax-function` in Catppuccin: Mocha `#89b4fa`, Latte `#0b59f4`.
+
+### File viewer
+
+- `--notice` colors a note that the view is partial (a file cut short, code too long to color): the
+  size in the header's meta line becomes `256 KB of 1.3 MB`, always beside a warning icon so the
+  color is not the only sign. It is a warning yellow, at least 4.5:1 on
+  `--bg`, `--bg-panel` and `--bg-elevated`: amber `#e8c55c` / `#7a5a00`, dark report `#f5b544`, light
+  report and charcoal `#8a5300`, dark charcoal `#d9b26a`, Catppuccin Mocha `#f9e2af` (yellow), Latte
+  `#8a5710`.
+- `--line-number` colors the line numbers beside code: tertiary text, quieter than the code. It is
+  `--text-dim`, except in Catppuccin, whose `--text-dim` (subtext1) is nearly `--text`: Mocha
+  overlay2 `#9399b2` (5.8:1), Latte `#64677d` (subtext0 darkened to 4.9:1 on `--bg`).
 
 ### Rules
 - Amber is the one chrome color. Accent (selected, focused, informational) and primary (the user's
@@ -259,10 +272,22 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 - Terminal and chat font families are comma-separated lists, default empty. They go in front of the
   terminal's built-in fonts (after the bundled Symbols Nerd Font Mono, which only draws icons) and of
   `--font-ui` in the chat's prose (as `--font-chat`), never in place of them; code in the chat keeps
-  `--font-mono`. At most 200 characters, with `;`, `{`, `}`, `<`,
+  `--font-mono`. A file viewer's Markdown preview takes the chat font size and family too.
+  At most 200 characters, with `;`, `{`, `}`, `<`,
   `>`, `\` and control characters stripped and names with spaces quoted.
 - Composer Enter behavior and folded thinking visibility are preferences, not typography tokens.
-- `highlightCode` colors code in the chat by its language (default on; off shows plain text).
+- `highlightCode` colors code in the chat and the file viewer by its language (default on; off
+  shows plain text).
+- File viewer: `wrapCode` (wrap long lines instead of scrolling sideways; default off) and
+  `markdownWidth`: `readable` (the chat lane, `--chat-w`, centered; default) or `full`.
+  These layout choices stay on this device, like chat width; code highlighting is shared across browsers.
+  The viewer loads the first 256 KB of a text file through one bounded streaming reader, with abort
+  on close or navigation and a 5 s fetch deadline. Partial text ends at the last whole line when
+  one exists; the response's Content-Range supplies the total, and an empty 416 opens empty.
+  A Markdown file its Preview cannot
+  be parsed for within 2 s, or whose Preview would draw over 60 000 elements, opens as its source
+  with a notice; code a worker cannot highlight within 2 s stays plain with one, and code of over
+  20 000 lines is one text without line numbers, with one too.
 - All settings share one sanitized `localStorage["herdr-web-ui:settings"]` record.
 
 ## 4. Spacing & Layout
@@ -495,10 +520,10 @@ One set for both themes: the card is island black wherever it shows.
 - The written label and unknown dashed edge keep color from being the only signal.
 - The sidebar's compact variant weights each state by how much it asks of the user. Waiting for
   an answer is the one filled glyph, a filled message circle in `--status-blocked`; finished and
-  not yet looked at is an 8px dot in `--status-done`, as an unread mark is; working is a stepped
-  spinning arc in `--text-dim`, since its motion already says it; BG is the same arc held still in
-  `--status-working`, since nothing about it moves until its work ends; ready and unknown draw
-  nothing. A pane herdr could not restore
+  not yet looked at is an 8px dot in `--status-done`, as an unread mark is; working is the same
+  dot in `--status-working` that breathes (`--dur-breathe`); BG is an 8px ring in
+  `--status-working` held still, since nothing about it moves until its work ends; ready and
+  unknown draw nothing. A pane herdr could not restore
   draws a warning triangle in `--status-blocked`. The element, its label and its tooltip are there
   for every state, and each drawn state has its own glyph as well as its color. Background tasks
   are a quiet count beside it (`.background-count`), not a badge.
@@ -644,7 +669,7 @@ One set for both themes: the card is island black wherever it shows.
   a tree hairline; a worktree whose repository workspace is not open stays at the top level.
 - Rows use only shared theme tokens in dark and light. Touch keeps row menus and folds visible,
   with `--touch-target` controls, and draws no hover fill; reduced motion removes row transitions
-  and the status spinner.
+  and keeps the working dot's breath (opacity only).
 - Footer holds the contextual **Install app** action and Settings with the plan meters beside it,
   as rows on the same grid with no rule above.
   It carries no product name or version: the running versions are read in Settings.
@@ -784,7 +809,9 @@ One set for both themes: the card is island black wherever it shows.
 - The chat lens is a centered `--chat-w` transcript over the still-attached terminal surface.
   At the Default chat width the lane follows the pane: min 820px, max 60rem (960px at a 16px
   root), 71% of the pane (`.terminal-stack`) between. `PaneTerminal` measures the pane and writes
-  the lane on it as one length, `min(max(820px, 60rem), <the pane's share>px)` (`chatLaneLength`,
+  the lane on its stack as one length, and a file viewer over the app measures the pane that
+  opened it and writes the same on itself for its Markdown preview (both `lib/chatLane.ts`),
+  `min(max(820px, 60rem), <the pane's share>px)` (`chatLaneLength`,
   `lib/settings.ts`); `--chat-w` never holds that percentage, because each column would resolve
   it against its own box and they would differ by their gutters.
   The ceiling is in rem because Wide is (`72rem`), and it stays `60rem` inside the length, so
@@ -812,7 +839,14 @@ One set for both themes: the card is island black wherever it shows.
   Markdown files use the same renderer in the file viewer. **Open in a new tab** opens an
   app link to the resolved absolute file on its own PC, independent of the originating pane.
   **Open raw file** (Code glyph) opens the original bytes; Download still saves those bytes.
-  Both use the existing header icon-button primitive, labels and focus states.
+  The reader page and dialog share **Show source** (Braces glyph, pressed while the source shows, so it
+  never looks like Open raw file), highlighted source with CSS-counter line
+  numbers, and **Copy file** for complete text (selecting the source if clipboard copy fails).
+  There is no separate Raw action. HTML blocks in Markdown files are parsed in the preview worker
+  with HTML enabled; local images still pass through the file endpoint's image-size check.
+  The page has an h1 and no Close or new-tab action; the dialog keeps its focus trap and sheet swipe.
+  Actions use the existing header icon-button primitive, labels and focus states. On a phone the
+  name and Close occupy the first row, with actions below; a reader page has no Close.
   A link keeps `--accent` and a file chip reads in `--text-strong` with a dotted underline; both
   underlines are `--text-dim` at rest and both take the accent on hover and focus-visible.
   Code blocks are `--radius-lg` and never scroll inside: one longer than 30 lines opens at its
@@ -1187,7 +1221,8 @@ One set for both themes: the card is island black wherever it shows.
   replaces the one entry. A reload steps out of the entries it finds; Forward reopens the page.
 - Pages, in order: **Appearance** (theme, colors, density, language, sidebar rows), **Chat**
   (panes open in, show thinking, chat width, chat font size and family, highlight code; then
-  **Composer**: Enter sends, suggestion chip; then **Quick replies**), **Terminal** (font size, 80 columns in a split, font family, wheel
+  **Composer**: Enter sends, suggestion chip; then **Quick replies**; then **File viewer**: wrap long
+  lines, Markdown width), **Terminal** (font size, 80 columns in a split, font family, wheel
   speed, input mode, Key bar), **Alerts**, **Voice input**, **Subscription usage**,
   **Shortcuts** (the platform-resolved global bindings), **Phone & devices** (the phone address,
   Keep screen on, Install; then paired devices), **Remote PCs**, **About** (Updates, herdr,
@@ -1301,7 +1336,8 @@ One set for both themes: the card is island black wherever it shows.
 | Micro | `--dur-fast` | `120ms` | Hover, active, toggle and control state |
 | Standard | `--dur-base` | `180ms` | Drawer slide; reserved dialog timing token |
 | Pulse | `--dur-pulse` | `1600ms` | Working and reconnecting dots (trough opacity 0.35; text never pulses) |
-| Spin | `--dur-spin` | `1600ms` | The sidebar's working arc: forty-eight steps over the turn (about 30 frames a second), under a pixel of travel each, where a coarser count reads as a stutter; the step count sets the frame rate, so this endless animation stays stepped |
+| Spin | `--dur-spin` | `1600ms` | One turn of a stepped spinner (the command palette's busy arc); the step count sets the frame rate |
+| Breathe | `--dur-breathe` | `2000ms` | The sidebar's working dot: full for 40% of the cycle, six steps down to opacity 0.5, held, six steps back; every dot shares the document clock's phase, so several runs breathe together. It replaced a spinning arc that read as flicker beside the rows |
 | Easing | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | Finite transitions |
 | Pulse easing | `--ease-pulse` | `steps(2, jump-none)` | Endless working and reconnecting dots; avoids drawing every display refresh |
 | Spring easing | `--ease-spring` | `cubic-bezier(0.32, 0.72, 0, 1)` | Voice recording pill enter (180ms, scale 0.96->1 + opacity, from the mic button) and exit (120ms); a phone's sheet rising and springing back |
@@ -1319,8 +1355,8 @@ One set for both themes: the card is island black wherever it shows.
   a state change, not a dialog, so the snap rule above does not apply to it.
 - `prefers-reduced-motion: reduce` removes pulses, drawer/control transitions, sheet rise and drop,
   smooth chat scrolling and settings toggle motion; a drag still follows the finger. State remains legible without animation.
-  One exception: the sidebar's RUN arc stops turning and takes the stepped opacity `pulse` instead,
-  since a held-still arc is how BG reads; nothing moves.
+  One exception: the sidebar's RUN dot keeps its stepped breath, opacity only and nothing moving,
+  so a running agent does not look frozen.
 - Under reduced motion the voice pill swaps its bars for one level bar updated at 4 Hz and drops
   the ring and the morph; the **Recording** label and the timer stay.
 
