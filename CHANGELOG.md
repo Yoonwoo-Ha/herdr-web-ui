@@ -67,6 +67,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ### Fixed
 - Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
   ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
+- **Send now** on a working Codex pane sends the message at once. Codex kept it until its next
+  tool call; once Codex shows that very message waiting, Send now presses Escape, which Codex
+  itself offers to interrupt the turn and send it. An ordinary Send and the automatic next-turn
+  delivery never interrupt Codex.
+  ([#783](https://github.com/devswha/herdr-web-ui/pull/783) by @kilhyeonjun)
 
 ## [0.4.8] - 2026-10-12
 

@@ -140,6 +140,20 @@ bun scripts/narrow-pane-demo-regression.ts    # a split pane under 80 columns: t
 
 `FILE_VIEWER_CASE=landscape-notch` selects a viewer case; `FILE_VIEWER_CSS=/path/to/before.css` compares another stylesheet. These checks use Chromium mobile emulation and synthetic safe-area/keyboard geometry; they cannot verify actual iOS Safari keyboard dismissal or notch insets. The existing `bun scripts/file-viewer-regression.ts` separately checks history with an owned herdr pane. The original `scripts/mobile-viewport-regression.ts` exports `checkMobileViewport` for the real-app `bun run test:ui` suite; it also checks the command palette and xterm focus transitions. The demo runners build the real client into a temporary directory, inject the committed fictional-session transport and serve it only on loopback; they do not use a live herdr session or download website media. Run on its own, each builds the client itself (`scripts/demo-build.ts`); the browser lane builds it once and names the directory in `HERDR_DEMO_BUILD`, and each runner copies that instead. They exercise real-app viewport and alert geometry, but not live herdr connectivity.
 
+## Codex Send now
+
+Codex's `Enter` steers the current turn, but can leave the message pending until the next
+tool call. The explicit, connection-owned pending-message **Send now** action checks the
+live native steering panel beside the empty composer, and that the panel holds the message it
+just submitted, before sending one `Escape` to interrupt and submit it. A normal Send,
+automatic delivery, another agent or idle Codex never takes this interruption path.
+Browser-held copies retain their ordinary Submit path. Every fresh read retains the existing
+identity, connection, interactive-menu and secret input guards; if the panel or delivery
+cannot be confirmed, the message is uncertain and must be checked in the terminal rather than
+retried automatically. The restart gate waits for the interrupted turn's readiness followed
+by the new turn's working/ready cycle. If Codex never exposes that cycle, remaining messages
+are held for explicit review.
+
 ## Conversation refresh
 
 The chat reads `/api/pane/conversation` after a `conversation-changed` WebSocket frame.

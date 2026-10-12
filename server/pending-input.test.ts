@@ -76,6 +76,45 @@ describe("bridge pending input", () => {
     f.queue.status("p1", "done"); expect(f.queue.next("p1")).toBe(second);
   });
 
+  for (const settleBeforeIdle of [true, false]) it(`keeps the interruption's ready state from draining the queue (${settleBeforeIdle ? "settled" : "in flight"})`, () => {
+    const f = fixture(); const first = f.enqueue(1); const second = f.enqueue(2);
+    f.queue.status("p1", "working"); f.queue.claim(first, false);
+    f.queue.committing(first, true, true);
+    if (settleBeforeIdle) f.queue.settle(first);
+    f.queue.status("p1", "idle");
+    if (!settleBeforeIdle) f.queue.settle(first);
+    expect(f.queue.next("p1")).toBeNull();
+    f.queue.status("p1", "done"); expect(f.queue.next("p1")).toBeNull();
+    f.queue.status("p1", "working"); expect(f.queue.next("p1")).toBeNull();
+    f.queue.status("p1", "done"); expect(f.queue.next("p1")).toBe(second);
+  });
+
+  it("holds remaining input when an interruption never exposes its ready transition", () => {
+    const f = fixture(); const first = f.enqueue(1); const second = f.enqueue(2);
+    f.queue.status("p1", "working"); f.queue.claim(first, false);
+    f.queue.committing(first, true, true); f.queue.settle(first);
+    f.queue.status("p1", "working"); f.queue.status("p1", "working"); f.advance(101);
+    expect(second.message.state).toBe("held");
+    f.queue.status("p1", "done"); expect(f.queue.next("p1")).toBeNull();
+  });
+
+  it("holds remaining input when the interrupted turn stops but its replacement never starts", () => {
+    const f = fixture(); const first = f.enqueue(1); const second = f.enqueue(2);
+    f.queue.status("p1", "working"); f.queue.claim(first, false);
+    f.queue.committing(first, true, true); f.queue.settle(first);
+    f.queue.status("p1", "idle"); f.advance(101);
+    expect(second.message.state).toBe("held");
+    expect(second.message.error?.code).toBe("pending_turn_unconfirmed");
+  });
+
+  it("retains a restarted turn's completion observed before the send settles", () => {
+    const f = fixture(); const first = f.enqueue(1); const second = f.enqueue(2);
+    f.queue.status("p1", "working"); f.queue.claim(first, false); f.queue.committing(first, true, true);
+    f.queue.status("p1", "idle"); f.queue.status("p1", "working"); f.queue.status("p1", "done");
+    expect(f.queue.next("p1")).toBeNull(); f.queue.settle(first);
+    expect(f.queue.next("p1")).toBe(second);
+  });
+
   it("holds the remaining queue when no new turn was confirmed before its deadline", () => {
     const f = fixture(); const first = f.enqueue(1); const second = f.enqueue(2);
     f.queue.status("p1", "idle"); f.queue.claim(first, true); f.queue.committing(first); f.queue.settle(first);

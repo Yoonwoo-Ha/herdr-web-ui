@@ -36,6 +36,7 @@ function holdConnect(rpc: "text" | "keys"): { reached: Promise<void>; release: (
   return { reached: at, release };
 }
 const approval = "Would you like to run the following command?\n\n$ rm -rf junk\n\n› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)\n\nPress enter to confirm or esc to cancel\n";
+const codexSteering = (entry = "send this now") => `• Working (2s • esc to interrupt)\n• Messages to be submitted after next tool call (press esc to interrupt and send immediately)\n  ↳ ${entry}\n› Ask Codex to do anything\n  gpt-6.1 default · /workspace\n`;
 
 class Socket {
   readonly seen: any[] = [];
@@ -126,6 +127,82 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
 }
 
 describe("connection-owned pending input", () => {
+  it("interrupts an explicit Codex Send now only after its native steering panel appears", async () => {
+    const f = await setup("codex-send-now", "codex"); const message = await f.queue(1, "send this now");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    await f.waitBytes("\r"); expect(f.bytes()).toBe(`${paste("send this now")}\r`);
+    await f.showScreen(codexSteering());
+    expect(await f.socket.action(10)).toMatchObject({ ok: true }); await f.removed(message.id); await f.waitBytes("\u001b");
+    const received = f.socket.seen.length;
+    f.socket.send({ type: "pending-action", id: 11, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    expect(await f.socket.action(11)).toMatchObject({ ok: true });
+    await f.socket.wait((frame) => frame.type === "pending-messages" && frame.removed?.some((item: any) => item.id === message.id), received);
+    expect(f.bytes()).toBe(`${paste("send this now")}\r\u001b`);
+  }, 30_000);
+
+  it("withholds Codex Escape when its sender's lease lapses while the key RPC connects", async () => {
+    const f = await setup("codex-guard-escape", "codex"); const message = await f.queue(1, "send this now");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    await f.waitBytes("\r");
+    const hold = holdConnect("keys"); await f.showScreen(codexSteering()); await hold.reached;
+    f.socket.send({ type: "role", mode: "observe" }); await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "observe");
+    f.socket.send({ type: "role", mode: "interact" }); await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "interact");
+    hold.release();
+    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
+    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
+    expect((await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: any) => item.id === message.id && item.state === "uncertain"))).messages[0].state).toBe("uncertain");
+  }, 30_000);
+
+  it("withholds Codex Escape when its deadline passes while the key RPC connects", async () => {
+    const f = await setup("codex-guard-deadline", "codex"); const message = await f.queue(1, "send this now");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    await f.waitBytes("\r");
+    const hold = holdConnect("keys"); await f.showScreen(codexSteering()); await hold.reached;
+    // the panel was read in time; by the time herdr is written to, Codex may have taken the steering itself
+    await Bun.sleep(1_600);
+    hold.release();
+    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
+    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
+  }, 30_000);
+
+  it("withholds Codex Escape when the pane's status moves while the key RPC connects", async () => {
+    const f = await setup("codex-guard-status", "codex"); const message = await f.queue(1, "send this now");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    await f.waitBytes("\r");
+    const hold = holdConnect("keys"); await f.showScreen(codexSteering()); await hold.reached;
+    // the turn ended on its own: Escape would now cancel whatever Codex opened next
+    await f.state("idle");
+    hold.release();
+    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
+    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
+  }, 30_000);
+
+  it("never interrupts an ordinary queue submit that races from idle into working Codex", async () => {
+    const f = await setup("codex-send-race", "codex", "› Message\n", { submitDelayMs: 500 });
+    await f.state("idle");
+    f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "ordinary send", payload: "unused", delivery: "queue" });
+    await f.waitBytes("\u001b[201~"); await f.state("working"); await f.showScreen(codexSteering());
+    expect(await f.socket.result(1)).toMatchObject({ ok: true }); await f.waitBytes("\r");
+    expect(f.bytes()).toBe(`${paste("ordinary send")}\r`);
+  }, 30_000);
+
+  it("does not send Escape when a Codex approval opens after the steering Enter", async () => {
+    const f = await setup("codex-menu-after-enter", "codex"); const message = await f.queue(1, "send this now");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    await f.waitBytes("\r"); await f.showScreen(approval);
+    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
+    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
+    expect((await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: any) => item.id === message.id && item.state === "uncertain"))).messages[0].state).toBe("uncertain");
+  }, 30_000);
+
+  it("does not send Escape after the pending message's pane was detached", async () => {
+    const f = await setup("codex-detach-after-enter", "codex"); const message = await f.queue(1, "send this now");
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    await f.waitBytes("\r"); f.socket.send({ type: "detach", pane_id: f.pane });
+    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
+    expect(f.bytes()).toBe(`${paste("send this now")}\r`);
+  }, 30_000);
+
   it("queues any working agent and advances one message per confirmed turn", async () => {
     const f = await setup("automatic");
     const first = await f.queue(1, "한글 👩🏽‍💻\nnext"); const second = await f.queue(2, "second");
@@ -600,7 +677,7 @@ describe("connection-owned pending input", () => {
 
   // Claude Code queues what Enter commits during a turn; its Ctrl+Enter sends it at once (#737).
   // The stand-in asks for modifyOtherKeys as Claude Code does, so herdr types Ctrl+Enter as xterm does.
-  it("steers a working Claude turn with Ctrl+Enter, and commits every other delivery with Enter", async () => {
+  it("steers Claude with Ctrl+Enter and Codex with Enter then a confirmed interruption", async () => {
     const ctrlEnter = "\u001b[27;5;13~";
     const f = await setup("steer-claude", "claude", "\\x1b[>4;2m› Message\n");
     const steer = await f.queue(1, "steer now"); const next = await f.queue(2, "next turn");
@@ -613,8 +690,10 @@ describe("connection-owned pending input", () => {
     const codex = await setup("steer-codex", "codex", "\\x1b[>4;2m› Message\n");
     const other = await codex.queue(1, "codex steer");
     codex.socket.send({ type: "pending-action", id: 10, pane_id: codex.pane, pending_id: other.id, action: "steer" });
-    expect(await codex.socket.action(10)).toMatchObject({ ok: true }); await codex.waitBytes("\r");
-    expect(codex.bytes()).toBe(`${paste("codex steer")}\r`);
+    await codex.waitBytes("\r");
+    await codex.showScreen(codexSteering("codex steer"));
+    expect(await codex.socket.action(10)).toMatchObject({ ok: true }); await codex.waitBytes("\u001b");
+    expect(codex.bytes()).toBe(`${paste("codex steer")}\r\u001b`);
   }, 45_000);
 
   // The paste and its key are written only once herdr's connect resolves; the sender's right is asked
