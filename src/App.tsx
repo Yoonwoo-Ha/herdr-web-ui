@@ -474,10 +474,11 @@ export function App() {
     const tab = tabOf(a);
     return tab !== undefined && tab === tabOf(b);
   }, [tabOf]);
-  /** the pane is in the tab the other half shows, while it is drawn */
+  /** the pane is in the tab the other half holds, drawn or not: a narrow window keeps the split, and a
+   *  pick of that half's pane there trades the halves instead of putting one tab in both */
   const inOtherHalf = useCallback((machineId: string, paneId: string): boolean => {
     const open = splitRef.current;
-    return open !== null && splitShownRef.current && sameTab(open.other, { machineId, paneId });
+    return open !== null && sameTab(open.other, { machineId, paneId });
   }, [sameTab]);
 
   // In-app alerts (components/Droplet.tsx): only while the app is on screen - a hidden app has
@@ -855,10 +856,16 @@ export function App() {
 
   // The split view (lib/split.ts): drawn only where the sidebar stands beside the pane, and only
   // while a pane is selected; a narrower window shows the active half alone and keeps the split
-  const splitOn = split !== null && wideScreen && selectedPaneId !== null;
-  splitShownRef.current = splitOn;
   const otherMachine = split ? machines.find((m) => m.id === split.other.machineId) : undefined;
   const otherPane = split ? otherMachine?.snapshot?.panes.find((pane) => pane.pane_id === split.other.paneId) ?? null : null;
+  // both halves on one tab (a saved split beside a link to its other tab, a pane moved across) would
+  // attach the tab's panes twice on the PC's one socket, and the detach of the half that then closes
+  // would take the other half's attachment with it: the other half is not drawn while that holds, and
+  // the effect below ends the split
+  const overlapping = split !== null && split.other.machineId === selectedMachineId
+    && (split.other.paneId === selectedPaneId || (otherPane !== null && selectedPane !== null && otherPane.tab_id === selectedPane.tab_id));
+  const splitOn = split !== null && wideScreen && selectedPaneId !== null && !overlapping;
+  splitShownRef.current = splitOn;
   const otherWorkspace = otherPane ? otherMachine?.snapshot?.workspaces.find((workspace) => workspace.workspace_id === otherPane.workspace_id) ?? null : null;
   const otherHerdr = split?.other.machineId === "local" ? health?.herdr : otherMachine?.herdr;
   const otherAttach = otherHerdr?.terminal_attach !== false || otherHerdr?.terminal_mirror === true;
@@ -906,11 +913,15 @@ export function App() {
     if (slot !== split.active) { endSplit(split.active); return; }
     applySplit(null, split.other);
   };
-  const selectInSlot = (slot: SplitSlot, machineId: string, paneId: string): void => {
+  const selectInSlot = (slot: SplitSlot, machineId: string, paneId: string, focusInput = true): void => {
     const open = splitRef.current;
-    if (!open || !splitOn || open.active === slot) { selectPane(paneId); return; }
-    if (paneId === selectedPaneId && machineId === selectedMachineId) return;
-    setSplit({ ...open, other: { machineId, paneId } });
+    if (!open || !splitOn || open.active === slot) { selectPane(paneId, focusInput); return; }
+    if (selectedPaneId === null) return;
+    // a pick in the other half (a press on a sibling pane of its tab, a tab opened there) makes that half
+    // active with the picked pane selected, in one step. The press's own activation and this pick both
+    // read the state from before the event: as two steps the second would undo the first and leave one
+    // tab in both halves, which ends the split
+    applySplit({ other: { machineId: selectedMachineId, paneId: selectedPaneId }, bSide: open.bSide, active: slot }, { machineId, paneId }, !focusInput);
   };
   /** A pane dropped at a point: the half under it opens the pane. A pane of a tab a half already
    *  shows counts as that half's own pane, and is then picked in it. */
@@ -1460,7 +1471,7 @@ export function App() {
             const lensOf = (item: HerdrPane): PaneView => active && item.pane_id === selectedPaneId ? view
               : storedView(lenses, viewPicks, item.pane_id, machineId, item.agent != null, attach);
             const slotView = active ? view : pane ? lensOf(pane) : "terminal";
-            const onSelect = active ? selectPane : (id: string) => selectInSlot(slot, machineId, id);
+            const onSelect = active ? selectPane : (id: string, focusInput = true) => selectInSlot(slot, machineId, id, focusInput);
             // one pane's panel keeps the page's own id, whichever slot draws it
             const slotPanelId = !splitOn || slot === "a" ? PANE_TABPANEL_ID : `${PANE_TABPANEL_ID}-${slot}`;
             const slotPanelLabel = active ? tabPanelLabel : paneTabPanelLabel(slotSnapshot, pane, t);
@@ -1480,6 +1491,9 @@ export function App() {
                   if (event.button === 0 && !paneContextPress(event, apple) && !(event.target as Element).closest(".pane-slot-action")) activateSlot(slot);
                 }}
                 onFocusCapture={active ? undefined : (event) => { if (Date.now() - lastKeyAtRef.current < KEY_FOCUS_MS && !(event.target as Element).closest(".pane-slot-action")) activateSlot(slot, true); }}
+                // a file or text dropped into the other half is for its pane: an upload's paths and the pasted
+                // text reach only the active half's terminal, so the drop makes the half active first
+                onDropCapture={active ? undefined : (event) => { if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) activateSlot(slot); }}
               >
                 {splitOn && (
                   <div className="pane-slot-bar">

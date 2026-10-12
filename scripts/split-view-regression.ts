@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, BrowserContext, Page, Route, WebSocket } from "playwright-core";
-import { herdrRpc, paneSplit, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
+import { herdrRpc, paneRead, paneSplit, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 
 /**
  * The split view's edges (lib/split.ts), each on a browser context of its own: the other half's
@@ -264,11 +264,15 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       }
 
       await page.setViewportSize({ width: 768, height: 800 });
+      await settled(page); // the layout follows the media query a render later
       await source.dispatchEvent("dragstart", { dataTransfer: data });
       await area.dispatchEvent("dragover", { dataTransfer: data, clientX: 500, clientY: y });
       await unchanged();
       await source.dispatchEvent("dragend", { dataTransfer: data });
       await page.setViewportSize({ width: 1280, height: 800 });
+      // the wide layout's drag listeners are registered by an effect after the render that follows the media query
+      await page.waitForFunction(() => document.querySelector(".pane-slot") !== null);
+      await settled(page);
       await page.emulateMedia({ reducedMotion: "reduce" });
       await start();
       await hover(middle - 40, "left");
@@ -342,7 +346,92 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       assert.equal(await page.locator(".pane-slot").count(), 2);
       assert.equal(await half(page, "left").locator(".pane-terminal").count(), 2, "a cancelled drag leaves the halves alone");
       console.log("PASS a tab dragged out of its strip opens in a half, at herdr's layout, never in both");
+      // a press on the other half's sibling pane (herdr's split) makes that half active with the sibling
+      // selected, in one step: the halves stay two, and no tab is drawn twice
+      const sibling = half(page, "left").locator(".pane-frame:not(.is-current) .pane-terminal");
+      await sibling.click({ position: { x: 40, y: 40 } });
+      await isActive(page, "left");
+      await settled(page);
+      assert.equal(await page.locator(".pane-slot").count(), 2, "a sibling press keeps both halves");
+      assert.equal(await page.locator(".pane-split .pane-terminal").count(), 3, "a sibling press draws no tab twice");
+      assert.equal(await half(page, "left").locator(".pane-frame.is-current .pane-terminal").count(), 1, "the pressed sibling is the selected pane");
+      assert.equal(await half(page, "left").locator(".pane-frame").count(), 2);
+      console.log("PASS a press on a sibling pane in the other half activates it with that pane selected");
       assert.deepEqual(errors, []);
+    }
+
+    // 6b. A narrow window shows the active half alone; picking the hidden half's pane trades the halves
+    //     instead of losing the split, which the wide window shows again.
+    {
+      const [shown, hidden] = await panesFor("narrow-shown", "narrow-hidden") as [string, string];
+      const { page, errors } = await open([shown, hidden], "chat");
+      await splitRight(page, hidden);
+      await half(page, "left").locator(".terminal-host").click({ position: { x: 40, y: 40 } });
+      await isActive(page, "left");
+      await page.setViewportSize({ width: 700, height: 800 });
+      await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 1);
+      await page.getByRole("log", { name: `conversation of ${shown}`, exact: true }).waitFor();
+      // the narrow window keeps the workspace list in a drawer
+      await page.getByRole("button", { name: "Open workspace list", exact: true }).click();
+      await page.locator(`.pane-select[title^="${hidden} —"]`).click();
+      await page.getByRole("log", { name: `conversation of ${hidden}`, exact: true }).waitFor();
+      assert.notEqual(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:split")), null, "the split is kept while the window is narrow");
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
+      await isActive(page, "right");
+      await half(page, "right").getByRole("log", { name: `conversation of ${hidden}`, exact: true }).waitFor();
+      await half(page, "left").getByRole("log", { name: `conversation of ${shown}`, exact: true }).waitFor();
+      assert.deepEqual(errors, []);
+      console.log("PASS a narrow window keeps the split, and a pick of the hidden half trades the halves");
+    }
+
+    // 6c. A saved split whose other half is the linked pane's own tab is never drawn: the tab's panes
+    //     would attach twice on one socket, and closing the duplicate would detach the survivor.
+    {
+      const [first] = await panesFor("overlap") as [string];
+      const beside = (await paneSplit(first, "right", false)).pane_id;
+      const frames: string[] = [];
+      const { page, errors } = await open([first, beside], "terminal", async (context) => {
+        await context.addInitScript(([other]) => {
+          sessionStorage.setItem("herdr-web-ui:split", JSON.stringify({ other: { machineId: "local", paneId: other }, bSide: "right", active: "a" }));
+        }, [beside] as const);
+        // what the page asks of the PC's socket: attach/detach/input frames tell an attachment lost from one never made
+        const note = (direction: string, payload: string | Buffer): void => {
+          try {
+            const message = JSON.parse(String(payload)) as { type?: string; pane_id?: string; text?: string };
+            if (message.type === "attach" || message.type === "detach" || message.type === "input" || message.type === "input-ready") frames.push(`${direction} ${message.type} ${message.pane_id ?? ""} ${message.text ? JSON.stringify(message.text) : ""}`.trim());
+          } catch { /* not JSON */ }
+        };
+        context.on("page", (opened) => opened.on("websocket", (socket) => {
+          socket.on("framesent", ({ payload }) => note(">", payload));
+          socket.on("framereceived", ({ payload }) => note("<", payload));
+        }));
+      });
+      await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 1 && sessionStorage.getItem("herdr-web-ui:split") === null);
+      await page.waitForFunction(() => document.querySelectorAll(".pane-split .pane-terminal").length === 2);
+      await settled(page);
+      assert.equal(await page.locator(".pane-slot").count(), 1, "the overlapping split is not drawn");
+      // the surviving terminal is still attached: a line typed into it reaches the shell
+      const screen = async (): Promise<string> => (await paneRead({ paneId: first, source: "visible" })).text;
+      const deadline = Date.now() + 15_000;
+      while ((await screen()).trim() === "") { // the shell's prompt first
+        if (Date.now() > deadline) throw new Error("Timed out: the pane drew no prompt");
+        await page.waitForTimeout(100);
+      }
+      const current = page.locator(".pane-frame.is-current .pane-terminal:not(.is-idle)");
+      await current.waitFor();
+      // typed before the PC says the pane takes input, a line is held for the user to send: wait for that word
+      await until(page, () => frames.some((frame) => frame === `< input-ready ${first}`), "the surviving terminal's input-ready");
+      await current.locator(".xterm-helper-textarea").focus();
+      await page.keyboard.type("echo split-ok-42\n");
+      let shown = await screen();
+      while (!shown.includes("split-ok-42")) {
+        if (Date.now() > deadline) throw new Error(`Timed out: the typed line did not reach the pane after the overlapping split closed; the pane shows:\n${shown}\nframes: ${frames.join(" | ")}`);
+        await page.waitForTimeout(100);
+        shown = await screen();
+      }
+      assert.deepEqual(errors, []);
+      console.log("PASS an overlapping saved split is never drawn and the surviving terminal stays attached");
     }
 
     // 7. A second page in the same browser context cannot replace this page's split.
