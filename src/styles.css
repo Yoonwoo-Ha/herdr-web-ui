@@ -1858,11 +1858,11 @@ button {
    only the transcript reaches up into it (ChatView.css), its first line still below it, and the
    banners start below it (PaneTerminal.css). The terminal lens keeps the bar in the flow as before. */
 @media (max-width: 768px) {
-  .app:has(> .app-body > .pane-column.is-chat > .terminal-host:first-child) {
+  .app:has(> .app-body > .pane-column.is-chat > .pane-split:first-child > .pane-slot > .terminal-host:first-child) {
     --header-over: calc(var(--header-h) + env(safe-area-inset-top, 0px));
   }
 
-  .app:has(> .app-body > .pane-column.is-chat > .terminal-host:first-child) > .app-header {
+  .app:has(> .app-body > .pane-column.is-chat > .pane-split:first-child > .pane-slot > .terminal-host:first-child) > .app-header {
     z-index: var(--z-header);
     margin-bottom: calc(-1 * var(--header-over));
     background: var(--bar-bg);

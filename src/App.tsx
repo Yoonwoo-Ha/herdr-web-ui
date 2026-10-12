@@ -39,6 +39,7 @@ import { alertPrefs, useSettings } from "./lib/settings.ts";
 import { useShortcuts } from "./lib/shortcuts.ts";
 import { useMediaQuery } from "./lib/useMediaQuery.ts";
 import { PaneLenses } from "./lib/paneLens.ts";
+import { paneContextPress } from "./lib/paneCanvas.ts";
 import type { AppActions, PaneView } from "./lib/actions.ts";
 import {
   notificationState,
@@ -120,15 +121,18 @@ function storeSelection(machineId: string, paneId: string | null): void {
  * terminal.
  */
 /** `hasAgent`: herdr leaves `agent` out for a shell, so callers compare with `!= null` */
-function storedView(lenses: PaneLenses, paneId: string, machineId: string, hasAgent: boolean | null, terminalAttach: boolean): PaneView {
+function storedView(lenses: PaneLenses, picks: ReadonlyMap<string, PaneView>, paneId: string, machineId: string, hasAgent: boolean | null, terminalAttach: boolean): PaneView {
   if (!terminalAttach) return "chat";
+  const key = paneStorageId(machineId, paneId);
+  const picked = picks.get(key);
+  if (picked !== undefined) return picked;
   try {
-    const stored = window.localStorage.getItem(`herdr-web-ui:view:${paneStorageId(machineId, paneId)}`);
+    const stored = window.localStorage.getItem(`herdr-web-ui:view:${key}`);
     if (stored === "chat" || stored === "terminal") return stored;
   } catch {
     /* private mode */
   }
-  return lenses.of(paneStorageId(machineId, paneId), hasAgent, window.matchMedia?.("(pointer: coarse)").matches === true);
+  return lenses.of(key, hasAgent, window.matchMedia?.("(pointer: coarse)").matches === true);
 }
 
 function Brand() {
@@ -144,6 +148,7 @@ function Brand() {
 
 export function App() {
   const t = useT();
+  const apple = /Mac|iPhone|iPad/.test(navigator.platform);
   const { settings, resolvedTheme, update: updateSettings } = useSettings();
   // this device's alert choices: sent with its push subscription, and applied to tab alerts here
   const alerts = useMemo(() => alertPrefs(settings), [settings.alertInput, settings.alertDone]);
@@ -154,6 +159,7 @@ export function App() {
   const alertsOnRef = useRef(alertsOn);
   alertsOnRef.current = alertsOn;
   const [machines, setMachines] = useState<Machine[]>([]);
+  const [machineRosterLoaded, setMachineRosterLoaded] = useState(false);
   // the place the address names, read once at load: a link wins over this window's last selection
   const [initialLink] = useState(() => {
     // a link's lens is drawn over its pane's own, as a tapped notification's is (notificationViewTarget below)
@@ -266,6 +272,8 @@ export function App() {
   // the width the sidebar's edge was dragged to on this device; null is the density's own
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
   const [lens, setLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
+  // Explicit lens choices stay authoritative in this page even when storage cannot be written.
+  const [viewPicks, setViewPicks] = useState<ReadonlyMap<string, PaneView>>(() => new Map());
   // two tabs side by side (lib/split.ts): the other half's pane, its side, and the active slot.
   // Only drawn where the sidebar stands beside the pane; a narrower window shows the active half
   const [split, setSplitState] = useState<SplitState | null>(storedSplit);
@@ -291,8 +299,6 @@ export function App() {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
-  // a lens picked in the other half is stored per pane (storedView): this draws the half again
-  const [, setOtherLensSerial] = useState(0);
   // the guide appears as soon as a pane is picked up; a target is chosen only over the area
   const [paneDragging, setPaneDragging] = useState(false);
   const [dropAt, setDropAt] = useState<SplitSide | null>(null);
@@ -403,6 +409,7 @@ export function App() {
     try {
       await snapshotRequests.current.read(fetchMachines, (next) => {
         setMachines((previous) => sameData(previous, next) ? previous : next);
+        setMachineRosterLoaded(true);
         setError(null); setLocked(false);
       });
     }
@@ -535,6 +542,7 @@ export function App() {
       if (payload.type === "machines") {
         seedStatuses(statusRef.current, alerting(payload.machines), { started: turnStartRef.current, lasted: lastTurnRef.current });
         setMachines((previous) => sameData(previous, payload.machines) ? previous : payload.machines);
+        setMachineRosterLoaded(true);
         return;
       }
       const machine = machinesRef.current.find((m) => m.id === payload.machine_id);
@@ -815,7 +823,7 @@ export function App() {
   const notificationView = notificationViewForPane(notificationViewTarget, selectedMachineId, selectedPaneId);
   let view = lens.view;
   if (lens.key !== lensKey) {
-    if (selectedPaneId !== null) view = storedView(lenses, selectedPaneId, selectedMachineId, selectedPane ? selectedAgent !== null : null, terminalAttach);
+    if (selectedPaneId !== null) view = storedView(lenses, viewPicks, selectedPaneId, selectedMachineId, selectedPane ? selectedAgent !== null : null, terminalAttach);
     setLens({ key: lensKey, view });
   }
   // a tapped alert's lens is drawn over the pane's own, never stored: once it is gone (the pane or
@@ -823,19 +831,25 @@ export function App() {
   // show (storedView), so its alert opens its own lens; until the snapshot says, it counts as an agent
   if (notificationView !== null && !(notificationView === "chat" && selectedPane !== null && selectedAgent === null)) view = notificationView;
 
+  const pickView = useCallback((machineId: string, paneId: string, next: PaneView) => {
+    const key = paneStorageId(machineId, paneId);
+    setViewPicks((current) => current.get(key) === next ? current : new Map(current).set(key, next));
+    try {
+      window.localStorage.setItem(`herdr-web-ui:view:${key}`, next);
+    } catch {
+      /* private mode: the lens is still picked for this page */
+    }
+  }, []);
+
   const setView = useCallback(
     (next: PaneView) => {
       setNotificationViewTarget(null);
       setLens((current) => ({ ...current, view: next }));
       setAutoSelected(false);
       if (selectedPaneId === null) return;
-      try {
-        window.localStorage.setItem(`herdr-web-ui:view:${paneStorageId(selectedMachineId, selectedPaneId)}`, next);
-      } catch {
-        /* private mode: the lens just stops being remembered */
-      }
+      pickView(selectedMachineId, selectedPaneId, next);
     },
-    [selectedPaneId, selectedMachineId],
+    [selectedPaneId, selectedMachineId, pickView],
   );
 
   // The split view (lib/split.ts): drawn only where the sidebar stands beside the pane, and only
@@ -847,14 +861,6 @@ export function App() {
   const otherWorkspace = otherPane ? otherMachine?.snapshot?.workspaces.find((workspace) => workspace.workspace_id === otherPane.workspace_id) ?? null : null;
   const otherHerdr = split?.other.machineId === "local" ? health?.herdr : otherMachine?.herdr;
   const otherAttach = otherHerdr?.terminal_attach !== false || otherHerdr?.terminal_mirror === true;
-  const setOtherView = useCallback((machineId: string, paneId: string, next: PaneView) => {
-    try {
-      window.localStorage.setItem(`herdr-web-ui:view:${paneStorageId(machineId, paneId)}`, next);
-    } catch {
-      /* private mode: the lens just stops being remembered */
-    }
-    setOtherLensSerial((serial) => serial + 1);
-  }, []);
 
   // the other half's pane closed: another pane of its tab takes its place, else back to one pane.
   // Both halves on one tab (a pane moved in) is one tab too many. An offline PC's cached roster
@@ -862,10 +868,11 @@ export function App() {
   const otherTabRef = useRef<string | null>(null);
   if (otherPane) otherTabRef.current = otherPane.tab_id;
   useEffect(() => {
-    if (!split) return;
+    if (!split || !machineRosterLoaded) return;
     const selected = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
     if (selected && sameTab(split.other, selected)) { endSplit(split.active); return; }
-    if (!otherMachine?.snapshot || otherMachine.state !== "connected") return;
+    if (!otherMachine) { endSplit(split.active); return; }
+    if (!otherMachine.snapshot || otherMachine.state !== "connected") return;
     const panes = otherMachine.snapshot.panes;
     if (panes.some((pane) => pane.pane_id === split.other.paneId)) return;
     const tabId = otherTabRef.current;
@@ -873,7 +880,7 @@ export function App() {
     const heir = panes.find((pane) => pane.tab_id === tabId && pane.pane_id === focused) ?? panes.find((pane) => pane.tab_id === tabId);
     if (heir) setSplit({ ...split, other: { machineId: split.other.machineId, paneId: heir.pane_id } });
     else endSplit(split.active);
-  }, [split, otherMachine, selectedMachineId, selectedPaneId, endSplit, setSplit, sameTab]);
+  }, [split, machineRosterLoaded, otherMachine, selectedMachineId, selectedPaneId, endSplit, setSplit, sameTab]);
 
   /** A split change and the pane it selects. The half that becomes active keeps its terminals: only
    *  a half whose pane moves to another PC attaches again and reports its connection. */
@@ -1449,7 +1456,7 @@ export function App() {
             const slotSnapshot = active ? snapshot : otherMachine?.snapshot ?? null;
             const attach = active ? terminalAttach : otherAttach;
             const lensOf = (item: HerdrPane): PaneView => active && item.pane_id === selectedPaneId ? view
-              : storedView(lenses, item.pane_id, machineId, item.agent != null, attach);
+              : storedView(lenses, viewPicks, item.pane_id, machineId, item.agent != null, attach);
             const slotView = active ? view : pane ? lensOf(pane) : "terminal";
             const onSelect = active ? selectPane : (id: string) => selectInSlot(slot, machineId, id);
             // one pane's panel keeps the page's own id, whichever slot draws it
@@ -1457,7 +1464,7 @@ export function App() {
             const slotPanelLabel = active ? tabPanelLabel : paneTabPanelLabel(slotSnapshot, pane, t);
             const toggleSlotView = (): void => {
               const next = slotView === "chat" ? "terminal" : "chat";
-              if (active) setView(next); else if (pane) setOtherView(machineId, pane.pane_id, next);
+              if (active) setView(next); else if (pane) pickView(machineId, pane.pane_id, next);
             };
             return (
               <MachineContext.Provider key={slot} value={machineId}>
@@ -1467,7 +1474,9 @@ export function App() {
                 data-side={splitOn ? slotSide(split, slot) : undefined}
                 // a press or the focus in the other half makes it the active one, before the press acts;
                 // its own bar's buttons (its lens, its close) act on it as it is
-                onPointerDownCapture={active ? undefined : (event) => { if (!(event.target as Element).closest(".pane-slot-action")) activateSlot(slot); }}
+                onPointerDownCapture={active ? undefined : (event) => {
+                  if (event.button === 0 && !paneContextPress(event, apple) && !(event.target as Element).closest(".pane-slot-action")) activateSlot(slot);
+                }}
                 onFocusCapture={active ? undefined : (event) => { if (Date.now() - lastKeyAtRef.current < KEY_FOCUS_MS && !(event.target as Element).closest(".pane-slot-action")) activateSlot(slot, true); }}
               >
                 {splitOn && (

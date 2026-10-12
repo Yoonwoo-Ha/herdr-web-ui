@@ -114,7 +114,7 @@ export function paneDragData(target: SplitTarget): string {
 /** The split this device left, if any: a reload opens it again while both panes are still there. */
 export function storedSplit(): SplitState | null {
   try {
-    const value = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null") as Partial<SplitState> | null;
+    const value = JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) ?? "null") as Partial<SplitState> | null;
     const other = value?.other;
     if (!value || !other || typeof other.machineId !== "string" || typeof other.paneId !== "string") return null;
     if (value.bSide !== "left" && value.bSide !== "right") return null;
@@ -127,8 +127,8 @@ export function storedSplit(): SplitState | null {
 
 export function storeSplit(state: SplitState | null): void {
   try {
-    if (state === null) window.localStorage.removeItem(STORAGE_KEY);
-    else window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (state === null) window.sessionStorage.removeItem(STORAGE_KEY);
+    else window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     /* private mode: the split just is not kept across a reload */
   }

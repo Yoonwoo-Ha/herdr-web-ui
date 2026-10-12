@@ -27,13 +27,24 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
     }
     return ids;
   };
-  const open = async (panes: string[], view: "chat" | "terminal", before?: (context: BrowserContext) => Promise<unknown>): Promise<{ page: Page; errors: string[] }> => {
+  const open = async (panes: string[], view: "chat" | "terminal", before?: (context: BrowserContext) => Promise<unknown>, options: { blockViewWrites?: boolean; platform?: string } = {}): Promise<{ page: Page; errors: string[] }> => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
     contexts.push(context);
-    await context.addInitScript(([ids, lens]) => {
+    await context.addInitScript(([ids, lens, blockViewWrites, platform]) => {
       if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertDone: "off" }));
       for (const id of ids as string[]) localStorage.setItem(`herdr-web-ui:view:${id}`, lens as string);
-    }, [panes, view] as const);
+      if (blockViewWrites) {
+        const setItem = Storage.prototype.setItem;
+        Object.defineProperty(Storage.prototype, "setItem", {
+          configurable: true,
+          value(this: Storage, key: string, value: string) {
+            if (this === localStorage && key.startsWith("herdr-web-ui:view:")) throw new DOMException("Storage disabled", "SecurityError");
+            setItem.call(this, key, value);
+          },
+        });
+      }
+      if (platform !== null) Object.defineProperty(navigator, "platform", { configurable: true, get: () => platform });
+    }, [panes, view, options.blockViewWrites === true, options.platform ?? null] as const);
     await before?.(context);
     const page = await context.newPage();
     const errors: string[] = [];
@@ -208,7 +219,7 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
         await preview(false, null);
         assert.equal(await page.locator(".pane-slot").count(), 1, "cancelling does not create a half");
         await page.getByRole("log", { name: `conversation of ${opened}`, exact: true }).waitFor();
-        assert.equal(await page.evaluate(() => localStorage.getItem("herdr-web-ui:split")), null, "cancelling does not save a split");
+        assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:split")), null, "cancelling does not save a split");
       };
 
       await preview(false, null);
@@ -332,6 +343,154 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       assert.equal(await half(page, "left").locator(".pane-terminal").count(), 2, "a cancelled drag leaves the halves alone");
       console.log("PASS a tab dragged out of its strip opens in a half, at herdr's layout, never in both");
       assert.deepEqual(errors, []);
+    }
+
+    // 7. A second page in the same browser context cannot replace this page's split.
+    {
+      const [first, firstOther, second, secondOther] = await panesFor("tab-one", "tab-one-other", "tab-two", "tab-two-other") as [string, string, string, string];
+      const { page: firstPage, errors: firstErrors } = await open([first, firstOther, second, secondOther], "chat");
+      const secondPage = await firstPage.context().newPage();
+      const secondErrors: string[] = [];
+      secondPage.on("pageerror", (error) => secondErrors.push(error.message));
+      await secondPage.goto(`${origin}/?pane=${encodeURIComponent(second)}`);
+      await secondPage.locator(".conn-live").waitFor();
+      await secondPage.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 1);
+
+      // Both pages begin without a split; each then stores a different one in the same context.
+      await splitRight(firstPage, firstOther);
+      await settled(firstPage);
+      await splitRight(secondPage, secondOther);
+      await settled(secondPage);
+
+      await firstPage.reload();
+      await firstPage.locator(".conn-live").waitFor();
+      await firstPage.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
+      await half(firstPage, "left").getByRole("log", { name: `conversation of ${first}`, exact: true }).waitFor();
+      await half(firstPage, "right").getByRole("log", { name: `conversation of ${firstOther}`, exact: true }).waitFor();
+      assert.equal(await firstPage.getByRole("log", { name: `conversation of ${secondOther}`, exact: true }).count(), 0,
+        "reloading the first page restores its split instead of the second page's");
+      assert.deepEqual(firstErrors, []);
+      assert.deepEqual(secondErrors, []);
+      console.log("PASS split state is isolated per page in a shared browser context");
+    }
+
+    // 8. Only a primary non-context press activates an inactive half, including on macOS.
+    {
+      const [left, right] = await panesFor("pointer-left", "pointer-right") as [string, string];
+      const { page, errors } = await open([left, right], "terminal", undefined, { platform: "MacIntel" });
+      await splitRight(page, right);
+      for (const press of [
+        { button: 2, ctrlKey: false, name: "right press" },
+        { button: 1, ctrlKey: false, name: "middle press" },
+        { button: 0, ctrlKey: true, name: "macOS Control-click" },
+      ]) {
+        await half(page, "left").locator(".terminal-host").dispatchEvent("pointerdown", {
+          button: press.button, ctrlKey: press.ctrlKey, pointerId: 1, pointerType: "mouse", isPrimary: true,
+        });
+        await settled(page);
+        assert.equal(await half(page, "right").evaluate((slot) => slot.classList.contains("is-active")), true,
+          `${press.name} does not activate the inactive half`);
+      }
+      assert.deepEqual(errors, []);
+      console.log("PASS right, middle and macOS Control-click presses leave the other half active");
+    }
+
+    // 9. An inactive-half lens choice is live in memory even when its storage write fails.
+    {
+      const [left, right] = await panesFor("lens-left", "lens-right") as [string, string];
+      const { page, errors } = await open([left, right], "chat", undefined, { blockViewWrites: true });
+      await splitRight(page, right);
+      await half(page, "left").getByRole("button", { name: "Show the terminal", exact: true }).click();
+      await settled(page);
+      assert.equal(await half(page, "left").locator(".pane-slot-action").first().getAttribute("aria-label"), "Show the chat",
+        "the inactive half reflects its explicit terminal choice");
+      assert.equal(await page.evaluate((pane) => localStorage.getItem(`herdr-web-ui:view:${pane}`), left), "chat",
+        "the fixture's stored value remains unchanged after the blocked write");
+      await half(page, "left").locator(".terminal-host").click({ position: { x: 40, y: 40 } });
+      await isActive(page, "left");
+      await settled(page);
+      assert.equal(await page.locator('.view-switch button[aria-pressed="true"]').innerText(), "Terminal",
+        "activating the half keeps the in-memory lens choice");
+      assert.deepEqual(errors, []);
+      console.log("PASS an inactive-half lens choice works and survives activation when storage writes fail");
+    }
+
+    // 10. The phone's glass header follows the nested pane DOM, but never crosses a notice or tab row.
+    {
+      const [pane] = await panesFor("mobile-glass") as [string];
+      const { page, errors } = await open([pane], "chat");
+      await page.setViewportSize({ width: 700, height: 500 });
+      await page.evaluate(() => {
+        const app = document.createElement("div");
+        app.id = "split-css-fixture";
+        app.className = "app";
+        app.style.cssText = "position:absolute;left:-2px;top:-2px;width:1px;height:1px;visibility:hidden;pointer-events:none";
+        const header = document.createElement("header");
+        header.className = "app-header";
+        const body = document.createElement("div");
+        body.className = "app-body";
+        const column = document.createElement("div");
+        column.className = "pane-column is-chat";
+        const split = document.createElement("div");
+        split.className = "pane-split";
+        const slot = document.createElement("div");
+        slot.className = "pane-slot";
+        const host = document.createElement("main");
+        host.className = "terminal-host";
+        slot.append(host);
+        split.append(slot);
+        column.append(split);
+        body.append(column);
+        app.append(header, body);
+        document.body.append(app);
+      });
+      const glassState = () => page.locator("#split-css-fixture").evaluate((app) => ({
+        over: getComputedStyle(app).getPropertyValue("--header-over").trim(),
+        margin: getComputedStyle(app.querySelector(".app-header")!).marginBottom,
+      }));
+      const initialGlass = await glassState();
+      assert.notEqual(initialGlass.over, "", "the nested pane host enables phone glass-header overlap");
+      assert.ok(Number.parseFloat(initialGlass.margin) < 0, "the header overlaps the chat when no row comes first");
+
+      await page.locator("#split-css-fixture .pane-column").evaluate((column) => {
+        const notice = document.createElement("p");
+        notice.className = "pane-notice";
+        notice.textContent = "Synthetic notice";
+        column.insertBefore(notice, column.firstElementChild);
+      });
+      const noticeState = await glassState();
+      assert.equal(noticeState.over, "", "a visible notice keeps the header in flow");
+      assert.notEqual(await page.locator("#split-css-fixture .pane-notice").evaluate((notice) => getComputedStyle(notice).display), "none",
+        "the notice remains visible");
+
+      await page.locator("#split-css-fixture .pane-notice").evaluate((notice) => notice.remove());
+      await page.locator("#split-css-fixture .pane-slot").evaluate((slot) => {
+        const tabs = document.createElement("div");
+        tabs.className = "tab-strip";
+        slot.insertBefore(tabs, slot.firstElementChild);
+      });
+      const tabState = await glassState();
+      assert.equal(tabState.over, "", "a visible tab strip keeps the header in flow");
+      assert.notEqual(await page.locator("#split-css-fixture .tab-strip").evaluate((tabs) => getComputedStyle(tabs).display), "none",
+        "the tab strip remains visible");
+      assert.deepEqual(errors, []);
+      console.log("PASS phone glass-header selectors follow pane-slot nesting without covering notices or tabs");
+    }
+
+    // A saved partner on a removed PC is discarded only after the roster arrives.
+    {
+      const [pane] = await panesFor("removed-machine") as [string];
+      const { page, errors } = await open([pane], "chat", (context) => context.addInitScript(() => {
+        sessionStorage.setItem("herdr-web-ui:split", JSON.stringify({
+          other: { machineId: "removed-split-fixture", paneId: "missing-pane" },
+          bSide: "right", active: "a",
+        }));
+      }));
+      await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 1
+        && sessionStorage.getItem("herdr-web-ui:split") === null);
+      await page.getByRole("log", { name: `conversation of ${pane}`, exact: true }).waitFor();
+      assert.deepEqual(errors, []);
+      console.log("PASS a saved split on a removed PC closes after the roster arrives");
     }
   } finally {
     for (const context of contexts) await context.close();

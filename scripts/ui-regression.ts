@@ -1815,10 +1815,10 @@ try {
     await page.locator(".conn.conn-live").waitFor();
     await half("left").getByRole("log", { name: `conversation of ${paneA}`, exact: true }).waitFor();
     await half("right").getByRole("log", { name: `conversation of ${paneB}`, exact: true }).waitFor();
-    assert.match(await page.evaluate(() => localStorage.getItem("herdr-web-ui:split") ?? ""), /"active":"a"/, "the split is kept for a reload");
+    assert.match(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:split") ?? ""), /"active":"a"/, "the split is kept for a reload");
     await half("right").getByRole("button", { name: "Close this half", exact: true }).click();
     await until(async () => await page.locator(".pane-slot").count() === 1, "one pane after closing a half");
-    assert.equal(await page.evaluate(() => localStorage.getItem("herdr-web-ui:split")), null);
+    assert.equal(await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:split")), null);
     await page.getByRole("log", { name: `conversation of ${paneA}`, exact: true }).waitFor();
   }
   console.log("PASS a dragged row opens its pane beside the open one; a press switches the active half; a half closes");

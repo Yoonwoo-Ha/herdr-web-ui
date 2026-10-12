@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
-import { activateOther, dockPane, draggedPane, dropSide, paneDragData, slotSide, type SplitState } from "./split.ts";
+import { afterEach, describe, expect, it } from "bun:test";
+import { activateOther, dockPane, draggedPane, dropSide, paneDragData, slotSide, storedSplit, storeSplit, type SplitState } from "./split.ts";
 
 const A = { machineId: "local", paneId: "w1:p1" };
 const B = { machineId: "local", paneId: "w1:p2" };
@@ -111,5 +111,56 @@ describe("split view", () => {
     const result = dockPane(null, A, B, committed)!;
     expect(slotSide(result.split, result.split.active)).toBe(preview);
     expect(result.select).toEqual(B);
+  });
+});
+
+describe("split storage", () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const storageKey = "herdr-web-ui:split";
+
+  afterEach(() => {
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+
+  it("stores and restores the split in session storage, not local storage", () => {
+    const session = new Map<string, string>();
+    const local = new Map<string, string>();
+    const storage = (entries: Map<string, string>) => ({
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => { entries.set(key, value); },
+      removeItem: (key: string) => { entries.delete(key); },
+    });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { sessionStorage: storage(session), localStorage: storage(local) },
+    });
+
+    const split: SplitState = { other: A, bSide: "right", active: "b" };
+    storeSplit(split);
+    expect(session.get(storageKey)).toBe(JSON.stringify(split));
+    expect(local.has(storageKey)).toBe(false);
+    expect(storedSplit()).toEqual(split);
+
+    storeSplit(null);
+    expect(session.has(storageKey)).toBe(false);
+    expect(local.has(storageKey)).toBe(false);
+  });
+
+  it("keeps storage access failures non-fatal", () => {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        sessionStorage: {
+          getItem() { throw new Error("storage denied"); },
+          setItem() { throw new Error("storage denied"); },
+          removeItem() { throw new Error("storage denied"); },
+        },
+      },
+    });
+
+    expect(storedSplit()).toBeNull();
+    expect(() => storeSplit({ other: A, bSide: "right", active: "b" })).not.toThrow();
+    expect(() => storeSplit(null)).not.toThrow();
   });
 });
