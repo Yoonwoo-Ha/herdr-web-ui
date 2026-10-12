@@ -28,6 +28,7 @@ import { AgentMark } from "./AgentMark.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
+import { paneDrag } from "../lib/paneDrag.ts";
 
 const said = (reason: unknown): string => reason instanceof ApiError ? reason.detail : reason instanceof Error ? reason.message : String(reason);
 
@@ -42,9 +43,13 @@ export interface TabStripProps {
   onNewTab: () => void;
   /** the open pane's actions (PaneCanvas), offered in the touch menu */
   paneActions?: (paneId: string) => RowMenuItem[];
+  /** the panel the tabs control: each half of a split view has its own (lib/split.ts) */
+  panelId?: string;
+  /** a tab dragged out of the strip may open its pane in half of the pane area (lib/paneDrag.ts) */
+  splitDrag?: boolean;
 }
 
-export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab, paneActions }: TabStripProps) {
+export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNewTab, paneActions, panelId = PANE_TABPANEL_ID, splitDrag = false }: TabStripProps) {
   const t = useT();
   const machineId = useMachineId();
   const { closeTab, renameTab, moveTab } = useMachineApi();
@@ -86,6 +91,15 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   const reorder = useTabReorder({ owner: `${machineId}:${workspace.workspace_id}`, tabs, strip, moveTab,
     failed: (reason) => setError(t("Move failed: {reason}", { reason: said(reason) })),
     stale: () => setError(t("Tab order did not refresh. Try again.")),
+    // dragged down out of the strip, a tab opens its pane in half of the pane area (lib/split.ts)
+    outside: splitDrag ? {
+      start: (tabId) => {
+        const tab = tabs.find((entry) => entry.tab_id === tabId);
+        const pane = tab ? paneFor(tab) : undefined;
+        if (pane) paneDrag.start({ machineId, paneId: pane.pane_id });
+      },
+      move: paneDrag.move, back: paneDrag.back, drop: paneDrag.drop, cancel: paneDrag.cancel,
+    } : undefined,
   });
   const nameOf = (tab: HerdrTab): string => sent?.tabId === tab.tab_id ? sent.label : tabLabel(tab, t, tabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1);
 
@@ -328,7 +342,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   // the pane region every tab governs, as App names it. App gives that region the tabpanel role
   // only while the pane's own tab is in this snapshot (paneTabPanelLabel); the same call answers
   // here, so a tab never claims to control a panel that is not standing there as one.
-  const panePanel = paneTabPanelLabel(snapshot, selectedPane, t) !== null ? PANE_TABPANEL_ID : undefined;
+  const panePanel = paneTabPanelLabel(snapshot, selectedPane, t) !== null ? panelId : undefined;
   return (
     <>
       <div ref={strip} className="tab-strip" role="tablist" aria-label={t("Tabs of {workspace}", { workspace: workspace.label })} aria-busy={reorder.moving} onKeyDown={onKeyDown} onScroll={onScroll}

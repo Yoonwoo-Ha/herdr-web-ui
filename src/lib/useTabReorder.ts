@@ -5,22 +5,31 @@ import { adjacentTabBoundary, movedTabOrder, tabDropBoundary } from "./tabOrder.
 type Drag = { tabId: string; boundary: number | null };
 type Press = { tabId: string; pointerId: number; element: HTMLElement; x: number; y: number; startX: number; startY: number; started: boolean };
 type Operation = { expected: string | null; settled: boolean; timer?: number };
+/** where a tab dragged out of the strip goes: the pane area opens its pane in a half (lib/paneDrag.ts) */
+export interface TabDragOut {
+  start: (tabId: string) => void;
+  move: (x: number, y: number) => void;
+  back: () => void;
+  drop: (x: number, y: number) => void;
+  cancel: () => void;
+}
 
 /** A drag previews only an insertion line. Herdr's next snapshot owns the actual order. */
-export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale }: {
+export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale, outside }: {
   owner: string;
   tabs: HerdrTab[];
   strip: RefObject<HTMLDivElement>;
   moveTab: (tabId: string, boundary: number) => Promise<TabMoved>;
   failed: (error: unknown) => void;
   stale: () => void;
+  outside?: TabDragOut;
 }) {
   const [drag, setDrag] = useState<Drag | null>(null);
   const [moving, setMoving] = useState(false);
   const ids = tabs.map((tab) => tab.tab_id);
   const key = JSON.stringify(ids);
-  const current = useRef({ owner, key, ids, moveTab, failed, stale });
-  current.current = { owner, key, ids, moveTab, failed, stale };
+  const current = useRef({ owner, key, ids, moveTab, failed, stale, outside });
+  current.current = { owner, key, ids, moveTab, failed, stale, outside };
   const press = useRef<Press | null>(null);
   const operation = useRef<Operation | null>(null);
   const suppressClick = useRef(false);
@@ -29,7 +38,7 @@ export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale }: {
   const cancelDrag = (): void => {
     const held = press.current;
     press.current = null;
-    if (held?.started) suppressClick.current = true;
+    if (held?.started) { suppressClick.current = true; current.current.outside?.cancel(); }
     if (held?.element.hasPointerCapture(held.pointerId)) held.element.releasePointerCapture(held.pointerId);
     if (animation.current !== null) cancelAnimationFrame(animation.current);
     animation.current = null;
@@ -91,11 +100,13 @@ export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale }: {
     const boundary = adjacentTabBoundary(current.current.ids, tabId, direction);
     if (boundary !== null) requestMove(tabId, boundary);
   };
+  const overStrip = (held: Press): boolean => {
+    const box = strip.current?.getBoundingClientRect();
+    return !!box && held.y >= box.top - 12 && held.y <= box.bottom + 12 && held.x >= box.left - 12 && held.x <= box.right + 12;
+  };
   const boundaryAt = (held: Press): number | null => {
     const row = strip.current;
-    if (!row) return null;
-    const box = row.getBoundingClientRect();
-    if (held.y < box.top - 12 || held.y > box.bottom + 12 || held.x < box.left - 12 || held.x > box.right + 12) return null;
+    if (!row || !overStrip(held) || current.current.ids.length < 2) return null;
     const rects = [...row.querySelectorAll<HTMLElement>(".tab-strip-item")].map((item) => item.getBoundingClientRect());
     return tabDropBoundary(rects, held.x);
   };
@@ -119,7 +130,7 @@ export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale }: {
     // Touch keeps its native swipe scroll; its menu offers the same adjacent moves.
     if (event.pointerType !== "mouse" || event.button !== 0 || event.ctrlKey || !event.isPrimary) return;
     suppressClick.current = false;
-    if (operation.current || current.current.ids.length < 2) return;
+    if (operation.current || (current.current.ids.length < 2 && !current.current.outside)) return;
     event.preventDefault(); // dragging an inactive tab must not steal terminal or keyboard focus
     const element = event.currentTarget;
     press.current = { tabId, pointerId: event.pointerId, element, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, started: false };
@@ -134,14 +145,18 @@ export function useTabReorder({ owner, tabs, strip, moveTab, failed, stale }: {
       held.started = true;
       suppressClick.current = true;
       animation.current = requestAnimationFrame(tick);
+      current.current.outside?.start(held.tabId);
     }
     paintDrag(held);
+    if (overStrip(held)) current.current.outside?.back();
+    else current.current.outside?.move(held.x, held.y);
   };
   const onPointerUp = (event: PointerEvent<HTMLElement>): void => {
     const held = press.current;
     if (!held || event.pointerId !== held.pointerId) return;
     held.x = event.clientX; held.y = event.clientY;
     const boundary = held.started ? boundaryAt(held) : null;
+    if (held.started && !overStrip(held)) current.current.outside?.drop(held.x, held.y);
     cancelDrag();
     if (boundary !== null) requestMove(held.tabId, boundary);
   };
