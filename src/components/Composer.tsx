@@ -254,6 +254,7 @@ export function Composer({
   const usageWindows = usage === undefined ? [] : statusWindows(usage);
   const usageLimit = usageWindows[0];
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const measurementRef = useRef<HTMLTextAreaElement | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const statusRef = useRef<HTMLDivElement | null>(null);
   const hintRef = useRef<HTMLSpanElement | null>(null);
@@ -400,13 +401,13 @@ export function Composer({
 
   const sizeTextarea = useCallback(() => {
     const element = textareaRef.current;
-    if (!element) return;
-    element.style.height = "auto";
-    element.style.height = `${element.scrollHeight}px`;
+    const measurement = measurementRef.current;
+    if (!element || !measurement) return;
+    // Measuring the live field at auto height enlarges the transcript and clamps its scroll.
+    element.style.height = `${measurement.scrollHeight}px`;
   }, []);
 
   // A suggestion or prompt hint changes only the placeholder of a populated draft.
-  // Collapsing it to measure unused placeholder text can scroll iOS's focused caret.
   useLayoutEffect(sizeTextarea, [sizeTextarea, text, text.length === 0 ? placeholder : null, boxWidth, facesLoaded]);
 
   // SettingsProvider writes --chat-scale in a passive effect. Measure on the next frame,
@@ -1269,6 +1270,16 @@ export function Composer({
             setMenuDismissed(false);
             setNote((current) => typeof current === "object" && current !== null && "failure" in current ? current : pasteCutNote.current);
           }}
+        />
+        <textarea
+          ref={measurementRef}
+          className="composer-measure"
+          rows={1}
+          value={text}
+          placeholder={placeholder}
+          readOnly
+          tabIndex={-1}
+          aria-hidden="true"
         />
 
         <div className="composer-controls composer-controls-left">

@@ -482,7 +482,8 @@
   box-shadow: 0 0 0 var(--hairline) var(--accent);
 }
 
-.composer-text {
+.composer-text,
+.composer-measure {
   grid-area: text;
   width: 100%;
   min-width: 0;
@@ -507,10 +508,21 @@
   line-height: var(--lh-base);
 }
 
+/* Same text metrics and grid column, without changing the live input or transcript geometry. */
+.composer-measure {
+  position: absolute;
+  inset: 0;
+  height: 0;
+  min-height: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* with a mouse the message is typed at the size the transcript is read at: --fs-chat scaled
    by Settings → Chat font size, as ChatView.css scales the transcript's --chat-fs-body */
 @media (hover: hover) and (pointer: fine) {
-  .composer-text {
+  .composer-text,
+  .composer-measure {
     font-size: calc(var(--fs-chat) * var(--chat-scale, 1));
     line-height: var(--lh-code);
   }
@@ -1040,7 +1052,8 @@
     padding-inline: var(--space-3);
   }
 
-  .composer-text {
+  .composer-text,
+  .composer-measure {
     padding: var(--space-3) var(--space-3) 0;
   }
 
