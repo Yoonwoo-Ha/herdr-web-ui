@@ -1516,7 +1516,7 @@ html:is(:lang(ja), :lang(zh)) body {
 /* Code, keys, the terminal and the two text boxes keep the browser's breaking, and their children
    inherit this reset: a path or a command is not a word, and xterm lays out its own cells.
    overflow-wrap is not part of this rule; the chat's and the composer's own rules keep it. */
-:is(pre, code, kbd, samp, .xterm, .composer-text, .terminal-input-text) {
+:is(pre, code, kbd, samp, .xterm, .composer-text, .composer-measure, .terminal-input-text) {
   word-break: normal;
   line-break: auto;
 }
@@ -1524,7 +1524,7 @@ html:is(:lang(ja), :lang(zh)) body {
 /* The two boxes' placeholders are interface copy, not typed text: Korean keeps their words whole
    too ("넣지 않습니다", never "넣지 않 / 습니다"). The pseudo-element alone takes keep-all, so the box
    itself, what the user types in it, and the code and terminal subtrees keep the reset above. */
-html:lang(ko) :is(.composer-text, .terminal-input-text)::placeholder {
+html:lang(ko) :is(.composer-text, .composer-measure, .terminal-input-text)::placeholder {
   word-break: keep-all;
 }
 

@@ -24,7 +24,7 @@ const LONG_MODEL = "gpt-5.6-sol-codex-preview-2026-10";
 // ids it names: "GPT-5.6" and "Opus 5.5"; null: the conversation names no model
 const NAMED = ["gpt-5.6", "claude-opus-5-5"] as const;
 
-interface Case { model: string | null; agent?: "claude" | "codex" | "pi" | "omo"; pending?: boolean; effort?: string | null; status?: "working" | "idle"; mic?: boolean; ring?: boolean; chatFontSize?: number | null; showUsage?: boolean; weeklyOnly?: boolean; suggestion?: string | null; contextUsed?: number; stream?: number; freezeConversation?: boolean }
+interface Case { model: string | null; agent?: "claude" | "codex" | "pi" | "omo"; pending?: boolean; effort?: string | null; status?: "working" | "idle"; mic?: boolean; ring?: boolean; chatFontSize?: number | null; showUsage?: boolean; weeklyOnly?: boolean; suggestion?: string | null; contextUsed?: number; stream?: number; freezeConversation?: boolean; language?: "en" | "ko" | "ja" | "zh" }
 type Draw = "full" | "no-effort" | "out";
 interface ComposerScrollGeometry {
   height: number;
@@ -216,19 +216,18 @@ try {
   /** One card: a phone (390px, touch) or a mouse-driven window of `width`. */
   const withCard = async (browser: Browser, width: number, state: Case, run: (page: Page) => Promise<void>): Promise<void> => {
     const touch = width <= 480;
-    const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: touch, isMobile: touch, locale: "en-US" });
+    const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: touch, isMobile: touch, locale: state.language ?? "en-US" });
     try {
       await context.addInitScript((fitCase) => {
-        if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: fitCase.mic ? "on" : "off", chatFontSize: fitCase.chatFontSize ?? null, showUsage: fitCase.showUsage ?? false, usageCount: "used" }));
+        if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: fitCase.language ?? "en", voiceInput: fitCase.mic ? "on" : "off", chatFontSize: fitCase.chatFontSize ?? null, showUsage: fitCase.showUsage ?? false, usageCount: "used" }));
         Object.assign(window, { fitCase });
       }, { agent: "claude", pending: true, status: "working", effort: "xhigh", mic: false, ring: true, ...state });
       const page = await context.newPage();
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       page.on("console", (message) => { if (message.type() === "error" && message.text().includes("ResizeObserver")) errors.push(message.text()); });
-      await page.goto(url);
+      await page.goto(`${url}&view=chat`);
       await page.locator(".conn-live").waitFor({ state: "attached" });
-      if (await page.locator(".terminal-stack.is-chat").count() === 0) await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
       await page.locator(".terminal-stack.is-chat").waitFor();
       await page.locator(".composer-model").waitFor({ state: "attached" });
       await appFaces(page);
@@ -937,6 +936,37 @@ try {
         }
       });
       console.log("PASS editing drafts preserves the reader's paragraph on phone and desktop");
+
+      for (const width of [320, 1440]) for (const [language, text] of [
+        ["ko", "가나다라마바사 ".repeat(5)],
+        ["ja", "あいうえおゃゅょ。".repeat(4)],
+        ["zh", "天地玄黄，宇宙洪荒。".repeat(4)],
+      ] as const) await withCard(browser, width, { language, status: "idle", pending: false, model: "gpt-5.6", freezeConversation: true, suggestion: text }, async (page) => {
+        const box = page.locator(".composer-text");
+        await page.waitForFunction((text) => document.querySelector<HTMLTextAreaElement>(".composer-text")!.placeholder === text, text);
+        for (const value of [text, ""]) {
+          await box.fill(value);
+          await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+          const size = await box.evaluate((box: HTMLTextAreaElement) => {
+            // Let the browser size a copy of the visible field's own wrapping rules,
+            // independently of the measurement field's styles, without moving the transcript.
+            const probe = box.cloneNode() as HTMLTextAreaElement;
+            probe.removeAttribute("aria-label");
+            probe.setAttribute("aria-hidden", "true");
+            probe.tabIndex = -1;
+            Object.assign(probe.style, { position: "absolute", visibility: "hidden", height: "0px", minHeight: "0px", width: `${box.getBoundingClientRect().width}px` });
+            box.after(probe);
+            try {
+              const required = probe.scrollHeight;
+              probe.style.minHeight = getComputedStyle(box).minHeight;
+              probe.style.height = `${required}px`;
+              return { actual: box.clientHeight, expected: probe.clientHeight };
+            } finally { probe.remove(); }
+          });
+          assert.ok(Math.abs(size.actual - size.expected) <= 1, `${language}/${width}px: ${value ? "draft" : "placeholder"} uses the visible field's natural height: ${JSON.stringify(size)}`);
+        }
+      });
+      console.log("PASS Korean, Japanese and Chinese drafts and wrapped placeholders fit their native text height on phone and desktop");
 
       // Changing the setting in an already-open chat rewraps the existing draft: an automatic
       // box grows and shrinks with it.

@@ -161,7 +161,7 @@ try {
     };
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}&view=chat`);
     await page.locator(".conn-live").waitFor();
-    await page.locator(".composer textarea").waitFor();
+    await page.locator(".composer-text").waitFor();
     await page.evaluate(() => new Promise<void>((resolveControlled, reject) => {
       const controlled = () => {
         clearTimeout(deadline);
@@ -179,11 +179,11 @@ try {
     await cdp.send("Storage.trackCacheStorageForOrigin", { origin });
     const cachedOld = cachedBuild(cdp, origin, oldEntry);
     try { await Promise.all([cachedOld.ready, page.reload()]); } finally { cachedOld.stop(); }
-    await page.locator(".composer textarea").waitFor();
+    await page.locator(".composer-text").waitFor();
     await page.getByText("PWA update fixture is ready.", { exact: true }).waitFor();
     const draft = `Unsent PWA draft ${width} 한글`;
-    await page.locator(".composer textarea").fill(draft);
-    assert.equal(await page.locator(".composer textarea").inputValue(), draft);
+    await page.locator(".composer-text").fill(draft);
+    assert.equal(await page.locator(".composer-text").inputValue(), draft);
     await capture("baseline");
     const offlineShell = async (entry: string) => {
       await context.setOffline(true);
@@ -213,20 +213,20 @@ try {
     await context.setOffline(false);
     await page.reload();
     await page.locator(".conn-live").waitFor();
-    await page.locator(".composer textarea").waitFor();
-    assert.equal(await page.locator(".composer textarea").inputValue(), draft, "the baseline also restores the draft when online");
+    await page.locator(".composer-text").waitFor();
+    assert.equal(await page.locator(".composer-text").inputValue(), draft, "the baseline also restores the draft when online");
     await page.getByText("PWA update fixture is ready.", { exact: true }).waitFor();
 
     renameSync(join(app, "dist"), join(app, "old-dist"));
     cpSync(current, join(app, "dist"), { recursive: true });
-    assert.equal(await page.locator(".composer textarea").inputValue(), draft, "changing the served build does not reload the open draft");
+    assert.equal(await page.locator(".composer-text").inputValue(), draft, "changing the served build does not reload the open draft");
     phase = "updated";
     const cachedNew = cachedBuild(cdp, origin, newEntry);
     try { await Promise.all([cachedNew.ready, page.reload()]); } finally { cachedNew.stop(); }
     await page.locator(".conn-live").waitFor();
-    await page.locator(".composer textarea").waitFor();
+    await page.locator(".composer-text").waitFor();
     assert.equal(await page.locator('script[type="module"][src]').getAttribute("src"), newEntry);
-    assert.equal(await page.locator(".composer textarea").inputValue(), draft, "online update preserves the draft");
+    assert.equal(await page.locator(".composer-text").inputValue(), draft, "online update preserves the draft");
     await page.getByText("PWA update fixture is ready.", { exact: true }).waitFor();
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await capture("updated");
@@ -239,8 +239,8 @@ try {
     await context.setOffline(false);
     await page.reload();
     await page.locator(".conn-live").waitFor();
-    await page.locator(".composer textarea").waitFor();
-    assert.equal(await page.locator(".composer textarea").inputValue(), draft);
+    await page.locator(".composer-text").waitFor();
+    assert.equal(await page.locator(".composer-text").inputValue(), draft);
     await page.getByText("PWA update fixture is ready.", { exact: true }).waitFor();
     await capture("recovered");
     assert.deepEqual(errors, [], "the app never raises a page error during the transition");
