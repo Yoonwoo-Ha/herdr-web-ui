@@ -1301,6 +1301,13 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   };
   // the turn at the top of the view and its offset there, or the end while the reader follows it
   const rememberPlace = (node: HTMLDivElement): void => {
+    if (stickToBottom.current) {
+      // End restoration ignores row anchors; only readers away from it need geometry.
+      rememberChatPosition(paneStorageId(machineId, paneId), {
+        historyId: history.current ?? null, turn: "", offset: 0, atEnd: true,
+      });
+      return;
+    }
     const top = node.getBoundingClientRect().top;
     let first: { key: string; top: number } | null = null;
     for (const row of node.querySelectorAll<HTMLElement>("[data-chat-row]")) {
@@ -1312,15 +1319,17 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
       historyId: history.current ?? null,
       turn: turn === undefined ? "" : chatTurnAnchor(turn),
       offset: first === null ? 0 : first.top - top,
-      atEnd: stickToBottom.current || turn === undefined,
+      atEnd: turn === undefined,
     });
   };
   const scrollToBottom = (): void => {
     const node = scroller.current;
     if (node === null) return;
+    pagingAway.current = false; stickToBottom.current = true; setNewMessages(false); setAway(false);
+    // A lens change can unmount us before the deferred list scroll emits its first event.
+    rememberPlace(node);
     if (timeline.current) timeline.current.scrollToEnd({ animated: false });
     else node.scrollTo({ top: node.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-    pagingAway.current = false; stickToBottom.current = true; setNewMessages(false); setAway(false);
   };
   useLayoutEffect(() => {
     if (!pageScroll) return;
