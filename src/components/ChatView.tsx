@@ -64,6 +64,8 @@ import { sendUserFileCall } from "../lib/sendUserFile.ts";
 import { shouldFoldUserMessage } from "../lib/userMessageFold.ts";
 
 /** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
+// How long after scroll input an upward move still counts as the reader's own.
+const SCROLL_INPUT_MS = 500;
 const ChatPaneContext = createContext<string | null>(null);
 const ChatHistoryContext = createContext("");
 /**
@@ -885,6 +887,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   // Explicit paging stays away even inside the ordinary near-bottom tolerance.
   const pagingAway = useRef(false);
   const lastScrollTop = useRef(0);
+  // When the reader last used input that can scroll the transcript (wheel, touch, pointer, keys).
+  const scrollInputAt = useRef(-Infinity);
   const signature = useRef("");
   // Older pages sit above the newest one. Once any shows, the newest page is
   // polled from its start at that moment, so the two always meet.
@@ -1351,6 +1355,16 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     return node === null ? undefined : dismissKeyboardOn(node);
   }, [state.source, ChatTimeline]);
 
+  useEffect(() => {
+    const mark = (event: Event): void => {
+      const node = scroller.current;
+      if (node !== null && event.target instanceof Node && node.contains(event.target)) scrollInputAt.current = performance.now();
+    };
+    const options = { capture: true, passive: true } as const;
+    const types = ["wheel", "touchmove", "pointerdown", "keydown"] as const;
+    for (const type of types) document.addEventListener(type, mark, options);
+    return () => { for (const type of types) document.removeEventListener(type, mark, options); };
+  }, []);
   const onScroll = (): void => {
     const node = scroller.current;
     if (node === null) return;
@@ -1358,16 +1372,20 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     const scrollingDown = node.scrollTop > lastScrollTop.current;
     const scrollingUp = node.scrollTop < lastScrollTop.current;
     lastScrollTop.current = node.scrollTop;
+    // An upward move right after the reader's own input is reading intent from the first pixel; one
+    // without it (a growing composer shrinking the viewport before the bottom correction) keeps
+    // following within main's 48 px allowance. The end presentation stays exact in measureEnd.
+    const allowance = performance.now() - scrollInputAt.current < SCROLL_INPUT_MS ? 1 : 48;
     // DOM heights are rounded; only downward intent may use the endpoint rounding allowance.
     if ((!pagingAway.current || scrollingDown) && distanceFromBottom <= 1) pagingAway.current = false;
-    if (scrollingUp && distanceFromBottom > 1 && stickToBottom.current) {
+    if (scrollingUp && distanceFromBottom > allowance && stickToBottom.current) {
       pagingAway.current = true;
       dropPendingListScroll(timeline.current);
     }
     // A downward automatic scroll may arrive before the next measured layout.
     // Only upward movement can turn an existing follow intent into reading intent.
     if (!stickToBottom.current || scrollingUp || pagingAway.current) {
-      stickToBottom.current = !pagingAway.current && distanceFromBottom <= 1;
+      stickToBottom.current = !pagingAway.current && distanceFromBottom <= allowance;
     }
     setAway(!stickToBottom.current);
     measureEnd();
