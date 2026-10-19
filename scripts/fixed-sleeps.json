@@ -15,7 +15,7 @@
   "server/collector.ts": 1,
   "server/herdr-profile-sync.test.ts": 1,
   "server/herdr-update.test.ts": 1,
-  "server/index.ts": 3,
+  "server/index.ts": 1,
   "server/machines.test.ts": 2,
   "server/mirror.test.ts": 4,
   "server/output.contract.test.ts": 6,

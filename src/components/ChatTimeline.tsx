@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
 import { ChatRowMemoryContext, type ChatRowMemory } from "../lib/chatRowState.tsx";
-import { chatMarkdownClipboardPayload } from "../lib/markdownClipboard.ts";
+import { chatSelectionClipboardPayload } from "../lib/markdownClipboard.ts";
 // ChatTimeline.css is imported by ChatView: the frame and the loading state need it before this chunk
 
 export interface ChatTimelineRow {
@@ -87,7 +87,7 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
     const copy = (event: ClipboardEvent) => {
       const selection = getSelection();
       if (event.defaultPrevented || !event.clipboardData || !selection) return;
-      const payload = chatMarkdownClipboardPayload(selection, node);
+      const payload = chatSelectionClipboardPayload(selection, node);
       if (!payload) return;
       event.clipboardData.setData("text/plain", payload.text);
       event.clipboardData.setData("text/html", payload.html);

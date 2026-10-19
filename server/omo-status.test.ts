@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { CompletionTracker, type OmoRest } from "./completion.ts";
+import { Finishes } from "./finishes.ts";
 import { paneAfterStatus } from "./machines.ts";
 import { earliestStart, holderStartedAt } from "./omo.ts";
 import { projectStateKey } from "./omo-state-dir.ts";
@@ -169,6 +170,30 @@ describe("OmO panes' status in place of herdr's", () => {
     return { omo, told, found, again, append, replace, state, files, backgroundCwds };
   }
   const statuses = (snapshot: SessionSnapshot) => Object.fromEntries(snapshot.panes.map((p) => [p.pane_id, `${p.agent}/${p.agent_status}`]));
+
+  it("identifies successive native finishes even when herdr's status and seq never change", async () => {
+    const { omo, append } = setup(lines(message("user")));
+    const completions = new CompletionTracker();
+    const finishes = new Finishes(() => "daemon-a");
+    const served = async () => finishes.snapshot(await completions.readSnapshot(async () => {
+      const raw = herdr();
+      for (const agent of raw.agents) agent.state_change_seq = 5;
+      await omo.refresh(raw.panes);
+      return omo.apply(raw);
+    }), completions);
+    expect((await served()).panes.find((pane) => pane.pane_id === "omo")).toMatchObject({ agent_status: "working", finish_id: 0 });
+    append(message("assistant", "stop", LATER));
+    omo.poll();
+    const first = await served();
+    expect(first.panes.find((pane) => pane.pane_id === "omo")).toMatchObject({ agent_status: "done", finish_id: 1 });
+    expect(first.agents.find((agent) => agent.pane_id === "omo")?.state_change_seq).toBe(5);
+    append(runtime("omo-senpi:wake"));
+    omo.poll();
+    await served();
+    append(message("assistant", "stop", "2026-10-02T00:03:00.000Z"));
+    omo.poll();
+    expect((await served()).panes.find((pane) => pane.pane_id === "omo")).toMatchObject({ agent_status: "done", finish_id: 2 });
+  });
 
   const detached = (id = "cell-one", at = "2026-10-02T00:00:40.000Z", queued = false) => JSON.stringify({
     type: "message", timestamp: at, message: { role: "toolResult", toolName: "eval", content: [{

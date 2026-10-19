@@ -467,6 +467,81 @@ describe("providers", () => {
     expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer oc_sk_test");
   });
 
+  /**
+   * OpenCode 2's own credential store, the `credential` table of the DB `server/opencode.ts` reads;
+   * `v1` leaves out `session_v2`, as in a 1.x store, whose `credential` table stays empty.
+   */
+  function opencodeStore(rows: Array<{ id?: string; integration?: string; value: unknown; active?: number | null; updated?: number }>, dir = join(home, ".local", "share", "opencode"), v1 = false) {
+    mkdirSync(dir, { recursive: true });
+    const db = new Database(join(dir, "opencode.db"));
+    db.exec("create table credential (id text primary key, integration_id text, label text, value text, active integer, time_created integer, time_updated integer)");
+    if (!v1) db.exec("create table session_v2 (id text primary key)");
+    const insert = db.query("insert into credential values (?, ?, ?, ?, ?, ?, ?)");
+    rows.forEach((row, i) => insert.run(row.id ?? `cred_${i}`, row.integration ?? "opencode-go", "OpenCode Go", JSON.stringify(row.value), row.active === undefined ? 1 : row.active, i, row.updated ?? i));
+    db.close();
+  }
+
+  // OpenCode 2 stopped writing auth.json but left it standing, holding the key it replaced: that
+  // file alone reports a CLI signed in and working as expired, so the store answers first
+  it("reads OpenCode 2's own credential store ahead of the auth.json it left behind", async () => {
+    write(join(home, ".local", "share", "opencode", "auth.json"), { "opencode-go": { type: "api", key: "oc_sk_replaced" } });
+    opencodeStore([{ value: { type: "key", key: "oc_sk_live" } }]);
+    replies.set("https://opencode.ai/zen/go/v1/usage", { body: { usage: { weekly: { percent: 30 } } } });
+    const [usage] = (await new UsageService(context("linux"), only("opencode")).report()).providers;
+    expect(usage).toMatchObject({ id: "opencode", problem: null, windows: [{ kind: "week", scope: null, used_percent: 30 }] });
+    expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer oc_sk_live");
+  });
+
+  it("takes OpenCode's active credential row, its Go row before its Zen row", async () => {
+    opencodeStore([
+      { integration: "opencode-go", value: { type: "key", key: "oc_sk_go_old" }, active: 0, updated: 5 },
+      { integration: "opencode-go", value: { type: "key", key: "oc_sk_go_active" }, active: 1, updated: 1 },
+      { integration: "opencode", value: { type: "key", key: "oc_sk_zen" }, active: 1, updated: 9 },
+    ]);
+    replies.set("https://opencode.ai/zen/go/v1/usage", { body: { usage: { weekly: { percent: 5 } } } });
+    const [usage] = (await new UsageService(context("linux"), only("opencode")).report()).providers;
+    expect(usage).toMatchObject({ id: "opencode", windows: [{ kind: "week", scope: null, used_percent: 5 }] });
+    expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer oc_sk_go_active");
+  });
+
+  // OpenCode 2 imports auth.json once, when it takes over a 1.x store, and leaves the file standing:
+  // signed out of OpenCode 2, or signed in by OAuth, the file's key is one OpenCode no longer uses
+  it("leaves out the auth.json OpenCode 2 no longer reads when its store holds no key", async () => {
+    opencodeStore([{ value: { type: "oauth", methodID: "browser", refresh: "rt" }, active: null }]);
+    write(join(home, ".local", "share", "opencode", "auth.json"), { "opencode-go": { type: "api", key: "oc_sk_signed_out" } });
+    expect((await new UsageService(context("linux"), only("opencode")).report()).providers).toEqual([]);
+    expect(requests).toEqual([]);
+  });
+
+  // known to be OpenCode 2's, a store that will not answer now (busy past the timeout, damaged)
+  // still leaves the file's key one OpenCode no longer uses; the variable it reads still answers
+  it("keeps OpenCode 2's old auth.json out when its credential cannot be read, and reads OPENCODE_API_KEY", async () => {
+    const dir = join(home, ".local", "share", "opencode");
+    mkdirSync(dir, { recursive: true });
+    const db = new Database(join(dir, "opencode.db"));
+    db.exec("create table session_v2 (id text primary key); create table credential (id text primary key, integration_id text, value text)");
+    db.close();
+    write(join(dir, "auth.json"), { "opencode-go": { type: "api", key: "oc_sk_signed_out" } });
+    replies.set("https://opencode.ai/zen/go/v1/usage", { body: { usage: { weekly: { percent: 3 } } } });
+    await new UsageService({ ...context("linux"), env: { USER: "me", OPENCODE_API_KEY: "oc_sk_env" } }, only("opencode")).report();
+    expect(requests.map((request) => (request.init.headers as Record<string, string>)["authorization"])).toEqual(["Bearer oc_sk_env"]);
+  });
+
+  it("does not read an OpenCode 2 credential over MAX_READ_BYTES", async () => {
+    opencodeStore([{ value: { type: "key", key: "oc_sk_big", pad: "x".repeat(MAX_READ_BYTES) } }]);
+    expect((await new UsageService(context("linux"), only("opencode")).report()).providers).toEqual([]);
+    expect(requests).toEqual([]);
+  });
+
+  it("reads auth.json beside an OpenCode 1 store", async () => {
+    opencodeStore([], undefined, true);
+    write(join(home, ".local", "share", "opencode", "auth.json"), { "opencode-go": { type: "api", key: "oc_sk_file" } });
+    replies.set("https://opencode.ai/zen/go/v1/usage", { body: { usage: { weekly: { percent: 7 } } } });
+    const [usage] = (await new UsageService(context("linux"), only("opencode")).report()).providers;
+    expect(usage).toMatchObject({ id: "opencode", windows: [{ kind: "week", scope: null, used_percent: 7 }] });
+    expect((requests[0]!.init.headers as Record<string, string>)["authorization"]).toBe("Bearer oc_sk_file");
+  });
+
   // OpenCode keeps every sign-in in one file, <XDG data>/opencode/auth.json (xdg-basedir: on macOS
   // too), keyed by provider; it has no keychain item, and the file names no account
   it("reads OpenCode's auth.json under XDG_DATA_HOME, its Go key before its Zen key", async () => {

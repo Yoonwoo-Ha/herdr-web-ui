@@ -76,11 +76,12 @@ https://github.com/user-attachments/assets/d854dbb6-64bd-4eba-81c7-fbd3f525726b
 
 <p align="center"><sub>每段片段都是同时录制电脑和手机的真实操作，实时、无剪辑。点击可播放完整视频。</sub></p>
 
-- **聊天与终端，共用一个窗格** — 阅读 Claude Code、Codex、omp、omo、gjc 和 pi 的原生会话记录，以及 herdr 识别出的 OpenCode 2 和 Devin CLI 会话，一键切换到实时终端。智能体工作时可以先写好下一条消息，它会在下一轮发出，也可以用 Send now 立即发送。[支持的智能体 →](docs/guide.md#supported-agents)
-- **轻点即可批准** — 审批请求、问题和计划菜单会显示为卡片，发送回答前会先确认提示仍然有效。
+- **聊天与终端，共用一个窗格** — 阅读 Claude Code、Codex、omp、omo、gjc、pi、Hermes 的原生会话记录，以及可明确识别的 OpenCode 和 Devin CLI 会话。Linux 上的 Grok 和实验性的 Antigravity（agy）也按下文所述条件提供支持，一键即可切换到同一窗格的终端。智能体工作时可将消息排队到下一轮发送，也可以用 Send now 立即发送。[支持的智能体 →](docs/guide.md#supported-agents)
+- **轻点即可批准** — 支持的审批请求、问题和计划菜单会显示为卡片，发送回答前会先确认提示仍然有效。不支持卡片的请求需在终端中回答。
 - **需要你时及时提醒** — 实时显示每个窗格的状态；应用打开时提醒会从顶部滑下；智能体需要输入或完成任务时发送推送通知，即使应用已关闭也能收到。
 - **安装到手机** — PWA 在键盘上方提供按键栏（Esc、Tab、Ctrl、Alt、Shift、Enter 和方向键），可在 Settings（设置）中调整顺序或添加自定义组合键；Tailscale 地址以二维码显示。[手机设置 →](docs/guide.md#on-your-phone)
-- **开口代替打字** — 在聊天或终端输入行中语音输入，韩语和英语混说也能识别；文字只放进输入框，由你决定何时发送。使用你自己的 OpenAI API 密钥，或浏览器自带的语音识别。
+- **开口代替打字** — 在聊天或终端输入行中语音输入，可选择中文等识别语言，并识别混在其中的英语代码术语；文字只放进输入框，不会自动发送给智能体。使用你自己的 OpenAI API 密钥，或浏览器的语音识别。录音等对外传输的详情见[语音输入](docs/guide.md#voice-input)。
+- **查看仓库改动** — 从文件浏览器打开工作区、暂存区或提交之间的比较，逐个阅读文件差异，不会修改仓库。
 - **沿用现有工作流** — 智能体由 herdr 管理，本应用负责连接；在 Settings（设置）中更新应用，无需停止智能体，每次更新带来的变化以更新说明列出。新标签页和 worktree 可从行的 ⋯ 菜单创建。[全部功能 →](docs/guide.md#features)
 
 ---
@@ -93,9 +94,10 @@ https://github.com/user-attachments/assets/d854dbb6-64bd-4eba-81c7-fbd3f525726b
 curl -fsSL https://herdrweb.dev/install.sh | sh
 ```
 
-支持 Linux（x64、arm64）或 macOS。安装程序会为当前用户补齐 herdr 0.9.0+、Bun 1.4+ 和 Node 18+ 依赖，然后将应用安装为 herdr 插件。如果已安装的 herdr 低于 0.9.0，请先自行更新并重启 herdr，再重新运行安装程序。使用默认监听地址且 Tailscale 正在运行时，HTTPS 配置成功后会提供 tailnet 内的访问地址和二维码。你自己的设备本来就能免验证码进入：`tailscale serve` 会告知你的登录名。如果你的手机仍被要求配对，设置 `HERDR_WEB_TAILSCALE_SERVE_ONLY=1` 后，在只有一个登录名的 tailnet 上也能免验证码进入；但仅限于没有公共代理或隧道等其他途径能访问此端口的情况（[访问与安全](docs/guide.md#access-and-safety)）。
+支持基于 glibc 的 Linux（x64、arm64）和 macOS（Intel、Apple Silicon）；不支持 Alpine/musl 或 32 位 ARM。需预先安装 `curl`、Git 和 `tar`；如果没有 Bun，还需要 Bash 和 `unzip`。所需版本为 herdr 0.9.0+、Bun 1.4+ 和 Node 18+。安装程序为当前用户安装缺少的工具、升级旧版 Bun，并在 Node 缺失或低于 18 时安装 Node 22，然后将应用安装为 herdr 插件。如果已安装的 herdr 低于 0.9.0，请先自行更新并重启 herdr，再重新运行安装程序。
 
-<p align="center">
+使用默认监听地址且 Tailscale 正在运行时，HTTPS 配置成功后会提供 tailnet 内的地址和二维码。未配置访问令牌时，如果 `tailscale serve` 报告的登录名与这台电脑的所有者相同，你自己的设备通常无需验证码即可进入。如果自己的手机仍被要求配对，`HERDR_WEB_TAILSCALE_SERVE_ONLY=1` 只会在 Tailscale 确认整个 tailnet 由一个登录名拥有、没有带标签的节点，且 serve 是此端口唯一访问途径时，允许没有登录信息的连接。公共代理、隧道或其他转发服务也能访问该端口时，切勿启用此设置（[访问与安全](docs/guide.md#access-and-safety)）。
+
 Windows x64 请在 PowerShell 中运行：
 
 ```powershell
@@ -108,13 +110,15 @@ irm https://herdrweb.dev/install.ps1 | iex
   <img src="docs/screenshots/install.png" width="720" alt="安装程序输出：安装 Bun、Node 和 herdr 插件，然后通过 tailscale serve 提供应用访问地址，并显示供手机扫描的二维码。">
 </p>
 
-已经安装了所需依赖？只需安装插件：
+已安装 herdr 0.9.0+、Bun 1.4+ 和 Node 18+（Windows 无需 Node）？只需安装插件：
 
 ```bash
 herdr plugin install devswha/herdr-web-ui
 ```
 
-在 herdr 运行时，打开 **[localhost:7317](http://localhost:7317)**。选择一个窗格，或点击 **New workspace（新建工作区）** 启动智能体。要在手机上使用，请扫描安装程序提供的二维码，并将应用添加到主屏幕。[快速入门 →](docs/guide.md#quick-start)
+旧版 herdr 必须先更新并重启。[INSTALL.md](INSTALL.md) 说明了各步操作及失败时的处理方法。
+
+在 herdr 运行时，使用安装程序打印或打开的地址，通常是 **[127.0.0.1:7317](http://127.0.0.1:7317)**；默认端口被占用时，插件会选择并记住其他端口。如果只安装了插件，请在 herdr 中运行 **Start herdr web ui**。首次安装到有桌面环境的电脑时，安装程序会自动打开浏览器；点击地址栏中的 **Install（安装）** 即可添加应用。安装后的应用属于这个确切地址，请继续使用同一地址，不要在 `127.0.0.1` 和 `localhost` 之间切换。安装前设置 `HERDR_WEB_NO_OPEN=1` 可跳过自动打开浏览器。选择一个窗格，或点击 **New workspace（新建工作区）** 启动智能体。在手机上使用时，扫描安装程序的二维码（也可从 herdr 的 **Phone setup** 查看），并将应用添加到主屏幕。[快速入门 →](docs/guide.md#quick-start)
 
 服务器默认监听 `127.0.0.1`。如需从其他设备访问，请参阅[手机设置](docs/guide.md#on-your-phone)和[访问与安全](docs/guide.md#access-and-safety)。
 
@@ -128,7 +132,9 @@ herdr plugin install devswha/herdr-web-ui
 
 **聊天视图支持哪些智能体？**
 
-Claude Code、Codex、omp、omo、gjc 和 pi 直接从各自的会话文件读取。OpenCode 2 会从 OpenCode 自己的数据库读取 herdr 报告的会话；处于主屏幕或使用 1.x 数据库时则显示实时终端。Devin CLI 在 herdr 或运行中的进程指明其会话时（例如 `devin --resume <id>`）显示为聊天，直接运行 `devin` 则显示实时终端。其他程序显示实时终端和状态。[支持的智能体 →](docs/guide.md#supported-agents)
+Claude Code、Codex、omp、omo、gjc、pi 和 Hermes 从各自的会话存储读取记录。GJC 聊天需要 GJC 0.18.9+、服务器电脑 PATH 中的 `gjc` 和 Git，以及已运行的 SDK broker；无法明确识别会话时显示终端。OpenCode 从支持的 2.x 和 1.x SQLite 表结构中读取 herdr 报告的会话；开始界面、缺少会话 ID，以及不支持、无法读取或超出大小限制的存储则显示终端。Devin CLI 在 herdr 或运行中的进程明确指出其会话时（例如 `devin --resume <id>`）显示为聊天，直接运行 `devin` 则显示终端。
+
+Grok 聊天仅支持 Linux，并要求进程只持有一个会话，且与 herdr 报告的会话一致；macOS、Windows 或身份不明确时显示终端。Antigravity（agy）是实验性支持，通过运行中进程持有的会话锁定位记录，而非猜测会话。Linux 已通过原生环境验证，macOS 尚未验证，Windows 仅显示终端。对于不支持或无法读取的记录，也会显示终端。[支持的智能体 →](docs/guide.md#supported-agents)
 
 **它会取代 herdr 自带的 TUI 吗？**
 
@@ -136,11 +142,15 @@ Claude Code、Codex、omp、omo、gjc 和 pi 直接从各自的会话文件读�
 
 **必须使用 Tailscale 吗？**
 
-不必。Tailscale、SSH 隧道、VPN 或自行配置的 HTTPS 代理都可以提供访问电脑的通路。安装应用和推送提醒需要 HTTPS 或 localhost 等安全上下文；基本浏览也可以使用局域网中的普通 HTTP 地址。[其他方式 →](docs/guide.md#faq)
+不必。Tailscale、SSH 隧道、VPN 或自行配置的 HTTPS 代理都可以提供访问电脑的通路。单独安装 Portal 2.6.1+ 后，还可通过可选的 [Portal 集成](docs/guide.md#behind-a-reverse-proxy)管理公网 HTTPS 地址；它需要 `HERDR_WEB_TOKEN`、可信中继，并关闭 `HERDR_WEB_TAILSCALE_SERVE_ONLY`。安装应用和推送提醒需要 HTTPS 或 localhost 等安全上下文；基本浏览也可以使用局域网中的普通 HTTP 地址。[其他方式 →](docs/guide.md#faq)
 
 **我的代码或对话会离开我的电脑吗？**
 
-会话文件保留在运行各个智能体的电脑上，内容会发送到你连接的浏览器。本应用没有自有的云端中继或账号服务。可选的语音输入会把录音发送给配置的服务商；启用文字整理时也会发送文本。启用用量显示后，会连接服务商的 API。更新、远程电脑设置和推送提醒也可能连接外部服务。应用在安装时、每次更新时，以及打开应用的当天每天一次（附带正在运行的编程智能体类型）会发送匿名计数（版本、操作系统、安装方式和一个随机 ID，不保存 IP 地址），可在 **Settings → About → Anonymous usage counts** 中查看发送内容并关闭。智能体自身如何连接模型，取决于它的配置。[数据传输与访问 →](docs/guide.md#faq)
+会话文件保留在运行各个智能体的电脑上，内容会发送到你连接的浏览器。本应用没有自有的云端中继或账号服务。可选的语音输入会将录音（启用文字整理时还包括文本）发送给配置的服务商；浏览器语音识别也可能使用浏览器厂商的服务。启用用量显示后会连接服务商 API；更新、远程电脑设置和推送提醒也可能使用外部服务。启用 Portal 后，连接会经过你选择的中继，它能看到连接元数据并持有该地址的证书，因此请只使用可信中继。
+
+匿名使用计数默认启用。在应用内显示说明并留出 10 分钟等待时间后，应用可发送安装或更新计数，包含随机安装 ID、版本（更新时包括旧版本）、操作系统、CPU 架构、安装方式和白名单内的设置快照。自定义文本和账号标识会被省略或概括，不收集代码、对话或文件。仓库中的接收端会在 Cloudflare 提供国家/地区代码时记录该代码，但不保存 IP 地址。活动计数包含打开应用当天（UTC）的智能体类型；同一天出现新类型时可更新当日计数。可在 **Settings → About → Anonymous usage counts** 中查看内容并关闭，也可设置 `HERDR_WEB_TELEMETRY=0` 或 `DO_NOT_TRACK=1`。智能体自身如何连接模型，取决于它的配置。[数据传输与访问 →](docs/guide.md#faq)
+
+随机 ID 可关联同一安装的计数，并不保证完全匿名。
 
 **支持 Windows 吗？**
 
@@ -148,7 +158,7 @@ Claude Code、Codex、omp、omo、gjc 和 pi 直接从各自的会话文件读�
 
 **它与 collie、roamgate、herdr-remote 有什么不同？**
 
-这些项目也提供 herdr 的手机或浏览器客户端。本应用直接读取智能体自己的会话记录，所以窗格显示的是按轮次折叠工作过程的聊天，而不是终端输出；其他电脑可以从侧边栏通过 SSH 加入。它不自带隧道，也只支持 herdr：如果你需要 tmux 或 zellij、差异查看、Telegram 或开箱即用的隧道，其他几个更合适。[完整对比 →](docs/guide.md#faq)
+这些项目也提供 herdr 的手机或浏览器客户端。本应用直接读取智能体自己的会话记录，将每轮工作过程折叠为聊天；其他电脑可从侧边栏通过 SSH 加入。它提供仓库差异查看，也能管理单独安装的 Portal 隧道，但只连接 herdr，不捆绑隧道程序。需要 tmux、zellij 或 Telegram 时，可比较其他客户端的支持范围。[完整对比 →](docs/guide.md#faq)
 
 **它与 Happy、Paseo、CloudCLI UI 有什么不同？**
 

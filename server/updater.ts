@@ -1,7 +1,7 @@
 /** Build in a private checkout. The source tree and the serving build stay intact. */
 import { spawn } from "node:child_process";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { CHECKOUT_CHANGED_REASON, noInstalledNotes, noUpdateNotes, unmanagedUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../shared/update.ts";
 import { compareVersions, releaseNotes, releaseSummaries, SUMMARIES_FILE } from "./release-notes.ts";
 
@@ -38,6 +38,21 @@ export function readNotesFile(path: string): string {
   } finally { closeSync(fd); }
 }
 const SHA = /^[0-9a-f]{40,64}$/;
+
+/** Shown when the launcher runs from an installed release instead of the checkout it was built from (#1373). */
+export const RELEASE_FOLDER_REASON = "This server runs from an installed update's folder, not from its source checkout. Restart herdr web ui from its source checkout (the herdr plugin's Stop, then Start, or bun run start there) to update.";
+
+/**
+ * Whether a directory is a release this updater installed: `<state>/updates/<16 hex>/release-*`
+ * (update-state.ts, and `release-` from the install below). Such a release is a detached checkout of
+ * a tag, never a source checkout, so the branch guard's "switch to main" would send the user the
+ * wrong way.
+ */
+export function isReleaseFolder(directory: string): boolean {
+  const resolved = resolve(directory);
+  const parent = dirname(resolved);
+  return basename(resolved).startsWith("release-") && /^[0-9a-f]{16}$/.test(basename(parent)) && basename(dirname(parent)) === "updates";
+}
 /** A release is a plain `vX.Y.Z` tag: `remote-v*` bundle tags and pre-releases never qualify. */
 const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
 
@@ -258,6 +273,7 @@ export class Updater {
   }
 
   private async sourceBlock(): Promise<string | null> {
+    if (isReleaseFolder(this.options.root)) return RELEASE_FOLDER_REASON;
     const branch = await this.git("branch", "--show-current");
     if (branch !== "main" && !(branch === "" && this.options.pluginCheckout)) return "Switch the source checkout to main to update.";
     if (await this.git("status", "--porcelain", "--untracked-files=all")) return "The source checkout has local changes. Commit or move them before updating.";

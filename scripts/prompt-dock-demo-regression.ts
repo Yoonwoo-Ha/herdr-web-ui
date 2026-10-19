@@ -192,11 +192,14 @@ try {
     window.formAnswers = [];
     window.formDelay = 0;
     window.formReturned = 0;
+    window.formReadFails = false;
     const promptOf = (pane) => pane === web ? window.formPrompt : window.panePrompts[pane] ?? null;
     const json = (body, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
     window.fetch = (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
       if (url.pathname === "/api/pane/prompt") {
+        // window.formReadFails: reads of the screen fail as a dropped connection does
+        if (window.formReadFails) return Promise.reject(new TypeError("Failed to fetch"));
         const prompt = promptOf(url.searchParams.get("pane_id"));
         if (prompt !== null) return json({ prompt, suggestion: null });
       }
@@ -638,6 +641,31 @@ try {
           assert.deepEqual(errors, []);
         } catch (error) { await preserveFailure(page, error); } finally { await close(); }
         console.log("PASS a prompt that replaces a scrolled one opens at its top");
+      }
+
+      {
+        // Reads that keep failing leave the card in place and say it may be out of date, until a read answers (#1335)
+        const { page, errors, close } = await open({ width: 1440, height: 900, prompt: FORM });
+        try {
+          const status = page.locator(".prompt-card [role=status]");
+          const STALE = "Not updated: the question on screen may have changed.";
+          assert.equal(await status.textContent(), "", "a card read a moment ago says nothing");
+          await page.evaluate(() => { (window as unknown as { formReadFails: boolean }).formReadFails = true; });
+          await page.waitForFunction((text) => document.querySelector(".prompt-card [role=status]")?.textContent === text, STALE, { timeout: 10_000 });
+          assert.equal(await page.locator(".prompt-card").count(), 1, "the card stays while reads fail");
+          assert.ok(await page.locator(".prompt-card").getByText(FORM.question).isVisible(), "its question is still shown");
+          // the screen moved on while reads failed: the answer is refused, the poll restarts, and the notice stays
+          await setPrompt(page, { ...FORM, id: "demo-form-moved" });
+          await page.locator(".prompt-card-option-label").first().click();
+          await page.locator(".prompt-card").getByText("The question on screen changed; check it and answer again.").waitFor();
+          await page.waitForTimeout(500);
+          assert.equal(await status.textContent(), STALE, "a refused answer restarts the reads without clearing the notice");
+          await setPrompt(page, FORM);
+          await page.evaluate(() => { (window as unknown as { formReadFails: boolean }).formReadFails = false; });
+          await page.waitForFunction(() => document.querySelector(".prompt-card [role=status]")?.textContent === "", undefined, { timeout: 10_000 });
+          assert.deepEqual(errors, []);
+        } catch (error) { await preserveFailure(page, error); } finally { await close(); }
+        console.log("PASS reads that keep failing mark the card as not updated, and the next read that answers clears it");
       }
 
       for (const size of [{ width: 1440, height: 900 }, { width: 390, height: 700, touch: true }]) {

@@ -23,6 +23,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProviderUsage, UsageProblem, UsageProviderId, UsageReport, UsageWindow } from "../shared/protocol.ts";
 import { jsonResponse } from "./http.ts";
+import { opencodeDatabasePath } from "./opencode.ts";
 
 export const FRESH_MS = 5 * 60_000;
 export const MIN_REFRESH_MS = 30_000;
@@ -663,12 +664,55 @@ const antigravity: UsageProvider = {
   },
 };
 
-// ---- OpenCode Go: the key OpenCode keeps in <XDG data>/opencode/auth.json, else OPENCODE_API_KEY ----
+// ---- OpenCode Go: the key OpenCode 2 keeps in its own store, else <XDG data>/opencode/auth.json, else OPENCODE_API_KEY ----
+
+/** OpenCode's service may hold the write lock for a moment; a read waits this long, never more. */
+const OPENCODE_DB_BUSY_TIMEOUT_MS = 250;
+
+/**
+ * OpenCode 2 keeps provider credentials itself, in the `credential` table of the store
+ * `server/opencode.ts` reads: the live one is the active row whose value is `{"type":"key","key":…}`.
+ * `auth.json` is the file OpenCode 1 wrote and 2 leaves standing, holding the key the service has
+ * since replaced, so reading it alone reports a signed-in CLI as expired. The Go key is read first,
+ * then the Zen key: the Go endpoint takes any console key, and answers 403 for one without a Go
+ * subscription. A row is chosen as OpenCode chooses it: the active one, else the newest (rows it
+ * imported from `auth.json` carry no flag). The store is OpenCode 2's when it has `session_v2`, as
+ * `server/opencode.ts` tells them apart: 1.x stores have an empty `credential` table too. Null when
+ * the file is not OpenCode 2's store (absent, OpenCode 1's, unreadable); `key` is null when the
+ * store holds no key of its own (signed out, or an OAuth sign-in) or, once it is known to be
+ * OpenCode 2's, cannot be read: the file it left standing holds a key it no longer uses either way.
+ * A value past MAX_READ_BYTES is not read, as for the files.
+ */
+function opencodeStore(path: string | null): { key: string | null } | null {
+  if (path === null) return null;
+  let db: Database | undefined;
+  let known = false;
+  try {
+    db = new Database(path, { readonly: true, create: false });
+    db.exec(`PRAGMA busy_timeout = ${OPENCODE_DB_BUSY_TIMEOUT_MS}`);
+    const tables = db.query("select count(*) as n from sqlite_master where type = 'table' and name in ('session_v2', 'credential')").get() as { n: number };
+    if (tables.n < 2) return null;
+    known = true;
+    const selected = db.query("select case when length(value) <= ? then value end as value from credential where integration_id = ? order by active desc, time_created desc, id desc limit 1");
+    for (const provider of ["opencode-go", "opencode"]) {
+      const row = selected.get(MAX_READ_BYTES, provider) as { value?: unknown } | null;
+      const entry = record(parseJson(text(row?.value ?? null)));
+      const key = entry["type"] === "key" ? text(entry["key"]) : null;
+      if (key) return { key };
+    }
+    return { key: null };
+  } catch {
+    // no file or not a database: not a store this reader knows; OpenCode 2's store that will not
+    // answer now (busy past the timeout, damaged) still holds no key its old auth.json can stand in for
+    return known ? { key: null } : null;
+  } finally {
+    db?.close();
+  }
+}
 
 /**
  * OpenCode keeps every sign-in in that one file, keyed by provider id; an API key is
- * `{ type: "api", key }` and names no account. The Go key is read first, then the Zen key: the Go
- * endpoint takes any console key, and answers 403 for one without a Go subscription.
+ * `{ type: "api", key }` and names no account.
  */
 function opencodeSignIn(source: string | null): SignIn | null {
   const root = record(parseJson(source));
@@ -685,7 +729,13 @@ const opencode: UsageProvider = {
   async signIns(ctx) {
     // xdg-basedir, as OpenCode resolves it: XDG_DATA_HOME, else ~/.local/share, on macOS too
     const dir = join(ctx.env["XDG_DATA_HOME"] || join(ctx.home, ".local", "share"), "opencode");
-    const file = opencodeSignIn(readText(join(dir, "auth.json")));
+    // the key OpenCode 2 signs its own requests with, ahead of the file it no longer writes; the
+    // place stays `dir` either way, so one account keeps one identity whichever store answered
+    const store = opencodeStore(opencodeDatabasePath(ctx.env, ctx.home));
+    if (store?.key) return [{ token: store.key, expiresAt: null, source: dir }];
+    // OpenCode 2 imports auth.json once, when it takes over a 1.x store, and never reads it again:
+    // a store without a key is a sign-out the file it left standing must not undo
+    const file = store ? null : opencodeSignIn(readText(join(dir, "auth.json")));
     if (file) return [{ ...file, source: dir }];
     // the variable OpenCode itself reads for both providers (models.dev)
     const token = text(ctx.env["OPENCODE_API_KEY"]);

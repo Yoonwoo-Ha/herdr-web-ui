@@ -171,6 +171,8 @@
 
 .machine-controls {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: var(--space-2);
   margin: 0 var(--space-3) var(--space-2);
   padding: var(--space-3);
@@ -179,18 +181,62 @@
   border-radius: var(--radius-md);
 }
 
-.machine-controls form,
+/* the rename form reflows: Rename sits at the end of the name field's row where the two fit, and
+   under the field, at its start, where they do not (a 240px sidebar, a phone's drawer) */
+.machine-controls form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.machine-controls form > .field {
+  flex: 1 1 10rem;
+}
+
+/* buttons that share a row share its height (the default stretch), so a wrapped label never
+   leaves its neighbours hanging from the row's bottom edge */
 .machine-control-buttons {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
+  min-width: 0;
   gap: var(--space-2);
 }
 
 .machine-controls .field {
-  flex: 1;
   min-width: 0;
   margin-bottom: 0;
+}
+
+/* a one-line label is the standard control's height (--control-h as a floor; the block padding is
+   small enough to stay under it); only a label that wraps grows its button */
+.machine-controls .btn {
+  max-width: 100%;
+  min-width: 0;
+  min-height: var(--control-h);
+  height: auto;
+  padding-block: var(--space-1);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* fingers: a touch-sized Rename is taller than the field, so it keeps its own line under it */
+@media (pointer: coarse) {
+  .machine-controls .btn {
+    min-height: var(--touch-target);
+  }
+
+  .machine-controls form > .field {
+    flex-basis: 100%;
+  }
+}
+
+/* only the removal in flight (MachineSidebar.tsx marks it aria-busy) keeps most of its tint, so its
+   warning stays readable while the request runs; disabled because another action of the panel is
+   running, it dims like its neighbours */
+.machine-controls .btn-danger[aria-busy="true"] {
+  opacity: 0.85;
 }
 
 .machine-dialog {

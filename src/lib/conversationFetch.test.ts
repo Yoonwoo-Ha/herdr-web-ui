@@ -16,6 +16,20 @@ afterEach(() => {
 });
 
 describe("conversation polling", () => {
+  it("revalidates a new finish without borrowing the previous finish's ETag", async () => {
+    const sent: (string | null)[] = [];
+    const body: ConversationResponse = { source: "claude-transcript", turns: [] };
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers).get("if-none-match"));
+      return Response.json(body, { headers: { etag: '"same-answer"' } });
+    }) as typeof fetch;
+    const first = await fetchPaneConversation("finish-proof-revalidate");
+    const next = await fetchPaneConversation("finish-proof-revalidate", "local", { fresh: true });
+    expect(sent).toEqual([null, null]);
+    expect(next).not.toBe(first);
+    expect(next).toEqual(first);
+  });
+
   it("asks with the last ETag and reuses the very same answer on a 304", async () => {
     const sent: (string | null)[] = [];
     let version = "\"v1\"";

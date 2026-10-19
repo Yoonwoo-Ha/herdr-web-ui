@@ -1,14 +1,18 @@
 import { expect, test } from "bun:test";
 
-import { isMouseReport, sameAttachment } from "./input-guard.ts";
+import { isMouseReport, sightingFacts, typingGuards } from "./input-guard.ts";
 
-const attach = (...members: string[]) => ({ clients: new Set(members) });
+const attach = (...members: string[]) => ({ clients: new Set(members), ready: true, process: {}, kind: "pty" as const, cols: 80 });
+/** typing taken while `origin` was the attach the client was in (none: typed with no attach of its own), now that `current` is the pane's */
+const typedThen = (origin: ReturnType<typeof attach> | undefined, current: ReturnType<typeof attach> | undefined, client: string): boolean =>
+  typingGuards.herdrTyping(sightingFacts({ attachment: origin, process: origin?.process, claim: undefined, member: origin !== undefined },
+    { attachment: current, claim: undefined }, client));
 
 test("typing taken with no attach is refused once someone attaches meanwhile", () => {
-  expect(sameAttachment(undefined, undefined, "a")).toBe(true);
-  expect(sameAttachment(undefined, attach("b"), "a")).toBe(false);
+  expect(typedThen(undefined, undefined, "a")).toBe(true);
+  expect(typedThen(undefined, attach("b"), "a")).toBe(false);
   // attaching yourself meanwhile is a new attach too: what was typed before it takes none of it
-  expect(sameAttachment(undefined, attach("a"), "a")).toBe(false);
+  expect(typedThen(undefined, attach("a"), "a")).toBe(false);
 });
 
 test("a click or a wheel is told from typing, so a queued one keeps the attach input path", () => {
@@ -26,9 +30,151 @@ test("a click or a wheel is told from typing, so a queued one keeps the attach i
 
 test("typing taken into an attach goes only into that attach, while it still has the typist", () => {
   const origin = attach("a");
-  expect(sameAttachment(origin, origin, "a")).toBe(true);
-  expect(sameAttachment(origin, undefined, "a")).toBe(false);
-  expect(sameAttachment(origin, attach("a"), "a")).toBe(false);
+  expect(typedThen(origin, origin, "a")).toBe(true);
+  expect(typedThen(origin, undefined, "a")).toBe(false);
+  expect(typedThen(origin, attach("a"), "a")).toBe(false);
   origin.clients.delete("a");
-  expect(sameAttachment(origin, origin, "a")).toBe(false);
+  expect(typedThen(origin, origin, "a")).toBe(false);
+});
+
+// The checks below replaced closures in server/index.ts. Each oracle is that closure's body as it was
+// on main, its capture renamed only (`attachments.get(message.pane_id)` reads `attachments`), so every
+// state a check can meet answers as it always did.
+type Attachment = { clients: Set<unknown>; ready: boolean; held?: boolean; process: object; kind: "pty" | "mirror"; cols: number };
+type Scenario = {
+  label: string;
+  message: { pane_id: string };
+  attachments: Map<string, Attachment>;
+  client: { data: { attached: Map<string, object> } };
+  /** the attachment the input path saw, whether or not the client was in it (secret, queued typing, pending) */
+  attachment: Attachment | undefined;
+  /** the attachment the client was in when it typed (herdr typing, keys) */
+  origin: Attachment | undefined;
+  /** keys' `origin?.process`, and the seen attachment's process for the others: both taken before the await */
+  pty: object | undefined;
+  attachmentPty: object | undefined;
+  claim: object | undefined;
+  facts: ReturnType<typeof sightingFacts>;
+};
+
+/** The original membership check, as server/index.ts called it before typingGuards. */
+function originalSameAttachment<Client, A extends { clients: { has(client: Client): boolean } }>(origin: A | undefined, current: A | undefined, client: Client): boolean {
+  return origin ? current === origin && origin.clients.has(client) : current === undefined;
+}
+
+function* scenarios(): Generator<Scenario> {
+  const states = [undefined, false, true];
+  for (const seenOne of [false, true])
+  for (const memberThen of seenOne ? [false, true] : [false])
+  for (const now of seenOne ? ["none", "seen", "other"] as const : ["none", "other"] as const)
+  for (const memberNow of [false, true])
+  for (const replaced of [false, true])
+  for (const ready of [false, true])
+  for (const held of states)
+  for (const otherHeld of now === "other" ? states : [undefined])
+  for (const otherMember of now === "other" ? [false, true] : [false])
+  for (const claimThen of [undefined, {}])
+  for (const claimNow of claimThen ? ["none", "same", "other"] as const : ["none", "other"] as const) {
+    const client = { data: { attached: new Map<string, object>() } };
+    const paneId = "w1:p1";
+    const before = {};
+    const seen: Attachment | undefined = seenOne ? { clients: new Set(memberThen ? [client] : []), ready: true, process: before, kind: "pty", cols: 80 } : undefined;
+    // what each path took before its await
+    const origin = seen?.clients.has(client) ? seen : undefined;
+    const pty = origin?.process as object | undefined;
+    const attachmentPty = seen?.process;
+    const sighting = { attachment: seen, process: seen?.process, claim: claimThen, member: seen?.clients.has(client) === true };
+    // and what happened meanwhile
+    if (seen) {
+      seen.clients = new Set(memberNow ? [client] : []);
+      seen.ready = ready;
+      seen.held = held;
+      if (replaced) seen.process = {};
+    }
+    const other: Attachment = { clients: new Set(otherMember ? [client] : []), ready: true, held: otherHeld, process: {}, kind: "pty", cols: 80 };
+    const current = now === "seen" ? seen : now === "other" ? other : undefined;
+    const attachments = new Map<string, Attachment>(current ? [[paneId, current]] : []);
+    const claimed = claimNow === "same" ? claimThen : claimNow === "other" ? {} : undefined;
+    if (claimed) client.data.attached.set(paneId, claimed);
+    yield {
+      label: JSON.stringify({ seenOne, memberThen, now, memberNow, replaced, ready, held, otherHeld, otherMember, claimThen: !!claimThen, claimNow }),
+      message: { pane_id: paneId }, attachments, client, attachment: seen, origin, pty, attachmentPty, claim: claimThen,
+      facts: sightingFacts(sighting, { attachment: current, claim: client.data.attached.get(paneId) }, client),
+    };
+  }
+}
+
+test("each typing guard answers every state as the check it replaced", () => {
+  let checked = 0;
+  for (const s of scenarios()) {
+    const { message, attachments, client, origin, pty, claim, facts } = s;
+    const verdicts: Record<string, [boolean, boolean]> = {
+      // input through herdr: its check right before herdr is written to, and its check in the queue's turn
+      herdrTyping: [typingGuards.herdrTyping(facts), client.data.attached.get(message.pane_id) === claim
+        && originalSameAttachment(origin, attachments.get(message.pane_id), client)],
+      herdrTypingTurn: [!typingGuards.herdrTyping(facts), client.data.attached.get(message.pane_id) !== claim
+        || !originalSameAttachment(origin, attachments.get(message.pane_id), client)],
+      keys: [typingGuards.keys(facts), !attachments.get(message.pane_id)?.held
+        && (!origin || (attachments.get(message.pane_id) === origin && origin.process === pty && origin.ready
+          && client.data.attached.get(message.pane_id) === claim && origin.clients.has(client)))],
+    };
+    // queued typing and a secret are taken only in an attach the client is in
+    if (s.attachment && origin) {
+      const attachment = s.attachment;
+      const pty = s.attachmentPty;
+      verdicts["queuedTyping"] = [typingGuards.queuedTyping(facts), attachments.get(message.pane_id) === attachment && attachment.process === pty
+        && client.data.attached.get(message.pane_id) === claim && attachment.clients.has(client) && attachment.ready && !attachment.held];
+      verdicts["queuedTypingTurn"] = [!typingGuards.queuedTyping(facts), attachments.get(message.pane_id) !== attachment || attachment.process !== pty
+        || client.data.attached.get(message.pane_id) !== claim
+        || !attachment.clients.has(client) || !attachment.ready || !!attachment.held];
+      verdicts["mirrorSecret"] = [typingGuards.mirrorSecret(facts), attachments.get(message.pane_id) === attachment
+        && attachment.process === pty && client.data.attached.get(message.pane_id) === claim && attachment.clients.has(client)];
+    }
+    // a pending lease is taken on any attachment; one that is held fails before the rest is asked
+    if (s.attachment) {
+      const lease = { attachment: s.attachment, pty: s.attachmentPty };
+      const owner = client;
+      const paneId = message.pane_id;
+      const attachment = attachments.get(paneId);
+      verdicts["pendingHeld"] = [facts.currentHeld, !!attachment?.held];
+      if (!attachment?.held) {
+        verdicts["pendingLease"] = [typingGuards.pendingLease(facts), !(attachment !== lease.attachment || attachment.process !== lease.pty
+          || !owner.data.attached.has(paneId) || !attachment.clients.has(owner) || !attachment.ready)];
+      }
+    }
+    for (const [check, [guard, oracle]] of Object.entries(verdicts)) {
+      if (guard !== oracle) throw new Error(`${check} differs for ${s.label}: guard ${guard}, original ${oracle}`);
+      checked += 1;
+    }
+  }
+  // every check met states where it allows and where it refuses
+  expect(checked).toBeGreaterThan(10_000);
+});
+
+test("each fact is the expression it stands for in the input paths' ordered checks", () => {
+  for (const s of scenarios()) {
+    const { message, attachments, client, claim, facts } = s;
+    const current = attachments.get(message.pane_id);
+    expect(facts.attached).toBe(current !== undefined);
+    expect(facts.origin).toBe(s.origin !== undefined);
+    expect(facts.sameAttachment).toBe(current === s.attachment);
+    if (s.attachment) expect(facts.samePty).toBe(s.attachment.process === s.attachmentPty);
+    expect(facts.sameClaim).toBe(client.data.attached.get(message.pane_id) === claim);
+    expect(facts.claimed).toBe(client.data.attached.has(message.pane_id));
+    expect(facts.member).toBe(!!s.attachment?.clients.has(client));
+    expect(facts.ready).toBe(!!s.attachment?.ready);
+    expect(facts.held).toBe(!!s.attachment?.held);
+    expect(facts.currentHeld).toBe(!!current?.held);
+  }
+});
+
+test("a sighting with no attachment is no origin, and a mirrored one says so with its grid", () => {
+  const none = sightingFacts({ attachment: undefined, process: undefined, claim: undefined, member: false }, { attachment: undefined, claim: undefined }, "a");
+  expect(none).toMatchObject({ attached: false, origin: false, sameAttachment: true, member: false, ready: false, mirror: false, cols: undefined });
+  expect(typingGuards.herdrTyping(none)).toBe(true);
+  const mirror = { clients: new Set(["a"]), ready: true, process: {}, kind: "mirror" as const, cols: 120 };
+  const seen = sightingFacts({ attachment: mirror, process: mirror.process, claim: undefined, member: true }, { attachment: mirror, claim: undefined }, "a");
+  expect(seen).toMatchObject({ mirror: true, cols: 120 });
+  mirror.cols = 90;
+  expect(sightingFacts({ attachment: mirror, process: mirror.process, claim: undefined, member: true }, { attachment: mirror, claim: undefined }, "a").cols).toBe(90);
 });

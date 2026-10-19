@@ -175,7 +175,7 @@ describe("OpenCode's rows as a conversation", () => {
           { kind: "thinking", text: "Write it, then read it." },
           { kind: "tool", name: "write", summary: "hello.txt", input: JSON.stringify({ path: "hello.txt", content: "hi\n" }, null, 2), output: "Created file successfully: hello.txt" },
           { kind: "tool", name: "shell", summary: "cat hello.txt", input: JSON.stringify({ command: "cat hello.txt" }, null, 2), output: "hi\n" },
-          { kind: "text", text: "It says hi." },
+          { kind: "text", text: "It says hi.", phase: "final_answer" },
         ],
       },
     ]);
@@ -267,11 +267,11 @@ describe("OpenCode's rows as a conversation", () => {
     ]);
     expect(turns.map((turn) => [turn.role, turn.parts])).toEqual([
       ["user", [{ kind: "text", text: "run it in the background" }]],
-      ["assistant", [{ kind: "text", text: "Started." }]],
+      ["assistant", [{ kind: "text", text: "Started.", phase: "final_answer" }]],
       ["user", [{ kind: "notice", text: "sleep 30 && echo ok\nok", source: "shell" }]],
-      ["assistant", [{ kind: "text", text: "It printed ok." }]],
+      ["assistant", [{ kind: "text", text: "It printed ok.", phase: "final_answer" }]],
       ["user", [{ kind: "notice", text: "Find sources\nThree sources.", source: "subagent" }]],
-      ["assistant", [{ kind: "text", text: "The subagent found three." }]],
+      ["assistant", [{ kind: "text", text: "The subagent found three.", phase: "final_answer" }]],
     ]);
   });
 
@@ -311,7 +311,7 @@ describe("a page of an OpenCode session", () => {
     const answer = page(opencodeConversation(s.path, s.session));
     expect(answer.cursor).toBeNull();
     expect(answer.history_id).toBe("opencode-ses_test1");
-    expect(answer.turns.map((turn) => turn.parts)).toEqual([[{ kind: "text", text: "hello" }], [{ kind: "text", text: "hi" }]]);
+    expect(answer.turns.map((turn) => turn.parts)).toEqual([[{ kind: "text", text: "hello" }], [{ kind: "text", text: "hi", phase: "final_answer" }]]);
     // input + output + reasoning + both cache tiers, as the footer counts them; no window is stated
     expect(answer.metadata).toEqual({ model: "deepseek-v4.1-flash", reasoning_effort: null, context: { used: 116, window: null } });
   });
@@ -357,7 +357,7 @@ describe("a page of an OpenCode session", () => {
     // the newest page moved one prompt on: the chat fetches the turn in between with before + since
     expect(moved.cursor).not.toBe(newest.cursor);
     const between = page(opencodeConversation(s.path, s.session, { before: moved.cursor!, since: newest.cursor! }));
-    expect(between.turns.map((turn) => turn.parts)).toEqual([[{ kind: "text", text: "p10" }], [{ kind: "text", text: "a10" }]]);
+    expect(between.turns.map((turn) => turn.parts)).toEqual([[{ kind: "text", text: "p10" }], [{ kind: "text", text: "a10", phase: "final_answer" }]]);
   });
 
   it("refuses a cursor from another history", () => {
@@ -379,7 +379,7 @@ describe("a page of an OpenCode session", () => {
     const before = page(opencodeConversation(s.path, s.session));
     s.db.query("UPDATE session_v2 SET revert = ? WHERE id = ?").run(JSON.stringify({ messageID: undone }), s.session);
     const staged = page(opencodeConversation(s.path, s.session));
-    expect(staged.turns.at(-1)!.parts).toEqual([{ kind: "text", text: "a59" }]);
+    expect(staged.turns.at(-1)!.parts).toEqual([{ kind: "text", text: "a59", phase: "final_answer" }]);
     expect(staged.history_id).not.toBe(before.history_id);
     // the next prompt commits it: the rows are deleted and the session holds no revert
     const { seq } = s.db.query<{ seq: number }, [string]>("SELECT seq FROM session_message WHERE id = ?").get(undone)!;
@@ -417,7 +417,7 @@ describe("a page of an OpenCode session", () => {
     s.idle();
     const second = page(opencodeConversation(s.path, s.session));
     expect(second.signature).not.toBe(first.signature);
-    expect(second.turns[1]!.parts).toEqual([{ kind: "text", text: "work, rewritten" }]);
+    expect(second.turns[1]!.parts).toEqual([{ kind: "text", text: "work, rewritten", phase: "final_answer" }]);
   });
 
   it("keeps the page it showed while the store is held, and the terminal before it showed one", () => {
@@ -465,7 +465,7 @@ describe("a page of an OpenCode session", () => {
     const second = page(opencodeConversation(s.path, s.session));
     expect(second.history_id).toBe(first.history_id);
     expect(second.signature).not.toBe(first.signature);
-    expect(second.turns[1]!.parts).toEqual([{ kind: "text", text: "work done" }]);
+    expect(second.turns[1]!.parts).toEqual([{ kind: "text", text: "work done", phase: "final_answer" }]);
   });
 
   it("keeps the terminal for a session it does not hold, a store whose tables are missing and a missing one, and creates nothing", () => {
@@ -616,7 +616,7 @@ describe("an OpenCode 1.x session (session/message/part)", () => {
     expect(answer.turns[1]!.parts).toEqual([
       { kind: "thinking", text: "think it through" },
       { kind: "tool", name: "bash", summary: "echo hi", input: JSON.stringify({ command: "echo hi" }, null, 2), output: "hi" },
-      { kind: "text", text: "done" },
+      { kind: "text", text: "done", phase: "final_answer" },
     ]);
     expect(answer.metadata).toEqual({ model: "deepseek-v4.1-flash", reasoning_effort: null, context: { used: 116, window: null } });
   });
@@ -664,7 +664,7 @@ describe("an OpenCode 1.x session (session/message/part)", () => {
     const parts = answer.turns[1]!.parts as Extract<ConversationPart, { kind: "tool" }>[];
     expect(parts[0]!.error).toBe(true);
     expect(parts[0]!.output).toBe("No changes to apply: oldString and newString are identical.");
-    expect(answer.turns[1]!.parts).toContainEqual({ kind: "text", text: "Error: Rate limited" });
+    expect(answer.turns[1]!.parts).toContainEqual({ kind: "text", text: "Error: Rate limited", phase: "final_answer" });
     expect(opencodeConversation(s.path, "ses_missing")).toEqual({ kind: "unavailable", reason: "session_not_found" });
   });
 

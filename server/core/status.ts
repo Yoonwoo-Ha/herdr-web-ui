@@ -10,6 +10,7 @@ import { ClaudeSubagentStatus } from "../claude-subagents.ts";
 import { codexOpenRollout, paneCodexHome } from "../codex.ts";
 import { startStatusCollector } from "../collector.ts";
 import { CompletionTracker, type OmoRest } from "../completion.ts";
+import { Finishes } from "../finishes.ts";
 import { claudePanePid, claudePaneSession, forgetPaneTranscriptState } from "../conversation.ts";
 import type { DeviceStore } from "../devices.ts";
 import { createGjcStatus, gjcPanes, readOmoSnapshot, reconcileProviderStatus } from "../gjc-status.ts";
@@ -20,7 +21,7 @@ import { bridgeAgentNews, MachineManager } from "../machines.ts";
 import { omoPanes } from "../omo.ts";
 import { OMO_ALIASES, OmoStatus } from "../omo-status.ts";
 import type { PendingInputs } from "../pending-input.ts";
-import { promptWaitEnded } from "../prompt.ts";
+import { promptWaitEnded, type OpenCodePromptState } from "../prompt.ts";
 import { type AlertTiming, createPushService, defaultStateDir } from "../push.ts";
 import { SessionPlans } from "../session-plan.ts";
 import type { Telemetry } from "../telemetry.ts";
@@ -42,6 +43,7 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
     pushLoopbackHttp?: boolean;
     backgroundWait?: { grace: number; limit: number };
     statusNow?: () => number;
+    openCodeState?: OpenCodePromptState;
   };
   devices: DeviceStore;
   clients: Set<Client>;
@@ -66,6 +68,7 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
 
   /** `done` for agents herdr loses track of (server/completion.ts), kept across restarts */
   const completions = new CompletionTracker(join(options.stateDir ?? defaultStateDir(), "completions.json"));
+  const finishes = new Finishes();
   /** OmO panes get their status from OmO's session files: herdr reports none for them (server/omo-status.ts) */
   const omo = new OmoStatus({
     discover: (panes) => omoPanes(panes),
@@ -108,6 +111,7 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
   });
   /** herdr's snapshot with OmO's and GJC's own status in it: what the completion tracker and web push are given */
   const rawSnapshot = async (): Promise<SessionSnapshot> => {
+    const promptCheckpoint = options.openCodeState?.checkpoint();
     const snapshot = await omoSnapshot();
     await gjc.refresh(snapshot.panes);
     const named = gjc.apply(omo.apply(snapshot));
@@ -116,14 +120,17 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
     void claudeAgents.refresh(named.panes).catch(() => undefined).then(() => plans.refresh(named.panes)).catch(() => undefined);
     // an agent this server started has had no turn yet: its start screen is no work (launched-agents.ts)
     for (const pane of named.panes) pane.agent_status = launchedAgents.settle(pane.pane_id, pane.agent_status);
+    options.openCodeState?.reconcile(named.panes, promptCheckpoint);
     return named;
   };
   const backgroundOf = (paneId: string): number => omo.backgroundOf(paneId) || claudeAgents.countOf(paneId);
   /** the snapshot clients get: finishes settled, OmO panes named, background tasks, waits and plan progress */
   const clientSnapshot = async (): Promise<SessionSnapshot> => {
+    const epoch = finishes.epoch;
     const snapshot = await completions.readSnapshot(rawSnapshot);
-    if (!snapshot.panes.some((pane) => backgroundOf(pane.pane_id) > 0 || waits.waiting(pane.pane_id) || plans.summaryOf(pane.pane_id) !== null)) return snapshot;
-    return {
+    // A read spanning a proven daemon replacement belongs to neither generation. Read afresh.
+    if (epoch !== finishes.epoch) return clientSnapshot();
+    return finishes.snapshot({
       ...snapshot,
       panes: snapshot.panes.map((pane) => {
         const background = backgroundOf(pane.pane_id);
@@ -131,7 +138,7 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
         const plan = plans.summaryOf(pane.pane_id);
         return background > 0 || waiting || plan !== null ? { ...pane, ...(background > 0 ? { background_tasks: background } : {}), ...(waiting ? { background_wait: true as const } : {}), ...(plan !== null ? { plan } : {}) } : pane;
       }),
-    };
+    }, completions);
   };
   /**
    * A browser visit for the daily active message: the call is made now so the visit's day is the
@@ -153,7 +160,7 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
   }
   /** A pane's status frame: every one says whether the pane waits on its turn's background work. */
   const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
-    ({ type: "pane-status", pane_id: paneId, agent_status: status, ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
+    ({ type: "pane-status", pane_id: paneId, agent_status: status, ...finishes.status(paneId, status), ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
   const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot);
   if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
 
@@ -235,6 +242,7 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
 
   const collector = startStatusCollector({
     onStatus: (paneId, read, agent, replay) => {
+      if (agent !== "opencode") options.openCodeState?.forget(paneId);
       const raw = launchedAgents.settle(paneId, read);
       gjc.poll();
       // read back from a snapshot around a gap between subscriptions. An OmO pane's status there
@@ -303,13 +311,15 @@ export function createStatusHub<Lease>({ options, devices, clients, present, pen
     // the tracker first: what it makes of each pane (a finish after work is done, not idle) is
     // what the alerts are measured against from here, or the next event would alert of it
     onResync: (panes, newer) => {
-      completions.resync(panes, newer);
+      finishes.resync(completions, panes, newer);
       const settled = (pane: HerdrPane): AgentStatus => completions.current(pane.pane_id) ?? pane.agent_status;
       for (const pane of panes) { pending.status(pane.pane_id, settled(pane)); drainPending(pane.pane_id); }
       for (const pane of panes) if (!newer.has(pane.pane_id) && pane.agent === "claude") waits.status(pane.pane_id, settled(pane));
       push.resync(panes.map((pane) => ({ ...pane, agent_status: alertStatus(settled(pane), waits.waiting(pane.pane_id)) })), newer);
     },
     onPaneEnded: (paneId) => {
+      options.openCodeState?.forget(paneId);
+      finishes.ended(paneId);
       if (usageLogin.ended(paneId)) usage.invalidate();
       holdPendingPane(paneId, { code: "pane_not_found", message: "The pane ended; its pending messages were not sent" });
       pending.forget(paneId);

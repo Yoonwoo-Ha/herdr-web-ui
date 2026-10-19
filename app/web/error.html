@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>herdr</title>
+  <link rel="stylesheet" href="shell.css">
+</head>
+<body>
+  <main>
+    <h1>Can't reach your PC</h1>
+    <p id="what">The app could not open it.</p>
+    <p class="error" id="reason"></p>
+    <p>Check that the PC is on, that herdr web UI runs there, and that this phone can reach it (on Tailscale, both in the same tailnet).</p>
+    <div class="row">
+      <button type="button" class="primary" id="retry">Try again</button>
+      <button type="button" id="change">Change PC</button>
+    </div>
+  </main>
+  <script type="module">
+    import { shell } from "./shell.js";
+    const state = await shell("getState");
+    if (state.last) document.getElementById("what").textContent = `The app could not open ${state.last}.`;
+    document.getElementById("reason").textContent = state.failure ?? "";
+    document.getElementById("retry").addEventListener("click", () => void shell("retry"));
+    document.getElementById("change").addEventListener("click", () => void shell("disconnect"));
+  </script>
+</body>
+</html>

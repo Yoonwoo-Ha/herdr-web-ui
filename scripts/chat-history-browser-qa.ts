@@ -30,6 +30,8 @@ try {
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === "/ws") return new Response(null, { status: 404 });
+    // Product connection failures report only metadata; this fictional server consumes it locally.
+    if (path === "/api/connection-diagnostics") return new Response(null, { status: 204 });
     if (path.endsWith("/pane/commands")) return Response.json({ commands: [] });
     if (path.endsWith("/pane/omo-tasks")) return Response.json({ tasks: [], runs: [] });
     // a desktop's composer asks whether dictation can work here before it shows the mic

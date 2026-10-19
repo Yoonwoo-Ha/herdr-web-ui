@@ -158,8 +158,12 @@
   min-width: 0;
 }
 
+/* the title and the place; on One line they share a line (below), else each has its own */
+.agent-main { display: contents; }
+
 .agent-title,
-.agent-context {
+.agent-context,
+.agent-tokens {
   overflow: hidden;
   line-height: var(--lh-tight);
   text-overflow: ellipsis;
@@ -186,6 +190,15 @@
   font-size: var(--fs-xs);
 }
 
+/* What herdr plugins report on the pane (its `$name` tokens: usage left, a task's progress): a
+   line of its own under the place, in either row height, only where the pane has one. Values
+   change while they are read, so their digits keep their width. */
+.agent-tokens {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
 /* the live name is what a command names the agent by: it reads in the command's face */
 .agent-name {
   color: var(--text);
@@ -193,13 +206,15 @@
 }
 
 /* Settings -> Sidebar rows -> One line: a workspace row's height, the place dim after the title.
-   The title keeps its width first; the place takes what is left and gives way with an ellipsis. */
+   The title keeps its width first; the place takes what is left and gives way with an ellipsis.
+   A pane's plugin tokens add their line under it. */
 .agents-sidebar.is-one-line .agent-row { min-height: var(--side-row); }
 
-.agents-sidebar.is-one-line .agent-copy {
-  flex-direction: row;
+.agents-sidebar.is-one-line .agent-main {
+  display: flex;
   align-items: baseline;
   gap: var(--space-2);
+  min-width: 0;
 }
 
 .agents-sidebar.is-one-line .agent-title-line { flex: 0 1 auto; }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { DeviceStore } from "./devices.ts";
-import type { DirectoryListing, FileInfo } from "../shared/protocol.ts";
+import type { DirectoryListing, FileInfo, ProjectFavicon } from "../shared/protocol.ts";
 
 /**
  * The answer every JSON route gives before it reaches herdr: the wrong method, a body that is not
@@ -105,6 +105,35 @@ describe("a read that succeeds on this PC", () => {
     const response = await fetch(`${ownBase}/api/fs/stat?path=${encodeURIComponent(file)}`);
     expect(response.status).toBe(200);
     expect(await response.json() as FileInfo).toMatchObject({ path: realpathSync(file), name: "note.txt", size: 5, kind: "text" });
+  });
+
+  it("answers a folder's project icon in one request, and a folder without one with null rather than a 404", async () => {
+    const site = join(root, "site");
+    mkdirSync(join(site, "public"), { recursive: true });
+    writeFileSync(join(site, "public", "favicon.svg"), "<svg/>");
+    writeFileSync(join(site, "logo.png"), "png");
+    const found = await fetch(`${ownBase}/api/fs/favicon?root=${encodeURIComponent(site)}`);
+    expect(found.status).toBe(200);
+    expect(await found.json() as ProjectFavicon).toMatchObject({ icon: { path: join(site, "public", "favicon.svg"), name: "favicon.svg", kind: "image" } });
+    const plain = join(root, "plain");
+    mkdirSync(plain, { recursive: true });
+    for (const folder of [plain, join(root, "absent")]) {
+      const missing = await fetch(`${ownBase}/api/fs/favicon?root=${encodeURIComponent(folder)}`);
+      expect(missing.status).toBe(200);
+      expect(await missing.json() as ProjectFavicon).toEqual({ icon: null });
+    }
+    expect(await answer(await fetch(`${ownBase}/api/fs/favicon?root=`))).toEqual([400, "missing_root"]);
+  });
+
+  it("keeps a project icon to the rules of a file read", async () => {
+    const query = `/api/fs/favicon?root=${encodeURIComponent(root)}`;
+    expect(await answer(await fetch(`${ownBase}${query}`, { method: "POST", headers: { origin: ownBase, "x-herdr-machine": "1" } }))).toEqual([400, "method_not_allowed"]);
+    // another site's page may not use it to learn which files exist
+    expect(await answer(await fetch(`${ownBase}${query}`, { headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" } }))).toEqual([403, "cross_site"]);
+    // nor a watching device, on this PC or through a PC's route
+    for (const path of [query, `/api/machines/pc1${query.slice("/api".length)}`]) {
+      expect([path, await answer(await fetch(`${watchBase}${path}`, { headers: { cookie: watchCookie } }))]).toEqual([path, [403, "read_only"]]);
+    }
   });
 
   it("lists a folder's folders, and its files when asked", async () => {

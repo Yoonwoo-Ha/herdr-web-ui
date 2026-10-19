@@ -15,7 +15,16 @@ describe("parseStatusFrame", () => {
       event: "pane.agent_status_changed",
       data: { agent: "claude", agent_status: "blocked", pane_id: "w3J:p1", workspace_id: "w3J" },
     };
-    expect(parseStatusFrame(frame)).toEqual({ paneId: "w3J:p1", status: "blocked", agent: "claude" });
+    expect(parseStatusFrame(frame)).toEqual({ paneId: "w3J:p1", status: "blocked", agent: "claude", displayAgent: null });
+  });
+
+  it("reads the line a plugin reports for the agent", () => {
+    // live (herdr 0.9.3): `report-metadata --display-agent` alone sends this, with the status unchanged
+    const frame: EventFrame = {
+      event: "pane.agent_status_changed",
+      data: { agent: "claude", agent_status: "idle", display_agent: "needs a login", pane_id: "w2X:p1", workspace_id: "w2X" },
+    };
+    expect(parseStatusFrame(frame)).toEqual({ paneId: "w2X:p1", status: "idle", agent: "claude", displayAgent: "needs a login" });
   });
 
   it("rejects frames that are not status events", () => {
@@ -163,6 +172,33 @@ describe("lifecycle invalidations", () => {
       await reconciled.promise;
       expect(log.structure).toBe(1);
       expect(herdr.snapshotCalls()).toBe(calls + 1);
+    } finally { collector.stop(); }
+  });
+
+  it("reads the panes again when a status event brings a new display_agent, and only then", async () => {
+    // Given: a pane whose plugin line the snapshot already says
+    const herdr = fakeHerdr([{ ...paneOf("w1:p1", "idle"), display_agent: "agent · working" }]);
+    const { log, handlers } = recorder();
+    const reconciled = Promise.withResolvers<void>();
+    handlers.onReconciled = () => reconciled.resolve();
+    const collector = startStatusCollector(handlers, herdr.deps);
+    try {
+      await until(() => herdr.status() !== undefined, "the status subscription");
+      herdr.status()!.start();
+      await reconciled.promise;
+      const stream = herdr.status()!;
+      const line = (display_agent?: string): EventFrame => ({ event: "pane.agent_status_changed", data: { pane_id: "w1:p1", agent_status: "idle", agent: "claude", ...(display_agent === undefined ? {} : { display_agent }) } });
+      // When: the same line again, then a new one, then none
+      stream.emit(line("agent · working"));
+      // fixed wait: proving no refresh comes for the same line (the debounce is 5 ms)
+      await tick(30);
+      expect(log.structure).toBe(0);
+      stream.emit(line("needs a login · 8m ago"));
+      await until(() => log.structure === 1, "the refresh for the new line");
+      stream.emit(line());
+      await until(() => log.structure === 2, "the refresh for no line");
+      // Then: the status itself is told as before
+      expect(log.statuses).toEqual(["w1:p1:idle", "w1:p1:idle", "w1:p1:idle"]);
     } finally { collector.stop(); }
   });
 
@@ -385,6 +421,12 @@ function fakeHerdr(initial: HerdrPane[]) {
 }
 
 const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (done: () => boolean, what: string): Promise<void> => {
+  for (const deadline = Date.now() + 5_000; !done();) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await Bun.sleep(5);
+  }
+};
 const paneOf = (pane_id: string, agent_status: string) => ({ pane_id, agent_status }) as unknown as HerdrPane;
 const statusFrame = (pane_id: string, agent_status: string): EventFrame => ({ event: "pane.agent_status_changed", data: { pane_id, agent_status, agent: "claude" } });
 
@@ -735,6 +777,30 @@ describe("startStatusCollector recovery", () => {
     expect(log.resyncs).toEqual([{ panes: ["w1:p1", "w1:p2"], newer: [] }]);
     expect(log.structure).toBe(1);
     collector.stop();
+  });
+
+  it("measures a display_agent event after a recovery against the line the resync showed", async () => {
+    // Given: a pane whose plugin line was A, and B while the subscription was lost
+    const herdr = fakeHerdr([{ ...paneOf("w1:p1", "idle"), display_agent: "A" } as HerdrPane]);
+    const { log, handlers } = recorder();
+    const collector = startStatusCollector(handlers, herdr.deps);
+    try {
+      await until(() => herdr.status() !== undefined, "the status subscription");
+      herdr.status()!.start();
+      await until(() => log.baselines >= 2, "the snapshot after the start");
+      const lost = herdr.status()!;
+      herdr.setPanes([{ ...paneOf("w1:p1", "idle"), display_agent: "B" } as HerdrPane]);
+      lost.drop();
+      await until(() => herdr.status() !== undefined && herdr.status() !== lost, "the reopened subscription");
+      herdr.status()!.start();
+      // the resync tells clients to read the panes again: they now show B
+      await until(() => log.structure === 1, "the resync's refresh");
+      // When: herdr says A again
+      herdr.setPanes([{ ...paneOf("w1:p1", "idle"), display_agent: "A" } as HerdrPane]);
+      herdr.status()!.emit({ event: "pane.agent_status_changed", data: { pane_id: "w1:p1", agent_status: "idle", agent: "claude", display_agent: "A" } });
+      // Then: that is a change from what clients show, and they read the panes again
+      await until(() => log.structure === 2, "the refresh for A");
+    } finally { collector.stop(); }
   });
 
   it("still resyncs a pane that only came to the front while the recovery snapshot was on its way", async () => {

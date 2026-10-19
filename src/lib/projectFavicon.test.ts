@@ -1,48 +1,74 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
-import { faviconKey, faviconPath, forgetFaviconProbes, probeFavicon } from "./projectFavicon.ts";
+import type { FileInfo } from "../../shared/protocol.ts";
+import { faviconKey, forgetFaviconProbes, probeFavicon } from "./projectFavicon.ts";
+
+const realFetch = globalThis.fetch;
+const icon = (path: string): FileInfo => ({ path, name: path.slice(path.lastIndexOf("/") + 1), size: 3, modified: "2026-01-01T00:00:00.000Z", mime: "image/svg+xml", kind: "image" });
+const error = (status: number, code: string) => Response.json({ error: { code, message: code } }, { status });
+
+/** Answers each request with the next response (the last one repeats) and records what was asked. */
+function serve(...responses: (Response | Error)[]): string[] {
+  const asked: string[] = [];
+  globalThis.fetch = (async (url: string) => {
+    asked.push(url);
+    const next = responses.length > 1 ? responses.shift()! : responses[0]!;
+    if (next instanceof Error) throw next;
+    return next.clone();
+  }) as typeof fetch;
+  return asked;
+}
 
 describe("project favicon probe", () => {
   beforeEach(forgetFaviconProbes);
+  afterEach(() => { globalThis.fetch = realFetch; });
 
-  it("returns the best candidate that is an image, asking every place at once", async () => {
-    const asked: string[] = [];
-    const found = await probeFavicon("k", "/work/app/", async (path) => { asked.push(path); return path.endsWith("public/favicon.ico") || path.endsWith("assets/logo.png"); });
-    expect(found).toBe("/work/app/public/favicon.ico");
-    expect(asked).toContain("/work/app/favicon.svg");
-    expect(asked).toContain("/work/app/app/icon.svg");
-    expect(asked).toContain("/work/app/.github/logo.png");
+  it("asks the folder's PC once for the best icon, however many places it may be kept", async () => {
+    const asked = serve(Response.json({ icon: icon("/work/app/public/favicon.ico") }));
+    expect(await probeFavicon("local", "/work/app")).toBe("/work/app/public/favicon.ico");
+    expect(asked).toEqual([`/api/fs/favicon?root=${encodeURIComponent("/work/app")}`]);
   });
 
-  it("finds an app icon or a logo where no favicon is kept", async () => {
-    expect(await probeFavicon("k1", "/a", async (path) => path === "/a/build/icon.png" || path === "/a/logo.svg")).toBe("/a/build/icon.png");
-    expect(await probeFavicon("k2", "/b", async (path) => path === "/b/assets/logo.png")).toBe("/b/assets/logo.png");
+  it("asks another PC through its own route", async () => {
+    const asked = serve(Response.json({ icon: icon("/srv/site/logo.svg") }));
+    expect(await probeFavicon("pc 2", "/srv/site")).toBe("/srv/site/logo.svg");
+    expect(asked).toEqual([`/api/machines/pc%202/fs/favicon?root=${encodeURIComponent("/srv/site")}`]);
   });
 
-  it("answers null when nothing is found, and a failing check counts as not found", async () => {
-    expect(await probeFavicon("k", "/x", async () => { throw new Error("404"); })).toBeNull();
+  it("takes a folder without an icon as an answer, and remembers it", async () => {
+    const asked = serve(Response.json({ icon: null }));
+    expect(await probeFavicon("local", "/x")).toBeNull();
+    expect(await probeFavicon("local", "/x")).toBeNull();
+    expect(asked).toHaveLength(1);
   });
 
-  it("asks again after a miss whose check failed", async () => {
-    let calls = 0;
-    expect(await probeFavicon("k", "/x", async () => { calls += 1; throw new Error("offline"); })).toBeNull();
-    const after = calls;
-    expect(await probeFavicon("k", "/x", async (path) => { calls += 1; return path === "/x/favicon.ico"; })).toBe("/x/favicon.ico");
-    expect(calls).toBeGreaterThan(after);
+  it("probes a folder once, also for rows asking at the same time, and once more on another PC", async () => {
+    const asked = serve(Response.json({ icon: icon("/x/favicon.svg") }));
+    const [first, second] = await Promise.all([probeFavicon("local", "/x"), probeFavicon("local", "/x")]);
+    expect([first, second]).toEqual(["/x/favicon.svg", "/x/favicon.svg"]);
+    expect(asked).toHaveLength(1);
+    expect(await probeFavicon("pc2", "/x")).toBe("/x/favicon.svg");
+    expect(asked).toHaveLength(2);
+    expect(faviconKey("pc2", "/x")).not.toBe(faviconKey("local", "/x"));
   });
 
-  it("probes a folder once, remembering a miss too", async () => {
-    let calls = 0;
-    const check = async () => { calls += 1; return false; };
-    await probeFavicon("k", "/x", check);
-    const after = calls;
-    expect(await probeFavicon("k", "/x", check)).toBeNull();
-    expect(calls).toBe(after);
-    await probeFavicon(faviconKey("pc2", "/x"), "/x", check);
-    expect(calls).toBe(after * 2);
+  it("asks again after a check that failed: the PC unreachable, a bridge error, a proxy's rate limit", async () => {
+    for (const failure of [new TypeError("Failed to fetch"), error(502, "machine_unavailable"), error(503, "machine_offline"), error(429, "too_many_requests")]) {
+      forgetFaviconProbes();
+      const asked = serve(failure, Response.json({ icon: icon("/x/favicon.ico") }));
+      expect(await probeFavicon("pc2", "/x")).toBeNull();
+      expect(await probeFavicon("pc2", "/x")).toBe("/x/favicon.ico");
+      expect(asked).toHaveLength(2);
+    }
   });
 
-  it("builds absolute paths", () => {
-    expect(faviconPath("/a/b//", "favicon.svg")).toBe("/a/b/favicon.svg");
+  it("remembers a refusal: a watching device, or a PC whose bridge has no such route", async () => {
+    for (const refusal of [error(403, "read_only"), error(404, "not_found")]) {
+      forgetFaviconProbes();
+      const asked = serve(refusal);
+      expect(await probeFavicon("pc2", "/x")).toBeNull();
+      expect(await probeFavicon("pc2", "/x")).toBeNull();
+      expect(asked).toHaveLength(1);
+    }
   });
 });

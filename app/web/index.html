@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>herdr</title>
+  <link rel="stylesheet" href="shell.css">
+</head>
+<body>
+  <main>
+    <h1>herdr</h1>
+    <p>Open the herdr web UI your PC serves. Its address is under Settings → Phone &amp; devices there.</p>
+    <form id="connect" novalidate>
+      <label for="address">PC address</label>
+      <input id="address" name="address" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://my-pc.tailnet.ts.net" autocomplete="url">
+      <p class="hint">An https address (<code>tailscale serve</code> on the PC) opens faster in the app than a plain http one.</p>
+      <p class="error" id="error" role="alert"></p>
+      <div class="row">
+        <button type="submit" class="primary" id="open">Open</button>
+        <button type="button" id="scan">Scan QR code</button>
+      </div>
+    </form>
+    <section id="saved-section" hidden>
+      <h2>Your PCs</h2>
+      <ul id="saved"></ul>
+    </section>
+    <h2>No PC yet?</h2>
+    <p>Look around with made-up agents and terminals: nothing leaves this phone. <a href="demo/index.html" id="demo">Try the demo</a></p>
+  </main>
+  <script type="module" src="connect.js"></script>
+</body>
+</html>

@@ -63,6 +63,15 @@
   overflow-wrap: anywhere;
 }
 
+/* "Back" sits at the header's start, before the title */
+.prompt-card-back {
+  flex: none;
+  height: var(--space-6);
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  font-size: var(--fs-xs);
+}
+
 /* "View plan" sits at the header's end, beside the title */
 .prompt-card-plan-file {
   margin-inline-start: auto;
@@ -177,6 +186,35 @@
 
 .prompt-card-step.is-answered .prompt-card-step-mark {
   color: var(--accent);
+}
+
+.prompt-card-step.is-clickable {
+  padding: 0;
+}
+
+.prompt-card-step-button {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2) 2px 2px;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-pill);
+}
+
+.prompt-card-step-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .prompt-card-step.is-clickable:hover {
+    border-color: var(--accent);
+    background: var(--bg-hover);
+  }
 }
 
 .prompt-card-step.is-current {
@@ -332,6 +370,7 @@
 
 /* a picked option: a checked box, or a typed pick of an approval's option that waits for Confirm */
 .prompt-card-option.is-checked,
+.prompt-card-option.is-selected,
 .prompt-card-option.is-typed {
   background: var(--accent-tint);
   border-color: var(--accent);
@@ -352,6 +391,7 @@
 }
 
 .prompt-card-option.is-checked .prompt-card-number,
+.prompt-card-option.is-selected .prompt-card-number,
 .prompt-card-option.is-typed .prompt-card-number {
   border-color: var(--accent);
   color: var(--accent);

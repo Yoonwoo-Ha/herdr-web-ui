@@ -110,7 +110,7 @@ it("serves an OpenCode pane's session over HTTP, and an unchanged one as 304", a
   expect(conversation.cursor).toBeNull();
   expect(conversation.turns.map((entry) => [entry.role, entry.parts])).toEqual([
     ["user", [{ kind: "text", text: "Check chat" }]],
-    ["assistant", [{ kind: "text", text: "Answer one" }]],
+    ["assistant", [{ kind: "text", text: "Answer one", phase: "final_answer" }]],
   ]);
   expect(conversation.metadata).toEqual({ model: "contract-model", reasoning_effort: "high", context: { used: 35, window: null } });
   const etag = first.headers.get("etag")!;

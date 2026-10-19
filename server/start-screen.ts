@@ -1,11 +1,9 @@
 import type { ConversationMetadata, ConversationResponse } from "../shared/protocol.ts";
 
 /**
- * The model and reasoning effort an agent's own screen states before its first message, when no
- * transcript records them yet. Only a line in the agent's own layout is read, and a model is
- * given the id its transcript will record only where the screen's name maps to it by the
- * vendor's regular rule (src/lib/modelName.ts); anything else stays unknown rather than guessed.
- * Captured live 2026-10-14: Claude Code 2.1.296, Codex 0.162.1, gjc 0.17.7.
+ * Models stated by the agent's own layout before its transcript exists.
+ * omp is deliberately excluded: its display names require a catalog lookup, and listing
+ * that catalog can refresh the CLI's OAuth credentials.
  */
 type Screen = Pick<ConversationMetadata, "model" | "reasoning_effort">;
 const NOTHING: Screen = { model: null, reasoning_effort: null };
@@ -31,11 +29,20 @@ function claudeScreen(lines: string[]): Screen {
   return { model: `claude-${named[1]!.toLowerCase()}-${named[2]}${named[3] === undefined ? "" : `-${named[3]}`}`, reasoning_effort: null };
 }
 
-/** `  GPT-6-Luna medium fast · /folder`, the status line under the composer. */
+/** Only the live composer footer owns a Codex model. Text above it (an answer quoting the
+ * /model picker, a draft) never does, and while a popup hides the footer the model is unknown. */
 function codexScreen(lines: string[]): Screen {
-  if (!lines.some((line) => line.includes("OpenAI Codex (v"))) return NOTHING;
-  const found = lastMatch(lines, new RegExp(`^\\s*(GPT-[\\w.-]+) (${EFFORT})(?: \\w+)? · `, "u"));
-  return found ? { model: found[1]!.toLowerCase(), reasoning_effort: found[2]! } : NOTHING;
+  let header = lines.length - 1;
+  while (header >= 0 && !lines[header]!.includes("OpenAI Codex (v")) header--;
+  if (header < 0) return NOTHING;
+  const visible = lines.slice(header + 1);
+  const footer = new RegExp(`^\\s*(GPT-[\\w.-]+) (${EFFORT})(?: \\w+)? · `, "u");
+  let end = visible.length - 1;
+  while (end >= 0 && visible[end]!.trim() === "") end--;
+  if (end < 1 || !/^\s*[←?].*(?:for agents|shortcuts)/u.test(visible[end]!)) return NOTHING;
+  const found = footer.exec(visible[end - 1]!);
+  if (!found || !visible.slice(0, end - 1).some((line) => /^\s*›(?:\s|$)/u.test(line))) return NOTHING;
+  return { model: found[1]!.toLowerCase(), reasoning_effort: found[2]! };
 }
 
 /** ` ⬢ opus-5.5 · ◉ xhigh · 1.5% / …`, the status line over the composer. */

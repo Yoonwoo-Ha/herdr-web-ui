@@ -8,7 +8,8 @@
  * rows changed in each), so whole screens were 135 KB a second to every viewer, over SSH from
  * a remote PC and on to a phone; the changed rows are 9 KB a second (#261). Output that scrolls
  * changes every row, and then the whole screen is the shorter of the two and goes out instead. It stands where a PtySession stands, so
- * the attach lifecycle, the replay for late joiners and the output window are the same.
+ * the attach lifecycle, the replay for late joiners and the output window are the same; it has no
+ * `resize`, as its grid is the pane's own (below).
  *
  * What a repaint cannot give: herdr's read carries no cursor position (the cursor is
  * hidden), output between two reads is not seen, and the grid is the pane's own, never
@@ -246,9 +247,6 @@ export class MirrorSession {
     if (this.closed) return;
     void this.options.write(data).then(() => this.poke(), () => undefined);
   }
-
-  /** The grid is the pane's own in herdr; nothing here can resize it. */
-  resize(_cols: number, _rows: number): void {}
 
   pause(): void {
     this.paused = true;

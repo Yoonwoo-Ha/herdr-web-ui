@@ -225,7 +225,7 @@ export function parseInline(source: string, links = true, depth = 0): InlineNode
 // tries every split of the spaces before it; with it the line is an item, as it reads
 const listLine = /^(\s*)([-*]|\d+\.)\s+(.+)$/s;
 /**
- * The line under a table's header: two or more cells of dashes (`---`, `:---:`), with or without
+ * The line under a table's header: two or more cells of dashes (`---`, `:-:`; one dash is enough, as on GitHub), with or without
  * the outer pipes. Read cell by cell: one pattern for the whole line tries every way to share
  * a run of spaces between its parts, and a long blank line takes seconds.
  */
@@ -234,7 +234,7 @@ export function isTableSeparator(line: string): boolean {
   if (row.startsWith("|")) row = row.slice(1);
   if (row.endsWith("|")) row = row.slice(0, -1);
   const columns = row.split("|");
-  return columns.length >= 2 && columns.every((column) => /^:?-{3,}:?$/.test(column.trim()));
+  return columns.length >= 2 && columns.every((column) => /^:?-+:?$/.test(column.trim()));
 }
 
 function cells(line: string): string[] {

@@ -76,6 +76,10 @@ describe("HERDR_WEB_APP_NAME", () => {
     expect(CONTENT_SECURITY_POLICY).toContain("frame-src 'self';");
   });
 
+  it("fetches the manifest with the page's cookies, so a sign-in proxy lets it through", () => {
+    expect(shell).toMatch(/<link rel="manifest" href="[^"]+" crossorigin="use-credentials" \/>/);
+  });
+
   it("escapes the name in the shell", () => {
     const renamed = renameShell(shell, `a"b<c>&$1 $&`);
     expect(renamed).toContain('content="a&quot;b&lt;c&gt;&amp;$1 $&amp;"');

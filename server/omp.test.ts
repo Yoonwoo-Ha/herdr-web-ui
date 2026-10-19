@@ -125,6 +125,19 @@ describe("an omp pane's chat", () => {
     await expect(paneConversation(pane.pane_id)).rejects.toThrow("no_session_path");
   });
 
+  it("leaves an unwritten session's model unknown without reading its status line", async () => {
+    // omp names its file at start and writes it with the first answer; `/switch` writes nothing
+    const store = join(home, ".omp/agent/sessions/-project");
+    mkdirSync(store, { recursive: true });
+    agentSession = { agent: "omp", kind: "path", value: join(store, "2026-10-19_s2.jsonl") };
+    const read = spyOn(herdr, "paneRead");
+    restores.push(() => read.mockRestore());
+    const started = await paneConversation(pane.pane_id);
+    expect(started).toMatchObject({ source: "omp-transcript", turns: [], metadata: { model: null, reasoning_effort: null } });
+    expect(started.screen).toBeUndefined();
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it.skipIf(process.platform !== "linux")("reads the transcript the pane's omp process holds open when herdr names none", async () => {
     const store = join(home, ".omp/agent/sessions/-project");
     mkdirSync(store, { recursive: true });

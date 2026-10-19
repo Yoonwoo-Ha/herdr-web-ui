@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, jest, setSystemTime } from
 import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NOTES_FILE_LIMIT, readNotesFile, Updater, runCommand, type Release } from "./updater.ts";
+import { isReleaseFolder, NOTES_FILE_LIMIT, readNotesFile, RELEASE_FOLDER_REASON, Updater, runCommand, type Release } from "./updater.ts";
+import { updateStateDir } from "./update-state.ts";
 import { spawnSync } from "node:child_process";
 import { symlinkSync } from "node:fs";
 import { HERDR_SOCKET_PATH } from "../shared/protocol.ts";
@@ -352,6 +353,27 @@ describe("managed source updates with real Git repositories and builds", () => {
     await updater.request("install");
     expect(updater.status.available).toBe(false);
     expect(updater.status.blocked_reason).toContain("release history");
+  });
+
+  it("says to restart from the source checkout when the launcher runs from an installed release (#1373)", async () => {
+    // an installed release, where install puts it: a detached clone under the checkout's update state
+    const installed = join(updateStateDir(root, 7317, join(directory, "app-state")), "release-AbC123");
+    mkdirSync(installed, { recursive: true });
+    await git(installed, "clone", "-q", root, ".");
+    await git(installed, "checkout", "-q", "--detach");
+    expect(isReleaseFolder(installed)).toBe(true);
+    expect(isReleaseFolder(root)).toBe(false);
+    expect(isReleaseFolder(join(directory, "updates", "not-a-hash", "release-AbC123"))).toBe(false);
+    // herdr's plugin root pointing at it does not make it a source checkout either
+    for (const pluginCheckout of [false, true]) {
+      const launched = new Updater({ root: installed, stateDir: join(directory, "release-state"), autoUpdate: false, pluginCheckout,
+        publish() {}, activate: async (_next, persist) => persist() });
+      await launched.initialize();
+      expect(launched.status.blocked_reason).toBe(RELEASE_FOLDER_REASON);
+      await launched.request("check");
+      expect(launched.status.blocked_reason).toBe(RELEASE_FOLDER_REASON);
+      launched.stop();
+    }
   });
 
   it("updates a herdr-managed plugin checkout: shallow, detached, owned by herdr", async () => {

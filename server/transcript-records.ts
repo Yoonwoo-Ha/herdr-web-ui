@@ -335,7 +335,7 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
         if (typeof block !== "object" || block === null) continue;
         const b = block as { type?: string; text?: unknown; thinking?: unknown; name?: unknown; id?: unknown; arguments?: unknown; intent?: unknown };
         if (b.type === "text" && typeof b.text === "string" && b.text.length > 0) {
-          turn.parts.push({ kind: "text", text: b.text });
+          turn.parts.push({ kind: "text", text: b.text, ...(message.stopReason === "stop" ? { phase: "final_answer" as const } : {}) });
         } else if (b.type === "thinking") {
           const thinking = typeof b.thinking === "string" ? b.thinking : typeof b.text === "string" ? b.text : "";
           if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });

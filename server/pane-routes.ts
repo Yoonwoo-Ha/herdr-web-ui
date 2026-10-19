@@ -12,7 +12,8 @@ import { conversationImage, ConversationUnavailable, forgetPaneTranscriptState, 
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import { GjcSdkLookupError } from "./gjc-sdk.ts";
-import { agentRename, HerdrError, layoutSetSplitRatio, paneClear, paneClose, paneFind, paneFocus, paneGet, paneRead, paneRename, paneResize, paneScroll, paneScrollInfo, paneSelectionRead, paneSendKeys, paneSendText, paneSplit, paneSwap, paneSwapWith, paneZoom } from "./herdr/client.ts";
+import { agentRename, HerdrError, layoutSetSplitRatio, paneClear, paneClose, paneFind, paneFocus, paneRead, paneRename, paneResize, paneScroll, paneScrollInfo, paneSelectionRead, paneSendKeys, paneSendText, paneSplit, paneSwap, paneSwapWith, paneZoom } from "./herdr/client.ts";
+import { paneContext } from "./pane-context.ts";
 import { PasteImageError, readImageBody, savePaneImage } from "./paste.ts";
 
 /** the native stores createServer was given; unset, each reader finds its own */
@@ -23,13 +24,6 @@ const isPaneDirection = (value: unknown): value is PaneDirection => value === "l
 /** pane.read's own enums; a read outside them is refused here rather than sent to herdr as a guess (the generated types are open-ended) */
 const READ_SOURCES = new Set<ReadSource>(["detection", "recent", "recent_unwrapped", "visible"]);
 const READ_FORMATS = new Set<ReadFormat>(["ansi", "text"]);
-
-export async function paneContext(paneId: string): Promise<{ agent: string | null; cwd: string }> {
-  const pane = await paneGet(paneId);
-  const cwd = pane.foreground_cwd ?? pane.cwd;
-  if (!cwd) throw new HerdrError("cwd_not_found", `pane ${paneId} has no working directory`);
-  return { agent: pane.agent ?? pane.agent_session?.agent ?? null, cwd };
-}
 
 /** The answer for a pane route, or null when the path is not one. */
 export async function handlePaneRequest(request: Request, url: URL, pathname: string, options: PaneStores): Promise<Response | null> {
@@ -223,8 +217,9 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
         return jsonResponse({ error: { code: `gjc_sdk_${error.reason}`, message: error.message } }, error.reason === "timeout" ? 504 : 503, { "cache-control": "no-store" });
       }
       // an unrecognized pane is not an error: the client falls back to the
-      // scrollback transcript, exactly like chatmux's terminal fallback
-      if (error instanceof ConversationUnavailable) return jsonResponse({ source: "scrollback", turns: [] });
+      // scrollback transcript, exactly like chatmux's terminal fallback. Its metadata is only
+      // ever what the agent's own status line states
+      if (error instanceof ConversationUnavailable) return jsonResponse({ source: "scrollback", turns: [], ...(error.screen ? { metadata: error.screen, screen: true } : {}) });
       return errorResponse(error);
     }
   }

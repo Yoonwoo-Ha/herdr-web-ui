@@ -119,6 +119,18 @@
   white-space: nowrap;
 }
 
+/* what the row cut, said whole: it wraps, even inside a long word. Plugin tokens can be dozens of
+   long values, so it scrolls past a third of the screen instead of pushing the actions out */
+.row-sheet-detail {
+  max-height: 30vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
 .row-sheet-item {
   display: flex;
   align-items: center;

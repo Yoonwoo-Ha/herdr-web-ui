@@ -7,6 +7,7 @@ import type { MachineManager } from "./machines.ts";
 const asked: (string | null)[] = [];
 const promptAsked: (string | null)[] = [];
 const PLAN_CARD = { id: "claude-plan:abc", agent: "claude", kind: "plan", title: "Plan", question: "Would you like to proceed?", options: [{ label: "Yes", description: null }], multi_select: false, custom_option_index: null };
+const faviconAsked: { search: string; authorization: string | null; cookie: string | null }[] = [];
 const diffAsked: { path: string; search: string; authorization: string | null; cookie: string | null; forwarded: string | null }[] = [];
 const remote = Bun.serve({
   port: 0,
@@ -15,6 +16,10 @@ const remote = Bun.serve({
     if (path === "/api/pane/conversation/image") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } });
     if (path === "/api/pane/conversation/tool-output") return new Response("complete remote output", { headers: { "content-type": "text/plain; charset=utf-8" } });
     if (path === "/api/fs/file") return new Response("%PDF-1.7", { headers: { "content-type": "application/pdf" } });
+    if (path === "/api/fs/favicon") {
+      faviconAsked.push({ search: new URL(request.url).search, authorization: request.headers.get("authorization"), cookie: request.headers.get("cookie") });
+      return Response.json({ icon: null });
+    }
     if (path === "/api/pane/prompt") {
       const search = new URL(request.url).searchParams;
       promptAsked.push(search.get("plan"));
@@ -95,6 +100,20 @@ it("opens a PC's file from a navigation another site started, and keeps every ot
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error: { code: "invalid_origin" } });
   }
+});
+
+it("asks a PC for a folder's project icon once, with the bridge's own credential, and only from this app", async () => {
+  const search = `?root=${encodeURIComponent("/home/u/my app")}`;
+  const response = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/pc1/fs/favicon${search}`, { headers: { cookie: "herdr_web_token=browser-secret" } }), manager);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toEqual({ icon: null });
+  expect(faviconAsked).toEqual([{ search, authorization: "Bearer remote-token", cookie: null }]);
+  // unlike a file itself, it is never opened by a navigation from another site
+  const crossSite = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/pc1/fs/favicon${search}`, { headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" } }), manager);
+  expect(crossSite.status).toBe(403);
+  expect(await crossSite.json()).toMatchObject({ error: { code: "invalid_origin" } });
+  expect(faviconAsked).toHaveLength(1);
 });
 
 it("refuses a path with an empty segment instead of forwarding it as another route", async () => {

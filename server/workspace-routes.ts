@@ -13,7 +13,7 @@ import { agentFault, agentLaunch, type AgentPayload } from "./agent-launch.ts";
 import { createDirectory, listDirectories } from "./directories.ts";
 import { HerdrError, tabClose, tabCreate, tabMove, tabRename, workspaceClose, workspaceCreate, workspaceMove, workspaceRename, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "./herdr/client.ts";
 import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse, readJsonObject } from "./http.ts";
-import { paneContext } from "./pane-routes.ts";
+import { paneContext } from "./pane-context.ts";
 import { repoDiffResponse } from "./repo-diff.ts";
 
 function expandedDirectory(value: string): string | null {

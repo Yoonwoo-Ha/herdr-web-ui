@@ -17,6 +17,32 @@ import { DevinHistoryChanged } from "./devin.ts";
 import * as omo from "./omo.ts";
 import { ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneTranscript, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput } from "./conversation.ts";
 
+it("labels only Claude's explicit end_turn text as final-answer evidence", () => {
+  const entry = (stop_reason: string | null) => JSON.stringify({ type: "assistant", message: { role: "assistant", stop_reason, content: [{ type: "text", text: "Answer" }] } });
+  expect(parseClaudeTranscript(entry(null))[0]?.parts).toEqual([{ kind: "text", text: "Answer" }]);
+  expect(parseClaudeTranscript(entry("tool_use"))[0]?.parts).toEqual([{ kind: "text", text: "Answer" }]);
+  expect(parseClaudeTranscript(entry("end_turn"))[0]?.parts).toEqual([{ kind: "text", text: "Answer", phase: "final_answer" }]);
+});
+
+it("keeps a cached pre-final Claude page distinct from its appended final answer", () => {
+  const dir = mkdtempSync(join(tmpdir(), "claude-finish-proof-"));
+  const file = join(dir, "session.jsonl");
+  const record = (stop_reason: string | null, text: string) => JSON.stringify({
+    type: "assistant", timestamp: "2026-10-19T01:00:00Z",
+    message: { role: "assistant", stop_reason, content: [{ type: "text", text }] },
+  }) + "\n";
+  try {
+    writeFileSync(file, record(null, "Partial answer"));
+    const before = transcriptPage("claude-transcript", file);
+    expect(before.turns.at(-1)?.parts.at(-1)).toEqual({ kind: "text", text: "Partial answer" });
+    expect(transcriptPage("claude-transcript", file).turns).toEqual(before.turns);
+    appendFileSync(file, record("end_turn", "Final answer"));
+    expect(transcriptPage("claude-transcript", file).turns.at(-1)?.parts.at(-1))
+      .toEqual({ kind: "text", text: "Final answer", phase: "final_answer" });
+    expect(before.turns.at(-1)?.parts.at(-1)).toEqual({ kind: "text", text: "Partial answer" });
+  } finally { forgetTranscriptState(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 describe("omo skill roots", () => {
   it("finds the bundled plugin from a Windows canonical launcher path", async () => {
     const canonical = win32.join("C:\\Users\\demo", "node_modules", "omo-ai", "dist", "cli.js");
@@ -1062,8 +1088,8 @@ describe("gjc sessions", () => {
     ].join("\n");
     const turns = parseOmpTranscript(text);
     expect(turns.map((turn) => turn.role)).toEqual(["user", "assistant", "assistant"]);
-    expect(turns[1]!.parts.at(-1)).toEqual({ kind: "text", text: "The full review." });
-    expect(turns[2]).toEqual({ role: "assistant", ts: "2026-10-05T22:14:58.000Z", end_ts: "2026-10-05T22:14:58.000Z", parts: [{ kind: "thinking", text: "nothing new" }, { kind: "text", text: "Nothing new to do." }] });
+    expect(turns[1]!.parts.at(-1)).toEqual({ kind: "text", text: "The full review.", phase: "final_answer" });
+    expect(turns[2]).toEqual({ role: "assistant", ts: "2026-10-05T22:14:58.000Z", end_ts: "2026-10-05T22:14:58.000Z", parts: [{ kind: "thinking", text: "nothing new" }, { kind: "text", text: "Nothing new to do.", phase: "final_answer" }] });
   });
 
   it("says which kind of notice the runtime delivered, and nothing where the runtime named none", () => {
@@ -1876,5 +1902,49 @@ describe("Agy native ledger through shared paging", () => {
         name: "ConversationUnavailable", message: "transcript_missing",
       });
     } finally { store.mockRestore(); rpc.mockRestore(); }
+  });
+});
+
+describe("a Codex pane that reported no session yet", () => {
+  // captured live 2026-10-19, Codex 0.163.0-alpha.10.2 started in a terminal, before any message
+  const FRESH = [
+    "  >_ OpenAI Codex (v0.163.0-alpha.10.2)",
+    "     /tmp/project",
+    "",
+    "› Ask Codex to do anything",
+    "",
+    "  GPT-6.1-Sol low · /tmp/project",
+    "  ? for shortcuts              ⚠ 3 warnings · f2 to view",
+  ].join("\n");
+
+  it("stands in with the terminal, carrying the model Codex's own status line states", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-codex-fresh-"));
+    const pane = { pane_id: "codex-fresh", cwd: root, foreground_cwd: root, agent: "codex", agent_status: "idle" } as HerdrPane;
+    let screen = FRESH;
+    const snapshot = spyOn(herdr, "sessionSnapshot").mockResolvedValue({ panes: [pane] } as SessionSnapshot);
+    const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async (method: string) => (method === "agent.get"
+      ? { agent: { agent: "codex" } } : { process_info: { foreground_processes: [{ argv: ["codex"] }] } }) as never);
+    const read = spyOn(herdr, "paneRead").mockImplementation(async () => ({ text: screen }) as never);
+    try {
+      await expect(paneConversation(pane.pane_id, join(root, ".codex"))).rejects.toMatchObject({
+        name: "ConversationUnavailable", screen: { model: "gpt-6.1-sol", reasoning_effort: "low" },
+      });
+      // switched with /model: the status line says the new one
+      screen = FRESH.replace("GPT-6.1-Sol low", "GPT-6-Sol high");
+      await expect(paneConversation(pane.pane_id, join(root, ".codex"))).rejects.toMatchObject({ screen: { model: "gpt-6-sol", reasoning_effort: "high" } });
+      // a picker hiding the footer leaves the model unknown, whatever its options say
+      screen = "  >_ OpenAI Codex (v0.163.0)\n  Select Model and Effort\n› 1. GPT-6.1-Sol (default) (current)\n  GPT-6-Sol high · /tmp/project";
+      const picker = await paneConversation(pane.pane_id, join(root, ".codex")).catch((error: unknown) => error);
+      expect(picker).toBeInstanceOf(ConversationUnavailable);
+      expect((picker as ConversationUnavailable).screen).toBeUndefined();
+      // a screen that does not say leaves the scrollback as it was, and so does a page of history
+      screen = "$ ";
+      const unknown = await paneConversation(pane.pane_id, join(root, ".codex")).catch((error: unknown) => error);
+      expect(unknown).toBeInstanceOf(ConversationUnavailable);
+      expect((unknown as ConversationUnavailable).screen).toBeUndefined();
+      screen = FRESH;
+      const page = await paneConversation(pane.pane_id, join(root, ".codex"), { before: "x:0" }).catch((error: unknown) => error);
+      expect((page as ConversationUnavailable).screen).toBeUndefined();
+    } finally { snapshot.mockRestore(); rpc.mockRestore(); read.mockRestore(); forgetTranscriptState(); rmSync(root, { recursive: true, force: true }); }
   });
 });

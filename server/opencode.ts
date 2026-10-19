@@ -219,7 +219,8 @@ export function opencodeTurns(records: readonly (OpencodeRecord | null)[]): Conv
       turn = { role: "assistant", ts: entry.ts, parts: [] };
       turns.push(turn);
     }
-    turn.parts.push(...entry.parts);
+    turn.parts.push(...entry.parts.map((part, index) => entry.stop && index === entry.parts.length - 1 && part.kind === "text"
+      ? { ...part, phase: "final_answer" as const } : part));
     if (entry.end !== null) turn.end_ts = entry.end;
     settled = entry.stop;
   }

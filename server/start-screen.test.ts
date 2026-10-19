@@ -38,7 +38,6 @@ describe("startScreenMetadata", () => {
   it("names no Claude model it cannot give an id for certain", () => {
     expect(startScreenMetadata("claude-transcript", CLAUDE.replace("Haiku 5.5", "Opus 5.5 (1M context)")).model).toBeNull();
     expect(startScreenMetadata("claude-transcript", CLAUDE.replace("Haiku 5.5", "Default")).model).toBeNull();
-    // the folder question stands where the title would: nothing says the model yet
     expect(startScreenMetadata("claude-transcript", "Accessing workspace\nIs this a project you created or one you trust?").model).toBeNull();
   });
 
@@ -52,6 +51,17 @@ describe("startScreenMetadata", () => {
     expect(startScreenMetadata("codex-transcript", "  >_ OpenAI Codex (v0.162.1)\n  Trust this folder?\n› 1. Trust and continue")).toEqual({ model: null, reasoning_effort: null });
   });
 
+  it("takes the model only from the live footer, never from a quoted picker, a draft or a popup", () => {
+    const header = "  >_ OpenAI Codex (v0.162.1)";
+    const quoted = CODEX.replace(header, `${header}\n• Run /model. You will see:\n  Select Model\n  1. gpt-evil (current)`);
+    expect(startScreenMetadata("codex-transcript", quoted)).toEqual({ model: "gpt-6-luna", reasoning_effort: "medium" });
+    const draft = CODEX.replace("› Ask Codex to do anything", "› note\n  Select Model\n  1. gpt-typed (current)");
+    expect(startScreenMetadata("codex-transcript", draft)).toEqual({ model: "gpt-6-luna", reasoning_effort: "medium" });
+    const picker = [header, "  Select Model and Effort", "› 1. GPT-6.1-Sol (default) (current)", "  2. GPT-6-Astra", "  Press enter to select · esc to go back"].join("\n");
+    expect(startScreenMetadata("codex-transcript", picker)).toEqual({ model: null, reasoning_effort: null });
+    expect(startScreenMetadata("codex-transcript", `${header}\n  GPT-6-Sol high · /tmp/project`)).toEqual({ model: null, reasoning_effort: null });
+  });
+
   it("reads gjc's status line, keeping a model it has no id for as gjc wrote it", () => {
     expect(startScreenMetadata("gjc-transcript", GJC)).toEqual({ model: "claude-opus-5-5", reasoning_effort: "xhigh" });
     expect(startScreenMetadata("gjc-transcript", GJC.replace("opus-5.5", "kimi-k3"))).toEqual({ model: "kimi-k3", reasoning_effort: "xhigh" });
@@ -59,8 +69,10 @@ describe("startScreenMetadata", () => {
 
   it("reads only the agents whose screen it knows", () => {
     expect(readsStartScreen("codex-transcript")).toBeTrue();
+    expect(readsStartScreen("omp-transcript")).toBeFalse();
     expect(readsStartScreen("opencode-transcript")).toBeFalse();
     expect(startScreenMetadata("omo-transcript", CODEX)).toEqual({ model: null, reasoning_effort: null });
     expect(startScreenMetadata("claude-transcript", CODEX)).toEqual({ model: null, reasoning_effort: null });
   });
 });
+

@@ -1,5 +1,5 @@
-/** Rendered selection -> Markdown/plain code and resource-free rich HTML.
- * Adapted from t3code's markdown-clipboard.ts (MIT).
+/** Rendered selection -> native plain text and resource-free rich HTML.
+ * HTML sanitization adapted from t3code's markdown-clipboard.ts (MIT).
  */
 export interface ClipboardNode {
   readonly tag: string;
@@ -8,7 +8,7 @@ export interface ClipboardNode {
   readonly children?: readonly ClipboardNode[];
 }
 
-export interface MarkdownClipboardPayload {
+export interface ClipboardPayload {
   readonly text: string;
   readonly html: string;
 }
@@ -19,75 +19,10 @@ const OMIT_CLASSES = new Set(["markdown-code-header", "markdown-code-error", "hl
 const attr = (node: ClipboardNode, name: string): string | undefined => node.attrs?.[name];
 const children = (node: ClipboardNode): readonly ClipboardNode[] => node.children ?? [];
 const visible = (node: ClipboardNode): boolean => (!OMIT.has(node.tag) || (node.tag === "BUTTON" && (attr(node, "class") ?? "").split(/\s+/).includes("markdown-file"))) && attr(node, "aria-hidden") !== "true" && !(attr(node, "class") ?? "").split(/\s+/).some((name) => OMIT_CLASSES.has(name));
-const rawText = (node: ClipboardNode): string => node.text ?? children(node).map(rawText).join("");
 const escapeHtml = (value: string): string => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-
-function inlineMarker(content: string, marker: string): string {
-  return content.replace(/^(\s*)([\s\S]*?)(\s*)$/, (_, before: string, core: string, after: string) => core ? `${before}${marker}${core}${marker}${after}` : content);
-}
-
-function codeMarker(code: string, minimum: number): string {
-  return "`".repeat(Math.max(minimum, ...[...(code.match(/`+/g) ?? [])].map((run) => run.length + 1)));
-}
-
-function markdown(node: ClipboardNode): string {
-  const source = attr(node, "data-markdown-copy");
-  if (source !== undefined) return source;
-  if (!visible(node)) return "";
-  if (node.text !== undefined) return node.text;
-  const content = children(node).map((child) => (node.tag === "LI" && (child.tag === "UL" || child.tag === "OL") ? "\n" : "") + markdown(child)).join("");
-  const heading = attr(node, "data-markdown-heading") ?? /^H([1-6])$/.exec(node.tag)?.[1];
-  if (heading) return `${"#".repeat(Number(heading))} ${content.trim()}\n\n`;
-  switch (node.tag) {
-    case "BR": return "\n";
-    case "HR": return "---\n\n";
-    case "P": return `${content.trim()}\n\n`;
-    case "PRE": {
-      const code = rawText(node);
-      const fence = codeMarker(code, 3);
-      return `${fence}${attr(node, "data-language") ?? ""}\n${code}\n${fence}\n\n`;
-    }
-    case "CODE": {
-      if (content.includes("\n") || children(node).some((child) => (attr(child, "class") ?? "").split(" ").includes("hl-line"))) return content;
-      const fence = codeMarker(content, 1);
-      const pad = content.startsWith("`") || content.endsWith("`") ? " " : "";
-      return `${fence}${pad}${content}${pad}${fence}`;
-    }
-    case "STRONG": case "B": return inlineMarker(content, "**");
-    case "EM": case "I": return inlineMarker(content, "*");
-    case "DEL": case "S": return inlineMarker(content, "~~");
-    case "A": {
-      const href = attr(node, "href") ?? "";
-      return /^(https?:\/\/|mailto:)/i.test(href) && content.trim() && content !== href ? `[${content}](${href})` : content;
-    }
-    case "IMG": return `![${attr(node, "alt") ?? ""}](${attr(node, "src") ?? ""})`;
-    case "UL": case "OL": {
-      const start = Number.parseInt(attr(node, "start") ?? "1", 10) || 1;
-      return children(node).filter((child) => child.tag === "LI").map((item, index) => {
-        const checkbox = children(item).find((child) => attr(child, "role") === "checkbox");
-        const task = checkbox ? `[${attr(checkbox, "aria-checked") === "true" ? "x" : " "}] ` : "";
-        const marker = node.tag === "OL" ? `${start + index}. ${task}` : `- ${task}`;
-        const lines = markdown(item).trim().split("\n");
-        return lines.map((line, lineIndex) => lineIndex === 0 ? marker + line : line ? " ".repeat(marker.length) + line : "").join("\n");
-      }).join("\n") + "\n\n";
-    }
-    case "BLOCKQUOTE": return content.trim().split("\n").map((line) => line ? `> ${line}` : ">").join("\n") + "\n\n";
-    case "TABLE": {
-      const rows = children(node).flatMap((child) => child.tag === "TR" ? [child] : children(child).filter((row) => row.tag === "TR"));
-      return rows.map((row, index) => {
-        const cells = children(row).filter((cell) => cell.tag === "TH" || cell.tag === "TD");
-        const line = `| ${cells.map((cell) => markdown(cell).trim().replace(/\n+/g, " ").replaceAll("|", "\\|")).join(" | ")} |`;
-        return index === 0 ? `${line}\n| ${cells.map(() => "---").join(" | ")} |` : line;
-      }).join("\n") + "\n\n";
-    }
-    case "DIV": case "SECTION": case "ARTICLE": return content && !content.endsWith("\n") ? content + "\n\n" : content;
-    default: return content;
-  }
-}
 
 /** Rebuild, rather than scrub arbitrary HTML: attributes cannot smuggle resources or handlers. */
 function richHtml(node: ClipboardNode): string {
-  if (attr(node, "data-markdown-copy") !== undefined) return escapeHtml(attr(node, "data-markdown-copy") ?? "");
   if (!visible(node)) return "";
   if (node.text !== undefined) return escapeHtml(node.text);
   if (node.tag === "IMG") return escapeHtml(attr(node, "alt") ?? "");
@@ -102,33 +37,21 @@ function richHtml(node: ClipboardNode): string {
   return node.tag === "BR" || node.tag === "HR" ? `<${tag}>` : `<${tag}${attributes}>${content}</${tag}>`;
 }
 
-export function renderedMarkdownPayload(nodes: readonly ClipboardNode[]): MarkdownClipboardPayload {
-  const pres: ClipboardNode[] = [];
-  let other = false;
-  const scan = (node: ClipboardNode): void => {
-    if (attr(node, "data-markdown-copy") !== undefined) { other = true; return; }
-    if (!visible(node)) return;
-    if (node.tag === "PRE") { pres.push(node); return; }
-    if (node.text?.trim() || node.tag === "IMG" || node.tag === "HR") other = true;
-    children(node).forEach(scan);
-  };
-  nodes.forEach(scan);
-  const soleCode = !other && pres.length === 1 ? pres[0] : undefined;
-  const text = soleCode ? rawText(soleCode) : nodes.map(markdown).join("").trim();
+/** The browser owns plain-text layout and whitespace; only the rich representation is rebuilt. */
+export function renderedClipboardPayload(nodes: readonly ClipboardNode[], text: string): ClipboardPayload {
   return { text, html: nodes.map(richHtml).join("") };
 }
 
 function fromDom(node: Node): ClipboardNode {
   if (!(node instanceof Element)) return { tag: "", text: node.nodeType === 3 ? node.textContent ?? "" : "", children: [...node.childNodes].map(fromDom) };
   const attrs = Object.fromEntries([...node.attributes].map((entry) => [entry.name, entry.value]));
-  if (node.tagName === "PRE") attrs["data-language"] = node.closest("[data-language]")?.getAttribute("data-language") ?? "";
   return { tag: node.tagName, attrs, children: [...node.childNodes].map(fromDom) };
 }
 
-/** Only claim a range wholly in this chat; composer fields and the terminal keep native copy. */
-export function chatMarkdownClipboardPayload(selection: Selection, root: Element): MarkdownClipboardPayload | null {
+/** Only claim ranges wholly in this chat; composer fields and the terminal keep native copy. */
+export function chatSelectionClipboardPayload(selection: Selection, root: Element): ClipboardPayload | null {
   if (selection.isCollapsed || selection.rangeCount === 0) return null;
-  const payloads: MarkdownClipboardPayload[] = [];
+  const nodes: ClipboardNode[] = [];
   for (let index = 0; index < selection.rangeCount; index++) {
     const range = selection.getRangeAt(index);
     if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
@@ -149,13 +72,10 @@ export function chatMarkdownClipboardPayload(selection: Selection, root: Element
         wrapped = parent;
       }
     }
-    const payload = renderedMarkdownPayload([...wrapped.childNodes].map(fromDom));
-    const nativeText = selection.rangeCount === 1 ? selection.toString() : range.toString();
-    // A prose-only selection already is Markdown. Keep its native row separators and endpoint
-    // whitespace exactly, including the blank line the virtual row layout contributes.
-    const plain = payload.text.replace(/\n+/g, "\n") === nativeText.trim().replace(/\n+/g, "\n");
-    const text = element?.closest("pre") || plain ? nativeText : payload.text;
-    if (text) payloads.push({ ...payload, text });
+    nodes.push(...[...wrapped.childNodes].map(fromDom));
   }
-  return payloads.length ? { text: payloads.map((payload) => payload.text).join("\n\n"), html: payloads.map((payload) => payload.html).join("") } : null;
+  const text = selection.toString();
+  // An image-only range can have no plain text; still intercept it so native copy cannot
+  // bypass the resource-free HTML representation.
+  return renderedClipboardPayload(nodes, text);
 }

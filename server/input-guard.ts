@@ -1,13 +1,94 @@
-/**
- * Whether typing taken while `origin` was the pane's attachment may still be written: into
- * the same attach, which still has the typist, or (taken with no attach) into a pane nobody
- * has attached since. An attach that came while the typing waited is someone else's screen.
- */
-export function sameAttachment<Client, Attachment extends { clients: { has(client: Client): boolean } }>(
-  origin: Attachment | undefined, current: Attachment | undefined, client: Client,
-): boolean {
-  return origin ? current === origin && origin.clients.has(client) : current === undefined;
+/** The parts of a pane's attachment the input checks read: who is in it, its state and its session. */
+export interface SeenAttachment<Client> {
+  clients: { has(client: Client): boolean };
+  ready: boolean;
+  held?: boolean;
+  process: unknown;
+  kind: "pty" | "mirror";
+  cols: number;
 }
+
+/**
+ * A connection's sighting of a pane's terminal, compared with the terminal now. The sighting is the
+ * attachment then (whether or not the connection was in it), the session it ran and the connection's
+ * claim then; each fact below is read now.
+ */
+export interface SightingFacts {
+  /** the pane has an attachment now */
+  attached: boolean;
+  /** the connection was in the attachment it saw: what it typed belongs to that attach */
+  origin: boolean;
+  /** the pane's attachment now is the one seen (no attachment then and now counts too) */
+  sameAttachment: boolean;
+  /** the seen attachment still runs the session seen: no retry, take-over or handoff replaced it */
+  samePty: boolean;
+  /** the connection's claim on the pane now is the one it had then */
+  sameClaim: boolean;
+  /** the connection has a claim on the pane now */
+  claimed: boolean;
+  /** the connection is in the seen attachment now */
+  member: boolean;
+  /** the seen attachment is ready now */
+  ready: boolean;
+  /** another web bridge holds the seen attachment's terminal now */
+  held: boolean;
+  /** another web bridge holds the pane's attachment now, whichever it is */
+  currentHeld: boolean;
+  /** the seen attachment mirrors the pane's screen */
+  mirror: boolean;
+  /** the seen attachment's grid width now */
+  cols: number | undefined;
+}
+
+export function sightingFacts<Client, Attachment extends SeenAttachment<Client>>(
+  seen: { attachment: Attachment | undefined; process: unknown; claim: unknown; member: boolean },
+  now: { attachment: Attachment | undefined; claim: unknown },
+  client: Client,
+): SightingFacts {
+  return {
+    attached: now.attachment !== undefined,
+    origin: seen.member,
+    sameAttachment: now.attachment === seen.attachment,
+    samePty: seen.attachment?.process === seen.process,
+    sameClaim: now.claim === seen.claim,
+    claimed: now.claim !== undefined,
+    member: seen.attachment?.clients.has(client) === true,
+    ready: seen.attachment?.ready === true,
+    held: seen.attachment?.held === true,
+    currentHeld: now.attachment?.held === true,
+    mirror: seen.attachment?.kind === "mirror",
+    cols: seen.attachment?.cols,
+  };
+}
+
+/**
+ * Whether typing taken while the connection saw the pane may still be written: into the attach it
+ * was in, which still has the typist, or (taken with no attach of its own) into a pane nobody has
+ * attached since. An attach that came while the typing waited is someone else's screen.
+ */
+export function sameOrigin(facts: SightingFacts): boolean {
+  return facts.origin ? facts.sameAttachment && facts.member : !facts.attached;
+}
+
+/**
+ * The checks made of what a connection saw, again right before herdr or the pty is written to. They
+ * differ on purpose and are not merged: each is the condition its input path always had. The
+ * connection's own part (it may type, its role is the one it had) is checked beside them.
+ */
+export const typingGuards = {
+  /** typing that goes through herdr (no attach here, or a mirrored one), and its turn in the queue */
+  herdrTyping: (facts: SightingFacts): boolean => facts.sameClaim && sameOrigin(facts),
+  /** typing queued behind a message into the attach's pty: the same pty, still ready and this bridge's */
+  queuedTyping: (facts: SightingFacts): boolean => facts.sameAttachment && facts.samePty && facts.sameClaim && facts.member
+    && facts.ready && !facts.held,
+  /** keys: a chord pressed in an attach goes to that attach while it is ready; keys pressed with none, to a pane no other bridge holds */
+  keys: (facts: SightingFacts): boolean => !facts.currentHeld && (!facts.origin || (facts.sameAttachment && facts.samePty
+    && facts.ready && facts.sameClaim && facts.member)),
+  /** a mirrored pane's secret: the same attach and session, still this connection's */
+  mirrorSecret: (facts: SightingFacts): boolean => facts.sameAttachment && facts.samePty && facts.sameClaim && facts.member,
+  /** a pending message's lease, once its terminal is not held: the same attach and session, still claimed, joined and ready */
+  pendingLease: (facts: SightingFacts): boolean => facts.sameAttachment && facts.samePty && facts.claimed && facts.member && facts.ready,
+};
 
 /** One or more mouse reports as xterm sends them: SGR (`CSI < b ; x ; y M|m`) or the default `CSI M` plus three bytes. */
 const MOUSE_REPORTS = /^(?:\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/;

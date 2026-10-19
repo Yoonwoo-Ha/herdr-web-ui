@@ -6,6 +6,7 @@ import { ApiError, authenticate, pairDevice } from "../lib/api.ts";
 import { deviceLabel } from "../lib/phone.ts";
 import type { AccessRefusal } from "../../shared/protocol.ts";
 import { useT } from "../lib/i18n.ts";
+import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { userErrorMessage, type UserError } from "../lib/userError.ts";
 
 
@@ -133,6 +134,10 @@ export function AccessGate({ reason, initialCode, onUnlocked }: AccessGateProps)
         </details>
         {error !== null && (
           <p id="access-gate-error" className="access-gate-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>
+        )}
+        {/* in the iOS app (app/) this page is all there is: the way back to its list of PCs */}
+        {inNativeApp() && (
+          <p className="access-gate-copy"><button type="button" className="btn" onClick={() => void changePc()}>{t("Change PC")}</button></p>
         )}
       </div>
     </main>

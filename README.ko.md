@@ -76,11 +76,12 @@ https://github.com/user-attachments/assets/d854dbb6-64bd-4eba-81c7-fbd3f525726b
 
 <p align="center"><sub>모든 클립은 데스크톱과 폰을 동시에 녹화한 실제 동작이며, 실제 속도로 컷 없이 담았습니다. 누르면 전체 영상을 볼 수 있습니다.</sub></p>
 
-- **채팅과 터미널을 pane 하나에** — Claude Code, Codex, omp, omo, gjc, pi의 대화 기록과 herdr가 식별한 OpenCode 2와 Devin CLI 세션을 보여 주고, 클릭 한 번이면 라이브 터미널로 넘어갑니다. 에이전트가 일하는 동안 다음 메시지를 써 두면 다음 턴에 들어가고, Send now로 바로 보낼 수도 있습니다. [지원 에이전트 →](docs/guide.md#supported-agents)
-- **탭 한 번으로 승인** — 승인 요청, 질문, 계획 메뉴가 카드로 뜹니다. 답을 보내기 전에 그 질문이 아직 유효한지 확인합니다.
+- **채팅과 터미널을 pane 하나에** — Claude Code, Codex, omp, omo, gjc, pi, Hermes의 기록과 식별된 OpenCode, Devin CLI 세션을 보여 줍니다. Linux의 Grok과 실험적인 Antigravity(agy)도 아래 지원 조건에 따라 채팅으로 보이며, 클릭 한 번이면 같은 pane의 터미널로 넘어갑니다. 에이전트가 일하는 동안 메시지를 대기열에 두어 다음 턴에 보내거나 **지금 보내기(Send now)**로 바로 보낼 수 있습니다. [지원 에이전트 →](docs/guide.md#supported-agents)
+- **탭 한 번으로 승인** — 지원되는 승인 요청, 질문, 계획 메뉴가 카드로 뜹니다. 답을 보내기 전에 그 질문이 아직 유효한지 확인하며, 카드로 지원하지 않는 요청에는 터미널에서 답합니다.
 - **내가 필요할 때 알림** — 모든 pane의 상태를 실시간으로 보여 주고, 앱을 보고 있을 때는 알림이 위에서 내려오며, 에이전트가 입력을 기다리거나 일을 끝내면 앱이 닫혀 있어도 푸시 알림을 보냅니다.
 - **폰에 설치해서 쓰기** — 키보드 위에 키 바(Esc, Tab, Ctrl, Alt, Shift, Enter, 방향키)가 붙은 PWA입니다. 키 순서를 바꾸거나 나만의 키 조합을 Settings(설정)에서 추가할 수 있습니다. Tailscale 주소는 QR 코드로 받아 갑니다. [폰 설정 →](docs/guide.md#on-your-phone)
 - **말로 입력하기** — 채팅이나 터미널 입력 줄에 받아쓰기로 입력합니다. 한국어와 영어를 섞어 말해도 됩니다. 에이전트에게 보내기 전에 글자를 확인할 수 있고, 받아쓰기는 내 OpenAI 키나 브라우저의 음성 인식을 씁니다.
+- **저장소 변경 살펴보기** — 파일 찾아보기에서 작업 트리, 스테이징된 변경 사항, 커밋 간 비교를 열고, 저장소를 바꾸지 않고 파일별 diff를 읽습니다.
 - **작업 방식은 그대로** — 에이전트는 herdr가 관리하고, 이 앱은 거기에 연결만 합니다. 에이전트를 멈추지 않고 Settings(설정)에서 업데이트하며, 업데이트마다 무엇이 바뀌는지 패치 노트로 보여 줍니다. 새 탭과 worktree는 행의 ⋯ 메뉴에서 만듭니다. [전체 기능 →](docs/guide.md#features)
 
 ---
@@ -93,9 +94,10 @@ https://github.com/user-attachments/assets/d854dbb6-64bd-4eba-81c7-fbd3f525726b
 curl -fsSL https://herdrweb.dev/install.sh | sh
 ```
 
-Linux(x64, arm64)와 macOS를 지원합니다. herdr 0.9.0 이상, Bun 1.4 이상, Node 18 이상 중 없는 것을 현재 사용자 계정에 설치한 뒤, 앱을 herdr 플러그인으로 설치합니다. 이미 설치된 herdr가 0.9.0보다 오래됐다면 herdr를 직접 업데이트하고 다시 시작한 다음 설치 스크립트를 다시 실행하세요. 기본 수신 주소를 쓰고 Tailscale이 켜져 있으면, HTTPS 설정이 끝났을 때 tailnet 주소와 QR 코드가 나옵니다. 자신의 기기는 원래 코드 없이 들어갑니다. `tailscale serve`가 로그인을 알려 주기 때문입니다. 그래도 자신의 폰이 페어링을 요구받는다면 `HERDR_WEB_TAILSCALE_SERVE_ONLY=1`을 설정하면 로그인이 하나뿐인 tailnet에서는 코드 없이 들어갈 수 있습니다. 단, 공용 프록시나 터널 등 다른 경로로 이 포트에 접근할 수 있다면 설정하지 마세요 ([접근과 안전](docs/guide.md#access-and-safety)).
+glibc 기반 Linux(x64, arm64)와 macOS(Intel, Apple Silicon)를 지원하며, Alpine(musl)과 32비트 ARM은 지원하지 않습니다. `curl`, Git, `tar`가 필요하며 Bun이 없다면 Bash와 `unzip`도 필요합니다. herdr 0.9.0 이상, Bun 1.4 이상, Node 18 이상이 필요합니다. 없는 도구는 현재 사용자 계정에 설치하고, 오래된 Bun은 업데이트하며, Node가 없거나 18보다 오래됐다면 Node 22를 설치한 뒤 앱을 herdr 플러그인으로 설치합니다. 이미 설치된 herdr가 0.9.0보다 오래됐다면 herdr를 직접 업데이트하고 다시 시작한 다음 설치 스크립트를 다시 실행하세요.
 
-<p align="center">
+기본 수신 주소를 쓰고 Tailscale이 켜져 있으면, HTTPS 설정이 끝났을 때 tailnet 주소와 QR 코드가 나옵니다. 별도 접근 토큰을 설정하지 않은 경우, `tailscale serve`가 이 PC 소유자와 같은 로그인임을 알려 주는 자신의 기기는 보통 코드 없이 들어갑니다. 그래도 자신의 폰이 페어링을 요구받는다면 `HERDR_WEB_TAILSCALE_SERVE_ONLY=1`은 Tailscale이 로그인이 하나뿐이고 태그된 기기가 없는 tailnet임을 확인하며 serve가 이 포트의 유일한 접근 경로일 때만 로그인 정보가 없는 접속을 허용합니다. 공용 프록시나 터널 등 다른 경로로 이 포트에 접근할 수 있다면 설정하지 마세요 ([접근과 안전](docs/guide.md#access-and-safety)).
+
 PowerShell에서 Windows x64용으로 설치하려면:
 
 ```powershell
@@ -108,13 +110,15 @@ irm https://herdrweb.dev/install.ps1 | iex
   <img src="docs/screenshots/install.png" width="720" alt="설치 스크립트 출력: Bun, Node, herdr 플러그인이 설치되고 tailscale serve가 앱을 공개한 뒤 폰용 QR 코드가 나옵니다.">
 </p>
 
-필요한 도구가 이미 있다면 플러그인만 설치해도 됩니다.
+herdr 0.9.0 이상, Bun 1.4 이상, Node 18 이상이 이미 있다면 플러그인만 설치해도 됩니다. Windows에서는 Node가 필요 없습니다.
 
 ```bash
 herdr plugin install devswha/herdr-web-ui
 ```
 
-herdr가 실행 중인 상태에서 **[localhost:7317](http://localhost:7317)**을 여세요. pane을 고르거나 **New workspace**로 에이전트를 시작합니다. 폰에서 쓰려면 설치 스크립트가 보여 준 QR 코드를 찍고 앱을 홈 화면에 추가하세요. [빠른 시작 →](docs/guide.md#quick-start)
+오래된 herdr는 먼저 업데이트하고 다시 시작해야 합니다. 단계별 설치와 문제 해결은 [INSTALL.md](INSTALL.md)를 보세요.
+
+herdr가 실행 중이면 설치 스크립트가 출력하거나 열어 준 주소로 접속하세요. 기본 주소는 **[127.0.0.1:7317](http://127.0.0.1:7317)**이며, 기본 포트가 사용 중이면 플러그인이 다른 포트를 골라 기억합니다. 플러그인만 설치했다면 herdr의 **Start herdr web ui**를 실행하세요. 데스크톱이 있는 PC의 새 설치에서는 브라우저가 자동으로 열립니다. 주소 표시줄의 **설치(Install)**로 앱을 추가하고 같은 주소를 계속 쓰세요. `127.0.0.1`과 `localhost`는 브라우저에서 서로 다른 앱 주소입니다. 자동 열기를 건너뛰려면 설치 전에 `HERDR_WEB_NO_OPEN=1`을 설정하세요. pane을 고르거나 **New workspace**로 에이전트를 시작합니다. 폰에서는 설치 스크립트의 QR 코드(herdr의 **Phone setup**에서도 확인 가능)를 찍고 앱을 홈 화면에 추가하세요. [빠른 시작 →](docs/guide.md#quick-start)
 
 서버는 기본적으로 `127.0.0.1`에서만 받습니다. 다른 기기에서 접속하려면 [폰 설정](docs/guide.md#on-your-phone)과 [접근과 보안](docs/guide.md#access-and-safety)을 보세요.
 
@@ -128,7 +132,9 @@ herdr가 실행 중인 상태에서 **[localhost:7317](http://localhost:7317)**�
 
 **채팅 화면은 어떤 에이전트를 지원하나요?**
 
-Claude Code, Codex, omp, omo, gjc, pi는 각자의 세션 파일에서 읽습니다. OpenCode 2는 herdr가 보고한 세션을 OpenCode 데이터베이스에서 읽으며, 홈 화면이나 1.x 저장소에서는 라이브 터미널을 표시합니다. Devin CLI는 `devin --resume <id>`처럼 herdr나 실행 중인 프로세스가 세션을 알려 줄 때 채팅으로 보이고, 그냥 `devin`으로 띄우면 라이브 터미널로 보입니다. 그 밖의 프로그램은 라이브 터미널과 상태로 보입니다. [지원 에이전트 →](docs/guide.md#supported-agents)
+Claude Code, Codex, omp, omo, gjc, pi, Hermes는 각자의 세션 저장소에서 읽습니다. GJC 채팅에는 GJC 0.18.9 이상, 서버 PC의 PATH에 있는 `gjc`와 Git, 이미 실행 중인 SDK 브로커가 필요하며, 세션을 확실히 식별할 수 없으면 터미널로 보입니다. OpenCode는 지원되는 2.x와 1.x SQLite 구조에서 herdr가 보고한 세션을 읽습니다. 시작 화면, 세션 식별자가 없는 경우, 지원하지 않거나 읽을 수 없거나 크기 제한을 넘긴 저장소에서는 터미널로 보입니다. Devin CLI는 `devin --resume <id>`처럼 herdr나 실행 중인 프로세스가 세션을 명시할 때 채팅으로 보이고, 그냥 `devin`으로 띄우면 터미널로 보입니다.
+
+Grok 채팅은 Linux에서 프로세스가 보유한 세션이 하나뿐이고 herdr가 보고한 세션과 일치할 때 지원됩니다. macOS와 Windows, 세션이 불명확한 경우에는 터미널로 보입니다. Antigravity(agy)는 실행 중인 프로세스의 대화 잠금을 따라 기록을 읽는 실험적 지원입니다. Linux에서 실제 동작을 확인했으며 macOS는 미검증, Windows는 터미널 전용입니다. 지원하지 않거나 읽을 수 있는 기록이 없는 경우에는 터미널로 보입니다. [지원 에이전트 →](docs/guide.md#supported-agents)
 
 **herdr의 TUI를 대체하나요?**
 
@@ -136,11 +142,15 @@ Claude Code, Codex, omp, omo, gjc, pi는 각자의 세션 파일에서 읽습니
 
 **Tailscale이 꼭 필요한가요?**
 
-아니요. Tailscale, SSH 터널, VPN이나 직접 설정한 HTTPS 프록시로 PC에 접속할 수 있습니다. 앱 설치와 푸시 알림에는 HTTPS나 localhost 같은 보안 컨텍스트가 필요하며, 기본 화면은 LAN의 일반 HTTP 주소로도 열 수 있습니다. [다른 방법 →](docs/guide.md#faq)
+아니요. Tailscale, SSH 터널, VPN이나 직접 설정한 HTTPS 프록시로 PC에 접속할 수 있습니다. Portal 2.6.1 이상을 별도로 설치하면 선택 기능인 [Portal 연동](docs/guide.md#behind-a-reverse-proxy)으로 공개 HTTPS 주소를 관리할 수도 있습니다. `HERDR_WEB_TOKEN`, 신뢰할 수 있는 중계가 필요하며 `HERDR_WEB_TAILSCALE_SERVE_ONLY`는 꺼야 합니다. 앱 설치와 푸시 알림에는 HTTPS나 localhost 같은 보안 컨텍스트가 필요하며, 기본 화면은 LAN의 일반 HTTP 주소로도 열 수 있습니다. [다른 방법 →](docs/guide.md#faq)
 
 **코드나 대화가 내 컴퓨터 밖으로 나가나요?**
 
-세션 파일은 각 에이전트가 실행되는 PC에 남고, 내용은 연결한 브라우저로 전송됩니다. 이 앱 자체의 클라우드 중계나 계정 서비스는 없습니다. 선택 기능인 음성 입력은 녹음을, 텍스트 다듬기를 쓰면 텍스트도 설정된 제공업체로 보내며, 사용량 표시를 켜면 제공업체 API에 접속합니다. 업데이트, 원격 PC 설정, 푸시 알림도 외부 서비스에 접속할 수 있습니다. 앱은 설치될 때, 업데이트될 때마다, 그리고 앱을 연 날 하루 한 번(실행 중인 코딩 에이전트 종류 포함) 익명 카운트를 보냅니다(버전, OS, 설치 방식, 무작위 ID이며 IP 주소는 저장하지 않습니다). **Settings → About → Anonymous usage counts**에서 보내는 내용을 보고 끌 수 있습니다. 에이전트 자체의 모델 연결은 해당 에이전트 설정에 따릅니다. [데이터 전송과 접근 →](docs/guide.md#faq)
+세션 파일은 각 에이전트가 실행되는 PC에 남고, 내용은 연결한 브라우저로 전송됩니다. 이 앱 자체의 클라우드 중계나 계정 서비스는 없습니다. 선택 기능인 음성 입력은 녹음을, 텍스트 다듬기는 텍스트도 설정된 제공업체로 보냅니다. 브라우저 음성 인식도 브라우저 제공업체의 서비스를 사용할 수 있습니다. 사용량 표시를 켜면 제공업체 API에 접속하며, 업데이트, 원격 PC 설정, 푸시 알림도 외부 서비스를 사용할 수 있습니다. Portal을 켜면 연결이 선택한 중계를 거칩니다. 중계는 연결 메타데이터를 보고 해당 주소의 인증서를 보유하므로 신뢰할 수 있는 중계를 쓰세요.
+
+익명 사용 집계는 기본적으로 켜져 있습니다. 앱 안에서 안내를 보여 준 뒤 10분의 대기 시간을 두고, 설치·업데이트 집계를 보낼 수 있습니다. 무작위 설치 ID, 버전(업데이트 전 버전 포함), OS, CPU 아키텍처, 설치 방식, 허용 목록의 앱 설정 스냅샷이 포함됩니다. 사용자 지정 텍스트와 계정 식별자는 생략하거나 요약하며 코드·대화·파일은 수집하지 않습니다. 저장소에 포함된 수신 서버는 Cloudflare가 제공할 때 국가 코드를 추가하지만 IP 주소는 저장하지 않습니다. 활동 집계에는 앱을 연 날(UTC 기준) 실행 중인 에이전트 종류가 포함되며, 새 종류가 나타나면 그날의 집계를 다시 보낼 수 있습니다. **Settings → About → Anonymous usage counts**에서 내용을 보고 끌 수 있고, `HERDR_WEB_TELEMETRY=0`이나 `DO_NOT_TRACK=1`로도 비활성화할 수 있습니다. 에이전트 자체의 모델 연결은 해당 에이전트 설정에 따릅니다. [데이터 전송과 접근 →](docs/guide.md#faq)
+
+무작위 ID로 같은 설치의 집계를 연결할 수 있으므로, 완전한 익명성을 보장하는 것은 아닙니다.
 
 **Windows에서도 되나요?**
 
@@ -148,7 +158,7 @@ Claude Code, Codex, omp, omo, gjc, pi는 각자의 세션 파일에서 읽습니
 
 **collie, roamgate, herdr-remote와 무엇이 다른가요?**
 
-이들도 herdr를 폰이나 브라우저에서 쓰는 클라이언트입니다. 이 앱은 에이전트의 기록을 직접 읽어서, pane이 터미널 출력이 아니라 작업이 턴마다 접힌 채팅으로 보이고, 다른 PC는 사이드바에서 SSH로 붙습니다. 터널은 제공하지 않고 herdr만 다룹니다. tmux나 zellij, diff, Telegram, 바로 쓰는 터널이 필요하면 다른 쪽이 더 맞습니다. [전체 비교 →](docs/guide.md#faq)
+이들도 herdr를 폰이나 브라우저에서 쓰는 클라이언트입니다. 이 앱은 에이전트의 기록을 직접 읽어서, pane이 터미널 출력이 아니라 작업이 턴마다 접힌 채팅으로 보이고, 다른 PC는 사이드바에서 SSH로 붙습니다. 저장소 diff를 제공하고 별도로 설치한 Portal 터널을 관리할 수 있지만, herdr만 다루며 터널 프로그램을 함께 배포하지는 않습니다. tmux, zellij, Telegram이 필요하다면 다른 클라이언트의 지원 범위를 비교해 보세요. [전체 비교 →](docs/guide.md#faq)
 
 **Happy, Paseo, CloudCLI UI와 무엇이 다른가요?**
 

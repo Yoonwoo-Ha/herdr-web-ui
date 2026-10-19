@@ -27,6 +27,7 @@
     "scripts/chat-virtual-browser-qa.ts",
     "scripts/grok-chat-browser-qa.ts",
     "scripts/gjc-status-browser-regression.ts",
+    "scripts/sidebar-activity-demo-regression.ts",
     "scripts/file-preview-text-browser-qa.ts",
     "scripts/file-preview-text-fixture.tsx",
     "scripts/virtual-source-browser-qa.ts",
@@ -38,7 +39,8 @@
     "scripts/omo-question-wheel-regression.ts",
     "scripts/terminal-cjk-punctuation-regression.ts",
     "scripts/pane-paging-demo-regression.ts",
-    "scripts/omp-question-compat.ts"
+    "scripts/omp-question-compat.ts",
+    "app/scripts/build-web.ts"
   ],
   "include": []
 }

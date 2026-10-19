@@ -19,13 +19,12 @@ export type {
   PaneScrollInfo,
   ReadFormat,
   ReadSource,
-  SessionSnapshot,
   Subscription as HerdrSubscriptionSpec,
   TabInfo,
   WorkspaceInfo,
 } from "./herdr-api.generated.ts";
 
-import type { AgentStatus, PaneInfo, PaneScrollInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
+import type { AgentStatus, PaneInfo, PaneScrollInfo, SessionSnapshot as HerdrSnapshot, TabInfo, WorkspaceInfo } from "./herdr-api.generated.ts";
 
 /** Friendly aliases used across the UI. */
 export type HerdrWorkspace = WorkspaceInfo;
@@ -35,7 +34,17 @@ export type HerdrTab = TabInfo;
  * `background_wait`: the pane is at rest while work its turn started still runs, and the turn goes on when it ends (server/background-wait.ts); absent when not.
  * `plan`: how far the pane's agent's task list or checklist has progressed; absent when it keeps none.
  */
-export type HerdrPane = PaneInfo & { background_tasks?: number; background_wait?: true; plan?: PlanSummary };
+export type HerdrPane = PaneInfo & {
+  background_tasks?: number; background_wait?: true; plan?: PlanSummary;
+  /** This bridge's counter of transitions into displayed DONE, scoped by finish_epoch. */
+  finish_id?: number;
+};
+/** Missing finish fields on an older bridge mean no finish can be acknowledged here. */
+export type SessionSnapshot = Omit<HerdrSnapshot, "panes"> & {
+  panes: HerdrPane[];
+  /** Random per bridge start and observed herdr socket/marker replacement, independently per PC. */
+  finish_epoch?: string;
+};
 
 export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAction, BridgeIdentity, BridgeHealth } from "./machines.ts";
 
@@ -76,6 +85,9 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *  POST   /api/updates/install           -> 202 { accepted: true }
  *         Update POSTs require X-Herdr-Update: 1, same-origin browser requests,
  *         and the usual token gate. Managed starts only; status is polled during restart.
+ *  POST   /api/connection-diagnostics    -> 204; ClientConnectionTrace, metadata only, same-origin
+ *         and authenticated (watch devices included). 400 invalid_trace, 413 trace_too_large,
+ *         429 trace_rate_limited. At most 16 events and 8192 bytes; never input or credentials.
  *  GET    /api/telemetry                 -> TelemetryStatus (shared/telemetry.ts), no-store
  *  POST   /api/telemetry                 -> TelemetryStatus; TelemetryChange (shared/telemetry.ts):
  *         { enabled?, notice_seen?: true, notice_version?, settings? }. A notice acknowledgement
@@ -601,6 +613,12 @@ export interface ConversationResponse {
   turns: ConversationTurn[];
   metadata?: ConversationMetadata;
   /**
+   * `metadata` was read off the agent's own screen: a conversation not begun, or a Codex that has
+   * reported no session (whose scrollback answer carries `metadata` only so). No file records it
+   * and the pane's output can change it, so the chat re-reads on terminal output.
+   */
+  screen?: true;
+  /**
    * Where the first turn sits in the transcript: pass it as `before` for the page
    * of turns before these (with `since`, never reaching back past that cursor), or
    * as `from` to keep polling from it. A `from` answer starts later than `from` when
@@ -726,6 +744,18 @@ export interface FileInfo {
   modified: string;
   mime: string;
   kind: FileKind;
+}
+
+/**
+ * GET /api/fs/favicon?root=: the icon the project in folder `root` keeps, or null. The PC looks
+ * through every place a project keeps one (`FAVICON_CANDIDATES` in server/project-favicon.ts),
+ * best first, each read as /api/fs/stat reads `<root>/<place>`, and answers once: a folder with
+ * no icon is `{ icon: null }`, never a 404. 400 missing_root; the access rules of /api/fs/stat
+ * (no watching device, no other site's page).
+ */
+export interface ProjectFavicon {
+  /** the image found; `path` opens it through /api/fs/file */
+  icon: FileInfo | null;
 }
 
 /** Which two states of a repository are compared. */
@@ -1044,6 +1074,8 @@ export interface InteractivePrompt {
   body: string | null;
   options: InteractivePromptOption[];
   multi_select: boolean;
+  /** Native OpenCode question explicitly marked required: false; an empty answer skips it. */
+  optional?: true;
   /** index of the "type your own answer" option, when the menu has one */
   custom_option_index: number | null;
   /** a question in Codex's queue while Codex keeps working: only the card answers it. Collapsed,
@@ -1056,6 +1088,14 @@ export interface InteractivePrompt {
   /** the answers a review asks to submit (Claude, omp), each question with what was picked for it,
    * read whole where the terminal wrapped them. A question cut off above the pane's top is null */
   answers?: InteractivePromptAnswer[];
+  /** whether the prompt can step back to a previous question in a multi-step form */
+  can_step_back?: boolean;
+  /** previously selected option index for a single-select step, if any */
+  default_option_index?: number | null;
+  /** previously selected option indices for a multi-select step, if any */
+  default_option_indices?: number[];
+  /** previously entered custom text for a step, if any */
+  default_custom_text?: string;
   /** the last-resort card for a blocked pane no reader knows: answered with its own buttons only,
    * so a message typed in the chat still goes to the agent as typed */
   fallback?: true;
@@ -1081,13 +1121,17 @@ export interface InteractivePromptOption {
   description: string | null;
 }
 
-/** POST /api/pane/prompt/answer body. Exactly one of option_index / option_indices / custom_text. */
+/** POST /api/pane/prompt/answer body. One answer or navigation action; native OpenCode multiselect may combine option_indices and custom_text. */
 export interface PromptAnswer {
   pane_id: string;
   prompt_id: string;
   option_index?: number;
   option_indices?: number[];
   custom_text?: string;
+  step_back?: boolean;
+  step_index?: number;
+  /** Unsent edits for the current OpenCode step, saved only when navigating back. */
+  draft?: { option_indices: number[]; custom_text: string };
 }
 
 /**
@@ -1214,6 +1258,32 @@ export type ClientMessage =
    * PC's socket relays it unchanged, so the remote server's snapshot decides whether it is sent. */
   | { type: "ping"; id: number };
 
+/** Local-only diagnostic metadata. This contract never contains a message, URL or credential. */
+export type ClientConnectionEventKind = "connect" | "open" | "connect_timeout" | "close" | "socket_error"
+  | "pagehide" | "pageshow" | "hidden" | "visible" | "online" | "probe" | "probe_retry"
+  | "probe_overdue" | "probe_drop" | "pong" | "submit_sent" | "submit_result" | "submit_timeout"
+  | "submit_disconnect" | "input_held" | "probe_input_blocked" | "closing_wait";
+export interface ClientConnectionEvent {
+  seq: number;
+  at: number;
+  connection: number;
+  kind: ClientConnectionEventKind;
+  socket_state: number | null;
+  visibility: "visible" | "hidden" | "unknown";
+  online: boolean | null;
+  code?: number;
+  elapsed_ms?: number;
+  pending?: number;
+  request_id?: number;
+  attempt?: number;
+  result?: "ok" | "refused";
+}
+export interface ClientConnectionTrace {
+  client_id: string;
+  target: "local" | "remote";
+  events: ClientConnectionEvent[];
+}
+
 /** What a server supports beyond the base protocol, listed in its first snapshot; older bridges list nothing. */
 export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping";
 
@@ -1243,7 +1313,7 @@ export type ServerMessage =
   | { type: "pending-messages"; pane_id: string; messages: PendingMessage[]; removed?: Array<{ id: string; outcome: "sent" | "discarded" }> }
   | { type: "secret-result"; id: number; pane_id: string; ok: boolean; code?: string }
   /** agent-status push for ANY pane, attached or not (server-side status collector) */
-  | { type: "pane-status"; pane_id: string; agent_status: AgentStatus; /** a pane's running background tasks (OmO's, or a Claude Code pane's subagents and commands), when the frame is about them: it changes no status */ background_tasks?: number; /** every frame says it: absent, the pane does not wait on its turn's background work */ background_wait?: true; /** a pane's plan, when the frame is about it (null: it keeps none now); it changes no status */ plan?: PlanSummary | null }
+  | { type: "pane-status"; pane_id: string; agent_status: AgentStatus; finish_id?: number; finish_epoch?: string; /** a pane's running background tasks (OmO's, or a Claude Code pane's subagents and commands), when the frame is about them: it changes no status */ background_tasks?: number; /** every frame says it: absent, the pane does not wait on its turn's background work */ background_wait?: true; /** a pane's plan, when the frame is about it (null: it keeps none now); it changes no status */ plan?: PlanSummary | null }
   /** Native transcript invalidation for an interested attached pane; signature is opaque, not a REST ETag. Refetch the existing conversation endpoint. */
   | { type: "conversation-changed"; pane_id: string; signature: string }
   /** a pane's process exited (pushed even when nobody is attached to it) */

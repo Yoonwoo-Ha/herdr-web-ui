@@ -24,8 +24,14 @@ const LONG_MODEL = "gpt-5.6-sol-codex-preview-2026-10";
 // ids it names: "GPT-5.6" and "Opus 5.5"; null: the conversation names no model
 const NAMED = ["gpt-5.6", "claude-opus-5-5"] as const;
 
-interface Case { model: string | null; agent?: "claude" | "codex" | "pi" | "omo"; pending?: boolean; effort?: string | null; status?: "working" | "idle"; mic?: boolean; ring?: boolean; chatFontSize?: number | null; showUsage?: boolean; weeklyOnly?: boolean; suggestion?: string | null; contextUsed?: number; stream?: number; freezeConversation?: boolean }
+interface Case { model: string | null; agent?: "claude" | "codex" | "pi" | "omo"; pending?: boolean; effort?: string | null; status?: "working" | "idle"; mic?: boolean; ring?: boolean; chatFontSize?: number | null; showUsage?: boolean; weeklyOnly?: boolean; suggestion?: string | null; contextUsed?: number; stream?: number; freezeConversation?: boolean; language?: "en" | "ko" | "ja" | "zh" }
 type Draw = "full" | "no-effort" | "out";
+interface ComposerScrollGeometry {
+  height: number;
+  viewport: number;
+  gap: number;
+  spacing: number;
+}
 
 const measure = (page: Page) => page.evaluate(() => {
   const status = document.querySelector<HTMLElement>(".composer-status")!;
@@ -210,19 +216,18 @@ try {
   /** One card: a phone (390px, touch) or a mouse-driven window of `width`. */
   const withCard = async (browser: Browser, width: number, state: Case, run: (page: Page) => Promise<void>): Promise<void> => {
     const touch = width <= 480;
-    const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: touch, isMobile: touch, locale: "en-US" });
+    const context = await browser.newContext({ viewport: { width, height: 844 }, hasTouch: touch, isMobile: touch, locale: state.language ?? "en-US" });
     try {
       await context.addInitScript((fitCase) => {
-        if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: fitCase.mic ? "on" : "off", chatFontSize: fitCase.chatFontSize ?? null, showUsage: fitCase.showUsage ?? false, usageCount: "used" }));
+        if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: fitCase.language ?? "en", voiceInput: fitCase.mic ? "on" : "off", chatFontSize: fitCase.chatFontSize ?? null, showUsage: fitCase.showUsage ?? false, usageCount: "used" }));
         Object.assign(window, { fitCase });
       }, { agent: "claude", pending: true, status: "working", effort: "xhigh", mic: false, ring: true, ...state });
       const page = await context.newPage();
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       page.on("console", (message) => { if (message.type() === "error" && message.text().includes("ResizeObserver")) errors.push(message.text()); });
-      await page.goto(url);
+      await page.goto(`${url}&view=chat`);
       await page.locator(".conn-live").waitFor({ state: "attached" });
-      if (await page.locator(".terminal-stack.is-chat").count() === 0) await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
       await page.locator(".terminal-stack.is-chat").waitFor();
       await page.locator(".composer-model").waitFor({ state: "attached" });
       await appFaces(page);
@@ -873,6 +878,149 @@ try {
         }, undefined, { timeout: 5_000 });
       });
       console.log("PASS terminal/chat return preserves the reader's paragraph and one-line draft, and remembers Jump-to-latest intent before a deferred scroll");
+
+      for (const width of [390, 1440]) await withCard(browser, width, { status: "idle", pending: false, model: "gpt-5.6", freezeConversation: true }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        await page.locator(".chat-virtual-row").last().waitFor();
+        const atBottom = () => page.waitForFunction(() => {
+          const node = document.querySelector(".chat-view")!;
+          return node.scrollHeight - node.clientHeight - node.scrollTop <= 1;
+        }, undefined, { timeout: 5_000 });
+        await box.fill("Short draft.");
+        await atBottom();
+        const samples = await page.evaluateHandle(() => {
+          const node = document.querySelector(".chat-view")!;
+          const box = document.querySelector(".composer-text")!;
+          const geometry = () => {
+            const last = [...node.querySelectorAll("[data-chat-row]")].at(-1)!;
+            return {
+              height: box.clientHeight,
+              viewport: node.clientHeight,
+              gap: node.scrollHeight - node.clientHeight - node.scrollTop,
+              spacing: document.querySelector(".composer-surface")!.getBoundingClientRect().top - last.getBoundingClientRect().bottom,
+            };
+          };
+          const resizeFrames: ComposerScrollGeometry[] = [];
+          const inputFrames: ComposerScrollGeometry[] = [];
+          const observer = new ResizeObserver(() => resizeFrames.push(geometry()));
+          // React's delegated input handler has run before this document listener. Read its
+          // commit in the same task, before a later frame could repair a displaced transcript.
+          const onInput = (event: Event) => {
+            if (event.target === box) queueMicrotask(() => inputFrames.push(geometry()));
+          };
+          document.addEventListener("input", onInput);
+          observer.observe(node);
+          return { geometry, resizeFrames, inputFrames, observer, onInput };
+        });
+        try {
+          const geometry = () => samples.evaluate(({ geometry }) => geometry());
+          const initial = await geometry();
+          const sameLineEdit = async (key: string, height: number, what: string) => {
+            const count = await samples.evaluate(({ inputFrames }) => inputFrames.length);
+            await box.press(key);
+            const frames = await samples.evaluate(({ inputFrames }, count) => inputFrames.slice(count), count);
+            assert.equal(frames.length, 1, `${what}: one native input edit was sampled`);
+            const edited = frames[0]!;
+            assert.equal(edited.height, height, `${what}: an edit within the same line keeps the input height`);
+            assert.ok(edited.gap <= 1 && Math.abs(edited.spacing - initial.spacing) <= 1, `${what}: the multiline draft keeps bottom spacing without a delayed repair: ${JSON.stringify(edited)}`);
+          };
+          const wrapped = "A draft that wraps onto the next line. ".repeat(width === 390 ? 12 : 48);
+          for (const [kind, text] of [["soft-wrapped", wrapped], ["explicit-newline", "First line\nSecond line\nThird line"]] as const) {
+            await box.fill(text);
+            await page.waitForFunction((height) => document.querySelector(".composer-text")!.clientHeight > height, initial.height);
+            await atBottom();
+            const grown = await geometry();
+            assert.ok(grown.viewport < initial.viewport, `${kind}: a taller draft reduces the transcript viewport`);
+            assert.ok(Math.abs(grown.spacing - initial.spacing) <= 1, `${kind}: growth preserves the output/input gap`);
+            await sameLineEdit("x", grown.height, `${kind} typing`);
+            await sameLineEdit("Backspace", grown.height, `${kind} backspacing`);
+            await box.fill("Short draft.");
+            await page.waitForFunction((height) => document.querySelector(".composer-text")!.clientHeight === height, initial.height);
+            await atBottom();
+            const shrunk = await geometry();
+            assert.equal(shrunk.viewport, initial.viewport, `${kind}: shrinking restores the transcript viewport`);
+            assert.ok(Math.abs(shrunk.spacing - initial.spacing) <= 1, `${kind}: shrinking preserves the output/input gap`);
+          }
+          const frames = await samples.evaluate(({ resizeFrames }) => resizeFrames);
+          assert.ok(frames.some((frame) => frame.viewport < initial.viewport), "resize samples include the reduced transcript viewport");
+          assert.ok(frames.every((frame) => frame.gap <= 1 && Math.abs(frame.spacing - initial.spacing) <= 1), `resize frames keep bottom spacing before paint: ${JSON.stringify(frames)}`);
+        } finally {
+          await samples.evaluate(({ observer, onInput }) => {
+            observer.disconnect();
+            document.removeEventListener("input", onInput);
+          });
+          await samples.dispose();
+        }
+      });
+      console.log("PASS wrapped and multiline drafts keep bottom spacing through growth, shrinkage and same-line edits on phone and desktop");
+
+      for (const width of [390, 1440]) await withCard(browser, width, { status: "idle", pending: false, model: "gpt-5.6", freezeConversation: true }, async (page) => {
+        const box = page.getByRole("textbox", { name: "Message", exact: true });
+        const draft = "An unsent draft.\n".repeat(6);
+        await box.fill(draft);
+        await page.waitForFunction(() => {
+          const node = document.querySelector(".chat-view")!;
+          return node.scrollHeight - node.clientHeight - node.scrollTop <= 1;
+        });
+        const initialHeight = await box.evaluate((node) => node.clientHeight);
+        await page.locator(".chat-view").hover();
+        await page.mouse.wheel(0, -120);
+        await page.getByRole("button", { name: "Jump to latest", exact: true }).waitFor();
+        const paragraph = (text: string | null = null) => page.evaluate((text) => {
+          const node = document.querySelector(".chat-view")!;
+          const view = node.getBoundingClientRect();
+          const paragraph = [...node.querySelectorAll(".markdown p")].find((item) => text === null
+            ? item.getBoundingClientRect().bottom > view.top && item.getBoundingClientRect().top < view.bottom
+            : item.textContent === text);
+          if (!paragraph) throw new Error("The reader's paragraph is not rendered");
+          return { text: paragraph.textContent!, offset: paragraph.getBoundingClientRect().top - view.top, gap: node.scrollHeight - node.clientHeight - node.scrollTop };
+        }, text);
+        const reading = await paragraph();
+        assert.ok(reading.gap > 48, "the reader is away from the end before editing");
+        for (const text of ["An edited unsent draft.\n".repeat(9), draft]) {
+          await box.fill(text);
+          await page.waitForFunction(({ initialHeight, growing }) => {
+            const height = document.querySelector(".composer-text")!.clientHeight;
+            return growing ? height > initialHeight : height === initialHeight;
+          }, { initialHeight, growing: text !== draft });
+          // Let layout observers finish, without waiting for the paragraph to be repaired.
+          await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+          const after = await paragraph(reading.text);
+          assert.ok(Math.abs(after.offset - reading.offset) <= 1 && after.gap > 48, `editing keeps the reader on the same paragraph: ${JSON.stringify({ reading, after })}`);
+        }
+      });
+      console.log("PASS editing drafts preserves the reader's paragraph on phone and desktop");
+
+      for (const width of [320, 1440]) for (const [language, text] of [
+        ["ko", "가나다라마바사 ".repeat(5)],
+        ["ja", "あいうえおゃゅょ。".repeat(4)],
+        ["zh", "天地玄黄，宇宙洪荒。".repeat(4)],
+      ] as const) await withCard(browser, width, { language, status: "idle", pending: false, model: "gpt-5.6", freezeConversation: true, suggestion: text }, async (page) => {
+        const box = page.locator(".composer-text");
+        await page.waitForFunction((text) => document.querySelector<HTMLTextAreaElement>(".composer-text")!.placeholder === text, text);
+        for (const value of [text, ""]) {
+          await box.fill(value);
+          await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+          const size = await box.evaluate((box: HTMLTextAreaElement) => {
+            // Let the browser size a copy of the visible field's own wrapping rules,
+            // independently of the measurement field's styles, without moving the transcript.
+            const probe = box.cloneNode() as HTMLTextAreaElement;
+            probe.removeAttribute("aria-label");
+            probe.setAttribute("aria-hidden", "true");
+            probe.tabIndex = -1;
+            Object.assign(probe.style, { position: "absolute", visibility: "hidden", height: "0px", minHeight: "0px", width: `${box.getBoundingClientRect().width}px` });
+            box.after(probe);
+            try {
+              const required = probe.scrollHeight;
+              probe.style.minHeight = getComputedStyle(box).minHeight;
+              probe.style.height = `${required}px`;
+              return { actual: box.clientHeight, expected: probe.clientHeight };
+            } finally { probe.remove(); }
+          });
+          assert.ok(Math.abs(size.actual - size.expected) <= 1, `${language}/${width}px: ${value ? "draft" : "placeholder"} uses the visible field's natural height: ${JSON.stringify(size)}`);
+        }
+      });
+      console.log("PASS Korean, Japanese and Chinese drafts and wrapped placeholders fit their native text height on phone and desktop");
 
       // Changing the setting in an already-open chat rewraps the existing draft: an automatic
       // box grows and shrinks with it.

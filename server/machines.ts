@@ -9,7 +9,8 @@ import type { ServerMessage, SessionSnapshot, HerdrPane } from "../shared/protoc
 import type { PushService } from "./push.ts";
 import { alertStatus } from "../shared/notify-policy.ts";
 import type { BridgeDescriptor } from "./bridge.ts";
-import { sessionSnapshot } from "./herdr/client.ts";
+import { HerdrError, sessionSnapshot } from "./herdr/client.ts";
+import { ConnectionDiagnostics, transportFailureCode } from "./connection-diagnostics.ts";
 import { labelOmoPanes } from "./conversation.ts";
 import type { CompletionTracker } from "./completion.ts";
 import { HerdrProfileState, herdrMachineId } from "./herdr-profile-state.ts";
@@ -156,6 +157,8 @@ export class MachineManager {
   private statePath: string;
   private sshDir: string;
   private local: Machine = { id: LOCAL_MACHINE, name: hostname(), kind: "local", enabled: true, state: "connecting", error: null, snapshot: null };
+  private localDiagnostics = new ConnectionDiagnostics("machine.local");
+  private remoteDiagnostics = new ConnectionDiagnostics("machine.remote");
   private discoveryTimer?: ReturnType<typeof setTimeout>;
   private discoveryStarted = false;
   private settingsPath: string;
@@ -316,7 +319,7 @@ export class MachineManager {
     // its id used again is a pane heard of for the first time
     if (message.type === "pane-exited") this.heardAgents.forget(message.pane_id);
     if (message.type === "pane-status" && this.local.snapshot) {
-      this.local.snapshot = { ...this.local.snapshot, panes: this.local.snapshot.panes.map((p: HerdrPane) => p.pane_id === message.pane_id ? paneAfterStatus(p, message) : p) };
+      this.local.snapshot = snapshotAfterStatus(this.local.snapshot, message);
     }
     if (message.type === "session-changed" || message.type === "pane-exited") void this.refreshLocal();
   }
@@ -338,17 +341,21 @@ export class MachineManager {
       do {
         this.localRefreshQueued = false;
         const revision = this.localRevision;
+        const started = performance.now();
         try {
           const snapshot = await this.readLocal();
           if (this.stopped) break;
           // A newer event already patched the roster. Never publish this older load.
           if (revision !== this.localRevision) { this.localRefreshQueued = true; continue; }
+          this.localDiagnostics.recovered(LOCAL_MACHINE, { operation: "snapshot", elapsed_ms: performance.now() - started });
           this.local.snapshot = snapshot; this.local.state = "connected"; this.local.error = null;
           // a pane the roster no longer lists is gone: the same id later is a pane heard of anew
           this.heardAgents.keepOnly(snapshot.panes);
         } catch (e) {
           if (this.stopped) break;
           if (revision !== this.localRevision) { this.localRefreshQueued = true; continue; }
+          const code = e instanceof HerdrError ? transportFailureCode(e.code) : null;
+          this.localDiagnostics.failed(LOCAL_MACHINE, code ?? "refresh_failed", { operation: "snapshot", elapsed_ms: performance.now() - started });
           this.local.state = "error"; this.local.error = String(e instanceof Error ? e.message : e);
         }
         this.emit();
@@ -460,6 +467,9 @@ export class MachineManager {
         this.emit();
       } catch (e) {
         const ownsRuntime = runtime.generation === generation;
+        if (ownsRuntime && !this.stopped && !job.abort.signal.aborted && job.public.phase !== "cancelled") {
+          this.remoteDiagnostics.failed(machineId, e instanceof MachineActionRequired ? "action_required" : "connection_lost", { operation: "bridge", machine_id: machineId });
+        }
         const error = e instanceof Error ? e.message : String(e);
         // an update of a registered PC that could not reach it (switched off, asleep, off the
         // network, or gone in the middle) learned nothing about its bridge: the PC waits as
@@ -745,7 +755,11 @@ export class MachineManager {
     const endpoint = runtime.endpoint!;
     const ws = authenticatedWebSocket(endpoint.url.replace("http:", "ws:") + "/ws", endpoint.token);
     runtime.observer = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ type: "role", mode: "observe" }));
+    ws.onopen = () => {
+      if (generation !== runtime.generation || this.stopped) return;
+      this.remoteDiagnostics.recovered(runtime.machine.id, { operation: "bridge", machine_id: runtime.machine.id });
+      ws.send(JSON.stringify({ type: "role", mode: "observe" }));
+    };
     ws.onmessage = (event) => {
       if (generation !== runtime.generation || this.stopped) return;
       let message: ServerMessage;
@@ -754,7 +768,7 @@ export class MachineManager {
       if (["snapshot", "pane-status", "pane-exited"].includes(message.type)) runtime.snapshotRevision++;
       if (message.type === "snapshot") { runtime.machine.snapshot = message.snapshot; this.push.seed(forAlerts(message.snapshot.panes), runtime.machine.id, runtime.machine.name); this.emit(); }
       if (message.type === "pane-status") {
-        if (runtime.machine.snapshot) runtime.machine.snapshot = { ...runtime.machine.snapshot, panes: runtime.machine.snapshot.panes.map((p) => p.pane_id === message.pane_id ? paneAfterStatus(p, message) : p) };
+        if (runtime.machine.snapshot) runtime.machine.snapshot = snapshotAfterStatus(runtime.machine.snapshot, message);
         void this.push.onStatus(message.pane_id, alertStatus(message.agent_status, message.background_wait), runtime.machine.id).catch(() => {});
       }
       if (message.type === "pane-exited") void this.push.onEnded(message.pane_id, runtime.machine.id).catch(() => {});
@@ -769,6 +783,7 @@ export class MachineManager {
   }
   private lost(runtime: Runtime, generation: number, error: unknown): void {
     if (generation !== runtime.generation || !runtime.machine.enabled || this.stopped) return;
+    this.remoteDiagnostics.failed(runtime.machine.id, error instanceof MachineActionRequired ? "action_required" : "connection_lost", { operation: "bridge", machine_id: runtime.machine.id });
     this.disconnect(runtime);
     runtime.machine.error = error instanceof Error ? error.message : String(error);
     if (error instanceof MachineActionRequired) {
@@ -862,10 +877,19 @@ export class MachineManager {
  * them; one that names neither leaves them. Every frame says whether the pane waits on its turn's work.
  */
 export function paneAfterStatus(p: HerdrPane, message: Extract<ServerMessage, { type: "pane-status" }>): HerdrPane {
-  const { background_tasks: before, background_wait: _waited, plan: planBefore, ...pane } = p;
+  const { background_tasks: before, background_wait: _waited, plan: planBefore, finish_id: _finish, ...pane } = p;
   const tasks = message.background_tasks === undefined ? before : message.background_tasks > 0 ? message.background_tasks : undefined;
   const plan = message.plan === undefined ? planBefore : message.plan ?? undefined;
-  return { ...pane, agent_status: message.agent_status, ...(tasks === undefined ? {} : { background_tasks: tasks }), ...(message.background_wait ? { background_wait: true } : {}), ...(plan === undefined ? {} : { plan }) };
+  return { ...pane, agent_status: message.agent_status, ...(message.finish_id === undefined ? {} : { finish_id: message.finish_id }), ...(tasks === undefined ? {} : { background_tasks: tasks }), ...(message.background_wait ? { background_wait: true } : {}), ...(plan === undefined ? {} : { plan }) };
+}
+
+function snapshotAfterStatus(snapshot: SessionSnapshot, message: Extract<ServerMessage, { type: "pane-status" }>): SessionSnapshot {
+  return { ...snapshot, finish_epoch: message.finish_epoch, panes: snapshot.panes.map((pane) => {
+    if (pane.pane_id === message.pane_id) return paneAfterStatus(pane, message);
+    if (snapshot.finish_epoch === message.finish_epoch) return pane;
+    const { finish_id: _finish, ...rest } = pane;
+    return rest;
+  }) };
 }
 
 /** A remote PC's panes as its alerts take them: one waiting on its turn's background work is working. */

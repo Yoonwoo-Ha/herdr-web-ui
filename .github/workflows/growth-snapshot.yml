@@ -1,0 +1,60 @@
+name: Growth snapshot
+# Once a week, the repository's stars (their dates, never who) and its traffic (views, clones,
+# referrers, paths), which GitHub keeps for 14 days only: scripts/growth-snapshot.ts. The result is
+# encrypted before upload, because anyone signed in to GitHub can download the artifacts of a public
+# repository. Secrets and reading the result: docs/development.md, "Growth snapshot".
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: growth-snapshot
+  cancel-in-progress: false
+jobs:
+  snapshot:
+    name: Snapshot stars and traffic
+    # GitHub-hosted: it needs gh, Bun and openssl only, none of the self-hosted runner's herdr tooling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: secrets
+        name: Check the secrets
+        env:
+          GROWTH_METRICS_TOKEN: ${{ secrets.GROWTH_METRICS_TOKEN }}
+          GROWTH_SNAPSHOT_KEY: ${{ secrets.GROWTH_SNAPSHOT_KEY }}
+        run: |
+          if [ -z "$GROWTH_METRICS_TOKEN" ] || [ -z "$GROWTH_SNAPSHOT_KEY" ]; then
+            echo "growth snapshot secrets are not set: see docs/development.md, Growth snapshot"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: ./.github/actions/setup-ci
+        with:
+          cache: restore
+      - if: steps.secrets.outputs.ready == 'true'
+        name: Take the snapshot
+        env:
+          GH_TOKEN: ${{ secrets.GROWTH_METRICS_TOKEN }}
+        run: bun scripts/growth-snapshot.ts --out growth
+      - if: steps.secrets.outputs.ready == 'true'
+        name: Encrypt it
+        shell: bash
+        env:
+          GROWTH_SNAPSHOT_KEY: ${{ secrets.GROWTH_SNAPSHOT_KEY }}
+        run: |
+          tar czf - growth | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:GROWTH_SNAPSHOT_KEY -out growth.tar.gz.enc
+          rm -rf growth
+      - if: steps.secrets.outputs.ready == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: growth-snapshot-${{ github.run_id }}
+          path: growth.tar.gz.enc
+          retention-days: 90
+          if-no-files-found: error

@@ -1,4 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
+import { ConnectionDiagnostics, transportFailureCode } from "../connection-diagnostics.ts";
 import type {
   AgentIntegration,
   PaneDirection,
@@ -16,6 +17,8 @@ import type { HerdrMethod, HerdrMethods, SingleHerdrMethod, UntypedHerdrMethod }
 import type { HerdrIdentity } from "../../shared/machines.ts";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const diagnostics = new ConnectionDiagnostics("herdr.rpc");
+let pendingRpcs = 0;
 
 /** herdr's default socket: ~/.config/herdr on Unix, %APPDATA%\herdr on Windows. */
 export function herdrSocketPath(): string {
@@ -113,82 +116,103 @@ export async function herdrRpc(
   guard?: () => boolean,
 ): Promise<unknown> {
   const id = nextId();
-  return await new Promise<unknown>((resolve, reject) => {
-    let settled = false;
-    let socket: { end: () => void } | null = null;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      try {
-        socket?.end();
-      } catch {
-        /* the server may already have closed it */
-      }
-      fn();
-    };
-
-    timer = setTimeout(
-      () => finish(() => reject(new HerdrError("timeout", `herdr ${method} timed out after ${timeoutMs}ms`))),
-      timeoutMs,
-    );
-
-    const handleLine = (line: string) => {
-      let frame: { id?: string; result?: unknown; error?: { code?: string; message?: string } };
-      try {
-        frame = JSON.parse(line) as typeof frame;
-      } catch {
-        finish(() => reject(new HerdrError("bad_frame", `herdr sent unparseable frame: ${line.slice(0, 200)}`)));
-        return;
-      }
-      if (frame.error) {
-        const { code = "herdr_error", message = "herdr request failed" } = frame.error;
-        finish(() => reject(new HerdrError(code, message)));
-        return;
-      }
-      finish(() => resolve(frame.result));
-    };
-
-    const onData = makeLineReader(handleLine);
-
-    Bun.connect({
-      unix: socketAddress(socketPath),
-      socket: {
-        data(_sock, chunk) {
-          onData(chunk);
-        },
-        error(_sock, err) {
-          finish(() => reject(new HerdrError("socket_error", err?.message ?? "herdr socket error")));
-        },
-        close() {
-          finish(() => reject(new HerdrError("closed", `herdr closed the connection before answering ${method}`)));
-        },
-      },
-    })
-      .then((sock) => {
-        socket = sock;
-        if (settled) {
-          try {
-            sock.end();
-          } catch {
-            /* already gone */
-          }
-          return;
-        }
-        if (guard && !guard()) {
-          finish(() => reject(new HerdrError("cancelled", `herdr ${method} was not sent: the sender may no longer send`)));
-          return;
-        }
-        sock.write(`${JSON.stringify({ id, method, params })}\n`);
-      })
-      .catch((err: Error) => {
-        finish(() =>
-          reject(new HerdrError("connect_failed", `cannot reach herdr at ${socketPath}: ${err.message}`)),
-        );
-      });
+  const started = performance.now();
+  const key = JSON.stringify([socketPath, method]); // private bookkeeping only; never logged
+  let connectedAt: number | undefined;
+  pendingRpcs++;
+  const fields = () => ({
+    operation: method, request_id: id, elapsed_ms: performance.now() - started,
+    connect_ms: connectedAt === undefined ? undefined : connectedAt - started,
+    timeout_ms: timeoutMs, pending: Math.max(0, pendingRpcs - 1),
+    phase: connectedAt === undefined ? "connect" as const : "response" as const,
   });
+  try {
+    const result = await new Promise<unknown>((resolve, reject) => {
+      let settled = false;
+      let socket: { end: () => void } | null = null;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        try {
+          socket?.end();
+        } catch {
+          /* the server may already have closed it */
+        }
+        fn();
+      };
+
+      timer = setTimeout(
+        () => finish(() => reject(new HerdrError("timeout", `herdr ${method} timed out after ${timeoutMs}ms`))),
+        timeoutMs,
+      );
+
+      const handleLine = (line: string) => {
+        let frame: { id?: string; result?: unknown; error?: { code?: string; message?: string } };
+        try {
+          frame = JSON.parse(line) as typeof frame;
+        } catch {
+          finish(() => reject(new HerdrError("bad_frame", `herdr sent unparseable frame: ${line.slice(0, 200)}`)));
+          return;
+        }
+        if (frame.error) {
+          const { code = "herdr_error", message = "herdr request failed" } = frame.error;
+          finish(() => reject(new HerdrError(code, message)));
+          return;
+        }
+        finish(() => resolve(frame.result));
+      };
+
+      const onData = makeLineReader(handleLine);
+
+      Bun.connect({
+        unix: socketAddress(socketPath),
+        socket: {
+          data(_sock, chunk) {
+            onData(chunk);
+          },
+          error(_sock, err) {
+            finish(() => reject(new HerdrError("socket_error", err?.message ?? "herdr socket error")));
+          },
+          close() {
+            finish(() => reject(new HerdrError("closed", `herdr closed the connection before answering ${method}`)));
+          },
+        },
+      })
+        .then((sock) => {
+          connectedAt = performance.now();
+          socket = sock;
+          if (settled) {
+            try {
+              sock.end();
+            } catch {
+              /* already gone */
+            }
+            return;
+          }
+          if (guard && !guard()) {
+            finish(() => reject(new HerdrError("cancelled", `herdr ${method} was not sent: the sender may no longer send`)));
+            return;
+          }
+          sock.write(`${JSON.stringify({ id, method, params })}\n`);
+        })
+        .catch((err: Error) => {
+          finish(() =>
+            reject(new HerdrError("connect_failed", `cannot reach herdr at ${socketPath}: ${err.message}`)),
+          );
+        });
+    });
+    diagnostics.recovered(key, fields());
+    return result;
+  } catch (error) {
+    const code = error instanceof HerdrError ? transportFailureCode(error.code) : null;
+    if (code !== null) diagnostics.failed(key, code, fields());
+    throw error;
+  } finally {
+    pendingRpcs--;
+  }
 }
 
 export async function ping(socketPath?: string): Promise<HerdrIdentity> {

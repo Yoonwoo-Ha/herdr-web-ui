@@ -208,7 +208,11 @@ export function parseGrokTranscript(text: string, path?: string, wholeCall?: str
     const u = event.update;
     const meta = record(u._meta);
     if (u.sessionUpdate === "rewind_marker") throw new GrokUnavailable();
-    if (u.sessionUpdate === "turn_completed") { assistant = undefined; continue; }
+    if (u.sessionUpdate === "turn_completed") {
+      const last = assistant?.parts.at(-1);
+      if (last?.kind === "text") last.phase = "final_answer";
+      assistant = undefined; continue;
+    }
     if (u.sessionUpdate === "user_message_chunk") {
       if (!Number.isSafeInteger(meta.promptIndex)) throw new GrokUnavailable();
       if (prompt !== meta.promptIndex) {

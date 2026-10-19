@@ -73,6 +73,12 @@ exist on purpose: an install cannot be pointed elsewhere by its environment.
 
 ## Reading the counts
 
+After `bunx wrangler login` from `telemetry/`, run
+`bun scripts/telemetry-report.ts --out <file.md>` from the repository root. It runs the weekly installs, DAU, WAU, MAU,
+agent-kind and country queries below, plus daily actives per country for the last 28 days, and
+writes them as one report. The script selects `telemetry/` as Wrangler's working directory.
+For the individual queries below, stay in `telemetry/`:
+
 ```sh
 bunx wrangler d1 execute herdr-web-ui-telemetry --remote --command "<query>"
 ```

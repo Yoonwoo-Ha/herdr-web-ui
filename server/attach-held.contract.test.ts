@@ -52,7 +52,7 @@ function connect(port: number, paneId: string) {
     }
     if (frame.type === "pty-exit" && frame.pane_id === paneId) state.exitCodes.push(frame.code);
     if (frame.type === "pty-exit" && frame.pane_id === paneId) state.exits++;
-    if (frame.type === "input-ready" && frame.pane_id === paneId) state.ready++;
+    if (frame.type === "input-ready" && frame.pane_id === paneId && frame.ready !== false) state.ready++;
     if (frame.type === "attach-resumed" && frame.pane_id === paneId) state.resumed++;
     if (frame.type === "pty-data" && frame.pane_id === paneId) {
       state.frames++;

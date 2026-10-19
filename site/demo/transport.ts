@@ -56,6 +56,11 @@ type SseListener = (event: MessageEvent) => void;
 const machines: Machine[] = structuredClone(machinesFixture.machines as Machine[]);
 const local = machines[0]!;
 const snapshot = (): SessionSnapshot => local.snapshot!;
+// Reloading the demo starts its in-memory server over, so IDs from the previous page cannot match.
+for (const machine of machines) if (machine.snapshot) {
+  machine.snapshot.finish_epoch = crypto.randomUUID();
+  for (const pane of machine.snapshot.panes) pane.finish_id = pane.agent_status === "done" ? 1 : 0;
+}
 /** pane id -> fixture key ("api", "web", …) */
 const keyOfPane = new Map<string, string>(Object.entries(panesFixture as Record<string, string>).map(([key, paneId]) => [paneId, key]));
 const chats = new Map<string, { turns: ConversationTurn[]; metadata: { model: string; reasoning_effort: string } }>(
@@ -70,6 +75,8 @@ const chats = new Map<string, { turns: ConversationTurn[]; metadata: { model: st
   for (const chat of chats.values()) for (const turn of chat.turns) {
     if (turn.ts) turn.ts = new Date(Date.parse(turn.ts) + shift).toISOString();
     if (turn.end_ts) turn.end_ts = new Date(Date.parse(turn.end_ts) + shift).toISOString();
+    const last = turn.parts.at(-1);
+    if (turn.role === "assistant" && turn.end_ts && last?.kind === "text") last.phase = "final_answer";
   }
 }
 let promptOpen = true;
@@ -84,6 +91,7 @@ const nextStateSeq = (): number => ++stateSeq;
 // taken once, as the pane, tab and workspace templates are: the last agent can be closed in a demo
 const agentTemplate = local.snapshot?.agents[0] ? structuredClone(local.snapshot.agents[0]) : null;
 function addAgent(pane: Pane): void {
+  pane.finish_id = pane.agent_status === "done" ? 1 : 0;
   const snap = snapshot();
   if (!pane.agent || !agentTemplate || snap.agents.some((agent) => agent.pane_id === pane.pane_id)) return;
   snap.agents.push({ ...structuredClone(agentTemplate), pane_id: pane.pane_id, tab_id: pane.tab_id, workspace_id: pane.workspace_id, terminal_id: pane.terminal_id,
@@ -298,14 +306,16 @@ function paneOf(paneId: string): Pane | undefined {
 function setStatus(paneId: string, status: AgentStatus): void {
   const pane = paneOf(paneId);
   if (!pane) return;
+  if (status === "done" && pane.agent_status !== "done") pane.finish_id = (pane.finish_id ?? 0) + 1;
   pane.agent_status = status;
   // as herdr does, every state change bumps the session's counter on the pane's agent
   const agent = snapshot().agents.find((entry) => entry.pane_id === paneId);
   if (agent) Object.assign(agent, { agent_status: status, state_change_seq: nextStateSeq() });
   for (const workspace of snapshot().workspaces) if (workspace.workspace_id === pane.workspace_id) workspace.agent_status = status;
   for (const tab of snapshot().tabs) if (tab.tab_id === pane.tab_id) tab.agent_status = status;
-  emitSse({ type: "machine-message", machine_id: local.id, message: { type: "pane-status", pane_id: paneId, agent_status: status } });
-  for (const socket of sockets) socket.push({ type: "pane-status", pane_id: paneId, agent_status: status });
+  const message: ServerMessage = { type: "pane-status", pane_id: paneId, agent_status: status, finish_id: pane.finish_id, finish_epoch: snapshot().finish_epoch };
+  emitSse({ type: "machine-message", machine_id: local.id, message });
+  for (const socket of sockets) socket.push(message);
 }
 
 function conversationChanged(paneId: string): void {
@@ -368,7 +378,7 @@ function submitToChat(paneId: string, text: string): void {
   replying.add(paneId);
   setStatus(paneId, "working");
   setTimeout(() => {
-    chat.turns.push({ role: "assistant", ts: now(), end_ts: now(), parts: [{ kind: "text", text: `This is the demo, so nothing ran. In the real app that message went to ${agent} in this pane, and its answer would be written here as it arrives, with its commands and edits folded above it.` }] });
+    chat.turns.push({ role: "assistant", ts: now(), end_ts: now(), parts: [{ kind: "text", phase: "final_answer", text: `This is the demo, so nothing ran. In the real app that message went to ${agent} in this pane, and its answer would be written here as it arrives, with its commands and edits folded above it.` }] });
     conversationChanged(paneId);
     finishDemoTurn(paneId);
   }, CHAT_ANSWER_MS);
@@ -384,9 +394,9 @@ function answerPrompt(paneId: string, optionIndex: number | undefined): void {
     chat?.turns.push({
       role: "assistant", ts: now(), end_ts: now(),
       parts: declined
-        ? [{ kind: "text", text: "Understood, I won't push. The changes stay on `feat/export-guard` locally; tell me what to do differently." }]
+        ? [{ kind: "text", phase: "final_answer", text: "Understood, I won't push. The changes stay on `feat/export-guard` locally; tell me what to do differently." }]
         : [{ kind: "tool", name: "exec", summary: "git push origin feat/export-guard", input: JSON.stringify({ cmd: "git push origin feat/export-guard" }, null, 2), output: "To github.com:acme/checkout-api.git\n * [new branch]      feat/export-guard -> feat/export-guard" },
-          { kind: "text", text: "Pushed `feat/export-guard`. The export button is guarded and the branch is ready for a pull request." }],
+          { kind: "text", phase: "final_answer", text: "Pushed `feat/export-guard`. The export button is guarded and the branch is ready for a pull request." }],
     });
     if (chat) conversationChanged(paneId);
     finishDemoTurn(paneId);
@@ -529,6 +539,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/updates/installed") return json({ revision: null, version: null, previous_version: null, installed_at: null, releases: [], omitted: 0 }, 200, { "cache-control": "no-store" });
   // the demo has no herdr to update: the controls stay hidden
   // the demo sends no counts: a server without telemetry answers 404, and the app shows neither its notice nor its switch
+  // Connection breadcrumbs stay inside the fictional demo; never send them to a real endpoint.
+  if (path === "/api/connection-diagnostics") return new Response(null, { status: 204 });
   if (path === "/api/telemetry") return json({ error: { code: "not_found", message: "This server sends no telemetry" } }, 404, { "cache-control": "no-store" });
   if (path === "/api/herdr/update") return json({ supported: false, phase: "idle", server_version: null, binary_version: null, stale: false, output: null, finished_at: null }, 200, { "cache-control": "no-store" });
   // the demo opens no public address: the Portal section stays hidden
@@ -1600,7 +1612,7 @@ setTimeout(() => {
   if (!chat || !turn || turn.role !== "assistant") return;
   turn.parts.push(
     { kind: "tool", name: "Bash", summary: "bun test metrics", input: JSON.stringify({ command: "bun test metrics" }, null, 2), output: " 6 pass\n 0 fail\nRan 6 tests across 1 file. [201ms]" },
-    { kind: "text", text: "Added `payments_idempotent_replays_total`, incremented where a stored response is replayed, and exposed with the other counters on `/metrics`. 6 tests pass." },
+    { kind: "text", phase: "final_answer", text: "Added `payments_idempotent_replays_total`, incremented where a stored response is replayed, and exposed with the other counters on `/metrics`. 6 tests pass." },
   );
   turn.end_ts = now();
   conversationChanged(paneId);

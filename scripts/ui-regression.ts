@@ -13,6 +13,7 @@ import type { Machine } from "../shared/machines.ts";
 import { MAX_ATTACHMENT_BYTES } from "../shared/attachments.ts";
 import { alertsOffMarked, alertsState, runMoreItem } from "./header-more.ts";
 import { routeDrained } from "./drained-route.ts";
+import { contextMenuKey } from "./context-menu-key.ts";
 import { checkTerminalFileInput } from "./terminal-file-input-regression.ts";
 import { checkTerminalInput } from "./terminal-input-regression.ts";
 import { checkSafariIme } from "./terminal-safari-ime-regression.ts";
@@ -365,14 +366,26 @@ try {
   }
   await unrouteHeldPoll();
   await herdrRpc("pane.report_agent", { pane_id: paneA, source: "manual", agent: "claude", state: "idle" });
-  // The bridge's collector retains the completed-turn event even when a direct native read
-  // already says idle. Compare the row with the same authoritative roster the UI consumes.
-  await until(async () => {
-    const roster = await (await context.request.get(`${origin}/api/machines`)).json() as { machines: Machine[] };
-    const settled = roster.machines.find((machine) => machine.id === "local")?.snapshot?.panes.find((pane) => pane.pane_id === paneA)?.agent_status;
-    return (settled === "idle" || settled === "done") && await agentRow(paneA).locator(".badge").getAttribute("data-status") === settled;
-  }, "the agent row reflects the bridge's completed-turn status");
-  console.log("PASS delayed machines poll preserves newer streamed pane status");
+  // This fixture only reports Claude to herdr; it has no native conversation. Selection of
+  // its unavailable chat must keep DONE unread, then presenting real terminal output reads it.
+  await page.locator(".pane-frame.is-current .chat-terminal-fallback").waitFor();
+  await agentRow(paneA).locator('.badge[data-status="done"]').waitFor();
+  const completionRoster = await (await context.request.get(`${origin}/api/machines`)).json() as { machines: Machine[] };
+  const completionSnapshot = completionRoster.machines.find((machine) => machine.id === "local")?.snapshot;
+  const completion = completionSnapshot?.panes.find((pane) => pane.pane_id === paneA);
+  assert.equal(completion?.agent_status, "done", "the bridge retains the completed turn");
+  assert.ok(completion?.finish_id && Number.isSafeInteger(completion.finish_id), "the completed turn has a server finish ID");
+  assert.equal(typeof completionSnapshot?.finish_epoch, "string");
+  const finishKey = `herdr-web-ui:finish:local:${encodeURIComponent(completionSnapshot!.finish_epoch!)}:${encodeURIComponent(paneA)}`;
+  assert.equal(await page.locator(".pane-frame.is-current [data-pane-content]").count(), 0, "an unavailable conversation is not presented content");
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), finishKey), null, "an unavailable chat does not acknowledge its finish");
+  await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+  await page.locator(".pane-frame.is-current .terminal-stack[data-pane-content]").waitFor();
+  await agentRow(paneA).locator('.badge[data-status="idle"]').waitFor();
+  assert.equal(await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "null")?.id, finishKey), completion.finish_id,
+    "presenting terminal output acknowledges exactly the bridge's completed turn");
+  await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+  console.log("PASS delayed machines poll preserves newer status; unavailable chat keeps DONE until terminal content is presented");
 
   // Agents is global to the sidebar, so collapsing a PC's Spaces does not hide
   // its reported agents or prevent explicit pane selection from that list.
@@ -1665,7 +1678,7 @@ try {
   writeFileSync(join(worktree.path, "unsaved.txt"), "dirty\n");
   // a desktop draws no row ⋯: the context-menu key opens the menu at the focused row
   await childHeader.locator(".workspace-select").focus();
-  await page.keyboard.press("Shift+F10");
+  await contextMenuKey(page);
   const childMenu = page.getByRole("menu");
   await childMenu.waitFor();
   const childActions = await childMenu.getByRole("menuitem").allTextContents();
@@ -2352,7 +2365,7 @@ try {
   const selectedRow = page.locator(".pane-item.is-selected .pane-select");
   assert.equal(await page.locator(".pane-item.is-selected .row-menu-toggle").isVisible(), false, "a desktop draws no row ⋯");
   await selectedRow.focus();
-  await page.keyboard.press("Shift+F10");
+  await contextMenuKey(page);
   const rowMenu = page.getByRole("menu");
   await rowMenu.waitFor();
   const rowActions = await rowMenu.getByRole("menuitem").allTextContents();
@@ -2371,7 +2384,7 @@ try {
   await page.keyboard.press("Escape");
   await rowMenu.waitFor({ state: "detached" });
   assert.equal(await selectedRow.evaluate((row) => document.activeElement === row), true, "Escape after a right-click returns focus to the row");
-  await page.keyboard.press("Shift+F10");
+  await contextMenuKey(page);
   await rowMenu.getByRole("menuitem", { name: "Close workspace", exact: true }).click();
   const confirmClose = page.getByRole("alertdialog");
   await confirmClose.waitFor();
@@ -2382,7 +2395,7 @@ try {
   await page.keyboard.press("Escape");
   await confirmClose.waitFor({ state: "detached" });
   assert.equal(await selectedRow.evaluate((row) => document.activeElement === row), true, "cancelling the confirm returns focus to the row");
-  await page.keyboard.press("Shift+F10");
+  await contextMenuKey(page);
   await rowMenu.getByRole("menuitem", { name: "Close workspace", exact: true }).click();
   await confirmClose.waitFor();
   await confirmClose.getByRole("button", { name: "Close", exact: true }).click();

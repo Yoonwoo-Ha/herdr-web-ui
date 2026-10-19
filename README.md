@@ -76,11 +76,12 @@ A browser and phone client for [herdr](https://github.com/herdrdev/herdr). Read 
 
 <p align="center"><sub>Each clip is a live recording of the desktop and a phone at once, in real time with no cuts. Click one for the full video.</sub></p>
 
-- **Chat and terminal, one pane** — native Claude Code, Codex, omp, omo, gjc, pi, Hermes and explicitly identified Devin CLI transcripts, plus OpenCode 2 sessions herdr identifies, with the live terminal a click away. Write the next message while the agent works: it goes in with the next turn, or at once with Send now. [Supported agents →](docs/guide.md#supported-agents)
-- **Approve with a tap** — approvals, questions and plan menus become cards, checked to be current before your answer is sent.
+- **Chat and terminal, one pane** — native Claude Code, Codex, omp, omo, gjc, pi, Hermes and explicitly identified Devin CLI transcripts, plus OpenCode sessions herdr identifies, Linux Grok sessions and experimental Antigravity (agy) support under the limits below, with the live terminal a click away. Queue a message while the agent works for the next turn, or send it at once with Send now. [Supported agents →](docs/guide.md#supported-agents)
+- **Approve with a tap** — supported approvals, questions and plan menus become cards, checked to be current before your answer is sent. Use Terminal for requests without card support.
 - **Know when you're needed** — live status for every pane, an alert that drops in while the app is open, and push alerts when an agent needs input or finishes, even with the app closed.
 - **Install it on your phone** — a PWA with a key bar above the keyboard (Esc, Tab, Ctrl, Alt, Shift, Enter, arrows) that you can rearrange and extend with your own combinations in Settings, and a QR code to your Tailscale address. [Phone setup →](docs/guide.md#on-your-phone)
 - **Speak instead of typing** — dictate into the chat or the terminal line, Korean and English mixed. Review the words before sending them to the agent; transcription uses your own OpenAI key or the browser's speech recognition.
+- **Review repository changes** — open working-tree, staged or commit comparisons from the file browser and read each file's diff without changing the repository.
 - **Keep your workflow** — herdr owns the agents; this app connects to them. Update from Settings without stopping them, with patch notes for what each update brings. New tabs and worktrees come from a row's ⋯ menu. [All features →](docs/guide.md#features)
 
 ---
@@ -91,7 +92,9 @@ A browser and phone client for [herdr](https://github.com/herdrdev/herdr). Read 
 curl -fsSL https://herdrweb.dev/install.sh | sh
 ```
 
-Linux (x64, arm64) or macOS. Installs missing herdr 0.9.0+, Bun 1.4+ and Node 18+ prerequisites for your user, then installs the app as a herdr plugin. If an existing herdr installation is older than 0.9.0, update and restart herdr yourself before rerunning the installer. With the default listen address and Tailscale running, successful HTTPS setup provides a tailnet address and QR code. Your own devices get in without a code as it is: `tailscale serve` states your login. If your own phone is asked to pair anyway, `HERDR_WEB_TAILSCALE_SERVE_ONLY=1` lets it in without a code on a tailnet one login owns, but only when nothing else, such as a public proxy or tunnel, reaches this port ([Access and safety](docs/guide.md#access-and-safety)).
+Linux with glibc (x64, arm64) or macOS (Intel, Apple Silicon); not Alpine/musl or 32-bit ARM. Have `curl`, Git and `tar` installed; installing a missing Bun also needs Bash and `unzip`. Requires herdr 0.9.0+, Bun 1.4+ and Node 18+. The installer adds missing prerequisites for your user, upgrades an older Bun and installs Node 22 if Node is missing or older than 18, then installs the app as a herdr plugin. If an existing herdr installation is older than 0.9.0, update and restart herdr yourself before rerunning the installer.
+
+With the default listen address and Tailscale running, successful HTTPS setup provides a tailnet address and QR code. Without a configured token, your devices normally get in without a code when `tailscale serve` reports the same login as this PC's owner. If your own phone is asked to pair anyway, `HERDR_WEB_TAILSCALE_SERVE_ONLY=1` allows the no-login path only when Tailscale confirms one login owns the tailnet with no tagged nodes, and serve is the sole route to this port. Never enable it when a public proxy, tunnel or other forwarding server also reaches the port ([Access and safety](docs/guide.md#access-and-safety)).
 
 Windows x64, in PowerShell:
 
@@ -113,7 +116,7 @@ herdr plugin install devswha/herdr-web-ui
 
 An older herdr has to be updated and restarted first. [INSTALL.md](INSTALL.md) walks through each step and what to do when one fails.
 
-With herdr running, open **[127.0.0.1:7317](http://127.0.0.1:7317)**. On a new install on a PC with a desktop, the installer opens it in your browser for you; click **Install** in the address bar to add the app. The installed app belongs to that exact address, so keep using `http://127.0.0.1:7317` rather than `localhost`. Set `HERDR_WEB_NO_OPEN=1` before running the installer to skip opening the browser. Pick a pane or start an agent with **New workspace**. To use your phone, scan the installer's QR code and add the app to your home screen. [Quick start →](docs/guide.md#quick-start)
+With herdr running, use the address the installer prints or opens, normally **[127.0.0.1:7317](http://127.0.0.1:7317)**; the plugin can choose and remember another port if that one is busy. On a plugin-only install, run herdr's **Start herdr web ui** action. On a new install on a PC with a desktop, the installer opens the address in your browser for you; click **Install** in the address bar to add the app. The installed app belongs to that exact address, so keep using it rather than switching between `127.0.0.1` and `localhost`. Set `HERDR_WEB_NO_OPEN=1` before running the installer to skip opening the browser. Pick a pane or start an agent with **New workspace**. To use your phone, scan the installer's QR code (also available from herdr's **Phone setup**) and add the app to your home screen. [Quick start →](docs/guide.md#quick-start)
 
 The server listens on `127.0.0.1` by default. For access from another device, see [phone setup](docs/guide.md#on-your-phone) and [access and safety](docs/guide.md#access-and-safety).
 
@@ -125,7 +128,9 @@ Yes. Run the agent in a [herdr](https://github.com/herdrdev/herdr) pane on your 
 
 **Which agents does the chat view support?**
 
-Claude Code, Codex, omp, omo, gjc, pi and Hermes are read from their own session stores. For OpenCode 2, the chat reads the session herdr reports from OpenCode's database; the home screen and OpenCode 1.x use the live terminal instead. Devin CLI is a chat when herdr or the running process names its session, as `devin --resume <id>` does; a plain `devin` shows the live terminal. Any other program in a herdr pane gets the live terminal and its status. [Supported agents →](docs/guide.md#supported-agents)
+Claude Code, Codex, omp, omo, gjc, pi and Hermes are read from their own session stores. GJC chat needs GJC 0.18.9+, `gjc` and Git on the server PC's PATH, and its SDK broker already running; missing or ambiguous session identity uses Terminal. For OpenCode, chat reads the session herdr reports from its SQLite database, including supported 2.x and 1.x schemas. The home screen, missing session identity or an unsupported, unreadable or over-limit store uses the terminal instead. Devin CLI is a chat when herdr or the running process names its session, as `devin --resume <id>` does; a plain `devin` shows the live terminal.
+
+Grok chat is Linux-only and requires one process-held session matching herdr's session identity; macOS, Windows or ambiguous identity use Terminal. Antigravity (agy) chat is experimental: Linux native-tested, macOS untested, Windows terminal-only. It follows the running process's held conversation lock rather than guessing a session. Any unsupported or unresolved transcript uses the terminal instead. [Supported agents →](docs/guide.md#supported-agents)
 
 **Does it replace herdr's own TUI?**
 
@@ -133,11 +138,15 @@ No. Both attach to the same terminals at the same time, so the pane stays live a
 
 **Do I need Tailscale?**
 
-No. Tailscale, an SSH tunnel, a VPN or your own HTTPS proxy can provide a route to the PC. Installation and push alerts need a secure context such as HTTPS or localhost; basic browsing also works over plain HTTP on a LAN. [The options →](docs/guide.md#faq)
+No. Tailscale, an SSH tunnel, a VPN or your own HTTPS proxy can provide a route to the PC. The optional [Portal integration](docs/guide.md#behind-a-reverse-proxy) can manage a public HTTPS address after you install Portal 2.6.1+ separately; it requires `HERDR_WEB_TOKEN`, a trusted relay and `HERDR_WEB_TAILSCALE_SERVE_ONLY` off. Installation and push alerts need a secure context such as HTTPS or localhost; basic browsing also works over plain HTTP on a LAN. [The options →](docs/guide.md#faq)
 
 **Does my code or conversation leave my machine?**
 
-Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The app sends an anonymous count when it is installed, each time it is updated (the version, the OS, how it was installed and a random ID; no IP address is stored) and once a day the app is opened (with the kinds of coding agents running), and **Settings → About → Anonymous usage counts** shows what is sent and turns it off. The agents’ own model connections depend on their configuration. [Data flow and access →](docs/guide.md#faq)
+Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; browser speech recognition may also use the browser vendor's service. Enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. If you enable Portal, connections pass through your chosen relay, which sees connection metadata and holds the address's certificate; use a relay you trust.
+
+Anonymous usage counts are on by default. After showing its notice and a ten-minute grace period, the app can send install/update counts with a random installation ID, version (and previous version on update), OS, CPU architecture, install method and an allowlisted settings snapshot. Custom text and account identities are omitted or summarized; code, conversations and files are not collected. The checked-in receiver adds a country code when Cloudflare provides one, but stores no IP address. Activity counts include the kinds of agents running on days the app is opened (UTC); the same day's count can be updated when a new kind appears. **Settings → About → Anonymous usage counts** shows the payload and turns sending off; `HERDR_WEB_TELEMETRY=0` or `DO_NOT_TRACK=1` also disables it. The agents’ own model connections depend on their configuration. [Data flow and access →](docs/guide.md#faq)
+
+The random ID links counts from the same installation; it is not a guarantee of anonymity.
 
 **Does it work on Windows?**
 
@@ -145,7 +154,7 @@ Yes, on Windows x64 without WSL. Until herdr can attach a terminal there, the te
 
 **How is it different from collie, roamgate or herdr-remote?**
 
-These are other phone or browser clients for herdr. This one reads the agent's own transcript, so a pane is a chat with the work folded per turn rather than terminal output, and other PCs join over SSH from the sidebar. It brings no tunnel and drives only herdr: if you want tmux or zellij, diffs, Telegram or a tunnel out of the box, one of the others is the better fit. [The full comparison →](docs/guide.md#faq)
+These are other phone or browser clients for herdr. This one reads the agent's own transcript, so a pane is a chat with the work folded per turn rather than terminal output, and other PCs join over SSH from the sidebar. It includes repository diffs and can manage a separately installed Portal tunnel, but drives only herdr and bundles no tunnel. For tmux, zellij or Telegram, compare the other clients. [The full comparison →](docs/guide.md#faq)
 
 **How is it different from Happy, Paseo or CloudCLI UI?**
 

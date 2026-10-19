@@ -180,13 +180,17 @@ with attach-only mode and the SDK's workspace scope. A bounded Git root probe
 supplies the scope's worktree identity; the broker validates it. Discovery matches
 the requested pane's GJC process to a unique live SDK session, then resolves that exact session ID to the broker's
 `savedSession` path. The two responses must agree on process and session identity.
-Discovery is limited to eight pages of 100 rows in that workspace, an eight-second
-total deadline and two seconds per command, with at most 1 MiB of command output.
+Discovery is limited to eight pages of 100 rows in that workspace, with at most 1 MiB
+of command output. Chat reads allow a 10-second total deadline and five seconds per
+command; status discovery keeps the previous eight-second total and two seconds per command.
+The SDK budget reserves five seconds of the 15-second local chat read for the work before
+and after it; those other operations have their own timeouts, not a shared end-to-end bound.
 An incomplete or ambiguous answer is not used; unrelated workspaces' retired
 sessions do not consume the page budget.
 
-Overlapping reads of the same pane share one lookup. A proven binding is kept for
-at most 30 seconds while the pane's process identity and transcript header still
+Overlapping reads of the same pane and purpose share one lookup. A proven binding found by
+either status discovery or chat serves both purposes; changing the SDK budget never evicts it.
+It is kept for at most 30 seconds while the pane's process identity and transcript header still
 match. The shared SDK index normally invalidates it, except for bounded,
 checksum-valid, sequential version-4 heartbeat appends belonging to other
 processes and sessions. The guard includes every session the SDK listed for the
@@ -199,8 +203,22 @@ change only their own identity's liveness, activity and heartbeat time, not its
 registered ownership, location or ambiguity. A changed snapshot, replaced or
 truncated log, incomplete row, invalid checksum or sequence, unrecognized record,
 or append over 256 KiB requires another SDK lookup. The bridge does not select a
-session from index records. Null results remain uncached, so the first saved
+session from index records. Chat reads leave null results uncached, so the first saved
 message after `/new` is discoverable without another index change.
+
+Session snapshots retain the shorter status budget, including the worktree probe,
+so `/api/session`, WebSocket connect snapshots and collector resyncs do not inherit
+the longer cold-chat SDK wait. An unresolved transcript keeps herdr's status.
+Only an actual SDK lookup's execution failure or unresolved result is kept for up to 30
+seconds for status discovery. A failed herdr RPC, missing foreground GJC process or rejected
+transcript is not a cached SDK failure. A status retry reads the pane's process identity
+(fresh on Windows) and index stamp before reusing a failure; a changed PID, process birth,
+index, pane or cwd invalidates it. Any index change invalidates a failed lookup, unlike the
+narrow unrelated-heartbeat exception for a proven binding above.
+Chat reads bypass the failure cache and may retry. Status and chat use separate single
+flights, so neither inherits the other's SDK deadline. Successful reads clear the recent
+failure, and an older overlapping flight cannot reinstate a failure after that success,
+even when no readable index lets the successful binding be kept.
 
 The native transcript must remain inside the canonical `~/.gjc/agent/sessions/`
 store and its header must identify the selected session and workspace. The pane's

@@ -1,4 +1,5 @@
 import type { PreferencesChange, SharedPreferences } from "../../shared/preferences.ts";
+import { resumeConnectionTraces } from "./connectionTrace.ts";
 import { machinePath, type BridgeHealth, type HerdrIdentity, type Machine, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   AgentKind,
@@ -35,6 +36,7 @@ import type {
   PaneFindRequest,
   PaneFindResponse,
   PlanStep,
+  ProjectFavicon,
   PromptAnswer,
   PushKey,
   PortalStatus,
@@ -244,7 +246,7 @@ export async function fetchPaneTranscript(paneId: string, lines: number, machine
 }
 
 /** Which turns (ConversationResponse.cursor): the page `before` a cursor, not past `since`; the newest ones `from` a held start. */
-export type ConversationPageQuery = { before?: string; since?: string; from?: string };
+export type ConversationPageQuery = { before?: string; since?: string; from?: string; /** Revalidate a new finish without borrowing another key's 304. */ fresh?: boolean };
 
 /**
  * The last answer per newest-page conversation URL and its ETag. The chat reads it again on
@@ -315,7 +317,7 @@ export async function fetchPaneConversation(paneId: string, machineId = "local",
   const polled = page.before === undefined;
   const known = polled ? conversationAnswers.get(url) : undefined;
   const { response, body } = await withChatReadDeadline(async (signal) => {
-    const response = await fetch(url, { cache: "no-store", signal, ...(known ? { headers: { "if-none-match": known.etag } } : {}) });
+    const response = await fetch(url, { cache: "no-store", signal, ...(known && !page.fresh ? { headers: { "if-none-match": known.etag } } : {}) });
     if (response.status === 304 && known) return { response, body: known.body };
     if (!response.ok) throw await errorFrom(url, response);
     return { response, body: (await response.json()) as ConversationResponse };
@@ -362,12 +364,14 @@ export async function authenticate(token: string): Promise<void> {
     body: JSON.stringify({ token }),
   });
   if (!response.ok) throw await errorFrom("/api/auth", response);
+  resumeConnectionTraces();
 }
 
 /** POST /api/devices/pair: the code shown on the PC, once; the server answers with this device's own HttpOnly cookie. */
 export async function pairDevice(code: string, label: string): Promise<void> {
   const response = await fetch("/api/devices/pair", { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ code, label }) });
   if (!response.ok) throw await errorFrom("/api/devices/pair", response);
+  resumeConnectionTraces();
 }
 
 export async function fetchDevices(): Promise<PairedDevice[]> {
@@ -604,6 +608,11 @@ export async function fetchFileInfo(path: string, paneId: string | null, machine
   }
   if (!response.ok) throw await errorFrom(url, response);
   return (await response.json()) as FileInfo;
+}
+
+/** GET /api/fs/favicon: the icon the project in folder `root` keeps, or null, in one request. */
+export async function fetchProjectFavicon(root: string, machineId = "local"): Promise<FileInfo | null> {
+  return (await getJson<ProjectFavicon>(machinePath(machineId, `fs/favicon?${new URLSearchParams({ root }).toString()}`))).icon;
 }
 
 /** GET /api/fs/file: the file itself, streamed (ranges for media); `download` saves it instead. */

@@ -1,4 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
+import { inNativeApp } from "./nativeApp.ts";
 import { t } from "./i18n.ts";
 
 interface InstallChoice {
@@ -61,7 +62,8 @@ function isStandalone(): boolean {
   const iosNavigator = navigator as Navigator & { standalone?: boolean };
   lastInstalled = installedState({
     matches: (query) => window.matchMedia?.(query).matches === true,
-    iosStandalone: iosNavigator.standalone === true,
+    // the iOS app (app/) is this client installed, as a home-screen app is
+    iosStandalone: iosNavigator.standalone === true || inNativeApp(),
     installedByEvent,
     relatedInstalled,
     previous: lastInstalled,

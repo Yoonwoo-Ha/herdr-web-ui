@@ -22,7 +22,6 @@ async function fileAction(scope: Locator | Page, name: string): Promise<Locator>
 import { sheetsSettled } from "./sheets-settled.ts";
 import { runMoreItem } from "./header-more.ts";
 import type { Machine } from "../shared/protocol.ts";
-import { FAVICON_CANDIDATES } from "../src/lib/projectFavicon.ts";
 import { chromePath } from "./chrome-path.ts";
 
 const openFiles = async (page: import("playwright-core").Page) => {
@@ -1185,10 +1184,9 @@ try {
       if (request.pathname === "/api/machines") { await route.fulfill({ json: { machines: [...roster.machines, remote] } }); return; }
       if (request.pathname === "/api/machines/remote-fixture/session") { await route.fulfill({ json: { snapshot: remote.snapshot } }); return; }
       if (request.pathname.includes("/fs/")) {
-        // the sidebar probes each workspace folder for its project icon on its own PC; only the
+        // the sidebar asks each workspace folder for its project icon on its own PC; only the
         // document's reads are the link's
-        const asked = request.searchParams.get("path") ?? "";
-        if (!FAVICON_CANDIDATES.some((candidate) => asked.endsWith(`/${candidate}`))) fileRequests.push(request.pathname);
+        if (!request.pathname.endsWith("/fs/favicon")) fileRequests.push(request.pathname);
         if (request.pathname.startsWith("/api/machines/remote-fixture/")) {
           request.pathname = request.pathname.replace("/api/machines/remote-fixture/", "/api/");
           await route.fulfill({ response: await route.fetch({ url: request.href }) });

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -146,7 +146,56 @@ async function remoteFixture() {
   };
 }
 
+it("records a remote bridge failure and a later recovery without its address or token", async () => {
+  const f = await remoteFixture();
+  f.runtime.machine.name = "private-machine-name";
+  const lines: string[] = [];
+  const warn = spyOn(console, "warn").mockImplementation((line) => { lines.push(String(line)); });
+  cleanups.push(() => warn.mockRestore());
+  const records = () => lines.filter((line) => line.startsWith("{")).map((line) => JSON.parse(line)).filter((record) => record.event.startsWith("machine.remote."));
+  const generation = f.runtime.generation;
+  f.setHttpStatus(503);
+  const failure = await f.drive.refresh(f.runtime).then(() => null, (error: unknown) => error);
+  expect(failure).toBeInstanceOf(Error);
+  const drive = f.manager as unknown as { lost(runtime: TestRuntime, generation: number, error: unknown): void };
+  drive.lost(f.runtime, generation, failure);
+  drive.lost(f.runtime, generation, new Error("private-stale-error"));
+  expect(records()).toHaveLength(1);
+  expect(records()[0]).toMatchObject({ event: "machine.remote.failed", operation: "bridge", code: "connection_lost" });
+  clearTimeout(f.runtime.retry);
+  f.setHttpStatus(200);
+  f.runtime.endpoint = f.endpoint;
+  f.runtime.ssh = { close() {} };
+  await f.drive.observe(f.runtime);
+  await until(() => records().length === 2);
+  expect(records()[1]).toMatchObject({ event: "machine.remote.recovered", episode_id: records()[0].episode_id });
+  expect(lines.join("\n")).not.toContain("private-");
+  expect(lines.join("\n")).not.toContain("fixture-token");
+  expect(lines.join("\n")).not.toContain(f.endpoint.url);
+});
+
 describe("machine snapshot refresh races", () => {
+  it("preserves a remote bridge's finish identity through HTTP snapshots and status events", async () => {
+    const { manager, drive, remote, runtime, send } = await remoteFixture();
+    const current = snapshot("done");
+    current.finish_epoch = "remote-server";
+    current.panes[0]!.finish_id = 3;
+    remote.set(current);
+    await drive.refresh(runtime);
+    expect(runtime.machine.snapshot).toMatchObject({ finish_epoch: "remote-server", panes: [{ finish_id: 3 }] });
+    const received = new Promise<ServerMessage>((resolve, reject) => {
+      const timer = setTimeout(() => { unsubscribe(); reject(new Error("no remote finish event")); }, 2000);
+      const unsubscribe = manager.subscribe((event) => {
+        if (event.type === "machine-message" && event.machine_id === "remote" && event.message.type === "pane-status") {
+          clearTimeout(timer); unsubscribe(); resolve(event.message);
+        }
+      });
+    });
+    send({ type: "pane-status", pane_id: "fixture:p1", agent_status: "done", finish_id: 4, finish_epoch: "remote-server" });
+    expect(await received).toMatchObject({ finish_id: 4, finish_epoch: "remote-server" });
+    expect(runtime.machine.snapshot?.panes[0]?.finish_id).toBe(4);
+  });
+
   it("keeps a newer local status and retries the invalidated snapshot", async () => {
     const { manager, drive, local, rosters } = await fixture();
     local.hold();

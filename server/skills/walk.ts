@@ -118,7 +118,8 @@ export function walkSkills(root: string, rules: WalkRules): WalkedSkill[] {
         try { ignore.add(readFileSync(join(root, filename), "utf8")); } catch { /* optional ignore file */ }
       }
     }
-    for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const entries = readdirSync(root, { withFileTypes: true });
+    for (const entry of entries) {
       if (entry.name.startsWith(".") || rules.skipNames?.(entry.name)) continue;
       const directory = join(root, entry.name);
       try {

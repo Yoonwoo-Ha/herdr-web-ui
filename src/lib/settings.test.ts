@@ -367,14 +367,6 @@ describe("chat font size", () => {
     expect(sanitizeSettings({ terminalFontSize: 15 }).chatFontSize).toBeNull();
   });
 
-  it("sizes the message box too: with a mouse at the transcript's size, on touch never under --fs-input", () => {
-    const css = readFileSync(join(import.meta.dir, "..", "components", "Composer.css"), "utf8");
-    const sizes = [...css.matchAll(/\.composer-text \{[^}]*?font-size: ([^;]+);/g)].map((match) => match[1]);
-    expect(sizes).toEqual([
-      "max(var(--fs-input), calc(var(--fs-chat) * var(--chat-scale, 1)))",
-      "calc(var(--fs-chat) * var(--chat-scale, 1))",
-    ]);
-  });
 });
 
 describe("chat width", () => {

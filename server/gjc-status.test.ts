@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { CompletionTracker, type OmoRest } from "./completion.ts";
+import { Finishes } from "./finishes.ts";
 import { createGjcStatus, gjcPanes, gjcTurnAfter, readOmoSnapshot, reconcileProviderStatus } from "./gjc-status.ts";
 import { noTurn, OMO_ALIASES, OmoStatus, type OmoLine, type OmoPane, type OmoTurn } from "./omo-status.ts";
 
@@ -151,6 +152,30 @@ describe("a GJC pane's status in place of herdr's provider-child status", () => 
     return { gjc, told, found, append, replace, state, files };
   }
   const statuses = (snapshot: SessionSnapshot) => Object.fromEntries(snapshot.panes.map((p) => [p.pane_id, `${p.agent}/${p.agent_status}`]));
+
+  it("identifies native DONE transitions while herdr keeps the provider working at one seq", async () => {
+    const { gjc, append } = setup(lines(message("user")));
+    const completions = new CompletionTracker();
+    const finishes = new Finishes(() => "daemon-a");
+    const served = async () => finishes.snapshot(await completions.readSnapshot(async () => {
+      const raw = herdr();
+      for (const agent of raw.agents) agent.state_change_seq = 5;
+      await gjc.refresh(raw.panes);
+      return gjc.apply(raw);
+    }), completions);
+    expect((await served()).panes[0]).toMatchObject({ agent_status: "working", finish_id: 0 });
+    append(message("assistant", "stop"));
+    gjc.poll();
+    const done = await served();
+    expect(done.panes[0]).toMatchObject({ agent_status: "done", finish_id: 1 });
+    expect(done.agents[0]?.state_change_seq).toBe(5);
+    append(asyncResult());
+    gjc.poll();
+    await served();
+    append(message("assistant", "stop", "2026-10-02T00:02:00.000Z"));
+    gjc.poll();
+    expect((await served()).panes[0]).toMatchObject({ agent_status: "done", finish_id: 2 });
+  });
 
   it("reads READY where herdr's provider child still reads working, and no finish from a first idle baseline", async () => {
     const { gjc, told, found, state } = setup();

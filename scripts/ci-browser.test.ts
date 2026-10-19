@@ -70,7 +70,12 @@ describe("browser lane", () => {
   it("summarizes every script and exits zero on success without enabling local evidence", async () => {
     const { text, code, evidence } = await lane();
     expect(code).toBe(0);
-    expect(rows(text)).toHaveLength(67);
+    expect(rows(text)).toHaveLength(71);
+    expect(rows(text).map((row) => row.script)).toContain("scripts/opencode-prompt-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/sidebar-machine-layout-demo-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/sidebar-machine-removal-demo-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/sidebar-machine-layout-demo-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/sidebar-machine-removal-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/cliproxy-settings-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/gjc-status-browser-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/pane-input-focus-demo-regression.ts");

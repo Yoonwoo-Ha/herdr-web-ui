@@ -8,6 +8,7 @@ import type { Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { HerdrError, herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { UsageService } from "../server/usage.ts";
+import { contextMenuKey } from "./context-menu-key.ts";
 
 type State = {
   readonly selector: string;
@@ -210,7 +211,7 @@ try {
   const alphaWorkspace = workspaceSelector(alpha.workspaceId);
   // a desktop draws no row ⋯: the context-menu key opens the menu at the focused row
   await page.locator(`${alphaWorkspace} .workspace-select`).focus();
-  await page.keyboard.press("Shift+F10");
+  await contextMenuKey(page);
   const workspaceMenu = page.getByRole("menu");
   await workspaceMenu.waitFor();
   const workspaceActions = await workspaceMenu.getByRole("menuitem").allTextContents();

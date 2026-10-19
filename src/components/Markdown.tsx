@@ -203,7 +203,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
       }
       case "math": return <MathExpression key={key} value={node.value} />;
       case "image": {
-        return <span key={key} data-markdown-copy={`![${node.alt}](${node.src})`}>{imageResolver === null
+        return <span key={key}>{imageResolver === null
           ? <Inline key={key} nodes={node.fallback} interactive={interactive} />
           : <MarkdownImage src={node.src} alt={node.alt} width={node.width} resolve={imageResolver} interactive={interactive} standalone={standalone} fallback={<Inline nodes={node.fallback} interactive={interactive} />} />}</span>;
       }
@@ -307,7 +307,7 @@ function Blocks({ blocks }: { blocks: MarkdownBlock[] }) {
         // agent headings are h3 whatever the agent wrote: the app's own h1/h2 (Brand, the dialog
         // titles) stay the outline above them. The level rides on a class, so the stylesheet
         // keeps drawing each level as it did (ChatView.css `.markdown h1`...`.markdown h6`).
-        return <h3 key={key} data-markdown-heading={block.level} className={`markdown-h${block.level}${block.align ? " markdown-center" : ""}`}><Inline nodes={block.content} /></h3>;
+        return <h3 key={key} className={`markdown-h${block.level}${block.align ? " markdown-center" : ""}`}><Inline nodes={block.content} /></h3>;
       case "paragraph":
         return <p key={key} className={block.align ? "markdown-center" : undefined}>{block.lines.map((line, lineIndex) => <span key={lineIndex}><Inline nodes={line} standalone={standaloneImage(line)} />{lineIndex < block.lines.length - 1 && <br />}</span>)}</p>;
       case "list": return <List key={key} block={block} />;

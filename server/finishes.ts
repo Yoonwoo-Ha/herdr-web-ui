@@ -1,0 +1,79 @@
+import { readFileSync, statSync } from "node:fs";
+import type { AgentStatus, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
+import type { CompletionTracker } from "./completion.ts";
+import { herdrSocketPath } from "./herdr/client.ts";
+
+/**
+ * The same socket identity evidence as CompletionTracker; include creation time against inode
+ * reuse. Windows replaces the pid:start marker's contents, not necessarily its file identity.
+ * An unreadable file is not proof of a restart.
+ */
+export function finishHerdrIdentity(path = herdrSocketPath(), platform = process.platform): string | null {
+  try {
+    if (platform === "win32") return readFileSync(path, "utf8").trim() || null;
+    const stat = statSync(path, { bigint: true });
+    return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
+  } catch { return null; }
+}
+
+/** Only final client-visible statuses enter here, never raw herdr statuses or activity counters. */
+export class Finishes {
+  private generation = crypto.randomUUID();
+  private identity: string | null;
+  private readonly panes = new Map<string, { status: AgentStatus; id: number }>();
+
+  constructor(private readonly herdr: () => string | null = finishHerdrIdentity) {
+    this.identity = herdr();
+  }
+
+  get epoch(): string {
+    const identity = this.herdr();
+    if (identity !== null) {
+      if (this.identity !== null && identity !== this.identity) {
+        this.generation = crypto.randomUUID();
+        this.panes.clear();
+      }
+      this.identity = identity;
+    }
+    return this.generation;
+  }
+
+  status(paneId: string, status: AgentStatus): { finish_epoch: string; finish_id: number } {
+    const finish_epoch = this.epoch;
+    return { finish_epoch, finish_id: this.observe(paneId, status) };
+  }
+
+  private observe(paneId: string, status: AgentStatus): number {
+    const before = this.panes.get(paneId);
+    const finish_id = (before?.id ?? 0) + (status === "done" && before?.status !== "done" ? 1 : 0);
+    this.panes.set(paneId, { status, id: finish_id });
+    return finish_id;
+  }
+
+  snapshot(snapshot: SessionSnapshot, completions: CompletionTracker): SessionSnapshot {
+    const finish_epoch = this.epoch;
+    const live = new Set(snapshot.panes.map((pane) => pane.pane_id));
+    // readSnapshot retains observations newer than its read, including panes absent from an
+    // older roster. Only an absence reconciled by that tracker is an authoritative ending.
+    for (const paneId of this.panes.keys()) {
+      if (!live.has(paneId) && completions.current(paneId) === undefined) this.ended(paneId);
+    }
+    return { ...snapshot, finish_epoch, panes: snapshot.panes.map((pane) => ({
+      ...pane, finish_id: this.observe(pane.pane_id, pane.agent_status),
+    })) };
+  }
+
+  /** The collector's authoritative recovery observations, before any pending refresh can finish. */
+  resync(completions: CompletionTracker, panes: readonly HerdrPane[], newer: ReadonlySet<string>): void {
+    completions.resync(panes, newer);
+    for (const pane of panes) if (!newer.has(pane.pane_id)) {
+      this.status(pane.pane_id, completions.current(pane.pane_id) ?? pane.agent_status);
+    }
+  }
+
+  /** Keep the counter if herdr reuses an ended pane's ID within this epoch. */
+  ended(paneId: string): void {
+    const before = this.panes.get(paneId);
+    if (before) this.panes.set(paneId, { ...before, status: "unknown" });
+  }
+}

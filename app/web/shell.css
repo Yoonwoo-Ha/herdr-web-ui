@@ -1,0 +1,23 @@
+/* The app's own pages (connect, error): the client's dark theme colours (src/styles.css). */
+:root { color-scheme: dark; --bg: #12100e; --panel: #181613; --input: #1c1916; --border: #2d2924; --text: #d8d0c3; --dim: #9b9183; --strong: #f2ebdf; --primary: #f0a830; --primary-text: #1b1407; --danger: #ff7b70; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 -apple-system, system-ui, sans-serif; -webkit-text-size-adjust: 100%; }
+main { max-width: 32rem; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 2.5rem) 1.25rem calc(env(safe-area-inset-bottom) + 2rem); }
+h1 { color: var(--strong); font-size: 1.75rem; margin: 0 0 .25rem; }
+h2 { color: var(--dim); font-size: .8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; margin: 2rem 0 .5rem; }
+p { margin: 0 0 1rem; color: var(--dim); }
+label { display: block; color: var(--strong); font-weight: 600; margin-bottom: .4rem; }
+input { width: 100%; font: inherit; color: var(--strong); background: var(--input); border: 1px solid var(--border); border-radius: .6rem; padding: .75rem .85rem; }
+input:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+button { font: inherit; border-radius: .6rem; padding: .75rem 1rem; border: 1px solid var(--border); background: var(--panel); color: var(--strong); cursor: pointer; }
+button.primary { background: var(--primary); color: var(--primary-text); border-color: var(--primary); font-weight: 600; }
+.row { display: flex; gap: .6rem; margin-top: .75rem; }
+.row > button { flex: 1; }
+.hint { font-size: .85rem; margin: .5rem 0 0; }
+code { font: .85em ui-monospace, monospace; color: var(--text); }
+.error { color: var(--danger); min-height: 1.45em; margin: .5rem 0 0; }
+ul { list-style: none; margin: 0; padding: 0; }
+li { display: flex; gap: .5rem; align-items: center; margin-bottom: .5rem; }
+li .open { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+li .forget { flex: none; color: var(--dim); }
+a { color: var(--primary); }

@@ -249,7 +249,7 @@ try {
           assert.deepEqual(errors, []);
           await page.getByRole("button", { name: label("Close settings"), exact: true }).tap();
           if (language === "en") {
-            const composer = page.locator(".composer textarea");
+            const composer = page.locator(".composer-text");
             await composer.fill("/");
             const menu = page.getByRole("listbox", { name: "Slash commands" });
             await menu.getByRole("option").last().waitFor();
@@ -263,19 +263,19 @@ try {
             });
             // Enter right after the keystroke that narrows the list, before React's next render, completes the row
             await page.evaluate(async () => {
-              const box = document.querySelector<HTMLTextAreaElement>(".composer textarea")!;
+              const box = document.querySelector<HTMLTextAreaElement>(".composer-text")!;
               Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, "/comments");
               box.selectionStart = box.selectionEnd = box.value.length;
               box.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
               await Promise.resolve(); await Promise.resolve();
               box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
             });
-            await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.value === "/pr-comments ");
+            await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")?.value === "/pr-comments ");
             await composer.fill("/comments");
             await menu.getByRole("option").filter({ hasText: "pr-comments" }).waitFor();
             assert.equal(await menu.getByRole("option").count(), 1);
             await composer.press("Tab");
-            await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.value === "/pr-comments ");
+            await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer-text")?.value === "/pr-comments ");
             assert.equal(await composer.inputValue(), "/pr-comments ");
             // a key typed after a completion, before the next frame (a busy phone), stays where it was typed
             await composer.fill("/comments");
@@ -468,7 +468,7 @@ try {
           if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `${id}-appearance-1280.png`), animations: "disabled" });
           await page.keyboard.press("Escape");
           await page.locator(".settings-dialog").waitFor({ state: "detached" });
-          await page.locator(".composer textarea").waitFor();
+          await page.locator(".composer-text").waitFor();
           if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `${id}-chat-1280.png`), animations: "disabled" });
         }
         await openSettings(page);

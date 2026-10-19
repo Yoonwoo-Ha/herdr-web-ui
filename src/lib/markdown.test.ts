@@ -282,7 +282,7 @@ describe("text no one wrote by hand", () => {
 
   it("knows a table's separator line as it did, cell by cell", () => {
     // the one pattern it was: it shares a run of spaces between its parts in every way there is
-    const asBefore = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+    const asBefore = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/;
     const lines = everyLine([" ", "|", "---", "--", ":", "x"], 6);
     expect(lines.length).toBeGreaterThan(55_000);
     let separators = 0;
@@ -291,8 +291,8 @@ describe("text no one wrote by hand", () => {
       if (isTableSeparator(line)) separators += 1;
     }
     expect(separators).toBeGreaterThan(100);
-    for (const line of ["|---|---|", "---|---", " | :--- | ---: | :---: | ", "\t|---\t|\t---|\t"]) expect(isTableSeparator(line)).toBe(true);
-    for (const line of ["", "---", "|---|", "||---|---", "|---|---||", "|--|--|", "|---|-x-|"]) expect(isTableSeparator(line)).toBe(false);
+    for (const line of ["|---|---|", "---|---", " | :--- | ---: | :---: | ", "\t|---\t|\t---|\t", "|--|--|", "|---|:-:|-|"]) expect(isTableSeparator(line)).toBe(true);
+    for (const line of ["", "---", "|---|", "||---|---", "|---|---||", "|---|:|", "|---|-x-|"]) expect(isTableSeparator(line)).toBe(false);
     within(1000, () => parseMarkdown(`a|b\n${" ".repeat(96_000)}x`));
     within(1000, () => parseMarkdown(`a|b\n---|---${" ".repeat(96_000)}x`));
   });

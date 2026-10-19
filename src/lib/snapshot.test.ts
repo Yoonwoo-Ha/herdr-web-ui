@@ -20,6 +20,22 @@ function snapshotFixture(): SessionSnapshot {
 }
 
 describe("applyPaneStatus", () => {
+  it("carries new finish IDs even when status is unchanged and invalidates other panes on epoch change", () => {
+    const current = snapshotFixture();
+    current.finish_epoch = "old";
+    for (const pane of current.panes) { pane.agent_status = "done"; pane.finish_id = 1; }
+    const next = applyPaneStatus(current, "w1:p1", "done", undefined, false, undefined, 2, "old");
+    expect(next.panes[0]?.finish_id).toBe(2);
+    expect(next.panes[1]?.finish_id).toBe(1);
+    const restarted = applyPaneStatus(next, "w1:p1", "done", undefined, false, undefined, 1, "new");
+    expect(restarted.finish_epoch).toBe("new");
+    expect(restarted.panes[0]?.finish_id).toBe(1);
+    expect(restarted.panes[1]?.finish_id).toBeUndefined();
+    const legacy = applyPaneStatus(restarted, "w1:p1", "done");
+    expect(legacy.finish_epoch).toBeUndefined();
+    expect(legacy.panes[0]?.finish_id).toBeUndefined();
+  });
+
   it("updates the pane and its agent entry to the pushed status", () => {
     const current = snapshotFixture();
     const next = applyPaneStatus(current, "w1:p1", "blocked" as AgentStatus);

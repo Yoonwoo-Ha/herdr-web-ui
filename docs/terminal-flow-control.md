@@ -6,7 +6,7 @@ Checked on 2026-09-22: Linux x64, Bun 1.4.2, Node 24.18.0, node-pty 1.1.0, xterm
 
 Keep xterm and the Node PTY sidecar. Bun.Terminal successfully handled the tested interactive operations and real herdr attaches, but its public API has no output `pause()`/`resume()`. Its `drain` callback concerns `terminal.write()` input, not consumption of child output. Removing node-pty would remove the upstream read control used below. Do not substitute `unref()` or suspend the whole attach process: input, including Ctrl+C, must remain live.
 
-This corrects the previous statement that Bun had no PTY API. [Bun.Terminal was introduced in 1.3.5](https://bun.com/blog/bun-v1.3.5). See the [current API](https://bun.com/reference/bun/Terminal) and [xterm flow-control guide](https://xtermjs.org/docs/guides/flowcontrol/). Revisit migration when native output control is available, or after validating another bounded, lossless approach. WebGL remains a separate rendering experiment.
+This corrects the previous statement that Bun had no PTY API. [Bun.Terminal was introduced in 1.3.5](https://bun.com/blog/bun-v1.3.5). See the [current API](https://bun.com/reference/bun/Terminal) and [xterm flow-control guide](https://xtermjs.org/docs/guides/flowcontrol/). Revisit migration when native output control is available, or after validating another bounded, lossless approach. As of 2026-10-20 neither Bun 1.4.3 nor the 1.4.4 canary has it: the request is [oven-sh/bun#41410](https://github.com/oven-sh/bun/issues/41410), and [oven-sh/bun#41411](https://github.com/oven-sh/bun/pull/41411) adds `Terminal.pause()`/`resume()`, open and unmerged. Revisit once it ships. WebGL remains a separate rendering experiment.
 
 ## Implemented behavior
 

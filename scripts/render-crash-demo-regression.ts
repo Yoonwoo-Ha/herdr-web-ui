@@ -222,11 +222,22 @@ try {
         const dialog = page.getByRole("dialog", { name: "Settings" });
         await dialog.getByText("Density", { exact: true }).waitFor();
         await page.waitForFunction(() => (window.history.state as Record<string, { depth?: number } | undefined> | null)?.["herdr-web-ui:settings"]?.depth === 2, undefined, { timeout: 5000 });
-        await startCrashing(page, "settings");
-        await dialog.getByText("Compact", { exact: true }).tap();
+        const compact = dialog.getByText("Compact", { exact: true });
+        // Arm the failure on the actual tap, before React handles the density change.
+        // Setting the URL earlier lets a content-readiness or roster render replace the
+        // button with the crash fallback before Playwright can dispatch that tap.
+        await compact.evaluate((button) => button.addEventListener("click", () => {
+          const url = new URL(window.location.href);
+          url.searchParams.set("crash", "settings");
+          window.history.replaceState(window.history.state, "", url);
+          Object.assign(window, { crashMarker: true });
+        }, { once: true, capture: true }));
+        await compact.tap();
         await dialog.getByRole("alert").filter({ hasText: "Settings can't be shown." }).waitFor();
+        await page.waitForFunction(() => (window.history.state as Record<string, { depth?: number } | undefined> | null)?.["herdr-web-ui:settings"]?.depth === 1, undefined, { timeout: 5000 });
         await page.evaluate(() => window.history.back());
         await dialog.waitFor({ state: "detached", timeout: 5000 });
+        assert.equal(await page.evaluate(() => "crashMarker" in window), true, "one Back closes the crashed nested page without navigating away");
         assert.equal(await page.locator(".app-crash").count(), 0, "the page is not blanked");
         await close();
       }

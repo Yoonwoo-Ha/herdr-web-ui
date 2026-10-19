@@ -1,0 +1,8 @@
+{
+  "appId": "dev.herdr.app",
+  "appName": "herdr",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never"
+  }
+}

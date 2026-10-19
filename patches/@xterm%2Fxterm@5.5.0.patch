@@ -1,6 +1,3 @@
-diff --git a/node_modules/@xterm/xterm/.bun-tag-e1949dc8b8c7d718 b/.bun-tag-e1949dc8b8c7d718
-new file mode 100644
-index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/src/browser/Terminal.ts b/src/browser/Terminal.ts
 index 0e945aa92b34cead9a28edb0e56d894f58ed9b51..a1675c4181d9005a21d6331a4044475512088d40 100644
 --- a/src/browser/Terminal.ts
@@ -131,7 +128,7 @@ index 9ebc55d96f328720dcb87cc31147c6d5a76ebebe..8ad922b9f033f878da81e81d33725c66
    compositionstart(): void;
    compositionupdate(ev: CompositionEvent): void;
 diff --git a/src/browser/input/CompositionHelper.ts b/src/browser/input/CompositionHelper.ts
-index 7542969a62fa6b5e84471a3bdecdc4bec82de542..f5192ca969e661a225ec37a4f26bb596f7df58fe 100644
+index 7542969a62fa6b5e84471a3bdecdc4bec82de542..8a455d5cbd86e7fa2e38d41182af285b8d14002c 100644
 --- a/src/browser/input/CompositionHelper.ts
 +++ b/src/browser/input/CompositionHelper.ts
 @@ -6,6 +6,11 @@
@@ -168,7 +165,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..f5192ca969e661a225ec37a4f26bb596
  
    /**
     * Data already sent due to keydown event.
-@@ -50,17 +60,102 @@ export class CompositionHelper {
+@@ -50,17 +60,108 @@ export class CompositionHelper {
      @IRenderService private readonly _renderService: IRenderService
    ) {
      this._isComposing = false;
@@ -242,10 +239,13 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..f5192ca969e661a225ec37a4f26bb596
 +  /** Keep Safari's provisional DOM edits out of Terminal._inputEvent and its 229 fallback. */
 +  public input(ev: InputEvent, keyDownSeen = false): boolean {
 +    if (!this._replacementComposition) return false;
-+    if (!keyDownSeen) this._editAwaitingKey = true;
 +    const start = this._compositionPosition.start;
++    const before = this._compositionView.textContent;
 +    this._compositionPosition.end = Math.max(start, this._textarea.selectionEnd ?? this._textarea.value.length);
 +    this._compositionView.textContent = this._textarea.value.substring(start, this._compositionPosition.end);
++    // An unchanged replacement is the input method committing the preedit, not an applied key:
++    // Safari 27 then passes Backspace on (keyCode 8) to delete the last jamo, which must happen.
++    if (!keyDownSeen && this._compositionView.textContent !== before) this._editAwaitingKey = true;
 +    this.updateCompositionElements();
 +    if (this._compositionPosition.end === start) {
 +      // Backspace removed the entire preedit. Nothing has reached the PTY to delete.
@@ -258,7 +258,10 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..f5192ca969e661a225ec37a4f26bb596
 +
 +  /** Commit the corrected DOM range before a following key, paste, syllable or blur. */
 +  public finishReplacement(): void {
-+    if (this._replacementComposition) this._finalizeComposition(false);
++    if (this._replacementComposition) {
++      this._editAwaitingKey = false;
++      this._finalizeComposition(false);
++    }
 +  }
 +
    /**
@@ -273,7 +276,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..f5192ca969e661a225ec37a4f26bb596
      this._compositionView.textContent = '';
      this._dataAlreadySent = '';
      this._compositionView.classList.add('active');
-@@ -71,9 +166,12 @@ export class CompositionHelper {
+@@ -71,9 +172,12 @@ export class CompositionHelper {
     * @param ev The event.
     */
    public compositionupdate(ev: Pick<CompositionEvent, 'data'>): void {
@@ -286,7 +289,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..f5192ca969e661a225ec37a4f26bb596
        this._compositionPosition.end = this._textarea.value.length;
      }, 0);
    }
-@@ -83,6 +181,7 @@ export class CompositionHelper {
+@@ -83,6 +187,7 @@ export class CompositionHelper {
     * the handler.
     */
    public compositionend(): void {
@@ -294,7 +297,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..f5192ca969e661a225ec37a4f26bb596
      this._finalizeComposition(true);
    }
  
-@@ -92,7 +191,24 @@ export class CompositionHelper {
+@@ -92,7 +197,24 @@ export class CompositionHelper {
     * @returns Whether the Terminal should continue processing the keydown event.
     */
    public keydown(ev: KeyboardEvent): boolean {
@@ -320,7 +323,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..f5192ca969e661a225ec37a4f26bb596
        if (ev.keyCode === 229) {
          // Continue composing if the keyCode is the "composition character"
          return false;
-@@ -125,56 +241,45 @@ export class CompositionHelper {
+@@ -125,56 +247,45 @@ export class CompositionHelper {
     *   the command is executed.
     */
    private _finalizeComposition(waitForPropagation: boolean): void {
@@ -404,7 +407,7 @@ index 7542969a62fa6b5e84471a3bdecdc4bec82de542..f5192ca969e661a225ec37a4f26bb596
    /**
     * Apply any changes made to the textarea after the current event chain is allowed to complete.
     * This should be called when not currently composing but a keydown event with the "composition
-@@ -183,7 +288,9 @@ export class CompositionHelper {
+@@ -183,7 +294,9 @@ export class CompositionHelper {
     */
    private _handleAnyTextareaChanges(): void {
      const oldValue = this._textarea.value;

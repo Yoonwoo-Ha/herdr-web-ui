@@ -25,13 +25,28 @@ packaging suffixes removed; neither requires a particular build number or a nume
 A reported ID is looked up exactly, including hashed directory names for long paths;
 directory or modification time never chooses a conversation.
 
-Grok 1.0.50 does not fire `SessionStart` on an in-TUI `/resume`, so Herdr can keep an old ID.
-`active_sessions.json` and open file descriptors can contain several sessions; neither
-identifies which of them is on screen. Chat is therefore shown only when the process's sole
-held `events.jsonl` session agrees with Herdr's ID. After a `/resume` that leaves them apart,
-or any other ambiguity, the pane uses the terminal view. That same rule applies to every
-Grok executable. Builds other than 1.0.50 were not each re-checked; an ambiguous hold still
-stays on the terminal view.
+Grok keeps `events.jsonl` open for earlier sessions as well as the one on screen, and an
+in-TUI `/resume` on Grok 1.0.50 does not fire `SessionStart`, so Herdr can keep an old ID.
+`active_sessions.json` does not say which session is on screen, and neither does the newest
+file. Chat follows the session Herdr reported only when that process holds its
+`events.jsonl`, that ID occurs in exactly one held session directory, and that file was
+written more recently than every other held session's `events.jsonl`. Older open session
+files do not hide it. Duplicate held IDs remain ambiguous even when only one directory has
+`updates.jsonl`; tied write times also use the terminal view.
+The held session events files must be fully resolved. A session events file under the
+sessions tree that is deleted, renamed (such as `events.jsonl.old`) or
+cannot be statted as a real file, makes the binding ambiguous and uses the terminal.
+
+The newest file only confirms Herdr's ID; it never chooses another session. A missing held
+file or a newer write to another held session uses the terminal view. An in-TUI `/resume`
+that writes to another session without reporting it to Herdr therefore shows the terminal
+until Herdr names that session and the same checks pass. The same rule applies to every
+Grok executable. Builds other than 1.0.50 were not each re-checked.
+
+**Resume limitation:** a `/resume` that Herdr does not hear about can keep showing the
+previous conversation until the resumed session writes its `events.jsonl`, because the
+previous session may still have the newest held file. This is a display limitation;
+approvals stay in the terminal.
 
 ## History and limits
 

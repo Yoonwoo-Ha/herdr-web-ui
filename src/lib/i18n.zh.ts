@@ -643,6 +643,7 @@ export const ZH: Record<string, string> = {
 
   // ---- prompt card ----
   "Submit": "提交",
+  "Skip question": "跳过问题",
   "Submit ({n})": "提交 ({n})",
   "Recommended": "推荐",
   "More than one could be picked": "可多选",
@@ -789,6 +790,7 @@ export const ZH: Record<string, string> = {
   // ---- terminal ----
   "Codex has a question open in the terminal: answer it above, or close it there (alt+↓) to message Codex.": "Codex 在终端中有一个未关闭的问题。请在上方回答，或在终端中关闭它 (alt+↓) 后再给 Codex 发消息。",
   "The question on screen changed; check it and answer again.": "屏幕上的问题已变化。请查看后重新回答。",
+  "Not updated: the question on screen may have changed.": "未更新：屏幕上的问题可能已经变化。",
   "NOT RESTORED": "恢复失败",
   "herdr could not restore this pane": "herdr 无法恢复此窗格",
   "Select a pane to open its terminal": "选择一个窗格以打开其终端",
@@ -867,6 +869,7 @@ export const ZH: Record<string, string> = {
   "That item no longer exists on the PC. Refresh and try again.": "该项目在电脑上已不存在。请刷新后重试。",
   "It changed on the PC while you were acting. Check it and try again.": "你操作期间电脑上的内容已更改。请检查后重试。",
   "The PC took too long to answer. Try again.": "电脑响应时间过长。请重试。",
+  "OpenCode did not confirm the answer. Check the question before sending again.": "未收到 OpenCode 的回答接收确认。请先检查问题，再决定是否重新发送。",
   "The PC could not do that. Try again; if it keeps failing, restart herdr web ui on the PC.": "电脑无法完成该操作。请重试；如果一直失败，请在电脑上重启 herdr web ui。",
   "Can't reach the PC. Check your connection, then try again.": "无法连接到电脑。请检查网络连接后重试。",
   "Something went wrong. Try again.": "出了点问题。请重试。",
@@ -1369,4 +1372,7 @@ export const ZH: Record<string, string> = {
   "Conversation turns": "对话轮次",
   "Go to turn {n}": "跳到第 {n} 轮",
   "Show full message": "显示完整消息",
+  "Change PC": "切换电脑",
+  "This is the demo. Go back to the app's list of PCs to open yours.": "这是演示。回到应用的电脑列表即可打开你自己的电脑。",
+  "This app shows {address}. Go back to its list of PCs to open another.": "此应用正在显示 {address}。回到电脑列表可打开其他电脑。",
 };
