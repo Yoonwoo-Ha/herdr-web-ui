@@ -11,6 +11,7 @@ import { processStartedAt, processStartUpperBound } from "./process-start.ts";
 import { codexImageParts } from "./codex-images.ts";
 import { codexReadCall, codexReadSkills, selectedSkill } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
+import type { TranscriptParser } from "./transcript-records.ts";
 import { agentGet, paneProcessInfo, paneRead, sessionSnapshot } from "./herdr/client.ts";
 import { resolveAgent } from "./pane-context.ts";
 
@@ -196,7 +197,7 @@ interface CodexParseState {
 }
 
 /** Complete records are folded once; snapshots detach mutable tools from prior HTTP answers. */
-export function createCodexTranscriptParser(state: CodexParseState = { turns: [], tools: new Map(), messages: [] }) {
+export function createCodexTranscriptParser(state: CodexParseState = { turns: [], tools: new Map(), messages: [] }): TranscriptParser {
   const { turns, tools, messages } = state;
   const assistant = (ts: string): ConversationTurn => {
     let turn = turns.at(-1);

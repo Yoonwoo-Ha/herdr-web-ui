@@ -229,28 +229,44 @@ export function toolSummary(name: string, input: Record<string, unknown>): strin
   return typeof first === "string" ? first.slice(0, 120) : name;
 }
 
+/** Complete-record folds with detached, non-committing previews of a final JSONL tail. */
+export interface TranscriptParser {
+  write(text: string): void;
+  snapshot(tail?: string): ConversationTurn[];
+}
+
+type OmpTranscriptOptions = { toolImages?: boolean; taskTitles?: Map<string, string> };
+
+interface OmpParseState {
+  turns: ConversationTurn[];
+  /** Tool parts still waiting for their result, also referenced by their turn's parts. */
+  pending: Map<string, Extract<ConversationPart, { kind: "tool" }>>;
+  /** The caller's map when parsing a page in stretches; previews must never write to it. */
+  taskTitles: Map<string, string>;
+  settled: boolean;
+}
+
+function ompParseState(options: OmpTranscriptOptions): OmpParseState {
+  return { turns: [], pending: new Map(), taskTitles: options.taskTitles ?? new Map(), settled: false };
+}
+
 /**
- * Splits one omp session jsonl into turns. Same shape of result as the Claude
- * parser: adjacent assistant messages merge, toolCall parts adopt the output
- * of the toolResult entry that answers them (matched by toolCallId), thinking
- * stays private to the agent.
+ * Folds new omp records into turns, retaining normalized parts rather than their source records.
+ * Adjacent assistant messages merge and tool calls adopt results matched by toolCallId.
  *
  * An assistant message that stopped for good (`stopReason: "stop"`) ends its turn: the next one
  * was woken by something nobody typed, such as omo's hidden monitor or background-task
  * notification. Merging across it folded the answer before it into the next turn's work block.
  */
-export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: { toolImages?: boolean; taskTitles?: Map<string, string> } = {}): ConversationTurn[] {
-  const turns: ConversationTurn[] = [];
-  /** tool parts still waiting for their result, by toolCall id */
-  const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
-  /** what OmO's `task` calls called their tasks, by task id: the caller's, when it parses a page in stretches */
-  const taskTitles = options.taskTitles ?? new Map<string, string>();
-  /** the last assistant message stopped for good: the next one starts a turn of its own */
-  let settled = false;
+export function createOmpTranscriptParser(options: OmpTranscriptOptions = {}): TranscriptParser {
+  return ompTranscriptParser(ompParseState(options), options.toolImages === true);
+}
 
+function ompTranscriptParser(state: OmpParseState, toolImages: boolean): TranscriptParser {
+  const { turns, pending, taskTitles } = state;
   const assistantTurn = (ts?: string): ConversationTurn => {
     const last = turns[turns.length - 1];
-    if (last !== undefined && last.role === "assistant" && !settled) return last;
+    if (last !== undefined && last.role === "assistant" && !state.settled) return last;
     const turn: ConversationTurn = { role: "assistant", ts: ts ?? null, parts: [] };
     turns.push(turn);
     return turn;
@@ -259,115 +275,137 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
   const contentParts = (content: unknown): { type?: string; text?: unknown }[] =>
     Array.isArray(content) ? content.filter((part) => typeof part === "object" && part !== null) : [];
 
-  for (const line of text.split("\n")) {
-    if (line.trim().length === 0) continue;
-    let entry: unknown;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue; // a torn tail line while omp is mid-append
-    }
-    if (entry === null || typeof entry !== "object") continue;
-    if (isContextClear(entry, "omp-transcript")) { turns.length = 0; pending.clear(); continue; }
-    const timestamp = (entry as { timestamp?: string }).timestamp;
-    const skillPrompt = skillPromptMessage(entry);
-    if (skillPrompt !== null) {
-      turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "text", text: skillPrompt.request }, ...skillPrompt.skills.map((skill) => ({ kind: "skill" as const, skill }))] });
-      continue;
-    }
-    const notice = piNotice(entry);
-    if (notice !== null) {
-      turns.push({ role: "user", ts: timestamp ?? null, parts: [notice] });
-      continue;
-    }
-    const results = omoTaskResults(entry, taskTitles);
-    if (results !== null) {
-      turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "task_result", tasks: results }] });
-      continue;
-    }
-    // pi folds old context into a summary of its own accord and on /compact. The entry is a
-    // tree entry, not a message, so it reaches the chat only through this branch: the card
-    // says where the conversation was cut, and pi keeps answering from the summary onward.
-    // piNotice above only claims `custom_message`, so a compaction entry always reaches here.
-    if ((entry as { type?: unknown }).type === "compaction") {
-      const summary = (entry as { summary?: unknown }).summary;
-      if (typeof summary === "string" && summary.trim().length > 0) {
-        turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "compact", text: summary }] });
+  const write = (text: string): void => {
+    for (const line of text.split("\n")) {
+      if (line.trim().length === 0) continue;
+      let entry: unknown;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue; // a torn tail line while omp is mid-append
       }
-      continue;
-    }
-    const message = piMessage(entry);
-    if (message === null) continue;
-    const applyResults = () => {
-      for (const result of piResults(message)) {
-        const tool = pending.get(result.id);
-        if (!tool) continue;
-        pending.delete(result.id);
-        trimOutput(tool, result.text, result.id);
-        if (result.error) tool.error = true;
-        if (options.toolImages === true && result.images.length > 0) {
-          // addressed by the call it answers: a nested result shares its entry with other
-          // blocks, so the entry id alone could not say which one an image came from
-          tool.images = result.images.map((media_type, index) => ({ media_type, ref: `pi:${result.id}:${index}` }));
+      if (entry === null || typeof entry !== "object") continue;
+      if (isContextClear(entry, "omp-transcript")) { turns.length = 0; pending.clear(); continue; }
+      const timestamp = (entry as { timestamp?: string }).timestamp;
+      const skillPrompt = skillPromptMessage(entry);
+      if (skillPrompt !== null) {
+        turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "text", text: skillPrompt.request }, ...skillPrompt.skills.map((skill) => ({ kind: "skill" as const, skill }))] });
+        continue;
+      }
+      const notice = piNotice(entry);
+      if (notice !== null) {
+        turns.push({ role: "user", ts: timestamp ?? null, parts: [notice] });
+        continue;
+      }
+      const results = omoTaskResults(entry, taskTitles);
+      if (results !== null) {
+        turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "task_result", tasks: results }] });
+        continue;
+      }
+      // pi folds old context into a summary of its own accord and on /compact. The entry is a
+      // tree entry, not a message, so it reaches the chat only through this branch: the card
+      // says where the conversation was cut, and pi keeps answering from the summary onward.
+      // piNotice above only claims `custom_message`, so a compaction entry always reaches here.
+      if ((entry as { type?: unknown }).type === "compaction") {
+        const summary = (entry as { summary?: unknown }).summary;
+        if (typeof summary === "string" && summary.trim().length > 0) {
+          turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "compact", text: summary }] });
         }
+        continue;
       }
-    };
-    if (message.role !== "assistant") applyResults();
-    omoTaskTitles(message, taskTitles);
-
-    if (message.role === "user") {
-      const prompt =
-        typeof message.content === "string"
-          ? message.content
-          : contentParts(message.content)
-              .map((part) => (part.type === "text" && typeof part.text === "string" ? part.text : ""))
-              .filter((part) => part.length > 0)
-              .join("\n");
-      if (prompt.length === 0) continue; // image-only user parts have no text to show
-      // a skill invocation reads as what the user asked, the skill as a chip on it: not as the
-      // SKILL.md the runtime put before it. Kept on this record, so no page boundary can part them
-      const invocation = skillInvocationPrompt(prompt);
-      const asked = invocation === null ? prompt : invocation.request || invocation.skills.map((skill) => `/skill:${skill.name}`).join(" ");
-      turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "text", text: asked }, ...(invocation?.skills ?? []).map((skill) => ({ kind: "skill" as const, skill }))] });
-      continue;
-    }
-
-    if (message.role === "assistant" && Array.isArray(message.content)) {
-      const turn = assistantTurn(timestamp);
-      if (timestamp) turn.end_ts = timestamp;
-      for (const block of message.content) {
-        if (typeof block !== "object" || block === null) continue;
-        const b = block as { type?: string; text?: unknown; thinking?: unknown; name?: unknown; id?: unknown; arguments?: unknown; intent?: unknown };
-        if (b.type === "text" && typeof b.text === "string" && b.text.length > 0) {
-          turn.parts.push({ kind: "text", text: b.text, ...(message.stopReason === "stop" ? { phase: "final_answer" as const } : {}) });
-        } else if (b.type === "thinking") {
-          const thinking = typeof b.thinking === "string" ? b.thinking : typeof b.text === "string" ? b.text : "";
-          if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });
-        } else if (b.type === "toolCall" && typeof b.name === "string") {
-          const input = (typeof b.arguments === "object" && b.arguments !== null ? b.arguments : {}) as Record<string, unknown>;
-          const summary = typeof b.intent === "string" && b.intent.length > 0 ? b.intent : toolSummary(b.name, input);
-          const part: Extract<ConversationPart, { kind: "tool" }> = {
-            kind: "tool",
-            name: b.name,
-            summary: summary.slice(0, 120),
-            input: JSON.stringify(input, null, 2),
-            output: "",
-          };
-          turn.parts.push(part);
-          if (typeof b.id === "string") pending.set(b.id, part);
+      const message = piMessage(entry);
+      if (message === null) continue;
+      const applyResults = () => {
+        for (const result of piResults(message)) {
+          const tool = pending.get(result.id);
+          if (!tool) continue;
+          pending.delete(result.id);
+          trimOutput(tool, result.text, result.id);
+          if (result.error) tool.error = true;
+          if (toolImages && result.images.length > 0) {
+            // addressed by the call it answers: a nested result shares its entry with other
+            // blocks, so the entry id alone could not say which one an image came from
+            tool.images = result.images.map((media_type, index) => ({ media_type, ref: `pi:${result.id}:${index}` }));
+          }
         }
-        // unsupported transcript parts are intentionally ignored
-      }
-      // A provider can place a result beside its call in the same assistant record.
-      applyResults();
-      // a failed request (a 401, an overloaded provider) leaves an empty message: without its
-      // error the chat showed the prompt with no answer at all
-      if (message.stopReason === "error" && typeof message.errorMessage === "string" && message.errorMessage.length > 0) {
-        turn.parts.push({ kind: "text", text: `Error: ${message.errorMessage}` });
-      }
-      settled = message.stopReason === "stop";
-    }
-  }
+      };
+      if (message.role !== "assistant") applyResults();
+      omoTaskTitles(message, taskTitles);
 
-  return turns.filter((turn) => turn.parts.length > 0).slice(-maxTurns);
+      if (message.role === "user") {
+        const prompt =
+          typeof message.content === "string"
+            ? message.content
+            : contentParts(message.content)
+                .map((part) => (part.type === "text" && typeof part.text === "string" ? part.text : ""))
+                .filter((part) => part.length > 0)
+                .join("\n");
+        if (prompt.length === 0) continue; // image-only user parts have no text to show
+        // a skill invocation reads as what the user asked, the skill as a chip on it: not as the
+        // SKILL.md the runtime put before it. Kept on this record, so no page boundary can part them
+        const invocation = skillInvocationPrompt(prompt);
+        const asked = invocation === null ? prompt : invocation.request || invocation.skills.map((skill) => `/skill:${skill.name}`).join(" ");
+        turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "text", text: asked }, ...(invocation?.skills ?? []).map((skill) => ({ kind: "skill" as const, skill }))] });
+        continue;
+      }
+
+      if (message.role === "assistant" && Array.isArray(message.content)) {
+        const turn = assistantTurn(timestamp);
+        if (timestamp) turn.end_ts = timestamp;
+        for (const block of message.content) {
+          if (typeof block !== "object" || block === null) continue;
+          const b = block as { type?: string; text?: unknown; thinking?: unknown; name?: unknown; id?: unknown; arguments?: unknown; intent?: unknown };
+          if (b.type === "text" && typeof b.text === "string" && b.text.length > 0) {
+            turn.parts.push({ kind: "text", text: b.text, ...(message.stopReason === "stop" ? { phase: "final_answer" as const } : {}) });
+          } else if (b.type === "thinking") {
+            const thinking = typeof b.thinking === "string" ? b.thinking : typeof b.text === "string" ? b.text : "";
+            if (thinking.length > 0) turn.parts.push({ kind: "thinking", text: thinking });
+          } else if (b.type === "toolCall" && typeof b.name === "string") {
+            const input = (typeof b.arguments === "object" && b.arguments !== null ? b.arguments : {}) as Record<string, unknown>;
+            const summary = typeof b.intent === "string" && b.intent.length > 0 ? b.intent : toolSummary(b.name, input);
+            const part: Extract<ConversationPart, { kind: "tool" }> = {
+              kind: "tool",
+              name: b.name,
+              summary: summary.slice(0, 120),
+              input: JSON.stringify(input, null, 2),
+              output: "",
+            };
+            turn.parts.push(part);
+            if (typeof b.id === "string") pending.set(b.id, part);
+          }
+          // unsupported transcript parts are intentionally ignored
+        }
+        // A provider can place a result beside its call in the same assistant record.
+        applyResults();
+        // a failed request (a 401, an overloaded provider) leaves an empty message: without its
+        // error the chat showed the prompt with no answer at all
+        if (message.stopReason === "error" && typeof message.errorMessage === "string" && message.errorMessage.length > 0) {
+          turn.parts.push({ kind: "text", text: `Error: ${message.errorMessage}` });
+        }
+        state.settled = message.stopReason === "stop";
+      }
+    }
+  };
+
+  return {
+    write,
+    snapshot(tail = ""): ConversationTurn[] {
+      if (tail.trim()) {
+        // Clone the whole graph together: pending must point at the preview's tool parts,
+        // and neither speculative title updates nor settled boundaries may escape it.
+        const preview = structuredClone(state);
+        ompTranscriptParser(preview, toolImages).write(tail);
+        return preview.turns.filter((turn) => turn.parts.length > 0);
+      }
+      return structuredClone(turns.filter((turn) => turn.parts.length > 0));
+    },
+  };
+}
+
+/** One-shot parsing shares the incremental record rules, including valid no-newline tails. */
+export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: OmpTranscriptOptions = {}): ConversationTurn[] {
+  const state = ompParseState(options);
+  ompTranscriptParser(state, options.toolImages === true).write(text);
+  // No writer survives this call, so its owned turns need no detached snapshot.
+  return state.turns.filter((turn) => turn.parts.length > 0).slice(-maxTurns);
 }

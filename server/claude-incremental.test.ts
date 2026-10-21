@@ -1,0 +1,243 @@
+import { describe, expect, it } from "bun:test";
+import type { ConversationTurn } from "../shared/protocol.ts";
+import type { SubagentDetail } from "./claude-subagents.ts";
+import { createClaudeTranscriptParser, parseClaudeTranscript } from "./conversation.ts";
+
+const jsonl = (...records: unknown[]) => records.map((record) => JSON.stringify(record)).join("\n");
+const stamp = (ms: number) => new Date(Date.UTC(2026, 9, 1) + ms).toISOString();
+const user = (content: unknown, parentUuid?: string) => ({ type: "user", parentUuid, message: { role: "user", content } });
+const assistant = (content: unknown[], stop_reason?: string | null, timestamp = stamp(0)) => ({ type: "assistant", timestamp, message: { role: "assistant", content, stop_reason } });
+const call = (id: string, name: string, input: Record<string, unknown>) => ({ type: "tool_use", id, name, input });
+const result = (tool_use_id: string, content: unknown, is_error = false) => ({ type: "tool_result", tool_use_id, content, is_error });
+const info = (content: string, ms: number) => ({ type: "system", subtype: "informational", content, timestamp: stamp(ms) });
+const local = (content: string, ms: number) => ({ type: "system", subtype: "local_command", content: `<local-command-stderr>${content}</local-command-stderr>`, timestamp: stamp(ms) });
+const notification = (id: string, use: string, result: string, status = "completed", summary = 'Agent "Reviewer" finished') => `<task-notification><task-id>${id}</task-id><tool-use-id>${use}</tool-use-id><status>${status}</status><summary>${summary}</summary><result>${result}</result></task-notification>`;
+const enqueue = (content: string) => ({ type: "queue-operation", operation: "enqueue", content });
+const notifiedAttachment = (prompt: string) => ({ type: "attachment", attachment: { type: "queued_command", commandMode: "task-notification", prompt } });
+const peerOrigin = { kind: "peer", from: "session-one", msg_id: "message-one", name: "Reviewer", body: "Review ready" };
+const peerAttachment = { type: "attachment", attachment: { type: "queued_command", origin: peerOrigin } };
+const peerEcho = { ...user("Review ready"), isMeta: true, origin: peerOrigin };
+const tools = (turns: ConversationTurn[]) => turns.flatMap((turn) => turn.parts.filter((part) => part.kind === "tool"));
+const tasks = (turns: ConversationTurn[]) => turns.flatMap((turn) => turn.parts.flatMap((part) => part.kind === "task_result" ? part.tasks : []));
+
+type Options = NonNullable<Parameters<typeof createClaudeTranscriptParser>[0]>;
+
+/** Check every append and speculative final line, including older returned snapshots. */
+function appendRecords(records: unknown[], options: Options = {}): ConversationTurn[] {
+  const parser = createClaudeTranscriptParser(options);
+  const initiallyNoticed = new Set(options.noticed);
+  const written: unknown[] = [];
+  for (const record of records) {
+    const before = parser.snapshot();
+    const saved = structuredClone(before);
+    const externalNoticed = options.noticed && new Set(options.noticed);
+    const externalSubagents = options.subagents && structuredClone(options.subagents);
+    const expected = parseClaudeTranscript(jsonl(...written, record), Infinity, { ...options, noticed: new Set(initiallyNoticed) });
+    expect(parser.snapshot(JSON.stringify(record))).toEqual(expected);
+    expect(parser.snapshot()).toEqual(saved);
+    expect(options.noticed).toEqual(externalNoticed);
+    expect(options.subagents).toEqual(externalSubagents);
+    parser.write(`${JSON.stringify(record)}\n`);
+    written.push(record);
+    expect(parser.snapshot()).toEqual(expected);
+    expect(before).toEqual(saved);
+  }
+  return parser.snapshot();
+}
+
+describe("incremental Claude transcripts", () => {
+  it("isolates consumer edits of ordinary snapshots from later skill results", () => {
+    const parser = createClaudeTranscriptParser();
+    parser.write(jsonl(user("Review the change"), assistant([call("skill", "Skill", { skill: "review" })], "tool_use")));
+    const exposed = parser.snapshot();
+    exposed[0]!.parts.length = 0;
+    tools(exposed)[0]!.skill!.name = "consumer edit";
+    parser.write(jsonl(user([result("skill", "Loaded")]), assistant([{ type: "text", text: "Reviewed" }], "end_turn")));
+    const updated = parser.snapshot();
+    expect(updated[0]?.parts).toEqual([{ kind: "text", text: "Review the change" }]);
+    expect(tools(updated)[0]?.skill).toMatchObject({ name: "review", status: "loaded" });
+    expect(updated.at(-1)?.parts.at(-1)).toEqual({ kind: "text", text: "Reviewed", phase: "final_answer" });
+  });
+
+  it("keeps delayed tool and skill results across notices and completed assistant turns", () => {
+    const turns = appendRecords([
+      user("Review and run"),
+      assistant([call("skill", "Skill", { skill: "review" }), call("run", "Bash", { command: "run" })], null, stamp(1)),
+      info("Message held", 2),
+      user([result("skill", [{ type: "text", text: "Loaded" }])]),
+      assistant([{ type: "thinking", thinking: "Internal reasoning" }, { type: "text", text: "First answer" }], "end_turn", stamp(3)),
+      user([result("run", "x".repeat(5000), true)]),
+      { ...user("Stop hook feedback"), isMeta: true },
+      { type: "system", subtype: "stop_hook_summary" },
+      assistant([call("retry", "Skill", { skill: "deploy" })], "tool_use", stamp(4)),
+      user([result("retry", "Unavailable", true)]),
+      assistant([{ type: "text", text: "Second answer" }], "end_turn", stamp(5)),
+    ]);
+    expect(turns.map((turn) => turn.role)).toEqual(["user", "user", "assistant", "assistant"]);
+    expect(turns[1]?.parts).toEqual([{ kind: "notice", text: "Message held", source: "informational" }]);
+    expect(turns.slice(2).map((turn) => turn.end_ts)).toEqual([stamp(3), stamp(5)]);
+    expect(turns[2]?.parts.map((part) => part.kind)).toEqual(["tool", "tool", "thinking", "text"]);
+    expect(tools(turns)).toMatchObject([
+      { name: "Skill", output: "Loaded", skill: { name: "review", status: "loaded" } },
+      { name: "Bash", output: `${"x".repeat(4000)}\n… trimmed`, output_ref: "run", output_size: 5000, error: true },
+      { name: "Skill", output: "Unavailable", error: true, skill: { name: "deploy", status: "failed" } },
+    ]);
+    expect(turns.slice(2).map((turn) => turn.parts.at(-1))).toEqual([
+      { kind: "text", text: "First answer", phase: "final_answer" }, { kind: "text", text: "Second answer", phase: "final_answer" },
+    ]);
+  });
+
+  it("deduplicates all notification carriers before the assistant at work and keeps resumed task results", () => {
+    const first = notification("review", "one", "First findings");
+    const second = notification("review", "two", "Retry failed", "failed");
+    const noticed = new Set(["prior\0prior-use"]);
+    const subagents = new Map<string, SubagentDetail>([["review", { title: "Review the parser", agent: "reviewer" }]]);
+    const turns = appendRecords([
+      user("Start"),
+      assistant([call("read", "Read", { file_path: "file.ts" })], "tool_use"),
+      enqueue(notification("prior", "prior-use", "Already on another page")),
+      enqueue(first),
+      notifiedAttachment(first),
+      user([{ type: "text", text: first }, result("read", "File read")]),
+      user(second),
+      enqueue(notification("shell", "shell-use", "Hidden command result", "completed", "Background command finished")),
+      assistant([{ type: "text", text: "Finished" }], "end_turn"),
+    ], { noticed, subagents });
+    expect(turns.map((turn) => turn.parts.map((part) => part.kind))).toEqual([["text"], ["task_result"], ["task_result"], ["tool", "text"]]);
+    expect(tasks(turns)).toMatchObject([
+      { id: "review", title: "Review the parser", agent: "reviewer", status: "completed", result: "First findings" },
+      { id: "review", title: "Review the parser", agent: "reviewer", status: "failed", result: "Retry failed" },
+    ]);
+    expect(tools(turns)[0]?.output).toBe("File read");
+    expect([...noticed]).toEqual(["prior\0prior-use", "review\0one", "review\0two"]);
+  });
+
+  it("reads newly supplied subagent metadata without letting previews change caller-owned state", () => {
+    const noticed = new Set<string>();
+    const subagents = new Map<string, SubagentDetail>();
+    const parser = createClaudeTranscriptParser({ noticed, subagents });
+    const start = [user("Start"), assistant([call("read", "Read", { file_path: "file.ts" })], "tool_use")];
+    parser.write(`${jsonl(...start)}\n`);
+    const before = parser.snapshot();
+    subagents.set("late", { title: "Metadata arrived", agent: "explorer" });
+    const record = enqueue(notification("late", "launch", "Found it"));
+    const preview = parser.snapshot(JSON.stringify(record));
+    expect(tasks(preview)).toMatchObject([{ title: "Metadata arrived", agent: "explorer", result: "Found it" }]);
+    expect(noticed.size).toBe(0);
+    expect([...subagents]).toEqual([["late", { title: "Metadata arrived", agent: "explorer" }]]);
+    expect(parser.snapshot()).toEqual(before);
+    parser.write(`${jsonl(record, notifiedAttachment(record.content))}\n`);
+    expect(parser.snapshot()).toEqual(preview);
+    expect(parser.snapshot()).toEqual(parseClaudeTranscript(jsonl(...start, record), Infinity, { subagents }));
+    expect([...noticed]).toEqual(["late\0launch"]);
+    expect(before.map((turn) => turn.parts.map((part) => part.kind))).toEqual([["text"], ["tool"]]);
+  });
+
+  it("joins informational lines and deduplicates local-command echoes across chunk boundaries", () => {
+    const turns = appendRecords([
+      user("Work"),
+      assistant([call("run", "Bash", { command: "run" })], "tool_use"),
+      info("\u001b[31mMessage held\u001b[0m", 100),
+      info("Try again", 101),
+      local("Message held", 102),
+      info("Later notice", 2000),
+      local("Different notice", 2001),
+      info("Different notice", 2002),
+      user([result("run", "Done")]),
+      assistant([{ type: "text", text: "Done" }], "end_turn"),
+    ]);
+    expect(turns.flatMap((turn) => turn.parts.filter((part) => part.kind === "notice"))).toEqual([
+      { kind: "notice", text: "Message held\nTry again", source: "informational" },
+      { kind: "notice", text: "Later notice", source: "informational" },
+      { kind: "notice", text: "Different notice", source: "local-command" },
+    ]);
+    expect(turns.at(-1)?.parts.map((part) => part.kind)).toEqual(["tool", "text"]);
+  });
+
+  it("removes sibling drafts after previews but retains prompts whose replies were committed", () => {
+    const parser = createClaudeTranscriptParser();
+    const draft = user("Cancelled draft", "parent");
+    const resend = user([{ type: "text", text: "Actual prompt" }], "parent");
+    const answer = assistant([{ type: "text", text: "Answer" }], "end_turn");
+    parser.write(`${jsonl(draft, { type: "last-prompt" })}\n`);
+    const old = parser.snapshot();
+    expect(parser.snapshot(JSON.stringify(resend))[0]?.parts).toEqual([{ kind: "text", text: "Actual prompt" }]);
+    expect(parser.snapshot(JSON.stringify(answer))).toHaveLength(2);
+    parser.write(`${jsonl(resend)}\n`);
+    expect(parser.snapshot()).toEqual([{ role: "user", ts: null, parts: [{ kind: "text", text: "Actual prompt" }] }]);
+    expect(old[0]?.parts).toEqual([{ kind: "text", text: "Cancelled draft" }]);
+    parser.write(`${jsonl(answer, user("A later sibling", "parent"))}\n`);
+    expect(parser.snapshot()).toEqual(parseClaudeTranscript(jsonl(draft, resend, answer, user("A later sibling", "parent"))));
+    expect(parser.snapshot().map((turn) => turn.parts[0])).toEqual([
+      { kind: "text", text: "Actual prompt" }, { kind: "text", text: "Answer", phase: "final_answer" }, { kind: "text", text: "A later sibling" },
+    ]);
+    const emptyReply = appendRecords([draft, assistant([], "end_turn"), resend]);
+    expect(emptyReply.map((turn) => turn.parts[0])).toEqual([{ kind: "text", text: "Cancelled draft" }, { kind: "text", text: "Actual prompt" }]);
+  });
+
+  it("preserves peer dedup, queued human prompts, image refs, pastes and thinking-display updates", () => {
+    const paste = '<pasted_content id="paste-one">\nPasted text\n</pasted_content id="paste-one">';
+    const turns = appendRecords([
+      { ...user([{ type: "text", text: paste }, { type: "image", source: { type: "base64", media_type: "image/png", data: "PRIVATE IMAGE" } }, { type: "image", source: { type: "base64", media_type: "application/pdf" } }]), uuid: "image-entry" },
+      { ...assistant([{ type: "thinking", thinking: "" }, { type: "thinking", thinking: "Visible update" }]), thinkingDisplay: "updates" },
+      peerAttachment,
+      peerEcho,
+      { ...user("Hidden meta body"), isMeta: true },
+      enqueue(paste),
+      { type: "attachment", attachment: { type: "queued_command", commandMode: "prompt", origin: { kind: "human" }, prompt: paste } },
+      assistant([{ type: "thinking", thinking: "Private reasoning" }, { type: "text", text: "Answer" }], "end_turn"),
+    ]);
+    expect(turns.map((turn) => turn.parts)).toEqual([
+      [{ kind: "image", media_type: "image/png", ref: "image-entry:1" }, { kind: "text", text: "Pasted text" }],
+      [{ kind: "text", text: "Visible update", phase: "commentary" }],
+      [{ kind: "notice", text: "Review ready", source: "peer:Reviewer" }],
+      [{ kind: "text", text: "Pasted text" }],
+      [{ kind: "thinking", text: "Private reasoning" }, { kind: "text", text: "Answer", phase: "final_answer" }],
+    ]);
+    expect(JSON.stringify(turns)).not.toContain("PRIVATE IMAGE");
+    expect(JSON.stringify(turns)).not.toContain("Hidden meta body");
+  });
+
+  it("clears visible state and pending tools while keeping native notification and peer dedup semantics", () => {
+    const notice = enqueue(notification("review", "one", "Old findings"));
+    const clear = user("<command-name>/clear</command-name>");
+    const before = [
+      user("Old prompt"),
+      assistant([call("stale", "Skill", { skill: "old" })], "tool_use"),
+      notice,
+      peerAttachment,
+      { ...clear, isMeta: true },
+      { ...user([{ type: "text", text: "Compacted summary" }]), isCompactSummary: true },
+    ];
+    const parser = createClaudeTranscriptParser();
+    parser.write(`${jsonl(...before)}\n`);
+    const saved = parser.snapshot();
+    expect(saved.at(-1)?.parts).toEqual([{ kind: "compact", text: "Compacted summary" }]);
+    expect(parser.snapshot(JSON.stringify(clear))).toEqual([]);
+    expect(parser.snapshot()).toEqual(saved);
+    parser.write(`${jsonl(clear, user([result("stale", "Too late", true)]), notice, peerEcho)}\n`);
+    expect(parser.snapshot()).toEqual([]);
+    const after = [user("New prompt"), assistant([call("fresh", "Skill", { skill: "new" })], "tool_use"), user([result("fresh", "Loaded")]), assistant([{ type: "text", text: "New answer" }], "end_turn")];
+    parser.write(`${jsonl(...after)}\n`);
+    expect(parser.snapshot()).toEqual(parseClaudeTranscript(jsonl(...before, clear, user([result("stale", "Too late", true)]), notice, peerEcho, ...after)));
+    expect(parser.snapshot().map((turn) => turn.parts.map((part) => part.kind))).toEqual([["text"], ["tool", "text"]]);
+    expect(tools(parser.snapshot())[0]?.skill).toMatchObject({ name: "new", status: "loaded" });
+    expect(tools(saved)[0]?.skill).toMatchObject({ name: "old", status: "requested" });
+  });
+
+  it("previews torn and valid final records without consuming them", () => {
+    const parser = createClaudeTranscriptParser();
+    const prompt = user("Unicode reply");
+    parser.write(`${jsonl(prompt)}\n`);
+    const before = parser.snapshot();
+    const tail = JSON.stringify(assistant([{ type: "text", text: "終🙂" }], "end_turn"));
+    for (let cut = 1; cut < tail.length; cut++) expect(parser.snapshot(tail.slice(0, cut))).toEqual(before);
+    const preview = parser.snapshot(tail);
+    expect(preview.at(-1)?.parts).toEqual([{ kind: "text", text: "終🙂", phase: "final_answer" }]);
+    expect(parser.snapshot()).toEqual(before);
+    parser.write(tail);
+    expect(parser.snapshot()).toEqual(preview);
+    expect(parser.snapshot()).toEqual(parseClaudeTranscript(`${jsonl(prompt)}\n${tail}`));
+    expect(before).toHaveLength(1);
+  });
+});
