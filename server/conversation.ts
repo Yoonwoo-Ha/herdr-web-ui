@@ -1084,7 +1084,7 @@ function parseTurns(source: RecognizedConversation["source"], path: string, text
       : parseOmpTranscript(text, Infinity, { toolImages: source === "pi-transcript" || source === "cmd-transcript", taskTitles });
 }
 
-type IncrementalSource = "codex-transcript" | "omp-transcript" | "claude-transcript";
+type IncrementalSource = "codex-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "claude-transcript";
 
 interface LiveTranscriptTurn {
   source: IncrementalSource;
@@ -1125,7 +1125,7 @@ function incrementalLiveTurn(path: string, stream: TranscriptStream, source: Inc
       }
     }
   }
-  // OMP and Claude used to reread the live task, so growth must not hide an in-place edit.
+  // Non-Codex readers used to reread the live task, so growth must not hide an in-place edit.
   // Verify committed bytes without decoding or reparsing them; keep only their digest.
   const currentBytes = source === "codex-transcript" ? undefined : readStream(stream, start, stream.length);
   let digest = currentBytes ? createHash("sha256") : undefined;
@@ -1140,8 +1140,8 @@ function incrementalLiveTurn(path: string, stream: TranscriptStream, source: Inc
   if (!cached) {
     const subagents = source === "claude-transcript" ? { ids: new Set<string>(), details: new Map<string, SubagentDetail>() } : undefined;
     const parser = source === "codex-transcript" ? createCodexTranscriptParser()
-      : source === "omp-transcript" ? createOmpTranscriptParser({ taskTitles: new Map(before.taskTitles) })
-      : createClaudeTranscriptParser({ subagents: subagents!.details, noticed: new Set(before.noticed) });
+      : source === "claude-transcript" ? createClaudeTranscriptParser({ subagents: subagents!.details, noticed: new Set(before.noticed) })
+      : createOmpTranscriptParser({ taskTitles: new Map(before.taskTitles) });
     cached = { source, id: stream.id, start, pageStart: before.start, prefixBoundary: before.tail, scanned: start,
       boundary: bytesBefore(stream, start), parser, metadata: before.metadata, subagents };
   }
@@ -1166,7 +1166,7 @@ function incrementalLiveTurn(path: string, stream: TranscriptStream, source: Inc
     cached.boundary = bytesBefore(stream, cached.scanned);
   }
   if (digest) cached.contentHash = digest.update(bytes.subarray(0, complete)).digest("hex");
-  // The original Codex cache's entry/source-byte budgets are shared by all three readers.
+  // All incremental readers share the original Codex cache's entry/source-byte budgets.
   // Retain normalized state only, never raw source records or the speculative tail.
   remember(liveTranscriptTurns, path, cached, 8);
   let retained = [...liveTranscriptTurns.values()].reduce((sum, turn) => sum + turn.scanned - turn.start, 0);
@@ -1226,7 +1226,7 @@ function liveTurns(path: string, stream: TranscriptStream, source: RecognizedCon
   }
   settled.observedEnd = stream.length;
   rememberPage(settledTurns, key, settled, 8);
-  if (source === "codex-transcript" || source === "omp-transcript" || source === "claude-transcript") {
+  if (source === "codex-transcript" || source === "omp-transcript" || source === "omo-transcript" || source === "gjc-transcript" || source === "claude-transcript") {
     const live = incrementalLiveTurn(path, stream, source, last, settled);
     return { turns: [...settled.turns, ...live.turns], metadata: live.metadata };
   }
