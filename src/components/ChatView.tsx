@@ -1506,13 +1506,13 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     if (!visible) return;
     let cancelled = false;
     /** The turns between the held start and where the newest page now starts, a page at a time; null when they cannot be joined. */
-    const turnsBetween = async (held: string | null, start: string): Promise<ConversationTurn[] | null> => {
+    const turnsBetween = async (held: string | null, start: string, signal: AbortSignal): Promise<ConversationTurn[] | null> => {
       const pages: ConversationTurn[][] = [];
       let before = start;
       try {
         for (let step = 0; step < 32 && before !== held; step++) {
           if (cancelled) return null;
-          const page = await fetchPaneConversation(paneId, { before, ...(held === null ? {} : { since: held }), prompts: pagePrompts });
+          const page = await fetchPaneConversation(paneId, { before, ...(held === null ? {} : { since: held }), prompts: pagePrompts, signal });
           if (page.cursor === held) {
             pages.unshift(page.turns);
             return pages.flat();
@@ -1529,11 +1529,11 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       }
       return before === held ? pages.flat() : null;
     };
-    const read = async (): Promise<void> => {
+    const read = async (signal: AbortSignal): Promise<void> => {
       const readKey = presentationRef.current;
       const finish = finishRef.current;
       const previousAnswer = lastAnswer.current ?? undefined;
-      const page = { ...(heldFrom.current === null ? {} : { from: heldFrom.current }), history_id: previousAnswer?.history_id, prompts: pagePrompts, fresh: readKey !== validatedPresentation.current };
+      const page = { ...(heldFrom.current === null ? {} : { from: heldFrom.current }), history_id: previousAnswer?.history_id, prompts: pagePrompts, fresh: readKey !== validatedPresentation.current, signal };
        let generation = olderGeneration.current;
       try {
         let conversation;
@@ -1546,7 +1546,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
           // the turns shown stay until the newest page answers: a /clear goes from them straight to
           // the new conversation, with no loading state between. A failed read takes them away too.
           try {
-            conversation = await fetchPaneConversation(paneId, { prompts: pagePrompts });
+            conversation = await fetchPaneConversation(paneId, { prompts: pagePrompts, signal });
           } finally {
             if (!cancelled && generation === olderGeneration.current) {
               dropOlder(); signature.current = ""; lastAnswer.current = null;
@@ -1604,7 +1604,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         const held = heldFrom.current ?? (previous?.source !== "scrollback" && previous?.history_id === conversation.history_id ? previous?.cursor : undefined);
         let moved: ConversationTurn[] = [];
         if (held !== undefined && conversation.source !== "scrollback" && typeof conversation.cursor === "string" && conversation.cursor !== held) {
-          const between = await turnsBetween(held, conversation.cursor);
+          const between = await turnsBetween(held, conversation.cursor, signal);
           if (cancelled || generation !== olderGeneration.current) return;
           if (between === null) {
             dropOlder(); setState(EMPTY_STATE); setLoaded(false); signature.current = ""; lastAnswer.current = null;
@@ -1628,7 +1628,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
               ? { source: "scrollback", turns: [], messages: [], truncated: false } : previous);
             signature.current = ""; lastAnswer.current = null;
           }
-          const result = await fetchPaneTranscript(paneId, TRANSCRIPT_LINES);
+          const result = await fetchPaneTranscript(paneId, TRANSCRIPT_LINES, signal);
           if (cancelled || generation !== olderGeneration.current) return;
           next = { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text).filter((message) => message.role !== "status"), truncated: result.truncated === true };
         }
@@ -1701,10 +1701,10 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     const generation = olderGeneration.current;
     loadingOlder.current = true;
     setOlderState("loading");
-    await conversationRefresh.page(async () => {
+    await conversationRefresh.page(async (signal) => {
       try {
         if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
-        const page = await fetchPaneConversation(paneId, { before, prompts: pagePrompts });
+        const page = await fetchPaneConversation(paneId, { before, prompts: pagePrompts, signal });
         if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
         if (autoTabNames.current) learnFromConversation(machineId, paneId, page);
         if (page.history_id !== history.current) {
@@ -1737,6 +1737,11 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       } finally {
         if (olderGeneration.current === generation) loadingOlder.current = false;
       }
+    }).catch((cause: unknown) => {
+      // A page still queued when its screen closes is cancelled before its callback runs, so its
+      // finally never clears the loading flags: clear them here, or Load older stays disabled
+      if (!(cause instanceof DOMException && cause.name === "AbortError")) throw cause;
+      if (olderGeneration.current === generation) { loadingOlder.current = false; setOlderState("idle"); }
     });
   }, [fetchPaneConversation, olderCursor, paneId, pagePrompts, conversationRefresh]);
 
