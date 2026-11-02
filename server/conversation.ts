@@ -42,7 +42,7 @@ import { isDshProcess, resolveDshTranscript, dshConversation, dshToolOutput, typ
 import { authorizedTranscript } from "./transcript-store.ts";
 
 import type { ConversationMetadata, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
-import { herdrRpc, paneProcessInfo, paneRead, paneScrollInfo, sessionSnapshot, type ProcessInfo } from "./herdr/client.ts";
+import { herdrRpc, herdrSocketPath, paneProcessInfo, paneRead, paneScrollInfo, sessionSnapshot, type ProcessInfo } from "./herdr/client.ts";
 import { resolveAgent } from "./pane-context.ts";
 import { codexFreshSession, codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHomePlaced, parseCodexTranscript, readRange } from "./codex.ts";
 import { CODEX_IMAGE_REF, CODEX_TOOL_IMAGE_REF, codexOutputPicture, codexTranscriptImage, DataUrlPictureScan, finish, finishAsync, forgetOmpBlobTypes, InlinePictureScan, MAX_IMAGE_BYTES, ompBlobAnchor, ompBlobDigest, ompBlobPictureSteps, type Steps } from "./codex-images.ts";
@@ -81,7 +81,7 @@ import { readsStartScreen, startScreenMetadata } from "./start-screen.ts";
 import { commandTranscriptRecords, PI_EVIDENCE_TYPES, type CommandTranscriptRecord } from "./outcome.ts";
 import { type ClaudeBranch, claudeForks, followClaudeBranch, type PromptChain, turnStarts } from "./transcript-turns.ts";
 import { copilotSetAside } from "./copilot.ts";
-import { devinSessionForPane, isDevinProcess } from "./devin-session.ts";
+import { DevinLockMissing, devinLockProof, devinSessionForPane, isDevinProcess, type DevinLockProof } from "./devin-session.ts";
 import { userHome } from "./user-home.ts";
 import { kiroCodexProcess } from "./kiro-terminal.ts";
 
@@ -1417,7 +1417,7 @@ type ResolvedTranscript =
 /** A native file or database session, resolved without parsing conversation turns. */
 export type NativeTranscript =
   | ResolvedTranscript
-  | { source: "devin-transcript"; path: string; session: string; cwd: string };
+  | { source: "devin-transcript"; path: string; session: string; cwd: string; binding?: string };
 
 /**
  * The store a pane's transcript lives in. herdr's agent label follows the
@@ -1556,6 +1556,7 @@ async function omoTranscriptPath(paneId: string, cwd: string, panes?: HerdrPane[
  * `pane.process_info` for this pane that the caller read for this same look, so it is not asked again.
  */
 export async function paneTranscript(paneId: string, codexHome?: string, snapshot?: SessionSnapshot, devinDbPath?: string, opencodeDb?: string, hermesHome?: string, grokHome?: string, museData?: string, known?: KnownProcesses): Promise<NativeTranscript> {
+  const socket = herdrSocketPath();
   const panes = (snapshot ?? await sessionSnapshot()).panes;
   const pane = panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined) throw new ConversationUnavailable("pane_not_found");
@@ -1565,9 +1566,10 @@ export async function paneTranscript(paneId: string, codexHome?: string, snapsho
   if (pane.agent === "devin" && !(await paneRunsOmo(paneId, known))) {
     const cwd = pane.foreground_cwd || pane.cwd;
     const storePath = devinDbPath ?? defaultDevinDbPath();
-    const info = known !== undefined ? { process_info: known ?? undefined } : await herdrRpc<{ process_info?: { foreground_processes?: { argv?: unknown }[] } }>(
+    const info = known !== undefined ? { process_info: known ?? undefined } : await herdrRpc<{ process_info?: { foreground_processes?: { pid?: number; argv?: unknown }[] } }>(
       "pane.process_info", { pane_id: paneId },
     ).catch(() => null);
+    if (herdrSocketPath() !== socket) throw new ConversationUnavailable("no_session_id");
     const processes = (info?.process_info?.foreground_processes ?? []).filter((process) =>
       Array.isArray(process.argv) && process.argv.every((arg) => typeof arg === "string") &&
       isDevinProcess(process.argv as string[]) && process.argv[1] !== "acp",
@@ -1576,8 +1578,23 @@ export async function paneTranscript(paneId: string, codexHome?: string, snapsho
     // No Devin runs under the label: what does run is resolved below, as it was before this
     // reader (an omo is found by its process tree, whatever herdr calls the pane).
     if (processes.length === 1) {
-      const session = devinSessionForPane(pane, panes, processes[0]!.argv as string[]);
-      return { source: "devin-transcript", path: storePath, session, cwd };
+      const foreground = processes[0]!;
+      // the live lock names a fresh session; where there is no lock to read (no session_locks in an
+      // older Devin, a symlinked store, no lock taken yet) an explicitly named session reads as
+      // before. Evidence that is read and does not hold up (two locks, a foreign owner) refuses, and
+      // so does a lock naming another session than the pane names (devinSessionForPane)
+      let proof: DevinLockProof | undefined;
+      if (process.platform === "linux" && typeof foreground.pid === "number") {
+        try { proof = devinLockProof(foreground.pid, storePath); } catch (error) {
+          if (!(error instanceof DevinLockMissing)) throw error;
+        }
+      }
+      const session = devinSessionForPane(pane, panes, foreground.argv as string[], proof?.session);
+      if (proof !== undefined) {
+        const again = devinLockProof(foreground.pid!, storePath);
+        if (again.session !== proof.session || again.binding !== proof.binding) throw new ConversationUnavailable("no_session_id");
+      }
+      return { source: "devin-transcript", path: storePath, session, cwd, binding: JSON.stringify([socket, proof?.binding ?? null]) };
     }
   }
 
@@ -1617,6 +1634,7 @@ async function bottomViewport(paneId: string): Promise<string> {
  * `opencodeDb` is OpenCode's store, unset where OpenCode itself would find it.
  */
 export async function paneConversation(paneId: string, codexHome?: string, page: ConversationPage = {}, devinDbPath?: string, opencodeDb?: string, hermesHome?: string, grokHome?: string, museData?: string): Promise<RecognizedConversation> {
+  const socket = herdrSocketPath();
   const snapshot = await sessionSnapshot();
   let resolved: NativeTranscript;
 
@@ -1685,7 +1703,11 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   }
   if (resolved.source === "devin-transcript") {
     try {
+      if (herdrSocketPath() !== socket) throw new ConversationUnavailable("no_session_id");
       const answer = devinConversation(resolved.session, resolved.cwd, page, resolved.path);
+      const fresh = await paneTranscript(paneId, codexHome, undefined, devinDbPath, opencodeDb, hermesHome, grokHome, museData);
+      if (fresh.source !== "devin-transcript" || fresh.session !== resolved.session || fresh.path !== resolved.path
+        || fresh.cwd !== resolved.cwd || fresh.binding !== resolved.binding) throw new ConversationUnavailable("no_session_id");
       rememberPaneDevin(paneId, resolved.session, resolved.cwd, resolved.path);
       return answer;
     } catch (error) {
