@@ -33,7 +33,6 @@ export const CHAT_JA: Record<string, string> = {
   "thinking": "思考",
   "Working…": "作業中…",
   "Worked": "作業完了",
-  "Rewind in terminal": "ターミナルで巻き戻す",
   "Copy as markdown": "Markdown としてコピー",
   "Copy as plain text": "プレーンテキストとしてコピー",
   "Plain text": "プレーンテキスト",

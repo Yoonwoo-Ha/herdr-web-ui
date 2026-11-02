@@ -33,7 +33,6 @@ export const CHAT_KO: Record<string, string> = {
   "thinking": "생각",
   "Working…": "작업 중…",
   "Worked": "작업함",
-  "Rewind in terminal": "터미널에서 되감기",
   "Copy as markdown": "마크다운으로 복사",
   "Copy as plain text": "일반 텍스트로 복사",
   "Plain text": "일반 텍스트",

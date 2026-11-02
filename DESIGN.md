@@ -2040,13 +2040,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   first copy drops its own left inset so its glyph stays on the prose edge (an overhang past the
   transcript's edge cannot be tapped). With a mouse the copy and format buttons keep their `--chip-h`
   look and take a `--pointer-target` hit area through an invisible `::before` expander.
-- A user turn of Claude Code, grok or agy carries one more glyph button beside its copy, the same
-  `.chat-copy` look (`.chat-rewind`, lucide Undo2): **Rewind in terminal** sends nothing and
-  opens the pane's terminal with a dismissible, one-line `.terminal-banner-rewind` hint to run
-  the agent's own `/rewind`. Drafts stay intact. Chat follows the native transcript's active
-  branch once the agent records it; it never guesses a restore from a dialog's wording. The
-  hover placement follows the message actions of the Claude and Codex apps; the terminal handoff
-  deliberately differs from their native rewind controls because this bridge does not own them.
+- A message carries no rewind action: an agent's own `/rewind` (Claude Code, grok, Antigravity) is run in the pane's terminal, and
+  Chat follows the native transcript's active branch once the agent records it; it never guesses a restore from a dialog's wording.
 - A terminal-only command sent from Chat is one quiet right-aligned row, not a bubble:
   `SquareTerminal`, the command in mono `--fs-sm`, **Ran in terminal** in `--text-dim`,
   and one **Open Terminal** text button, which opens a terminal peek over the chat (see the
@@ -2766,8 +2761,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   pointer, or `768px` and under) the key bar takes the composer's place and the composer is
   `display: none`, still mounted with its draft: the message box is blurred on the accepted
   receipt, so a phone's keyboard drops, and the grid is not focused.
-- The peek's head stands in the terminal banner column and takes no grid row, in the rewind
-  hint's anatomy (neutral elevated surface, hairline, `--radius-md`, `--fs-xs`, `--space-2`
+- The peek's head stands in the terminal banner column and takes no grid row, in the held-input
+  row's anatomy (neutral elevated surface, hairline, `--radius-md`, `--fs-xs`, `--space-2`
   gaps, existing button targets): **/command ran** (truncated, whole in its title), under it
   **Chat may come back when you close it** when the return is armed (a possibility, never a
   promise: Claude may record no close, and a screen may close onto text), then **Back to Chat** and

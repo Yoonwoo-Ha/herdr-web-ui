@@ -33,7 +33,6 @@ export const CHAT_ZH: Record<string, string> = {
   "thinking": "思考",
   "Working…": "正在工作…",
   "Worked": "已工作",
-  "Rewind in terminal": "在终端中回退",
   "Copy as markdown": "复制为 Markdown",
   "Copy as plain text": "复制为纯文本",
   "Plain text": "纯文本",

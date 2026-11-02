@@ -113,7 +113,7 @@ export interface PaneTerminalProps {
   machineName?: string;
   /** the lens over the pane: the chat transcript, or the live xterm grid (App remembers it per pane) */
   view: PaneView;
-  /** switches this pane to its terminal lens, and saves it (Keep Terminal, the rewind hint) */
+  /** switches this pane to its terminal lens, and saves it (Keep Terminal) */
   onOpenTerminal?: () => void;
   /** the terminal command's peek this pane shows (lib/terminalPeek.ts): its terminal over its chat */
   peek?: TerminalPeek | null;
@@ -456,11 +456,6 @@ export function PaneTerminal({
   // input typed while disconnected, held for the user to review and send
   const [draftState, setDraftState] = useState<{ owner: string | null; value: InputDraft }>({ owner: null, value: EMPTY_DRAFT });
   const draft = draftState.value;
-  // a message's "Rewind in terminal" (Claude Code, grok, agy): which pane's terminal says to run the agent's own
-  // rewind, until dismissed or the chat is back. Nothing is typed for it: a draft stays as it was
-  const [rewindHint, setRewindHint] = useState<string | null>(null);
-  const rewindInTerminal = useCallback(() => { setRewindHint(paneId); onOpenTerminal?.(); }, [paneId, onOpenTerminal]);
-  useEffect(() => { if (chatView) setRewindHint(null); }, [chatView]);
   const onPeekRef = useRef(onPeek); onPeekRef.current = onPeek;
   const onEndPeekRef = useRef(onEndPeek); onEndPeekRef.current = onEndPeek;
   // The outcome ids this pane's chat last read (its prompt poll). A send notes them as it leaves, so
@@ -1078,12 +1073,6 @@ export function PaneTerminal({
             {draft.text.length > 0 && <span className="draft-held" title={draft.text}> {t("Input held:")} <code>“{draft.text}”</code></span>}
           </div>
         )}
-        {paneId !== null && !chatView && rewindHint === paneId && (
-          <div className="terminal-banner terminal-banner-rewind" role="status">
-            <span>{t("Run /rewind here to choose the message to go back to. The chat follows.")}</span>
-            <button type="button" className="icon-button" aria-label={t("Dismiss")} title={t("Dismiss")} onClick={() => setRewindHint(null)}><X aria-hidden="true" /></button>
-          </div>
-        )}
         {/* the peek's head: no grid row of its own, no focus trap and no Escape of its own (Escape is the
             agent's). Keep Terminal saves the terminal lens, which ends the peek */}
         {paneId !== null && peek !== null && (
@@ -1222,7 +1211,6 @@ export function PaneTerminal({
             onOutcomes={onChatOutcomes}
             interactive={!observing && role === "interact"}
             quotable={!secretActive}
-            onRewindInTerminal={onOpenTerminal ? rewindInTerminal : undefined}
             cwd={cwd}
           />
           </RenderBoundary>
