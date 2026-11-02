@@ -123,8 +123,8 @@ in the app the phone runs for that PC, which is code the developer serves from `
 (Cloudflare Pages): it holds the phone's key and shows what the PC sends, so it protects the
 content from the relay, not from that code. That code is open source, built by the Release
 workflow from each tag and published with its SHA-256, and sends the content only to the PC.
-`app.ovis.sh` sees requests for its static files (the phone's address, the PC's relay ID, and
-any file path in a page address such as a file opened in its own tab or as a raw file); no code
+`app.ovis.sh` sees requests for its static files (the phone's address and the PC's relay ID; a
+file path or pane the page shows stays in the address's fragment, which is never sent); no code
 of the developer's runs on them and the developer keeps no log of them.
 One route does reach the developer: the app tells the PC the settings chosen in it
 (`TelemetryNotice` in

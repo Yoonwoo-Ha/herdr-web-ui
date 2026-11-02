@@ -139,9 +139,9 @@ accesses" that data, and Ovis shows it, so it does not apply. Three routes leave
   PC relay ID (and, for the PC's own connection, its public key), its role, its address and when
   and how much passes, never the content, and keeps none of it (no logs, no storage; the
   address only rate-limits). The app such a PC opens in is static files from `app.ovis.sh`
-  (Cloudflare Pages), which sees requests for those files: the phone's address, the PC's relay ID
-  in the path, and whatever else the address holds, such as the path of a file the user opens in
-  a tab of its own or as a raw file. No code of the developer's runs on those requests (no Pages
+  (Cloudflare Pages), which sees requests for those files: the phone's address and the PC's relay ID
+  in the path. A file path or pane the page shows stays in the address's fragment, which the
+  browser never sends. No code of the developer's runs on those requests (no Pages
   Functions) and the developer keeps no log of them. So for the encrypted content (the types in
   the table that the user sees and sends) the relay adds no type and no recipient: it still goes
   only to the user's PC. What the relay services do get, unencrypted, is checked against the
