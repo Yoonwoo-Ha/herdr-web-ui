@@ -206,6 +206,5 @@ export const CHAT_JA: Record<string, string> = {
   "Go to turn {n}": "ターン {n} へ移動",
   "Show full message": "メッセージ全体を表示",
   "Open link": "リンクを開く",
-  "Share link": "リンクを共有",
   "Sent · waiting for the agent's next turn": "送信済み · エージェントの次のターンを待っています",
 };

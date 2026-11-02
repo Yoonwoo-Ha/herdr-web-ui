@@ -7,7 +7,7 @@ import type { AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { loadRelayShell } from "../lib/relay.ts";
-import { useRelay } from "../lib/useRelay.ts";
+import { inRelayShell, useRelay } from "../lib/useRelay.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
 import { SHORTCUTS, bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutDisplayKeys, shortcutKeys, shortcutConflict, type ShortcutId } from "../lib/shortcuts.ts";
 import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
@@ -885,7 +885,7 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll }: { auth: Health
     fetchRemoteAccess().then(setAccess, () => setAccess(null));
   }, []);
   useEffect(() => { loadAccess(); }, [loadAccess]);
-  const plan = phonePlan({ protocol: window.location.protocol, hostname: window.location.hostname, origin: window.location.origin, secure: window.isSecureContext }, access ?? null);
+  const plan = phonePlan({ protocol: window.location.protocol, hostname: window.location.hostname, origin: window.location.origin, secure: window.isSecureContext, shell: inRelayShell() }, access ?? null);
   // where a phone can open this app now, for the pairing QR code: the served address, else this one when it is not loopback
   const pairUrl = plan.kind === "here" || plan.kind === "served" ? plan.url : isLoopbackHost(window.location.hostname) ? null : window.location.origin;
   // what keeps the switch from working here, only while it does (lib/wakeLock.ts asks for the same two)
