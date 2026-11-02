@@ -1088,6 +1088,20 @@ function usageReport(): UsageReport {
 const DEVICE_STATE = new URLSearchParams(location.search).get("demo_devices");
 const CONNECTION_DROPS = new URLSearchParams(location.search).get("demo_connection") === "drops";
 let connectionLost = false;
+/** `?demo_connection=switch`: the page loses the bridge connection with `herdrDemoLoseConnection()` and lets it
+ *  back with `herdrDemoRestoreConnection()`, so a capture of the header while it reconnects never races a timer
+ *  (scripts/reconnect-header-demo-regression.ts) */
+if (new URLSearchParams(location.search).get("demo_connection") === "switch") Object.assign(globalThis, {
+  herdrDemoLoseConnection: () => {
+    connectionLost = true;
+    for (const socket of [...sockets]) socket.close(1006, "demo: the connection was lost");
+  },
+  // an attempt made during the outage never opens: it fails now, so the client's next retry finds the bridge back
+  herdrDemoRestoreConnection: () => {
+    connectionLost = false;
+    for (const socket of [...sockets]) if (socket.readyState === 0) socket.close(1006, "demo: the attempt failed");
+  },
+});
 const DEVICE_PAIRS_AFTER_MS = 1800;
 /** `held`: each pairing started waits here until the page releases it; no timer decides it */
 const PAIRING_HELD = new URLSearchParams(location.search).get("demo_pairing") === "held";

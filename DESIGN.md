@@ -1990,6 +1990,17 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   after a drop, disconnected once output stopped. Below `900px` it keeps only its dot; the word stays as
   its accessible text and in its tooltip. While live the chip takes no room and stays in the
   document as a `role="status"` a screen reader can read (`.conn-live`; never `display: none`).
+- A connection this page had and lost is also said in words in the title area, in the crumb's place
+  (`.context-connection`, `lib/headerConnection.ts`): **Reconnecting…** in `--status-working` while
+  it is lost, **Connected** in `--status-done` for two seconds once it is back, then the crumb again,
+  as WhatsApp and Telegram say it under a chat's name. It follows the messengers rather than a
+  coding-agent app because their case is Ovis's on a phone: one conversation's header, whose link to
+  the other end comes and goes with the network. From `769px` it sits on the title's line; at
+  `<=768px` it goes under the title, both lines inside the header's height. It swaps in place and
+  is never animated, and while it speaks the chip keeps only its dot (`.conn-quiet`). It is about
+  the PC and split half the header shows, by the half that reported it: a recovery on one PC or half
+  is not said once another is shown, and a pane's first connection is not a reconnect. A stalled
+  output, which retries nothing, gets no line: the chip says disconnected. The return sends nothing: a draft stays a draft.
 
 ### Chat turn (`.chat-turn`)
 - Native conversation rows use LegendList 3.3.5, with the chat view as the single
