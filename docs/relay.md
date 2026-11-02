@@ -79,8 +79,10 @@ What keeps that in check:
   added (`shellContentSecurityPolicy()` in [`server/static.ts`](../server/static.ts)). A rendered
   HTML page from the PC runs apart from them, in a sandboxed render host with the PC's own policy
   for rendered pages ([Files](#files)).
-- The host sees requests for static files: the phone's address, and the PC's relay ID in the path
-  (`/s/<server_id>/`). It never gets the pairing link's `#offer=` part, which browsers don't send, or
+- The host sees requests for static files: the phone's address, the PC's relay ID in the path
+  (`/s/<server_id>/`), and anything else in the address, such as the file path and machine of a
+  file opened in a tab of its own or as a raw file (`?read=`, `readerHref` in
+  [`src/lib/fileReader.ts`](../src/lib/fileReader.ts)). It never gets the pairing link's `#offer=` part, which browsers don't send, or
   any of the traffic, which goes to the relay.
 
 To take `app.ovis.sh` out of the picture, [host the app yourself](guide.md#running-your-own-relay).
