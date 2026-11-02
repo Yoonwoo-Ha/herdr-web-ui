@@ -944,7 +944,7 @@ U and D to **Scroll pane up** and **Scroll pane down** in Settings → Shortcuts
 or record a chord such as `⌘+U`). This lets you read history without leaving the message box or reaching for
 the screen. Shift+PageUp/PageDown alone retains the focused control's own behavior.
 
-Enter sends and Shift+Enter adds a line. On a touch screen, Settings → Chat → Composer → Return inserts a new line lets Return add a line instead; use Send to send the message. On a desktop, turning off Enter sends switches sending to Mod+Enter. On a touch screen with a hardware keyboard, Mod+Enter sends while Return inserts a new line is on. This choice is saved per device.
+On a desktop, Enter sends and Shift+Enter adds a line. On a touch screen, Return adds a line and the Send button sends the message, unless you turn off Settings → Chat → Composer → Return inserts a new line, which makes Return send. On a desktop, turning off Enter sends switches sending to Mod+Enter. On a touch screen with a hardware keyboard, Mod+Enter sends while Return inserts a new line is on. This choice is saved per device.
 
 ## How it works
 
