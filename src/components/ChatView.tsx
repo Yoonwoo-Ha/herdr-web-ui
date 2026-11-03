@@ -1310,6 +1310,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const stickToBottom = useRef(true);
   // the timeline's hold on a following reader's own click layout (ChatTimeline manualLayout)
   const manualLayout = useRef(false);
+  // a selection in progress in the transcript (ChatTimeline selecting): nothing follows the end under it
+  const selecting = useRef(false);
   // Explicit paging stays away even inside the ordinary near-bottom tolerance.
   const pagingAway = useRef(false);
   // The paging away is the reader opening something (readOpened): it holds in a chat still too short to scroll.
@@ -1848,7 +1850,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   // instead of scrolling there from the top.
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (node !== null && stickToBottom.current) {
+    if (node !== null && stickToBottom.current && !selecting.current) {
       if (state.source === "conversation") timeline.current?.scrollToEnd({ animated: false });
       else node.scrollTop = node.scrollHeight;
     }
@@ -1873,7 +1875,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         const next = `${entry.contentRect.width}|${style.fontSize}|${style.fontFamily}`;
         if (next !== lane) { lane = next; follow = true; }
       }
-      if (follow && stickToBottom.current) {
+      if (follow && stickToBottom.current && !selecting.current) {
         // The list's scrollToEnd lands a frame later (see dropPendingListScroll), so the frame
         // painted now would show the conversation's last lines under a composer that grew a line.
         // This callback runs before that paint: put the view at the end here, then let the list
@@ -1897,7 +1899,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const faces = useFacesArrived();
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (node !== null && stickToBottom.current) {
+    if (node !== null && stickToBottom.current && !selecting.current) {
       if (timeline.current) timeline.current.scrollToEnd({ animated: false });
       else node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
     }
@@ -2037,7 +2039,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     const stoppedShort = scrollingDown && !byReader && timeline.current !== null && !listEndPadded(node);
     // the layout's move left a reader still following short of the end: they go on there, unless
     // what they just clicked is laid out where they are (ChatTimeline manualLayout)
-    if ((heldInPlace || stoppedShort) && stickToBottom.current && !pagingAway.current && !manualLayout.current && distanceFromBottom > LAYOUT_ALLOWANCE_PX) {
+    if ((heldInPlace || stoppedShort) && stickToBottom.current && !pagingAway.current && !manualLayout.current && !selecting.current && distanceFromBottom > LAYOUT_ALLOWANCE_PX) {
       // the list's scroll lands a frame later: the frame painted next is at the end already
       if (stoppedShort) node.scrollTop = node.scrollHeight;
       if (timeline.current) timeline.current.scrollToEnd({ animated: false });
@@ -2411,6 +2413,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       listRef={timeline}
       following={stickToBottom}
       manualLayout={manualLayout}
+      selecting={selecting}
       memories={rowMemories}
       header={header}
       footer={footer}
