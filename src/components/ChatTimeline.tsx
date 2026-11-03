@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
 import { ChatRowMemoryContext, type ChatRowMemory } from "../lib/chatRowState.tsx";
-import { dropPendingListScroll } from "../lib/followScroll.ts";
+import { dropPendingListScroll, listEndPadded } from "../lib/followScroll.ts";
 import { chatSelectionClipboardPayload } from "../lib/markdownClipboard.ts";
 // ChatTimeline.css is imported by ChatView: the frame and the loading state need it before this chunk
 
@@ -23,20 +23,20 @@ export interface ChatTimelineProps<Row extends ChatTimelineRow> {
    * chat, which lets it go when the reader goes back to the end (Jump to latest), whatever set it.
    */
   manualLayout: RefObject<boolean>;
-  /** A turn works and motion is welcome: following the end glides. */
-  smoothFollow: boolean;
   memories: Map<string, ChatRowMemory>;
   header: ReactNode;
   footer: ReactNode;
   label: string;
   onScroll: () => void;
+  /** The timeline put the view at the end itself, at `top`: the next scroll event is read from there. */
+  onFollowed: (top: number) => void;
   /** The reader opened something in a row (a tool, a folded block, a whole output): they read there. */
   onOpen: () => void;
   renderRow: (row: Row, index: number) => ReactNode;
 }
 
 /** One scroll owner; selected and focused rows stay real DOM nodes outside its window. */
-export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source, scroller, listRef, following, manualLayout, smoothFollow, memories, header, footer, label, onScroll, onOpen, renderRow }: ChatTimelineProps<Row>) {
+export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source, scroller, listRef, following, manualLayout, memories, header, footer, label, onScroll, onFollowed, onOpen, renderRow }: ChatTimelineProps<Row>) {
   const [selectionKeys, setSelectionKeys] = useState<string[]>([]);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   useLayoutEffect(() => {
@@ -47,10 +47,14 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
   const positions = useMemo(() => new Map(rowKeys.map((key, index) => [key, index])), [rowKeys]);
   const pinned = useMemo(() => [...new Set(focusKey === null ? selectionKeys : [...selectionKeys, focusKey])], [selectionKeys, focusKey]);
   const extraData = useMemo(() => ({ renderRow }), [renderRow]);
+  // where the view was when the chat last read it: where the list opened it, its scroll event, or the
+  // follow's own move
+  const heardTop = useRef<number | null>(null);
   const attachList = useCallback((instance: LegendListRef | null) => {
     listRef.current = instance;
     const node = instance?.getScrollableNode();
     scroller.current = node instanceof HTMLDivElement ? node : null;
+    heardTop.current = scroller.current?.scrollTop ?? null;
   }, [listRef, scroller]);
 
   useLayoutEffect(() => {
@@ -96,7 +100,11 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
       if (control.matches(".chat-tool-more") || control.getAttribute("aria-expanded") === "false" || (details instanceof HTMLDetailsElement && !details.open)) {
         manualLayout.current = false;
         onOpen();
-      } else if (following.current) manualLayout.current = true;
+      } else if (following.current) {
+        manualLayout.current = true;
+        // a follow the list queued before this click would still land after it: the fold stays put
+        dropPendingListScroll(listRef.current);
+      }
     };
     document.addEventListener("selectionchange", selectionChanged);
     node.addEventListener("focusin", focusChanged);
@@ -123,27 +131,7 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
       node.removeEventListener("click", interaction, true);
       document.removeEventListener("copy", copy);
     };
-  }, [scroller, positions, rowKeys, onOpen, following, manualLayout]);
-
-  // A glide aims at the end it saw; content that grew meanwhile leaves it short. Where it stops, a
-  // reader still following is put at the end at once.
-  useEffect(() => {
-    const node = scroller.current;
-    if (node === null || !smoothFollow) return;
-    const settle = () => {
-      if (following.current && !manualLayout.current && node.scrollHeight - node.clientHeight - node.scrollTop > 1) listRef.current?.scrollToEnd({ animated: false });
-    };
-    // `in` narrows the element to never: the DOM types always declare onscrollend
-    if ("onscrollend" in (node as object)) {
-      node.addEventListener("scrollend", settle);
-      return () => node.removeEventListener("scrollend", settle);
-    }
-    // Safari before 26 fires no scrollend: settle once the scroll events have been quiet a moment
-    let quiet: ReturnType<typeof setTimeout> | undefined;
-    const scrolled = () => { clearTimeout(quiet); quiet = setTimeout(settle, 150); };
-    node.addEventListener("scroll", scrolled, { passive: true });
-    return () => { clearTimeout(quiet); node.removeEventListener("scroll", scrolled); };
-  }, [scroller, listRef, following, manualLayout, smoothFollow]);
+  }, [scroller, listRef, positions, rowKeys, onOpen, following, manualLayout]);
 
   // The footer (a sent message's bubble, the Working line) is no row: no item size change reports
   // its growth, and a scroll to the end asked for before the list measured it stops short of it,
@@ -162,6 +150,41 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
     observer.observe(box);
     return () => observer.disconnect();
   }, [scroller, listRef, following, manualLayout]);
+
+  // A measured row is followed in the frame it was measured in, before that frame paints. The list
+  // measures inside a ResizeObserver callback and draws its new total in the microtask React queues
+  // for it; this follow runs in a microtask queued after that one, once per batch of measurements,
+  // and puts the view at the end: the scroller's, or the list's measured one while the list pads
+  // the transcript to hold rows in place (listEndPadded). The list's own scroll to the end lands a frame later or more: on a slow device the
+  // next change comes first, and the reader never catches up (#2624, #2647). A scroll the chat has
+  // not heard yet (its event comes later in the frame) is read first, as that event would read it:
+  // a reader who left the end is not pulled back.
+  const followQueued = useRef(false);
+  const scrolled = useRef(onScroll);
+  scrolled.current = onScroll;
+  const heard = useCallback(() => {
+    heardTop.current = scroller.current?.scrollTop ?? null;
+    scrolled.current();
+  }, [scroller]);
+  const followMeasured = useCallback(() => {
+    if (followQueued.current) return;
+    followQueued.current = true;
+    queueMicrotask(() => {
+      followQueued.current = false;
+      const node = scroller.current, list = listRef.current;
+      if (node === null || list === null || !following.current || manualLayout.current) return;
+      if (node.scrollTop !== heardTop.current) {
+        heard();
+        if (!following.current || manualLayout.current) return;
+      }
+      const measured = list.getState().contentLength;
+      const end = Math.max(0, (listEndPadded(node) ? measured : Math.max(measured, node.scrollHeight)) - node.clientHeight);
+      if (Math.abs(node.scrollTop - end) <= 1) return;
+      node.scrollTop = end;
+      heardTop.current = node.scrollTop;
+      onFollowed(node.scrollTop);
+    });
+  }, [scroller, listRef, following, manualLayout, heard, onFollowed]);
 
   useLayoutEffect(() => {
     const transcript = scroller.current?.querySelector<HTMLElement>(".chat-transcript");
@@ -205,15 +228,8 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
     alwaysRender={{ keys: pinned }}
     ListHeaderComponent={<div className="chat-virtual-header">{header}</div>}
     ListFooterComponent={<div ref={footerRef} className="chat-virtual-footer">{footer}</div>}
-    onScroll={onScroll}
+    onScroll={heard}
     onLoad={() => { if (following.current) listRef.current?.scrollToEnd({ animated: false }); }}
-    onItemSizeChanged={() => {
-      if (!following.current || manualLayout.current) return;
-      // The browser's own glide yields to any scroll the reader or a jump makes next; the list's
-      // animated scroll keeps retrying toward the end and would pull them back.
-      const node = scroller.current;
-      if (smoothFollow && node !== null) node.scrollTo({ top: node.scrollHeight - node.clientHeight, behavior: "smooth" });
-      else listRef.current?.scrollToEnd({ animated: false });
-    }}
+    onItemSizeChanged={() => { if (following.current && !manualLayout.current) followMeasured(); }}
   />;
 }
