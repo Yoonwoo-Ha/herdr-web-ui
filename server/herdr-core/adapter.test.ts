@@ -95,23 +95,25 @@ afterEach(() => {
   cleanups = [];
 });
 
+const EMPTY_LIST = { terminals: [], hidden_finished: 0, machines: [] };
+
 for (const method of ["call", "open"] as const) {
   it(`times out ${method} while hc never answers hello and reconnects on the next call`, async () => {
     const cores: FakeCore[] = [];
     const hc = new HcConnection(() => {
-      const core = new FakeCore({ ping: () => ({ ok: true }) }, cores.length > 0);
+      const core = new FakeCore({ "terminal.list": () => EMPTY_LIST }, cores.length > 0);
       cores.push(core);
       return core;
     });
     jest.useFakeTimers();
     try {
-      const pending = method === "call" ? hc.call("ping", {}, 50)
+      const pending = method === "call" ? hc.call("terminal.list", {}, 50)
         : hc.open("events.subscribe", {}, { onData() {}, onClose() {} }, 50);
       const failure = pending.then(() => "resolved", (error: unknown) => error instanceof HcError ? error.kind : "unexpected");
       jest.advanceTimersByTime(50);
       expect(cores[0]?.killed).toBe(true);
       expect(await failure).toBe("timeout");
-      expect(await hc.call<{ ok: boolean }>("ping", {}, 50)).toEqual({ ok: true });
+      expect(await hc.call("terminal.list", {}, 50)).toEqual(EMPTY_LIST);
       expect(cores).toHaveLength(2);
     } finally {
       hc.close();
@@ -129,7 +131,7 @@ async function setup(terminals: HcTerminal[], extra: Record<string, Handler> = {
     "terminal.get": (params) => {
       const found = terminals.find((entry) => entry.address === params["terminal"]);
       if (!found) throw new Error(`no terminal ${String(params["terminal"])}`);
-      return { terminal: found };
+      return found;
     },
     "terminal.attach": () => ({ channel: cores.at(-1)!.channel(), terminal: terminals[0] }),
     "terminal.keys": () => ({ turn: 0 }),
@@ -423,7 +425,7 @@ describe("herdr-core adapter, agents", () => {
     const record = terminal("t1", { cols: 90, rows: 20, pid: 10, argv: ["/bin/bash"], foreground: shell });
     const { socket, cores } = await setup([record], {
       // hc's foreground: the shell until the line was typed, then the agent
-      "terminal.get": () => ({ terminal: { ...record, foreground: cores[0]!.typed.length > 0 ? agent : shell } }),
+      "terminal.get": () => ({ ...record, foreground: cores[0]!.typed.length > 0 ? agent : shell }),
     });
     await agentStart({ name: "claude-1", kind: "claude", paneId: "t1", args: ["--model", "it's big"] }, socket);
     const core = cores[0]!;
@@ -441,7 +443,7 @@ describe("herdr-core adapter, agents", () => {
       const record = terminal("t1", { pid: 10, argv: ["/bin/bash"], foreground: shell });
       const holder: { cores: FakeCore[] } = { cores: [] };
       let seen = 0;
-      const get = () => ({ terminal: { ...record, foreground: holder.cores[0]?.typed.length ? after[Math.min(seen++, after.length - 1)] : shell } });
+      const get = () => ({ ...record, foreground: holder.cores[0]?.typed.length ? after[Math.min(seen++, after.length - 1)] : shell });
       return { record, holder, get };
     };
     const node = sequence([{ pid: 11, name: "node", argv: ["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"] }]);
@@ -458,7 +460,7 @@ describe("herdr-core adapter, agents", () => {
     const shell = { pid: 10, name: "bash" };
     const record = terminal("t1", { pid: 10, argv: ["/bin/bash"], foreground: shell });
     const holder: { cores: FakeCore[]; agentUp: boolean } = { cores: [], agentUp: false };
-    const ready = await setup([record], { "terminal.get": () => ({ terminal: { ...record, foreground: holder.agentUp ? { pid: 11, name: "claude" } : shell } }) });
+    const ready = await setup([record], { "terminal.get": () => ({ ...record, foreground: holder.agentUp ? { pid: 11, name: "claude" } : shell }) });
     holder.cores = ready.cores;
     const starting = agentStart({ name: "claude-1", kind: "claude", paneId: "t1" }, ready.socket);
     let started = false;
@@ -475,7 +477,7 @@ describe("herdr-core adapter, agents", () => {
     const shell = { pid: 10, name: "bash" };
     const record = terminal("t1", { pid: 10, argv: ["/bin/bash"], foreground: shell });
     const holder: { cores: FakeCore[] } = { cores: [] };
-    const ready = await setup([record], { "terminal.get": () => ({ terminal: { ...record, foreground: holder.cores[0]?.typed.length ? { pid: 11, name: "cursor-agent" } : shell } }) });
+    const ready = await setup([record], { "terminal.get": () => ({ ...record, foreground: holder.cores[0]?.typed.length ? { pid: 11, name: "cursor-agent" } : shell }) });
     holder.cores = ready.cores;
     await agentStart({ name: "cursor-1", kind: "cursor", paneId: "t1" }, ready.socket);
     expect(ready.cores[0]!.typed.map((write) => write.text).join("")).toBe("\u0015'cursor-agent'\r");
@@ -524,7 +526,7 @@ describe("herdr-core adapter, agents", () => {
     const login = { pid: 10, name: "zsh", argv: ["-zsh", "-l"] };
     const record = terminal("t1", { pid: 10, argv: ["-zsh", "-l"], foreground: login });
     const holder: { cores: FakeCore[] } = { cores: [] };
-    const ready = await setup([record], { "terminal.get": () => ({ terminal: { ...record, foreground: holder.cores[0]?.typed.length ? { pid: 11, name: "claude" } : login } }) });
+    const ready = await setup([record], { "terminal.get": () => ({ ...record, foreground: holder.cores[0]?.typed.length ? { pid: 11, name: "claude" } : login }) });
     holder.cores = ready.cores;
     await agentStart({ name: "y", kind: "claude", paneId: "t1" }, ready.socket);
     expect(ready.cores[0]!.typed.map((write) => write.text).join("")).toBe("\u0015'claude'\r");
