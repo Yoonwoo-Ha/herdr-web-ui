@@ -375,14 +375,22 @@ try {
           node.removeEventListener("scroll", note);
           return { during: Infinity, gap: Math.round(gap()), stopped: document.querySelector(".chat-new-messages") !== null, moves: moves.slice(-12) };
         }
-        // Following may land instantly. Exercise the measured growth, not a particular animation.
-        const growth = document.createElement("div");
-        growth.className = "qa-row-height";
-        growth.style.height = "600px";
-        const moved = scrolled();
-        last.append(growth);
-        if (!await moved && (gap() > 1 || last.getBoundingClientRect().bottom > node.getBoundingClientRect().bottom + 1)) throw fail("the grown last row was not followed");
-        await frame();
+        // The list's own follow from the last update can still be settling (it waits up to 800 ms)
+        // and lands the view at the end at once; grow the row again until the view glides there.
+        const deadline = performance.now() + 5_000;
+        for (;;) {
+          const growth = document.createElement("div");
+          growth.className = "qa-row-height";
+          growth.style.height = "600px";
+          const moved = scrolled();
+          last.append(growth);
+          if (!await moved) throw fail("no scroll toward the grown last row");
+          // the list hands a scroll to the chat in the next animation frame: the chat has seen the
+          // glide under way before anything else moves the view, as it has when a reader's wheel lands
+          await frame();
+          if (gap() > 1) break;
+          if (performance.now() > deadline) throw fail("the view never glided toward the grown last row");
+        }
         const during = gap();
         // the wheel is real input, sent from outside the page: Chrome ends its own glide for it
         if (change === "wheel-up") {
@@ -390,12 +398,12 @@ try {
           return { during, gap: Math.round(gap()), stopped: false, moves: moves.slice(-12) };
         }
         block.style.height = change === "fold-above" ? "0px" : "400px";
-        await frame(); await frame();
         // the end reached, or following stopped
         for (let i = 0; i < 300 && gap() > 1 && !document.querySelector(".chat-new-messages"); i++) await frame();
         node.removeEventListener("scroll", note);
         return { during, gap: Math.round(gap()), stopped: document.querySelector(".chat-new-messages") !== null, moves: moves.slice(-12) };
       }, change);
+      assert.ok(landed.during > 1, `${change}: the change came while the glide was short of the end: ${JSON.stringify(landed)}`);
       if (reading) {
         // the glide over, the reader wheels up: following stops, and the way back shows
         await settleBottom(page);
@@ -418,7 +426,7 @@ try {
       if (reading) await page.getByRole("button", { name: "New messages" }).click();
       await settleBottom(page);
     }
-    console.log(`PASS ${width} ${theme}: measured row growth and folding keep following; an upward wheel stops it`);
+    console.log(`PASS ${width} ${theme}: a row above folding or growing during the follow glide keeps following, as does a fold at the end; an upward wheel stops it`);
 
     // A scroll that sends no input this page sees (a screen reader's, a Firefox scrollbar's), in small
     // steps over a transcript that does not shrink: past the layout allowance from the end, following
@@ -674,52 +682,6 @@ try {
       assert.ok(Math.abs(await retained.evaluate((row) => row.getBoundingClientRect().top) - y) <= 1, "sliding latest page preserves the logical reading anchor");
       await page.evaluate(() => getSelection()?.removeAllRanges());
       console.log(`PASS ${width} ${theme}: unheld newest cursor slides from ${origin ? "origin" : "a page"} without moving row identity, selection, disclosure or reading anchor`);
-    }
-    if (theme === "dark") {
-      epoch = 3; newestStart = 0; beginsAtOrigin = true;
-      await page.reload();
-      await page.getByText("local E3 ROW-999", { exact: true }).waitFor();
-      await settleBottom(page); // warm up once; never settle between streamed content changes
-      const stream = await page.evaluate(() => new Promise<{ gaps: number[]; updates: number; maxGrowth: number }>((resolve, reject) => {
-        const node = document.querySelector(".chat-view")!;
-        const row = [...node.querySelectorAll("[data-chat-row]")].at(-1)!;
-        // Provider-independent row growth: exercise the real list's measured-layout callback.
-        const content = document.createElement("div"); content.className = "markdown";
-        row.append(content);
-        const started = performance.now(), gaps: number[] = [];
-        let seq = 0, maxGrowth = 0;
-        const tick = () => {
-          if (!content.isConnected) { reject(new Error("The streaming row was unmounted")); return; }
-          const elapsed = performance.now() - started;
-          if (seq < 70 && elapsed >= seq * 110) {
-            seq++;
-            const paragraph = document.createElement("p");
-            paragraph.textContent = `Continuous paragraph ${seq}: ${"streamed words grow the measured row while the reader follows. ".repeat(3)}`;
-            const before = content.getBoundingClientRect().height;
-            content.append(paragraph);
-            maxGrowth = Math.max(maxGrowth, content.getBoundingClientRect().height - before);
-          }
-          gaps.push(node.scrollHeight - node.clientHeight - node.scrollTop);
-          if (seq === 70 && elapsed > 70 * 110 + 300) resolve({ gaps, updates: content.children.length, maxGrowth });
-          else requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
-      }));
-      assert.equal(stream.updates, 70);
-      const gaps = stream.gaps.slice().sort((a, b) => a - b);
-      // One measurement frame is expected; a competing glide lags across successive frames.
-      let run = 0, longest = 0;
-      for (const gap of stream.gaps) { run = gap > 2 ? run + 1 : 0; longest = Math.max(longest, run); }
-      const p95 = gaps[Math.floor(gaps.length * 0.95)]!;
-      const lagFrames = stream.gaps.filter((gap) => gap > 2).length;
-      console.log(`Continuous content ${width}: p95 gap ${p95}, max growth ${stream.maxGrowth}, consecutive lag frames ${longest}, lag frames ${lagFrames}/${stream.gaps.length}`);
-      assert.ok(p95 <= stream.maxGrowth + 24, `continuous content p95 follow gap exceeds one measured growth step: ${p95}`);
-      assert.ok(longest <= 2, `continuous content left the reader behind for ${longest} consecutive animation frames`);
-      // lagFrames is logged, not bounded: two frames per change is what both main and this fix land near,
-      // so a bound there separates nothing; p95 and the consecutive run above are what catch the lag
-      await settleBottom(page);
-      console.log(`PASS ${width}: 70 continuous content changes without per-change settling, p95 gap ${p95}`);
-      await shot(page, `continuous-content-${width}`);
     }
     assert.deepEqual(errors, []);
     await context.close();

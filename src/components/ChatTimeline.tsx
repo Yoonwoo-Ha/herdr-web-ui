@@ -23,7 +23,7 @@ export interface ChatTimelineProps<Row extends ChatTimelineRow> {
    * chat, which lets it go when the reader goes back to the end (Jump to latest), whatever set it.
    */
   manualLayout: RefObject<boolean>;
-  /** A turn works and motion is welcome. Following the end no longer glides (#2624): it only keeps the scrollend settle below. */
+  /** A turn works and motion is welcome: following the end glides. */
   smoothFollow: boolean;
   memories: Map<string, ChatRowMemory>;
   header: ReactNode;
@@ -96,11 +96,7 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
       if (control.matches(".chat-tool-more") || control.getAttribute("aria-expanded") === "false" || (details instanceof HTMLDetailsElement && !details.open)) {
         manualLayout.current = false;
         onOpen();
-      } else if (following.current) {
-        manualLayout.current = true;
-        // a follow the list queued before this click would still land after it: the fold stays put
-        dropPendingListScroll(listRef.current);
-      }
+      } else if (following.current) manualLayout.current = true;
     };
     document.addEventListener("selectionchange", selectionChanged);
     node.addEventListener("focusin", focusChanged);
@@ -127,7 +123,7 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
       node.removeEventListener("click", interaction, true);
       document.removeEventListener("copy", copy);
     };
-  }, [scroller, listRef, positions, rowKeys, onOpen, following, manualLayout]);
+  }, [scroller, positions, rowKeys, onOpen, following, manualLayout]);
 
   // A glide aims at the end it saw; content that grew meanwhile leaves it short. Where it stops, a
   // reader still following is put at the end at once.
@@ -213,8 +209,11 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
     onLoad={() => { if (following.current) listRef.current?.scrollToEnd({ animated: false }); }}
     onItemSizeChanged={() => {
       if (!following.current || manualLayout.current) return;
-      // The list's own scroll to the end waits for the rows it measured, so it lands on the real end
-      listRef.current?.scrollToEnd({ animated: false });
+      // The browser's own glide yields to any scroll the reader or a jump makes next; the list's
+      // animated scroll keeps retrying toward the end and would pull them back.
+      const node = scroller.current;
+      if (smoothFollow && node !== null) node.scrollTo({ top: node.scrollHeight - node.clientHeight, behavior: "smooth" });
+      else listRef.current?.scrollToEnd({ animated: false });
     }}
   />;
 }
