@@ -1036,10 +1036,15 @@ pages or credentials.
 ### Self-hosted runner
 
 `ci.yml`'s Linux jobs of a push run on the maintainer PC's runners (labels
-`["self-hosted","self-hosted-ovis"]`) by default; other events, pull requests included, stay on
-`ubuntu-24.04`, so a pull request's timing-sensitive browser checks do not share that PC's CPU with
-the agents working there. The repository variable `CI_SELF_HOSTED_LABELS` overrides that (labels
-send same-repository pull requests back to the self-hosted runners) with another JSON array of runner labels that contains `"self-hosted"`, or with the
+`["self-hosted","self-hosted-ovis"]`) by default. A same-repository pull request goes there too
+while those runners have room for its four Linux jobs, and to `ubuntu-24.04` (with the browser
+checks sharded) when they do not, so neither pool queues while the other sits idle. The workflow
+token cannot list runners, so Detect changes counts room from the Actions API: the repository
+variable `CI_SELF_HOSTED_CAPACITY` (default 10, the PC's `self-hosted-ovis` runners) minus the
+queued and running jobs of every workflow that target those labels. When that count fails, the
+pull request stays hosted. Other events stay on `ubuntu-24.04`. The repository variable
+`CI_SELF_HOSTED_LABELS` overrides that (labels send every same-repository pull request to the
+self-hosted runners) with another JSON array of runner labels that contains `"self-hosted"`, or with the
 JSON string `"ubuntu-24.04"` to keep every job GitHub-hosted while that PC is offline. `pages.yml`
 and `release.yml` stay on `ubuntu-24.04` unless the variable holds labels. The variable routes:
 
