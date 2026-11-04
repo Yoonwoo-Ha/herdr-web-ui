@@ -17,7 +17,7 @@ const AGENT = { app: "claude-code", state: "idle" };
  */
 function fakeCore(terminals: Held[]) {
   const written: { terminal: string; labels: Record<string, string> }[] = [];
-  const state = { failing: false, early: [] as Record<string, unknown>[], held: null as Record<string, unknown>[] | null };
+  const state = { failing: false, early: [] as Record<string, unknown>[], held: null as Record<string, unknown>[] | null, answer: null as Promise<void> | null };
   /** resolves when the next label write reaches hc, before hc answers it */
   let writing = Promise.withResolvers<void>();
   let onData: ((chunk: Uint8Array) => void) | null = null;
@@ -40,6 +40,8 @@ function fakeCore(terminals: Held[]) {
       const event = { type: "labels", terminal: found.address, data: { labels: { ...found.labels } } };
       if (state.held) state.held.push(event);
       else tell(event);
+      // hc's answer to the write waits, after its labels event was told
+      if (state.answer) await state.answer;
       return found;
     },
     open: async (_method: string, _params: unknown, handlers: { onData: (chunk: Uint8Array) => void; onClose: () => void }) => {
@@ -291,6 +293,159 @@ describe("bridgePins", () => {
     await pins.idle();
     expect(preferences.get().pins).toEqual([]);
     expect(core.written.map((write) => write.labels["herdr.pinned"])).toEqual(["1", ""]);
+  });
+
+  it("keeps an unpin made in the Herdr app while our own pin write waits for hc's answer", async () => {
+    const dir = stateDir();
+    const preferences = store(dir, []);
+    const terminals: Held[] = [{ address: "t1", state: "live", labels: {} }];
+    const core = fakeCore(terminals);
+    const pins = bridge(core, preferences, dir);
+    await core.opened();
+    await pins.idle();
+    const answer = Promise.withResolvers<void>();
+    core.state.answer = answer.promise;
+    const reached = core.writing();
+    preferences.set({ settings: {}, pins: ["local:t1"] });
+    await reached;
+    // our pin landed and its event came; the Herdr app unpins before hc's answer does
+    terminals[0]!.labels = {};
+    core.tell({ type: "labels", terminal: "t1", data: { labels: {} } });
+    core.state.answer = null;
+    answer.resolve();
+    await pins.idle();
+    expect(preferences.get().pins).toEqual([]);
+    expect(terminals[0]!.labels).toEqual({});
+    expect(core.written).toEqual([{ terminal: "t1", labels: { "herdr.pinned": "1" } }]);
+  });
+
+  it("keeps an unpin from the Herdr app that the list could not save, and takes it once it can", async () => {
+    const dir = stateDir();
+    const preferences = store(dir, ["local:t1"]);
+    const failing = { on: false };
+    const flaky = {
+      get: () => preferences.get(),
+      set: (change: Parameters<PreferenceStore["set"]>[0]) => {
+        if (failing.on && change.pins) throw new Error("disk full");
+        return preferences.set(change);
+      },
+      subscribe: (listener: Parameters<PreferenceStore["subscribe"]>[0]) => preferences.subscribe(listener),
+    };
+    const terminals: Held[] = [{ address: "t1", state: "live", labels: { "herdr.pinned": "1" } }];
+    const core = fakeCore(terminals);
+    const pins = bridgePins(core.hc, flaky, "local", dir, 0);
+    cleanups.push(pins.stop);
+    await core.opened();
+    await pins.idle();
+    failing.on = true;
+    terminals[0]!.labels = {};
+    core.tell({ type: "labels", terminal: "t1", data: { labels: {} } });
+    expect(preferences.get().pins).toEqual(["local:t1"]);
+    // the next change of anything else neither writes the pin back nor forgets the unpin
+    failing.on = false;
+    preferences.set({ settings: { theme: "dark" } });
+    await pins.idle();
+    expect(core.written).toEqual([]);
+    expect(preferences.get().pins).toEqual([]);
+  });
+
+  it("keeps an agreed pin when preferences.json is lost and another pinned terminal starts the list", async () => {
+    const dir = stateDir();
+    // t2 agreed pinned by an earlier run, then preferences.json was lost
+    const first = fakeCore([{ address: "t2", state: "live", labels: { "herdr.pinned": "1" } }]);
+    const earlier = bridge(first, store(dir, []), dir);
+    await first.opened();
+    await earlier.idle();
+    earlier.stop();
+    rmSync(join(dir, "preferences.json"), { force: true });
+    const preferences = new PreferenceStore(dir);
+    const core = fakeCore([
+      { address: "t1", state: "live", labels: { "herdr.pinned": "1" } },
+      { address: "t2", state: "live", labels: { "herdr.pinned": "1" } },
+    ]);
+    const pins = bridge(core, preferences, dir);
+    await core.opened();
+    await pins.idle();
+    expect(core.written).toEqual([]);
+    expect(preferences.get().pins).toEqual(["local:t1", "local:t2"]);
+  });
+
+  it("takes a late labels event of an answered write for no newer agreement", async () => {
+    const dir = stateDir();
+    const terminals: Held[] = [{ address: "t1", state: "live", labels: {} }];
+    const core = fakeCore(terminals);
+    const first = bridge(core, store(dir, []), dir);
+    await core.opened();
+    await first.idle();
+    // a quick pin and unpin in Ovis, both answered; only the pin's event comes, late
+    core.state.held = [];
+    const preferences = new PreferenceStore(dir);
+    first.stop();
+    const again = fakeCore(terminals);
+    const pins = bridge(again, preferences, dir);
+    await again.opened();
+    again.state.held = [];
+    preferences.set({ settings: {}, pins: ["local:t1"] });
+    await pins.idle();
+    preferences.set({ settings: {}, pins: [] });
+    await pins.idle();
+    const held = again.state.held!;
+    again.state.held = null;
+    again.tell(held[0]!);
+    pins.stop();
+    // Ovis stopped; the Herdr app pins t1
+    terminals[0]!.labels = { "herdr.pinned": "1" };
+    const last = fakeCore(terminals);
+    const third = bridge(last, new PreferenceStore(dir), dir);
+    await last.opened();
+    await third.idle();
+    expect(last.written).toEqual([]);
+    expect(new PreferenceStore(dir).get().pins).toEqual(["local:t1"]);
+  });
+
+  it("unpins no agreed pin a list started past its limit leaves out", async () => {
+    const dir = stateDir();
+    const last = `t${MAX_PINS}`;
+    const first = fakeCore([{ address: last, state: "live", labels: { "herdr.pinned": "1" } }]);
+    const earlier = bridge(first, store(dir, []), dir);
+    await first.opened();
+    await earlier.idle();
+    earlier.stop();
+    rmSync(join(dir, "preferences.json"), { force: true });
+    const preferences = new PreferenceStore(dir);
+    const core = fakeCore(Array.from({ length: MAX_PINS + 1 }, (_, index) => ({ address: `t${index}`, state: "live", labels: { "herdr.pinned": "1" } })));
+    const pins = bridge(core, preferences, dir);
+    await core.opened();
+    await pins.idle();
+    expect(core.written).toEqual([]);
+    expect(preferences.get().pins).toHaveLength(MAX_PINS);
+    preferences.set({ settings: { theme: "dark" } });
+    await pins.idle();
+    expect(core.written).toEqual([]);
+  });
+
+  it("takes a first pin from the Herdr app that the list could not save once it can", async () => {
+    const dir = stateDir();
+    const preferences = store(dir);
+    const failing = { on: true };
+    const flaky = {
+      get: () => preferences.get(),
+      set: (change: Parameters<PreferenceStore["set"]>[0]) => {
+        if (failing.on && change.pins) throw new Error("disk full");
+        return preferences.set(change);
+      },
+      subscribe: (listener: Parameters<PreferenceStore["subscribe"]>[0]) => preferences.subscribe(listener),
+    };
+    const core = fakeCore([{ address: "t1", state: "live", labels: { "herdr.pinned": "1" } }]);
+    const pins = bridgePins(core.hc, flaky, "local", dir, 0);
+    cleanups.push(pins.stop);
+    await core.opened();
+    expect(preferences.get().pins).toBeUndefined();
+    failing.on = false;
+    preferences.set({ settings: { theme: "dark" } });
+    await pins.idle();
+    expect(preferences.get().pins).toEqual(["local:t1"]);
+    expect(core.written).toEqual([]);
   });
 
   it("unpins nothing while no browser has shared its pins", async () => {
