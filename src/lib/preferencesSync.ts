@@ -315,14 +315,19 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
       }
     }
     revision.current = Math.max(revision.current, remote.revision);
-    // the page's first document from a server whose revisions went back started over (a fresh state
-    // folder): the pins this browser kept knowing are not its, and its own join the server's as on a first share
-    if (!loadedRef.current && stored.current !== null && remote.revision < stored.current.revision) base.current = { ...base.current, pins: null };
+    // the page's first document from a server that started over (a fresh state folder: another folder's
+    // id, or, from a server that names none, revisions that went back): the pins this browser kept
+    // knowing are not its, and its own join the server's as on a first share
+    const kept = stored.current;
+    const startedOver = kept !== null && (remote.revision < kept.revision || (kept.stateId !== undefined && remote.state_id !== undefined && remote.state_id !== kept.stateId));
+    if (!loadedRef.current && startedOver) base.current = { ...base.current, pins: null };
     const taken = takePreferences(base.current, latest.current, remote, inFlight.current, readOnly.current, refused.current);
     // the page's first document without pins comes from a server that holds none (a fresh state
     // folder): the pins this browser kept knowing are not its, and its own go with its next change
     base.current = !loadedRef.current && remote.pins === undefined ? { ...taken.base, pins: null } : taken.base;
-    saveSharedPins(base.current.pins === null ? null : { pins: [...base.current.pins], revision: remote.revision });
+    // the id goes with the baseline it came with: a document without one (a release that names no folder)
+    // leaves none, and the next page goes by the revision, since that baseline may be another folder's
+    saveSharedPins(base.current.pins === null ? null : { pins: [...base.current.pins], revision: remote.revision, ...(remote.state_id === undefined ? {} : { stateId: remote.state_id }) });
     // a second document in the same tick compares against what this one set, not the last render
     latest.current = { settings: sanitizeSettings({ ...latest.current.settings, ...taken.patch }), pins: taken.pins ?? latest.current.pins, muted: taken.muted === undefined ? latest.current.muted : taken.muted, tabLabels: taken.tabLabels ?? latest.current.tabLabels };
     if (Object.keys(taken.patch).length > 0) update(taken.patch);

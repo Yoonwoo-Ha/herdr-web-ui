@@ -68,8 +68,10 @@ const SHARED_KEY = "ovis:sidebar-pins-shared";
  * The pins this browser last knew the server to hold (lib/preferencesSync.ts), with the revision of
  * the document that held them; null while it has known none. Kept with the pins, so a page opened
  * again tells its own pins from ones removed elsewhere meanwhile, instead of sending them back as new.
+ * `stateId` is the server's state folder (absent from a server too old to name it): a folder that
+ * started over is another server, whatever revision it has reached.
  */
-export interface SharedPins { pins: string[]; revision: number }
+export interface SharedPins { pins: string[]; revision: number; stateId?: string }
 
 export function loadSharedPins(): SharedPins | null {
   try {
@@ -77,7 +79,8 @@ export function loadSharedPins(): SharedPins | null {
     if (value === undefined || value === null) return null;
     const parsed: unknown = JSON.parse(value);
     if (typeof parsed !== "object" || parsed === null || !("pins" in parsed) || !("revision" in parsed) || !Array.isArray(parsed.pins) || typeof parsed.revision !== "number") return null;
-    return { pins: parsed.pins.filter((key): key is string => typeof key === "string" && key.length > 0), revision: parsed.revision };
+    const stateId = "stateId" in parsed && typeof parsed.stateId === "string" ? parsed.stateId : undefined;
+    return { pins: parsed.pins.filter((key): key is string => typeof key === "string" && key.length > 0), revision: parsed.revision, ...(stateId === undefined ? {} : { stateId }) };
   } catch { return null; }
 }
 

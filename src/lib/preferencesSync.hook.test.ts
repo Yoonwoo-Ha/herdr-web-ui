@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { createElement } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { PreferenceStore } from "../../server/preferences.ts";
+/** a document saved at least once, which names its state folder */
+const named = <T extends object>(doc: T) => ({ ...doc, state_id: expect.stringMatching(/^[0-9a-f]{32}$/) });
 import { type PreferencesChange, type SharedPreferences } from "../../shared/preferences.ts";
 import { DEFAULT_SETTINGS, SettingsProvider, sanitizeSettings, useSettings, type Settings } from "./settings.ts";
 import { currentSidebarPins, setSidebarPins } from "./sidebarPins.ts";
@@ -46,8 +48,8 @@ describe("preferences sync real send path", () => {
   let keepalives: boolean[];
   /** the bodies the PUTs carried, in order */
   let sent: PreferencesChange[];
-  /** an older server: no theme sides, and no mute list in what it keeps or answers */
-  const dropNewKeys = ({ muted_panes: _muted, ...doc }: SharedPreferences): SharedPreferences => ({
+  /** an older server: no theme sides, no mute list and no state folder id in what it keeps or answers */
+  const dropNewKeys = ({ muted_panes: _muted, state_id: _id, ...doc }: SharedPreferences): SharedPreferences => ({
     ...doc, settings: Object.fromEntries(Object.entries(doc.settings).filter(([key]) => key !== "darkTheme" && key !== "lightTheme")),
   });
   interface Client {
@@ -212,7 +214,7 @@ describe("preferences sync real send path", () => {
     store.set({ settings: { palette: "catppuccin" } });
     store.set({ settings: { theme } });
     store = new PreferenceStore(dir);
-    expect(store.get()).toEqual({ revision: 2, settings: { palette: "catppuccin", theme }, muted_panes: [] });
+    expect(store.get()).toEqual(named({ revision: 2, settings: { palette: "catppuccin", theme }, muted_panes: [] }));
     revisions.length = 0;
     store.subscribe((doc) => {
       revisions.push(doc.revision);
@@ -535,6 +537,62 @@ describe("preferences sync real send path", () => {
     await act(async () => { client.update({ darkTheme: "tokyo-night" }); });
     await send();
     expect(store.get().pins).toEqual(["local:t2", "local:t1"]);
+  });
+
+  // the new server's saves from elsewhere reach the revision this browser kept (2), or pass it
+  for (const saves of [2, 3]) it(`a page opened again on a server started over whose saves reached revision ${saves} keeps its own pins too`, async () => {
+    store.set({ settings: {}, pins: [] });
+    await open();
+    await windows();
+    await act(async () => { setSidebarPins(["local:t1"]); });
+    await send();
+    expect(store.get().revision).toBe(2);
+    await act(async () => { for (const renderer of renderers.splice(0)) renderer.unmount(); });
+    clients.length = 0;
+    // the server starts over with a fresh state folder, and another device saves there meanwhile
+    rmSync(dir, { recursive: true, force: true });
+    dir = mkdtempSync(join(tmpdir(), "herdr-sync-hook-"));
+    store = new PreferenceStore(dir);
+    for (let index = 0; index < saves; index += 1) store.set({ settings: {}, pins: ["local:t2"] });
+    expect(store.get().revision).toBe(saves);
+    store.subscribe((doc) => { for (const client of clients) client.receive(doc); });
+    const client = await open(DEFAULT_SETTINGS, true);
+    await windows();
+    await act(async () => { client.update({ darkTheme: "tokyo-night" }); });
+    await send();
+    expect(store.get().pins).toEqual(["local:t2", "local:t1"]);
+  });
+
+  it("a page that took a baseline from a release naming no folder does not bring back a pin removed after the upgrade", async () => {
+    store.set({ settings: {}, pins: [] });
+    await open();
+    await windows();
+    await act(async () => { setSidebarPins(["local:t1"]); });
+    await send();
+    await act(async () => { for (const renderer of renderers.splice(0)) renderer.unmount(); });
+    clients.length = 0;
+    // the server starts over with a fresh state folder on a release that names none, and holds the pin at revision 3
+    rmSync(dir, { recursive: true, force: true });
+    dir = mkdtempSync(join(tmpdir(), "herdr-sync-hook-"));
+    store = new PreferenceStore(dir);
+    for (let index = 0; index < 3; index += 1) store.set({ settings: {}, pins: ["local:t1"] });
+    rmSync(join(dir, "preferences-id.json"));
+    store = new PreferenceStore(dir);
+    store.subscribe((doc) => { for (const client of clients) client.receive(doc); });
+    oldServer = true;
+    // the same browser opens there and takes its document as what the server holds
+    await open(DEFAULT_SETTINGS, true);
+    await windows();
+    await act(async () => { for (const renderer of renderers.splice(0)) renderer.unmount(); });
+    clients.length = 0;
+    // the server is upgraded, and another device removes the pin: that save names the folder
+    oldServer = false;
+    store.set({ settings: {}, pins: [] });
+    const client = await open(DEFAULT_SETTINGS, true);
+    await windows();
+    await act(async () => { client.update({ darkTheme: "tokyo-night" }); });
+    await send();
+    expect(store.get().pins).toEqual([]);
   });
 
   it("mute survives restart and another browser", async () => {
