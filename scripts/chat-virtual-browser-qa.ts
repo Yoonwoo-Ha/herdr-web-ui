@@ -238,6 +238,66 @@ try {
     console.log(`PASS ${width} ${status} ${reducedMotion}: a long chat's first open shows its newest message in all ${landing.length} frames until it settles`);
     await context.close();
   }
+  // A reader who wheels up as the long chat's first open puts its view at the end (ChatView's
+  // stoppedShort write), before that write's own scroll event, stays where the wheel took them (#2594).
+  {
+    longRead = { asked: Promise.withResolvers<void>(), answer: Promise.withResolvers<void>() };
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+    await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: "dark" })));
+    const page = await context.newPage();
+    activePage = page;
+    page.setDefaultTimeout(15_000);
+    await throttled(page);
+    await page.goto(`http://127.0.0.1:${server.port}/`);
+    await page.getByText("REVISION-0", { exact: true }).waitFor();
+    await page.evaluate(() => window.chatQa.resize(543, 478));
+    await page.evaluate(() => { window.chatQa.status("idle"); window.chatQa.machine("long"); });
+    const unasked = setTimeout(() => longRead.asked.reject(new Error("the long chat never asked for its conversation")), 15_000);
+    await longRead.asked.promise;
+    clearTimeout(unasked);
+    await page.evaluate(() => {
+      const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!;
+      const state = { wheeled: false };
+      Object.assign(window, { wheelDuringJump: state });
+      Object.defineProperty(Element.prototype, "scrollTop", {
+        configurable: true, get() { return scrollTop.get!.call(this); },
+        set(this: Element, value: number) {
+          scrollTop.set!.call(this, value);
+          // the chat's first write to the end of the drawn transcript (stoppedShort), once
+          if (state.wheeled || !this.classList.contains("chat-view") || this.scrollHeight <= this.clientHeight || value !== this.scrollHeight) return;
+          state.wheeled = true;
+          Object.defineProperty(Element.prototype, "scrollTop", scrollTop);
+          // the wheel comes as the next task, as input does, before the frame that sends the write's scroll event
+          const input = new MessageChannel();
+          input.port1.onmessage = () => {
+            (this.querySelector("[data-chat-row]") ?? this).dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
+            scrollTop.set!.call(this, scrollTop.get!.call(this) - 120);
+          };
+          input.port2.postMessage(null);
+        },
+      });
+    });
+    longRead.answer.resolve();
+    await page.waitForFunction(() => (window as unknown as { wheelDuringJump: { wheeled: boolean } }).wheelDuringJump.wheeled);
+    // settled: the view and the transcript's height unchanged for 20 frames
+    const gap = await page.evaluate(() => new Promise<number>((resolve) => {
+      let last = "", same = 0;
+      const sample = () => {
+        const node = document.querySelector<HTMLElement>(".chat-view")!;
+        const now = `${node.scrollTop}:${node.scrollHeight}`;
+        same = now === last ? same + 1 : 0;
+        last = now;
+        if (same >= 20) resolve(Math.round(node.scrollHeight - node.clientHeight - node.scrollTop));
+        else requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    }));
+    assert.ok(gap >= 100, `a wheel up during a long chat's first-open jump to the end is kept: the view settled ${gap}px from the end`);
+    // the reader left the end: the next update does not take them back there
+    assert.ok(await page.getByRole("button", { name: "Jump to latest" }).isVisible(), "a reader who wheeled up during the first-open jump is no longer following the end");
+    console.log(`PASS a wheel up during a long chat's first-open jump keeps the reader ${gap}px from the end`);
+    await context.close();
+  }
   for (const [width, theme] of [[1440, "dark"], [1440, "light"], [390, "dark"], [390, "light"]] as const) {
     revision = 0; epoch = 1; holdOlder = false; olderReads = 0; wholeReads = 0;
     newestStart = 0; beginsAtOrigin = false; slideReads = 0;
