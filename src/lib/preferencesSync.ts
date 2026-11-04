@@ -22,7 +22,7 @@ import { DEFAULT_THEME } from "./themes.ts";
 import { sanitizeSettings, sharedSettings, useSettings, type Settings } from "./settings.ts";
 import { currentPaneMutes, setPaneMutes, subscribePaneMutes } from "./paneMutes.ts";
 import { currentSidebarPins, setSidebarPins, subscribeSidebarPins } from "./sidebarPins.ts";
-import { currentTabLabels, setTabLabels, subscribeTabLabels } from "./tabLabels.ts";
+import { attachmentTabLabel, currentTabLabels, setTabLabels, subscribeTabLabels } from "./tabLabels.ts";
 import { userErrorMessage, type UserError } from "./userError.ts";
 
 const SEND_AFTER_MS = 600;
@@ -68,8 +68,10 @@ export function preferencesChange(base: Baseline, local: Local): PreferencesChan
   const heldLabels = base.tabLabels ?? {};
   const labelsHere = local.tabLabels ?? {};
   // while the setting is off the server keeps none: nothing learned is sent, so nothing is refused again and again
-  const added: Record<string, string> = base.tabLabels === null || local.settings.autoTabNames === false ? {} : Object.fromEntries(Object.entries(labelsHere).filter(([key]) => !(key in heldLabels)));
-  const removed = base.tabLabels === null ? [] : Object.keys(heldLabels).filter((key) => !(key in labelsHere));
+  // a label an earlier version learned from an attachment's path is replaced by the one learned again (#2637)
+  const replaced = (key: string): boolean => key in labelsHere && key in heldLabels && attachmentTabLabel(heldLabels[key]!) && labelsHere[key] !== heldLabels[key];
+  const added: Record<string, string> = base.tabLabels === null || local.settings.autoTabNames === false ? {} : Object.fromEntries(Object.entries(labelsHere).filter(([key]) => !(key in heldLabels) || replaced(key)));
+  const removed = base.tabLabels === null ? [] : Object.keys(heldLabels).filter((key) => !(key in labelsHere) || (key in added && replaced(key)));
   // a label dropped because its pane was seen gone is no one's action: the drop waits for a change someone made,
   // so reading or watching a page never writes the shared preferences
   const othersChanged = Object.keys(settings).length > 0 || pinsChanged || mutedChanged || Object.keys(added).length > 0;

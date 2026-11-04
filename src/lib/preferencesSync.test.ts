@@ -16,6 +16,10 @@ describe("preferences sync", () => {
     expect(preferencesChange(known, { ...local(DEFAULT_SETTINGS, [], []), tabLabels: {} })).toBeNull();
     expect(preferencesChange(known, { ...local(light, [], []), tabLabels: {} })).toEqual({ settings: { theme: "light" }, tab_labels_removed: ["w1:p1|t1"] });
     expect(preferencesChange(known, { ...local(DEFAULT_SETTINGS, [], []), tabLabels: { "w1:p1|t1": "Server" } })).toBeNull();
+    // a label an earlier version learned from an attachment's path is replaced by the one learned again (#2637)
+    const stale: Baseline = { ...known, tabLabels: { "w1:p1|t1": "@/Users/example/Library/\u2026" } };
+    expect(preferencesChange(stale, { ...local(DEFAULT_SETTINGS, [], []), tabLabels: { "w1:p1|t1": "Fix footer" } })).toEqual({ settings: {}, tab_labels: { "w1:p1|t1": "Fix footer" }, tab_labels_removed: ["w1:p1|t1"] });
+    expect(preferencesChange(stale, { ...local(DEFAULT_SETTINGS, [], []), tabLabels: {} })).toBeNull();
   });
 
   it("lays the tab labels learned and dropped here over another browser's, label by label", () => {
