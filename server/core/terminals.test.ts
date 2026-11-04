@@ -610,3 +610,55 @@ it("marks a newcomer recovering after a ready stream ends and clears it when the
     mock.module("../pty/session.ts", () => ({ PtySession: RealPtySession }));
   }
 });
+
+it("makes the new ID's first attach wait for the old ID's process, also while it is created and across a second move (#1503)", async () => {
+  let retiring: Map<string, Promise<void>> | undefined;
+  const created = Promise.withResolvers<PaneAttachment>();
+  const exited = Promise.withResolvers<void>();
+  const killed: string[] = [];
+  mock.restore();
+  spyOn(terminalProcess, "createSpawnAttachment").mockImplementation(({ attachments, retiringAttachments }) => {
+    retiring = retiringAttachments;
+    return { spawnAttachment: async (pane: string) => { const made = await created.promise; attachments.set(pane, made); return made; } };
+  });
+  const frames: ServerMessage[] = [];
+  const client = {
+    data: connectionData({ deviceId: undefined, readOnly: false }), readyState: WebSocket.OPEN,
+    getBufferedAmount: () => 0, send: (text: string) => { frames.push(JSON.parse(text)); return text.length; },
+    close() {},
+  };
+  const registry = createTerminalRegistry({
+    options: {}, clients: new Set([client]), stopped: () => false, terminalAttach: async () => true,
+    holdFor: 0, heldRetry: 0, retryFor: 0, relookupFor: 0,
+    holdPending() {}, holdPendingPane() {}, attached() {}, inputReady() {}, end() {},
+  });
+  try {
+    const attaching = registry.terminalFrames.attach(client, { type: "attach", pane_id: "A", cols: 80, rows: 24 });
+    // moved while its terminal is still looked up: the new ID waits from now
+    registry.paneMoved("A", "B");
+    const waitB = retiring?.get("B");
+    expect(waitB).toBeDefined();
+    created.resolve({
+      kind: "pty", ready: true, cols: 80, rows: 24, clients: new Set(), grids: new Map(), stalled: new Map(), replay: new ReplayBuffer(1024),
+      process: { exited: exited.promise, pause() {}, resume() {}, resize() {}, winch() {}, kill() { killed.push("A"); }, write() {} } as unknown as Extract<PaneAttachment, { kind: "pty" }>["process"],
+    });
+    await attaching;
+    await Promise.resolve();
+    // a second move before the first process exited carries the wait on
+    registry.paneMoved("B", "C");
+    const waitC = retiring?.get("C");
+    expect(waitC).toBeDefined();
+    let settled = false;
+    void Promise.all([waitB, waitC]).then(() => { settled = true; });
+    await created.promise.then(() => undefined);
+    for (let turn = 0; turn < 5; turn++) await Promise.resolve();
+    expect(killed).toEqual(["A"]);
+    expect(frames).toContainEqual({ type: "pty-exit", pane_id: "A", code: null });
+    expect(client.data.attached.has("A")).toBe(false);
+    expect(settled).toBe(false);
+    exited.resolve();
+    await Promise.all([waitB, waitC]);
+    expect(retiring?.has("B")).toBe(false);
+    expect(retiring?.has("C")).toBe(false);
+  } finally { registry.conversations.stop(); }
+});

@@ -263,6 +263,8 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
     await retiringAttachments.get(paneId);
     const mirrored = !(await terminalAttach());
     const { terminalId, rect } = await terminalInfoFor(paneId);
+    // a pane moved here while its terminal was looked up: the process attached under its old ID still holds herdr's slot (#1503)
+    await retiringAttachments.get(paneId);
     if (isStopped()) throw new HerdrError("server_stopped", "the web bridge stopped during attachment creation");
     // an observer-first attachment spawns at the pane's own grid (fallback 80x24 when
     // the layout has no rect for it): the attach must not seed the shared pty with a

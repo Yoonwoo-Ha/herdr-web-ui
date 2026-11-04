@@ -1127,6 +1127,13 @@ export type ServerMessage =
   | { type: "pane-exited"; pane_id: string }
   /** session structure changed (pane created/closed): refetch /api/session */
   | { type: "session-changed" }
+  /**
+   * herdr moved pane `from` to another workspace under the new ID `to`, wherever the move was made. Sent
+   * before the `session-changed` of that move. The server's own state follows it: pending messages are
+   * under `to` (held for an explicit send), and a terminal attached as `from` ended (`pty-exit`): attach
+   * `to` instead. Older bridges never send it; older clients ignore it.
+   */
+  | { type: "pane-moved"; from: string; to: string }
   /** herdr's own focus moved to this pane (its `pane.focused`, also sent for a tab or workspace brought
    * to the front), whoever moved it: its TUI, its CLI or a script. A browser follows it only when
    * asked to (Settings → Terminal); an older bridge never sends it */

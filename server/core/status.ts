@@ -42,7 +42,7 @@ import type { TelemetryIngress, TelemetrySurface } from "../../shared/telemetry.
 /** a focus or reconnect re-reads the panes for the daily active message at most this often */
 const VISIT_READ_MS = 10 * 60_000;
 
-export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pending, drainPending, holdPendingPane, usage, usageLogin }: {
+export function createStatusHub<Owner, Lease>({ options, devices, preferences, clients, present, pending, drainPending, holdPendingPane, paneMoved, usage, usageLogin }: {
   options: {
     stateDir?: string;
     codexHome?: string;
@@ -72,6 +72,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   pending: PendingInputs<Owner, Lease>;
   drainPending: (paneId: string) => void;
   holdPendingPane: (paneId: string, fault: { code: string; message: string }) => void;
+  /** herdr moved a pane under a new ID: what the server keeps under the old one follows it (pending messages, the terminal) */
+  paneMoved?: (from: string, to: string) => void;
   usage: UsageService;
   usageLogin: UsageLoginService;
 }) {
@@ -569,6 +571,12 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     },
     // closed, not ended by itself: the same cleanup with no "terminal ended" alert
     onPaneClosed: (paneId) => paneGone(paneId),
+    // told first, so a client remaps the pane before the pty-exit and pending lists of the old ID reach it,
+    // and before the structure change's roster no longer has that ID (#1503)
+    onPaneMoved: (from, to) => {
+      broadcastAll({ type: "pane-moved", from, to });
+      paneMoved?.(from, to);
+    },
     onStructureChange: () => broadcastAll({ type: "session-changed" }),
   }, { snapshot: async () => {
     const checkpoint = openCodeVerificationCheckpoint();

@@ -393,6 +393,27 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       firstReceipts.delete(paneId);
     }
   }
+  /**
+   * herdr moved the pane under a new ID: its messages follow it there, held for an explicit send, since the
+   * leases and typed Pi receipts they had were for the old ID's terminal (#1503).
+   */
+  function movePendingPane(from: string, to: string): void {
+    if (from === to) return;
+    const fault = { code: "pane_moved", message: "The pane moved to another workspace; review this message and send it again" };
+    holdPendingPane(from, fault);
+    pending.move(from, to, fault);
+    const receipts = firstReceipts.get(from);
+    firstReceipts.delete(from);
+    if (receipts) firstReceipts.set(to, [...firstReceipts.get(to) ?? [], ...receipts].slice(-FIRST_MESSAGE_RECEIPTS));
+    // typed Pi receipts, failed above as for a changed terminal, stay dismissible under the new ID
+    const typed = piTyped.get(from);
+    piTyped.delete(from);
+    piConsumed.delete(from);
+    if (typed) {
+      piTyped.set(to, [...piTyped.get(to) ?? [], ...typed]);
+      publishPi(to);
+    }
+  }
   function authorizePending(owner: Client, paneId: string, lease: PendingLease): void {
     authorizeSocket(owner);
     if (!clients.has(owner) || connectionOf(owner).closing) throw new HerdrError("disconnected", "The pending message's connection closed");
@@ -1215,5 +1236,5 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     },
   };
 
-  return { pending, holdPending, holdPendingPane, drainPending, pendingFrames, queueFirstMessage, attached, closeConnection, reconcilePiDeliveries };
+  return { pending, holdPending, holdPendingPane, movePendingPane, drainPending, pendingFrames, queueFirstMessage, attached, closeConnection, reconcilePiDeliveries };
 }
