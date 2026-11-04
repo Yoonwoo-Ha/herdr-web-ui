@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from "react";
-import { ArchiveRestore, Columns2, Ellipsis, Eraser, Maximize2, MoveHorizontal, Pencil, Rows2, ArrowLeftRight, TextWrap, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from "react";
+import { ArchiveRestore, Bot, Columns2, Ellipsis, Eraser, Maximize2, MoveHorizontal, Pencil, Plus, Rows2, ArrowLeftRight, Terminal, TextWrap, X } from "lucide-react";
 import { createPortal } from "react-dom";
-import type { HerdrPane, PaneLayoutSnapshot, SessionSnapshot } from "../../shared/protocol.ts";
+import type { HerdrPane, HerdrTab, PaneLayoutSnapshot, SessionSnapshot } from "../../shared/protocol.ts";
+import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
+import { customTabLabel } from "../lib/tabName.ts";
 import { useAppLayout, useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { PANE_DRAG_TYPE, paneDragData, type SplitSide } from "../lib/split.ts";
 import { PaneSubmitRetention } from "../lib/paneSubmitRetention.ts";
@@ -9,7 +11,8 @@ import { PaneCachedContext, PanePresentedContext, PaneShownContext, PaneSubmitCo
 import { cachedPaneCells, visitPaneTab } from "../lib/paneTabCache.ts";
 import { routeMissing } from "../lib/api.ts";
 import { layoutCells, zoomMode } from "../lib/layoutMap.ts";
-import { layoutTopology, paneContextPress, paneFieldTarget, SOLO_PANE_QUERY, soloPane, splitPath, splitRatioAt } from "../lib/paneCanvas.ts";
+import { CRAMPED_QUERY, layoutTopology, loneTabHidden, paneContextPress, paneFieldTarget, SOLO_PANE_QUERY, soloPane, splitPath, splitRatioAt } from "../lib/paneCanvas.ts";
+import { rosterPanes } from "../lib/dagPane.ts";
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
 import { MIRROR_WRAP_QUERY, wideGridKey, wideGrids } from "../lib/terminalFold.ts";
@@ -17,7 +20,9 @@ import { userErrorMessage, type UserError } from "../lib/userError.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
+import type { RenameRequest } from "../lib/useRenameRequest.ts";
 import { paneLifetimes } from "../lib/paneLifetime.ts";
+import { AgentMark } from "./AgentMark.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
@@ -40,6 +45,11 @@ interface Props {
   mirrored?: boolean;
   /** opens Recover unsent text for the pane, offered while earlier herdrs' panes left some (UnsentText) */
   onRecoverUnsent?: (target: HerdrPane) => void;
+  /** the tab row's New tab with agent… and its + (a shell tab): where a lone tab's row is left out (TabStrip's cramped), the pane's menu offers them */
+  onNewTab?: () => void;
+  onNewTerminal?: () => Promise<void>;
+  /** the Rename tab shortcut or palette action for the open pane: where the row is left out, its dialog stands in for the row's field (TabStrip clears it) */
+  renameRequest?: RenameRequest | null;
 }
 type Menu = { paneId: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus: HTMLElement | null };
 interface Drag {
@@ -62,7 +72,7 @@ interface Drag {
 }
 
 /** The active tab, drawn from herdr's rectangles. No browser-owned layout or PTY state. */
-export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged, renderPane, actionsRef, onOpenInHalf, mirrored = false, onRecoverUnsent }: Props) {
+export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged, renderPane, actionsRef, onOpenInHalf, mirrored = false, onRecoverUnsent, onNewTab, onNewTerminal, renameRequest = null }: Props) {
   const t = useT();
   const { settings, update: updateSettings } = useSettings();
   const narrowScreen = useMediaQuery(MIRROR_WRAP_QUERY);
@@ -75,6 +85,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const apple = /Mac|iPhone|iPad/.test(navigator.platform);
   const coarse = useMediaQuery("(pointer: coarse)");
   const narrow = useMediaQuery(SOLO_PANE_QUERY);
+  const cramped = useMediaQuery(CRAMPED_QUERY);
   const api = useMachineApi();
   const canvas = useRef<HTMLDivElement>(null);
   const [submits] = useState(() => new PaneSubmitRetention());
@@ -88,6 +99,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   }, [snapshot, submits]);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<HerdrPane | null>(null);
+  const [renamingTab, setRenamingTab] = useState<HerdrTab | null>(null);
   const [closing, setClosing] = useState<HerdrPane | null>(null);
   const [error, setError] = useState<UserError | null>(null);
   // A new pane can be selected before its snapshot arrives, and a selected pane can close
@@ -103,6 +115,9 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     ?? snapshot?.panes.find((item) => item.tab_id === previousTab)
     ?? null;
   const layout = snapshot?.layouts.find((item) => item.tab_id === presented?.tab_id) ?? null;
+  // the open tab is a lone one with no row (TabStrip's cramped): its lone pane draws no ellipsis
+  const loneRowHidden = presented !== null
+    && loneTabHidden(cramped, snapshot?.tabs.filter((tab) => tab.workspace_id === presented.workspace_id).length ?? 0);
   const topology = layout ? layoutTopology(layout) : "";
   const latest = useRef({ topology, tabId: presented?.tab_id, paneId: selectedPaneId, selection: 0 });
   latest.current = { topology, tabId: presented?.tab_id, paneId: selectedPaneId,
@@ -129,7 +144,13 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     return () => { alive.current = false; cancelDrag(); };
   }, []);
   useEffect(() => { cancelDrag(); }, [topology]);
-  useEffect(() => { setMenu(null); setRenaming(null); setClosing(null); setError(null); }, [presented?.tab_id]);
+  useEffect(() => { setMenu(null); setRenaming(null); setRenamingTab(null); setClosing(null); setError(null); }, [presented?.tab_id]);
+  // one press each: the request depends on itself alone, as the row's does (TabStrip)
+  useLayoutEffect(() => {
+    if (renameRequest === null || !loneRowHidden || appLayout || !presented) return;
+    const tab = snapshot?.tabs.find((entry) => entry.tab_id === presented.tab_id);
+    if (tab) setRenamingTab(tab);
+  }, [renameRequest]);
   useEffect(() => { if (menu && !snapshot?.panes.some((item) => item.pane_id === menu.paneId)) setMenu(null); }, [snapshot, menu]);
 
   const run = (operation: () => Promise<unknown>): void => {
@@ -182,7 +203,43 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         if (alive.current && latest.current.tabId === tabId && latest.current.selection === selection) onSelect(target.pane_id);
       }) },
   ];
-  const itemsFor = (target: HerdrPane): RowMenuItem[] => [
+  // A lone tab on a cramped phone has no row (TabStrip), so the pane's menu carries what the row's
+  // menu would: the tab's other panes, shown one at a time there, and the way to a new tab. There
+  // the pane draws no ellipsis of its own: the header's More menu offers this menu (App)
+  const rowItems = (target: HerdrPane): { panes: RowMenuItem[]; tab: RowMenuItem[] } | null => {
+    const tabs = snapshot?.tabs.filter((tab) => tab.workspace_id === target.workspace_id).length ?? 0;
+    if (!loneTabHidden(cramped, tabs)) return null;
+    const tab = snapshot?.tabs.find((entry) => entry.tab_id === target.tab_id);
+    const own = rosterPanes(snapshot?.panes.filter((item) => item.tab_id === target.tab_id) ?? [], selectedPaneId);
+    return {
+      panes: own.length < 2 ? [] : own.map((item): RowMenuItem => ({
+        id: `pane:${item.pane_id}`, label: displayPaneTitle(item), icon: Terminal,
+        glyph: item.agent ? <AgentMark agent={item.agent} size={16} /> : undefined,
+        current: item.pane_id === selectedPaneId, run: () => onSelect(item.pane_id),
+      })),
+      tab: [
+        ...(onNewTerminal ? [{ id: "new-terminal", label: t("New terminal"), icon: Plus, run: () => {
+          const tabId = latest.current.tabId;
+          setError(null);
+          void onNewTerminal().catch((reason: unknown) => {
+            if (alive.current && latest.current.tabId === tabId) setError({ message: t("New terminal failed: {reason}", { reason: userErrorMessage(reason).message }), detail: null });
+          });
+        } }] : []),
+        ...(onNewTab ? [{ id: "new-agent-tab", label: t("New tab with agent…"), icon: Bot, run: onNewTab }] : []),
+        // the row's inline name field is gone with it: the tab is named in a dialog, as a pane is
+        ...(appLayout || !tab ? [] : [{ id: "rename-tab", label: t("Rename tab"), icon: Pencil, run: () => setRenamingTab(tab) }]),
+      ],
+    };
+  };
+  const itemsFor = (target: HerdrPane): RowMenuItem[] => {
+    const row = rowItems(target);
+    if (!row) return paneItemsFor(target);
+    // as the row's menu does, a canvas showing one pane at a time offers no split or zoom, only unzoom
+    const own = paneItemsFor(target).filter((item) => item.id === "zoom" ? layout?.zoomed : item.id !== "split-right" && item.id !== "split-down");
+    return [row.panes, own, row.tab].filter((group) => group.length > 0)
+      .flatMap((group, at) => at === 0 ? group : group.map((item, index) => index === 0 ? { ...item, divider: true } : item));
+  };
+  const paneItemsFor = (target: HerdrPane): RowMenuItem[] => [
     ...layoutItems(target),
     // a mirror, or a pane watched at another device's grid, wider than the screen is folded to it
     // (lib/terminalFold.ts); a full-screen program reads better at its own width, panned sideways.
@@ -194,7 +251,14 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     { id: "close", label: t("Close pane"), icon: X, danger: true, run: () => requestClose(target) },
   ];
   const items = target ? itemsFor(target) : [];
-  if (actionsRef) actionsRef.current = itemsFor;
+  const published = useRef<{ ref: MutableRefObject<((target: HerdrPane) => RowMenuItem[]) | null>; items: typeof itemsFor } | null>(null);
+  if (actionsRef) { actionsRef.current = itemsFor; published.current = { ref: actionsRef, items: itemsFor }; }
+  // a canvas that goes (the setup guide in its place) leaves no actions behind for the header's menu
+  // or the row's; another canvas that took the ref over keeps its own
+  useEffect(() => () => {
+    const last = published.current;
+    if (last && last.ref.current === last.items) last.ref.current = null;
+  }, []);
 
   // One in-flight ratio at a time; retain only the newest position and always flush release.
   const flush = (current: Drag): void => {
@@ -312,7 +376,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
           if (paneContextPress(event, apple) && !paneFieldTarget(event.target)) { event.preventDefault(); event.stopPropagation(); }
         }}
         onContextMenuCapture={(event) => context(event, item)}>
-        <div className="pane-frame-head" draggable={onOpenInHalf !== undefined && !coarse}
+        {!(single && !offTab && loneRowHidden) && <div className="pane-frame-head" draggable={onOpenInHalf !== undefined && !coarse}
           onClick={(event) => {
             if (!onOpenInHalf || coarse || paneContextPress(event, apple) || (event.target instanceof Element && event.target.closest("button"))) return;
             const frame = event.currentTarget.parentElement;
@@ -331,7 +395,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
           <span className="pane-frame-title">{displayPaneTitle(item)}</span>
           <button type="button" className="icon-button pane-frame-menu" aria-label={t("Pane actions for {name}", { name: displayPaneTitle(item) })}
             onClick={(event) => showMenu(item, event.currentTarget)}><Ellipsis aria-hidden="true" /></button>
-        </div>
+        </div>}
         <div className="pane-frame-body"><PaneCachedContext.Provider value={cell.cached && !cell.retained}><PaneWatchedContext.Provider value={cell.cached && !cell.retained && watchedTabs.has(item.tab_id)}><PanePresentedContext.Provider value={!offTab}><PaneShownContext.Provider value={!hidden}>{renderPane(item, active, alone === null && cells.length > 1)}</PaneShownContext.Provider></PanePresentedContext.Provider></PaneWatchedContext.Provider></PaneCachedContext.Provider></div>
       </section>;
     })}
@@ -358,31 +422,42 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     })}
     {error && <div className="pane-canvas-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}<button className="icon-button" aria-label={t("Dismiss")} onClick={() => setError(null)}><X /></button></div>}
     {menu && target && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={t("Pane actions for {name}", { name: displayPaneTitle(target) })} items={items} onClose={closeMenu} />}
-    {renaming && <PaneRename pane={renaming} onClose={() => setRenaming(null)} onSave={async (label) => { await api.renamePane(renaming.pane_id, label); onChanged(); }} />}
+    {renaming && <RenameDialog title={t("Rename pane")} field={t("Pane name")} initial={renaming.label ?? ""} maxLength={80} onClose={() => setRenaming(null)} onSave={async (label) => { await api.renamePane(renaming.pane_id, label); onChanged(); }} />}
+    {renamingTab && <RenameDialog title={t("Rename tab")} field={t("Tab name")} initial={customTabLabel(renamingTab, 1) ?? ""} maxLength={MAX_LABEL_CHARS} required={t("A tab needs a name.")}
+      onClose={() => setRenamingTab(null)} onSave={async (label) => { await api.renameTab(renamingTab.tab_id, label); onChanged(); }} />}
     {closing && <ConfirmDialog title={t("Close pane {name}?", { name: displayPaneTitle(closing) })}
       body={t("The pane's running processes will stop. Closing its last pane also closes the workspace.")}
       confirmLabel={t("Close pane")} onClose={() => setClosing(null)} onConfirm={async () => { await api.closePane(closing.pane_id); setClosing(null); onChanged(); }} />}
   </div></PaneSubmitContext.Provider>;
 }
 
-function PaneRename({ pane, onClose, onSave }: { pane: HerdrPane; onClose: () => void; onSave: (label: string) => Promise<void> }) {
+/** A pane's or a lone tab's name; `required` is the error an empty name gets, where one is not allowed (a tab's). */
+function RenameDialog({ title, field, initial, maxLength, required, onClose, onSave }: { title: string; field: string; initial: string; maxLength: number; required?: string; onClose: () => void; onSave: (label: string) => Promise<void> }) {
   const t = useT();
   const input = useRef<HTMLInputElement>(null);
   const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: input });
-  const [value, setValue] = useState(pane.label ?? "");
+  const [value, setValue] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<UserError | null>(null);
   usePhoneSheetBack(() => { if (busy) return false; onClose(); });
   useEffect(() => {
-    const key = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); } };
+    // an IME's Escape is the composition's, not the dialog's
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault(); event.stopPropagation(); if (!busy) onClose();
+    };
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
   }, [busy, onClose]);
   return createPortal(<div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
-    <div ref={surface} className="modal" role="dialog" aria-modal="true" aria-label={t("Rename pane")}>
-      <form className="pane-rename-form" onSubmit={(event) => { event.preventDefault(); if (busy) return; setBusy(true); void onSave(value.trim()).then(onClose, (reason) => { setError(userErrorMessage(reason)); setBusy(false); }); }}>
-        <header className="modal-header"><h2 className="modal-title">{t("Rename pane")}</h2></header>
-        <div className="modal-body"><label>{t("Pane name")}<input ref={input} className="input" value={value} disabled={busy} maxLength={80} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setValue(event.target.value)} /></label>{error && <p role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>}</div>
+    <div ref={surface} className="modal" role="dialog" aria-modal="true" aria-label={title}>
+      <form className="pane-rename-form" onSubmit={(event) => {
+        event.preventDefault();
+        if (busy) return;
+        if (required !== undefined && value.trim() === "") { setError({ message: required, detail: null }); return; }
+        setBusy(true); void onSave(value.trim()).then(onClose, (reason) => { setError(userErrorMessage(reason)); setBusy(false); }); }}>
+        <header className="modal-header"><h2 className="modal-title">{title}</h2></header>
+        <div className="modal-body"><label>{field}<input ref={input} className="input" value={value} disabled={busy} maxLength={maxLength} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setValue(event.target.value)} /></label>{error && <p role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>}</div>
         <footer className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{t("Cancel")}</button><button className="btn btn-primary" disabled={busy}>{t("Save")}</button></footer>
       </form>
     </div>

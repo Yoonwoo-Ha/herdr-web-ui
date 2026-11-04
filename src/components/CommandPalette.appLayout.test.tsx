@@ -36,20 +36,23 @@ describe("the command palette on a PC the Herdr app lays out", () => {
   const descriptors = new Map<string, PropertyDescriptor | undefined>();
   const stored = new Map<string, string>();
   let renderer: ReactTestRenderer | undefined;
+  // a cramped screen's height query (CRAMPED_QUERY) holds: a lone tab draws no row there
+  let phone = false;
 
   beforeEach(() => {
     for (const key of ["window", "document", "navigator", "getComputedStyle", "localStorage", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     stored.clear();
     const storage = { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); }, removeItem: (key: string) => { stored.delete(key); } };
     const events = new EventTarget();
-    const media = { matches: false, addEventListener() {}, removeEventListener() {} };
+    phone = false;
+    const media = (query: string) => ({ get matches() { return phone && query.includes("max-height"); }, addEventListener() {}, removeEventListener() {} });
     const define = (key: string, value: unknown) => Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
     define("IS_REACT_ACT_ENVIRONMENT", true);
     // the test renderer draws no DOM: nothing is an element, so the focus trap finds nothing to hold
     define("HTMLElement", class HTMLElement {});
     define("localStorage", storage);
     define("navigator", { languages: ["en-US"], platform: "Linux" });
-    define("window", { localStorage: storage, matchMedia: () => media, innerWidth: 1280, innerHeight: 800, history: { state: null, pushState() {}, replaceState() {}, back() {} }, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout, clearTimeout });
+    define("window", { localStorage: storage, matchMedia: media, innerWidth: 1280, innerHeight: 800, history: { state: null, pushState() {}, replaceState() {}, back() {} }, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout, clearTimeout });
     define("document", { visibilityState: "visible", activeElement: null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } }, querySelector: () => null, querySelectorAll: () => [], addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events) });
     define("getComputedStyle", () => ({ getPropertyValue: () => "" }));
   });
@@ -76,6 +79,11 @@ describe("the command palette on a PC the Herdr app lays out", () => {
     const listed = await rows(false, "p1", ">");
     for (const row of LAYOUT_ROWS) expect(listed).toContain(row);
     expect(await rows(false, "p3", ">move tab")).toEqual(["Move tab to w1"]);
+  });
+
+  it("keeps Rename tab where a lone tab draws no row, whose dialog stands in for the row's field", async () => {
+    phone = true;
+    expect(await rows(false, "p3", ">rename tab")).toEqual(["Rename tab"]);
   });
 
   it("lists none of them on a core PC, and keeps New workspace and New tab", async () => {
