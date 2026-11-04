@@ -97,6 +97,19 @@ export class SeenStore {
     return next;
   }
 
+  /**
+   * herdr moved a pane of `pc` under a new ID (#1503): what was read under the old ID is read under the new one,
+   * each finish under the number the server counts it by there (`renumber`, server/finishes.ts moved), and every
+   * browser is told. The old ID's records stay, as an ended pane's do.
+   */
+  moved(pc: string, from: string, to: string, renumber: (id: number) => number = (id) => id): void {
+    if (from === to) return;
+    for (const finish of this.list()) {
+      if (finish.pc !== pc || finish.pane !== from) continue;
+      this.keep({ ...finish, pane: to, id: renumber(finish.id) }, undefined);
+    }
+  }
+
   subscribe(listener: (finish: SeenFinish, presented?: SeenPresentation) => void): () => void {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };

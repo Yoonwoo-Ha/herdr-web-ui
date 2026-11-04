@@ -3,7 +3,7 @@ import { paneStorageId, type Machine } from "../../shared/machines.ts";
 import { ComposerDraftStore, SEND_LEASE_MS } from "./composerDraft.ts";
 import { ReplyCommentStore } from "./replyComments.ts";
 import { PaneLifetimes, paneLifetimes } from "./paneLifetime.ts";
-import { carryPaneState } from "./paneMove.ts";
+import { carryPaneState, movedView } from "./paneMove.ts";
 import { readTerminalDraft, setTerminalDraftSending, writeTerminalDraft } from "./terminalDraft.ts";
 function fixture() {
   const data = new Map<string, string>();
@@ -251,4 +251,13 @@ it("keeps the comments a send on its way carries out of a second send from the m
   drafts.end("ovis:composer-draft:w1:p1", drafts.sendOf("ovis:composer-draft:w1:p1"));
   comments.release(carried);
   expect(comments.unreserved(comments.read(after)).map((item) => item.comment)).toEqual(["carried", "for the next message"]);
+});
+
+it("takes the view of a pane moved elsewhere to its new ID in either half, and nothing the user went to meanwhile (#1503)", () => {
+  const split = { other: { machineId: "pc", paneId: "w1:p1" }, ratio: 0.5 };
+  expect(movedView({ machineId: "pc", paneId: "w1:p1" }, split, "pc", "w1:p1", "w2:p1"))
+    .toEqual({ selection: "w2:p1", split: { other: { machineId: "pc", paneId: "w2:p1" }, ratio: 0.5 } });
+  // the same pane ID on another PC is another pane
+  expect(movedView({ machineId: "other", paneId: "w1:p1" }, null, "pc", "w1:p1", "w2:p1")).toEqual({ selection: null, split: null });
+  expect(movedView({ machineId: "pc", paneId: "w3:p1" }, null, "pc", "w1:p1", "w2:p1")).toEqual({ selection: null, split: null });
 });

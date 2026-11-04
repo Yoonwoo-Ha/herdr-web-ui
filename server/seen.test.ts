@@ -414,3 +414,18 @@ describe("a damaged read-finish file", () => {
     expect(new SeenStore(dir).list()).toEqual([finish("a", 1)]);
   });
 });
+
+describe("a pane moved under a new ID (#1503)", () => {
+  it("reads under the new ID what was read under the old one, renumbered, on its own PC only, and tells every browser", () => {
+    const store = new SeenStore(root());
+    store.record(finish("w1:p1", 3, "answer"));
+    store.record({ ...finish("w1:p1", 2), pc: "other" });
+    const told: SeenFinish[] = [];
+    store.subscribe((changed) => told.push(changed));
+    store.moved("local", "w1:p1", "w2:p1", (id) => id + 4);
+    expect(told).toEqual([finish("w2:p1", 7, "answer")]);
+    expect(store.list()).toContainEqual(finish("w2:p1", 7, "answer"));
+    expect(store.list()).toContainEqual({ ...finish("w1:p1", 2), pc: "other" });
+    expect(store.list().some((kept) => kept.pc === "other" && kept.pane === "w2:p1")).toBe(false);
+  });
+});

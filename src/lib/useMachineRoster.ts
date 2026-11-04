@@ -167,7 +167,7 @@ export function useRosterLoader({ rosterIn, setMachines, setMachineRosterLoaded,
   return { snapshotRequests, reorderCoordinator, load, scheduleRefetch };
 }
 
-export function useRosterEvents({ machineSessions, locked, receivePreferencesRef, snapshotRequests, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, getTakeNotificationTargetRef }: {
+export function useRosterEvents({ onPaneMoved, machineSessions, locked, receivePreferencesRef, snapshotRequests, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, getTakeNotificationTargetRef }: {
   machineSessions: MachineSessionRegistry;
   locked: boolean | null;
   receivePreferencesRef: RefObject<ReturnType<typeof usePreferencesSync>["receive"]>;
@@ -180,6 +180,8 @@ export function useRosterEvents({ machineSessions, locked, receivePreferencesRef
   machinesRef: RefObject<Machine[]>;
   onPaneStatus: ReturnType<typeof useAlertSignals>["onPaneStatus"];
   onPaneExited: ReturnType<typeof useAlertSignals>["onPaneExited"];
+  /** herdr moved a pane of a PC under a new ID (the server's pane-moved, #1503) */
+  onPaneMoved: (machineId: string, from: string, to: string) => void;
   followFocusRef: RefObject<boolean>;
   selectionRef: RefObject<SelectionMark>;
   splitShownRef: RefObject<boolean>;
@@ -256,6 +258,8 @@ export function useRosterEvents({ machineSessions, locked, receivePreferencesRef
         setNotificationViewTarget(null); setTerminalPeek(null);
         setAutoSelected(true);
       }
+      // told before the structure change of the move: the pane's state and view go to the new ID first
+      if (message.type === "pane-moved") onPaneMoved(machine.id, message.from, message.to);
       if (message.type === "session-changed" || message.type === "pane-exited") {
         // until the roster after it comes, the panes' sessions are not known: no press read of the old one is taken
         paneSessionsMoving(machine.id);

@@ -87,7 +87,7 @@ import { useT } from "./lib/i18n.ts";
 import { useConnectionChip, useServerMessageHandler } from "./lib/useConnectionChip.ts";
 import { useHeaderConnection } from "./lib/headerConnection.ts";
 import { selectionStill } from "./lib/selectionMark.ts";
-import { carryPaneState } from "./lib/paneMove.ts";
+import { carryMovedPane, movedView } from "./lib/paneMove.ts";
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
 import { useSidebarLayout } from "./lib/useSidebarLayout.ts";
 import { useAlertPrefs, useAlertRefs } from "./lib/useAlerts.ts";
@@ -96,7 +96,7 @@ import { useNotificationState, useNotificationSwitch } from "./lib/useNotificati
 import { alertsBell } from "./lib/alertsBell.ts";
 import { Droplet } from "./components/Droplet.tsx";
 import { MarkdownLinkMenu } from "./components/MarkdownLinkMenu.tsx";
-import { paneDragData, PANE_DRAG_TYPE, sameTarget, slotSide, type SplitSlot, type SplitTarget } from "./lib/split.ts";
+import { paneDragData, PANE_DRAG_TYPE, slotSide, type SplitSlot, type SplitTarget } from "./lib/split.ts";
 import { useLayoutNotice, useLayoutRefused, useMoveRefused } from "./lib/useLayoutNotice.ts";
 import { PaneFollowContext, PanePressContext } from "./lib/paneSubmitContext.ts";
 import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
@@ -247,7 +247,8 @@ export function App() {
 
   const { dropIn, chime, onRoster, onPaneStatus, onPaneExited } = useAlertSignals({ settings, selectionRef, drawerOpenRef, splitRef, splitShownRef, machinesRef, alertsRef, alertsOnRef, pushOnRef, statusRef, turnStartRef, lastTurnRef, alertInAppRef, alertSoundRef });
 
-  useRosterEvents({ machineSessions, locked, receivePreferencesRef, snapshotRequests, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, getTakeNotificationTargetRef: () => takeNotificationTargetRef });
+  // herdr moved a pane under a new ID, from anywhere (the server's pane-moved): followPaneMove below, called at the event
+  useRosterEvents({ onPaneMoved: (machineId, from, to) => followPaneMove(machineId, from, to), machineSessions, locked, receivePreferencesRef, snapshotRequests, onRoster, reorderCoordinator, setMachines, rosterIn, setMachineRosterLoaded, machinesRef, onPaneStatus, onPaneExited, followFocusRef, selectionRef, splitShownRef, splitRef, pendingLink, selectionHint, setSelectedPaneId, setNotificationViewTarget, setTerminalPeek, setAutoSelected, scheduleRefetch, preferencesResubscribedRef, preferencesDisconnectedRef, preferencesClosedRef, dropIn, chime, setPairedNotices, getTakeNotificationTargetRef: () => takeNotificationTargetRef });
 
   const handleServerMessage = useServerMessageHandler(setOutputStopped);
 
@@ -325,6 +326,14 @@ export function App() {
     }).catch((err) => layoutRefused("pane swap failed", err));
   };
 
+  // what this browser keeps under the moved pane's ID goes to its new ID (lib/paneMove.ts), and wherever the old ID is
+  // shown, in either half, the view goes with it (#1503). Nothing is sent: held text waits for its Send or Discard
+  const followPaneMove = (machineId: string, from: string, to: string): void => {
+    carryMovedPane(machineId, from, to);
+    const view = movedView(selectionRef.current, splitRef.current, machineId, from, to);
+    if (view.split !== null) setSplit(view.split);
+    if (view.selection !== null) selectTargetRef.current(machineId, view.selection);
+  };
   const { takeNotificationTargetRef } = useNotificationTargets({ machinesRef, selectTargetRef, selectionHint, pendingLink, pendingFile, setLinkLanded, linkSince, rosterSeq, setLinkTick, load });
 
 
@@ -487,14 +496,9 @@ export function App() {
         try {
           const moved = await moveTabToWorkspace(tabId, workspaceId, machineId);
           if (from === null) return;
-          // what was typed into the pane and not sent goes to its new ID with it (lib/paneMove.ts)
-          carryPaneState(machineId, from, moved.pane_id);
-          // the pane changed its ID with its workspace: wherever the old one is still shown, in either half,
-          // the view goes with it. A pane the user went to meanwhile is theirs to keep
-          const open = splitRef.current;
-          if (open && sameTarget(open.other, { machineId, paneId: from })) setSplit({ ...open, other: { machineId, paneId: moved.pane_id } });
-          const now = selectionRef.current;
-          if (now.machineId === machineId && now.paneId === from) selectTargetRef.current(machineId, moved.pane_id);
+          // the pane changed its ID with its workspace: what was kept under the old one, and the view showing it,
+          // go with it; the server's pane-moved for the same move finds nothing left to carry
+          followPaneMove(machineId, from, moved.pane_id);
         } catch (err) {
           if (notice) moveRefused(err);
           throw err;

@@ -62,6 +62,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     openCodeStateDir?: string;
     /** this server's workspace-order counter (server/order-sequence.ts); createServer makes the one there is */
     orderSequence?: OrderSequence;
+    /** herdr moved a pane of this PC under a new ID: the finishes read there go with it, numbered as counted there (server/seen.ts moved) */
+    seenMoved?: (from: string, to: string, renumber: (id: number) => number) => void;
   };
   devices: DeviceStore;
   /** the preferences every browser shares (server/preferences.ts): web push reads the muted panes from it */
@@ -574,6 +576,11 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     // told first, so a client remaps the pane before the pty-exit and pending lists of the old ID reach it,
     // and before the structure change's roster no longer has that ID (#1503)
     onPaneMoved: (from, to) => {
+      // its finishes go on counting under the new ID, and what was read of them is read there (server/seen.ts)
+      const renumber = finishes.moved(from, to);
+      // a read record that cannot be written costs that record, never the rest of the move
+      try { options.seenMoved?.(from, to, renumber); }
+      catch (error) { console.warn(`seen: could not carry the reads of ${from} to ${to}:`, error); }
       broadcastAll({ type: "pane-moved", from, to });
       paneMoved?.(from, to);
     },
