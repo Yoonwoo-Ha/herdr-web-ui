@@ -2519,13 +2519,19 @@ async function codexProcessesOf(paneId: string, known?: ProcessInfo | null): Pro
 }
 
 /** A missing label is expected for Kiro's outer PTY, but only its proven live Codex can use this fallback. */
-async function codexAgentInfo(paneId: string, known?: ProcessInfo | null): Promise<Pick<AgentInfo, "agent_session" | "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd"> & { nestedTerminal?: true }> {
+/**
+ * `processRead`: the pane's processes as this lookup read them, after agent.get, when herdr answered: the reader
+ * that binds a rollout to them takes the same read. Never a caller's earlier read, which may predate a Kiro
+ * wrapper the pane runs now (#2774).
+ */
+async function codexAgentInfo(paneId: string): Promise<Pick<AgentInfo, "agent_session" | "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd"> & { nestedTerminal?: true; processRead?: { info: ProcessInfo | undefined } }> {
   try {
     const agent = await agentGet(paneId);
-    const info = known !== undefined ? known ?? undefined : await paneProcessInfo(paneId).catch(() => undefined);
+    let processRead: { info: ProcessInfo | undefined } | undefined;
+    const info = await paneProcessInfo(paneId).then((answer) => (processRead = { info: answer }).info, () => undefined);
     // herdr's own report that the outer PTY is Kiro's wrapper keeps the guard, whether or not one more
     // process-table probe proves its Codex: a failed or racing probe must not make this a plain pane
-    return kiroNested(info, agent.agent === "codex") ? { ...agent, nestedTerminal: true } : agent;
+    return { ...agent, ...kiroNested(info, agent.agent === "codex") ? { nestedTerminal: true as const } : {}, ...processRead ? { processRead } : {} };
   }
   catch (error) {
     // herdr's wrapper fact, as above: the process lookup that follows proves the Codex or finds none
@@ -2902,8 +2908,8 @@ async function freshReportedThread(
 }
 
 /** The pane's Codex processes, and the rollouts they hold open (lsof on macOS, /proc elsewhere): one alone is the pane's. */
-async function openRollouts(paneId: string, home: string): Promise<{ codexProcesses: Awaited<ReturnType<typeof codexProcessesOf>>["list"]; processes: string; open: Set<string> }> {
-  const { list: codexProcesses, key: processes } = await codexProcessesOf(paneId);
+async function openRollouts(paneId: string, home: string, known?: ProcessInfo | null): Promise<{ codexProcesses: Awaited<ReturnType<typeof codexProcessesOf>>["list"]; processes: string; open: Set<string> }> {
+  const { list: codexProcesses, key: processes } = await codexProcessesOf(paneId, known);
   const open = new Set<string>();
   if (globalThis.process.platform === "darwin" && codexProcesses.length > 0) {
     // lsof is available on macOS, where /proc does not exist. Keep the same
@@ -2997,17 +3003,21 @@ export async function codexOpenRollout(paneId: string, cwd: string | null | unde
  * conversation a TUI shows: when nothing of this folder tells, the screen is matched against
  * all of them (loadedConversation).
  */
-export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[], homeUnplaced = false, known?: ProcessInfo | null): Promise<string | null> {
+export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[], homeUnplaced = false, homeFromEarlierRead = false): Promise<string | null> {
   if (panes !== undefined) {
     const open = new Set(panes.map((pane) => pane.pane_id));
     for (const pane of [...boundRollouts.keys()]) if (!open.has(pane)) boundRollouts.delete(pane);
   }
-  const agent = await codexAgentInfo(paneId, known);
+  const agent = await codexAgentInfo(paneId);
   const session = agent.agent_session;
+  // the read that decides the Kiro guard failed: a later one could prove a nested Codex the guard then misses (#2774)
+  if (agent.processRead === undefined && !agent.nestedTerminal) return null;
 
-  // always read now, never the caller's earlier answer: a screen match below binds the rollout to these processes,
-  // and one read before a Codex left (or before its pid came back) would bind a conversation to the wrong one
-  const { codexProcesses, processes, open } = await openRollouts(paneId, home);
+  // read now, never the caller's earlier answer (agent.get's own read, when herdr gave one): a screen match below
+  // binds the rollout to these processes, and one read before a Codex left (or before its pid came back) would
+  // bind a conversation to the wrong one
+  // (an answer without process facts is asked again, as before: a nested Codex may yet be proven from the next one)
+  const { codexProcesses, processes, open } = await openRollouts(paneId, home, agent.processRead?.info);
   // no Codex process of the pane proven now: what its screen still shows (an earlier occupant's, or
   // a Codex gone since) ties it to no conversation, and the terminal stands in
   if (codexProcesses.length === 0) return null;
@@ -3015,6 +3025,10 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   // must be known to write there (its environment says so), or what this store holds is not proof
   const first = codexProcesses[0];
   if (homeUnplaced && first !== undefined && await processCodexHome(first.pid, first.argv) !== home) return null;
+  // `home` was placed by the Codex an earlier read named (the caller's, or paneCodexHomePlaced's own): the one seen
+  // now must write there too, or another Codex started since with a store of its own would be shown this store's
+  // conversation (#2774)
+  if (homeFromEarlierRead && first !== undefined && ((await processCodexHome(first.pid, first.argv)) ?? defaultCodexHome()) !== home) return null;
   if (open.size === 1) return [...open][0]!;
   const resumed = resumedThread(codexProcesses.map((process) => process.argv ?? []));
 
