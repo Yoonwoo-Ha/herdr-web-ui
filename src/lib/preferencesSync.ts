@@ -206,7 +206,8 @@ export function takePreferences(base: Baseline, local: Local, remote: SharedPref
     if (force || remote.settings.autoTabNames === false) tabLabels = { ...remoteLabels };
     else {
       const merged: Record<string, string> = {};
-      for (const [key, label] of Object.entries(remoteLabels)) if (key in now || !(key in reference)) merged[key] = label;
+      // a label learned here again over an attachment's (#2637) stays, to replace it as preferencesChange does (#2682)
+      for (const [key, label] of Object.entries(remoteLabels)) if (key in now || !(key in reference)) merged[key] = key in now && attachmentTabLabel(label) && now[key] !== label ? now[key]! : label;
       for (const [key, label] of Object.entries(now)) if (!(key in reference) && !(key in merged)) merged[key] = label;
       tabLabels = merged;
     }

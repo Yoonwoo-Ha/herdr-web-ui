@@ -97,10 +97,12 @@ const NOT_A_NAME = /^(?:\/|~\/|\.\.?\/|[A-Za-z]:[\\/]|```|~~~)/;
  * An attached file's mention, `@` and its absolute path (lib/compose.ts imageMention), which names
  * nothing a tab could be told by (#2637). An upload's path may hold spaces (a folder under
  * ~/Library), so one in the shape an upload takes (server/paste.ts: `<name>-<YYYYMMDD>-<HHMMSS>-
- * <8 hex>.<ext>`, a name with no space) is taken whole up to the next mention, as lib/chatImages.ts
- * reads it; any other path ends at a space, and so does one whose words reach another path.
+ * <8 hex>.<ext>`, a name with no space) is taken whole up to the next path or mention, as
+ * lib/chatImages.ts reads it; any other path ends at a space. Only one in an upload folder `.ovis` may
+ * run past a word ending in an image's extension, so the words after another mention never read as an
+ * upload's path (#2682). A folder's " @" or " ~" followed by a space is part of it.
  */
-const ATTACHMENT = /(^|\s)@(?:\/|~[\\/]|[A-Za-z]:[\\/])(?:(?:(?!\s(?:@|[\\/~]|[A-Za-z]:[\\/])).){0,1024}?[\\/][\p{L}\p{N}._-]*-\d{8}-\d{6}-[0-9a-f]{8}(?:\.[a-z0-9]{1,10})?(?=\s|$)|\S*)/giu;
+const ATTACHMENT = /(^|\s)@(?:\/|~[\\/]|[A-Za-z]:[\\/])(?:(?:(?!\s(?:@\S|[\\/]|~[\\/]|[A-Za-z]:[\\/])).){0,1024}?[\\/]\.ovis[\\/][\p{L}\p{N}._-]*-\d{8}-\d{6}-[0-9a-f]{8}(?:\.[a-z0-9]{1,10})?(?=\s|$)|(?:(?!\s(?:@\S|[\\/]|~[\\/]|[A-Za-z]:[\\/])|\.(?:png|jpe?g|gif|webp)\s).){0,1024}?[\\/][\p{L}\p{N}._-]*-\d{8}-\d{6}-[0-9a-f]{8}(?:\.[a-z0-9]{1,10})?(?=\s|$)|\S*)/giu;
 
 /**
  * A label an Ovis before #2637 learned with an attachment's mention in it (a label learned now never

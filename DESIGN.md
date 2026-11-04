@@ -1619,7 +1619,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   alike, shows a few words of the first message its agent was given, about 24 columns (a wide
   character takes two) cut at a word's end with `…` (#2019); its hover stays the pane's title. A
   slash command, a path or a code fence names nothing, so the next line is taken, and an attached
-  file's `@path` mention is left out, an upload's path with spaces whole (#2637). An agent's own name
+  file's `@path` mention is left out, an upload's path with spaces whole (#2637), though never the
+  words after another mention (#2682). An agent's own name
   for its conversation comes before those words: the pane's name, else herdr's pane title, else the
   terminal title of Codex (its thread) or Claude Code (its topic), the agents that name the
   conversation there (another agent's says its state, "Ready"), unless it only says which agent runs

@@ -34,6 +34,15 @@ describe("preferences sync", () => {
     expect(takePreferences(known, { ...mine, tabLabels: known.tabLabels! }, { revision: 3, settings: {}, pins: [], muted_panes: [] }, null).tabLabels).toEqual({});
   });
 
+  it("keeps a label learned again over an attachment's one another browser's save brings back (#2682)", () => {
+    const stale = "See @/Users/example/Library/\u2026";
+    const known: Baseline = { ...base(DEFAULT_SETTINGS, [], []), tabLabels: { "w1:p1|t1": stale } };
+    const mine: Local = { ...local(DEFAULT_SETTINGS, [], []), tabLabels: { "w1:p1|t1": "Fix footer" } };
+    const taken = takePreferences(known, mine, { revision: 2, settings: {}, pins: [], muted_panes: [], tab_labels: { "w1:p1|t1": stale, "w1:p2|t2": "Two" } }, null);
+    expect(taken.tabLabels).toEqual({ "w1:p1|t1": "Fix footer", "w1:p2|t2": "Two" });
+    expect(preferencesChange(taken.base, { ...mine, tabLabels: taken.tabLabels! })).toEqual({ settings: {}, tab_labels: { "w1:p1|t1": "Fix footer" }, tab_labels_removed: ["w1:p1|t1"] });
+  });
+
   it("sends no learned label while the setting is off, and takes the server's empty map", () => {
     const known: Baseline = { ...base(DEFAULT_SETTINGS, [], []), tabLabels: {} };
     const off = { ...DEFAULT_SETTINGS, autoTabNames: false };
