@@ -3,7 +3,7 @@ import type { PreferencesChange, SharedPreferences } from "../../shared/preferen
 import type { SeenFinish } from "../../shared/seen.ts";
 import type { AgentCatalogResponse, AgentTabStarted } from "../../shared/agent-catalog.ts";
 import { resumeConnectionTraces } from "./connectionTrace.ts";
-import { machinePath, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type Machine, type MachineRoster, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
+import { machinePath, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   WorkspaceMoved,
   HerdrPane,
@@ -202,6 +202,13 @@ export async function requestUpdate(request: UpdateRequest): Promise<void> {
 /** Settings → Updates: herdr itself, on the PC the server runs on. */
 export function fetchHerdrUpdate(): Promise<HerdrUpdateStatus> {
   return getJson<HerdrUpdateStatus>("/api/herdr/update");
+}
+
+/** Settings → About → Terminals: saves `runtime` and has the server start again on it (server/herdr-core/runtime-choice.ts). */
+export async function switchRuntime(runtime: "herdr" | "herdr-core"): Promise<void> {
+  const url = "/api/runtime";
+  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ runtime }) });
+  if (!response.ok) throw await errorFrom(url, response);
 }
 
 export async function requestHerdrUpdate(): Promise<void> {
@@ -770,6 +777,8 @@ export interface HealthInfo {
   security?: SecuritySummary;
   /** authenticated only; absent from an older server and until the server's first look for hc has ended */
   herdr_core?: HerdrCoreFacts;
+  /** a driving owner only; absent from an older server */
+  herdr_runtime?: HerdrRuntimeFacts;
 }
 
 export async function fetchHealth(): Promise<HealthInfo> {

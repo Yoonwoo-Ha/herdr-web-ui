@@ -763,8 +763,17 @@ Portal tells the app who signed in with `X-Portal-User` and `X-Portal-Auth` (`--
 ## Herdr app terminals
 
 The [Herdr desktop app](https://herdr.dev/download/) runs its terminals on herdr-core (`hc`), a
-runtime apart from herdr's TUI server. Start Ovis with `OVIS_RUNTIME=herdr-core` to show those
-terminals instead of the TUI's: this PC's panes are then the app's. Ovis needs an `hc` speaking
+runtime apart from herdr's TUI server. Ovis can show those terminals instead of the TUI's: this
+PC's panes are then the app's. One server serves one runtime, chosen as it starts:
+
+1. `OVIS_RUNTIME` (`herdr` or `herdr-core`) in the server's environment, when it is set;
+2. else the choice made in **Settings → About → Terminals** (saved as `runtime-<port>.json` in the state folder);
+3. else what the PC has. Any trace of herdr's TUI (a `herdr` on the `PATH` or in `~/.local/bin`,
+   `~/.config/herdr/config.toml`, or its socket) keeps herdr, and nothing is run to decide it.
+   Only a PC with none looks for herdr-core, and picks it when an `hc` answers `--version` and the
+   Herdr app is installed or its core runs.
+
+Ovis needs an `hc` speaking
 protocol generation 1 (checked with 0.1.14 and 0.1.17), and finds it the way the Herdr app does:
 `OVIS_HC_BIN`, then the `PATH`, then your login shell's `PATH`, then the usual install places
 (`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, mise, Nix and cargo), taking `herdr-core`
@@ -773,13 +782,24 @@ managers ship an unrelated `hc`. Looking runs nothing but `--version`: every oth
 starts a core when none runs. When no candidate answers, Ovis does not start and says where it
 looked, rather than run an `hc` that may not be herdr-core's.
 
-**Settings → About → Terminals** says which runtime this PC serves. On herdr's TUI, when it finds
-the Herdr app's core on the same PC, it says so and how to switch: set `OVIS_RUNTIME=herdr-core` and restart
-Ovis. When herdr's plugin starts Ovis, that goes in the `.env` file in the folder
-`herdr plugin config-dir devswha.ovis` prints; started another way (`bun run start`, a service),
-it goes in that environment. Only a device that drives this PC is told this, never a watching one or a stranger
-on an open install; and the look behind it skips the login shell, whose profile could run any
-command, so it never starts a core on a PC that did not choose herdr-core. Whether the core runs is read from its socket file (`HC_SOCKET`, `socket` in hc's
+**Settings → About → Terminals** says which runtime this PC serves and, when the PC has the
+other one too, offers to switch: **Switch** asks first, saves the choice and restarts Ovis on it,
+on the same port and state folder, and Settings shows the new runtime once the restarted server
+answers. Text left unsent in one runtime's panes waits in **Recover unsent text** once the other's
+are shown; pins and muted alerts are kept for the panes shown, so the other runtime's may be cleared.
+A start that fails on the chosen runtime goes back to the previous one, and a saved Herdr app
+whose core is gone starts herdr instead and says so there. Only a device that drives this PC can
+switch, never a watching one or a stranger on an open install, and the switch needs Ovis's own
+launcher (the herdr plugin or `bun run start`), which restarts the server. When `OVIS_RUNTIME`
+is set in the environment, it decides, and Settings says to change it there. On a server
+started directly (`bun server/index.ts`), Settings says how to switch by hand: set
+`OVIS_RUNTIME=herdr-core` and restart Ovis (for herdr's plugin, in the `.env` file in the folder
+`herdr plugin config-dir devswha.ovis` prints). The look for hc behind these facts skips the
+login shell, whose profile could run any command, so it never starts a core on a PC that did not
+choose herdr-core; the start on herdr-core looks there too, and so does finding hc again after an
+update moved it, each candidate asked `--version` afresh. While Ovis serves herdr-core, herdr's
+own version and **Update herdr** are not shown: herdr-core's version is on the Terminals line.
+Whether the core runs is read from its socket file (`HC_SOCKET`, `socket` in hc's
 `config.toml`, else `<session>.sock` under `$XDG_RUNTIME_DIR/herdr-core/`; `HC_SESSION` names the
 session, `default` otherwise); nothing connects to it.
 
@@ -871,7 +891,7 @@ Each `OVIS_*` variable was called `HERDR_WEB_*` before Ovis took its name (`OVIS
 | `OVIS_PUSH_SUBJECT` | this repository's URL | VAPID contact URL or `mailto:` address |
 | `OVIS_BUNDLE_MANIFEST` | unset | Remote-PC bundle manifest (path or URL) that overrides local and published bundles |
 | `OVIS_HERDR_BIN` | `herdr` | herdr executable used for terminal attach |
-| `OVIS_RUNTIME` | `herdr` | `herdr-core` shows the terminals of [herdr-core](https://herdr.dev/core) (`hc`), the core the Herdr desktop app runs on, instead of herdr's TUI server: see [Herdr app terminals](#herdr-app-terminals) |
+| `OVIS_RUNTIME` | chosen | `herdr-core` shows the terminals of [herdr-core](https://herdr.dev/core) (`hc`), the core the Herdr desktop app runs on, instead of herdr's TUI server. Unset, the runtime chosen in Settings, else what the PC has, decides; set, it wins and Settings cannot switch: see [Herdr app terminals](#herdr-app-terminals) |
 | `OVIS_HC_BIN` | found | hc executable used with `OVIS_RUNTIME=herdr-core`, looked at first: the server runs it as its one `hc connect`, which also carries the live terminals. One whose `--version` does not say `hc …` is passed over for the next one found (see [Herdr app terminals](#herdr-app-terminals)). `HC_SESSION` and `HC_SOCKET` pick the core as for any hc command |
 | `OVIS_SSH` | `ssh` (Git for Windows' on Windows) | OpenSSH client for [remote PCs](#remote-pcs-over-ssh); the `sftp` and `ssh-keygen` beside it are used too |
 | `OVIS_APP_NAME` | unset (`Ovis`) | The name the installed app has on a phone or computer, for example the PC's name. Each PC installs as an app of its own, and without it they are all called `Ovis`. An app already installed takes the new name when the browser next updates it, usually within a day or two, without a reinstall. Keep it short: a home screen cuts a long label |

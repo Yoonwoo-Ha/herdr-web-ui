@@ -22,7 +22,8 @@ import { AGENT_CATALOG, catalogPlatform } from "../shared/agent-catalog.ts";
 import { AgentInstaller } from "./agent-catalog-install.ts";
 import { type BackgroundAgentDeps } from "./background-agent.ts";
 import { herdrSocketPath, ping } from "./herdr/client.ts";
-import { coreConnection, hcBin, servingCore, startRuntime } from "./herdr-core/runtime.ts";
+import { coreConnection, hcBin, NoHerdrCoreError, servingCore, setRuntime, startRuntime } from "./herdr-core/runtime.ts";
+import { chooseRuntime, runtimeService, type RuntimeChoice, type RuntimeService } from "./herdr-core/runtime-choice.ts";
 import { bridgePins } from "./herdr-core/pin-label.ts";
 import { SeenMarker } from "./herdr-core/seen-label.ts";
 import { herdrCoreFacts } from "./herdr-core/discovery.ts";
@@ -147,6 +148,10 @@ export function createServer(
     herdrUpdate?: HerdrUpdater;
     /** what this PC has of herdr-core, for Settings (server/herdr-core/discovery.ts); unset, health tells none. Tests pass a stand-in. */
     herdrCoreFacts?: () => HerdrCoreFacts | undefined;
+    /** which runtime this server serves and the Settings switch (server/herdr-core/runtime-choice.ts); unset, health tells none and a switch is refused. Tests pass a stand-in. */
+    runtimeService?: RuntimeService;
+    /** whether the launcher took this bridge as its own after its startup check (server/supervisor.ts); unset, nothing is told */
+    launchAccepted?: () => boolean;
     /** a public address through Portal (server/portal.ts); unset, the app offers none. Tests pass one that runs a stand-in portal. */
     portal?: PortalService;
     /** Relay opt-in and identity persist in stateDir; tests can supply a local physical transport. */
@@ -447,9 +452,34 @@ if (import.meta.main) {
   // resolved once, for the same reason as in createServer
   const stateDir = defaultStateDir();
   // herdr-core's adapter is HERDR_SOCKET: it listens before anything below asks herdr
+  // the launcher says when it took this bridge as its own, past its startup check: a page following a
+  // runtime switch waits for that, never for a bridge the launcher may still roll back
+  let launchAccepted = process.env["OVIS_MANAGED"] !== "1";
+  process.on("message", (message: unknown) => {
+    if (message !== null && typeof message === "object" && (message as { type?: unknown }).type === "bridge-accepted") launchAccepted = true;
+  });
+  // OVIS_RUNTIME, else the choice saved from Settings, else what this PC has (runtime-choice.ts)
+  const startEnv = { ...process.env };
   let herdrCore: Awaited<ReturnType<typeof startRuntime>>;
+  let choice: RuntimeChoice;
+  let fallback: "no_herdr_core" | undefined;
   try {
-    herdrCore = await startRuntime(stateDir);
+    choice = await chooseRuntime({ stateDir, port: Number(startEnv["PORT"] || DEFAULT_PORT), env: startEnv });
+    setRuntime(choice.runtime);
+    console.log(`Runtime: ${choice.runtime} (${choice.reason})`);
+    try {
+      herdrCore = await startRuntime(stateDir);
+    } catch (err) {
+      // a choice saved from Settings whose core is gone falls back to herdr, where Settings can switch again;
+      // OVIS_RUNTIME says what to serve, and its failure stays an error
+      // only a missing hc: any other failure (a state folder, another Ovis) is the launcher's to roll back
+      if (choice.source !== "saved" || choice.runtime !== "herdr-core" || !(err instanceof NoHerdrCoreError)) throw err;
+      console.error(`The herdr-core chosen in Settings cannot start (${err instanceof Error ? err.message : String(err)}); serving herdr.`);
+      choice = { ...choice, runtime: "herdr" };
+      fallback = "no_herdr_core";
+      setRuntime("herdr");
+      herdrCore = null;
+    }
   } catch (err) {
     console.error(`Ovis cannot start: ${err instanceof Error ? err.message : String(err)}.`);
     process.exit(1);
@@ -461,7 +491,10 @@ if (import.meta.main) {
   const relay = new RelayService({ stateDir });
   let instance: ReturnType<typeof createServer>;
   try {
-    instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), herdrCoreFacts, portal, relay, telemetry, registerBridge: true, herdrProfiles: readHerdrProfiles, shellAgents: new ShellAgentLocator(), agentDetector: new AgentDetector({ locate: catalogLocator({ probe: defaultLoginProbe() }) }), stateDir, siblingStateDir: siblingStateDir(stateDir) });
+    instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), herdrCoreFacts,
+      launchAccepted: () => launchAccepted,
+      runtimeService: runtimeService({ stateDir, port: Number(startEnv["PORT"] || DEFAULT_PORT), serving: choice.runtime, source: choice.source, ...(fallback ? { fallback } : {}), env: startEnv, core: herdrCoreFacts, accepted: () => launchAccepted, restart: (id) => process.send?.({ type: "runtime-restart", id }) }),
+      portal, relay, telemetry, registerBridge: true, herdrProfiles: readHerdrProfiles, shellAgents: new ShellAgentLocator(), agentDetector: new AgentDetector({ locate: catalogLocator({ probe: defaultLoginProbe() }) }), stateDir, siblingStateDir: siblingStateDir(stateDir) });
     instance.warmAgentCatalog();
   } catch (err) {
     const { code, syscall } = err as { code?: string; syscall?: string };

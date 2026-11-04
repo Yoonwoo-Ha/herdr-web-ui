@@ -31,7 +31,8 @@ import { paneGet, ping } from "./herdr/client.ts";
 import { handlePushRequest } from "./push.ts";
 import { handlePromptRequest, type OpenCodePromptState } from "./prompt.ts";
 import { attachableIdentity } from "./pty/sidecar.ts";
-import { handleUpdateRequest } from "./update-api.ts";
+import { runtime } from "./herdr-core/runtime.ts";
+import { handleUpdateRequest, updateRequestAllowed } from "./update-api.ts";
 import { handleHerdrUpdateRequest } from "./herdr-update.ts";
 import { handlePortalRequest } from "./portal.ts";
 import { handleRelayRequest } from "./relay/routes.ts";
@@ -437,21 +438,37 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     } : undefined;
     const securityHeaders: Record<string, string> = security ? { "cache-control": "no-store" } : {};
     const relay = access.level === "full" ? { relay: ctx.services.relay.status() } : {};
-    if (url.searchParams.get("scope") === "bridge") return jsonResponse({ ok: true, auth, bridge_protocol: BRIDGE_PROTOCOL, ...relay, ...(security ? { security } : {}) }, 200, securityHeaders);
-    // what this PC has of the Herdr app's runtime, for Settings: never waited for, no path in it; a bridge poll asks none.
+    // what this PC has of the Herdr app's runtime, for Settings: never waited for, no path in it.
     // Only a driving owner is told: a session name can name a project, which a watching device or a
     // stranger on an open install has no need to read
     const owner = access.level === "full" && access.role === "drive" && access.via !== "open";
+    const herdr_runtime = owner ? options.runtimeService?.facts() : undefined;
+    // the boot id lets the launcher know its own new bridge without waiting on herdr (server/supervisor.ts);
+    // the runtime facts ride along, so Settings can switch back while herdr's TUI is stopped
+    if (url.searchParams.get("scope") === "bridge") return jsonResponse({ ok: true, auth, bridge_protocol: BRIDGE_PROTOCOL, ...relay, ...(security ? { security } : {}), web_ui: { boot_id: bootId }, runtime: runtime(), ...(options.launchAccepted ? { accepted: options.launchAccepted() } : {}), ...(herdr_runtime ? { herdr_runtime } : {}) }, 200, securityHeaders);
     const herdr_core = owner ? options.herdrCoreFacts?.() : undefined;
     try {
       const info = await ping();
       // a forced answer (tests) and a runtime without the PTY sidecar are told the way a Windows herdr's own would be
       const herdr = attachableIdentity(info, sidecar);
-      return jsonResponse({ ok: true, herdr, auth, ...relay, ...(lan_exposure ? { lan_exposure } : {}), ...(security ? { security } : {}), ...(herdr_core ? { herdr_core } : {}),
+      return jsonResponse({ ok: true, herdr, auth, ...relay, ...(lan_exposure ? { lan_exposure } : {}), ...(security ? { security } : {}), ...(herdr_core ? { herdr_core } : {}), ...(herdr_runtime ? { herdr_runtime } : {}),
         web_ui: { boot_id: bootId, revision: process.env["OVIS_REVISION"] ?? null } }, 200, securityHeaders);
     } catch (error) {
       return errorResponse(error);
     }
+  }
+
+  if (pathname === "/api/runtime") {
+    setRequestRoute(pathname);
+    if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    if (!updateRequestAllowed(request)) return jsonResponse({ error: { code: "forbidden", message: "a runtime switch must come from this app's own page" } }, 403);
+    // the same boundary as the facts: only a driving owner, never a watching device or a stranger on an open install
+    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can switch its runtime" } }, 403);
+    if (!options.runtimeService) return jsonResponse({ error: { code: "runtime_locked", message: "this server cannot switch its runtime" } }, 409);
+    let body: unknown;
+    try { body = await request.json(); } catch { return badRequest("invalid_json", "send { \"runtime\": \"herdr\" | \"herdr-core\" }"); }
+    const answer = options.runtimeService.request(body !== null && typeof body === "object" ? (body as Record<string, unknown>)["runtime"] : undefined);
+    return answer.ok ? jsonResponse({ accepted: true }, 202) : jsonResponse({ error: { code: answer.code, message: answer.message } }, answer.status);
   }
 
   if (pathname === "/api/herdr-ui") {

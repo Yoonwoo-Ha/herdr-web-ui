@@ -34,7 +34,8 @@ import { testShellEnv } from "../scripts/test-shell.ts";
 import { PendingInputError, PendingInputs } from "./pending-input.ts";
 import { loginPathProbe, ShellAgentLocator, type LoginPathProbe } from "./shell-agent.ts";
 import { DeviceStore } from "./devices.ts";
-import type { HerdrCoreFacts, MachineEvent, MachineSettings } from "../shared/machines.ts";
+import type { HerdrCoreFacts, HerdrRuntimeFacts, MachineEvent, MachineSettings } from "../shared/machines.ts";
+import type { RuntimeService, SwitchAnswer } from "./herdr-core/runtime-choice.ts";
 import { MAX_MUTED_PANES, type SharedPreferences } from "../shared/preferences.ts";
 import { OmoStatus } from "./omo-status.ts";
 import { omoJobTasks } from "./omo-jobs.ts";
@@ -5696,15 +5697,15 @@ describe("shared preferences API", () => {
 });
 
 describe("access facts on /api/health", () => {
-  type Body = { auth: HealthAuth; lan_exposure?: LanExposure; security?: SecuritySummary; herdr_core?: HerdrCoreFacts };
+  type Body = { auth: HealthAuth; lan_exposure?: LanExposure; security?: SecuritySummary; herdr_core?: HerdrCoreFacts; herdr_runtime?: HerdrRuntimeFacts };
   const SECRET = "fictional-t0k3n-value";
   const guard = { "content-type": "application/json", "x-herdr-machine": "1" };
   /** a server of its own: a temp state dir, an empty token unless one is given, nothing from the runner's environment */
   const CORE_FACTS: HerdrCoreFacts = { version: "0.1.17", session: "default", running: false };
-  const serve = (options: { hostname?: string; token?: string; serveOnly?: boolean; owner?: string | null; seed?: (stateDir: string) => void } = {}) => {
+  const serve = (options: { hostname?: string; token?: string; serveOnly?: boolean; owner?: string | null; seed?: (stateDir: string) => void; runtime?: RuntimeService; accepted?: () => boolean } = {}) => {
     const stateDir = mkdtempSync(join(tmpdir(), "herdr-security-summary-"));
     options.seed?.(stateDir);
-    const instance = createServer({ port: 0, hostname: options.hostname ?? "127.0.0.1", token: options.token ?? "", stateDir, tailscaleOwner: options.owner ?? null, tailscaleServeOnly: options.serveOnly ?? false, herdrCoreFacts: () => CORE_FACTS });
+    const instance = createServer({ port: 0, hostname: options.hostname ?? "127.0.0.1", token: options.token ?? "", stateDir, tailscaleOwner: options.owner ?? null, tailscaleServeOnly: options.serveOnly ?? false, herdrCoreFacts: () => CORE_FACTS, ...(options.runtime ? { runtimeService: options.runtime } : {}), ...(options.accepted ? { launchAccepted: options.accepted } : {}) });
     const read = async (headers: Record<string, string> = {}, scope = "") => {
       const response = await fetch(`http://127.0.0.1:${instance.port}/api/health${scope}`, { headers });
       const text = await response.text();
@@ -5790,6 +5791,65 @@ describe("access facts on /api/health", () => {
       expect(stranger.body.auth).toMatchObject({ authenticated: true, via: "open" });
       expect(stranger.body.herdr_core).toBeUndefined();
       expect((await open.read({})).body.herdr_core).toEqual(CORE_FACTS);
+    } finally { open.stop(); }
+  });
+
+  it("says in the bridge's own answer which runtime it serves and whether its launcher took it", async () => {
+    let taken = false;
+    const server = serve({ accepted: () => taken });
+    try {
+      const first = (await server.read({}, "?scope=bridge")).body as unknown as { runtime?: string; accepted?: boolean; web_ui?: { boot_id?: string } };
+      expect([first.runtime, first.accepted, typeof first.web_ui?.boot_id]).toEqual(["herdr", false, "string"]);
+      taken = true;
+      expect(((await server.read({}, "?scope=bridge")).body as unknown as { accepted?: boolean }).accepted).toBe(true);
+    } finally { server.stop(); }
+  });
+
+  it("tells the runtime facts to a driving owner only, and takes a switch from that owner's own page only", async () => {
+    const facts: HerdrRuntimeFacts = { serving: "herdr", source: "detected", tui: { installed: true, running: true }, app_installed: true, switch_to: "herdr-core", locked: null };
+    const asked: unknown[] = [];
+    let answer: SwitchAnswer = { ok: true };
+    const runtime: RuntimeService = { facts: () => facts, request: (target) => { asked.push(target); return answer; } };
+    let token = "";
+    const secured = serve({ token: SECRET, runtime, seed: (stateDir) => {
+      const store = new DeviceStore(stateDir);
+      token = store.pair(store.startPairing().code, "Watch", "watch")!.token;
+      store.match(token);
+    } });
+    const bearer = { authorization: `Bearer ${SECRET}` };
+    const post = (headers: Record<string, string>, body: unknown = { runtime: "herdr-core" }) =>
+      fetch(`http://127.0.0.1:${secured.port}/api/runtime`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+    try {
+      expect((await secured.read(bearer)).body.herdr_runtime).toEqual(facts);
+      expect((await secured.read({ cookie: `ovis_device=${token}`, "x-forwarded-for": "192.168.0.20" })).body.herdr_runtime).toBeUndefined();
+      expect((await secured.read({})).body.herdr_runtime).toBeUndefined();
+      // the bridge's own answer, which needs no herdr, tells the same owner the same, so a stopped TUI keeps the way back
+      expect((await secured.read(bearer, "?scope=bridge")).body.herdr_runtime).toEqual(facts);
+      expect((await secured.read({ cookie: `ovis_device=${token}`, "x-forwarded-for": "192.168.0.20" }, "?scope=bridge")).body.herdr_runtime).toBeUndefined();
+      expect((await secured.read({}, "?scope=bridge")).body.herdr_runtime).toBeUndefined();
+      // nobody but a driving owner, and only through the app's own request header
+      expect((await post({})).status).toBe(401);
+      expect((await post({ cookie: `ovis_device=${token}`, "x-forwarded-for": "192.168.0.20", "x-herdr-update": "1" })).status).toBe(403);
+      expect((await post(bearer)).status).toBe(403);
+      expect(asked).toEqual([]);
+      const accepted = await post({ ...bearer, "x-herdr-update": "1" });
+      expect([accepted.status, await accepted.json()]).toEqual([202, { accepted: true }]);
+      expect(asked).toEqual(["herdr-core"]);
+      // the service's refusal reaches the page as it is
+      answer = { ok: false, status: 409, code: "runtime_locked", message: "OVIS_RUNTIME decides" };
+      const refused = await post({ ...bearer, "x-herdr-update": "1" }, { runtime: "herdr" });
+      expect([refused.status, ((await refused.json()) as { error: { code: string } }).error.code]).toEqual([409, "runtime_locked"]);
+      expect((await fetch(`http://127.0.0.1:${secured.port}/api/runtime`, { headers: bearer })).status).toBe(400);
+    } finally { secured.stop(); }
+    // an open install lets a stranger on the network in as a driver: still no switch for them
+    asked.length = 0;
+    answer = { ok: true };
+    const open = serve({ hostname: "0.0.0.0", runtime });
+    try {
+      const stranger = await fetch(`http://127.0.0.1:${open.port}/api/runtime`, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1", "x-forwarded-for": "192.168.0.20" }, body: JSON.stringify({ runtime: "herdr-core" }) });
+      expect(stranger.status).toBe(403);
+      expect((await open.read({ "x-forwarded-for": "192.168.0.20" })).body.herdr_runtime).toBeUndefined();
+      expect(asked).toEqual([]);
     } finally { open.stop(); }
   });
 
