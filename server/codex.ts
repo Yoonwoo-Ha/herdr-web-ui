@@ -15,7 +15,7 @@ import { codexReadCall, codexReadSkills, selectedSkill } from "./skill-activity.
 import { trimOutput } from "./tool-output.ts";
 import type { TranscriptParser } from "./transcript-records.ts";
 import type { AgentInfo } from "../shared/herdr-api.generated.ts";
-import { agentGet, HerdrError, paneGet, paneProcessInfo, paneRead, sessionSnapshot } from "./herdr/client.ts";
+import { agentGet, HerdrError, paneGet, paneProcessInfo, paneRead, sessionSnapshot, type ProcessInfo } from "./herdr/client.ts";
 import { kiroCodexProcess, kiroNested, kiroWrapper } from "./kiro-terminal.ts";
 import { resolveAgent } from "./pane-context.ts";
 import { FOOTER } from "./codex-steering.ts";
@@ -533,12 +533,12 @@ export async function paneCodexHome(paneId: string, configured?: string): Promis
  * placed is the default store only because no Codex process was seen (a probe failed or raced): a reader
  * that finds a conversation there asks again, as a Codex proven since may keep its store elsewhere.
  */
-export async function paneCodexHomePlaced(paneId: string, configured?: string): Promise<{ home: string; placed: boolean }> {
+export async function paneCodexHomePlaced(paneId: string, configured?: string, known?: ProcessInfo | null): Promise<{ home: string; placed: boolean }> {
   if (configured) return { home: configured, placed: true };
   try {
     // the first Codex listed decides, with or without a home of its own: a child or wrapper it
     // started with another CODEX_HOME writes to a store that is not this pane's conversation
-    const [first] = (await codexProcessesOf(paneId)).list;
+    const [first] = (await codexProcessesOf(paneId, known)).list;
     if (first !== undefined) return { home: (await processCodexHome(first.pid, first.argv)) ?? defaultCodexHome(), placed: true };
   } catch { /* herdr busy: the default store */ }
   return { home: defaultCodexHome(), placed: false };
@@ -2475,8 +2475,9 @@ export async function paneCodexProcess(paneId: string): Promise<{ pid: number; a
   return (await codexProcessesOf(paneId)).list[0] ?? null;
 }
 
-async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; argv?: string[] }[]; key: string }> {
-  const processInfo = await paneProcessInfo(paneId);
+/** `known`: herdr's `pane.process_info` answer the caller's poll already read for this pane (null: no processes). */
+async function codexProcessesOf(paneId: string, known?: ProcessInfo | null): Promise<{ list: { pid: number; argv?: string[] }[]; key: string }> {
+  const processInfo = known !== undefined ? known ?? undefined : await paneProcessInfo(paneId);
   // herdr's schema allows `argv: null`; this reader has always read argv as absent or a list
   // (the cast is the inline result type herdrRpc was given before the typed seam)
   const list = ((processInfo?.foreground_processes ?? []) as { pid: number; argv?: string[] }[])
@@ -2518,10 +2519,10 @@ async function codexProcessesOf(paneId: string): Promise<{ list: { pid: number; 
 }
 
 /** A missing label is expected for Kiro's outer PTY, but only its proven live Codex can use this fallback. */
-async function codexAgentInfo(paneId: string): Promise<Pick<AgentInfo, "agent_session" | "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd"> & { nestedTerminal?: true }> {
+async function codexAgentInfo(paneId: string, known?: ProcessInfo | null): Promise<Pick<AgentInfo, "agent_session" | "terminal_title" | "terminal_title_stripped" | "cwd" | "foreground_cwd"> & { nestedTerminal?: true }> {
   try {
     const agent = await agentGet(paneId);
-    const info = await paneProcessInfo(paneId).catch(() => undefined);
+    const info = known !== undefined ? known ?? undefined : await paneProcessInfo(paneId).catch(() => undefined);
     // herdr's own report that the outer PTY is Kiro's wrapper keeps the guard, whether or not one more
     // process-table probe proves its Codex: a failed or racing probe must not make this a plain pane
     return kiroNested(info, agent.agent === "codex") ? { ...agent, nestedTerminal: true } : agent;
@@ -2996,14 +2997,16 @@ export async function codexOpenRollout(paneId: string, cwd: string | null | unde
  * conversation a TUI shows: when nothing of this folder tells, the screen is matched against
  * all of them (loadedConversation).
  */
-export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[], homeUnplaced = false): Promise<string | null> {
+export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[], homeUnplaced = false, known?: ProcessInfo | null): Promise<string | null> {
   if (panes !== undefined) {
     const open = new Set(panes.map((pane) => pane.pane_id));
     for (const pane of [...boundRollouts.keys()]) if (!open.has(pane)) boundRollouts.delete(pane);
   }
-  const agent = await codexAgentInfo(paneId);
+  const agent = await codexAgentInfo(paneId, known);
   const session = agent.agent_session;
 
+  // always read now, never the caller's earlier answer: a screen match below binds the rollout to these processes,
+  // and one read before a Codex left (or before its pid came back) would bind a conversation to the wrong one
   const { codexProcesses, processes, open } = await openRollouts(paneId, home);
   // no Codex process of the pane proven now: what its screen still shows (an earlier occupant's, or
   // a Codex gone since) ties it to no conversation, and the terminal stands in

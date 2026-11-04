@@ -1198,8 +1198,8 @@ function parseCursor(stream: TranscriptStream, cursor: string): number {
 }
 
 /** gjc's resolver answers null; the chat lens reports why it fell back to scrollback. */
-export async function gjcTranscriptPath(paneId: string, cwd: string, home?: string): Promise<string> {
-  const path = await gjcTranscriptForPane(paneId, cwd, home);
+export async function gjcTranscriptPath(paneId: string, cwd: string, home?: string, known?: KnownProcesses): Promise<string> {
+  const path = known === undefined ? await gjcTranscriptForPane(paneId, cwd, home) : await gjcTranscriptForPane(paneId, cwd, home, { known });
   if (!path) throw new ConversationUnavailable("no_session_path");
   return path;
 }
@@ -1498,12 +1498,15 @@ function ompBlobIdentity({ path, root, identity }: { path: string; root: string;
   } catch { return null; } finally { for (const entry of held) entry.close(); }
 }
 
-export async function ompTranscriptPath(paneId: string, cwd: string): Promise<{ path: string; blobs: string | null }> {
+export async function ompTranscriptPath(paneId: string, cwd: string, known?: KnownProcesses): Promise<{ path: string; blobs: string | null }> {
   const info = await herdrRpc<{ agent: { agent_session?: { kind?: unknown; value?: unknown } } }>("agent.get", { target: paneId });
   const session = info.agent.agent_session;
   const path = session?.kind === "path" && typeof session.value === "string" ? session.value : null;
   const home = userHome();
-  const route = process.platform === "win32" ? null : await ompPaneRoute(paneId);
+  let route = process.platform === "win32" ? null : await ompPaneRoute(paneId, known);
+  // the caller's read named no omp (none in front, only the shell, or one gone since): an omp started after it may
+  // keep another store than the session herdr still reports, so the pane is asked again
+  if (route === null && known != null && process.platform !== "win32") route = await ompPaneRoute(paneId);
   // an omp whose store nothing proves, or two keeping different ones
   if (route === "unproved") throw new ConversationUnavailable("no_session_path");
   const store = route === null ? ompSessionStore(path, home) : path === null ? null : ompRouteStore(route, path);
@@ -1701,9 +1704,9 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
     }
     if (agent === "codex") {
       // the pane's own store: the rollout, its history and its images are all read from there
-      const { home, placed } = await paneCodexHomePlaced(paneId, codexHome);
+      const { home, placed } = await paneCodexHomePlaced(paneId, codexHome, known);
       // a store chosen while no Codex process of the pane was seen is checked against the one the lookup proves
-      const path = await codexTranscriptPath(paneId, cwd, home, panes, !placed);
+      const path = await codexTranscriptPath(paneId, cwd, home, panes, !placed, known);
       if (!path) throw new ConversationUnavailable("no_session_path");
       return { source: "codex-transcript", path, codexHome: home };
     }
@@ -1713,10 +1716,10 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
       return { source: "claude-transcript", path };
     }
     if (agent === "omp") {
-      const authorized = await ompTranscriptPath(paneId, sessionCwd);
+      const authorized = await ompTranscriptPath(paneId, sessionCwd, known);
       return { source: "omp-transcript", path: authorized.path, ompBlobs: authorized.blobs };
     }
-    if (agent === "gjc") return { source: "gjc-transcript", path: await gjcTranscriptPath(paneId, sessionCwd) };
+    if (agent === "gjc") return { source: "gjc-transcript", path: await gjcTranscriptPath(paneId, sessionCwd, undefined, known) };
     // pi's own label only routes pi: an omo pane was taken above, by its process tree.
     if (agent === "pi") {
       const found = await piTranscriptPath(paneId, undefined, known === undefined ? {} : { processes: known?.foreground_processes ?? [] });
