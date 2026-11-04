@@ -12,7 +12,7 @@ export type InlineNode =
   /** `![alt](src)`; `fallback` is what a surface that draws no images shows after the `!` */
   | { type: "image"; alt: string; src: string; fallback: InlineNode[]; /** CSS pixels, from an HTML `<img width>` */ width?: number }
   /** a link to a local file (`[report](/repo/out/REPORT.md)`): its label opens the path */
-  | { type: "file"; path: string; children: InlineNode[] };
+  | { type: "file"; path: string; children: InlineNode[]; /** the address as written, when decoding changed it: what a terminal shows */ written?: string };
 
 export interface ListItem {
   content: InlineNode[];
@@ -63,7 +63,7 @@ export function shownText(nodes: InlineNode[], addresses = false): string | null
       case "link": case "file": {
         const words = shownText(node.children);
         if (words === null) return null;
-        const href = node.type === "link" ? node.href : node.path;
+        const href = node.type === "link" ? node.href : node.written ?? node.path;
         out += addresses && href && words !== href && words !== href.replace(/^mailto:/, "") ? `${words} (${href})` : words;
         break;
       }
@@ -97,7 +97,8 @@ export function webLikeHref(target: string): string | null {
  * The file a link names, when its target is a path rather than an address: agents link
  * files they wrote (`[report](/repo/out/REPORT.md)`, `[x](src/x.ts#L12)`, `[x](x.ts:12)`).
  * A line anchor (`#L12`, `:12`) stays for the viewer; other anchors are dropped. A line after a bare
- * word is a scheme's (`tel:123`), not a file's.
+ * word is a scheme's (`tel:123`), not a file's. The path is URL-encoded, as a `file:///` URI's is
+ * (`/a%20b/%EC%95%B0.md`): it is decoded once, and kept as written when it is not valid encoding.
  */
 export function markdownFileTarget(href: string): string | null {
   const value = href.trim();
@@ -106,7 +107,21 @@ export function markdownFileTarget(href: string): string | null {
   const target = value.replace(/#(?!L\d+(?:-L?\d+)?$).*$/, "");
   const path = target.replace(/(?::\d+){1,2}$|#L\d+(?:-L?\d+)?$/, "");
   if (path === "" || /^[a-z][a-z0-9+.-]*:/i.test(path) || (path !== target && !/[./]/.test(path))) return null;
-  return target;
+  let decoded = path;
+  try { decoded = decodeURIComponent(path); } catch { /* `100%.png`: not encoding, a name */ }
+  // a control character belongs to no path, an encoded `%3A12` or `%23L12` names the file, not a
+  // line, and an encoded space at either end would be trimmed away by the viewer
+  if (/[\u0000-\u001f\u007f]|(?::\d+){1,2}$|#L\d+(?:-L?\d+)?$|^\s|\s$/.test(decoded)) decoded = path;
+  return decoded + target.slice(path.length);
+}
+
+/** A file link's node, or null when the target names no file. */
+export function markdownFileNode(href: string, children: InlineNode[]): InlineNode | null {
+  const path = markdownFileTarget(href);
+  if (path === null) return null;
+  const written = href.trim();
+  return /^file:/i.test(written) || !/%[0-9a-f]{2}/i.test(written) || path === written
+    ? { type: "file", path, children } : { type: "file", path, written, children };
 }
 
 /** A bare URL without the punctuation that closes the sentence around it (GFM's autolink rule). */
@@ -293,10 +308,8 @@ export function parseInline(source: string, links = true, depth = 0): InlineNode
       const target = token.slice(split + 2, -1);
       // a label holds no `]`, so no link nests in one: only emphasis counts toward the depth
       const href = safeMarkdownHref(target) ?? webLikeHref(target);
-      const file = href === null ? markdownFileTarget(target) : null;
       const shown: InlineNode = href !== null ? { type: "link", href, children: parseInline(label, false, depth) }
-        : file !== null ? { type: "file", path: file, children: parseInline(label, false, depth) }
-        : { type: "text", value: label };
+        : markdownFileNode(target, parseInline(label, false, depth)) ?? { type: "text", value: label };
       if (image) nodes.push({ type: "image", alt: label, src: target, fallback: [{ type: "text", value: "!" }, shown] });
       else nodes.push(shown);
     } else if (token.startsWith("**") || token.startsWith("__")) {

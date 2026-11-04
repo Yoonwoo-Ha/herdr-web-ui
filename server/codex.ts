@@ -1081,7 +1081,7 @@ function codexShownText(nodes: InlineNode[]): string | null {
   const rendered = (node: InlineNode): InlineNode => {
     if (node.type === "link" || node.type === "file") {
       const label = shownText(node.children);
-      const target = node.type === "link" ? node.href : node.path;
+      const target = node.type === "link" ? node.href : node.written ?? node.path;
       if (label === target) return { type: "text", value: `${label} (${target})` };
     }
     if (node.type === "strong" || node.type === "em" || node.type === "del") return { ...node, children: node.children.map(rendered) };
