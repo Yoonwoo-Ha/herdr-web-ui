@@ -13,7 +13,7 @@
 import { createHash, createPublicKey, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type DevicePairedEvent, type DeviceRole, type DevicesRevokedAll, type PairedDevice, STREAM_COOKIE_PREFIX } from "../shared/protocol.ts";
+import { type DevicePairedEvent, type DevicePairToken, type DeviceRole, type DevicesRevokedAll, type PairedDevice, STREAM_COOKIE_PREFIX } from "../shared/protocol.ts";
 import type { Access } from "./access.ts";
 import { CLEAR_LEGACY_DEVICE_COOKIE, COOKIE_MAX_AGE_SECONDS, DEVICE_COOKIE_CLEARED, deviceCookie, isSecureRequest, noContent, parseCookies } from "./auth.ts";
 import { badRequest, isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
@@ -87,6 +87,11 @@ export function streamKeys(request: Request): string[] {
     if (keys.length === STREAM_KEYS_MAX) break;
   }
   return keys;
+}
+
+/** The request names `application/json` among the types it accepts: a browser's fetch sends `*\/*` and never asks. */
+function acceptsJson(request: Request): boolean {
+  return (request.headers.get("accept") ?? "").split(",").some((type) => type.split(";")[0]!.trim().toLowerCase() === "application/json");
 }
 
 export function newStreamKey(): string {
@@ -486,9 +491,19 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     const body = await json();
     if (body instanceof Response) return body;
     if (typeof body["code"] !== "string") return badRequest("missing_code", "code is required");
+    const firstPair = !store.gated;
     const paired = store.pair(body["code"], normalizeLabel(body["label"], "Device"), "drive", Date.now(), streamKeys(request));
     if (paired === null) return jsonResponse({ error: { code: "invalid_code", message: "the code is wrong, spent or expired; start a new pairing on the PC" } }, 401);
-    return noContent(deviceCookie(paired.token, isSecureRequest(request)), CLEAR_LEGACY_DEVICE_COOKIE);
+    const cookies = [deviceCookie(paired.token, isSecureRequest(request)), CLEAR_LEGACY_DEVICE_COOKIE];
+    if (!acceptsJson(request)) return noContent(...cookies);
+    // a script asked for the token itself, to send as `Authorization: Device <token>` (#2744); a
+    // browser never asks, so its page never reads the credential its HttpOnly cookie keeps. A first
+    // pairing waits in memory for its cookie to come back; a script may store the token and use it
+    // after a restart, so its pairing is confirmed (written, gate closed) before the answer
+    if (firstPair) store.match(paired.token);
+    const answer = jsonResponse({ token: paired.token } satisfies DevicePairToken, 200, { "cache-control": "no-store" });
+    for (const cookie of cookies) answer.headers.append("set-cookie", cookie);
+    return answer;
   }
   if (pathname === "/api/devices") {
     setRequestRoute(pathname);

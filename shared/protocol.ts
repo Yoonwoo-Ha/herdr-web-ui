@@ -389,7 +389,10 @@ export type { DevicePairedEvent, Machine, MachineEvent, MachineRoster, PaneTarge
  *  POST   /api/devices/pair/start        -> PairingCode: a six-digit code good for ten minutes, replacing any pending one
  *         (X-Herdr-Machine: 1 + same origin, from a client with full access)
  *  POST   /api/devices/pair { code, label? } -> 204 + Set-Cookie ovis_device (public, like /api/auth;
- *         401 invalid_code when the code is wrong, spent after five tries, or expired)
+ *         401 invalid_code when the code is wrong, spent after five tries, or expired). With
+ *         `Accept: application/json` (a script, never the browser app): 200 DevicePairToken + the same
+ *         Set-Cookie; the script then sends `Authorization: Device <token>` in place of the cookie,
+ *         under the same role, last-seen and revocation
  *  PATCH  /api/devices/:id  { label }    -> PairedDevice;  DELETE /api/devices/:id -> 204 (revoked at its next request)
  *  POST   /api/devices/revoke-all        -> DevicesRevokedAll + Set-Cookie clearing ovis_device and its old name
  *         (X-Herdr-Machine: 1 + same origin, a client that can drive: 403 invalid_origin / read_only;
@@ -476,6 +479,11 @@ export interface RelayStatus {
   readonly sessions: number;
   readonly blocked: null | "serve_only" | "identity_unreadable";
   readonly error: string | null;
+}
+
+/** POST /api/devices/pair's answer to a request that accepts JSON: the device's own credential. */
+export interface DevicePairToken {
+  readonly token: string;
 }
 
 /**

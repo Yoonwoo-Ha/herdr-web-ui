@@ -7,7 +7,7 @@ import { handleIntegrationsRequest } from "./integrations-routes.ts";
 import type { OrderSequence } from "./order-sequence.ts";
 import type { DevicePairedEvent, HealthAuth, SecuritySummary, SessionSnapshot } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
-import { authClient, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
+import { authClient, deviceAuthorizationValue, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { bindScope, cameThroughProxy, decideAccess, forwardingHeaders, inTailnet, isLoopbackAddress, isServeOwnerRequest, lanExposed, observedIngress } from "./access.ts";
 import { type DeviceStore, handleDeviceRequest, newStreamKey, sameBrowser, streamCookie, streamKeys, type DeviceMatch } from "./devices.ts";
 import { handlePreferencesRequest, type PreferenceStore } from "./preferences.ts";
@@ -147,7 +147,8 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   const tokenMatched = presented === "match";
   let pairedDevice: DeviceMatch | null;
   try {
-    pairedDevice = relayPeer ?? devices.match(deviceCookieValue(parseCookies(request.headers.get("cookie"))));
+    // a script's `Authorization: Device` header stands for the cookie a browser holds (#2744)
+    pairedDevice = relayPeer ?? devices.match(deviceAuthorizationValue(request) ?? deviceCookieValue(parseCookies(request.headers.get("cookie"))));
   } catch (error) {
     // First-cookie confirmation is an authorization write, not best-effort telemetry.
     return errorResponse(error);
