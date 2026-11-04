@@ -235,7 +235,17 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     ))).then(publish);
     return () => { live = false; };
   }, [listWorktrees, unmarked, online, watching, appLayout]);
-  const { branches, rememberOpened } = useWorktreeBranches(snapshot, online, true, repositoryWorkspaces, watching);
+  // a repository's folder that stops being a checkout is refused on a later poll: that refusal is an answer too (#2726)
+  const notCheckout = useCallback((id: string) => {
+    repositoryAnswers.current.set(id, false);
+    setRepositoryWorkspaces((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+  const { branches, rememberOpened } = useWorktreeBranches(snapshot, online, true, repositoryWorkspaces, watching, notCheckout);
   // the sidebar's filter (lib/sidebarFilter.ts): which rows stay, which are context; it learns the branch
   // each row says from here, since the inventory is this roster's. What it last said outlives a fold of the
   // PC (which unmounts this roster), so a branch stays findable on a PC drawn folded
