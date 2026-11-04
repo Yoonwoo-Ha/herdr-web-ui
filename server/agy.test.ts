@@ -62,9 +62,9 @@ it("reads a checkpointed WAL catalog without recreating missing side files", () 
 });
 
 it.each([
-  ["database", 32 * 1024 * 1024 + 1, 0],
-  ["WAL", 8192, 32 * 1024 * 1024 + 1],
-  ["combined", 16 * 1024 * 1024, 16 * 1024 * 1024 + 1],
+  ["database", 64 * 1024 * 1024 + 1, 0],
+  ["WAL", 8192, 64 * 1024 * 1024 + 1],
+  ["combined", 32 * 1024 * 1024, 32 * 1024 * 1024 + 1],
 ] as const)("rejects an oversized %s before copying the catalog", (_name, dbBytes, walBytes) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "agy-catalog-limit-")));
   try {
@@ -114,6 +114,60 @@ it.each(["wal", "shm", null] as const)("reads a WAL catalog with %s missing with
     expect(exitCode).toBe(0);
     // Incomplete pairs read only the checkpointed main file, as session-history does.
     expect(JSON.parse(stdout)).toEqual(missing === null ? [0, 1] : [0]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+it("reads a long session's live WAL catalog past 32 MiB and copies it again only when it changes", async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "agy-wal-large-")));
+  try {
+    const transcript = join(dir, "brain", "session", ".system_generated", "logs", "transcript_full.jsonl");
+    const dbPath = agyDatabasePath(transcript);
+    mkdirSync(dirname(dbPath), { recursive: true });
+    // 24 MiB checkpointed plus about 10 MiB of WAL, the shape of a long turn (#2618).
+    const rows = (from: number, to: number) => Array.from({ length: to - from }, (_, at) => `INSERT INTO steps VALUES (${from + at}, randomblob(1048576));`).join("");
+    await abandonedWal(dbPath, `PRAGMA journal_mode=WAL; CREATE TABLE steps(idx INTEGER PRIMARY KEY, payload BLOB); ${rows(0, 24)} PRAGMA wal_checkpoint(TRUNCATE); ${rows(24, 34)}`);
+    expect(fs.statSync(dbPath).size + fs.statSync(`${dbPath}-wal`).size).toBeGreaterThan(32 * 1024 * 1024);
+
+    const changed = () => Math.max(...[dbPath, `${dbPath}-wal`].flatMap((file) => [fs.statSync(file).mtimeMs, fs.statSync(file).ctimeMs]));
+    let now = changed() + 100;
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const writes = spyOn(fs, "writeFileSync");
+    try {
+      expect(agyCatalog(transcript).size).toBe(34);
+      // Files changed just before a copy may yet be rewritten under the same times: copy again.
+      writes.mockClear();
+      expect(agyCatalog(transcript).size).toBe(34);
+      expect(writes).toHaveBeenCalled();
+      // Copied once they had settled, a catalog is reused for as long as it does not change.
+      now += 2500;
+      expect(agyCatalog(transcript).size).toBe(34);
+      now += 60_000;
+      writes.mockClear();
+      expect(agyCatalog(transcript).size).toBe(34);
+      expect(writes).not.toHaveBeenCalled();
+      await abandonedWal(dbPath, "INSERT INTO steps VALUES (34, NULL);");
+      now = changed() + 100;
+      expect(agyCatalog(transcript).has(34)).toBe(true);
+      expect(writes).toHaveBeenCalled();
+      await abandonedWal(dbPath, "INSERT INTO steps VALUES (35, NULL);");
+      now = changed() + 2500;
+      expect(agyCatalog(transcript).has(35)).toBe(true);
+      // A reused catalog still requires the path to name the pinned database.
+      writes.mockClear();
+      expect(() => agyCatalog(transcript, () => {
+        fs.renameSync(dbPath, `${dbPath}.old`);
+        fs.copyFileSync(`${dbPath}.old`, dbPath);
+      })).toThrow(AgyUnavailable);
+      expect(writes).not.toHaveBeenCalled();
+      // ...and unchanged pinned files through the read, as a fresh copy does.
+      fs.rmSync(dbPath);
+      fs.renameSync(`${dbPath}.old`, dbPath);
+      now = changed() + 2500;
+      expect(agyCatalog(transcript).size).toBe(36);
+      writes.mockClear();
+      expect(() => agyCatalog(transcript, () => fs.truncateSync(dbPath, 0))).toThrow(AgyUnavailable);
+      expect(writes).not.toHaveBeenCalled();
+    } finally { writes.mockRestore(); clock.mockRestore(); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
