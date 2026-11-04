@@ -167,6 +167,7 @@ run_script scripts/replay-clipboard-demo-regression.ts
 run_script scripts/todo-snapshots-demo-regression.ts
 run_script scripts/command-outcome-demo-regression.ts
 run_script scripts/chat-outcome-note-browser-qa.ts
+run_script scripts/prompt-card-lifetime-browser-qa.ts
 run_script scripts/sidebar-activity-demo-regression.ts
 run_script scripts/sidebar-filter-demo-regression.ts
 run_script scripts/sidebar-declutter-demo-regression.ts
