@@ -82,7 +82,13 @@ export interface HerdrCoreAdapter {
   stop: () => void;
 }
 
-export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string): Promise<HerdrCoreAdapter> {
+/**
+ * `observeSeen`: told each terminal's turn and labels as the events subscription learns them, so the
+ * server knows a turn some client marked seen before Ovis is told of a look (seen-label.ts SeenMarker).
+ */
+export type SeenObserver = (address: string, turn: number, labels: Record<string, string>) => void;
+
+export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string, observeSeen?: SeenObserver): Promise<HerdrCoreAdapter> {
   if (existsSync(socketPath)) {
     const live = await new Promise<boolean>((resolve, reject) => {
       const probe = createConnection(socketPath);
@@ -120,7 +126,7 @@ export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string
             first = false;
             const request = parseRequest(line);
             if (!request) { send(socket, `${JSON.stringify({ id: "", error: { code: "bad_frame", message: "not a herdr request" } })}\n`, true); return; }
-            if (request.method === "events.subscribe") { void subscribe(hc, socket, request, firstTurn); return; }
+            if (request.method === "events.subscribe") { void subscribe(hc, socket, request, firstTurn, observeSeen); return; }
             void answers(request).then((reply) => send(socket, `${JSON.stringify({ id: request.id, ...reply })}\n`, true));
           }, () => socket.end()),
         };
@@ -611,7 +617,7 @@ function labelsOf(labels: unknown): Record<string, string> {
  * subscriber that fell behind on hc (`missed`), or a line to hc that ended, ends this connection:
  * the status collector reopens it and reads what it missed from a fresh snapshot.
  */
-async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, request: Request, firstTurn: FirstTurn): Promise<void> {
+async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, request: Request, firstTurn: FirstTurn, observeSeen?: SeenObserver): Promise<void> {
   const subscriptions = Array.isArray(request.params["subscriptions"]) ? request.params["subscriptions"].filter(isRecord) : [];
   const statusPanes = new Set(subscriptions.flatMap((entry) => entry["type"] === STATUS_EVENT && typeof entry["pane_id"] === "string" ? [entry["pane_id"]] : []));
   const structure = subscriptions.some((entry) => typeof entry["type"] === "string" && !NOT_STRUCTURE.has(entry["type"]));
@@ -657,6 +663,7 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
     const labels = labelsOf(record["labels"]);
     const first = firstTurn({ address: record["address"], turn });
     known.set(record["address"], { status, turn, first, labels, shown: shownStatusOf(status, turn, labels, first) });
+    observeSeen?.(record["address"], turn, labels);
   };
   const tell = (paneId: string, status: HcStatus | null, shown: AgentStatus) => {
     emit(STATUS_EVENT, { pane_id: paneId, agent_status: shown, agent: agentOfStatus(status) });
@@ -704,6 +711,7 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
         const entry = paneId ? known.get(paneId) : undefined;
         if (!entry || typeof event.data?.["turn"] !== "number") return;
         entry.turn = event.data["turn"];
+        observeSeen?.(paneId!, entry.turn, entry.labels);
         retell(paneId!);
         return;
       }
@@ -731,6 +739,7 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
         const entry = paneId ? known.get(paneId) : undefined;
         if (entry) {
           entry.labels = labelsOf(event.data?.["labels"]);
+          observeSeen?.(paneId!, entry.turn, entry.labels);
           retell(paneId!);
         }
         lifecycle("layout.updated", "layout_updated");

@@ -844,7 +844,7 @@ macOS). See [INSTALL.md](../INSTALL.md#2-choose-the-install-method).
   through herdr-core's `herdr.seen` terminal label. A finish you read in Ovis is no longer
   **done** in the Herdr app, and one you looked at in the app is no longer **done** in Ovis; one
   marked unread elsewhere is **done** again (Ovis does not read it for you again while it stays on
-  your screen). A terminal no client has labeled yet shows a turn that ended since Ovis started as
+  your screen; coming back to it later does). A terminal no client has labeled yet shows a turn that ended since Ovis started as
   **done**, until someone reads it. A remote PC's finishes are not shared this way.
 - **Terminal:** the live view streams over the server's own connection to herdr-core, input and
   the key bar work as on herdr, and the terminal takes the size of the viewer that last typed in

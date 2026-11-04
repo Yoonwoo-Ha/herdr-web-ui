@@ -4,9 +4,9 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import type { Machine } from "../../shared/machines.ts";
 import type { AgentStatus, HerdrPane } from "../../shared/protocol.ts";
 import machinesFixture from "../../site/demo/fixtures/machines.json";
-import { useSidebarActivityState, type SidebarActivity } from "./sidebarActivity.tsx";
+import { type PanePresence, useSidebarActivityState, type SidebarActivity } from "./sidebarActivity.tsx";
 import { loadSeen, receiveSeen, saveSeen, seenKey, SEEN_LIMIT } from "./seenFinishes.ts";
-import type { SeenFinish } from "../../shared/seen.ts";
+import type { SeenFinish, SeenPresentation } from "../../shared/seen.ts";
 import { conversationFinishEvidence } from "./panePresentation.ts";
 import { shareSeen } from "./api.ts";
 
@@ -77,14 +77,14 @@ describe("sidebar finish acknowledgement through React effects", () => {
     });
   }
 
-  async function open(machines: Machine[], selected: string | null = null, covered = false, share?: (finish: SeenFinish) => Promise<void>) {
+  async function open(machines: Machine[], selected: string | null = null, covered = false, share?: (finish: SeenFinish, presented?: SeenPresentation) => Promise<void>) {
     let activity: SidebarActivity | undefined;
     let current = machines;
     let renders = 0;
     function Probe({ machines, selected, covered }: { machines: Machine[]; selected: string | null; covered: boolean }) {
       // Keep callback identity stable between the hook's own renders.
       renders++;
-      activity = useSidebarActivityState(machines, "local", selected, inFronts[Number(covered)]!, share);
+      activity = useSidebarActivityState(machines, "local", selected, covered ? coveredView : loading.current ? loadingView : frontView, share);
       return null;
     }
     let renderer: ReactTestRenderer | undefined;
@@ -115,7 +115,9 @@ describe("sidebar finish acknowledgement through React effects", () => {
       get renders() { return renders; },
     };
   }
-  const inFronts = [() => true, () => false];
+  // stable identities, as App's memoized callback; content still loading: in view, not yet drawn
+  const frontView = (): PanePresence => "front", coveredView = (): PanePresence => "covered", loadingView = (): PanePresence => "loading";
+  const loading = { current: false };
 
   for (const state of ["connecting", "reconnecting", "disconnected"] as const) {
     it(`keeps cached read finishes ready while ${state}, without marking an unseen selected pane`, async () => {
@@ -345,7 +347,8 @@ describe("sidebar finish acknowledgement through React effects", () => {
         expect(post.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
           ["/api/seen", "POST"], ["/api/seen", "POST"],
         ]);
-        expect(delivered).toEqual([{ pc: "local", epoch: "server-a", pane: "a", id: 1 }]);
+        // a retry tells an earlier look: it cannot overrule an unread told since
+        expect(delivered).toEqual([{ pc: "local", epoch: "server-a", pane: "a", id: 1, presented: "held" }]);
       } finally { post.mockRestore(); }
     });
   }
@@ -501,7 +504,8 @@ describe("sidebar finish acknowledgement through React effects", () => {
       // When one later health response confirms sign-in.
       authenticated = true;
       await act(async () => { jest.advanceTimersByTime(2_000); });
-      for (let index = 0; index < 100; index++) await client.update(roster({ [`p${index}`]: 1 }), `p${index}`);
+      // roster updates on the pane still in front (going back to the others would be a look again)
+      for (let index = 0; index < 100; index++) await client.update(roster({ p99: 1 }), "p99");
       await act(async () => { jest.advanceTimersByTime(60_000); });
 
       // Then every finish is delivered exactly once, and health polling stops.
@@ -577,6 +581,36 @@ describe("sidebar finish acknowledgement through React effects", () => {
       expect(health).toHaveBeenCalledTimes(1);
       expect(attempts).toBe(1);
     } finally { health.mockRestore(); }
+  });
+
+  it("says whether a shared finish's pane just came into view, and tells a held finish again when the pane is shown again", async () => {
+    const told: [number, string | undefined][] = [];
+    const share = async (finish: SeenFinish, presented?: SeenPresentation) => { told.push([finish.id, presented]); };
+    const client = await open(roster({ a: 1, b: 1 }, { b: "working" }), "a", false, share);
+    // a finish that arrives while the pane is in front (another client marked it unread)
+    await client.update(roster({ a: 2, b: 1 }, { b: "working" }), "a");
+    // away and back: the same finish, now shown again
+    await client.update(roster({ a: 2, b: 1 }, { b: "working" }), "b");
+    await client.update(roster({ a: 2, b: 1 }, { b: "working" }), "a");
+    // once told as a look, coming back to it tells nothing more
+    await client.update(roster({ a: 2, b: 1 }, { b: "working" }), "b");
+    await client.update(roster({ a: 2, b: 1 }, { b: "working" }), "a");
+    // content still loading and a reconnect are no look: the pane stayed in view
+    loading.current = true;
+    await client.update(roster({ a: 3, b: 1 }, { b: "working" }), "a");
+    loading.current = false;
+    await client.update(roster({ a: 3, b: 1 }, { b: "working" }), "a");
+    const away = roster({ a: 4, b: 1 }, { b: "working" });
+    away[0]!.state = "reconnecting";
+    await client.update(away, "a");
+    await client.update(roster({ a: 4, b: 1 }, { b: "working" }), "a");
+    // a pane selected while covered is new once it is first presented
+    await client.update(roster({ a: 4, b: 5 }), "b", true);
+    await client.update(roster({ a: 4, b: 5 }), "b");
+    // closing an overlay over it brings it into view again
+    await client.update(roster({ a: 4, b: 6 }), "b", true);
+    await client.update(roster({ a: 4, b: 6 }), "b");
+    expect(told).toEqual([[1, "new"], [2, "held"], [2, "new"], [3, "held"], [4, "held"], [5, "new"], [6, "new"]]);
   });
 
   it("upgrades a shared finish when its same-ID answer fingerprint becomes available", async () => {

@@ -36,7 +36,7 @@ import { CommandPalette } from "./components/CommandPalette.tsx";
 import { AppLayoutContext, appLayoutOf, MachineContext } from "./lib/machineContext.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
-import { useSidebarActivityState } from "./lib/sidebarActivity.tsx";
+import { type PanePresence, useSidebarActivityState } from "./lib/sidebarActivity.tsx";
 import { FilePanelResizer } from "./components/FilePanelResizer.tsx";
 import { openPresentation } from "./lib/filePresentation.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
@@ -358,14 +358,15 @@ export function App() {
 
   const contentKey = paneContentKey(selectedMachine, selectedPane, view);
   const { dialogCover, webDialogCover, contentReady } = usePaneCoverage({ contentKey });
-  const paneInFront = useCallback(() => locked === false && linkLanded && pendingFile.current === null && pendingCreate.current === null
+  // covered by something (closing it brings the pane into view again), or in view with its content still loading
+  const panePresence = useCallback((): PanePresence => !(locked === false && linkLanded && pendingFile.current === null && pendingCreate.current === null
     && !drawerOpen && !settingsOpen && !newSessionOpen
     && !filesOpen && !machineDialog && !paletteOpen && !diffViewing && !(viewing && !fileDocked)
-    && !dialogCover && !paneCovered()
-    && contentReady && paneContentPresented(contentKey),
+    && !dialogCover && !paneCovered()) ? "covered"
+    : contentReady && paneContentPresented(contentKey) ? "front" : "loading",
   [locked, linkLanded, drawerOpen, settingsOpen, newSessionOpen, filesOpen, machineDialog, paletteOpen, diffViewing, viewing, fileDocked, dialogCover, contentReady, contentKey]);
   // one source for the sidebar's two lists: live counters per PC and finishes looked at here
-  const activity = useSidebarActivityState(machines, selectedMachineId, presentedPaneId, paneInFront, shareSeen);
+  const activity = useSidebarActivityState(machines, selectedMachineId, presentedPaneId, panePresence, shareSeen);
 
   const { pickView, setView } = usePaneViewPicks({ setViewPicks, setNotificationViewTarget, setTerminalPeek, setLens, setAutoSelected, selectedPaneId, selectedMachineId });
   const { unsentFor, openUnsent, closeUnsent, recover } = useUnsentRecovery({ selectedMachineId, selectedPaneId, setView, pickView });

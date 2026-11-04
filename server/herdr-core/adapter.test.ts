@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HerdrError, herdrRpc, paneGet, paneRead, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, tabClose, tabCreate, workspaceClose, workspaceCreate, agentManifests, agentStart, ping } from "../herdr/client.ts";
 import { claudeInputDraft, viewportShowsLive } from "../claude-input.ts";
-import { paintedScreen, startHerdrCoreAdapter } from "./adapter.ts";
+import { paintedScreen, type SeenObserver, startHerdrCoreAdapter } from "./adapter.ts";
 import { SeenMarker } from "./seen-label.ts";
 import { encodeFrame, FRAME_CLOSE, FRAME_DATA, HcConnection, HcError, type HcTransport, makeFrameReader } from "./connection.ts";
 import type { HcTerminal } from "./snapshot.ts";
@@ -123,7 +123,7 @@ for (const method of ["call", "open"] as const) {
     }
   });
 }
-async function setup(terminals: HcTerminal[], extra: Record<string, Handler> = {}) {
+async function setup(terminals: HcTerminal[], extra: Record<string, Handler> = {}, observeSeen?: SeenObserver) {
   const dir = mkdtempSync(join(tmpdir(), "ovis-hc-"));
   const socket = join(dir, "herdr.sock");
   const cores: FakeCore[] = [];
@@ -144,7 +144,7 @@ async function setup(terminals: HcTerminal[], extra: Record<string, Handler> = {
     cores.push(core);
     return core;
   });
-  const adapter = await startHerdrCoreAdapter(hc, socket);
+  const adapter = await startHerdrCoreAdapter(hc, socket, observeSeen);
   cleanups.push(() => { adapter.stop(); hc.close(); rmSync(dir, { recursive: true, force: true }); });
   return { socket, cores, hc };
 }
@@ -391,12 +391,13 @@ it("asks for a fresh snapshot when a report's kind, message or progress changes,
   it("tells a finish past herdr.seen as done on its turn, and a look from any client as idle", async () => {
     let channel = 0;
     const working = { app: "claude-code", state: "working" };
+    const observed: [string, number, string | undefined][] = [];
     const { socket, cores } = await setup([terminal("t1"), terminal("t2")], {
       "events.subscribe": () => {
         channel = cores.at(-1)!.channel();
         return { channel, seq: 1, terminals: [terminal("t1", { status: working, turn: 1, labels: { "herdr.seen": "1" } }), terminal("t2", { status: working, turn: 4 })] };
       },
-    });
+    }, (address, turn, labels) => observed.push([address, turn, labels["herdr.seen"]]));
     const frames: EventFrame[] = [];
     const started = Promise.withResolvers<void>();
     const told = Promise.withResolvers<void>();
@@ -425,14 +426,17 @@ it("asks for a fresh snapshot when a report's kind, message or progress changes,
     await told.promise;
     const shown = (pane: string, status: string) => ({ event: "pane.agent_status_changed", data: { pane_id: pane, agent_status: status, agent: "claude" } });
     expect(frames).toEqual([shown("t1", "done"), shown("t1", "idle"), shown("t1", "done"), shown("t2", "done"), shown("t2", "idle"), shown("t2", "working")]);
+    // what the server's seen marker learns: each terminal's turn and herdr.seen, as they change
+    expect(observed).toEqual([["t1", 1, "1"], ["t2", 4, undefined], ["t1", 2, "1"], ["t1", 2, "2"], ["t1", 2, "2"], ["t1", 2, "1"], ["t2", 5, undefined], ["t2", 5, "5"]]);
   });
 
-  it("marks a terminal seen at its turn, only to raise it or where it is missing, once per turn", async () => {
+  it("marks a terminal seen at its turn, only to raise it or where it is missing, once per turn unless it is shown again", async () => {
     const terminals = [
       terminal("t1", { turn: 3, labels: { "herdr.seen": "1" } }),
       terminal("t2", { turn: 3, labels: { "herdr.seen": "3" } }),
       terminal("t3", { turn: 2 }),
       terminal("t4", { turn: 5, state: "finished" }),
+      terminal("t5", { turn: 3, labels: { "herdr.seen": "3" } }),
     ];
     const written: unknown[] = [];
     const { hc } = await setup(terminals, { "terminal.label": (params) => { written.push(params); return terminals[0]; } });
@@ -441,12 +445,25 @@ it("asks for a fresh snapshot when a report's kind, message or progress changes,
     // another client marks t1 unread while it is still on screen here: this turn is not written again
     terminals[0]!.labels = { "herdr.seen": "2" };
     await marker.mark("t1");
+    // a person coming back to it later raises it again
+    await marker.mark("t1", true);
+    // t2 was read elsewhere first: marked unread while on screen here, it stays unread
+    terminals[1]!.labels = { "herdr.seen": "2" };
+    await marker.mark("t2");
+    // t5 was read elsewhere while idle in front here (Ovis was told of no look): the same
+    marker.observe("t5", 3, { "herdr.seen": "3" });
+    terminals[4]!.labels = { "herdr.seen": "2" };
+    await marker.mark("t5");
+    // and coming back to it raises it again
+    await marker.mark("t5", true);
     // the next turn is
     terminals[0]!.turn = 4;
     await Promise.all([marker.mark("t1"), marker.mark("t1")]);
     expect(written).toEqual([
       { terminal: "t1", labels: { "herdr.seen": "3" } },
       { terminal: "t3", labels: { "herdr.seen": "2" } },
+      { terminal: "t1", labels: { "herdr.seen": "3" } },
+      { terminal: "t5", labels: { "herdr.seen": "3" } },
       { terminal: "t1", labels: { "herdr.seen": "4" } },
     ]);
   });

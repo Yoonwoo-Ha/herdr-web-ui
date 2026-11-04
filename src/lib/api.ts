@@ -1,6 +1,6 @@
 import { apiFetch } from "./api-request-id.ts";
 import type { PreferencesChange, SharedPreferences } from "../../shared/preferences.ts";
-import type { SeenFinish } from "../../shared/seen.ts";
+import type { SeenFinish, SeenPresentation } from "../../shared/seen.ts";
 import type { AgentCatalogResponse, AgentTabStarted } from "../../shared/agent-catalog.ts";
 import { resumeConnectionTraces } from "./connectionTrace.ts";
 import { machinePath, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
@@ -284,11 +284,13 @@ export async function savePreferences(body: PreferencesChange, keepalive = false
 
 /**
  * Tells every browser of this server that this one presented a finish (shared/seen.ts). A server
- * that predates it (404) or a watching device (403) keeps the read to this browser.
+ * that predates it (404) or a watching device (403) keeps the read to this browser; one that
+ * predates `presented` ignores it.
  */
-export async function shareSeen(finish: SeenFinish): Promise<void> {
+export async function shareSeen(finish: SeenFinish, presented?: SeenPresentation): Promise<void> {
   const url = "/api/seen";
-  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(finish) });
+  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(presented === undefined ? finish : { ...finish, presented }) });
   if (response.ok || response.status === 404 || response.status === 403) return;
   throw await errorFrom(url, response);
 }
