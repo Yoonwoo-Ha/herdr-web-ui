@@ -17,6 +17,22 @@ export const composerDraftKey = (paneKey: string): string => DRAFT_PREFIX + pane
 /** a draft that holds an agent-only message put back by Edit (#511): it is sent `agent_only` until the box is emptied */
 export const AGENT_ONLY_PREFIX = "ovis:composer-agent-only:";
 const agentOnlyKey = (key: string): string => AGENT_ONLY_PREFIX + (key.startsWith(DRAFT_PREFIX) ? key.slice(DRAFT_PREFIX.length) : key);
+/** The send on its way on the draft `key`, from any tab, as its lease in storage says, or null: absent or expired. */
+export function sendLease(storage: Pick<Storage, "getItem">, key: string): InFlight | null {
+  try {
+    const raw = storage.getItem(SENDING_PREFIX + key);
+    if (raw === null) return null;
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== "object" || value === null) return null;
+    const { sent, at } = value as Partial<InFlight>;
+    if (typeof sent !== "string" || typeof at !== "number" || !Number.isFinite(at)) return null;
+    return Date.now() - at > SEND_LEASE_MS ? null : { sent, at };
+  } catch {
+    return null;
+  }
+}
+/** Whether a storage key is a draft's send lease (another tab began or ended a send). */
+export const isSendLeaseKey = (key: string): boolean => key.startsWith(SENDING_PREFIX);
 export class ComposerDraftStore {
   private drafts = new Map<string, Draft>();
   private saved = new Map<string, string | null>();
@@ -58,17 +74,7 @@ export class ComposerDraftStore {
   }
   /** The send another tab has in flight, or null: absent, expired, or this tab's own. */
   private inFlight(key: string): InFlight | null {
-    try {
-      const raw = this.storage().getItem(SENDING_PREFIX + key);
-      if (raw === null) return null;
-      const value: unknown = JSON.parse(raw);
-      if (typeof value !== "object" || value === null) return null;
-      const { sent, at } = value as Partial<InFlight>;
-      if (typeof sent !== "string" || typeof at !== "number" || !Number.isFinite(at)) return null;
-      return Date.now() - at > SEND_LEASE_MS ? null : { sent, at };
-    } catch {
-      return null;
-    }
+    try { return sendLease(this.storage(), key); } catch { return null; }
   }
   refresh(key: string): void {
     if (this.unsaved.has(key)) return;
