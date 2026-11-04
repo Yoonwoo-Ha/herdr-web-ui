@@ -525,11 +525,13 @@ describe("text no one wrote by hand", () => {
     const searches = new Set([
       /[`[<*_~$]|:codex-file-citation\{|\\\(|file:\/\/\/|https?:\/\/|www\./g,
       /\n/g, /}/g, /[\n\r\u2028\u2029]/g, /\\\)/g, /\$/g, /[\]\n]/g, /[\s)]/g,
-      /(?<=\S)_(?![\p{L}\p{N}\p{M}_])/gu,
-      /(?<=\S)__(?![\p{L}\p{N}\p{M}_])/gu,
+      /_(?![\p{L}\p{N}\p{M}_])/gu,
+      /__(?![\p{L}\p{N}\p{M}_])/gu,
       // Only the single-underscore token can succeed in the last fixture; trying the bold
       // alternative first would rescan the whole suffix at every `__`.
-      /(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_])/yu,
+      /_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_])/yu,
+      // one sticky attempt, over a run with no `*` in it
+      /\*\*[^*\n]+\*\*/y,
     ].map((pattern) => pattern.toString()));
     const counted = (text: string): InlineNode[] => {
       let scanned = 0;

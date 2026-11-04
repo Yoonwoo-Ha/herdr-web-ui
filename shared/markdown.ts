@@ -1,4 +1,5 @@
 import { fileUriPath } from "./fileUri.ts";
+import { charBefore } from "./lookbehind.ts";
 import { parseHtmlBlock, startsHtml } from "./markdownHtml.ts";
 
 export type InlineNode =
@@ -164,23 +165,37 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
   // Underscores inside identifiers are literal: MAC_QA_CHAT_OK must survive
   // rendering exactly as it appears in the terminal and native transcript.
   // a bare or <angle> http(s) URL is a link too; it stops at the first non-ASCII character,
-  // so `…/pull/36에서` links the address and leaves the Korean after it as text
-  const marker = /(`[^`\n]+`|:codex-file-citation\{(?:[ \t]*[a-z_]+="[^"\\\n]*(?:\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4})[^"\\\n]*)*")+[ \t]*\}|\\\(.+?\\\)|(?<![A-Za-z0-9\\$])\$(?:[^\s$\\`]|[^\s$`][^\n\r\u2028\u2029$`]*[^\s$\\`])\$(?![A-Za-z0-9_${#@*(`])|\[[^\]\n]+\]\([^\s)]+\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/yu;
+  // so `…/pull/36에서` links the address and leaves the Korean after it as text.
+  // What may come before a mark is checked where its opener is found, not with a lookbehind
+  // (shared/lookbehind.ts): `$`, `www.`, `_` and `__` after no word, a lone `*` after no `*`
+  const marker = /(`[^`\n]+`|:codex-file-citation\{(?:[ \t]*[a-z_]+="[^"\\\n]*(?:\\(?:["\\/bfnrt]|u[0-9A-Fa-f]{4})[^"\\\n]*)*")+[ \t]*\}|\\\(.+?\\\)|\$(?:[^\s$\\`]|[^\s$`][^\n\r\u2028\u2029$`]*[^\s$\\`])\$(?![A-Za-z0-9_${#@*(`])|\[[^\]\n]+\]\([^\s)]+\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|\*[^*\n]+\*(?!\*)|_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/yu;
   // its last part alone, for a `__` that nothing closes as bold: one `_` may still close it
-  const emphasis = /(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_])/yu;
+  const emphasis = /_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_])/yu;
+  // its bold part alone, for a `*` right after another, where a lone `*` opens nothing
+  const strong = /\*\*[^*\n]+\*\*/y;
+  const word = /^[\p{L}\p{N}\p{M}_]$/u;
   // what any part of `marker` starts with
   const opener = /[`[<*_~$]|:codex-file-citation\{|\\\(|file:\/\/\/|https?:\/\/|www\./g;
-  /** Where `pattern` is next found from `from` on. Asked with a `from` that only rises, so a place found serves every `from` before it. */
-  const next = (pattern: RegExp): ((from: number) => number) => {
+  /**
+   * Where `pattern` is next found from `from` on, at a place `startsAt` accepts. Asked with a `from`
+   * that only rises, so a place found serves every `from` before it.
+   */
+  const next = (pattern: RegExp, startsAt: (index: number) => boolean = () => true): ((from: number) => number) => {
     let found = -1;
     return (from) => {
       if (found < from) {
         pattern.lastIndex = from;
-        found = pattern.exec(source)?.index ?? Infinity;
+        for (;;) {
+          const index = pattern.exec(source)?.index;
+          if (index === undefined) { found = Infinity; break; }
+          if (startsAt(index)) { found = index; break; }
+          pattern.lastIndex = index + 1;
+        }
       }
       return found;
     };
   };
+  const afterNonSpace = (index: number): boolean => /\S/.test(source[index - 1] ?? "");
   const lineEnd = next(/\n/g);
   const citationEnd = next(/}/g);
   // `.` stops at these, and a formula is `.+?`
@@ -189,8 +204,8 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
   const dollarClose = next(/\$/g);
   const labelEnd = next(/[\]\n]/g);
   const targetEnd = next(/[\s)]/g);
-  const emphasisClose = next(/(?<=\S)_(?![\p{L}\p{N}\p{M}_])/gu);
-  const strongClose = next(/(?<=\S)__(?![\p{L}\p{N}\p{M}_])/gu);
+  const emphasisClose = next(/_(?![\p{L}\p{N}\p{M}_])/gu, afterNonSpace);
+  const strongClose = next(/__(?![\p{L}\p{N}\p{M}_])/gu, afterNonSpace);
   let from = 0;
   for (;;) {
     opener.lastIndex = from;
@@ -215,8 +230,13 @@ export function* inlineMarks(source: string): Generator<RegExpExecArray> {
         const end = targetEnd(target);
         if (!(end > target && source[end] === ")")) pattern = null;
       }
+    } else if (char === "w") {
+      if (/[\w.@/-]/.test(source[start - 1] ?? "")) pattern = null;
+    } else if (char === "*") {
+      if (source[start - 1] === "*") pattern = strong;
     } else if (char === "_") {
       const end = lineEnd(start + 1);
+      if (word.test(charBefore(source, start))) continue;
       // a `__` that closes also closes as a `_`, so `marker` has no long search left to fail
       if (!(source[start + 1] === "_" && strongClose(start + 3) < end)) pattern = emphasisClose(start + 2) < end ? emphasis : null;
     }
