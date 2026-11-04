@@ -136,6 +136,21 @@ export class HerdrSocket {
    * end has arrived, and any end after it is the current view's own.
    */
   private readonly superseded = new Map<string, { ends: number; fence: number | null }>();
+  /**
+   * Per pane, typing sent on this connection that no pong has confirmed yet, in the order sent (see
+   * awaitReceipt): `fence` is the id of the first ping sent after it, whose pong (or a later one) proves
+   * the server read it.
+   */
+  private readonly unconfirmed = new Map<string, { text: string; fence: number }[]>();
+  /** the ping that fences typing, while its pong is on its way: typing sent meanwhile waits for the next one */
+  private inputFence: number | null = null;
+  /**
+   * per pane, the typing connections ended with unconfirmed, until the pane's terminal takes it, with the herdr
+   * that pane belonged to (`lifetime`, null when unproven): pane IDs are given out again by a replaced herdr
+   */
+  private readonly lostInput = new Map<string, { lifetime: string | undefined | null; typed: string[] }>();
+  /** the herdr this connection proved by a trusted features frame or its snapshot (`herdr_lifetime`); null until then */
+  private lifetime: string | undefined | null = null;
   /** Panes whose mounted, visible chat asks for transcript invalidations. The server drops interest
    * with the attachment, so each attach of a pane listed here (a reconnect's, or a tab back in use
    * after letting go of it) asks again; only the chat taking its interest back removes it. */
@@ -319,6 +334,7 @@ export class HerdrSocket {
     this.inputReady.clear();
     this.outputSeen.clear();
     this.featuresKnown = false;
+    this.lifetime = null;
     this.terminalHistory = false;
     this.machineEventsOffered = null;
     this.featuresSeen = new Promise((resolve) => { this.markFeatures = resolve; });
@@ -376,6 +392,7 @@ export class HerdrSocket {
       // goes on to them, so a view that read input as refused during the probe reads it again
       if (message.type === "pong") {
         for (const [paneId, stale] of this.superseded) if (stale.fence !== null && message.id >= stale.fence) this.superseded.delete(paneId);
+        this.confirmInput(message.id);
       }
       if (message.type === "pong" && this.probeIds.has(message.id)) {
         this.trace.record("pong");
@@ -403,11 +420,17 @@ export class HerdrSocket {
         const first = !this.featuresKnown;
         this.features = new Set(message.features ?? []);
         this.featuresKnown = true;
+        // typing lost on another herdr, or on one never proven, is not this herdr's pane's, whatever its ID
+        this.lifetime = message.type === "snapshot" ? message.snapshot.herdr_lifetime : message.herdr_lifetime;
+        for (const [paneId, lost] of this.lostInput) if (lost.lifetime !== this.lifetime) this.lostInput.delete(paneId);
         this.pingKnown = this.features.has("ping");
         // a probe sent before these features (running or paused), on ping support remembered from an
         // earlier connection: this bridge does not answer pings (an older one after a reconnect), so
         // its connection is trusted as before rather than dropped at the deadline or left paused
         if (!this.pingKnown && this.probing) this.endProbe();
+        // typing sent before this was kept unfenced: fenced now, or trusted as before by a bridge that answers no ping
+        if (this.features.has("ping")) this.fenceInput();
+        else { this.unconfirmed.clear(); this.inputFence = null; }
         if (!this.features.has("input-ready")) for (const pane of this.outputSeen) if (this.attached.has(pane)) this.inputReady.add(pane);
         // Capabilities arrive after open's role/attach replay. Restore only current interest,
         // never send an unknown frame to an older bridge or replay a hidden/detached chat.
@@ -524,6 +547,15 @@ export class HerdrSocket {
     this.socket = null;
     this.clearConnectTimer();
     this.clearLiveness();
+    // typing no pong confirmed may never have reached the server: the panes' terminals hold it for review
+    // added to what an earlier end left that no terminal took yet (one unmounted since), older typing first
+    for (const [paneId, typed] of this.unconfirmed) {
+      const earlier = this.lostInput.get(paneId);
+      const kept = earlier !== undefined && earlier.lifetime === this.lifetime ? earlier.typed : [];
+      this.lostInput.set(paneId, { lifetime: this.lifetime, typed: [...kept, ...typed.map((entry) => entry.text)] });
+    }
+    this.unconfirmed.clear();
+    this.inputFence = null;
     for (const handler of this.disconnectHandlers) handler();
     this.markFeatures();
     this.settleSubmits(DISCONNECTED);
@@ -957,10 +989,59 @@ export class HerdrSocket {
     return this.canQueueMessages() && this.features.has("pending-hold");
   }
 
-  /** `stop`: the composer's Stop, a lone ESC the bridge keeps ahead of the next message. `automatic`: xterm's own reply, nobody typed it. */
-  sendInput(paneId: string, text: string, stop = false, automatic = false): boolean {
+  /** `stop`: the composer's Stop, a lone ESC the bridge keeps ahead of the next message. `automatic`: xterm's own reply, nobody typed it.
+   * `secret`: typed at a masked prompt. Neither is kept to be held when its connection ends unconfirmed */
+  sendInput(paneId: string, text: string, stop = false, automatic = false, secret = false): boolean {
     if (!this.canInput(paneId)) { this.traceProbeRefusal(); return false; }
-    try { this.rawSend({ type: "input", pane_id: paneId, text, ...(stop ? { stop: true } : {}), ...(automatic ? { automatic: true } : {}) }); return true; } catch { return false; }
+    try { this.rawSend({ type: "input", pane_id: paneId, text, ...(stop ? { stop: true } : {}), ...(automatic ? { automatic: true } : {}) }); } catch { return false; }
+    if (!secret && !automatic) this.awaitReceipt(paneId, text);
+    return true;
+  }
+
+  /**
+   * Typing the socket took has not yet reached the server: a relay carrier can stop before its mux
+   * writes the frame, and a socket can go half-open just after a send (#2587). The server reads a
+   * connection's frames in order, so the pong of a ping sent after the typing proves it was read;
+   * until then it is kept, and a connection that ends first leaves it to the pane's terminal, which
+   * holds it for review (takeUnconfirmedInput). Typing sent before the bridge said what it takes is kept
+   * unfenced until it does; an older bridge, which answers no ping, is then trusted as before.
+   */
+  private awaitReceipt(paneId: string, text: string): void {
+    if (this.featuresKnown && !this.features.has("ping")) return;
+    const typed = this.unconfirmed.get(paneId) ?? [];
+    typed.push({ text, fence: this.nextPing });
+    this.unconfirmed.set(paneId, typed);
+    if (this.featuresKnown) this.fenceInput();
+  }
+
+  /** Pings after the typing still unconfirmed, unless a fence is already on its way: one at a time, however fast the typing. */
+  private fenceInput(): void {
+    if (this.inputFence !== null || this.unconfirmed.size === 0) return;
+    this.inputFence = this.nextPing++;
+    // a send that throws ends the connection, and its end holds the typing
+    try { this.rawSend({ type: "ping", id: this.inputFence }); } catch { /* see above */ }
+  }
+
+  /** A pong confirms the typing sent before its ping: any ping's, a probe's included. */
+  private confirmInput(pong: number): void {
+    for (const [paneId, typed] of this.unconfirmed) {
+      const left = typed.filter((entry) => entry.fence > pong);
+      if (left.length === 0) this.unconfirmed.delete(paneId);
+      else this.unconfirmed.set(paneId, left);
+    }
+    if (this.inputFence !== null && pong >= this.inputFence) {
+      this.inputFence = null;
+      this.fenceInput();
+    }
+  }
+
+  /** The typing for this pane that the last connection ended with before the server confirmed it, in the order sent; given once. */
+  takeUnconfirmedInput(paneId: string): string[] {
+    // a new connection that has not proved its herdr yet may be another herdr's: it waits for that proof
+    if (this.socket !== null && this.lifetime === null) return [];
+    const lost = this.lostInput.get(paneId);
+    this.lostInput.delete(paneId);
+    return lost?.typed ?? [];
   }
 
   /**

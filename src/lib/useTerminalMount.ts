@@ -6,7 +6,7 @@ import { HerdrSocket } from "./ws.ts";
 import { MachineSession, type MachineSessionRegistry } from "./machineSession.ts";
 import { disposeAfterPendingFrame } from "./terminalDispose.ts";
 import { clipboardKey, hasModifiers, physicalKey, terminalChord, navigationSequence, keyFromData, ctrlEnterSequence, mirroredCtrlEnterKey, modifyOtherKeysLevel, NO_STICKY_MODIFIERS, type StickyModifiers } from "./keys.ts";
-import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, type InputDraft } from "./draft.ts";
+import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, holdBefore, type InputDraft } from "./draft.ts";
 import { pendingMessages } from "./pendingMessages.ts";
 import { FrameGate } from "./inputRow.ts";
 import { AttachmentTooLargeError, assertAttachable, fetchPaneConversation, fetchPaneScroll, fetchPaneSelection, scrollPane } from "./api.ts";
@@ -1435,6 +1435,16 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         modifyOtherKeysRef.current = 0;
         // typing that waited for an idle pane's new attach is held for review, never sent after the reconnect
         failResume();
+        // typing the server never confirmed may not have reached the pane: held for review ahead of
+        // anything typed since, never in a draft while a masked prompt is on screen (#2587)
+        const current = paneRef.current;
+        const lost = current === null ? [] : socket.takeUnconfirmedInput(current);
+        if (current !== null && secretRef.current === null && !draftIsEmpty(holdBefore(lost, EMPTY_DRAFT))) {
+          const samePane = draftPaneRef.current === current;
+          draftPaneRef.current = current;
+          setDraft((prev) => holdBefore(lost, samePane ? prev : EMPTY_DRAFT));
+          draftHeldForRef.current = current;
+        }
       });
       session.connect();
 
@@ -1504,7 +1514,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       // a key, a chord or text for the pane: sent now, or, when the pane cannot take it, told or held for review
       const sendTyped = (current: string, typed: Typed): void => {
         if (typed.keys !== null && socket.sendKeys(current, typed.keys)) return;
-        if (!typed.chord && !holdPendingTextRef.current && socket.sendInput(current, typed.input, typed.stop, typed.automatic === true)) return;
+        if (!typed.chord && !holdPendingTextRef.current && socket.sendInput(current, typed.input, typed.stop, typed.automatic === true, typed.secret)) return;
         retainTyped(current, typed, false);
       };
       // what the pane could not take: told, or held for review (`secretNow`: a masked prompt is on screen now)
