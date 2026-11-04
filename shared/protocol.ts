@@ -929,8 +929,11 @@ export type ClientMessage =
   /** a pane another web bridge holds (`attach_held`): take herdr's attach slot from it, here, now */
   | { type: "take-over"; pane_id: string }
   /** `stop`: the composer's Stop (text a lone ESC). The bridge sends it in the pane's turn, after typing
-   * still on its way, and a message sent next waits for it; an older bridge types it like any key. */
-  | { type: "input"; pane_id: string; text: string; stop?: true }
+   * still on its way, and a message sent next waits for it; an older bridge types it like any key.
+   * `automatic`: the browser's terminal made the text itself (an answer to the program's query), nobody
+   * typed it. On herdr-core it reaches the program as hc's automatic input where hc confirmed it, so it
+   * does not make this viewer the active one; everywhere else, and on an older bridge, it is typed as before. */
+  | { type: "input"; pane_id: string; text: string; stop?: true; automatic?: true }
   | { type: "keys"; pane_id: string; keys: string[] }
   /** a composer message, sent to servers whose snapshot lists "submit": the server types it and
    * its own Enter after a short gap, and answers with a submit-result of the same id. `text` is

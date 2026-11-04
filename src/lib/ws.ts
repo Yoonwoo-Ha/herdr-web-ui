@@ -957,10 +957,10 @@ export class HerdrSocket {
     return this.canQueueMessages() && this.features.has("pending-hold");
   }
 
-  /** `stop`: the composer's Stop, a lone ESC the bridge keeps ahead of the next message. */
-  sendInput(paneId: string, text: string, stop = false): boolean {
+  /** `stop`: the composer's Stop, a lone ESC the bridge keeps ahead of the next message. `automatic`: xterm's own reply, nobody typed it. */
+  sendInput(paneId: string, text: string, stop = false, automatic = false): boolean {
     if (!this.canInput(paneId)) { this.traceProbeRefusal(); return false; }
-    try { this.rawSend(stop ? { type: "input", pane_id: paneId, text, stop: true } : { type: "input", pane_id: paneId, text }); return true; } catch { return false; }
+    try { this.rawSend({ type: "input", pane_id: paneId, text, ...(stop ? { stop: true } : {}), ...(automatic ? { automatic: true } : {}) }); return true; } catch { return false; }
   }
 
   /**

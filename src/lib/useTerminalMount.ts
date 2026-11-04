@@ -34,6 +34,7 @@ import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "./wheelSteps.ts
 import { createTouchWheelPacer } from "./touchWheelPacer.ts";
 import { attachTerminalWheel, canPanTerminalGrid } from "./terminalWheel.ts";
 import { createTerminalFold, hyperlinkAt, wideGridKey, wideGrids } from "./terminalFold.ts";
+import { userInputTracker } from "./terminalReplies.ts";
 import { visibleTerminalInputBounds } from "./terminalViewport.ts";
 import type { PaneSubmitRetention } from "./paneSubmitRetention.ts";
 import type { ShortcutOverrides } from "./shortcutBindings.ts";
@@ -47,7 +48,8 @@ import { copyOnSelect, herdrUiKnown, loadHerdrUi } from "./herdrUi.ts";
 declare const __HERDR_TEST_HOOKS__: boolean;
 
 /** One piece of typing for the pane: `keys` for a chord or an arrow herdr encodes, else `input` as typed. */
-type Typed = { input: string; keys: string[] | null; chord: boolean; stop: boolean; secret: boolean };
+/** `automatic`: xterm made the input itself (a query's answer), nobody typed it */
+type Typed = { input: string; keys: string[] | null; chord: boolean; stop: boolean; secret: boolean; automatic?: boolean };
 
 export interface TerminalMountDeps {
   activeRef: RefObject<boolean>;
@@ -1502,7 +1504,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       // a key, a chord or text for the pane: sent now, or, when the pane cannot take it, told or held for review
       const sendTyped = (current: string, typed: Typed): void => {
         if (typed.keys !== null && socket.sendKeys(current, typed.keys)) return;
-        if (!typed.chord && !holdPendingTextRef.current && socket.sendInput(current, typed.input, typed.stop)) return;
+        if (!typed.chord && !holdPendingTextRef.current && socket.sendInput(current, typed.input, typed.stop, typed.automatic === true)) return;
         retainTyped(current, typed, false);
       };
       // what the pane could not take: told, or held for review (`secretNow`: a masked prompt is on screen now)
@@ -1536,7 +1538,10 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           setInputError(tRef.current("Not sent: the terminal is not ready for keys."));
         }
       };
+      const userInput = userInputTracker(term);
       const onData = term.onData((data) => {
+        // asked first, before any return below: the answer belongs to this data alone
+        const automatic = !userInput.wasUserInput();
         // a key from the key bar or the Stop, or a dropped file's paths, ends the swipe before it
         if (!touchWheelDispatching && (barKeyRef.current !== null || stopKeyRef.current || pasting)) cancelTouchRef.current();
         // the split half following the other half's grid of the same tab draws it only: the active
@@ -1605,7 +1610,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         // cannot take now goes the way typing does below, as an arrow always did.
         const arrow = chord === null && !pasting && !composingRef.current && !compositionCommitPendingRef.current && key?.startsWith("Arrow")
           ? terminalChord(key, NO_STICKY_MODIFIERS) : null;
-        const typed: Typed = { input, keys: arrow !== null ? [arrow] : chord !== null ? [chord] : null, chord: chord !== null, stop: stopKey && input === "\u001b", secret };
+        const typed: Typed = { input, keys: arrow !== null ? [arrow] : chord !== null ? [chord] : null, chord: chord !== null, stop: stopKey && input === "\u001b", secret, ...(automatic ? { automatic } : {}) };
         // typed into a tab taking its pane back from idleness: it waits for the new attach (never a password)
         if (resumeInput !== null && resumeInput.pane !== current) takeResume();
         // a mouse report is for the grid it was pressed on: the attach redraws the pane at another, so it is not kept
@@ -2402,6 +2407,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         for (const type of keepTextOn) textarea?.removeEventListener(type, keepText, true);
         host.removeEventListener("keydown", onCommandArrow);
         onData.dispose();
+        userInput.dispose();
         host.removeEventListener("paste", onPaste, true);
         host.removeEventListener("keydown", onTyped, true);
         host.removeEventListener("input", onTyped, true);

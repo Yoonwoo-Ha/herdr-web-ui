@@ -6,6 +6,7 @@
 import type { ClientMessage, ServerMessage } from "../../shared/protocol.ts";
 import { RECEIPT_RESUME_ID } from "../../shared/receipt-resume.ts";
 import { ConversationMonitor } from "../conversation-monitor.ts";
+import { CoreAttachSession } from "../herdr-core/attach-session.ts";
 import { type SightingFacts, sightingFacts } from "../input-guard.ts";
 import { OUTPUT_HARD_BYTES, OUTPUT_HIGH_BYTES, OUTPUT_STALL_MS, OutputWindow, wireBytes } from "../output-window.ts";
 import { backlog, type Client, connectionOf, send } from "./connections.ts";
@@ -38,8 +39,11 @@ export interface TerminalSighting {
   readonly pty: unknown;
   readonly claim: unknown;
   facts(): SightingFacts;
-  /** Writes into the session seen, as typing into its pty does (a mirror sends it through herdr). */
-  write(data: string): boolean | void;
+  /**
+   * Writes into the session seen, as typing into its pty does (a mirror sends it through herdr).
+   * `automatic`: the viewer's terminal made the bytes itself; only a herdr-core stream can tell hc so.
+   */
+  write(data: string, automatic?: boolean): boolean | void;
 }
 
 /** Clamp surface for the shared pty, mirroring the sidecar's own limits. */
@@ -287,7 +291,7 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
       pty: member ? process : undefined,
       claim,
       facts: () => sightingFacts(seen, { attachment: attachments.get(paneId), claim: client.data.attached.get(paneId) }, client),
-      write: (data) => process!.write(data),
+      write: (data, automatic) => process instanceof CoreAttachSession ? process.write(data, automatic) : process!.write(data),
     };
   }
 

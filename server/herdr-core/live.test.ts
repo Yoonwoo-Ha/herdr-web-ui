@@ -147,6 +147,29 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
     await subscription.channel.close();
   }, TEST_MS);
 
+  it("gets a reply the viewer's terminal made itself to the program, whether or not hc confirms automatic input", async () => {
+    const hello = await hc.hello();
+    const record = await hc.call("terminal.run", { argv: ["bash", "-c", "stty -echo; IFS= read -r line; echo \"got:$line\"; exit 3"] });
+    let screen = "";
+    const exit = Promise.withResolvers<number | null>();
+    const session = new CoreAttachSession({
+      hc,
+      terminal: record.address,
+      cols: 80,
+      rows: 24,
+      onData: (data) => { screen += data; wake(); },
+      onExit: (code) => exit.resolve(code),
+    });
+    await until("first paint", () => screen.length > 0);
+    // a core without the feature must get it as DATA: AUTOMATIC_INPUT it does not know would be dropped
+    session.write("auto\r", true);
+    expect(await exit.promise).toBe(3);
+    expect(screen).toContain("got:auto");
+    // what the pinned core says, for whoever raises the pin: hc 0.1.14 to 0.1.17 do not name the feature
+    console.info(`hc ${hello.version} automatic_input: ${hello.features.includes("automatic_input")}`);
+    await hc.call("terminal.rm", { terminal: record.address });
+  }, TEST_MS);
+
   it("streams a terminal through CoreAttachSession: typing, a resize, and the program's exit code", async () => {
     const record = await hc.call("terminal.run", { argv: ["bash", "-c", "stty -echo; IFS= read -r line; echo \"got:$line\"; exit 7"] });
     let sizes = "";
