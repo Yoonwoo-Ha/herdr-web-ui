@@ -2291,6 +2291,9 @@ class DemoSocket extends EventTarget {
       if (this.requests.size > 128) this.requests.delete(this.requests.keys().next().value!);
     }
     switch (message.type) {
+      case "machine-events":
+        // Not advertised by the demo: its machine document still arrives through its SSE stand-in.
+        break;
       case "role":
         this.mode = message.mode === "observe" ? "observe" : "interact";
         if (this.mode === "observe") this.holdPending(undefined, "read_only", "This connection now only watches. Pending messages will not be sent automatically.");

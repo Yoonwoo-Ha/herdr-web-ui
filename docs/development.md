@@ -76,6 +76,35 @@ still returns `undefined`. Ordinary responses carry the server ID too. The defau
 `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` fill absent headers only,
 preserving each route's CSP, framing, MIME, caching and compression headers.
 
+## Machine event transport and rollback
+
+New browser clients subscribe to `machine-events` on the existing local `/ws` connection when
+its `features` frame advertises that capability. The `machine-event` frames carry the same
+machine roster, redacted sidebar values, shared preferences, seen finishes and filtered device
+pairings as `/api/machines/events`. The local connection is kept even while a remote PC is
+selected; remote terminal sockets do not subscribe to this document.
+
+Older servers still use SSE. Set `OVIS_MACHINE_EVENTS_WS=0` in the server environment and restart
+only Ovis to disable the capability and return new clients to SSE without changing stored data.
+Removing that override and restarting restores the WebSocket transport. The SSE endpoint remains
+available to older clients and bridge/relay consumers. A reconnect negotiates the transport again;
+no terminal input is replayed by this subscription.
+
+A page takes machine events over SSE whenever its socket does not carry them: a connection that
+has not said whether it does within five seconds, a socket stopped for output (4008, which only
+reconnects on an attach), or a connection whose server sent `machine-events-ended`. Machine events
+never close the terminal or stall its output: one that would put more than `OUTPUT_LOW_BYTES`
+(64 KiB) on the socket, counting what is queued already, ends the subscription with that frame
+instead. A roster carries every PC's snapshot, so a page whose roster is larger than that takes
+machine events over SSE, one stream per tab as before this transport. The next connection that offers the capability takes over
+from SSE again.
+
+This avoids consuming one long-lived HTTP/1.1 request per browser tab. It does not make every tab
+share its rendered conversation, terminal or JavaScript heap, and is not a claim of a measured RAM
+reduction. Compare the same pages, conversation sizes and activity before claiming one. In
+particular, the conversation cache's byte budget is an upper bound on retained serialized answers,
+not a measurement of a tab's resident memory or its parsed objects and rendered nodes.
+
 ## Checks
 
 Production builds create Brotli (`.br`) and gzip (`.gz`) sidecars for JavaScript and CSS under

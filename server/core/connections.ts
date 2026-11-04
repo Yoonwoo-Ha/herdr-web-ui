@@ -1,3 +1,4 @@
+import { subscribeMachineEvents, type MachineEventDocument } from "../machine-events.ts";
 /**
  * A browser's WebSocket connection: what the upgrade records on it, what it may do, how a frame is
  * sent to it, the presence beat it sends, and how it ends. Only this module changes a connection's
@@ -8,12 +9,14 @@ import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 import type { DeviceStore } from "../devices.ts";
 import { HerdrError, herdrSocketPath } from "../herdr/client.ts";
 import type { MachineRelay } from "../machine-relay.ts";
-import { OUTPUT_HARD_BYTES, type OutputWindow } from "../output-window.ts";
+import { OUTPUT_HARD_BYTES, OUTPUT_LOW_BYTES, type OutputWindow } from "../output-window.ts";
 import type { PendingInputs } from "../pending-input.ts";
 import { PaneWatch } from "../watch.ts";
 import type { TelemetryIngress, TelemetrySurface } from "../../shared/telemetry.ts";
 
 export interface SocketData {
+  /** Only the connection server grants this document; remote terminal relays do not. */
+  machineEvents?: MachineEventDocument;
   deviceId?: string;
   readOnly?: boolean;
   relay?: MachineRelay;
@@ -37,6 +40,7 @@ export interface SocketData {
 
 interface ConnectionState {
   closing: boolean;
+  stopMachineEvents?: () => void;
   revoked: boolean;
   /** the connection's authority: observe connections cannot type or resize */
   mode: ClientRole;
@@ -63,7 +67,7 @@ function stateOf(client: Client): ConnectionState {
 }
 
 /** The data for a connection's upgrade: it starts to interact unless its access is read-only. */
-export function connectionData(fields: { relay?: MachineRelay; deviceId: string | undefined; readOnly: boolean; bridge?: boolean; surface?: TelemetrySurface; ingress?: TelemetryIngress; recheckMs?: number }): SocketData {
+export function connectionData(fields: { machineEvents?: MachineEventDocument; relay?: MachineRelay; deviceId: string | undefined; readOnly: boolean; bridge?: boolean; surface?: TelemetrySurface; ingress?: TelemetryIngress; recheckMs?: number }): SocketData {
   const data: SocketData = { connectionId: crypto.randomUUID(), attached: new Map<string, { keepSize: boolean }>(), conversationInterests: new Set<string>(), output: new Map(), ...fields };
   states.set(data, { closing: false, revoked: false, mode: fields.readOnly ? "observe" : "interact", roles: 0, watches: new Map<string, PaneWatch>() });
   return data;
@@ -72,6 +76,34 @@ export function connectionData(fields: { relay?: MachineRelay; deviceId: string 
 /** The connection's live authority and closing, read where a check needs them; changed only here. */
 export function connectionOf(client: Client): Readonly<Pick<ConnectionState, "closing" | "mode" | "roles">> {
   return stateOf(client);
+}
+
+/**
+ * Idempotent subscription, with the same authorized document as SSE. Machine events never close
+ * the terminal (4008) nor sit in front of its output long enough to stall it: one that would put
+ * more than OUTPUT_LOW_BYTES on the socket, counting what is queued already, ends the subscription
+ * instead, and the page takes machine events over SSE until its next connection. The ending notice is a
+ * few bytes sent past the budget, so the page always learns of it.
+ */
+export function setMachineEvents(client: Client, enabled: boolean): void {
+  const state = stateOf(client);
+  if (!enabled) { state.stopMachineEvents?.(); state.stopMachineEvents = undefined; return; }
+  if (state.closing || state.stopMachineEvents || !client.data.machineEvents) return;
+  let stop: (() => void) | undefined;
+  let overflowed = false;
+  const end = () => {
+    stop?.();
+    if (state.stopMachineEvents === stop) state.stopMachineEvents = undefined;
+    if (state.closing) return;
+    try { client.send(JSON.stringify({ type: "machine-events-ended" } satisfies ServerMessage)); } catch { /* client vanished */ }
+  };
+  const overflow = () => { overflowed = true; if (stop) end(); };
+  stop = subscribeMachineEvents(client.data.machineEvents, (event) => {
+    if (!overflowed) send(client, { type: "machine-event", event }, overflow);
+  });
+  if (state.closing) stop();
+  else if (overflowed) end();
+  else state.stopMachineEvents = stop;
 }
 
 /** A `presence` frame's answer, or null for any other frame. A relayed frame is only parsed when it can be one. */
@@ -116,7 +148,12 @@ export function backlog(client: Client): number {
   return buffered - Math.min(excused.frame, excused.ahead);
 }
 
-export function send(client: Client, message: ServerMessage): number {
+/**
+ * `overflow` marks a side-channel frame (machine events): it is called, and the frame not sent,
+ * when the frame would put more than OUTPUT_LOW_BYTES on the socket, counting what is queued
+ * already, or when the socket refuses it; such a frame never closes the connection.
+ */
+export function send(client: Client, message: ServerMessage, overflow?: () => void): number {
   const state = stateOf(client);
   if (state.closing) return 0;
   try {
@@ -125,6 +162,7 @@ export function send(client: Client, message: ServerMessage): number {
     // A frame larger than the whole budget is sent while the backlog is within it, and excused
     // while it drains; only one at a time, so a client holds at most one such frame past it.
     const queued = backlog(client);
+    if (overflow && queued + bytes > OUTPUT_LOW_BYTES) { overflow(); return 0; }
     const oversized = bytes > OUTPUT_HARD_BYTES && queued <= OUTPUT_HARD_BYTES && !state.excused;
     // Include JSON escaping in the transport budget, before Bun could drop a
     // frame at its own cap. An overload close is explicit and never auto-replayed.
@@ -134,7 +172,7 @@ export function send(client: Client, message: ServerMessage): number {
     }
     // -1 means ALREADY queued. Never retry that frame, or terminal bytes repeat.
     const result = client.send(encoded);
-    if (result === 0) client.close(OUTPUT_STALLED_CLOSE_CODE, "output delivery failed");
+    if (result === 0) { if (overflow) overflow(); else client.close(OUTPUT_STALLED_CLOSE_CODE, "output delivery failed"); }
     else {
       const after = client.getBufferedAmount();
       // a frame sent after the excused one queues behind it: only its own bytes are new
@@ -232,6 +270,7 @@ export function createConnections({ clients, present, pending, devices, detachCl
    */
   function end(client: Client, reason: "stalled" | "revoked" | "closed"): void {
     const state = stateOf(client);
+    state.stopMachineEvents?.(); state.stopMachineEvents = undefined;
     switch (reason) {
       case "stalled": {
         if (state.closing) return;

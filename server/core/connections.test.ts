@@ -5,11 +5,14 @@ import { join } from "node:path";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 import { DeviceStore } from "../devices.ts";
 import type { MachineRelay } from "../machine-relay.ts";
-import { OUTPUT_HARD_BYTES } from "../output-window.ts";
+import { OUTPUT_HARD_BYTES, OUTPUT_HIGH_BYTES, OUTPUT_LOW_BYTES } from "../output-window.ts";
 import type { PendingInputs } from "../pending-input.ts";
-import { backlog, type Client, connectionData, connectionOf, createConnections, send } from "./connections.ts";
+import type { MachineEventDocument } from "../machine-events.ts";
+import type { ServerMessage } from "../../shared/protocol.ts";
+import type { SharedPreferences } from "../../shared/preferences.ts";
+import { backlog, type Client, connectionData, connectionOf, createConnections, send, setMachineEvents } from "./connections.ts";
 
-function harness({ deviceId, readOnly = false, relay, revokedAlready = false, store }: { deviceId?: string; readOnly?: boolean; relay?: MachineRelay; revokedAlready?: boolean; store?: DeviceStore } = {}) {
+function harness({ deviceId, readOnly = false, relay, revokedAlready = false, store, machineEvents }: { deviceId?: string; readOnly?: boolean; relay?: MachineRelay; revokedAlready?: boolean; store?: DeviceStore; machineEvents?: MachineEventDocument } = {}) {
   const log: string[] = [];
   const revocations: (() => void)[] = [];
   const devices = store ?? {
@@ -20,7 +23,7 @@ function harness({ deviceId, readOnly = false, relay, revokedAlready = false, st
   } as unknown as DeviceStore;
   const pending = { close: () => log.push("pending closed") } as unknown as PendingInputs<Client, never>;
   const client = {
-    data: connectionData({ deviceId, readOnly, ...(relay ? { relay } : {}) }),
+    data: connectionData({ deviceId, readOnly, ...(relay ? { relay } : {}), ...(machineEvents ? { machineEvents } : {}) }),
     readyState: WebSocket.OPEN,
     close: (code?: number, reason?: string) => log.push(`closed ${code} ${reason}`),
     getBufferedAmount: () => 0,
@@ -90,6 +93,64 @@ it("closes a client whose backlog of ordinary frames would pass the transport bu
   Object.assign(client, { getBufferedAmount: () => OUTPUT_HARD_BYTES - 10 });
   expect(send(client, { type: "error", code: "x", message: "x".repeat(20) })).toBe(0);
   expect(log).toEqual([`closed ${OUTPUT_STALLED_CLOSE_CODE} terminal output transport stalled`]);
+});
+
+it("ends the machine-event subscription, never the terminal connection, rather than put more than OUTPUT_LOW_BYTES of machine events on the socket", () => {
+  const listeners = new Set<(preferences: SharedPreferences) => void>();
+  const preferences = (bytes: number) => ({ revision: 1, settings: { note: "x".repeat(bytes) } }) as unknown as SharedPreferences;
+  let initial = 200;
+  const machineEvents: MachineEventDocument = {
+    manager: { subscribe: () => () => {} },
+    preferences: { get: () => preferences(initial), subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; } },
+  };
+  const subscribe = (queued: number) => {
+    const { client, log } = harness({ machineEvents });
+    let buffered = queued;
+    const sent: string[] = [];
+    Object.assign(client, { getBufferedAmount: () => buffered, send: (raw: string) => { sent.push((JSON.parse(raw) as ServerMessage).type); buffered += Buffer.byteLength(raw); return -1; } });
+    setMachineEvents(client, true);
+    return { client, log, sent, queue: (bytes: number) => { buffered = bytes; } };
+  };
+  // a backlog with no room left even for the ending notice: still told, and the terminal kept
+  for (const queued of [OUTPUT_HARD_BYTES - 10, OUTPUT_LOW_BYTES - 100]) {
+    const { log, sent } = subscribe(queued);
+    expect(log).toEqual([]);
+    expect(sent).toEqual(["machine-events-ended"]);
+    expect(listeners.size).toBe(0);
+  }
+  // a small document on an empty queue goes out; a live event that would pass the cap ends it
+  const small = subscribe(0);
+  expect(small.sent).toEqual(["machine-event"]);
+  expect(listeners.size).toBe(1);
+  small.queue(OUTPUT_LOW_BYTES - 100);
+  for (const listener of [...listeners]) listener(preferences(200));
+  expect(small.log).toEqual([]);
+  expect(small.sent).toEqual(["machine-event", "machine-events-ended"]);
+  expect(listeners.size).toBe(0);
+  // a roster of 768 KiB-1 MiB on an empty queue never rides the socket: the page moves to SSE, and
+  // the 256 KiB of terminal output that follows is sent with nothing of it in front
+  initial = 900 * 1024;
+  const large = subscribe(0);
+  expect(large.sent).toEqual(["machine-events-ended"]);
+  expect(listeners.size).toBe(0);
+  const output = "x".repeat(256 * 1024);
+  expect(send(large.client, { type: "pty-data", pane_id: "w1:p1", data: output } as unknown as ServerMessage)).toBe(-1);
+  expect(backlog(large.client)).toBeLessThan(OUTPUT_HIGH_BYTES + 1024);
+  expect(large.log).toEqual([]);
+  expect(large.sent).toEqual(["machine-events-ended", "pty-data"]);
+});
+
+it("ends the machine-event subscription, never the terminal connection, when the socket refuses a machine event", () => {
+  const machineEvents: MachineEventDocument = {
+    manager: { subscribe: () => () => {} },
+    preferences: { get: () => ({ revision: 1, settings: {} }) as unknown as SharedPreferences, subscribe: () => () => {} },
+  };
+  const { client, log } = harness({ machineEvents });
+  const sent: string[] = [];
+  Object.assign(client, { send: (raw: string) => { const type = (JSON.parse(raw) as ServerMessage).type; sent.push(type); return type === "machine-event" ? 0 : 1; } });
+  setMachineEvents(client, true);
+  expect(log).toEqual([]);
+  expect(sent).toEqual(["machine-event", "machine-events-ended"]);
 });
 
 it("a revoke ends the connection with 1008 and leaves its pending input to the socket's close", () => {

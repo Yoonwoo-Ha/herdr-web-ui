@@ -2337,3 +2337,15 @@ it("runs on a transport's socket where the page has no global WebSocket", () => 
     setTransport(nativeTransport);
   }
 });
+
+it("forgets machine event capability on disconnect before a replacement subscriber can observe it", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect(); const socket = FakeSocket.last; socket.open();
+  socket.receive({ type: "features", features: ["machine-events"], connection: "c" });
+  expect(client.machineEventsAvailable).toBe(true);
+  client.setMachineEvents(true);
+  expect(socket.sent.filter((frame) => frame.type === "machine-events")).toEqual([{ type: "machine-events", enabled: true }]);
+  socket.disconnect();
+  expect(client.machineEventsAvailable).toBeNull();
+  client.close();
+});

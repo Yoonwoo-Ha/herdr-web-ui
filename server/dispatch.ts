@@ -313,7 +313,21 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     const observed = observedIngress({ ...requestShape, ...identity, peerKnown: ip !== null, forwardingHeaders: forwardingHeaders(request.headers) });
     const surface = bridgeAuthorized ? false : visitSurface(url.searchParams.get("surface"));
     const ingress: TelemetryIngress = observed === "direct" ? (loopback ? "local" : "lan") : observed;
-    const upgraded = ctx.upgrade(request, { headers, data: connectionData({ deviceId, readOnly, bridge: bridgeAuthorized, ...(surface ? { surface } : {}), ...(surface === false ? {} : { ingress }), ...recheck }) });
+    // Reuse the terminal socket for the same authorized event document as /api/machines/events.
+    // A server-side switch keeps the old SSE path available for immediate transport rollback.
+    const useMachineEvents = machines && !bridgeAuthorized && process.env["OVIS_MACHINE_EVENTS_WS"] !== "0";
+    const presentedKeys = streamKeys(request);
+    const issuedKey = useMachineEvents && presentedKeys.length === 0 ? newStreamKey() : null;
+    const keys = issuedKey === null ? presentedKeys : [issuedKey];
+    if (issuedKey !== null) headers.append("set-cookie", streamCookie(issuedKey, isSecureRequest(request)));
+    const openAccess = access.level === "full" && access.via === "open";
+    const machineEvents = useMachineEvents ? {
+      manager: machines, preferences, herdrSidebar, seen,
+      pairings: { subscribe: (listener: (event: DevicePairedEvent) => void) => devices.onPaired((event, origin) => {
+        if (!openAccess && event.device_id !== deviceId && !sameBrowser(origin, keys)) listener(event);
+      }) },
+    } : undefined;
+    const upgraded = ctx.upgrade(request, { headers, data: connectionData({ machineEvents, deviceId, readOnly, bridge: bridgeAuthorized, ...(surface ? { surface } : {}), ...(surface === false ? {} : { ingress }), ...recheck }) });
     if (upgraded) return undefined;
     return new Response("websocket upgrade required", { status: 426 });
   }

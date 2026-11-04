@@ -1,3 +1,4 @@
+import type { MachineEvent } from "./machines.ts";
 /**
  * Ovis's own HTTP/WebSocket contract, shared by the Bun server and the React client.
  *
@@ -917,6 +918,8 @@ export interface PendingMessage {
 }
 
 export type ClientMessage =
+  /** Subscribe to this connection server's authorized machine document; requires machine-events. */
+  | { type: "machine-events"; enabled: boolean }
   /** keep_size: the grid is covered (the chat lens), so the attach leaves the shared pty's size as it is */
   | { type: "attach"; pane_id: string; cols: number; rows: number; flow_control?: "ack"; keep_size?: boolean; /** Opaque browser UUID for device-bound Pi presentation receipts only; never input authority. */ receipt_resume_id?: string }
   | { type: "detach"; pane_id: string }
@@ -1042,9 +1045,12 @@ export interface ClientConnectionTrace {
 }
 
 /** What a server supports beyond the base protocol, listed in its `features` frame and its first snapshot; older bridges list nothing. */
-export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only";
+export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events";
 
 export type ServerMessage =
+  | { type: "machine-event"; event: MachineEvent }
+  /** the subscription ended because a machine event would overrun this socket's output budget: the page takes them over SSE until its next connection */
+  | { type: "machine-events-ended" }
   /** the first frame of a connection, before the snapshot that can wait seconds on herdr: what this server
    * supports and this socket's `connection` id (the snapshot names the same), and the herdr it reads now
    * (`herdr_lifetime` as a snapshot names it; absent when unproven). A page acts on it before the snapshot only
