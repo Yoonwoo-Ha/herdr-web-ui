@@ -1528,6 +1528,13 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         }
         setDraft((prev) => applyToDraft(prev, typed.input));
         if (!draftIsEmpty(applyToDraft(EMPTY_DRAFT, typed.input))) draftHeldForRef.current = current;
+        // A key the draft cannot hold (Escape, Enter, an arrow, typed right as the terminal opens, say) is told, never
+        // lost in silence. Not Backspace, which edits the draft, nor what xterm sends by itself, which no one typed: focus
+        // and mouse reports, and its answers to the program's queries (device attributes and status, cursor position,
+        // modes, window reports, DECRQSS, colors).
+        else if (!/^([\x7f\b]+|\x1b(P|\]|\[([IO]|<|M|[?>=]?[\d;]*\$?[cnRyt]))[\s\S]*)$/.test(typed.input)) {
+          setInputError(tRef.current("Not sent: the terminal is not ready for keys."));
+        }
       };
       const onData = term.onData((data) => {
         // a key from the key bar or the Stop, or a dropped file's paths, ends the swipe before it

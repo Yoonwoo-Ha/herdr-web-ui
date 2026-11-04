@@ -71,6 +71,7 @@ run_script scripts/terminal-switch-regression.ts
 run_script scripts/terminal-switch-resize-regression.ts
 run_script scripts/terminal-view-replay-demo-regression.ts
 run_script scripts/terminal-release-no-watch-demo-regression.ts
+run_script scripts/terminal-early-keys-demo-regression.ts
 run_script scripts/pane-lifetime-regression.ts
 run_script scripts/terminal-arrows-clicks-regression.ts
 run_script scripts/terminal-viewport-regression.ts
