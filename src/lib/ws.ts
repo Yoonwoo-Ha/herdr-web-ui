@@ -117,6 +117,8 @@ export class HerdrSocket {
   private readonly disconnectHandlers = new Set<() => void>();
   private readonly beforeReplayHandlers = new Set<() => void>();
   private featuresKnown = false;
+  /** `terminal-history` from this connection's latest features frame (trusted or not) or snapshot: it says how to draw, not what to send */
+  private terminalHistory = false;
   private machineEventsOffered: boolean | null = null;
   private readonly outputSeen = new Set<string>();
   private readonly inputReady = new Set<string>();
@@ -317,6 +319,7 @@ export class HerdrSocket {
     this.inputReady.clear();
     this.outputSeen.clear();
     this.featuresKnown = false;
+    this.terminalHistory = false;
     this.machineEventsOffered = null;
     this.featuresSeen = new Promise((resolve) => { this.markFeatures = resolve; });
     this.clearConnectTimer();
@@ -390,7 +393,12 @@ export class HerdrSocket {
       // seconds on herdr; an older bridge lists them in its snapshot only. Each list is the bridge's
       // latest word, but what it restores is asked for once per connection, by the first of them. A features
       // frame counts only when trusted (trustFeatures); otherwise its snapshot says, as an older bridge's does.
-      if (message.type === "features" || message.type === "snapshot") this.machineEventsOffered = message.features?.includes("machine-events") ?? false;
+      // an untrusted features frame still says how its attach replays draw: history it lists ahead of the
+      // snapshot would be cut by a scrollback lowered until the snapshot came
+      if (message.type === "features" || message.type === "snapshot") {
+        this.terminalHistory = (message.features ?? []).includes("terminal-history");
+        this.machineEventsOffered = message.features?.includes("machine-events") ?? false;
+      }
       if ((message.type === "features" && this.featuresTrusted(message)) || message.type === "snapshot") {
         const first = !this.featuresKnown;
         this.features = new Set(message.features ?? []);
@@ -843,6 +851,11 @@ export class HerdrSocket {
   /** Before the features are known, a watch waits for capability discovery rather than acquiring an attach. */
   canWatch(): boolean {
     return !this.featuresKnown || this.features.has("watch");
+  }
+
+  /** Whether the browser keeps a pane's scrollback (`terminal-history`); false until the features come. */
+  hasTerminalHistory(): boolean {
+    return this.terminalHistory;
   }
 
   unwatch(paneId: string): void {

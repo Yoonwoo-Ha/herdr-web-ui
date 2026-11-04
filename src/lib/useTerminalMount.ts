@@ -15,6 +15,7 @@ import { matchHerdrWidths } from "./terminalWidths.ts";
 import { unwrapAgentRows } from "./agentCopy.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import { secretPrompt } from "../../shared/secret-prompt.ts";
+import { TERMINAL_HISTORY_LINES } from "../../shared/terminal-flow.ts";
 import type { ClientRole, ServerMessage } from "../../shared/protocol.ts";
 import { terminalTheme, type Palette, type ResolvedTheme, type Settings } from "./settings.ts";
 import { measurableFontStack, openingFontStack, TERMINAL_FONT_STACK } from "./fontFamily.ts";
@@ -212,7 +213,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         // xterm keeps no scrollback: the attach stream lives in the alternate screen and herdr
         // owns scrollback (wheel and touch go to it). With scrollback on, the fit addon reserves
         // a scrollbar column - 15px by fallback wherever scrollbars are overlays - and the last
-        // columns of the hero surface go dead.
+        // columns of the hero surface go dead. On herdr-core xterm keeps the history (syncHistory).
         scrollback: 0,
         allowProposedApi: true,
         fontSize: terminalFontSize,
@@ -968,7 +969,8 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           peakInFlight = Math.max(peakInFlight, inFlight);
           write(data, () => { inFlight--; callback?.(); });
         };
-        Object.assign(host, { outputProbe: () => ({ ...term.oscStringState(), parsingReplay, replayOscOpen, retired: writingOutput && parsingOwner !== outputOwner, queued: outputFrames.length, inFlight, peakInFlight, writes, written, frameSettled: frameGateRef.current.current }) });
+        Object.assign(host, { outputProbe: () => ({ ...term.oscStringState(), parsingReplay, replayOscOpen, retired: writingOutput && parsingOwner !== outputOwner, queued: outputFrames.length, inFlight, peakInFlight, writes, written, frameSettled: frameGateRef.current.current,
+          history: { scrollback: term.options.scrollback ?? 0, length: term.buffer.active.length, viewportY: term.buffer.active.viewportY, baseY: term.buffer.active.baseY } }) });
       }
 
       // OSC 52: the pane program asked the terminal to set the clipboard - the pty
@@ -1017,6 +1019,16 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       const session = machineSessions?.get(machineId) ?? new MachineSession(machineId);
       const socket = session.socket;
       sessionRef.current = session;
+      // On a herdr-core server (`terminal-history`) this terminal keeps the scrollback, as VS Code's
+      // does: the wheel scrolls it natively unless the program reads the mouse, touch below. herdr's
+      // TUI keeps its own. Returns whether it changed.
+      const syncHistory = (): boolean => {
+        const lines = socket.hasTerminalHistory() ? TERMINAL_HISTORY_LINES : 0;
+        if (term.options.scrollback === lines) return false;
+        term.options.scrollback = lines;
+        return true;
+      };
+      syncHistory();
       pendingScopeRef.current = session.scope;
       pendingEpochRef.current = session.epoch;
       socketRef.current = socket;
@@ -1094,7 +1106,9 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       const screenSecret = (): string | null => {
         const lines: string[] = [];
         const buffer = term.buffer.active;
-        for (let row = 0; row < buffer.length; row++) {
+        // the screen only: a prompt is on its last lines, and a herdr-core pane's history (syncHistory) would
+        // cost every output frame a pass over its 2,000 lines
+        for (let row = buffer.baseY; row < buffer.length; row++) {
           const line = buffer.getLine(row);
           const text = line?.translateToString(!buffer.getLine(row + 1)?.isWrapped) ?? "";
           if (line?.isWrapped && lines.length) lines[lines.length - 1] += text;
@@ -1153,6 +1167,9 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         pendingEpochRef.current = session.epoch;
         // Every pane-addressed frame, errors included, belongs only to that pane's renderer.
         if ("pane_id" in message && message.pane_id !== undefined && message.pane_id !== paneRef.current) return;
+        // the features come ahead of any pane's bytes; a changed scrollback changes the fit's scrollbar column
+        // a tab out of use refits when it is back (back())
+        if ((message.type === "features" || message.type === "snapshot") && syncHistory() && inUse()) refit();
         // the PC's shared connection came back after an overload close (another pane's mount, or an
         // explicit pick, reconnected it): its replayed attach serves this pane again
         if (message.type === "snapshot" && stalledRef.current) {
@@ -1870,6 +1887,13 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         if (steps === 0) return;
         if (scrollableMirror() || wheelStateRef.current.omoQuestion) {
           lineScroll.current?.(-steps * HERDR_MOUSE_SCROLL_LINES);
+          return;
+        }
+        // history this terminal keeps itself (syncHistory) scrolls here, as a real wheel scrolls it: the
+        // wheel dispatched below lands past xterm's viewport, which would type arrow keys to the program
+        if ((term.options.scrollback ?? 0) > 0 && term.buffer.active.type === "normal" && term.modes.mouseTrackingMode === "none") {
+          // a step has the wheel's sign (negative is older lines), as xterm's scrollLines does
+          term.scrollLines(steps * HERDR_MOUSE_SCROLL_LINES);
           return;
         }
         const target = term.element ?? host;

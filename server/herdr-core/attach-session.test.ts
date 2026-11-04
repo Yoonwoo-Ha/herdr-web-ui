@@ -1,10 +1,13 @@
 import { describe, expect, it } from "bun:test";
+import { TERMINAL_HISTORY_LINES } from "../../shared/terminal-flow.ts";
 import { CoreAttachSession } from "./attach-session.ts";
 import { encodeFrame, FRAME_CLOSE, FRAME_CREDIT, FRAME_DATA, FRAME_FACTS, FRAME_FOCUS, FRAME_RESIZE, type Frame, HcConnection, type HcTransport, makeFrameReader } from "./connection.ts";
 
 const CHANNEL = 7;
 /** what the session asks the viewers' terminal on attach, as `hc attach` asks its own */
 const ASKED = "\x1b[?1004h\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b[16t\x1b[c";
+/** what goes ahead of hc's first bytes: the viewer's last attach's scrollback is erased, on the main screen, before hc replays it */
+const CLEARED = "\x1b[?1049l\x1b[3J\x1b[H\x1b[2J";
 
 /** A core behind a fake `hc connect` that answers `terminal.attach` with one channel and records what the viewer sends on it. */
 class FakeCore implements HcTransport {
@@ -107,12 +110,12 @@ function attach(onData: (data: string) => void = () => {}, options: ConstructorP
 }
 
 describe("CoreAttachSession", () => {
-  it("attaches at the viewer's grid, and types what was written before hc answered, in order", async () => {
+  it("attaches at the viewer's grid with its history, and types what was written before hc answered, in order", async () => {
     const { core, session } = attach();
     session.write("a");
     session.write("b");
     await core.until(FRAME_DATA, 2);
-    expect(core.attachParams).toEqual({ terminal: "t3", cols: 80, rows: 24 });
+    expect(core.attachParams).toEqual({ terminal: "t3", cols: 80, rows: 24, history: TERMINAL_HISTORY_LINES });
     expect(core.of(FRAME_DATA).map((frame) => new TextDecoder().decode(frame.payload))).toEqual(["a", "b"]);
   });
 
@@ -149,7 +152,7 @@ describe("CoreAttachSession", () => {
     expect(credited()).toEqual([5]);
     session.resume();
     expect(credited()).toEqual([5, 4]);
-    expect(seen.join("").replace(ASKED, "")).toBe("helloheld");
+    expect(seen.join("").replace(ASKED, "")).toBe(`${CLEARED}helloheld`);
   });
 
   it("ends with the program's exit code when hc closes the stream", async () => {
@@ -161,13 +164,13 @@ describe("CoreAttachSession", () => {
     expect(session.write("x")).toBe(false);
   });
 
-  it("hears a first paint that hc sent before its reply to the attach", async () => {
+  it("hears a first paint that hc sent before its reply to the attach, after erasing the viewer's scrollback once", async () => {
     const seen: string[] = [];
     const painted = Promise.withResolvers<void>();
     const { core } = attach((data) => { seen.push(data); painted.resolve(); }, { paintFirst: "first screen" });
     await core.attached;
     await painted.promise;
-    expect(seen.join("")).toBe("first screen");
+    expect(seen.join("")).toBe(`${CLEARED}first screen`);
     // and credits it, or hc would hold the stream at its window
     await core.until(FRAME_CREDIT, 1);
   });

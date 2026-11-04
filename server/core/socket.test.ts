@@ -7,7 +7,7 @@ import { createSocket } from "./socket.ts";
 function socket(stopped: boolean) {
   const ended: string[] = [];
   const handler = createSocket({
-    clients: new Set(), present: new Set(), stopped: () => stopped, admit: () => true, setRole() {}, watchable: () => true, watchPane() {}, unwatchPane() {},
+    clients: new Set(), present: new Set(), stopped: () => stopped, admit: () => true, setRole() {}, watchable: () => true, terminalHistory: () => false, watchPane() {}, unwatchPane() {},
     end: (_client, reason) => { ended.push(reason); }, holdPending() {}, attachments: new Map(),
     clientSnapshot: async () => ({}) as SessionSnapshot, herdrLifetime: () => undefined, browserSnapshot: (snapshot) => snapshot, countVisit() {}, drainOutput() {}, frames: {} as never,
   });
@@ -21,7 +21,7 @@ it("tells a new connection its features before its snapshot, which waits on herd
     let fail: (error: Error) => void = () => {};
     const held = new Promise<SessionSnapshot>((resolve, reject) => { settle = resolve; fail = reject; });
     const handler = createSocket({
-      clients: new Set(), present: new Set(), stopped: () => false, admit: () => true, setRole() {}, watchable: () => true, watchPane() {}, unwatchPane() {},
+      clients: new Set(), present: new Set(), stopped: () => false, admit: () => true, setRole() {}, watchable: () => true, terminalHistory: () => false, watchPane() {}, unwatchPane() {},
       end() {}, holdPending() {}, attachments: new Map(),
       clientSnapshot: () => held, herdrLifetime: () => outcome === "read" ? "herdr-a" : undefined, browserSnapshot: (snapshot) => snapshot, countVisit() {}, drainOutput() {}, frames: {} as never,
     });
@@ -30,6 +30,8 @@ it("tells a new connection its features before its snapshot, which waits on herd
     const opened = handler.open!(client);
     expect(frames.map((frame) => frame.type)).toEqual(["features"]);
     expect(frames[0]!.features).toEqual(expect.arrayContaining(["submit", "pending-input", "terminal-insert", "watch"]));
+    // herdr's TUI owns scrollback: the browser keeps none
+    expect(frames[0]!.features).not.toContain("terminal-history");
     expect(frames[0]!.connection).toBe(client.data.connectionId);
     // the herdr it reads now, read without a herdr call; none when it proves none
     expect(frames[0]!.herdr_lifetime).toBe(outcome === "read" ? "herdr-a" : undefined);
@@ -44,7 +46,7 @@ it("tells a new connection its features before its snapshot, which waits on herd
 it("offers no watch where none can be drawn (herdr-core), and ends a watch sent anyway without starting one", async () => {
   const watched: string[] = [];
   const handler = createSocket({
-    clients: new Set(), present: new Set(), stopped: () => false, admit: () => true, setRole() {}, watchable: () => false,
+    clients: new Set(), present: new Set(), stopped: () => false, admit: () => true, setRole() {}, watchable: () => false, terminalHistory: () => true,
     watchPane: (_client, paneId) => { watched.push(paneId); }, unwatchPane() {},
     end() {}, holdPending() {}, attachments: new Map(),
     clientSnapshot: async () => ({ workspaces: [], panes: [], agents: [], layouts: [] }) as unknown as SessionSnapshot, herdrLifetime: () => undefined, browserSnapshot: (snapshot) => snapshot, countVisit() {}, drainOutput() {}, frames: {} as never,
@@ -55,6 +57,8 @@ it("offers no watch where none can be drawn (herdr-core), and ends a watch sent 
   expect(frames.map((frame) => frame.type)).toEqual(["features", "snapshot"]);
   for (const frame of frames) {
     expect(frame.features).not.toContain("watch");
+    // herdr-core keeps no viewport to scroll: its attaches replay history for the browser to keep
+    expect(frame.features).toContain("terminal-history");
     // everything else stays offered
     expect(frame.features).toEqual(expect.arrayContaining(["submit", "pending-input", "conversation-watch", "terminal-insert"]));
   }
@@ -73,7 +77,7 @@ it("delivers a session snapshot larger than the transport budget to a socket wit
   const snapshot = { workspaces: [], panes: Array.from({ length: 600 }, (_, i) => ({ pane_id: `p${i}`, cwd: `/w/${"x".repeat(2000)}` })), agents: [], layouts: [] } as unknown as SessionSnapshot;
   expect(Buffer.byteLength(JSON.stringify(snapshot))).toBeGreaterThan(OUTPUT_HARD_BYTES);
   const handler = createSocket({
-    clients: new Set(), present: new Set(), stopped: () => false, admit: () => true, setRole() {}, watchable: () => true, watchPane() {}, unwatchPane() {},
+    clients: new Set(), present: new Set(), stopped: () => false, admit: () => true, setRole() {}, watchable: () => true, terminalHistory: () => false, watchPane() {}, unwatchPane() {},
     end() {}, holdPending() {}, attachments: new Map(),
     clientSnapshot: async () => snapshot, herdrLifetime: () => undefined, browserSnapshot: (read) => read, countVisit() {}, drainOutput() {}, frames: {} as never,
   });

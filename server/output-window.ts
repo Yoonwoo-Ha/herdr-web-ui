@@ -189,6 +189,11 @@ export class ReplayBuffer {
     return [...this.modes].map(([mode, state]) => `\x1b[?${mode}${state}`).join("") + keys + this.tail;
   }
 
+  /** whether the output before the tail left the alternate screen on: the tail starts on it */
+  get alternateScreen(): boolean {
+    return this.modes.get("1049") === "h";
+  }
+
   /** The raw tail, for matching herdr's own error text. */
   get recent(): string {
     return this.tail;

@@ -1044,8 +1044,13 @@ export interface ClientConnectionTrace {
   events: ClientConnectionEvent[];
 }
 
-/** What a server supports beyond the base protocol, listed in its `features` frame and its first snapshot; older bridges list nothing. */
-export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events";
+/**
+ * What a server supports beyond the base protocol, listed in its `features` frame and its first snapshot; older bridges list nothing.
+ * `terminal-history` (herdr-core, which has no viewport to scroll): each attach clears the client's scrollback and replays
+ * the pane's last TERMINAL_HISTORY_LINES lines, so the client keeps the scrollback and scrolls it itself. Without it herdr
+ * owns the scrollback and the client keeps none.
+ */
+export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events" | "terminal-history";
 
 export type ServerMessage =
   | { type: "machine-event"; event: MachineEvent }

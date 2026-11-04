@@ -993,6 +993,42 @@ it("discovers watch support anew before each connection's attach replay", () => 
   } finally { client.close(); }
 });
 
+it("keeps a pane's scrollback in the browser only for a server that says it has none of its own", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.trustFeatures(() => true);
+  const seen: boolean[] = [];
+  // a pane hears the features frame after the socket learned them, and sizes its scrollback by it
+  const off = client.on((message) => { if (message.type === "features") seen.push(client.hasTerminalHistory()); });
+  try {
+    client.connect();
+    let socket = FakeSocket.last;
+    socket.open();
+    expect(client.hasTerminalHistory()).toBe(false);
+    socket.receive({ type: "features", features: ["submit", "terminal-history"], connection: "c1" });
+    expect(seen).toEqual([true]);
+    // a reconnect to herdr's own server (its TUI keeps the history) forgets it
+    socket.disconnect();
+    client.connect();
+    socket = FakeSocket.last;
+    socket.open();
+    expect(client.hasTerminalHistory()).toBe(false);
+    socket.receive(snapshot(["watch", "submit"]));
+    expect(client.hasTerminalHistory()).toBe(false);
+  } finally { off(); client.close(); }
+});
+
+// #2664 review: an untrusted features frame lowered the scrollback, and history replayed before the snapshot was cut
+it("keeps a pane's scrollback on from a features frame it does not trust yet", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.trustFeatures(() => false);
+  try {
+    client.connect();
+    FakeSocket.last.open();
+    FakeSocket.last.receive({ type: "features", features: ["submit", "terminal-history"], connection: "c1" });
+    expect(client.hasTerminalHistory()).toBe(true);
+  } finally { client.close(); }
+});
+
 it("waits for capabilities when output precedes snapshot, and supports old bridges", () => {
   for (const features of [["input-ready"], []]) {
     const client = new HerdrSocket("ws://test/ws"); client.connect();

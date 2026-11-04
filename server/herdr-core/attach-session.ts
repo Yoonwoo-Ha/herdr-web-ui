@@ -1,3 +1,4 @@
+import { TERMINAL_HISTORY_LINES } from "../../shared/terminal-flow.ts";
 import type { Channel, HcConnection } from "./connection.ts";
 
 /** Asks the viewer's terminal for its colours, cursor colour and cell size; DA1 marks the end (as `hc attach` asks). */
@@ -5,6 +6,18 @@ const ASK_DISPLAY = "\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b[16t\x1b[c
 /** Focus reports pick hc's active viewer, so they stay on whatever the program asks (as `hc attach` keeps them). */
 const FOCUS_ON = "\x1b[?1004h";
 const FOCUS_OFF = "\x1b[?1004l";
+/**
+ * Erases the viewer's scrollback (ED 3) and screen ahead of the history hc replays first: a viewer that kept
+ * the last attach's lines (a reconnect, a recent tab coming back, a joiner's bounded replay) holds them once,
+ * not once per attach. It leaves the alternate screen first, or ED 3 would clear that buffer and leave the
+ * main screen's old history for the replay to double.
+ */
+export const CLEAR_HISTORY = "\x1b[?1049l\x1b[3J\x1b[H\x1b[2J";
+/**
+ * The scrollback alone, for a joiner whose bounded tail starts on the main screen: its screen stays, as a cut
+ * tail of in-place updates cannot draw it again (hc has no repaint), and the tail's lines land once.
+ */
+export const CLEAR_JOINER_HISTORY = "\x1b[?1049l\x1b[3J";
 
 /** What the viewer's terminal said about itself (hc's `Display`). */
 type Display = { fg?: string; bg?: string; cursor?: string; cell?: [number, number] };
@@ -72,8 +85,13 @@ export interface CoreAttachOptions {
  * process and no PTY host per viewer. It answers the calls the server makes on a PtySession:
  * keystrokes are DATA, a size is hc's RESIZE, and pausing holds back hc's credit, which stops the
  * stream once hc's window is spent.
+ *
+ * The viewer keeps the scrollback (`terminal-history`): each attach starts with the terminal's last
+ * TERMINAL_HISTORY_LINES lines, main screen only, as `hc attach --history` shows them.
  */
 export class CoreAttachSession {
+  /** goes ahead of a joiner's cut main-screen replay, which lost the first attach's CLEAR_HISTORY */
+  readonly replayPrefix = CLEAR_JOINER_HISTORY;
   readonly exited: Promise<void>;
   private channel: Channel | null = null;
   private closed = false;
@@ -98,6 +116,7 @@ export class CoreAttachSession {
     this.exited = promise;
     const decoder = new TextDecoder();
     let ended = false;
+    let first = true;
     this.end = (code) => {
       if (ended) return;
       ended = true;
@@ -107,12 +126,16 @@ export class CoreAttachSession {
       options.onExit(code);
       resolve();
     };
-    options.hc.open("terminal.attach", { terminal: options.terminal, cols: options.cols, rows: options.rows }, {
+    options.hc.open("terminal.attach", { terminal: options.terminal, cols: options.cols, rows: options.rows, history: TERMINAL_HISTORY_LINES }, {
       credit: "manual",
       onData: (payload) => {
         this.owed += payload.length;
         this.settle();
-        const text = decoder.decode(payload, { stream: true });
+        let text = decoder.decode(payload, { stream: true });
+        if (text && first) {
+          first = false;
+          text = CLEAR_HISTORY + text;
+        }
         // a program turning focus reports off would leave hc without this viewer's focus
         if (text) options.onData(text.includes(FOCUS_OFF) ? text + FOCUS_ON : text);
       },

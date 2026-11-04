@@ -19,7 +19,7 @@ const { createTerminalRegistry } = await import("./terminals.ts");
 
 afterEach(() => mock.restore());
 
-async function join({ readOnly = false, ready, recovering, times = 1, receiptResumeId, verifyResume }: { readOnly?: boolean; ready: boolean; recovering?: boolean; times?: number; receiptResumeId?: string; verifyResume?: (id: string | undefined) => void }): Promise<ServerMessage[]> {
+async function join({ readOnly = false, ready, recovering, times = 1, receiptResumeId, verifyResume, replayPrefix, retained = "retained screen" }: { readOnly?: boolean; ready: boolean; recovering?: boolean; times?: number; receiptResumeId?: string; verifyResume?: (id: string | undefined) => void; replayPrefix?: string; retained?: string }): Promise<ServerMessage[]> {
   const frames: ServerMessage[] = [];
   const client = {
     data: connectionData({ deviceId: undefined, readOnly }), readyState: WebSocket.OPEN,
@@ -27,10 +27,10 @@ async function join({ readOnly = false, ready, recovering, times = 1, receiptRes
     close() {},
   };
   const replay = new ReplayBuffer(1024);
-  replay.append("retained screen");
+  replay.append(retained);
   attachment = {
     kind: "pty", ready, ...(recovering === undefined ? {} : { recovering }), cols: 80, rows: 24, clients: new Set(), grids: new Map(), stalled: new Map(), replay,
-    process: { exited: Promise.resolve(), pause() {}, resume() {}, resize() {}, winch() {}, kill() {}, write() {} } as unknown as Extract<PaneAttachment, { kind: "pty" }>["process"],
+    process: { exited: Promise.resolve(), pause() {}, resume() {}, resize() {}, winch() {}, kill() {}, write() {}, ...(replayPrefix === undefined ? {} : { replayPrefix }) } as unknown as Extract<PaneAttachment, { kind: "pty" }>["process"],
   };
   const registry = createTerminalRegistry({
     options: {}, clients: new Set([client]), stopped: () => false, terminalAttach: async () => true,
@@ -68,6 +68,28 @@ for (const readOnly of [false, true]) for (const ready of [false, true]) {
     if (ready) expect(frames.findIndex((frame) => frame.type === "input-ready"))
       .toBeGreaterThan(frames.findIndex((frame) => frame.type === "pty-data"));
     expect(frames.some((frame) => frame.type === "output-recovering")).toBe(false);
+  });
+}
+
+// #2664 review: a herdr-core joiner's bounded tail may have lost the attach's clear, and the history it kept doubled;
+// a tail on the alternate screen keeps no history, and leaving that screen blanked what the tail restores;
+// one that leaves it again reprinted the shell's lines after it into the history the joiner kept
+for (const [stream, cleared] of [
+  [`${coreAttach.CLEAR_HISTORY}whole stream`, "none"],
+  [`${coreAttach.CLEAR_HISTORY}${"h".repeat(2048)}main tail`, "ahead"],
+  [`\x1b[?1049h${"a".repeat(2048)}alternate tail`, "none"],
+  [`\x1b[?1049h${"a".repeat(2048)}\x1b[?1049lshell after`, "where it leaves"],
+] as const) {
+  it(`clears a herdr-core joiner's kept history once in its cut tail (${cleared}): ${stream.slice(-14)}`, async () => {
+    const frames = await join({ ready: true, replayPrefix: coreAttach.CLEAR_JOINER_HISTORY, retained: stream });
+    const tail = new ReplayBuffer(1024);
+    tail.append(stream);
+    expect(frames.filter((frame) => frame.type === "pty-data")).toEqual([
+      { type: "pty-data", pane_id: "p", data: cleared === "ahead" ? coreAttach.CLEAR_JOINER_HISTORY + tail.text()
+        : cleared === "where it leaves" ? tail.text().replace("\x1b[?1049l", coreAttach.CLEAR_JOINER_HISTORY) : tail.text(), replay: true },
+    ]);
+    // #2664 review: rows a cut tail of in-place updates never draws again stay on the joiner's screen
+    expect(coreAttach.CLEAR_JOINER_HISTORY).not.toMatch(/\x1b\[[02]?J|\x1b\[H/);
   });
 }
 
