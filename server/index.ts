@@ -498,7 +498,7 @@ if (import.meta.main) {
   }
   const updates = connectUpdater();
   const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
-  const telemetry = new Telemetry({ stateDir, version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version });
+  const telemetry = new Telemetry({ stateDir, version, env: process.env, fetch, previousVersion: () => updates.installed().previous_version, runtime: herdrCore === null ? "herdr" : "herdr-core" });
   const portal = new PortalService({ stateDir });
   const relay = new RelayService({ stateDir });
   let instance: ReturnType<typeof createServer>;
