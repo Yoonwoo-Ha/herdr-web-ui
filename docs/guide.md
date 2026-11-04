@@ -784,6 +784,12 @@ session, `default` otherwise); nothing connects to it.
 `OVIS_RUNTIME=herdr-core` is Linux/macOS only: there is no Windows named pipe support yet.
 Ovis refuses to start with this runtime on Windows; use the default `herdr` runtime there.
 
+On a Linux or macOS PC with herdr-core and no herdr, the one-line installer
+(`curl -fsSL https://ovis.sh/install.sh | sh`) sets this up by itself: no herdr and no plugin, Ovis
+in `~/.local/share/ovis/app`, `OVIS_RUNTIME=herdr-core` in `~/.config/ovis/env`, and a user service
+that starts it at login (`systemctl --user status ovis` on Linux, the `sh.ovis.server` LaunchAgent on
+macOS). See [INSTALL.md](../INSTALL.md#2-choose-the-install-method).
+
 - **Sidebar:** each of the app's spaces is a workspace and each of its tabs a tab, in the app's
   order and names; every terminal block in a tab is a pane. A terminal no tab holds that another
   one started (a helper an agent started with `hc run`) has a tab of its own right after the tab
