@@ -3705,6 +3705,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   accounts already signed in; the guide opened again from Settings changes no setting (nor says it
   will).
 - "Start with …" and beside it a plain "Connect your phone", which opens a `--bg-panel` box under them.
+  On a first run on the PC itself (the desktop app, or a browser on its loopback) the box is open from
+  the start, as a phone is the next device to add; it leads with the relay only, so where the relay
+  cannot lead it stays closed instead of sending the page to Settings → Phone untapped. The relay stays
+  off until "Turn on the Ovis relay", as Paseo keeps its relay off until Enable relay; unlike Paseo,
+  which leaves pairing in Settings, the first run shows it.
   Where the Ovis relay can lead (offered here, nothing blocks it, not a watching device or a Portal
   visitor), the box leads with it (off until the user turns it on, then a QR code): one line on what it does, the device-gate note when turning
   it on closes the gate, and "Turn on the Ovis relay" as the primary button (the tap is the consent).
