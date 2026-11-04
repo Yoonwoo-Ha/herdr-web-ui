@@ -2660,17 +2660,18 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   other than Pi, actual Enter delivery removes the pending row and refreshes the transcript. For
   a message submitted from Ovis Chat to Pi, Enter changes it to a read-only **Sent to Pi ·
   waiting for transcript** user bubble. What Pi runs itself gets no bubble, as Pi's submit handler
-  reads the trimmed text: a builtin such as `/model` (with an argument only where Pi takes one), a
-  prompt template the pane's catalog lists, and `!command`. Pi records no user line with its text, so
-  nothing could confirm it. An unknown `/name`, `/new please` or a lone `!` is a message to Pi and
-  keeps one. A `/skill:name` send matches the record Pi writes with the whole SKILL.md before its
-  request, read back as typed, its request trimmed as Pi trims it. Known gaps: an extension's command
-  is in no catalog, a template sent while the catalog is not cached (after a bridge restart, before
-  the menu is read) is taken as a message, and chained skills are not read back; their bubbles wait
+  reads the trimmed text (line ends, tabs and control characters as its editor pastes them): a
+  builtin such as `/model` (with an argument only where Pi takes one) and `!command`. Pi records no
+  user line with its text, so nothing could confirm it. `/new please` or a lone `!` is a message to
+  Pi and keeps one. Any other `/name` keeps one too: whether it is a prompt template (recorded only
+  expanded), an extension's command (recorded as nothing) or a message depends on what that Pi
+  loaded, which no catalog proves. Pi records its sends in order, so its own text confirms it, and
+  it is settled as run when a later Ovis send's record lands before its own, or when the record after
+  it is any other text where the pane's catalog listed it as a template (its expansion). Other records, such as a
+  message typed in the terminal, are skipped as for any receipt. A `/skill:name` send
+  matches the record Pi writes with the whole SKILL.md before its request, read back as typed, its
+  request trimmed as Pi trims it. Known gap: chained skills are not read back; their bubbles wait
   for good, and so do the ones behind them.
-  Templates from Pi's settings or packages are not in the catalog either, so theirs wait the same way.
-  A Pi started with `--no-prompt-templates`, or a template added after Pi loaded, makes a `/template`
-  message lose its bubble; the message is still sent.
   A SKILL.md whose body holds `\n</skill>\n\n` is not read back (Pi's own parser has the same limit).
   Only a matching durable user record appended beyond the
   byte boundary captured on that exact Pi file/session and extending its captured leaf removes it, and

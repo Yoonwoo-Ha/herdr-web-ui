@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HerdrPane, InteractivePrompt } from "../shared/protocol.ts";
 
-import { answerKeys, hermesInputDraft, claudeClearableDraft, claudeInputBoxText, claudeInputDraft, claudeInputEmpty, historyEndShowsLive, viewportShowsLive, removedInvisible, noteSubmitted, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted, piRunsCommand } from "./prompt.ts";
+import { answerKeys, hermesInputDraft, claudeClearableDraft, claudeInputBoxText, claudeInputDraft, claudeInputEmpty, historyEndShowsLive, viewportShowsLive, removedInvisible, noteSubmitted, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted, piListsTemplate, piRunsCommand } from "./prompt.ts";
 import { rememberPaneCommands } from "./commands.ts";
 import { registry } from "./dialogs/registry.ts";
 import { gjcCustomEditorMatches } from "./dialogs/fallback.ts";
@@ -7387,17 +7387,17 @@ describe("piRunsCommand", () => {
     expect(piRunsCommand(pane, "wow!")).toBe(false);
   });
 
-  test("takes the pane's prompt templates, which Pi records only expanded, but not its skills, which are read back", () => {
+  test("keeps a receipt for the pane's prompt templates, which no catalog proves Pi loaded, and its skills", () => {
     const pane = { pane_id: "pi-runs-catalog", agent: "pi", cwd: "/work" } as HerdrPane;
-    expect(piRunsCommand(pane, "/review")).toBe(false);
     rememberPaneCommands(pane, "pi", [
       { name: "skill:commit", description: "Commit", source: "skill" },
       { name: "review", description: "Review", source: "user" },
     ]);
     expect(piRunsCommand(pane, "/skill:commit and push")).toBe(false);
-    expect(piRunsCommand(pane, "/review")).toBe(true);
-    // a template's name ends at any white space, its arguments follow on the next line too
-    expect(piRunsCommand(pane, "/review\nthe parser")).toBe(true);
-    expect(piRunsCommand(pane, "/commit")).toBe(false);
+    expect(piRunsCommand(pane, "/review")).toBe(false);
+    expect(piRunsCommand(pane, "/review\nthe parser")).toBe(false);
+    expect(piListsTemplate(pane, "/review\nthe parser")).toBe(true);
+    expect(piListsTemplate(pane, "/skill:commit and push")).toBe(false);
+    expect(piListsTemplate(pane, "/commit")).toBe(false);
   });
 });

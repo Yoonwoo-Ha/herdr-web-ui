@@ -214,27 +214,37 @@ export function prepareCommandSend(pane: HerdrPane, text: string, screen = ""): 
 
 /**
  * Whether Pi runs `text` as something it keeps no record of as sent, read as Pi's submit handler reads
- * the trimmed text: a builtin such as `/model` runs without a user record, a prompt template is
- * recorded only as its expansion, and `!command` as the shell's output. So no record can ever confirm
- * a Chat receipt for it. A skill is read back from its record (pi-delivery.ts) and keeps its receipt.
- * Pi sends anything else as a message and records it as typed: an unknown `/name`, a builtin's name
- * with an argument it does not take (`/new please`), and a lone `!`. Only a name in the pane's catalog
- * counts, as Pi matches it (case and all); an extension's command is in no catalog, so it keeps its
- * receipt, which never confirms.
+ * the trimmed text: a builtin such as `/model` runs without a user record, and `!command` is recorded
+ * as the shell's output. So no record can ever confirm a Chat receipt for it. A builtin's name with an
+ * argument it does not take (`/new please`) and a lone `!` are messages Pi records as typed, matched
+ * as Pi matches them (case and all). Any other `/name` keeps its receipt: whether it is a prompt
+ * template or an extension's command depends on what that Pi loaded, which no catalog proves, and
+ * pi-delivery.ts settles it on the first record Pi writes after it. A skill is read back from its record.
  */
 export function piRunsCommand(pane: HerdrPane, text: string): boolean {
   const typed = piRecordText(text);
   if (typed.startsWith("!")) return (typed.startsWith("!!") ? typed.slice(2) : typed.slice(1)).trim().length > 0;
-  // a template's name ends at any white space; a builtin is matched whole or before a space
+  // a builtin is matched whole or before a space
   const name = /^\/(\S+)(?:\s|$)/u.exec(typed)?.[1];
   if (!name) return false;
   const cached = cachedPaneCommands(pane);
   const commands = cached?.agent === "pi" ? cached.commands : builtinCommands("pi");
   return commands.some((row) => {
-    if (row.trigger !== undefined || row.source === "skill" || row.name !== name) return false;
-    if (row.source !== "builtin" || typed === `/${name}`) return true;
+    if (row.trigger !== undefined || row.source !== "builtin" || row.name !== name) return false;
+    if (typed === `/${name}`) return true;
     return typed.startsWith(`/${name} `) && (row.forms ?? []).some((form) => form.match !== "bare");
   });
+}
+
+/**
+ * Whether the pane's cached catalog lists `text`'s `/name` as a prompt template. A hint only: what that
+ * Pi loaded may differ, so the receipt stays (pi-delivery.ts settles it on the first record after it).
+ */
+export function piListsTemplate(pane: HerdrPane, text: string): boolean {
+  const name = /^\/(\S+)(?:\s|$)/u.exec(piRecordText(text))?.[1];
+  const cached = cachedPaneCommands(pane);
+  return name !== undefined && cached?.agent === "pi" && cached.commands.some((row) =>
+    row.trigger === undefined && row.source !== "builtin" && row.source !== "skill" && row.name === name);
 }
 
 /** The send record for `text` against a given catalog: the remembered one above, or one the delivery already waited for. */

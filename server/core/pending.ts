@@ -25,7 +25,7 @@ import type { ClientMessage, HerdrPane, PendingMessage, PendingRemoval, SessionS
 import { typingGuards } from "../input-guard.ts";
 import { claudeForegroundSession, isClaudeProcess } from "../claude-store.ts";
 import { HerdrError, paneProcessInfo, paneRead, paneSendKeys, paneSendText, type ProcessInfo } from "../herdr/client.ts";
-import { bindCommandProcess, claudeHeldIsGrey, codexQuestionsCollapsed, isClaudeHeld, heldCandidate, noteSubmitted, parseInteractivePrompt, piRunsCommand, prepareCommandSend, shownInputBox } from "../prompt.ts";
+import { bindCommandProcess, claudeHeldIsGrey, codexQuestionsCollapsed, isClaudeHeld, heldCandidate, noteSubmitted, parseInteractivePrompt, piRunsCommand, piListsTemplate, prepareCommandSend, shownInputBox } from "../prompt.ts";
 import { registry } from "../dialogs/registry.ts";
 import { secretPrompt } from "../../shared/secret-prompt.ts";
 import { PendingInputs, samePendingIdentity, type PendingIdentity, type PendingRecord } from "../pending-input.ts";
@@ -55,7 +55,7 @@ const isClient = (owner: PendingOwner): owner is Client => owner !== FIRST_MESSA
 type PendingItem = PendingRecord<PendingOwner, PendingLease | null>;
 /** `refusal`: a queued request's own input_draft refusal, kept for its submit-result's draft actions; never sent as is */
 type SubmitReply = { ok: boolean; pending?: PendingMessage; code?: string; message?: string; refusal?: { draft: string | null; box: string | null; identity: PendingIdentity } };
-type PiTypedReceipt = { owner: Client; resumeKey?: string; message: PendingMessage; match: string; identity: PendingIdentity; anchor: PiDeliveryAnchor | null };
+type PiTypedReceipt = { owner: Client; resumeKey?: string; message: PendingMessage; match: string; template: boolean; identity: PendingIdentity; anchor: PiDeliveryAnchor | null };
 /** a first message refused before anything was typed because its connection could not type it yet stays queued for its next attach or turn */
 const FIRST_MESSAGE_RETRY_CODES = new Set(["input_not_ready", "pending_lease_lost", "disconnected", "read_only"]);
 /** a first message whose page left before it went, or that named none: held for an explicit Send now or Discard */
@@ -246,7 +246,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     return expected === null ? null : capturePiDeliveryAnchorRetrying(path, true, expected);
   };
   const recordPiTyped = (owner: Client, paneId: string, requestId: number, text: string, identity: PendingIdentity, anchor: PiDeliveryAnchor | null | undefined,
-    reservation?: PiReceiptReservation<Client> | null): void => {
+    reservation?: PiReceiptReservation<Client> | null, template = false): void => {
     if (anchor === undefined || !clients.has(owner) || connectionOf(owner).closing) return;
     if (anchor === null) piCapacity.release(reservation);
     else if (!piCapacity.retain(owner, reservation)) return;
@@ -255,7 +255,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       owner, resumeKey: resumeKey(owner, paneId), identity: { ...identity }, anchor,
       // Pi expands pasted tabs and trims its record, including closeMention's space (#2454).
       // Keep that matching value separate from the saved copy of the text sent.
-      match: piRecordText(text),
+      match: piRecordText(text), template,
       message: { id: `pi:${crypto.randomUUID()}`, request_id: requestId, text, state: "uncertain", created_at: new Date().toISOString(),
         error: anchor === null
           ? { code: "transcript_unconfirmed", message: "Pi's exact transcript could not be resolved before Enter" }
@@ -304,7 +304,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       let matching = same.filter((item) => activePiReceipt(paneId, item) && path === item.anchor.path);
       failPi(paneId, same.filter((item) => !matching.includes(item)));
       if (matching.length === 0 || "unwritten" in found) return;
-      const candidates = matching.map((item) => ({ id: item.message.id, text: item.match, anchor: item.anchor }));
+      const candidates = matching.map((item) => ({ id: item.message.id, text: item.match, template: item.template, anchor: item.anchor }));
       const entries = piConsumed.get(paneId) ?? new Set<string>();
       piConsumed.set(paneId, entries);
       let result = matchPiDeliveries(path, candidates, entries);
@@ -575,6 +575,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       const piTracked = context.identity.agent !== "pi" || !piRunsCommand(context.pane, text);
       piReservation = piTracked ? reservePiReceipt(owner, context.identity) : null;
       const receiptText = piTracked ? piReceiptText(context.identity, text) : undefined;
+      const piTemplate = piTracked && piListsTemplate(context.pane, text);
       if (automatic && (context.working || queueHeld(paneId))) {
         pending.observe(paneId, "working", mark);
         throw new HerdrError("pending_wait", "The agent is working again; this message still waits for its next turn");
@@ -672,7 +673,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       // This proves only that Ovis committed Enter to Pi, not that Pi accepted, queued or recorded
       // the message. Keep a non-resendable receipt until the bound JSONL active branch appends it.
       if (receiptText !== undefined) {
-        try { recordPiTyped(owner, paneId, requestId, receiptText, beforeEnter.identity, piAnchor, piReservation); } catch { /* Enter already succeeded; receipt tracking is best-effort. */ }
+        try { recordPiTyped(owner, paneId, requestId, receiptText, beforeEnter.identity, piAnchor, piReservation, piTemplate); } catch { /* Enter already succeeded; receipt tracking is best-effort. */ }
       }
       // the status the panel was read under; a status event since (a finish, an approval) stales the Escape
       let statusAtRead = pending.current(paneId);
@@ -1112,7 +1113,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             await submitText(message.pane_id, framed.text, framed.payload, arrivedAt, message.typed === true, () => authorizeSocket(client), message.clear_draft,
               draftConfirmations.get(client)?.get(message.pane_id), message.send_anyway === true, agentOnly);
             if (identity !== null && receiptText !== undefined) {
-              try { recordPiTyped(client, message.pane_id, message.id, receiptText, identity, piAnchor, reservation); } catch { /* The send succeeded; receipt tracking cannot make it retryable. */ }
+              try { recordPiTyped(client, message.pane_id, message.id, receiptText, identity, piAnchor, reservation, current !== null && piListsTemplate(current.pane, framed.text)); } catch { /* The send succeeded; receipt tracking cannot make it retryable. */ }
             }
           } finally { piCapacity.release(reservation); }
         };
