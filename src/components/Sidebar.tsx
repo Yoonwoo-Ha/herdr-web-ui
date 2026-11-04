@@ -93,12 +93,14 @@ function alignBreath(event: AnimationEvent<HTMLSpanElement>) {
   for (const animation of event.currentTarget.getAnimations()) animation.startTime = 0;
 }
 
-export function StatusBadge({ status, compact = false }: { status?: AgentStatus; compact?: boolean }) {
+/** `detail`: what the agent itself said of the state (a blocked agent's reason), after the state's words */
+export function StatusBadge({ status, compact = false, detail = null }: { status?: AgentStatus; compact?: boolean; detail?: string | null }) {
   const t = useT();
   const { settings } = useSettings();
   const value = knownStatus(status);
   const label = t(STATUS_WORD[value]);
-  const description = value === "waiting" ? t("Agent waiting on background work") : t("Agent {status}", { status: label });
+  const stateWords = value === "waiting" ? t("Agent waiting on background work") : t("Agent {status}", { status: label });
+  const description = detail ? `${stateWords} — ${detail}` : stateWords;
   // classic (the default): a compact cell draws only the states that ask for a look: a red question
   // mark while the agent waits for an answer, a green dot once it has finished and was not looked
   // at, a working-coloured dot that breathes while it runs, a working-coloured ring held still while

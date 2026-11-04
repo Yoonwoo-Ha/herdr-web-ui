@@ -309,6 +309,66 @@ describe("herdr-core adapter", () => {
     expect(core.closed).toContain(channel);
   });
 
+it("asks for a fresh snapshot when a report's kind, message or progress changes, and only then", async () => {
+    let channel = 0;
+    const { socket, cores } = await setup([terminal("t1")], {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: [] };
+      },
+    });
+    const frames: EventFrame[] = [];
+    const started = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.updated" }], {
+      onEvent: (frame) => frames.push(frame),
+      onStarted: () => started.resolve(),
+      onClose: () => ended.resolve(),
+    }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores[0]!;
+    const status = (seq: number, status: Record<string, unknown>) => core.notify(channel, "event", { seq, type: "status", terminal: "t1", data: { status } });
+    status(2, { app: "codex", state: "working" });
+    status(3, { app: "codex", state: "blocked", kind: "permission", msg: "Allow bash?" });
+    status(4, { app: "codex", state: "blocked", kind: "permission", msg: "Allow bash?" });
+    status(5, { app: "codex", state: "working", progress: 40 });
+    // the same percent, and a message and kind nobody is shown (not blocked): no news
+    status(6, { app: "codex", state: "working", progress: 40, msg: "Reading files", kind: "question" });
+    // the row prints the exact percent: one more is news
+    status(61, { app: "codex", state: "working", progress: 41 });
+    status(7, { app: "codex", state: "idle" });
+    core.notify(channel, "missed", { seq: 8, terminals: [] });
+    await ended.promise;
+    const updated = { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } };
+    expect(frames).toEqual([updated, updated, updated, updated]);
+  });
+
+  it("hears a message or progress that was there as the stream started go away", async () => {
+    let channel = 0;
+    const { socket, cores } = await setup([terminal("t1")], {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: [{ ...terminal("t1"), status: { app: "codex", state: "blocked", kind: "permission", msg: "Allow bash?" } }] };
+      },
+    });
+    const frames: EventFrame[] = [];
+    const started = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.updated" }], {
+      onEvent: (frame) => frames.push(frame),
+      onStarted: () => started.resolve(),
+      onClose: () => ended.resolve(),
+    }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores[0]!;
+    core.notify(channel, "event", { seq: 2, type: "status", terminal: "t1", data: { status: { app: "codex", state: "working" } } });
+    core.notify(channel, "missed", { seq: 3, terminals: [] });
+    await ended.promise;
+    expect(frames).toEqual([{ event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } }]);
+  });
+
   it("acknowledges before an event bundled with the hc subscribe response", async () => {
     const { socket, cores } = await setup([terminal("t1")], {
       "events.subscribe": () => ({ channel: cores[0]!.channel(), seq: 1, terminals: [] }),

@@ -45,9 +45,20 @@ export type HerdrTab = TabInfo;
  * `background_tasks`: an OmO pane's `task` children, or a Claude Code pane's subagents and background commands, still running, counted by the server; absent when none.
  * `background_wait`: the pane is at rest while work its turn started still runs, and the turn goes on when it ends (server/background-wait.ts); absent when not.
  * `plan`: how far the pane's agent's task list or checklist has progressed; absent when it keeps none.
+ *
+ * What herdr-core (server/herdr-core/snapshot.ts) reports about the terminal, each absent where it
+ * reported nothing (and always on herdr's TUI runtime):
+ * `parent_pane_id`: the pane of the terminal that started this one (hc's `parent`), when that pane is shown.
+ * `agent_kind`, `agent_message`, `agent_progress`: the program's own OSC 7501 report: what a blocked
+ * agent waits for (`permission`, `question`, `auth`), its message in its own words (never
+ * translated), and how far it is, 0 to 100.
  */
 export type HerdrPane = PaneInfo & {
   background_tasks?: number; background_wait?: true; plan?: PlanSummary;
+  parent_pane_id?: string;
+  agent_kind?: string;
+  agent_message?: string;
+  agent_progress?: number;
   /** This bridge's counter of transitions into displayed DONE, scoped by finish_epoch. */
   finish_id?: number;
 };

@@ -5,7 +5,7 @@ import { AGENT_LABELS } from "../agents-routes.ts";
 import { LINE_BYTES, makeLineReader } from "../herdr/client.ts";
 import { SHELL_AGENTS, shellCommandLine } from "../shell-agent.ts";
 import { type HcConnection, HcError } from "./connection.ts";
-import { agentInfoOf, agentOfStatus, agentStatusOf, buildSnapshot, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, OTHER_WORKSPACE_ID, processInfoOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
+import { agentInfoOf, agentOfStatus, agentStatusOf, buildSnapshot, reportedFacts, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, OTHER_WORKSPACE_ID, processInfoOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
 import type { SessionSnapshot } from "../../shared/herdr-api.generated.ts";
 
 /**
@@ -47,6 +47,21 @@ class AdapterError extends Error {
 /** Ovis's subscription types that are status, not structure. */
 const STATUS_EVENT = "pane.agent_status_changed";
 const NOT_STRUCTURE = new Set([STATUS_EVENT, "pane.focused", "pane.output_matched"]);
+/**
+ * What of a status the rows draw beyond its state, as `subscribe` compares reports: the kind and
+ * message of a blocked agent, and its progress, which the rows print as its exact percent.
+ */
+function shownFacts(report: unknown): string {
+  if (!isRecord(report) || typeof report["state"] !== "string") return NO_FACTS;
+  const facts = reportedFacts({
+    state: report["state"],
+    ...(typeof report["kind"] === "string" ? { kind: report["kind"] } : {}),
+    ...(typeof report["msg"] === "string" ? { msg: report["msg"] } : {}),
+    ...(typeof report["progress"] === "number" ? { progress: report["progress"] } : {}),
+  });
+  return JSON.stringify([facts.agent_kind ?? null, facts.agent_message ?? null, facts.agent_progress ?? null]);
+}
+const NO_FACTS = JSON.stringify([null, null, null]);
 /** A status or layout notification must fit in 4 MiB, even across hc frames. */
 const EVENT_LINE_BYTES = 4 * 1024 * 1024;
 
@@ -605,14 +620,22 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
   const lifecycle = (event: string, type: string, paneId?: string) => {
     if (structure) emit(event, { type, ...(paneId ? { pane_id: paneId } : {}) });
   };
+  /** what each terminal's last report said beyond its state (kind, message, progress), which only a snapshot carries */
+  const reported = new Map<string, string>();
   const onEvent = (event: HcEvent) => {
     const paneId = event.terminal;
     switch (event.type) {
       case "status": {
-        if (!paneId || !statusPanes.has(paneId)) return;
-        const reported = event.data?.["status"];
-        const status = isRecord(reported) && typeof reported["state"] === "string"
-          ? { state: reported["state"], ...(typeof reported["app"] === "string" ? { app: reported["app"] } : {}) }
+        if (!paneId) return;
+        const report = event.data?.["status"];
+        // a new kind, message or progress step (or one gone) reaches the rows through a fresh snapshot
+        const facts = shownFacts(report);
+        const before = reported.get(paneId) ?? NO_FACTS;
+        reported.set(paneId, facts);
+        if (facts !== before) lifecycle("pane.updated", "pane_updated", paneId);
+        if (!statusPanes.has(paneId)) return;
+        const status = isRecord(report) && typeof report["state"] === "string"
+          ? { state: report["state"], ...(typeof report["app"] === "string" ? { app: report["app"] } : {}) }
           : null;
         emit(STATUS_EVENT, { pane_id: paneId, agent_status: agentStatusOf(status), agent: agentOfStatus(status) });
         return;
@@ -629,6 +652,7 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
         lifecycle("pane.closed", "pane_closed", paneId);
         return;
       case "removed":
+        if (paneId) reported.delete(paneId);
         lifecycle("pane.closed", "pane_closed", paneId);
         return;
       case "lost":
@@ -660,7 +684,12 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
     send(socket, `${JSON.stringify({ id: request.id, error: { code: "bad_frame", message: `hc event line exceeds ${EVENT_LINE_BYTES} bytes` } })}\n`, true);
   });
   try {
-    const { channel } = await hc.open("events.subscribe", {}, { onData: read, onClose: end });
+    const { result, channel } = await hc.open("events.subscribe", {}, { onData: read, onClose: end });
+    // what each terminal reported as the stream starts: a first event that drops a message or progress is a change
+    for (const terminal of Array.isArray(result.terminals) ? result.terminals : []) {
+      if (!isRecord(terminal) || typeof terminal["address"] !== "string" || reported.has(terminal["address"])) continue;
+      reported.set(terminal["address"], shownFacts(terminal["status"]));
+    }
     // the herdr side went, or hc's stream did (`missed` can come with the answer), before the
     // acknowledgement: nothing is started, and hc's stream goes too
     if (ended || socket.data.closed || socket.data.ending) {

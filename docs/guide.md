@@ -785,8 +785,11 @@ session, `default` otherwise); nothing connects to it.
 Ovis refuses to start with this runtime on Windows; use the default `herdr` runtime there.
 
 - **Sidebar:** each of the app's spaces is a workspace and each of its tabs a tab, in the app's
-  order and names; every terminal block in a tab is a pane. A terminal no tab holds (a worker an
-  agent started, one from `hc run`) has a tab of its own under **Other terminals**.
+  order and names; every terminal block in a tab is a pane. A terminal no tab holds that another
+  one started (a helper an agent started with `hc run`) has a tab of its own right after the tab
+  of the terminal that started it, and its row in **Agents** is one line indented under that
+  agent's, its place in the row's tooltip (closing that workspace ends it too, as ending the agent would). Any other terminal no tab
+  holds has a tab of its own under **Other terminals**.
 - **New and Close:** **New workspace**, **New tab**, a new terminal and **New tab with agent**
   start a shell that herdr-core keeps, labeled so the Herdr app takes it into that space and tab;
   it shows there even before the app does. Ovis never writes the app's own names, so a name you
@@ -798,7 +801,11 @@ Ovis refuses to start with this runtime on Windows; use the default `herdr` runt
   cannot take one.
 - **Status and alerts:** an agent's status is what it reports to herdr-core (OSC 7501), so an
   agent that reports none shows no status. A turn is done only when the program itself reports
-  its turn finished (`done`, or `working` then `idle`); `error` shows no status.
+  its turn finished (`done`, or `working` then `idle`); `error` shows no status. When a blocked
+  agent says why (a permission, a question or a sign-in), its row in **Agents** says so in a few
+  words after its name, and the row's and the state's tooltips give its message in its own words;
+  a progress it reports (0 to 100) while it works or waits is a percent after the name. Nothing
+  is shown that it did not report.
 - **Terminal:** the live view streams over the server's own connection to herdr-core, input and
   the key bar work as on herdr, and the terminal takes the size of the viewer that last typed in
   it or resized it: the app's window, or your phone once you type or open it there.
