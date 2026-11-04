@@ -642,6 +642,47 @@ try {
     await page.reload();
     await page.getByText("REVISION-102", { exact: true }).waitFor();
     await settleBottom(page);
+    // A reopened chat's list has not measured all of its transcript yet (its footer, rows drawn taller
+    // than estimated): its own scroll to the end aims short of the end the browser shows, and while
+    // that scroll is on its way it holds the view there. Neither may leave a reader who follows the
+    // end short of it, or take them for one who scrolled away. A box the list never measures makes its
+    // end lag by more than the layout allowance, drawn after the footer or, as a row drawn taller than
+    // measured reaches, past the bottom of the rows' wrapper; a view a pixel shorter has the chat
+    // follow its end and the list scroll to its own.
+    const chatHeight = width === 390 ? 844 : 900;
+    for (const where of ["after the footer", "past the rows"] as const) {
+      await page.locator(".chat-transcript-virtual").evaluate((content, where) => {
+        const unmeasured = document.createElement("div");
+        unmeasured.className = "qa-unmeasured";
+        unmeasured.style.height = "100px";
+        const rows = [...content.children].find((child) => child.querySelector("[data-chat-row]"));
+        if (where === "past the rows" && rows instanceof HTMLElement) {
+          Object.assign(unmeasured.style, { position: "absolute", left: "0", width: "1px", top: `${rows.offsetHeight}px` });
+          rows.append(unmeasured);
+        } else content.append(unmeasured);
+      }, where);
+      await page.evaluate((height) => window.chatQa.resize(height - 1), chatHeight);
+      // at the end and staying there for three frames, the list's scroll landed; Jump to latest never
+      const lagging = await page.evaluate(() => new Promise<{ gaps: number[]; away: boolean }>((resolve) => {
+        const node = document.querySelector<HTMLElement>(".chat-view")!;
+        const gaps: number[] = [];
+        let away = false, settled = 0;
+        const frame = () => {
+          const gap = Math.round(node.scrollHeight - node.clientHeight - node.scrollTop);
+          gaps.push(gap);
+          away ||= document.querySelector(".chat-virtual-jump") !== null;
+          settled = gap <= 1 ? settled + 1 : 0;
+          if (settled >= 3 || away || gaps.length >= 600) resolve({ gaps: gaps.slice(-12), away });
+          else requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
+      }));
+      assert.ok(!lagging.away && lagging.gaps.at(-1)! <= 1, `a scroll to the end the list measured short (${where}) still ends at the transcript's end, following: ${JSON.stringify(lagging)}`);
+      await page.locator(".qa-unmeasured").evaluate((unmeasured) => unmeasured.remove());
+      await page.evaluate((height) => window.chatQa.resize(height), chatHeight);
+      await settleBottom(page);
+    }
+    console.log(`PASS ${width} ${theme}: a reopened chat whose list measured its end short lands at the end, following`);
     await page.evaluate(() => window.chatQa.machine("remote"));
     await page.getByText("remote E1 ROW-999", { exact: true }).waitFor();
     assert.ok((await metrics(page)).keys.every((key) => key?.includes('"remote"')), "same-pane remote rows have a separate identity scope");
