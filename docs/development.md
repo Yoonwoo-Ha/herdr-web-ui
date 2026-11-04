@@ -12,6 +12,11 @@ bun run dev      # Vite on :5173, proxies /api and /ws
 
 `bun run server` and `bun run dev` never update themselves; only `bun run start` and the plugin run the update supervisor.
 
+For a loopback-only server, `HOST=127.0.0.1 OVIS_IPV6_LOOPBACK=1 bun run server` also listens on
+`::1` at the same port. Both listeners share the API and WebSocket services; `localhost`,
+`127.0.0.1` and `[::1]` keep their own URLs and browser storage. This option does not change a
+non-loopback bind and requires IPv6 loopback to be available.
+
 The plugin's `start` and `stop` (`scripts/plugin.ts`) take turns through `lifecycle.lock` in the
 plugin's state directory (the owner lock of `server/owner-guard.ts`, taken over once its owner is
 proved gone): a start holds it until its server answers or the start fails, a stop until the server

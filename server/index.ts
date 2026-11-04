@@ -109,6 +109,8 @@ export function createServer(
   options: {
     port?: number;
     hostname?: string;
+    /** Also listen on ::1 when the primary listener is bound to 127.0.0.1. */
+    ipv6Loopback?: boolean;
     token?: string;
     /** where VAPID keys and push subscriptions persist; tests pass a temp dir */
     stateDir?: string;
@@ -215,6 +217,7 @@ export function createServer(
   const bootId = process.env["OVIS_BOOT_ID"] || randomUUID();
   const orderSequence = new OrderSequence(bootId);
   const hostname = options.hostname ?? process.env["HOST"] ?? "127.0.0.1";
+  const ipv6Loopback = (options.ipv6Loopback ?? process.env["OVIS_IPV6_LOOPBACK"] === "1") && hostname === "127.0.0.1";
   /** Empty token = gate disabled; every route then behaves exactly as it did before auth existed. */
   const token = options.token ?? process.env["OVIS_TOKEN"] ?? "";
   /** paired devices (server/devices.ts) and the PC's Tailscale login: the two ways in besides the token and this PC itself */
@@ -327,6 +330,23 @@ export function createServer(
 
     websocket: core.websocket,
   });
+  // bound before anything else opens, so a failed ::1 bind leaves only what a failed primary bind would
+  let ipv6: Bun.Server<SocketData> | null = null;
+  if (ipv6Loopback) {
+    try {
+      ipv6 = Bun.serve<SocketData>({
+        hostname: "::1", port: server.port, maxRequestBodySize: BUN_BODY_CEILING,
+        fetch: (request, bunServer) => handleRequest(request, socketContext(bunServer)),
+        websocket: core.websocket,
+      });
+    } catch (error) {
+      server.stop(true);
+      // createCore already started the status hub's watchers and timers
+      core.stop(() => clearInterval(draftTimer));
+      piReader.close();
+      throw error;
+    }
+  }
 
   const requestLog = new RequestLog(stateDir);
   const services: RequestServices = {
@@ -397,6 +417,7 @@ export function createServer(
       void shellAgents.stop();
       agentDetector.close();
       server.stop(true);
+      ipv6?.stop(true);
       releaseFilePool();
       releaseCommandHistory();
       requestLog.close();
