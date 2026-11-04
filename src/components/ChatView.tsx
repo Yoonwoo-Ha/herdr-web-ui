@@ -2268,13 +2268,20 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const workBlockLive = lastSplit !== null && (visibleWorkParts(lastSplit.work, settings.showThinking).length > 0 || lastSplit.answer.length === 0);
   // a running turn with words and no work rows: the activity is a line under its words, as before
   const answerOnlyLive = lastSplit !== null && !workBlockLive;
+  // the last turn ended on its answer, named by its row (two turns can share a start time)
+  const answeredRow = lastShownTurn?.role === "assistant" && endedOnAnswer(lastShownTurn) ? slots.current.rows[shownTurns.length - 1]?.key ?? null : null;
+  // the answered row the pane was last seen at rest under: working again after that, a turn began.
+  // Blocked (waiting on the user) or an unknown status is no rest: the answer may still be trailed.
+  const restedUnder = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if ((workStatus === "idle" || workStatus === "done") && answeredRow !== null) restedUnder.current = answeredRow;
+  }, [workStatus, answeredRow]);
   // working over a turn that ended on its answer: the status trailing that answer, or a turn the agent
-  // began by itself with no row yet. The next turn's head waits out the lag, so none flashes under
-  // each answer. A send from here has its turn on the way, and its head shows at once.
-  const afterAnswer = workStatus === "working" && lastShownTurn?.role === "assistant" && lastShownTurn !== finishedBeforeSend && endedOnAnswer(lastShownTurn);
-  // the wait runs for that finished turn, named by its start (no later read of it changes that): a new
-  // turn read in already finished waits its own, and the frame it first shows in draws no head
-  const answerTurn = afterAnswer && lastShownTurn !== undefined ? lastShownTurn.ts ?? chatTurnAnchor(lastShownTurn) : null;
+  // began by itself with no row yet. A send from here has its turn on the way, and its head shows at once.
+  const afterAnswer = workStatus === "working" && lastShownTurn !== finishedBeforeSend && answeredRow !== null;
+  // Only a rest seen under that answer tells a new turn from a status still trailing it, however long
+  // the lag; the new turn's head then waits out the lag too, so none flashes under each answer.
+  const answerTurn = afterAnswer && restedUnder.current === answeredRow ? answeredRow : null;
   const [lagOutFor, setLagOutFor] = useState<string | null>(null);
   useEffect(() => {
     if (answerTurn === null) { setLagOutFor(null); return; }
