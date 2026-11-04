@@ -77,8 +77,11 @@ describe("preferences sync real send path", () => {
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en-US"] } });
     const localStorage = { getItem: (key: string) => records.get(key) ?? null, setItem: (key: string, value: string) => records.set(key, value), removeItem: (key: string) => records.delete(key) };
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: localStorage });
+    const tab = new Map<string, string>();
     Object.defineProperty(globalThis, "window", { configurable: true, value: {
       localStorage,
+      // this tab's session storage, which a reload keeps
+      sessionStorage: { getItem: (key: string) => tab.get(key) ?? null, setItem: (key: string, value: string) => tab.set(key, value), removeItem: (key: string) => tab.delete(key) },
       setTimeout: (fn: () => void, ms: number) => {
         const id = globalThis.setTimeout(() => { waits.delete(id); fn(); }, ms);
         waits.set(id, ms);
@@ -323,6 +326,33 @@ describe("preferences sync real send path", () => {
     await act(async () => { pageEvents.dispatchEvent(new Event("visibilitychange")); });
     await windows(3);
     expect(keepalives).toEqual([true]);
+  });
+
+  it.each([
+    ["sends it again", false],
+    ["takes a newer value saved elsewhere instead", true],
+  ] as const)("when the request on the way out of a reload is lost, the reloaded page %s", async (_name, savedElsewhere) => {
+    // Given a switch turned on and saved, then off again just before a reload whose request on the way out is lost.
+    const on = !DEFAULT_SETTINGS.showUsage;
+    const client = await open();
+    await act(async () => { client.update({ showUsage: on }); });
+    await send();
+    await act(async () => { client.update({ showUsage: !on }); });
+    refusing = () => Promise.reject(new TypeError("Failed to fetch"));
+    await act(async () => { pageEvents.dispatchEvent(new Event("pagehide")); });
+    await act(async () => { renderers.pop()!.unmount(); });
+    clients.length = 0;
+    refusing = null;
+    expect(store.get().settings.showUsage).toBe(on);
+    if (savedElsewhere) store.set({ settings: { showUsage: on } });
+
+    // When the page comes back in the same tab.
+    const reloaded = await open(JSON.parse(records.get("ovis:settings")!), true);
+    await windows(3);
+
+    // Then the value it went with is the server's and the page's, unless another browser saved the setting since.
+    expect(store.get().settings.showUsage).toBe(savedElsewhere ? on : !on);
+    expect(reloaded.settings.showUsage).toBe(savedElsewhere ? on : !on);
   });
 
   it("sends nothing on its way out when nothing changed", async () => {

@@ -93,6 +93,18 @@ describe("preferences sync", () => {
     expect(preferencesChange(overtaken.base, local({ ...light, theme: "dark" }, []))).toBeNull();
   });
 
+  it("keeps a setting or the pins changed back while the change was on its way, and sends them next", () => {
+    // the switch went on and its change is on its way; the user turns it off again before the server's answer, which carries on
+    const on = !DEFAULT_SETTINGS.showUsage;
+    const taken = takePreferences(base(DEFAULT_SETTINGS, []), local(DEFAULT_SETTINGS, []), { revision: 1, settings: { showUsage: on }, pins: [] }, { settings: { showUsage: on } });
+    expect(taken.patch).toEqual({});
+    expect(preferencesChange(taken.base, local(DEFAULT_SETTINGS, []))).toEqual({ settings: { showUsage: DEFAULT_SETTINGS.showUsage } });
+    // a pin made and taken back the same way
+    const unpinned = takePreferences(base(DEFAULT_SETTINGS, []), local(DEFAULT_SETTINGS, []), { revision: 1, settings: {}, pins: ["local:w1:p1"] }, { settings: {}, pins: ["local:w1:p1"] });
+    expect(unpinned.pins).toBeNull();
+    expect(preferencesChange(unpinned.base, local(DEFAULT_SETTINGS, []))).toEqual({ settings: {}, pins: [] });
+  });
+
   it("a refused change gives way where another browser saved the same setting or the pins since, and stays elsewhere", () => {
     // refused here: dark tokyo-night, the light side and a pin; meanwhile another browser saved its own dark theme and pins
     const local: Settings = sanitizeSettings({ ...DEFAULT_SETTINGS, darkTheme: "tokyo-night", lightTheme: "catppuccin-latte" });
