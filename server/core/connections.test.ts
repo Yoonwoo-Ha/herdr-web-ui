@@ -1,11 +1,12 @@
-import { expect, it } from "bun:test";
+import { expect, it, jest } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 import { DeviceStore } from "../devices.ts";
 import type { MachineRelay } from "../machine-relay.ts";
-import { OUTPUT_HARD_BYTES, OUTPUT_HIGH_BYTES, OUTPUT_LOW_BYTES } from "../output-window.ts";
+import { LARGE_REPLY_BYTES } from "../herdr/client.ts";
+import { OUTPUT_HARD_BYTES, OUTPUT_HIGH_BYTES, OUTPUT_JOIN_BYTES_PER_SECOND, OUTPUT_LOW_BYTES, OUTPUT_STALL_MS } from "../output-window.ts";
 import type { PendingInputs } from "../pending-input.ts";
 import type { MachineEventDocument } from "../machine-events.ts";
 import type { ServerMessage } from "../../shared/protocol.ts";
@@ -75,17 +76,56 @@ it("sends one frame larger than the transport budget and keeps the client while 
   expect(sent).toHaveLength(2);
 });
 
-it("excuses one large frame at a time, and the next once the last has drained", () => {
+it("excuses a second large frame sent while the first still drains, and counts what follows both (#2573)", () => {
   const { client, log } = harness();
   let buffered = 0;
   Object.assign(client, { getBufferedAmount: () => buffered, send: (raw: string) => { buffered += Buffer.byteLength(raw); return -1; } });
   const big = { type: "error", code: "x", message: "x".repeat(OUTPUT_HARD_BYTES) } as const;
+  const bigBytes = Buffer.byteLength(JSON.stringify(big));
+  const small = { type: "error", code: "x", message: "x".repeat(1000) } as const;
+  const smallBytes = Buffer.byteLength(JSON.stringify(small));
   expect(send(client, big)).toBe(-1);
-  buffered = 0;
+  expect(send(client, small)).toBe(-1);
+  // a mirrored screen whose JSON escaping takes it past the budget, while the snapshot is queued
   expect(send(client, big)).toBe(-1);
-  // a second large frame while one is queued counts in full
+  expect(backlog(client)).toBe(smallBytes);
+  expect(send(client, small)).toBe(-1);
+  expect(backlog(client)).toBe(2 * smallBytes);
+  // the first drained, and part of the second
+  buffered -= bigBytes + smallBytes + 100;
+  expect(backlog(client)).toBe(smallBytes);
+  expect(log).toEqual([]);
+});
+
+it("holds the large frames queued at once to herdr's largest reply", () => {
+  const { client, log } = harness();
+  let buffered = 0;
+  Object.assign(client, { getBufferedAmount: () => buffered, send: (raw: string) => { buffered += Buffer.byteLength(raw); return -1; } });
+  const big = { type: "error", code: "x", message: "x".repeat(LARGE_REPLY_BYTES / 2) } as const;
+  expect(send(client, big)).toBe(-1);
   expect(send(client, big)).toBe(0);
   expect(log).toEqual([`closed ${OUTPUT_STALLED_CLOSE_CODE} terminal output transport stalled`]);
+});
+
+it("closes a client whose large frame stops draining, once the slowest link would have taken it, and keeps one that drained (#2573)", () => {
+  jest.useFakeTimers();
+  try {
+    for (const drains of [false, true]) {
+      const { client, log } = harness();
+      let buffered = 0;
+      Object.assign(client, { getBufferedAmount: () => buffered, send: (raw: string) => { buffered += Buffer.byteLength(raw); return -1; } });
+      const big = { type: "error", code: "x", message: "x".repeat(OUTPUT_HARD_BYTES) } as const;
+      expect(send(client, big)).toBe(-1);
+      const allowed = OUTPUT_STALL_MS + Math.ceil(buffered * 1000 / OUTPUT_JOIN_BYTES_PER_SECOND);
+      jest.advanceTimersByTime(allowed - 1);
+      expect(log).toEqual([]);
+      if (drains) buffered = 0;
+      jest.advanceTimersByTime(1);
+      expect(log).toEqual(drains ? [] : [`closed ${OUTPUT_STALLED_CLOSE_CODE} terminal output transport stalled`]);
+    }
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it("closes a client whose backlog of ordinary frames would pass the transport budget", () => {

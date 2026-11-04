@@ -110,7 +110,7 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
       const buffered = backlog(client);
       if (window) {
         // an ACK client: measured by its ACK progress, and a joiner draining its replay never pauses the pty
-        const verdict = window.check(buffered);
+        const verdict = window.check(buffered, Date.now(), client.getBufferedAmount() - buffered);
         if (verdict === "stop") end(client, "stalled");
         else if (verdict === "pause") paused = true;
         continue;

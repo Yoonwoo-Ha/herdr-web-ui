@@ -8,7 +8,7 @@ import type { ClientMessage, ClientRole, ServerFeature, SessionSnapshot } from "
 import { ConnectionDiagnostics } from "../connection-diagnostics.ts";
 import { HerdrError, LARGE_REPLY_BYTES } from "../herdr/client.ts";
 import { OUTPUT_HARD_BYTES } from "../output-window.ts";
-import { type Client, connectionOf, presenceOf, send, setMachineEvents, type SocketData } from "./connections.ts";
+import { type Client, connectionOf, presenceOf, relayClient, send, setMachineEvents, type SocketData } from "./connections.ts";
 import { type AttachmentView, validGeometry } from "./terminals.ts";
 import type { TelemetryIngress, TelemetrySurface } from "../../shared/telemetry.ts";
 
@@ -120,8 +120,8 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
 
   return {
     // Only a last guard: send() holds each client to OUTPUT_HARD_BYTES itself, past which Bun would drop
-    // the next frame, and the queue may also hold one larger frame (connections.ts `backlog`): a snapshot,
-    // as large as herdr's largest reply (#2566).
+    // the next frame, and the queue may also hold larger frames (connections.ts `backlog`), a snapshot among
+    // them, as large as herdr's largest reply together (#2566, #2573).
     backpressureLimit: OUTPUT_HARD_BYTES + LARGE_REPLY_BYTES,
     closeOnBackpressureLimit: true,
     drain(client) {
@@ -129,7 +129,7 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
     },
     async open(client) {
       if (!admit(client)) return;
-      if (client.data.relay) { client.data.relay.bind(client); return; }
+      if (client.data.relay) { client.data.relay.bind(relayClient(client)); return; }
       clients.add(client);
       // before the snapshot, which waits on herdr (seconds after a restart or under load, or never when the
       // read fails): a client sends nothing until it knows what this server takes, and that needs no herdr.

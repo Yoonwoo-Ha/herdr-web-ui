@@ -7,9 +7,9 @@ import { subscribeMachineEvents, type MachineEventDocument } from "../machine-ev
 import type { ClientRole, ServerMessage } from "../../shared/protocol.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 import type { DeviceStore } from "../devices.ts";
-import { HerdrError, herdrSocketPath } from "../herdr/client.ts";
+import { HerdrError, herdrSocketPath, LARGE_REPLY_BYTES } from "../herdr/client.ts";
 import type { MachineRelay } from "../machine-relay.ts";
-import { OUTPUT_HARD_BYTES, OUTPUT_LOW_BYTES, type OutputWindow } from "../output-window.ts";
+import { crossingMs, OUTPUT_HARD_BYTES, OUTPUT_LOW_BYTES, OUTPUT_STALL_MS, type OutputWindow } from "../output-window.ts";
 import type { PendingInputs } from "../pending-input.ts";
 import { PaneWatch } from "../watch.ts";
 import type { TelemetryIngress, TelemetrySurface } from "../../shared/telemetry.ts";
@@ -50,12 +50,16 @@ interface ConnectionState {
   unwatchDevice?: () => void;
   recheck?: ReturnType<typeof setTimeout>;
   /**
-   * One frame larger than the whole budget, not counted as a backlog while it drains (#2566): `ahead` is what
-   * is still queued up to its end, `frame` its size in the queue, `last` the queue as last seen. Whatever is
-   * sent after it queues behind it, and the queue drains in order.
+   * Frames larger than the whole budget, not counted as a backlog while they drain (#2566, #2573), oldest
+   * first: each one's `ahead` is what is still queued up to its end, `frame` its size in the queue, and
+   * `timer` closes the client when it has not drained by the time the slowest link allowed would take.
+   * `last` is the queue as last seen. Whatever is sent after a frame queues behind it, and the queue drains
+   * in order.
    */
-  excused?: { ahead: number; frame: number; last: number };
+  excused?: { frames: ExcusedFrame[]; last: number };
 }
+
+interface ExcusedFrame { ahead: number; frame: number; timer: ReturnType<typeof setTimeout> }
 
 /** Keyed by the very `data` object the upgrade passed, which Bun hands to every handler of the connection. */
 const states = new WeakMap<SocketData, ConnectionState>();
@@ -134,18 +138,27 @@ export type Client = SocketLike;
  * which a client that keeps up still needs time to read (#2566).
  */
 export function backlog(client: Client): number {
+  return client.getBufferedAmount() - excusedBytes(client);
+}
+
+/** What is left queued of the frames larger than the budget, once what drained since last seen is taken off. */
+function excusedBytes(client: Client): number {
   const state = stateOf(client);
-  const buffered = client.getBufferedAmount();
   const excused = state.excused;
-  if (!excused) return buffered;
-  // what drained since it was last seen left from the front, up to that frame's end first
-  excused.ahead = Math.max(0, excused.ahead - Math.max(0, excused.last - buffered));
+  if (!excused) return 0;
+  const buffered = client.getBufferedAmount();
+  // what drained since it was last seen left from the front, up to each frame's end first
+  const drained = Math.max(0, excused.last - buffered);
   excused.last = buffered;
-  if (excused.ahead === 0) {
-    state.excused = undefined;
-    return buffered;
-  }
-  return buffered - Math.min(excused.frame, excused.ahead);
+  let held = 0;
+  excused.frames = excused.frames.filter((frame) => {
+    frame.ahead = Math.max(0, frame.ahead - drained);
+    if (frame.ahead === 0) { clearTimeout(frame.timer); return false; }
+    held += Math.min(frame.frame, frame.ahead);
+    return true;
+  });
+  if (excused.frames.length === 0) state.excused = undefined;
+  return held;
 }
 
 /**
@@ -154,16 +167,32 @@ export function backlog(client: Client): number {
  * already, or when the socket refuses it; such a frame never closes the connection.
  */
 export function send(client: Client, message: ServerMessage, overflow?: () => void): number {
+  if (stateOf(client).closing) return 0;
+  let encoded: string;
+  try { encoded = JSON.stringify(message); } catch { return 0; }
+  return sendEncoded(client, encoded, overflow);
+}
+
+/**
+ * The socket a remote PC's frames are relayed to (machine-relay.ts), held to the same budget as this PC's own
+ * frames: a remote session's snapshot past it is excused while it drains as well (#2573).
+ */
+export function relayClient(client: Client): { send(raw: string): number; getBufferedAmount(): number; large(): number; close(code?: number, reason?: string): void } {
+  return { send: (raw) => sendEncoded(client, raw), getBufferedAmount: () => backlog(client), large: () => excusedBytes(client), close: (code, reason) => client.close(code, reason) };
+}
+
+function sendEncoded(client: Client, encoded: string, overflow?: () => void): number {
   const state = stateOf(client);
   if (state.closing) return 0;
   try {
-    const encoded = JSON.stringify(message);
     const bytes = Buffer.byteLength(encoded);
     // A frame larger than the whole budget is sent while the backlog is within it, and excused
-    // while it drains; only one at a time, so a client holds at most one such frame past it.
-    const queued = backlog(client);
+    // while it drains; those queued at once stay within herdr's largest reply, which the socket's
+    // own limit leaves room for (socket.ts `backpressureLimit`).
+    const held = excusedBytes(client);
+    const queued = client.getBufferedAmount() - held;
     if (overflow && queued + bytes > OUTPUT_LOW_BYTES) { overflow(); return 0; }
-    const oversized = bytes > OUTPUT_HARD_BYTES && queued <= OUTPUT_HARD_BYTES && !state.excused;
+    const oversized = bytes > OUTPUT_HARD_BYTES && queued <= OUTPUT_HARD_BYTES && held + bytes <= LARGE_REPLY_BYTES;
     // Include JSON escaping in the transport budget, before Bun could drop a
     // frame at its own cap. An overload close is explicit and never auto-replayed.
     if (queued + (oversized ? 0 : bytes) > OUTPUT_HARD_BYTES) {
@@ -174,16 +203,34 @@ export function send(client: Client, message: ServerMessage, overflow?: () => vo
     const result = client.send(encoded);
     if (result === 0) { if (overflow) overflow(); else client.close(OUTPUT_STALLED_CLOSE_CODE, "output delivery failed"); }
     else {
+      // the frame just sent queues behind the excused ones: only its own bytes are new, and what the
+      // socket wrote out meanwhile drained from the front
+      if (state.excused) { state.excused.last += bytes; excusedBytes(client); }
       const after = client.getBufferedAmount();
-      // a frame sent after the excused one queues behind it: only its own bytes are new
-      if (oversized) state.excused = after > 0 ? { ahead: after, frame: Math.min(bytes, after), last: after } : undefined;
-      else if (state.excused) state.excused.last = after;
+      if (oversized && after > 0) {
+        const frame: ExcusedFrame = { ahead: after, frame: Math.min(bytes, after), timer: setTimeout(() => expire(client, frame), OUTPUT_STALL_MS + crossingMs(after)) };
+        frame.timer.unref?.();
+        state.excused ??= { frames: [], last: after };
+        state.excused.frames.push(frame);
+      }
     }
     return result;
   } catch {
     /* client vanished mid-send */
     return 0;
   }
+}
+
+/**
+ * A frame past the budget that has not drained by the time it would take on the slowest link allowed for
+ * (OUTPUT_JOIN_BYTES_PER_SECOND) is a stall: nothing else counts it, so a client that stops reading would
+ * otherwise hold it until TCP gives up.
+ */
+function expire(client: Client, frame: ExcusedFrame): void {
+  const state = stateOf(client);
+  if (state.closing) return;
+  excusedBytes(client);
+  if (state.excused?.frames.includes(frame)) client.close(OUTPUT_STALLED_CLOSE_CODE, "terminal output transport stalled");
 }
 
 /**
@@ -296,6 +343,8 @@ export function createConnections({ clients, present, pending, devices, detachCl
         return;
       }
       case "closed": {
+        for (const frame of state.excused?.frames ?? []) clearTimeout(frame.timer);
+        state.excused = undefined;
         state.unwatchDevice?.();
         clearTimeout(state.recheck);
         state.closing = true;
