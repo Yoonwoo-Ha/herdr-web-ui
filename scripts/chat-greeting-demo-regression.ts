@@ -130,8 +130,10 @@ try {
         const pane = await newWorkspace(page, "/home/demo/new-project");
         await select(page, pane);
         const greeting = page.locator(".pane-frame.is-current .composer-greeting");
-        // the demo's new agent works for a moment first: it is greeted once it rests
+        // the demo's new agent works for a moment first: a status at work alone leaves the greeting
+        // (#2550), and the steps below start from an agent at rest
         await greeting.waitFor({ timeout: 8_000 });
+        await page.locator('.pane-frame.is-current .composer-status[data-status="idle"]').waitFor({ state: "attached", timeout: 8_000 });
         assert.equal(await greeting.locator(".composer-greeting-title").textContent(), "What should Claude do in new-project?");
         assert.equal(await greeting.locator(".composer-greeting-where").textContent(), "workstation · /home/demo/new-project");
         assert.equal(await page.locator(".pane-frame.is-current .chat-empty").count(), 0, "the greeting stands in for the chat's own empty line");

@@ -1866,9 +1866,11 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     if (writtenSessions.has(`${error.source}\0${error.identity}`)) throw new ConversationUnavailable("transcript_missing");
     // nothing comes before a conversation not begun: a cursor into it is another one's
     if (page.before !== undefined || page.since !== undefined || page.from !== undefined) throw new HistoryChanged();
-    // an agent at work on its first turn has written nothing yet, but its terminal shows the turn
+    // an agent at work on its first turn has written nothing yet, but its terminal shows the turn.
+    // Claude writes its file with the first message, so at work with none it has no turn yet: a
+    // /clear reports working for a moment (#2550)
     const status = snapshot.panes.find((pane) => pane.pane_id === paneId)?.agent_status;
-    if (status === "working" || status === "blocked") throw error;
+    if ((status === "working" && error.source !== "claude-transcript") || status === "blocked") throw error;
     // the chat says there is nothing yet; the session's first prompt writes the file and
     // the next refresh's history_id differs, so the chat takes it whole
     return notBegun(error.source, `unwritten:${error.sessionId}`);

@@ -145,6 +145,11 @@ const BLOCKED_PROMPT_READS = 6;
  * enough that a turn the agent begins by itself shows its Working head within a second.
  */
 const ANSWER_STATUS_LAG_MS = 800;
+/**
+ * How long a Claude turn stays "Working…" after herdr's status rests before its answer is read: the
+ * transcript trailed the status by up to about 1 s at the turn ends measured (#2550).
+ */
+const ANSWER_READ_WAIT_MS = 2_000;
 // failed prompt reads in a row before the card says it may be out of date: one is a hiccup
 const PROMPT_STALE_READS = 2;
 /** The prompt each pane's chat last read (by paneStorageId): a chat drawn again (back from the
@@ -1262,8 +1267,16 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const [screenRead, setScreenRead] = useState(false);
   // Native Grok/Agy events can arrive while Herdr still reports ready/done. This is display
   // feedback only: sending, queuing and stopping retain the server's input authority.
-  const activity = state.activity ?? (agentStatus === "working" ? "working" : "idle");
-  const workStatus = state.activity !== undefined && agentStatus !== "blocked" ? activity === "idle" ? "idle" : "working" : agentStatus;
+  // herdr rested while the turn on screen has no answer yet (the page then): the turn is shown at work
+  // until a read changes that page with anything but more of an unanswered turn (its answer, a turn
+  // of the user's), or for ANSWER_READ_WAIT_MS with no such read. Display only, as above.
+  const [answerWait, setAnswerWait] = useState<{ pane: string; page: ConversationTurn[] } | null>(null);
+  const pageEnd = state.turns.at(-1);
+  const awaitingAnswer = answerWait !== null && answerWait.pane === paneId && (agentStatus === "idle" || agentStatus === "done")
+    && (answerWait.page === state.turns || (pageEnd?.role === "assistant" && !endedOnAnswer(pageEnd)));
+  const shownStatus = awaitingAnswer ? "working" : agentStatus;
+  const activity = state.activity ?? (shownStatus === "working" ? "working" : "idle");
+  const workStatus = state.activity !== undefined && agentStatus !== "blocked" ? activity === "idle" ? "idle" : "working" : shownStatus;
   const [error, setError] = useState<UserFailure | null>(null);
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   /** reads failed in a row: a slow PC is waited for this many times before the chat alarms */
@@ -2262,6 +2275,24 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   heldPage.current = state.turns;
   const finishedBeforeSend = sentOver !== null && sentOver.page === state.turns ? sentOver.turn : null;
   const lastShownTurn = state.source === "conversation" ? shownTurns.at(-1) : undefined;
+  // Claude Code's activity is herdr's status, which can rest before a read holds the turn's answer:
+  // the turn stays at work until one does. Before paint, so no frame shows it ended with no answer.
+  const answerEdge = useRef<{ pane: string; status: AgentStatus | undefined }>({ pane: paneId, status: agentStatus });
+  useLayoutEffect(() => {
+    const seen = answerEdge.current;
+    answerEdge.current = { pane: paneId, status: agentStatus };
+    if (seen.pane !== paneId || seen.status !== "working" || (agentStatus !== "idle" && agentStatus !== "done")) return;
+    if (state.conversationSource !== "claude-transcript" || state.activity !== undefined || lastShownTurn === undefined) return;
+    if (lastShownTurn.role === "assistant" && endedOnAnswer(lastShownTurn)) return;
+    setAnswerWait({ pane: paneId, page: state.turns });
+  }, [paneId, agentStatus]);
+  // a read that brings more of the unanswered turn shows the transcript still moves: the wait starts again
+  const awaitedPage = awaitingAnswer ? state.turns : null;
+  useEffect(() => {
+    if (answerWait === null) return;
+    const timer = window.setTimeout(() => setAnswerWait(null), ANSWER_READ_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [answerWait, awaitedPage]);
   const lastSplit = lastShownTurn !== undefined && isLiveWorkTurn(lastShownTurn, true, workStatus, finishedBeforeSend) ? splitTurn(lastShownTurn.parts) : null;
   // the last turn runs and already says the agent works: its work block, or the head standing in
   // for one while it has no answer yet
@@ -2481,7 +2512,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
           thinks (a work block's head says Working). Without native activity the pane status stands
           in. One Working at a time, so none before the first read: its rows may hold the running
           turn's own head. None seen under an answer while the status may still be catching up with it. */}
-      {connected && loaded && !ended && activity !== "idle" && agentStatus !== "blocked" && prompt === null && (activity === "thinking" || !workBlockLive) && (workBlockLive
+      {connected && loaded && !ended && activity !== "idle" && agentStatus !== "blocked" && prompt === null && !(greeted && blank) && (activity === "thinking" || !workBlockLive) && (workBlockLive
         // under the running turn's own head, a second head would read as a second block
         ? <p className={`${activityClass} chat-activity-line`} role="status" aria-hidden={activityReserved || undefined}><CircleDot aria-hidden="true" />{t("Thinking…")}</p>
         // under a running turn's words: removing a line below them moves nothing when it ends

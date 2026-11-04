@@ -303,8 +303,96 @@ try {
       assert.ok(approved.length > 0, "the answer after the approval is drawn");
       assert.deepEqual(approved.filter((frame) => frame.footer.length > 0).map((frame) => frame.footer), [],
         "no Working head stands under an answer drawn while the pane was blocked");
-      assert.deepEqual(errors, []);
       console.log("PASS an answer drawn while blocked has no Working head under it when the status catches up");
+
+      // herdr rests before a read holds the turn's answer (#2550, about 1 s live): the turn stays at
+      // work until the answer is drawn, never shown ended with no answer, also over a read between
+      // that brings only more of the turn's work
+      const books: ConversationTurn = { role: "user", ts: null, parts: [{ kind: "text", text: "How many books?" }] };
+      const bookTurns: ConversationTurn[] = [...shelvedBefore, shelved,
+        { role: "assistant", ts: "2026-11-04T09:02:00.000Z", parts: [{ kind: "text", text: "The atlas is shelved.", phase: "final_answer" }] },
+        books,
+      ];
+      await addTurns(page, panes.flaky, bookTurns);
+      await status(page, panes.flaky, "working");
+      await flaky.getByText("How many books?", { exact: true }).waitFor();
+      await flaky.locator(".chat-activity", { hasText: "Working" }).waitFor();
+      await painted(page);
+      await record(page, panes.flaky);
+      const counting: ConversationTurn = { role: "assistant", ts: null, parts: [
+        { kind: "tool", name: "Bash", summary: "ls books", input: JSON.stringify({ command: "ls books" }), output: "40", call_id: "books", state: "ok" },
+      ] };
+      await status(page, panes.flaky, "done");
+      await painted(page);
+      await addTurns(page, panes.flaky, [...bookTurns, counting]);
+      // the new turn's row, open or folded: its header counts the command
+      await page.waitForFunction((id) => [...document.querySelectorAll(`.pane-frame[data-layout-pane="${id}"] [data-chat-row]`)].at(-1)?.textContent?.includes("1 command") === true, panes.flaky);
+      await painted(page);
+      await addTurns(page, panes.flaky, [...bookTurns, { ...counting, parts: [...counting.parts, { kind: "text", text: "There are forty books.", phase: "final_answer" }] }]);
+      await flaky.getByText("There are forty books.", { exact: true }).waitFor();
+      await painted(page);
+      const lagged = await stop(page);
+      assert.deepEqual(lagged.filter((frame) => !frame.lastRow.includes("There are forty books.") && frame.footer.length === 0 && !frame.lastBlocks.some((block) => block.startsWith("live/"))), [],
+        "the turn stays at work until its answer is drawn");
+      console.log("PASS a turn whose answer is read after herdr rests stays at work until the answer is drawn");
+
+      // a rest with no answer to come (a turn stopped from the terminal): the turn ends within the wait
+      await addTurns(page, panes.flaky, [...bookTurns.slice(0, -1), { role: "user", ts: null, parts: [{ kind: "text", text: "Stop here." }] }]);
+      await status(page, panes.flaky, "working");
+      await flaky.getByText("Stop here.", { exact: true }).waitFor();
+      await flaky.locator(".chat-activity", { hasText: "Working" }).waitFor();
+      await status(page, panes.flaky, "done");
+      await flaky.locator(".chat-activity").waitFor({ state: "detached", timeout: 5_000 });
+      console.log("PASS a turn that gets no answer after herdr rests ends within the wait");
+
+      // a /clear in an empty chat reports working for a moment, with no turn: the greeting stays
+      const blank = await page.evaluate(async () => {
+        const response = await fetch("/api/workspace/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: "/home/demo/cleared", agent: { kind: "claude" } }) });
+        return ((await response.json()) as { pane_id: string }).pane_id;
+      });
+      const row = page.locator(`.pane-select[title^="${blank} \u2014"]`).first();
+      await row.waitFor({ state: "attached" });
+      await row.evaluate((node: HTMLElement) => node.click());
+      await page.locator(`.pane-select[title^="${blank} \u2014"][aria-current="true"]`).first().waitFor({ state: "attached" });
+      await page.getByTitle("Chat transcript (\u2318\u21e7J)", { exact: true }).click();
+      const greeting = page.locator(".pane-frame.is-current .composer-greeting");
+      // the demo's new agent works for a moment first: it is greeted once it rests
+      await greeting.waitFor({ timeout: 8_000 });
+      await page.locator('.pane-frame.is-current .composer-status[data-status="idle"]').waitFor({ state: "attached", timeout: 8_000 });
+      await painted(page);
+      await record(page, blank);
+      const greeted = page.evaluate(() => {
+        const seen: boolean[] = [];
+        const tick = (): void => {
+          seen.push(document.querySelector(".pane-frame.is-current .composer-greeting") !== null);
+          if ((window as unknown as { greetingFrames?: boolean[] }).greetingFrames === seen) requestAnimationFrame(tick);
+        };
+        (window as unknown as { greetingFrames?: boolean[] }).greetingFrames = seen;
+        tick();
+      });
+      await greeted;
+      await page.evaluate((id) => new Promise<void>((settled) => {
+        const order = (window as unknown as { __herdrDemoOrder: { status(pane: string, status: string): void } }).__herdrDemoOrder;
+        order.status(id, "working");
+        const shown = (): void => {
+          if (document.querySelector('.pane-frame.is-current .composer-status[data-status="working"]') === null) { requestAnimationFrame(shown); return; }
+          // fixed wait: how long a /clear's working status lasted live (241\u2013549 ms)
+          setTimeout(() => { order.status(id, "idle"); settled(); }, 400);
+        };
+        shown();
+      }), blank);
+      await painted(page);
+      const cleared = await stop(page);
+      const greetingFrames = await page.evaluate(() => {
+        const w = window as unknown as { greetingFrames?: boolean[] };
+        const seen = w.greetingFrames ?? [];
+        delete w.greetingFrames;
+        return seen;
+      });
+      assert.ok(greetingFrames.length > 0 && greetingFrames.every(Boolean), "the greeting stays through a /clear's working status");
+      assert.deepEqual(cleared.filter((frame) => frame.footer.length > 0).map((frame) => frame.footer), [], "no Working head stands under the greeting");
+      assert.deepEqual(errors, []);
+      console.log("PASS a short working status over an empty chat keeps its greeting");
       await context.close();
     } finally { await browser.close(); }
   } finally { server.stop(); }
