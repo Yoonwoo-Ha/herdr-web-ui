@@ -284,6 +284,8 @@ const BASE: Record<string, string> = {
   "{n} background task": "{n} 个后台任务",
   "{n} background tasks": "{n} 个后台任务",
   "Try again": "重试",
+  "The relay did not start: {message}": "中继未能启动：{message}",
+  "Turning on the relay closes the device gate: a new browser then needs a pairing code or the access token.": "开启中继后将关闭设备门槛：此后新的浏览器需要配对码或访问令牌。",
   // tabs: the strip over the pane, and the New tab dialog
   "New tab": "新建标签页",
   "Rename tab": "重命名标签页",

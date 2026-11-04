@@ -282,6 +282,8 @@ const BASE: Record<string, string> = {
   "{n} background task": "バックグラウンドタスク {n} 件",
   "{n} background tasks": "バックグラウンドタスク {n} 件",
   "Try again": "再試行",
+  "The relay did not start: {message}": "リレーを開始できませんでした: {message}",
+  "Turning on the relay closes the device gate: a new browser then needs a pairing code or the access token.": "リレーをオンにするとデバイスゲートが閉じます。以後、新しいブラウザーにはペアリングコードかアクセストークンが必要です。",
   // tabs: the strip over the pane, and the New tab dialog
   "New tab": "新しいタブ",
   "Rename tab": "タブの名前を変更",

@@ -280,6 +280,8 @@ const BASE: Record<string, string> = {
   "{n} background task": "백그라운드 작업 {n}개",
   "{n} background tasks": "백그라운드 작업 {n}개",
   "Try again": "다시 시도",
+  "The relay did not start: {message}": "릴레이를 시작하지 못했습니다: {message}",
+  "Turning on the relay closes the device gate: a new browser then needs a pairing code or the access token.": "릴레이를 켜면 기기 게이트가 닫힙니다. 그 뒤 새 브라우저는 페어링 코드나 접속 토큰이 필요합니다.",
   // tabs: the strip over the pane, and the New tab dialog
   "New tab": "새 탭",
   "Rename tab": "탭 이름 바꾸기",

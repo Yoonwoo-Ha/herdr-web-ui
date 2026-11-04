@@ -3678,8 +3678,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   the agent asks for its own when it first starts. On a first run, plan usage turns on by itself for
   accounts already signed in; the guide opened again from Settings changes no setting (nor says it
   will).
-- "Start with …" and beside it a plain "Connect your phone", which opens a `--bg-panel` box under them:
-  a QR code that opens the app on the phone with a fresh pairing code filled in, the address and the
+- "Start with …" and beside it a plain "Connect your phone", which opens a `--bg-panel` box under them.
+  Where the Ovis relay can lead (offered here, nothing blocks it, not a watching device or a Portal
+  visitor), the box leads with it (off until the user turns it on, then a QR code): one line on what it does, the device-gate note when turning
+  it on closes the gate, and "Turn on the Ovis relay" as the primary button (the tap is the consent).
+  A browser in only because nothing is paired yet pairs itself first, as the relay closes the gate.
+  Then the relay's state while it connects, a failed start with Try again, and once online the same
+  pairing QR code Settings shows (`RelayPairing`), which gives way to Paired and New code once a
+  new device is listed, since its code is single-use. A quiet "Use Tailscale or Wi-Fi instead" link under
+  it, and the whole box where the relay cannot lead, shows the other way: a QR code that opens the app on the phone with a fresh pairing code filled in, the address and the
   code. The code is asked for when the box opens and never renewed behind the user's back (it would
   replace one Settings shows); once a phone pairs ("Paired: …") or it runs out, New code asks again.
   A browser in only because nothing is paired yet pairs itself first, as Settings → Phone's Pair this
