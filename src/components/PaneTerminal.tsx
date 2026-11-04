@@ -830,13 +830,16 @@ export function PaneTerminal({
   });
   // an empty chat: one greeting line over the composer, which a mouse-driven window centres
   const folder = greetingFolder(cwd);
-  const greetingDue = chatView && paneId !== null && agent !== null && !secretActive && !observing && !ended
+  // Sends pressed whose claim waits for the pane's cross-tab lock: each takes the greeting away from its press
+  const [claims, setClaims] = useState(0);
+  const onSendClaim = useCallback((delta: 1 | -1) => setClaims((current) => current + delta), []);
+  const greetingDue = chatView && paneId !== null && agent !== null && !secretActive && !observing && !ended && claims === 0
     && showsGreeting({ memory: greetingMemory(paneStorageId(machineId, paneId)), agentStatus, queued: queued.length + pending.length, folder });
   // a stack too short for the composer and the greeting keeps the chat's own empty line
   const greeted = greetingDue && greetingRoom;
   // a message on its way, before its answer and its bubble, or held as a pending row (which has no
   // bubble): the chat's own empty line does not stand in for the greeting the send took away
-  const sending = pending.length > 0 || (paneId !== null && greetingMemory(paneStorageId(machineId, paneId)).pending > 0);
+  const sending = claims > 0 || pending.length > 0 || (paneId !== null && greetingMemory(paneStorageId(machineId, paneId)).pending > 0);
   // Only the composer moves (Composer.css): the surface under it keeps its box, so the xterm
   // mount is never resized by a greeting coming or going. Measured before paint, so the composer
   // is never seen docked first. The greeting stays mounted while it does not fit, so that it is
@@ -1350,6 +1353,7 @@ export function PaneTerminal({
           ) : null}
           waitingAnswer={waitingAnswer}
           onSend={composerSend}
+          onClaim={onSendClaim}
           onAbort={abortTurn}
           onUploadImage={uploadImage}
         />

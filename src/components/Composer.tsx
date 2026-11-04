@@ -122,6 +122,8 @@ export interface ComposerProps {
    * note offers to send again with `clearDraft`, which clears that draft from the terminal first, or,
    * where it named none, with `sendAnyway`; a promise settles to any of them */
   onSend: (text: string, clearDraft?: string, sendAnyway?: boolean, agentOnly?: boolean) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
+  /** a Send pressed waits for its claim (the pane's cross-tab lock, granted in a later task): +1 at the press, -1 once the claim ran, sent or not */
+  onClaim?: (delta: 1 | -1) => void;
   onAbort: () => void;
   onUploadImage: (file: File) => Promise<string>;
 }
@@ -262,6 +264,7 @@ export function Composer({
   branch = null,
   worktreeRepo = null,
   onSend,
+  onClaim,
   onAbort,
   onUploadImage,
 }: ComposerProps) {
@@ -316,6 +319,8 @@ export function Composer({
   const free = useMemo(() => replyComments.unreserved(comments), [comments, reservation]);
   const carried: readonly ReplyComment[] = commentsHeld ? [] : free;
   const mounted = useRef(true);
+  /** each pressed Send's claim still waiting for its lock: a composer that goes ends them, as the claim would send nothing */
+  const openClaims = useRef(new Set<() => void>());
   const [caret, setCaret] = useState(text.length);
   const textRef = useRef(text);
   const caretRef = useRef(caret);
@@ -415,6 +420,7 @@ export function Composer({
     mounted.current = true;
     return () => {
       mounted.current = false;
+      for (const release of [...openClaims.current]) release();
       // files not yet sent and paths not yet placed go with the pane
       uploadQueue.current = [];
       waitingMentions.current = [];
@@ -869,7 +875,7 @@ export function Composer({
     const pressedOn = drops.current;
     // what goes is read again inside the pane's cross-tab lock: another tab may have sent this draft or
     // its comments since this one drew them (#2369)
-    return underSendLock(draftKey, () => {
+    const claim = (): boolean => {
       // a claim that waited for the lock goes only where and while it was pressed
       if (!mounted.current || !connectedRef.current || drops.current !== pressedOn || draftKeyRef.current !== draftKey) return false;
       const waiting = new Set(replyComments.read(commentsKey).map((item) => item.id));
@@ -891,8 +897,18 @@ export function Composer({
         if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
       }
       return true;
+    };
+    // the press is the send as the user sees it: an empty chat's greeting goes in its frame, not the grant's
+    onClaim?.(1);
+    const release = (): void => {
+      if (!openClaims.current.delete(release)) return;
+      onClaim?.(-1);
+    };
+    openClaims.current.add(release);
+    return underSendLock(draftKey, () => {
+      try { return claim(); } finally { release(); }
     });
-  }, [attachments, carried, commentsKey, connected, dictation.forget, draftKey, onOpenHistory, onSend, role, roomless, sending, t, terminalTyped, text, uploading]);
+  }, [attachments, carried, commentsKey, connected, dictation.forget, draftKey, onClaim, onOpenHistory, onSend, role, roomless, sending, t, terminalTyped, text, uploading]);
   const sendRef = useRef(send);
   sendRef.current = send;
   const connectedRef = useRef(connected);
