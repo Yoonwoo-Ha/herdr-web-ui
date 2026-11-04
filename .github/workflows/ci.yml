@@ -283,7 +283,7 @@ jobs:
       # The herdr-backed lanes of every runner on the self-hosted PC share check.ts's slots
       # (scripts/self-hosted-runner/run.sh): at most CHECK_MAX_RUNS at once, and a lane that finds
       # them taken waits its turn instead of failing. A hosted runner has the slots to itself.
-      CHECK_MAX_RUNS: 3
+      CHECK_MAX_RUNS: 6
       CHECK_WAIT_SECONDS: 2400
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -330,7 +330,7 @@ jobs:
       # The herdr-backed lanes of every runner on the self-hosted PC share check.ts's slots
       # (scripts/self-hosted-runner/run.sh): at most CHECK_MAX_RUNS at once, and a lane that finds
       # them taken waits its turn instead of failing. A hosted runner has the slots to itself.
-      CHECK_MAX_RUNS: 3
+      CHECK_MAX_RUNS: 6
       CHECK_WAIT_SECONDS: 2400
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -399,7 +399,7 @@ jobs:
       # The herdr-backed lanes of every runner on the self-hosted PC share check.ts's slots
       # (scripts/self-hosted-runner/run.sh): at most CHECK_MAX_RUNS at once, and a lane that finds
       # them taken waits its turn instead of failing. A hosted runner has the slots to itself.
-      CHECK_MAX_RUNS: 3
+      CHECK_MAX_RUNS: 6
       CHECK_WAIT_SECONDS: 2400
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

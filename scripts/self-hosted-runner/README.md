@@ -131,7 +131,7 @@ share `check.ts`'s slots (`CHECK_HOST_MAX_RUNS`) with theirs, so they can wait t
 On the maintainer PC the launcher runs as the systemd user unit `ovis-ci-runner.service`
 (`run.sh --repo devswha/ovis --count 4 --labels self-hosted-ovis` from a copy of this directory in
 `~/.local/share/ovis-ci-runner`): four slots let one CI run's four Linux jobs start together, and
-`check.ts`'s shared slots still cap its herdr-backed lanes at three. Copy the directory again and
+`check.ts`'s shared slots cap its herdr-backed lanes at `ci.yml`'s `CHECK_MAX_RUNS`. Copy the directory again and
 restart the unit after changing these files.
 
 ## Per-host limits
