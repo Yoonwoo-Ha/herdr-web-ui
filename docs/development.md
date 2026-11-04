@@ -352,7 +352,9 @@ their progress and hide older sessions; ordinary Pi headers are only a few hundr
 A file whose header is not yet complete has no row yet, never a
 guessed identity. Files completed in that first chunk publish their EOF-checked labels immediately.
 The subsequent full label scans share a two-second deadline measured from before the header pass,
-including all queue time. Tests may lengthen both phase deadlines with `piSessionDeadlineMs`.
+including all queue time. When the header pass leaves less than a quarter of that deadline, the
+label scans still get a quarter of it, so a slow disk fills labels over later opens instead of
+never. Tests may lengthen both phase deadlines with `piSessionDeadlineMs`.
 No full scan begins or continues past its deadline. Concurrent listings keep
 independent deadlines, even when reading the same transcript.
 Only clipped metadata and a bounded record projection are retained during a scan. A size and
