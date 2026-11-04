@@ -4210,6 +4210,40 @@ describe("pairing and identity", () => {
     }
   });
 
+  it("regression: lets the owner's login in as soon as Tailscale finishes starting, not five minutes after a boot", async () => {
+    const state = mkdtempSync(join(tmpdir(), "herdr-boot-identity-"));
+    const savedOwner = process.env["OVIS_TAILSCALE_OWNER"];
+    delete process.env["OVIS_TAILSCALE_OWNER"];
+    // a PC that paired a device before: the gate is closed to strangers
+    writeFileSync(join(state, "devices.json"), JSON.stringify({ gate_closed_at: new Date().toISOString(), devices: [] }));
+    // at boot the server asks before tailscaled has logged in: no user yet; every later read is Running
+    const starting = JSON.stringify({ BackendState: "NoState", Self: { DNSName: "" } });
+    const running = JSON.stringify({ BackendState: "Running", Self: { DNSName: "pc.example.ts.net.", UserID: 7, TailscaleIPs: ["100.101.102.103"] }, User: { "7": { LoginName: OWNER } } });
+    let reads = 0;
+    const tailnet = new TailnetIdentitySource(async () => reads++ === 0 ? starting : running);
+    await tailnet.freshIdentity(null);
+    const booted = createServer({ port: 0, stateDir: state, tailnet });
+    const at = async (headers: Record<string, string>) => ((await (await fetch(`http://127.0.0.1:${booted.port}/api/health?scope=bridge`, { headers })).json()) as { auth: HealthAuth }).auth;
+    // the owner's phone asks a few seconds after the boot read, once tailscaled is up
+    const start = Date.now();
+    const clock = spyOn(Date, "now").mockImplementation(() => start + 3_000);
+    try {
+      expect(await at(proxied(OWNER))).toMatchObject({ authenticated: true, via: "tailscale" });
+      // once the login is known it is kept for the cache's life: later polls read nothing
+      const settled = reads;
+      expect(await at(proxied(OWNER))).toMatchObject({ authenticated: true, via: "tailscale" });
+      expect(reads).toBe(settled);
+      // a stranger still pairs
+      expect(await at(proxied("someone@example.com"))).toMatchObject({ authenticated: false, reason: "other_user" });
+      expect(await at(proxied())).toMatchObject({ authenticated: false, reason: "pairing_required" });
+    } finally {
+      clock.mockRestore();
+      booted.stop();
+      if (savedOwner === undefined) delete process.env["OVIS_TAILSCALE_OWNER"]; else process.env["OVIS_TAILSCALE_OWNER"] = savedOwner;
+      rmSync(state, { recursive: true, force: true });
+    }
+  });
+
   it("takes the login named in OVIS_TAILSCALE_OWNER for the PC's own, as a tagged node needs", async () => {
     const state = mkdtempSync(join(tmpdir(), "herdr-named-owner-"));
     const before = process.env["OVIS_TAILSCALE_OWNER"];
