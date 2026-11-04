@@ -500,6 +500,8 @@ function trimConversationAnswers(keep: string): void {
  * only while the pane is still on it. A pane the roster has not named yet is on `undefined`.
  */
 const paneSessions = new Map<string, string>();
+/** Each pane's session (as paneSessions) and folder as the roster last named them: what its slash commands are read for. */
+const paneCommandScopes = new Map<string, string>();
 /**
  * Per PC, a token its event that panes changed (paneSessionsMoving) gave it until the roster after it
  * names the sessions: a read in between is of a session not known yet, so it stands for none other.
@@ -537,7 +539,7 @@ export function paneSessionKey(pane: Pick<HerdrPane, "agent" | "agent_session">)
  * replaced another reuses its pane IDs, so the session is the herdr's too; a pane the roster no longer
  * lists has none.
  */
-export function observePaneSessions(machines: readonly { id: string; snapshot: { herdr_lifetime?: string; panes: readonly Pick<HerdrPane, "pane_id" | "agent" | "agent_session">[] } | null }[], readAfter?: number): void {
+export function observePaneSessions(machines: readonly { id: string; snapshot: { herdr_lifetime?: string; panes: readonly Pick<HerdrPane, "pane_id" | "agent" | "agent_session" | "cwd" | "foreground_cwd">[] } | null }[], readAfter?: number): void {
   for (const machine of machines) {
     if (machine.snapshot === null) continue;
     // only a roster read after the PC's last event names its panes' sessions now; one read before it (a poll
@@ -548,10 +550,31 @@ export function observePaneSessions(machines: readonly { id: string; snapshot: {
     for (const pane of machine.snapshot.panes) {
       const key = paneKey(pane.pane_id, machine.id);
       listed.add(key);
-      paneSessions.set(key, `${machine.snapshot.herdr_lifetime ?? ""}\u0000${paneSessionKey(pane)}`);
+      const session = `${machine.snapshot.herdr_lifetime ?? ""}\u0000${paneSessionKey(pane)}`;
+      paneSessions.set(key, session);
+      // the folder the server lists the pane's commands for (pane-context.ts)
+      paneCommandScopes.set(key, `${session}\u0000${pane.foreground_cwd ?? pane.cwd ?? ""}`);
     }
     for (const key of paneSessions.keys()) if (key.startsWith(paneKey("", machine.id)) && !listed.has(key)) paneSessions.delete(key);
+    for (const key of paneCommandScopes.keys()) if (key.startsWith(paneKey("", machine.id)) && !listed.has(key)) paneCommandScopes.delete(key);
   }
+}
+
+/**
+ * What a pane's slash commands are read for now: its session and folder as the roster last named them
+ * (empty before it names the pane). The same pane running its agent in another project lists other skills.
+ */
+export function paneCommandScope(paneId: string, machineId: string): string {
+  return paneCommandScopes.get(paneKey(paneId, machineId)) ?? "";
+}
+
+/**
+ * The PC's token from its last event that panes changed, until the roster after it names them; undefined
+ * otherwise. A commands read in that gap may be of a session not named yet: it joins no read begun before
+ * and is not kept, while the lists already kept stay drawn.
+ */
+export function paneScopesMoving(machineId: string): string | undefined {
+  return movingSessions.get(machineId)?.token;
 }
 
 /**
@@ -634,8 +657,9 @@ export function prefetchPaneConversation(paneId: string, machineId: string, prom
   const historyId = cached?.source === "scrollback" ? undefined : cached?.history_id;
   const controller = new AbortController();
   const pressed: PressRead = { controller, at: performance.now(), pane, session: sessionNow(pane), read: fetchPaneConversation(paneId, machineId, { prompts, history_id: historyId, fresh: true, signal: controller.signal }) };
-  // a press that was a scroll leaves it untaken; a read that takes it still gets its failure
-  pressed.read.then((answer) => { pressed.answer = answer; }, () => undefined);
+  // a press that was a scroll leaves it untaken; a read that takes it on its way still gets its failure,
+  // and a read that comes after the failure asks the server again (the bridge may be back by then)
+  pressed.read.then((answer) => { pressed.answer = answer; }, () => { if (pressReads.get(url) === pressed) pressReads.delete(url); });
   pressReads.set(url, pressed);
   setTimeout(() => { if (pressReads.get(url) === pressed) pressReads.delete(url); }, PRESS_READ_MS);
 }
@@ -1222,7 +1246,9 @@ export async function removeWorktree(request: RemoveWorktreeRequest, machineId =
 
 /** GET /api/pane/commands: the slash commands the pane's agent understands (built-in + custom). */
 export async function fetchPaneCommands(paneId: string, machineId = "local"): Promise<SlashCommand[]> {
-  return (await getJson<{ commands: SlashCommand[] }>(machinePath(machineId, `pane/commands?pane_id=${encodeURIComponent(paneId)}`))).commands;
+  // a read that never answers would be shared by every later caller for good: it fails at a deadline instead,
+  // past the 45 s the server waits for a scan before it answers 503 (server/commands.ts COMMANDS_WAIT_MS)
+  return (await withChatReadDeadline((signal) => getJson<{ commands: SlashCommand[] }>(machinePath(machineId, `pane/commands?pane_id=${encodeURIComponent(paneId)}`), { signal }), 4 * chatReadDeadlineMs(machineId))).commands;
 }
 
 /**
