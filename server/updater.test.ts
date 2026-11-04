@@ -703,11 +703,11 @@ describe("managed source updates with real Git repositories and builds", () => {
   it("takes a bridge by its own answer, or by the whole one when it predates the bridge-scope boot id, and tells it", async () => {
     // runSupervisor in a stand-in child, as above: the bridge is a fake whose health answers say what
     // a bridge of this revision says (its boot id and runtime in ?scope=bridge) or an older one (none)
-    const asked = async (older: boolean) => {
+    const asked = async (older: boolean, herdrSocket?: string) => {
       const root = mkdtempSync(join(directory, "launch-root-"));
       const stateDir = mkdtempSync(join(directory, "launch-state-"));
-      const record = join(directory, `launch-record-${older}.json`);
-      const script = join(directory, `launch-stand-in-${older}.ts`);
+      const record = join(stateDir, "launch-record.json");
+      const script = join(stateDir, "launch-stand-in.ts");
       writeFileSync(script, `
         import { mock } from "bun:test";
         import { writeFileSync } from "node:fs";
@@ -733,9 +733,9 @@ describe("managed source updates with real Git repositories and builds", () => {
         writeFileSync(${JSON.stringify(record)}, JSON.stringify({ urls, sent }));
         process.exit(0);
       `);
-      // no herdr socket here: a bridge of this revision serving herdr needs no whole answer
+      // no herdr socket by default: a bridge of this revision serving herdr needs no whole answer
       const child = Bun.spawn([process.execPath, script], { env: { ...process.env, PORT: "59998", HOST: "127.0.0.1", OVIS_STATE_DIR: stateDir,
-        XDG_CONFIG_HOME: join(stateDir, "config"), HERDR_SOCKET: join(stateDir, "no-herdr.sock"), OVIS_AUTO_UPDATE: "0" }, stdout: "pipe", stderr: "pipe" });
+        XDG_CONFIG_HOME: join(stateDir, "config"), HERDR_SOCKET: herdrSocket ?? join(stateDir, "no-herdr.sock"), OVIS_AUTO_UPDATE: "0" }, stdout: "pipe", stderr: "pipe" });
       const output = Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
       const timer = setTimeout(() => child.kill("SIGKILL"), 15_000); // a wedged stand-in must not hang the run
       try {
@@ -752,7 +752,24 @@ describe("managed source updates with real Git repositories and builds", () => {
     const older = await asked(true);
     expect(older.urls).toEqual(["?scope=bridge", ""]);
     expect(older.sent.filter((message) => message.type === "bridge-accepted")).toHaveLength(1);
-  }, 40_000);
+    if (process.platform === "win32") return; // herdr's socket is a named pipe there: no unix socket file is left behind
+    // a socket file a killed herdr left behind refuses the connect: herdr is stopped, as with no socket (#2670)
+    const stale = join(mkdtempSync(join(directory, "stale-")), "herdr.sock");
+    const holder = Bun.spawn([process.execPath, "-e", `Bun.listen({ unix: ${JSON.stringify(stale)}, socket: { data() {} } }); console.log("listening");`], { stdout: "pipe" });
+    await holder.stdout.getReader().read();
+    holder.kill("SIGKILL");
+    await holder.exited;
+    expect(existsSync(stale)).toBe(true);
+    expect((await asked(false, stale)).urls).toEqual(["?scope=bridge"]);
+    // a herdr that answers the connect must answer the whole health check too
+    const live = join(mkdtempSync(join(directory, "live-")), "herdr.sock");
+    const listener = Bun.listen({ unix: live, socket: { data() {} } });
+    try {
+      expect((await asked(false, live)).urls).toEqual(["?scope=bridge", ""]);
+    } finally {
+      listener.stop(true);
+    }
+  }, 60_000);
 
   it("holds the timer off after a user's own failed unshallow fetch too", async () => {
     // a user's Check skips the backoff, but its failure still starts one: the timer that comes

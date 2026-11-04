@@ -11,7 +11,7 @@ import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { readUpdateIpcRequest } from "../shared/update.ts";
 import { restoreRuntime } from "./herdr-core/runtime-file.ts";
 import { defaultStateDir, HANDOVER_EXIT, moveLegacyStateDir, updateStateDir } from "./update-state.ts";
-import { herdrSocketPath } from "./herdr/client.ts";
+import { herdrMayListen, herdrSocketPath } from "./herdr/client.ts";
 import { legacyLauncherStateDir, withLegacyNames } from "./legacy-env.ts";
 import { acquireOwnerDirectory } from "./owner-guard.ts";
 import { runCommand, Updater, type Release } from "./updater.ts";
@@ -116,8 +116,9 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
   /**
    * Starts a bridge and waits for it: its own answer first (`?scope=bridge`, which never asks
    * herdr), then the whole health answer when the runtime it says it serves must answer too:
-   * herdr-core, or herdr's TUI while its socket is there. A herdr TUI that is stopped is no failed
-   * start: Settings offers it, and the user starts herdr later. The bridge is told once it is taken.
+   * herdr-core, or herdr's TUI while its socket may be listening (herdrMayListen). A herdr TUI that
+   * is stopped is no failed start: Settings offers it, and the user starts herdr later. The bridge
+   * is told once it is taken.
    */
   async function launch(release: Release | null) {
     if (stopping) throw new Error("Server is stopping");
@@ -169,7 +170,7 @@ export async function runSupervisor(root = resolve(import.meta.dir, "..")) {
         // to): the whole health answer is the only check it can pass, as it always was
         const older = bridge.ok && own.web_ui === undefined;
         if (older || bridge.ok && ours(own)) {
-          let ready = !older && own.runtime !== "herdr-core" && !existsSync(socketPath);
+          let ready = !older && own.runtime !== "herdr-core" && !await herdrMayListen(socketPath);
           if (!ready) {
             const response = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(1000) });
             ready = response.ok && ours(await response.json() as { web_ui?: { boot_id?: string } });
