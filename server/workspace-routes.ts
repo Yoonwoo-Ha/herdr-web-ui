@@ -157,7 +157,11 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
       // the request's first message is the user's send: queued for the agent's first ready turn through the
       // bridge's pending path (server/core/pending.ts), never typed here; an agent that did not start gets none
       const firstMessage = launched.agent_started && typeof payload.first_message === "string"
-        ? await queueFirstMessage(created.root_pane.pane_id, payload.first_message, payload.agent.kind as string, requester, launchedPid).then((message): { id: string } | ReturnType<typeof notQueued> => ({ id: message.id }), (error: unknown) => {
+        ? await queueFirstMessage(created.root_pane.pane_id, payload.first_message, payload.agent.kind as string, requester, launchedPid).then((message): { id: string; held?: string } | ReturnType<typeof notQueued> => ({
+          id: message.id,
+          // held from the start (no page to type it, #2743): said, so a client tells it from a queued one
+          ...(message.state === "held" && message.error ? { held: message.error.code } : {}),
+        }), (error: unknown) => {
           console.warn(`first message for ${created.root_pane.pane_id} not queued: ${error instanceof Error ? error.message : String(error)}`);
           // the agent runs and the message did not go in: told apart from an agent that did not start (null)
           return notQueued(error);
