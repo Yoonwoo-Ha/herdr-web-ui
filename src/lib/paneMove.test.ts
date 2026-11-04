@@ -30,6 +30,14 @@ it("carries the chat draft, the held terminal input and the picked lens to the p
   expect(data.get("ovis:view:w1:p2")).toBe("chat");
   expect(drafts.read("ovis:composer-draft:remote:pc:w1%3Ap1").text).toBe("other PC");
 });
+it("carries no draft another tab sent before this one heard of it (#2369)", () => {
+  const { data, drafts, storage } = fixture();
+  drafts.set("ovis:composer-draft:w1:p1", "deploy");
+  data.delete("ovis:composer-draft:w1:p1");
+  carryPaneState("local", "w1:p1", "w2:p4", drafts, storage);
+  expect(data.has("ovis:composer-draft:w2:p4")).toBe(false);
+  expect(drafts.read("ovis:composer-draft:w2:p4").text).toBe("");
+});
 it("leaves a draft whose send is on its way, and keeps what the new ID holds already", () => {
   const { data, drafts, storage } = fixture();
   drafts.set("ovis:composer-draft:w1:p1", "on its way");
