@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { AgyUnavailable, agyCatalog, agyDatabasePath, parseAgyTranscript } from "./agy.ts";
+import { AgyUnavailable, agyCatalog, agyDatabasePath, parseAgyTranscript, withAgyHistory } from "./agy.ts";
 
 /** Writes a WAL catalog from a process that then dies without closing it, as agy does when killed:
  * nothing checkpoints, and no handle stays open, so a test may delete side files on any platform. */
@@ -18,6 +18,24 @@ async function abandonedWal(dbPath: string, sql: string): Promise<void> {
   expect(stderr).toBe("");
   expect([existsSync(`${dbPath}-wal`), existsSync(`${dbPath}-shm`)]).toEqual([true, true]);
 }
+
+it("copies a live WAL catalog for a history read on a file thread, not the server's (#2706)", async () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "agy-thread-")));
+  try {
+    const transcript = join(dir, "brain", "session", ".system_generated", "logs", "transcript_full.jsonl");
+    const dbPath = agyDatabasePath(transcript);
+    mkdirSync(dirname(dbPath), { recursive: true });
+    mkdirSync(dirname(transcript), { recursive: true });
+    await abandonedWal(dbPath, "PRAGMA journal_mode=WAL; CREATE TABLE steps(idx INTEGER PRIMARY KEY); PRAGMA wal_checkpoint(TRUNCATE); INSERT INTO steps VALUES (0);");
+    fs.writeFileSync(transcript, `${JSON.stringify({ step_index: 0, type: "USER_INPUT", status: "DONE", content: "one" })}\n`);
+    // the private copy is written with writeFileSync: a file thread's calls are not this thread's
+    const writes = spyOn(fs, "writeFileSync");
+    try {
+      expect(await withAgyHistory(transcript, (projection) => projection.indices)).toEqual([0]);
+      expect(writes).not.toHaveBeenCalled();
+    } finally { writes.mockRestore(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 it("reads a stable rollback-journal catalog without creating side files", () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "agy-rollback-")));

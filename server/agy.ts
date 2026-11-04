@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ConversationPart, ConversationTurn } from "../shared/protocol.ts";
+import { FileBusyError, fileTask } from "./file-pool.ts";
 import { trimOutput } from "./tool-output.ts";
 import { toolSummary } from "./transcript-records.ts";
 
@@ -13,8 +14,8 @@ const MAX_ENTRIES = 100_000;
 const MAX_LINE = 16 * 1024 * 1024;
 const SCAN_BYTES = 32 * 1024 * 1024;
 // The catalog's database and WAL grow with the session's payloads, not its step count: a long
-// session passes 32 MiB during a turn (#2618). The copy is synchronous and repeats while a turn
-// writes, so the bound stays near that size until it leaves the main thread (#2706).
+// session passes 32 MiB during a turn (#2618). The copy repeats while a turn writes, on a file
+// thread since #2706, but it still holds that thread and the disk for its duration.
 const CATALOG_BYTES = 64 * 1024 * 1024;
 const hash = (value: string): string => createHash("sha256").update(value).digest("base64url");
 const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -150,8 +151,20 @@ function entry(line: string): Record<string, unknown> {
   return value;
 }
 
+/**
+ * `agyCatalog` on a file thread (`file-pool.ts`): copying and opening a long session's catalog takes
+ * up to a second, which on the server's thread stalls every request and terminal (#2706).
+ */
+export async function agyCatalogOffThread(path: string): Promise<Set<number>> {
+  let rows: number[];
+  try { rows = await fileTask<number[]>({ op: "agy-catalog", path }); }
+  catch (error) { throw error instanceof FileBusyError ? error : new AgyUnavailable(); }
+  return new Set(rows);
+}
+
 export interface AgyProjection { segments: { start: number; end: number }[]; promptStarts: number[]; revision: string; indices: number[]; activity: "working" | "idle" }
-export function agyProjection(path: string, fd: number): AgyProjection {
+/** The ledger's index, scanned on to the end of the file `fd` holds. */
+function agyScan(path: string, fd: number): Index {
   const stat = fstatSync(fd);
   const identity = `${stat.dev}:${stat.ino}`;
   const changed = `${stat.mtimeMs}:${stat.ctimeMs}`;
@@ -201,7 +214,11 @@ export function agyProjection(path: string, fd: number): AgyProjection {
     position += read;
   }
   if (position < stat.size) throw new AgyUnavailable();
-  const catalog = agyCatalog(path);
+  return index;
+}
+
+/** The scanned steps the catalog keeps, read after the scan as Agy writes the ledger first. */
+function agyReduce(index: Index, catalog: Set<number>): AgyProjection {
   // Native idle rewind updates the DB before any replacement ledger lines arrive.
   // DB-only steps are normal; equality or a strict prefix would reject healthy logs.
   const physicalStarts = new Set(index.steps.map((step) => step.start));
@@ -232,16 +249,37 @@ export function agyProjection(path: string, fd: number): AgyProjection {
   return { segments, promptStarts, revision: index.revision, indices, activity };
 }
 
-/** Keep one fd through projection and page reads, and reject a cut during the read. */
-export function withAgyHistory<T>(path: string, read: (projection: AgyProjection, fd: number) => T): T {
+const historyReads = new Map<string, Promise<unknown>>();
+
+/**
+ * Keep one fd through projection and page reads, and reject a cut during the read. One read of a
+ * ledger at a time: each updates the ledger's shared index, and each now waits for its catalog.
+ */
+export function withAgyHistory<T>(path: string, read: (projection: AgyProjection, fd: number) => T): Promise<T> {
+  const run = (historyReads.get(path) ?? Promise.resolve()).then(() => agyHistoryRead(path, read), () => agyHistoryRead(path, read));
+  const settled = run.then(() => {}, () => {});
+  historyReads.set(path, settled);
+  void settled.then(() => { if (historyReads.get(path) === settled) historyReads.delete(path); });
+  return run;
+}
+
+async function agyHistoryRead<T>(path: string, read: (projection: AgyProjection, fd: number) => T): Promise<T> {
   const fd = openSync(path, "r");
   try {
     if (realpathSync(path) !== path) throw new AgyUnavailable();
     const before = fstatSync(fd);
-    const projection = agyProjection(path, fd);
+    const index = agyScan(path, fd);
+    const catalog = await agyCatalogOffThread(path);
+    // forgotten or evicted while the catalog was read: parsing and output refs look it up by path
+    if (indexes.get(path) !== index) {
+      indexes.delete(path); indexes.set(path, index);
+      if (indexes.size > 16) indexes.delete(indexes.keys().next().value!);
+    }
+    const projection = agyReduce(index, catalog);
     const result = read(projection, fd);
+    const current = await agyCatalogOffThread(path);
+    // after the wait, so a ledger cut or replaced during it is seen
     const after = statSync(path), pinned = fstatSync(fd);
-    const current = agyCatalog(path);
     if (before.dev !== after.dev || before.ino !== after.ino || pinned.size < before.size
       || (pinned.size === before.size && (pinned.mtimeMs !== before.mtimeMs || pinned.ctimeMs !== before.ctimeMs))
       || projection.indices.some((index) => !current.has(index))) throw new AgyUnavailable();
@@ -298,12 +336,13 @@ export function parseAgyTranscript(text: string, path?: string): ConversationTur
   return turns;
 }
 
-export function agyToolOutput(path: string, ref: string): string | null {
+export async function agyToolOutput(path: string, ref: string): Promise<string | null> {
   if (!/^agy:[A-Za-z0-9_-]{43}$/.test(ref)) return null;
   try {
-    return withAgyHistory(path, (projection, fd) => {
+    return await withAgyHistory(path, (projection, fd) => {
       const visible = new Set(projection.indices);
-      for (const step of indexes.get(path)!.visible) {
+      // forgotten (forgetAgyState) while this read waited for its catalog
+      for (const step of indexes.get(path)?.visible ?? []) {
         if (step.type !== "GENERIC" || !visible.has(step.index) || outputRef(path, step) !== ref) continue;
         const bytes = Buffer.alloc(step.end - step.start);
         if (readSync(fd, bytes, 0, bytes.length, step.start) !== bytes.length) return null;
@@ -313,5 +352,9 @@ export function agyToolOutput(path: string, ref: string): string | null {
       }
       return null;
     });
-  } catch { return null; }
+  } catch (error) {
+    // every file thread busy: worth another try soon (http.ts answers 503), not a missing output
+    if (error instanceof FileBusyError) throw error;
+    return null;
+  }
 }

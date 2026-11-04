@@ -58,8 +58,9 @@ import { cmdTranscriptPath } from "./cmd.ts";
 import { defaultDevinDbPath, DevinHistoryUnavailable, devinConversation, forgetDevinState } from "./devin.ts";
 import { forgetGrokState, GROK_IMAGE_REF, grokImage, grokProjection, grokToolOutput, parseGrokTranscript, GrokUnavailable } from "./grok.ts";
 import { resolveGrokStore } from "./grok-store.ts";
-import { AgyUnavailable, agyCatalog, agyToolOutput, forgetAgyState, parseAgyTranscript, withAgyHistory, type AgyProjection } from "./agy.ts";
+import { AgyUnavailable, agyCatalogOffThread, agyToolOutput, forgetAgyState, parseAgyTranscript, withAgyHistory, type AgyProjection } from "./agy.ts";
 import { resolveAgyStore, sameAgyStore, type AgyStore } from "./agy-store.ts";
+import { FileBusyError } from "./file-pool.ts";
 import { museSession, museToolOutput, MuseUnavailable, parseMuseTranscript } from "./muse.ts";
 import { resolveMuseSession } from "./muse-store.ts";
 import { LettaUnavailable, lettaToolOutput, parseLettaTranscript } from "./letta.ts";
@@ -1693,7 +1694,7 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
       try { transcriptExists = !!statSync(found.path, { throwIfNoEntry: false }); }
       catch { throw new ConversationUnavailable("transcript_missing"); }
       if (!transcriptExists) {
-        if (agyCatalog(found.path).size !== 0 || !sameAgyStore(found, await resolveAgyStore(pane))) throw new ConversationUnavailable("transcript_missing");
+        if ((await agyCatalogOffThread(found.path)).size !== 0 || !sameAgyStore(found, await resolveAgyStore(pane))) throw new ConversationUnavailable("transcript_missing");
         throw new ConversationNotStarted(found.session, "agy-transcript", found.path);
       }
       return { source: "agy-transcript", path: found.path, agy: found };
@@ -1950,7 +1951,8 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   const prefix = history !== null && resolved.source === "copilot-transcript" ? copilotPrefix(paneId, `${resolved.binding}\0${history}`) : null;
   let answer: RecognizedConversation;
   try {
-    answer = transcriptPage(resolved.source, resolved.path, prefix === null ? page : copilotPage(page, prefix), resolved.codexHome ?? codexHome, resolved.piAgentDir);
+    answer = resolved.source === "agy-transcript" ? await agyTranscriptPage(resolved.path, page, resolved.codexHome ?? codexHome)
+      : transcriptPage(resolved.source, resolved.path, prefix === null ? page : copilotPage(page, prefix), resolved.codexHome ?? codexHome, resolved.piAgentDir);
   } catch (error) {
     if (resolved.source !== "copilot-transcript" || prefix === null || !(error instanceof ConversationUnavailable) || error.message !== "transcript_missing") throw error;
     const paged = page.before !== undefined || page.since !== undefined || page.from !== undefined;
@@ -2214,7 +2216,7 @@ function runsOnFromCut(leaf: string, path: readonly CommandTranscriptRecord[], f
  * One page of a resolved transcript (paneConversation's `page`). `piAgentDir` is the pane's pi
  * agent directory, whose catalogs state a pi model's context window (parseConversationMetadata).
  */
-export function transcriptPage(source: StreamSource, path: string, page: ConversationPage = {}, codexHome?: string, piAgentDir?: string | null): RecognizedConversation {
+export function transcriptPage(source: Exclude<StreamSource, "agy-transcript">, path: string, page: ConversationPage = {}, codexHome?: string, piAgentDir?: string | null): RecognizedConversation {
   if (source === "copilot-transcript") {
     let fd: number;
     try { fd = openCopilotFile(path); }
@@ -2222,14 +2224,17 @@ export function transcriptPage(source: StreamSource, path: string, page: Convers
     try { return transcriptPageRead(source, path, page, codexHome, undefined, fd, piAgentDir); }
     finally { closeSync(fd); }
   }
-  if (source === "agy-transcript") {
-    try { return withAgyHistory(path, (projection, fd) => ({ ...transcriptPageRead(source, path, page, codexHome, projection, fd), activity: projection.activity })); }
-    catch (error) {
-      if (error instanceof HistoryChanged || error instanceof ConversationUnavailable) throw error;
-      throw new ConversationUnavailable("transcript_missing");
-    }
-  }
   return transcriptPageRead(source, path, page, codexHome, undefined, undefined, piAgentDir);
+}
+
+/** One page of an Agy ledger (transcriptPage), whose catalog is read on a file thread (#2706). */
+export async function agyTranscriptPage(path: string, page: ConversationPage = {}, codexHome?: string): Promise<RecognizedConversation> {
+  try { return await withAgyHistory(path, (projection, fd) => ({ ...transcriptPageRead("agy-transcript", path, page, codexHome, projection, fd), activity: projection.activity })); }
+  catch (error) {
+    // every file thread busy: worth another try soon (http.ts answers 503)
+    if (error instanceof HistoryChanged || error instanceof ConversationUnavailable || error instanceof FileBusyError) throw error;
+    throw new ConversationUnavailable("transcript_missing");
+  }
 }
 
 function transcriptPageRead(source: StreamSource, path: string, page: ConversationPage, codexHome?: string, agy?: AgyProjection, fd?: number, piAgentDir?: string | null): RecognizedConversation {
@@ -2948,7 +2953,8 @@ export async function toolOutput(paneId: string, ref: string, codexHome?: string
     nativeRef = ref.slice(prefix.length);
     if (!nativeRef.includes("@")) return null;
   }
-  const output = transcriptToolOutput(resolved.source, resolved.path, nativeRef, resolved.codexHome ?? codexHome);
+  const output = resolved.source === "agy-transcript" ? await agyToolOutput(resolved.path, nativeRef)
+    : transcriptToolOutput(resolved.source, resolved.path, nativeRef, resolved.codexHome ?? codexHome);
   if (resolved.agy && !sameAgyStore(resolved.agy, await resolveAgyStore(pane))) return null;
   if (resolved.source === "copilot-transcript") {
     const current = await copilotTranscriptPath(pane, snapshot.panes, resolved.peerClaims).catch(() => null);
@@ -2961,7 +2967,7 @@ export async function toolOutput(paneId: string, ref: string, codexHome?: string
 }
 
 /** The output a transcript file holds for one tool call id, whole (up to TOOL_OUTPUT_MAX). */
-export function transcriptToolOutput(source: StreamSource, path: string, ref: string, codexHome?: string): string | null {
+export function transcriptToolOutput(source: Exclude<StreamSource, "agy-transcript">, path: string, ref: string, codexHome?: string): string | null {
   if (!TOOL_REF.test(ref) && !(source === "copilot-transcript" && /^[A-Za-z0-9_:.-]{1,128}@[0-9a-z]+@[0-9a-z]+@[0-9a-f]{32}$/.test(ref))) return null;
   if (source === "codex-transcript") {
     let segments: ReturnType<typeof codexHistorySegments>;
@@ -2976,7 +2982,6 @@ export function transcriptToolOutput(source: StreamSource, path: string, ref: st
     return null;
   }
   if (source === "grok-transcript") return grokToolOutput(path, ref);
-  if (source === "agy-transcript") return agyToolOutput(path, ref);
   if (source === "muse-transcript") {
     const output = museToolOutput(path, ref);
     return output !== null && output.length > TOOL_OUTPUT_MAX ? `${output.slice(0, TOOL_OUTPUT_MAX)}\n… trimmed` : output;
