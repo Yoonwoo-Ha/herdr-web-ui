@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { HerdrError, herdrRpc, paneGet, paneRead, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, tabClose, tabCreate, workspaceClose, workspaceCreate, agentManifests, agentStart, ping } from "../herdr/client.ts";
 import { claudeInputDraft, viewportShowsLive } from "../claude-input.ts";
 import { paintedScreen, startHerdrCoreAdapter } from "./adapter.ts";
+import { SeenMarker } from "./seen-label.ts";
 import { encodeFrame, FRAME_CLOSE, FRAME_DATA, HcConnection, HcError, type HcTransport, makeFrameReader } from "./connection.ts";
 import type { HcTerminal } from "./snapshot.ts";
 
@@ -387,6 +388,79 @@ it("asks for a fresh snapshot when a report's kind, message or progress changes,
     expect(order).toEqual(["ack", "pane.created"]);
   });
 
+  it("tells a finish past herdr.seen as done on its turn, and a look from any client as idle", async () => {
+    let channel = 0;
+    const working = { app: "claude-code", state: "working" };
+    const { socket, cores } = await setup([terminal("t1"), terminal("t2")], {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: [terminal("t1", { status: working, turn: 1, labels: { "herdr.seen": "1" } }), terminal("t2", { status: working, turn: 4 })] };
+      },
+    });
+    const frames: EventFrame[] = [];
+    const started = Promise.withResolvers<void>();
+    const told = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.agent_status_changed", pane_id: "t1" }, { type: "pane.agent_status_changed", pane_id: "t2" }], {
+      onEvent: (frame) => { frames.push(frame); if (frames.length === 6) told.resolve(); },
+      onStarted: () => started.resolve(),
+    }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores[0]!;
+    const idle = { status: { app: "claude-code", state: "idle" } };
+    // a turn ends: the status first, then the turn that counts it
+    core.notify(channel, "event", { seq: 2, type: "status", terminal: "t1", data: idle });
+    core.notify(channel, "event", { seq: 3, type: "turn", terminal: "t1", data: { turn: 2, state: "idle" } });
+    // the Herdr app showed it to someone
+    core.notify(channel, "event", { seq: 4, type: "labels", terminal: "t1", data: { labels: { "herdr.seen": "2" } } });
+    // a label that changes nothing it shows tells nothing
+    core.notify(channel, "event", { seq: 5, type: "labels", terminal: "t1", data: { labels: { "herdr.seen": "2", "herdr.pinned": "1" } } });
+    // marked unread elsewhere
+    core.notify(channel, "event", { seq: 6, type: "labels", terminal: "t1", data: { labels: { "herdr.seen": "1" } } });
+    // no label: a turn that ended since the server first saw it is done, until someone looks
+    core.notify(channel, "event", { seq: 7, type: "status", terminal: "t2", data: idle });
+    core.notify(channel, "event", { seq: 8, type: "turn", terminal: "t2", data: { turn: 5, state: "idle" } });
+    core.notify(channel, "event", { seq: 9, type: "labels", terminal: "t2", data: { labels: { "herdr.seen": "5" } } });
+    core.notify(channel, "event", { seq: 10, type: "status", terminal: "t2", data: { status: working } });
+    await told.promise;
+    const shown = (pane: string, status: string) => ({ event: "pane.agent_status_changed", data: { pane_id: pane, agent_status: status, agent: "claude" } });
+    expect(frames).toEqual([shown("t1", "done"), shown("t1", "idle"), shown("t1", "done"), shown("t2", "done"), shown("t2", "idle"), shown("t2", "working")]);
+  });
+
+  it("marks a terminal seen at its turn, only to raise it or where it is missing, once per turn", async () => {
+    const terminals = [
+      terminal("t1", { turn: 3, labels: { "herdr.seen": "1" } }),
+      terminal("t2", { turn: 3, labels: { "herdr.seen": "3" } }),
+      terminal("t3", { turn: 2 }),
+      terminal("t4", { turn: 5, state: "finished" }),
+    ];
+    const written: unknown[] = [];
+    const { hc } = await setup(terminals, { "terminal.label": (params) => { written.push(params); return terminals[0]; } });
+    const marker = new SeenMarker(hc);
+    for (const address of ["t1", "t2", "t3", "t4"]) await marker.mark(address);
+    // another client marks t1 unread while it is still on screen here: this turn is not written again
+    terminals[0]!.labels = { "herdr.seen": "2" };
+    await marker.mark("t1");
+    // the next turn is
+    terminals[0]!.turn = 4;
+    await Promise.all([marker.mark("t1"), marker.mark("t1")]);
+    expect(written).toEqual([
+      { terminal: "t1", labels: { "herdr.seen": "3" } },
+      { terminal: "t3", labels: { "herdr.seen": "2" } },
+      { terminal: "t1", labels: { "herdr.seen": "4" } },
+    ]);
+  });
+
+  it("shows a turn ended since it first saw an unlabeled terminal as done in the snapshot, and a look elsewhere as idle", async () => {
+    const t1 = terminal("t1", { status: { app: "claude-code", state: "idle" }, turn: 2 });
+    const { socket } = await setup([t1]);
+    expect((await sessionSnapshot(socket)).panes[0]!.agent_status).toBe("idle");
+    t1.turn = 3;
+    expect((await sessionSnapshot(socket)).panes[0]!.agent_status).toBe("done");
+    t1.labels = { "herdr.seen": "3" };
+    expect((await sessionSnapshot(socket)).panes[0]!.agent_status).toBe("idle");
+  });
+
   it("fails what waited on a line to hc that ended, and opens a new one for the next call", async () => {
     const { socket, cores } = await setup([terminal("t1")]);
     await sessionSnapshot(socket);
@@ -466,6 +540,8 @@ describe("herdr-core adapter, new and closed terminals", () => {
     expect(labels["herdr.space"]).toMatch(/^ovis-/);
     expect(labels["herdr.tab"]).toMatch(/^ovis-/);
     expect(labels["ovis.workspace"]).toBe("web");
+    // nothing has finished in a terminal a client starts (herdr-app docs/labels.md)
+    expect(labels["herdr.seen"]).toBe("0");
     expect(created.workspace).toMatchObject({ workspace_id: labels["herdr.space"], label: "web" });
     expect(created.tab).toMatchObject({ tab_id: labels["herdr.tab"], workspace_id: labels["herdr.space"] });
     expect(created.root_pane).toMatchObject({ pane_id: "t2", terminal_id: "t2", tab_id: labels["herdr.tab"] });
@@ -479,7 +555,7 @@ describe("herdr-core adapter, new and closed terminals", () => {
     expect(tab.tab).toMatchObject({ workspace_id: "s1", label: "logs" });
     expect(tab.root_pane.pane_id).toBe("t2");
     await tabCreate({ workspaceId: "hc-other" }, socket);
-    expect(runs[1]!["labels"]).toEqual({});
+    expect(runs[1]!["labels"]).toEqual({ "herdr.seen": "0" });
     await expect(tabCreate({ workspaceId: "nope" }, socket)).rejects.toMatchObject({ code: "workspace_not_found" });
   });
 

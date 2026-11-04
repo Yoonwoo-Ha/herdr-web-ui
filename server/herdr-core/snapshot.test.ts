@@ -32,6 +32,29 @@ describe("buildSnapshot", () => {
     ]);
   });
 
+  it("shows an agent at rest as done while a turn ended past herdr.seen, and idle once looked at", () => {
+    const resting = (address: string, state: string, turn: number, labels?: Record<string, string>) =>
+      terminal(address, { status: { app: "claude-code", state }, turn, ...(labels ? { labels } : {}) });
+    const snapshot = buildSnapshot([
+      resting("t1", "idle", 3, { "herdr.seen": "2" }),
+      resting("t2", "idle", 3, { "herdr.seen": "3" }),
+      resting("t3", "done", 3, { "herdr.seen": "3" }),
+      resting("t4", "working", 3, { "herdr.seen": "1" }),
+      resting("t5", "blocked", 3, { "herdr.seen": "3" }),
+      // no label, or one no client wrote as a turn: the program's own word, as before
+      resting("t6", "idle", 3),
+      resting("t7", "done", 3, { "herdr.seen": "x" }),
+      // a shell that never reported stays without a status
+      terminal("t8", { turn: 0, labels: { "herdr.seen": "0" } }),
+    ], { spaces: [] }, "0.1.17");
+    expect(snapshot.panes.map((pane) => [pane.pane_id, pane.agent_status])).toEqual([
+      ["t1", "done"], ["t2", "idle"], ["t3", "idle"], ["t4", "working"], ["t5", "blocked"], ["t6", "idle"], ["t7", "done"], ["t8", "unknown"],
+    ]);
+    // without the label, a turn ended since the server first saw the terminal is done
+    const since = buildSnapshot([resting("t6", "idle", 3), resting("t9", "idle", 2)], { spaces: [] }, "0.1.17", () => 2);
+    expect(since.panes.map((pane) => [pane.pane_id, pane.agent_status])).toEqual([["t6", "done"], ["t9", "idle"]]);
+  });
+
   it("names an unnamed space and tab as the app labels their terminals", () => {
     const layout = { spaces: [{ id: "s1", name: "", tabs: [{ id: "s1t1", name: "", root: block("t1") }] }] };
     const snapshot = buildSnapshot([terminal("t1", { labels: { where: "tmp / 3" } })], layout, "0.1.14");
