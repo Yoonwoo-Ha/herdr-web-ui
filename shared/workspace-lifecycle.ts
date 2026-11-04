@@ -25,6 +25,8 @@ export interface CreateWorkspaceRequest {
    * closes before the message went, the message is held for an explicit Send now or Discard.
    */
   first_message_connection?: string;
+  /** environment variables for the new pane's shell (and an agent it starts); see POST /api/workspace/create in shared/protocol.ts */
+  env?: Record<string, string> | null;
 }
 
 /** POST /api/tab/move: the boundary is counted BEFORE removing the source tab. */
