@@ -7,7 +7,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { PreferenceStore } from "../../server/preferences.ts";
 import { type PreferencesChange, type SharedPreferences } from "../../shared/preferences.ts";
 import { DEFAULT_SETTINGS, SettingsProvider, sanitizeSettings, useSettings, type Settings } from "./settings.ts";
-import { setSidebarPins } from "./sidebarPins.ts";
+import { currentSidebarPins, setSidebarPins } from "./sidebarPins.ts";
 import { currentPaneMutes, setPaneMutes } from "./paneMutes.ts";
 import { usePreferencesSync } from "./preferencesSync.ts";
 import type { UserError } from "./userError.ts";
@@ -67,7 +67,7 @@ describe("preferences sync real send path", () => {
   }
 
   beforeEach(() => {
-    for (const key of ["window", "document", "navigator", "getComputedStyle", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    for (const key of ["window", "document", "navigator", "getComputedStyle", "IS_REACT_ACT_ENVIRONMENT", "localStorage"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     records = new Map();
     waits = new Map();
     syncEnabled = true;
@@ -75,8 +75,10 @@ describe("preferences sync real send path", () => {
     keepalives = [];
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en-US"] } });
+    const localStorage = { getItem: (key: string) => records.get(key) ?? null, setItem: (key: string, value: string) => records.set(key, value), removeItem: (key: string) => records.delete(key) };
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: localStorage });
     Object.defineProperty(globalThis, "window", { configurable: true, value: {
-      localStorage: { getItem: (key: string) => records.get(key) ?? null, setItem: (key: string, value: string) => records.set(key, value) },
+      localStorage,
       setTimeout: (fn: () => void, ms: number) => {
         const id = globalThis.setTimeout(() => { waits.delete(id); fn(); }, ms);
         waits.set(id, ms);
@@ -111,6 +113,8 @@ describe("preferences sync real send path", () => {
     answerListeners = new Set();
     // the mute list is page state (lib/paneMutes.ts): each test opens as a page that has heard none
     setPaneMutes(null);
+    // and the pins are this browser's own, with none it knew the server to hold
+    setSidebarPins([]);
     store.subscribe((doc) => {
       revisions.push(doc.revision);
       for (const client of clients) client.receive(oldServer ? dropNewKeys(doc) : doc);
@@ -153,8 +157,9 @@ describe("preferences sync real send path", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function open(raw: object = DEFAULT_SETTINGS): Promise<Client> {
-    records.clear();
+  /** a page of a browser opening; `again` keeps what an earlier page of the same browser stored */
+  async function open(raw: object = DEFAULT_SETTINGS, again = false): Promise<Client> {
+    if (!again) records.clear();
     records.set("ovis:settings", JSON.stringify(raw));
     const unmounted = () => { throw new Error("not mounted"); };
     const client: Client = { settings: sanitizeSettings(raw), rendered: { id: "amber", mode: "dark" }, update: unmounted, receive: unmounted, saveError: null, paused: false, retrying: false, retry: unmounted, resubscribed: unmounted, disconnected: unmounted, closed: unmounted, rerender: unmounted };
@@ -438,6 +443,68 @@ describe("preferences sync real send path", () => {
     // (the pins ride along with the first change, as they always have)
     expect(sent).toEqual([{ settings: { showThinking: true }, pins: [] }]);
     expect(currentPaneMutes()).toBeNull();
+  });
+
+  it("a page opened again keeps a pin another client removed meanwhile removed, instead of sending its own back", async () => {
+    // a server that already shares pins
+    store.set({ settings: {}, pins: [] });
+    await open();
+    await windows();
+    await act(async () => { setSidebarPins(["local:t1"]); });
+    await send();
+    expect(store.get().pins).toEqual(["local:t1"]);
+    // the page goes; meanwhile the pin is removed elsewhere (another browser, or the Herdr app)
+    await act(async () => { for (const renderer of renderers.splice(0)) renderer.unmount(); });
+    clients.length = 0;
+    store.set({ settings: {}, pins: [] });
+    const before = sent.length;
+    // the same browser opens again, its own copy still holding the old pin
+    await open(DEFAULT_SETTINGS, true);
+    await windows(3);
+    expect(store.get().pins).toEqual([]);
+    expect(currentSidebarPins()).toEqual([]);
+    expect(sent.slice(before)).toEqual([]);
+  });
+
+  it("a page opened again on a server that holds no pins any more shares its own with its next change", async () => {
+    store.set({ settings: {}, pins: [] });
+    await open();
+    await windows();
+    await act(async () => { setSidebarPins(["local:t1"]); });
+    await send();
+    await act(async () => { for (const renderer of renderers.splice(0)) renderer.unmount(); });
+    clients.length = 0;
+    // the server starts over with a fresh state folder
+    rmSync(dir, { recursive: true, force: true });
+    dir = mkdtempSync(join(tmpdir(), "herdr-sync-hook-"));
+    store = new PreferenceStore(dir);
+    store.subscribe((doc) => { for (const client of clients) client.receive(doc); });
+    const client = await open(DEFAULT_SETTINGS, true);
+    await windows();
+    await act(async () => { client.update({ darkTheme: "tokyo-night" }); });
+    await send();
+    expect(store.get().pins).toEqual(["local:t1"]);
+  });
+
+  it("a page opened again on a server started over that already holds other pins keeps its own too", async () => {
+    store.set({ settings: {}, pins: [] });
+    await open();
+    await windows();
+    await act(async () => { setSidebarPins(["local:t1"]); });
+    await send();
+    await act(async () => { for (const renderer of renderers.splice(0)) renderer.unmount(); });
+    clients.length = 0;
+    // the server starts over with a fresh state folder, and gets a pin from elsewhere first
+    rmSync(dir, { recursive: true, force: true });
+    dir = mkdtempSync(join(tmpdir(), "herdr-sync-hook-"));
+    store = new PreferenceStore(dir);
+    store.set({ settings: {}, pins: ["local:t2"] });
+    store.subscribe((doc) => { for (const client of clients) client.receive(doc); });
+    const client = await open(DEFAULT_SETTINGS, true);
+    await windows();
+    await act(async () => { client.update({ darkTheme: "tokyo-night" }); });
+    await send();
+    expect(store.get().pins).toEqual(["local:t2", "local:t1"]);
   });
 
   it("mute survives restart and another browser", async () => {

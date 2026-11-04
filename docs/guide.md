@@ -814,6 +814,12 @@ macOS). See [INSTALL.md](../INSTALL.md#2-choose-the-install-method).
   words after its name, and the row's and the state's tooltips give its message in its own words;
   a progress it reports (0 to 100) while it works or waits is a percent after the name. Nothing
   is shown that it did not report.
+- **Pinned agents:** an agent pinned in Ovis is pinned in the Herdr app, and one pinned or
+  unpinned in the app is pinned or unpinned in Ovis, through herdr-core's `herdr.pinned`
+  terminal label; a pin made in the app joins the end of the pinned list. When the two first
+  meet, a pin on either side is kept; after that, a pin or unpin made on one side while Ovis was
+  stopped or herdr-core away is kept too. Pinned workspaces stay Ovis's own. A pin made in the app
+  joins Ovis only while its list has room (500 pins); until then it stays the app's alone.
 - **Read finishes:** Ovis and the Herdr app agree on which finishes someone has looked at,
   through herdr-core's `herdr.seen` terminal label. A finish you read in Ovis is no longer
   **done** in the Herdr app, and one you looked at in the app is no longer **done** in Ovis; one

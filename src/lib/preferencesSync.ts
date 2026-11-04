@@ -21,7 +21,7 @@ import { ApiError, fetchPreferences, savePreferences } from "./api.ts";
 import { DEFAULT_THEME } from "./themes.ts";
 import { sanitizeSettings, sharedSettings, useSettings, type Settings } from "./settings.ts";
 import { currentPaneMutes, setPaneMutes, subscribePaneMutes } from "./paneMutes.ts";
-import { currentSidebarPins, setSidebarPins, subscribeSidebarPins } from "./sidebarPins.ts";
+import { currentSidebarPins, loadSharedPins, saveSharedPins, setSidebarPins, subscribeSidebarPins } from "./sidebarPins.ts";
 import { attachmentTabLabel, currentTabLabels, setTabLabels, subscribeTabLabels } from "./tabLabels.ts";
 import { userErrorMessage, type UserError } from "./userError.ts";
 
@@ -228,7 +228,8 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
   const latest = useRef<Local>({ settings, pins, muted, tabLabels });
   latest.current = { settings, pins, muted, tabLabels };
   // what this browser last knew the server to hold; until a document arrives, what it holds itself
-  const base = useRef<Baseline>({ settings: sharedSettings(settings), pins: null, muted: null, tabLabels: {} });
+  const stored = useRef(loadSharedPins());
+  const base = useRef<Baseline>({ settings: sharedSettings(settings), pins: stored.current?.pins ?? null, muted: null, tabLabels: {} });
   const revision = useRef(0);
   // a document has arrived (the GET, or the event stream's opening): sending begins then
   const loadedRef = useRef(false);
@@ -277,8 +278,14 @@ export function usePreferencesSync(enabled: boolean): PreferencesSync {
   const absorb = useCallback((remote: SharedPreferences) => {
     if (off.current || (loadedRef.current && remote.revision <= revision.current)) return;
     revision.current = Math.max(revision.current, remote.revision);
+    // the page's first document from a server whose revisions went back started over (a fresh state
+    // folder): the pins this browser kept knowing are not its, and its own join the server's as on a first share
+    if (!loadedRef.current && stored.current !== null && remote.revision < stored.current.revision) base.current = { ...base.current, pins: null };
     const taken = takePreferences(base.current, latest.current, remote, inFlight.current, readOnly.current, refused.current);
-    base.current = taken.base;
+    // the page's first document without pins comes from a server that holds none (a fresh state
+    // folder): the pins this browser kept knowing are not its, and its own go with its next change
+    base.current = !loadedRef.current && remote.pins === undefined ? { ...taken.base, pins: null } : taken.base;
+    saveSharedPins(base.current.pins === null ? null : { pins: [...base.current.pins], revision: remote.revision });
     // a second document in the same tick compares against what this one set, not the last render
     latest.current = { settings: sanitizeSettings({ ...latest.current.settings, ...taken.patch }), pins: taken.pins ?? latest.current.pins, muted: taken.muted === undefined ? latest.current.muted : taken.muted, tabLabels: taken.tabLabels ?? latest.current.tabLabels };
     if (Object.keys(taken.patch).length > 0) update(taken.patch);
