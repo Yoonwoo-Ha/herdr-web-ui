@@ -95,7 +95,7 @@ import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { t } from "./i18n.ts";
 import { chatReadDeadlineMs, withChatReadDeadline } from "./chatReadDeadline.ts";
 import { movingHerdrFocus } from "./followFocus.ts";
-import type { UsageLoginAccounts, UsageLoginCode, UsageLoginFollowed, UsageLoginPrompt, UsageLoginProvider, UsageLoginRequest, UsageLoginStarted } from "../../shared/usage-login.ts";
+import type { UsageAccountRemoval, UsageLoginAccounts, UsageLoginCode, UsageLoginFollowed, UsageLoginPrompt, UsageLoginProvider, UsageLoginRequest, UsageLoginStarted } from "../../shared/usage-login.ts";
 
 export function fetchUsageLoginProviders(signal: AbortSignal): Promise<{ providers: readonly UsageLoginProvider[] }> {
   return getJson("/api/usage/login", { signal });
@@ -149,6 +149,16 @@ export function fetchRemoteAccess(): Promise<RemoteAccess> {
 /** The sidebar's plan meters; `refresh` asks the providers again instead of the server's recent answer. */
 export function fetchUsage(refresh = false): Promise<UsageReport> {
   return getJson<UsageReport>(refresh ? "/api/usage?refresh=1" : "/api/usage");
+}
+
+/** Removes the account from Ovis without changing the CLI's sign-in. */
+export async function removeUsageAccount(account: string): Promise<void> {
+  await sendJson("/api/usage/accounts", "DELETE", { account } satisfies UsageAccountRemoval);
+}
+
+/** Lists a removed account in Ovis again. */
+export async function restoreUsageAccount(account: string): Promise<void> {
+  await sendJson("/api/usage/accounts", "POST", { account } satisfies UsageAccountRemoval);
 }
 
 /** Settings → Agents' plan limits: whether Claude's limits are read from its status line on the server's PC. */

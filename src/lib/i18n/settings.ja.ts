@@ -150,7 +150,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Drag to reorder": "ドラッグして並べ替え",
   "Held modifier": "固定する修飾キー",
   "Saved combination": "保存した組み合わせ",
-  "Remove {name}": "{name} を削除",
   "No keys selected.": "キーが選択されていません。",
   "Add key": "キーを追加",
   "All keys added": "すべてのキーを追加済み",

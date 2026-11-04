@@ -3276,6 +3276,21 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   sign-in status with an existing status-token dot, without badge pills. Within-provider reorder
   and visibility controls stay in fixed columns; hidden rows remain listed but fade. Empty lists
   show one dim sentence.
+- Local account rows also offer **Remove**, with the existing confirmation dialog (Cancel focused).
+  This keeps the Codex-app-inspired connected-item list above: account identity and status lead,
+  sign-in is the primary action, and removal stays beside the account rather than in another settings
+  page. The confirmation distinguishes removing an Ovis list entry from signing the CLI out.
+  Removed keys live in the server's own `usage-removed.json` (`{ "accounts": ["provider:key"] }`),
+  apart from credentials and preferences so an older version cannot rewrite them away. The file
+  is additive state: older versions ignore it; no credential files or keychain entries are moved
+  or deleted. A removed account this PC still lists waits under **Removed from Ovis** at the foot of
+  its provider's accounts, each with **Restore** (`POST /api/usage/accounts`), so one tap never
+  loses an account for good and every provider has a way back, not only the two with a browser
+  sign-in. This follows the Codex app's connected-item list, where a disconnected item stays listed
+  with its way back beside it. A successful browser sign-in also restores only its own account. A
+  `usage-removed.json` that is not the list is set aside as `.corrupt-<time>` and every account is
+  listed again, rather than failing the usage report. The eye still only hides a meter, and reorder
+  still uses the existing shared preferences and fixed arrow columns.
 - An expired Claude or Codex sign-in on this PC gets one **Sign in again** button: under the row's status in
   Settings, and under **Sign-in expired.** in the usage popover (whose note then drops "Open X to
   renew it"). It runs Add account's terminal-tab sign-in, but in that account's own credential home

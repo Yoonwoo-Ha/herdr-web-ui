@@ -28,6 +28,8 @@ import { RELAY_ZH } from "./i18n/relay.zh.ts";
  * Placeholders in braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "Remove": "移除",
+  "Remove {name}": "移除 {name}",
   "Save": "保存",
   "Goal": "目标",
   "Waiting for your answer": "等待你的回答",

@@ -150,7 +150,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Drag to reorder": "拖动以调整顺序",
   "Held modifier": "保持按下的修饰键",
   "Saved combination": "已保存的组合键",
-  "Remove {name}": "移除 {name}",
   "No keys selected.": "未选择任何按键。",
   "Add key": "添加按键",
   "All keys added": "所有按键均已添加",

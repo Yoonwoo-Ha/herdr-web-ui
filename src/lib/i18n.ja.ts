@@ -26,6 +26,8 @@ import { RELAY_JA } from "./i18n/relay.ja.ts";
  * in English. Placeholders in braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "Remove": "削除",
+  "Remove {name}": "{name} を削除",
   "Save": "保存",
   "Goal": "目標",
   "Waiting for your answer": "回答待ち",

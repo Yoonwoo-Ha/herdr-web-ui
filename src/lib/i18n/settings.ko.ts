@@ -150,7 +150,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Drag to reorder": "드래그하여 순서 변경",
   "Held modifier": "고정 보조 키",
   "Saved combination": "저장된 조합",
-  "Remove {name}": "{name} 제거",
   "No keys selected.": "선택한 키가 없습니다.",
   "Add key": "키 추가",
   "All keys added": "모든 키가 추가됨",
