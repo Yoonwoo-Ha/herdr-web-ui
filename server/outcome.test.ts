@@ -157,6 +157,14 @@ describe("evidence-only command outcomes", () => {
     expect(outcome(sent, { now: at + 2_000, transcript: started }).state).toBe("accepted");
     expect(outcome(sent, { now: at + 41_000, transcript: ended })).toMatchObject({ state: "result-observed", evidence: [{ kind: "transcript", at: new Date(at + 40_000).toISOString() }] });
   });
+  it("does not call a queued Claude /compact done on an automatic compaction", () => {
+    const line = (entry: object, ms: number) => JSON.stringify({ ...entry, timestamp: new Date(at + ms).toISOString() });
+    const boundary = (trigger: string) => line({ type: "system", subtype: "compact_boundary", content: "Conversation compacted", compactMetadata: { trigger, preTokens: 160_000 } }, 30_000);
+    const summary = line({ type: "user", isCompactSummary: true, message: { role: "user", content: "This session is being continued from a previous conversation." } }, 30_000);
+    const sent = send("/compact", "claude", [row("compact")]);
+    expect(outcome(sent, { now: at + 31_000, transcript: [boundary("auto"), summary].join("\n") }).state).toBe("accepted");
+    expect(outcome(sent, { now: at + 31_000, transcript: [boundary("manual"), summary].join("\n") }).state).toBe("result-observed");
+  });
 });
 
 it("serves bounded outcomes, strips observer previews, and records only a successful card commit", async () => {
