@@ -87,7 +87,19 @@ try {
     const typedOf = (pane: string) => page.evaluate((pane) => window.earlyKeys.sent
       .filter((sent) => (sent.type === "input" || sent.type === "keys") && sent.pane_id === pane)
       .map((sent) => sent.type === "input" ? sent.text! : sent.keys!.join(" ")), pane);
-    await frame.locator(".xterm-helper-textarea").focus();
+    const keyboard = frame.locator(".xterm-helper-textarea");
+    // keys whose bytes match a reply xterm sends by itself (Shift+F3 a cursor-position report, Ctrl+F3 too,
+    // Alt+] the start of an OSC colour, Alt+Shift+P of a DECRQSS reply) were typed all the same: each is told
+    const notReady = frame.getByText("Not sent: the terminal is not ready for keys.");
+    for (const key of ["Shift+F3", "Control+F3", "Alt+BracketRight", "Alt+Shift+KeyP"]) {
+      await keyboard.focus(); // the Dismiss before took the focus
+      await page.keyboard.press(key);
+      await notReady.first().waitFor({ state: "attached", timeout: 10_000 })
+        .catch(async () => assert.fail(`${key} typed before input-ready was dropped without a word: ${JSON.stringify(await typedOf(pane))}`));
+      await frame.getByRole("button", { name: "Dismiss" }).first().click();
+      await notReady.first().waitFor({ state: "detached", timeout: 10_000 });
+    }
+    await keyboard.focus();
     await page.keyboard.press("x");
     await page.keyboard.press("y");
     await page.keyboard.press("Escape");

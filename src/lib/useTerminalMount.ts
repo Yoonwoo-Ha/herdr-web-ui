@@ -1531,10 +1531,10 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         setDraft((prev) => applyToDraft(prev, typed.input));
         if (!draftIsEmpty(applyToDraft(EMPTY_DRAFT, typed.input))) draftHeldForRef.current = current;
         // A key the draft cannot hold (Escape, Enter, an arrow, typed right as the terminal opens, say) is told, never
-        // lost in silence. Not Backspace, which edits the draft, nor what xterm sends by itself, which no one typed: focus
-        // and mouse reports, and its answers to the program's queries (device attributes and status, cursor position,
-        // modes, window reports, DECRQSS, colors).
-        else if (!/^([\x7f\b]+|\x1b(P|\]|\[([IO]|<|M|[?>=]?[\d;]*\$?[cnRyt]))[\s\S]*)$/.test(typed.input)) {
+        // lost in silence. Not Backspace, which edits the draft, nor a mouse report, nor what xterm sends by itself, which
+        // no one typed (a focus report, its answers to the program's queries). Told apart at the source, not by the bytes:
+        // Shift+F3 sends what a cursor-position report does, Alt+] the start of a colour report.
+        else if (typed.automatic !== true && !/^([\x7f\b]+|\x1b\[(<|M)[\s\S]*)$/.test(typed.input)) {
           setInputError(tRef.current("Not sent: the terminal is not ready for keys."));
         }
       };
