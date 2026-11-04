@@ -2986,6 +2986,49 @@ export function transcriptToolOutput(source: StreamSource, path: string, ref: st
     return output !== null && output.length > TOOL_OUTPUT_MAX ? `${output.slice(0, TOOL_OUTPUT_MAX)}\n… trimmed` : output;
   }
   if (source === "pi-transcript" || source === "cmd-transcript") return piToolOutput(path, ref);
+  if (source === "omo-transcript") {
+    try {
+      const stream = transcriptStream(source, path, statSync(path), codexHome ?? defaultCodexHome());
+      const from = windowStart(stream.length);
+      const ranges = [...finish(linesWithSteps(stream, ref, from, stream.length)), ...finish(linesWithSteps(stream, "context_clear", from, stream.length))];
+      const unique = new Map(ranges.map((range) => [range[0], range]));
+      let output: string | null = null;
+      // A window may start inside a record; never interpret that partial record.
+      const partialLead = from > 0 && readStream(stream, from - 1, from)[0] !== 0x0a;
+      for (const [start, end] of [...unique.values()].sort((a, b) => a[0] - b[0])) {
+        if (partialLead && start === from) continue;
+        if (end - start > TOOL_OUTPUT_MAX) {
+          const shape = finish(recordShapeSteps(stream, [start, end]));
+          if (shape === UNREAD) return null;
+          if (shape === NOT_A_RECORD) continue;
+          if (isContextClear(shape.entry, source)) output = null;
+          if (output !== null) continue;
+          const message = piMessage(shape.entry);
+          if (!message) continue;
+          const blocks = message.role === "toolResult" ? [message] : Array.isArray(message.content) ? message.content.filter((item) => item && typeof item === "object" && item.type === "toolResult") : [];
+          const block = blocks.find((item) => item && typeof item === "object" && (item as { toolCallId?: unknown }).toolCallId === ref) as { content?: unknown } | undefined;
+          if (!block) continue;
+          let result = "";
+          let truncated = false;
+          const text = (value: string): void => {
+            if (truncated || result.length > TOOL_OUTPUT_MAX) return;
+            truncated = !finish(scanStringSteps(stream, shape, value, TOOL_OUTPUT_MAX + 1 + IMAGE_SEARCH_WINDOW - result.length,
+              (piece) => { result += piece.slice(0, TOOL_OUTPUT_MAX + 1 - result.length); }));
+          };
+          const content = block.content;
+          if (typeof content === "string") text(content);
+          else if (Array.isArray(content)) for (const item of content) if (item && typeof item === "object" && typeof item.text === "string") text(item.text);
+          output = result;
+          if (truncated || output.length > TOOL_OUTPUT_MAX) output = `${output.slice(0, TOOL_OUTPUT_MAX)}\n… trimmed`;
+          continue;
+        }
+        const line = readStream(stream, start, end).toString("utf8");
+        try { if (isContextClear(JSON.parse(line), source)) output = null; } catch { continue; }
+        if (output === null) output = outputInText(source, line, ref);
+      }
+      return output;
+    } catch { return null; }
+  }
   if (source === "copilot-transcript") {
     let fd: number;
     try { fd = openCopilotFile(path); } catch { return null; }

@@ -217,6 +217,14 @@ describe("Devin pane identity", () => {
     expect(() => devinSessionForPane(pane, [pane], ["/bin/devin"])).toThrow(ConversationUnavailable);
     expect(() => devinSessionForPane(shell, [shell], ["/bin/devin", "--resume", "stale"])).toThrow(ConversationUnavailable);
   });
+  it("names a fresh or continued session with no lock and no reported id as unverified, not a missing id", () => {
+    for (const argv of [["/bin/devin"], ["/bin/devin", "--continue"]]) {
+      expect(() => devinSessionForPane(pane, [pane, peer], argv)).toThrow(expect.objectContaining({
+        message: "no_session_id", diagnostic: "devin_current_session_unverified",
+      }));
+    }
+    expect(() => devinSessionForPane(pane, [pane], ["/bin/devin", "--resume"])).toThrow(expect.objectContaining({ diagnostic: undefined }));
+  });
   it("accepts only an exact reported or resumed identity and does not consider shell peers", () => {
     expect(devinSessionForPane(reported, [reported, shell], ["/bin/devin"])).toBe("one");
     expect(devinSessionForPane(pane, [pane, shell], ["/bin/devin", "--resume=two"])).toBe("two");
@@ -2514,9 +2522,86 @@ describe("a cut tool output and the whole of it", () => {
       const omp = join(dir, "omp.jsonl");
       writeFileSync(omp, JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "call_1", content: [{ type: "text", text: long }] } }));
       expect(transcriptToolOutput("omp-transcript", omp, "call_1")).toBe(long);
+      expect(transcriptToolOutput("omo-transcript", omp, "call_1")).toBe(long);
+      appendFileSync(omp, `\n${JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "call_2", content: [{ type: "text", text: "x".repeat(17 * 1024 * 1024) }] } })}\n`);
+      expect(transcriptToolOutput("omo-transcript", omp, "call_2")).toBeNull();
       const codex = join(dir, "codex.jsonl");
       writeFileSync(codex, JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "call_x", output: long } }));
       expect(transcriptToolOutput("codex-transcript", codex, "call_x")).toBe(long);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("returns the exact OMO output budget across decoded chunks and content blocks", () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-omo-output-"));
+    const path = join(dir, "session.jsonl");
+    const record = (id: string, content: { type: string; text: string }[]) =>
+      JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: id, content } }) + "\n";
+    try {
+      writeFileSync(path, record("single", [{ type: "text", text: "x".repeat(3_000_000) }]));
+      expect(transcriptToolOutput("omo-transcript", path, "single")).toBe(`${"x".repeat(2_000_000)}\n… trimmed`);
+      const first = "한\\\n".repeat(300_000);
+      const second = "z".repeat(1_500_000);
+      const whole = first + second;
+      writeFileSync(path, record("large", [{ type: "text", text: first }, { type: "text", text: second }]));
+      expect(transcriptToolOutput("omo-transcript", path, "large")).toBe(`${whole.slice(0, 2_000_000)}\n… trimmed`);
+      writeFileSync(path, record("exact", [{ type: "text", text: "x".repeat(2_000_000) }]));
+      expect(transcriptToolOutput("omo-transcript", path, "exact")).toBe("x".repeat(2_000_000));
+      writeFileSync(path, record("over", [{ type: "text", text: "x".repeat(2_000_001) }]));
+      expect(transcriptToolOutput("omo-transcript", path, "over")).toBe(`${"x".repeat(2_000_000)}\n… trimmed`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("ignores records outside the OMO tail and resets output on context clear", () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-omo-tail-"));
+    const path = join(dir, "session.jsonl");
+    const record = (id: string, text: string) => JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: id, content: [{ type: "text", text }] } }) + "\n";
+    try {
+      writeFileSync(path, record("old", "old output") + record("huge", "x".repeat(17 * 1024 * 1024)) + record("recent", "recent output"));
+      expect(transcriptToolOutput("omo-transcript", path, "old")).toBeNull();
+      expect(transcriptToolOutput("omo-transcript", path, "huge")).toBeNull();
+      expect(transcriptToolOutput("omo-transcript", path, "recent")).toBe("recent output");
+      appendFileSync(path, JSON.stringify({ type: "custom", customType: "context_clear" }) + "\n");
+      expect(transcriptToolOutput("omo-transcript", path, "recent")).toBeNull();
+      appendFileSync(path, record("recent", "after clear"));
+      expect(transcriptToolOutput("omo-transcript", path, "recent")).toBe("after clear");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("reads a whole OMO record that starts exactly where the tail window does", () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-omo-edge-"));
+    const path = join(dir, "session.jsonl");
+    const record = JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: "edge", content: [{ type: "text", text: "at the edge" }] } }) + "\n";
+    try {
+      // the window starts at the first 64 KiB boundary at least 16 MiB before the end; a newline ends the byte before it
+      writeFileSync(path, "x".repeat(64 * 1024 - 1) + "\n" + record);
+      fs.truncateSync(path, TRANSCRIPT_WINDOW_BYTES + 64 * 1024 - 1);
+      appendFileSync(path, "\n");
+      expect(transcriptToolOutput("omo-transcript", path, "edge")).toBe("at the edge");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("bounds total OMO output reads to the transcript tail", () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-omo-io-"));
+    const path = join(dir, "session.jsonl");
+    const record = (id: string, text: string) => JSON.stringify({ type: "message", message: { role: "toolResult", toolCallId: id, content: [{ type: "text", text }] } }) + "\n";
+    try {
+      writeFileSync(path, record("old", "outside"));
+      fs.truncateSync(path, 128 * 1024 * 1024);
+      appendFileSync(path, "\n" + record("recent", "inside"));
+      const original = fs.readSync;
+      let bytes = 0;
+      const reads = spyOn(fs, "readSync").mockImplementation(((...args: Parameters<typeof fs.readSync>) => {
+        const got = original(...args); bytes += got; return got;
+      }) as typeof fs.readSync);
+      try {
+        expect(transcriptToolOutput("omo-transcript", path, "recent")).toBe("inside");
+        expect(bytes).toBeGreaterThan(0);
+        expect(bytes).toBeLessThanOrEqual(2 * TRANSCRIPT_WINDOW_BYTES + 1024);
+        bytes = 0;
+        expect(transcriptToolOutput("omo-transcript", path, "old")).toBeNull();
+        expect(bytes).toBeGreaterThan(0);
+        expect(bytes).toBeLessThanOrEqual(2 * TRANSCRIPT_WINDOW_BYTES + 1024);
+      } finally { reads.mockRestore(); }
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
