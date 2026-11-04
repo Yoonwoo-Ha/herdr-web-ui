@@ -1329,10 +1329,13 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
   const owner = maybe?.length === 1 && (footerOwners === null || footerOwners.has(maybe[0]!.path)) ? maybe[0]! : null;
   const ownerLast = owner === null ? null : lastFinishedTurn(owner.text);
   // The footed answer, the same text or read through its rendering (markup, a table, a link Codex shows
-  // relative to the folder), counts only while no other candidate was asked the prompt shown, in any turn:
+  // relative to the folder), counts only while no other candidate's latest turn was asked the prompt shown:
   // another conversation may have recorded the answer another way that Codex renders as this text, and its
   // turn may be unfinished or its finish cut from the read and still be the one on screen. Telling such
-  // renderings apart is not attempted: a same-prompt screen is left to the guarded matches below.
+  // renderings apart is not attempted: a same-prompt screen is left to the guarded matches below. A prompt
+  // asked only before its latest turn does not count once that turn is read finished (its own prompt recorded
+  // last): that conversation's screen shows the later turn. While it may still be running, or its finish
+  // has no turn of its own, the screen may have been read before it began, and every prompt counts.
   // `unread`: a read that shows no prompt at all counts as asked too, as it may have cut the one asked
   const askedElsewhere = (unread: boolean) => owner !== null && candidates.some((candidate, index) => {
     if (candidate.path === owner.path) return false;
@@ -1350,6 +1353,7 @@ export function matchCodexTranscript(screen: string, candidates: { path: string;
       return found === null || displays.some((display) => display.includes(found.anchor)) || completedAnswerMatches(answer, footed!.text);
     });
     // a prompt sent as several messages reads as its parts' run
+    if (last !== null && prompts.at(-1) === last.asked) return users.length > 0 && users.join("").endsWith(shownPrompt);
     return prompts.some((asked) => alnum(asked).endsWith(shownPrompt)) || users.some((_, at) => users.slice(0, at + 1).join("").endsWith(shownPrompt));
   });
   // the same text binds while no other candidate records the prompt shown; a rendering only while no other's read may have cut it either
