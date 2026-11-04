@@ -29,6 +29,7 @@ import { type HerdrCoreFacts, LOCAL_MACHINE } from "../shared/machines.ts";
 import { type AlertTiming, defaultStateDir } from "./push.ts";
 import { mergeSiblingState, siblingStateDir } from "./state-merge.ts";
 import { moveLegacyStateDir } from "./update-state.ts";
+import { sweepSshDirs } from "./ssh.ts";
 import { OpenCodePromptState } from "./prompt.ts";
 import { connectUpdater, type UpdateService } from "./update-api.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
@@ -437,6 +438,8 @@ export function createServer(
 
 if (import.meta.main) {
   moveLegacyStateDir();
+  // SSH connection folders an earlier server left in /tmp; here, not in createServer, so tests never touch them
+  void sweepSshDirs();
   // resolved once, for the same reason as in createServer
   const stateDir = defaultStateDir();
   // herdr-core's adapter is HERDR_SOCKET: it listens before anything below asks herdr
