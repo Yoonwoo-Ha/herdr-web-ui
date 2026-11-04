@@ -314,7 +314,7 @@ function createAnswers(hc: HcConnection): (request: Request) => Promise<Reply> {
     let paint = "";
     const { promise, resolve } = Promise.withResolvers<string | null>();
     const timer = setTimeout(() => resolve(null), PAINT_MS);
-    const { result, channel } = await hc.open<{ channel: number; terminal?: HcTerminal }>("terminal.attach", { terminal: paneId, cols: record.cols, rows: record.rows, history: record.rows, observe: true }, {
+    const { result, channel } = await hc.open("terminal.attach", { terminal: paneId, cols: record.cols, rows: record.rows, history: record.rows, observe: true }, {
       onData: (payload) => {
         paint += decoder.decode(payload, { stream: true });
         if (paint.includes(PAINT_END)) resolve(paint);
@@ -333,7 +333,7 @@ function createAnswers(hc: HcConnection): (request: Request) => Promise<Reply> {
       clearTimeout(timer);
       await channel.close();
     }
-    return screen ?? (await hc.call<{ text: string }>("terminal.read", { terminal: paneId, lines: 0 })).text;
+    return screen ?? (await hc.call("terminal.read", { terminal: paneId, lines: 0 })).text;
   };
 
   /** Input to one pane in the order it was asked for: each attach and its bytes finish before the next. */
