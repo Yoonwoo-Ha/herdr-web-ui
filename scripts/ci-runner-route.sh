@@ -2,9 +2,10 @@
 # Picks the runner for ci.yml's Linux jobs and prints `linux=<json>` for $GITHUB_OUTPUT.
 # A fork pull request always gets the GitHub-hosted image: its code must never reach the
 # self-hosted runner. Otherwise the workflow_dispatch input wins over the repository variable
-# CI_SELF_HOSTED_LABELS. With neither, a push or a same-repository pull request goes to the
-# maintainer PC's runners (scripts/self-hosted-runner/, label self-hosted-ovis) and any other event
-# stays on ubuntu-24.04. The variable value "ubuntu-24.04" (a JSON string, which pages.yml and
+# CI_SELF_HOSTED_LABELS. With neither, a push goes to the maintainer PC's runners
+# (scripts/self-hosted-runner/, label self-hosted-ovis) and any other event, a same-repository pull
+# request included, stays on ubuntu-24.04: pull requests then do not share that PC's CPU with the
+# agents that open them, and setting the variable to labels sends them back to the self-hosted ones. The variable value "ubuntu-24.04" (a JSON string, which pages.yml and
 # release.yml also accept) keeps every job hosted while that PC is offline. A push to main takes the
 # repository variable CI_MAIN_SELF_HOSTED_LABELS over CI_SELF_HOSTED_LABELS when it is set, so main's
 # runs go to runners pull requests never use (run.sh --reserved); "ubuntu-24.04" there keeps only
@@ -47,7 +48,7 @@ elif [[ "$event" == push && "${REF:-}" == refs/heads/main && -n "${main_configur
   fi
 elif [[ -n "${configured//[[:space:]]/}" ]]; then
   choose_labels "repository variable CI_SELF_HOSTED_LABELS" "$configured"
-elif [[ "$event" == push || "$event" == pull_request ]]; then
+elif [[ "$event" == push ]]; then
   choose_labels "default for $event (CI_SELF_HOSTED_LABELS unset)" "$default_labels"
 else
   echo "Runner: ubuntu-24.04 ($event, CI_SELF_HOSTED_LABELS unset)" >&2

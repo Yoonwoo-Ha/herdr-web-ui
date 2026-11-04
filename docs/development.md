@@ -915,8 +915,9 @@ The [CI workflow](../.github/workflows/ci.yml) runs on every PR and `main` push:
     process, server and fixture panes. Those helpers stay sequential within their own fixture.
     The context suite prints each helper's elapsed time and stops its owned daemon on exit.
     `bun run test:ui` also runs both suites.
-  - **Browser regression (other scripts)** runs every other browser script, four at a time
-    on hosted CI and six at a time on self-hosted CI.
+  - **Browser regression (other scripts)** runs every other browser script: six at a time in
+    one job on self-hosted CI, and on hosted CI split over four jobs (`BROWSER_SHARD=k/4`,
+    balanced by `scripts/ci-browser-timings.json`) that run three at a time each.
 
   Both browser jobs run `scripts/ci-browser-parallel.ts`, which takes its script list from
   `scripts/ci-browser.sh` (`BROWSER_SCRIPTS` picks from it, `BROWSER_EXCLUDE` leaves scripts out,
@@ -996,9 +997,11 @@ pages or credentials.
 
 ### Self-hosted runner
 
-`ci.yml`'s Linux jobs of a push or a same-repository pull request run on the maintainer PC's runners
-(labels `["self-hosted","self-hosted-ovis"]`) by default; other events stay on `ubuntu-24.04`. The repository variable `CI_SELF_HOSTED_LABELS`
-overrides that with another JSON array of runner labels that contains `"self-hosted"`, or with the
+`ci.yml`'s Linux jobs of a push run on the maintainer PC's runners (labels
+`["self-hosted","self-hosted-ovis"]`) by default; other events, pull requests included, stay on
+`ubuntu-24.04`, so a pull request's timing-sensitive browser checks do not share that PC's CPU with
+the agents working there. The repository variable `CI_SELF_HOSTED_LABELS` overrides that (labels
+send same-repository pull requests back to the self-hosted runners) with another JSON array of runner labels that contains `"self-hosted"`, or with the
 JSON string `"ubuntu-24.04"` to keep every job GitHub-hosted while that PC is offline. `pages.yml`
 and `release.yml` stay on `ubuntu-24.04` unless the variable holds labels. The variable routes:
 

@@ -26,13 +26,12 @@ function routed(env: Record<string, string>): unknown {
 }
 
 describe.skipIf(process.platform === "win32")("CI runner route", () => {
-  it("routes to the maintainer PC's runners without the variable", () => {
-    expect(routed({ EVENT_NAME: "pull_request", HEAD_REPO: repo })).toEqual(["self-hosted", "self-hosted-ovis"]);
+  it("routes a push to the maintainer PC's runners without the variable", () => {
     expect(routed({ EVENT_NAME: "push" })).toEqual(["self-hosted", "self-hosted-ovis"]);
   });
 
-  it("keeps any other event hosted without the variable", () => {
-    for (const event of ["workflow_dispatch", "workflow_run", "merge_group", "schedule", ""]) {
+  it("keeps any other event, a same-repository pull request included, hosted without the variable", () => {
+    for (const event of ["pull_request", "workflow_dispatch", "workflow_run", "merge_group", "schedule", ""]) {
       expect(routed({ EVENT_NAME: event, HEAD_REPO: repo })).toBe("ubuntu-24.04");
     }
   });
@@ -89,7 +88,7 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
 
   it("keeps every run but a push to main off main's runners", () => {
     const main = '["self-hosted","self-hosted-ovis-main"]';
-    expect(routed({ EVENT_NAME: "pull_request", HEAD_REPO: repo, REF: "refs/pull/1/merge", MAIN_LABELS: main })).toEqual(["self-hosted", "self-hosted-ovis"]);
+    expect(routed({ EVENT_NAME: "pull_request", HEAD_REPO: repo, REF: "refs/pull/1/merge", MAIN_LABELS: main })).toBe("ubuntu-24.04");
     expect(routed({ EVENT_NAME: "pull_request", HEAD_REPO: repo, MAIN_LABELS: main, CONFIGURED_LABELS: labels })).toEqual(JSON.parse(labels));
     expect(routed({ EVENT_NAME: "pull_request", HEAD_REPO: "someone/fork", MAIN_LABELS: main })).toBe("ubuntu-24.04");
     for (const ref of ["refs/heads/other", "refs/tags/v1.0.0", ""]) {
