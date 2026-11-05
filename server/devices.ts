@@ -695,8 +695,9 @@ export class DeviceStore {
   }
 
   /** The drive member of `account` whose key is `key`, the only signer whose `add` or `remove` applies. */
-  accountSigner(key: string, account: string): DeviceMatch | null {
-    const device = this.devices.find((d) => d.relay_public_key === key && d.account === account && d.role === "drive" && !this.stale(d));
+  /** The member of `account` holding `key`: a drive one, unless `anyRole` (a device signing its own leave). */
+  accountSigner(key: string, account: string, anyRole = false): DeviceMatch | null {
+    const device = this.devices.find((d) => d.relay_public_key === key && d.account === account && (anyRole || d.role === "drive") && !this.stale(d));
     return device ? { id: device.id, label: device.label, role: device.role } : null;
   }
 

@@ -748,3 +748,26 @@ test("a waiting remove survives a stop right after the service took its page's a
   await new AccountMailbox({ devices: f.app.context.services.devices, identity: () => identity, service: "https://account.test", fetch: service.fetch, pendingPath }).pull();
   expect(f.app.context.services.devices.hasKey(c.spki)).toBe(false);
 });
+
+test("a watching member leaves the account on a PC with a remove signed by its own key", async () => {
+  const f = fixture();
+  const { key, link } = await member(f);
+  const watcher = await accountKey();
+  const record = await sign({ v: 1, kind: "add", account: ACCOUNT, key: watcher.spki, label: "Tablet", role: "watch", issued_at: new Date().toISOString(), id: newRecordId(), signer: key.spki }, key);
+  await post(link, "/api/account/records", { records: [record] });
+  expect(f.app.context.services.devices.hasKey(watcher.spki)).toBe(true);
+  const [left] = await applyAccountRecords(f.app.context.services.devices, [await remove(watcher, watcher.spki)], SERVER_ID);
+  expect(left?.outcome).toBe("applied");
+  expect(f.app.context.services.devices.hasKey(watcher.spki)).toBe(false);
+});
+
+test("a watching member still cannot remove another device", async () => {
+  const f = fixture();
+  const { key, link } = await member(f);
+  const [watcher, other] = [await accountKey(), await accountKey()];
+  const watch = await sign({ v: 1, kind: "add", account: ACCOUNT, key: watcher.spki, label: "Tablet", role: "watch", issued_at: new Date().toISOString(), id: newRecordId(), signer: key.spki }, key);
+  await post(link, "/api/account/records", { records: [watch, await add(key, other.spki)] });
+  const [refused] = await applyAccountRecords(f.app.context.services.devices, [await remove(watcher, other.spki)], SERVER_ID);
+  expect(refused).toMatchObject({ outcome: "refused", code: "signer_not_member" });
+  expect(f.app.context.services.devices.hasKey(other.spki)).toBe(true);
+});
