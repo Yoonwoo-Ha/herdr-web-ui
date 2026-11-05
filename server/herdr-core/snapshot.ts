@@ -1,4 +1,4 @@
-import type { AgentInfo, AgentStatus, PaneInfo, PaneLayoutSnapshot, PaneProcessInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
+import type { AgentInfo, AgentSessionInfo, AgentStatus, PaneInfo, PaneLayoutSnapshot, PaneProcessInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
 import { HC_OTHER_WORKSPACE_ID } from "../../shared/machines.ts";
 import type { HerdrPane } from "../../shared/protocol.ts";
 import type { Foreground, Status, Terminal } from "./hc-api.generated.ts";
@@ -49,7 +49,7 @@ export type HcForeground = Pick<Foreground, "pid" | "name"> & Partial<Pick<Foreg
 
 /** The fields of hc's `Terminal` record this side reads, by hc's own schema; `parent` is the terminal that started it (`t3`), set once at its start. */
 export type HcTerminal = Pick<Terminal, "address" | "cols" | "rows" | "cwd" | "state"> &
-  Partial<Pick<Terminal, "argv" | "pid" | "name" | "title" | "labels" | "turn" | "parent">> &
+  Partial<Pick<Terminal, "argv" | "pid" | "name" | "title" | "labels" | "turn" | "parent" | "records">> &
   { status?: HcStatus | null; foreground?: HcForeground | null };
 
 /**
@@ -118,6 +118,24 @@ export function agentOfStatus(status: HcStatus | null | undefined): string | nul
 export function agentOf(terminal: HcTerminal): string | null {
   return agentOfStatus(terminal.status);
 }
+
+/**
+ * The sessions an OpenCode TUI reports as pending (its `program-status.ts`): one OSC 7501 record per
+ * open tab's session that works or waits, under the session's id, cleared once it rests. A record
+ * says nothing of which tab is on screen, and hc names a resting session nowhere: the sessions a
+ * terminal ever named are only candidates for the one it shows (adapter.ts `sessionOf`).
+ */
+export function opencodeRecords(records: unknown): string[] {
+  if (!isRecord(records)) return [];
+  return Object.keys(records).filter((id) => {
+    const record = records[id];
+    return isRecord(record) && record["app"] === "opencode";
+  });
+}
+
+
+/** The agent session a terminal shows, as herdr's OpenCode integration reports it (adapter.ts `sessionOf`). */
+export type SessionOf = (terminal: HcTerminal) => AgentSessionInfo | null;
 
 const STATUS_RANK: Record<string, number> = { blocked: 4, working: 3, done: 2, idle: 1 };
 
@@ -343,9 +361,11 @@ export function reportedFacts(status: HcStatus | null | undefined): Pick<HerdrPa
   };
 }
 
-function paneOf(terminal: HcTerminal, workspaceId: string, tabId: string, shown: ReadonlySet<string>, firstTurn?: FirstTurn): HerdrPane {
+function paneOf(terminal: HcTerminal, workspaceId: string, tabId: string, shown: ReadonlySet<string>, firstTurn?: FirstTurn, sessionOf?: SessionOf): HerdrPane {
   const cwd = terminal.foreground?.cwd ?? terminal.cwd;
+  const session = sessionOf?.(terminal) ?? null;
   return {
+    ...(session ? { agent_session: session } : {}),
     ...(terminal.parent && terminal.parent !== terminal.address && shown.has(terminal.parent) ? { parent_pane_id: terminal.parent } : {}),
     // only a tab its labels make takes a split (adapter.ts `pane.split`)
     ...(terminal.labels?.[SPACE_LABEL] === workspaceId && terminal.labels?.[TAB_LABEL] === tabId ? {} : { own_tab: true as const }),
@@ -374,6 +394,7 @@ export function agentInfoOf(pane: PaneInfo): AgentInfo {
     workspace_id: pane.workspace_id,
     tab_id: pane.tab_id,
     agent: pane.agent ?? null,
+    ...(pane.agent_session ? { agent_session: pane.agent_session } : {}),
     agent_status: pane.agent_status,
     cwd: pane.cwd ?? null,
     foreground_cwd: pane.foreground_cwd ?? null,
@@ -438,7 +459,7 @@ function arranged(placed: Group[], ovisDoc: unknown): { groups: Group[]; zoomed:
  * app arranges the core), never by its terminals' grids: a viewer sizes a terminal to its pane's
  * cell, and a grid read back as the pane made panes shrink each other (#2812).
  */
-export function buildSnapshot(terminals: readonly HcTerminal[], layout: unknown, version: string, firstTurn?: FirstTurn, ovisDoc?: unknown): SessionSnapshot {
+export function buildSnapshot(terminals: readonly HcTerminal[], layout: unknown, version: string, firstTurn?: FirstTurn, ovisDoc?: unknown, sessionOf?: SessionOf): SessionSnapshot {
   const workspaces: WorkspaceInfo[] = [];
   const tabs: TabInfo[] = [];
   const panes: PaneInfo[] = [];
@@ -452,7 +473,7 @@ export function buildSnapshot(terminals: readonly HcTerminal[], layout: unknown,
     for (const [tabIndex, tab] of group.tabs.entries()) {
       const byAddress = new Map(tab.terminals.map((terminal) => [terminal.address, terminal]));
       const cut = place(tab.root ?? sideBySide(tab.terminals.map((terminal) => terminal.address)));
-      const tabPanes = cut.panes.map(({ pane_id }) => paneOf(byAddress.get(pane_id)!, group.id, tab.id, shown, firstTurn));
+      const tabPanes = cut.panes.map(({ pane_id }) => paneOf(byAddress.get(pane_id)!, group.id, tab.id, shown, firstTurn, sessionOf));
       groupPanes.push(...tabPanes);
       const alone = zoomed.get(tab.id);
       const focused = alone ?? tabPanes[0]!.pane_id;

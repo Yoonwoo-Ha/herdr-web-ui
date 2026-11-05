@@ -151,7 +151,10 @@ async function setup(terminals: HcTerminal[], extra: Record<string, Handler> = {
     return core;
   };
   const hc = machine === undefined ? new HcConnection(spawn) : new MachineScopedConnection(spawn, machine, `${machine}-id`);
-  const adapter = await startHerdrCoreAdapter(hc, socket, observeSeen, { otherMachine: machine !== undefined });
+  // OpenCode's store, as these tests title its sessions: each by its id's end, but two twins
+  const opencodeStore = [..."first second third short".split(" ").map((title) => [`ses_${title}`, title]), ["ses_twinA", "twin"], ["ses_twinB", "twin"]];
+  const opencodeTitled = (title: string) => opencodeStore.flatMap(([id, named]) => `OC | ${named}` === title ? [id!] : []);
+  const adapter = await startHerdrCoreAdapter(hc, socket, observeSeen, { otherMachine: machine !== undefined, opencodeTitled });
   cleanups.push(() => { adapter.stop(); hc.close(); rmSync(dir, { recursive: true, force: true }); });
   return { socket, cores, hc };
 }
@@ -533,6 +536,72 @@ it("asks for a fresh snapshot when a report's kind, message or progress changes,
     expect((await sessionSnapshot(socket)).panes[0]!.agent_status).toBe("done");
     t1.labels = { "herdr.seen": "3" };
     expect((await sessionSnapshot(socket)).panes[0]!.agent_status).toBe("idle");
+  });
+
+  it("binds an OpenCode pane to the named session its terminal title shows, through rest, a background tab, a switch and its exit", async () => {
+    const opencode = (state: string) => ({ app: "opencode", state });
+    const t1 = terminal("t1", { title: "OC | first", status: opencode("working"), records: { ses_first: opencode("working") } });
+    const { socket } = await setup([t1]);
+    const session = async () => (await sessionSnapshot(socket)).panes[0]!.agent_session ?? null;
+    const reported = (value: string) => ({ agent: "opencode", source: "herdr:opencode", kind: "id", value });
+    expect(await session()).toEqual(reported("ses_first"));
+    // OpenCode clears a session's record once it rests: the pane still shows it
+    t1.status = opencode("idle");
+    t1.records = {};
+    expect(await session()).toEqual(reported("ses_first"));
+    // a background tab's session working alone takes nothing from the one on screen
+    t1.status = opencode("working");
+    t1.records = { ses_second: opencode("working") };
+    expect(await session()).toEqual(reported("ses_first"));
+    // switched to that tab, resting: the title says so
+    t1.status = opencode("idle");
+    t1.records = {};
+    t1.title = "OC | second";
+    expect(await session()).toEqual(reported("ses_second"));
+    // the home screen, a session this terminal never named, or one whose title another session has too, shows none
+    t1.title = "OpenCode";
+    expect(await session()).toBeNull();
+    t1.title = "OC | third";
+    expect(await session()).toBeNull();
+    t1.records = { ses_twinA: opencode("working") };
+    t1.title = "OC | twin";
+    expect(await session()).toBeNull();
+    // once OpenCode is gone, the next one in the terminal shows nothing it named before
+    t1.title = "OC | first";
+    t1.status = null;
+    expect(await session()).toBeNull();
+    t1.status = opencode("idle");
+    expect(await session()).toBeNull();
+  });
+
+  it("remembers an OpenCode session a status event named, for a turn that ended before any snapshot", async () => {
+    let channel = 0;
+    const t1 = terminal("t1", { title: "OC | short", status: { app: "opencode", state: "idle" } });
+    const { socket, cores } = await setup([t1], {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: [t1] };
+      },
+    });
+    const statuses: unknown[] = [];
+    const started = Promise.withResolvers<void>();
+    const told = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.agent_status_changed", pane_id: "t1" }], {
+      onEvent: (frame) => { if (statuses.push(frame.data?.["agent_status"]) === 2) told.resolve(); },
+      onStarted: () => started.resolve(),
+      onClose() {},
+    }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores[0]!;
+    const pending = { ses_short: { app: "opencode", state: "working" } };
+    core.notify(channel, "event", { seq: 2, type: "status", terminal: "t1", data: { status: { app: "opencode", state: "working" }, records: pending } });
+    core.notify(channel, "event", { seq: 3, type: "status", terminal: "t1", data: { status: { app: "opencode", state: "idle" }, records: {} } });
+    // told only as a status of its own, so the two before it have been heard
+    core.notify(channel, "event", { seq: 4, type: "status", terminal: "t1", data: { status: { app: "opencode", state: "blocked" }, records: {} } });
+    await told.promise;
+    expect(statuses).toEqual(["working", "blocked"]);
+    expect((await sessionSnapshot(socket)).panes[0]!.agent_session).toEqual({ agent: "opencode", source: "herdr:opencode", kind: "id", value: "ses_short" });
   });
 
   it("fails what waited on a line to hc that ended, and opens a new one for the next call", async () => {

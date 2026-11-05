@@ -6,6 +6,7 @@ import { SeenMarker } from "./seen-label.ts";
 import { existsSync } from "node:fs";
 import { findHc, type FoundHc } from "./discovery.ts";
 import { adapterAddress } from "./pipe.ts";
+import { opencodeDatabasePath, opencodeSessionsTitled } from "../opencode.ts";
 
 /**
  * Which runtime this PC's terminals run on. `OVIS_RUNTIME=herdr-core` serves the terminals of
@@ -147,7 +148,9 @@ export async function startRuntime(stateDir: string, find: () => Promise<FoundHc
   if (unix) chmodSync(stateDir, 0o700);
   const hc = coreConnection();
   // on Windows the pipe is named after the folder itself: a junction or a short (8.3) spelling of it names the same pipe
-  const adapter = await startHerdrCoreAdapter(hc, adapterAddress(unix ? stateDir : realpathSync.native(stateDir), platform), (address, turn, labels) => coreSeenMarker().observe(address, turn, labels), { otherMachine: hcMachine() !== null });
+  const adapter = await startHerdrCoreAdapter(hc, adapterAddress(unix ? stateDir : realpathSync.native(stateDir), platform), (address, turn, labels) => coreSeenMarker().observe(address, turn, labels),
+    // another machine's OpenCode keeps its sessions there: none of its panes is bound to one here
+    hcMachine() !== null ? { otherMachine: true } : { opencodeTitled: (title) => opencodeSessionsTitled(opencodeDatabasePath(), title) });
   if (unix) chmodSync(adapter.socketPath, 0o600);
   process.env["HERDR_SOCKET"] = adapter.socketPath;
   serving = true;

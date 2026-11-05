@@ -629,6 +629,38 @@ export function opencodeSessionVersion(path: string, sessionId: string): string 
   }
 }
 
+/**
+ * The terminal title OpenCode's TUI sets on a session with this title (its `app.tsx`). An untitled
+ * session's terminal title is plain `OpenCode`, as on its home screen: it names no session.
+ */
+export function opencodeTerminalTitle(title: string): string {
+  return `OC | ${title.length > 40 ? `${title.slice(0, 37)}\u2026` : title}`;
+}
+
+/**
+ * Every session in the store (2.x or 1.x) whose terminal title is this one: the session a terminal
+ * shows only when there is exactly one, whichever sessions that terminal reported. Read without
+ * waiting on the store's writer: it runs on every snapshot.
+ */
+export function opencodeSessionsTitled(path: string | null, terminalTitle: string): string[] {
+  if (path === null || !terminalTitle.startsWith("OC | ")) return [];
+  // the title as shown, or the start OpenCode cut it to: the rows are then compared as OpenCode shows them
+  const start = terminalTitle.slice("OC | ".length).replace(/\u2026$/, "");
+  if (start === "") return [];
+  try {
+    return withStore(path, (db) => {
+      const flavor = storeFlavor(db);
+      if (flavor === "unknown") return [];
+      const table = flavor === "v1" ? "session" : "session_v2";
+      const rows = db.query<{ id: string; title: unknown }, [string, string]>(`SELECT id, title FROM ${table} WHERE substr(title, 1, length(?)) = ?`).all(start, start);
+      return rows.flatMap((row) => typeof row.title === "string" && opencodeTerminalTitle(row.title) === terminalTitle ? [row.id] : []);
+    }, 0) ?? [];
+  } catch (error) {
+    if (unusable(error) || busy(error)) return [];
+    throw error;
+  }
+}
+
 /* -------------------------------------------------------------------------------------------------
  * OpenCode 1.x: session / message / part
  *
