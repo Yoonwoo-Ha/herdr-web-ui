@@ -22,6 +22,7 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { appFaces } from "./app-faces.ts";
+import { shownRow, shownRows } from "./shown-rows.ts";
 
 const SETTINGS_KEY = "ovis:settings";
 const PREFIX = "/herdr-web-ui/demo/app/";
@@ -128,7 +129,7 @@ async function open(context: BrowserContext, clock = false): Promise<{ page: Pag
   if (clock) await page.clock.install();
   await page.goto(`${origin}?pane=${encodeURIComponent(panes.shell)}&view=terminal`);
   await page.locator(".conn-live").waitFor({ state: "attached" });
-  await page.locator(".pane-frame:not(.is-hidden) .xterm-rows").waitFor();
+  await page.locator(shownRows(".pane-frame:not(.is-hidden)")).waitFor();
   await appFaces(page);
   return { page, errors };
 }
@@ -178,7 +179,7 @@ const tapAndState = (page: Page): Promise<{ label: string | null; pressed: strin
 const ready = (page: Page): Promise<unknown> =>
   page.waitForFunction(() => document.querySelector<HTMLButtonElement>('.pane-frame:not(.is-hidden) .key-bar [data-key="keyboard"]')?.disabled === false);
 
-const control = (page: Page): Promise<ControlState> => page.evaluate(() => {
+const control = (page: Page): Promise<ControlState> => page.evaluate((row) => {
   const frame = document.querySelector(".pane-frame:not(.is-hidden)");
   const key = frame?.querySelector<HTMLButtonElement>('.key-bar [data-key="keyboard"]') ?? null;
   const active = document.activeElement;
@@ -194,11 +195,11 @@ const control = (page: Page): Promise<ControlState> => page.evaluate(() => {
     keyboard: document.documentElement.hasAttribute("data-keyboard"),
     active: active instanceof HTMLElement && active !== document.body ? active.className : null,
     direct: document.querySelector("[data-direct-typing]") !== null,
-    grid: { rows: frame?.querySelectorAll(".xterm-rows > div").length ?? 0, width: Math.round(screen?.width ?? 0), height: Math.round(screen?.height ?? 0) },
+    grid: { rows: document.querySelectorAll(row).length, width: Math.round(screen?.width ?? 0), height: Math.round(screen?.height ?? 0) },
     settings: localStorage.getItem("ovis:settings"),
     frames: (window as unknown as QaWindow).sentFrames.map((frame) => frame.type),
   };
-});
+}, shownRow(".pane-frame:not(.is-hidden)"));
 
 const lineState = (page: Page): Promise<[string, number | null, number | null]> =>
   lineOf(page).evaluate((node: HTMLTextAreaElement) => [node.value, node.selectionStart, node.selectionEnd]);
@@ -270,7 +271,7 @@ async function switchMode(page: Page, to: "line" | "direct"): Promise<void> {
     assert.deepEqual(after.frames.slice(before.frames.length).filter((type) => type === "resize"), [], "and sends no resize");
     return;
   }
-  await page.waitForFunction((rows) => document.querySelectorAll(".pane-frame:not(.is-hidden) .xterm-rows > div").length !== rows, before.grid.rows);
+  await page.waitForFunction(({ rows, row }) => document.querySelectorAll(row).length !== rows, { rows: before.grid.rows, row: shownRow(".pane-frame:not(.is-hidden)") });
   await page.waitForFunction((count) => (window as unknown as QaWindow).sentFrames.filter((frame) => frame.type === "resize").length > count, before.frames.filter((type) => type === "resize").length);
   await ready(page);
 }
@@ -685,7 +686,7 @@ async function composingOrUnavailableTarget(browser: Browser): Promise<Record<st
     }, panes.shell);
     assert.equal(made.status, 200, `/api/pane/split answered ${made.status}`);
     await page.locator(".pane-frame.is-hidden").waitFor({ state: "attached" });
-    await page.locator(".pane-frame:not(.is-hidden) .xterm-rows").waitFor();
+    await page.locator(shownRows(".pane-frame:not(.is-hidden)")).waitFor();
     await ready(page);
     const shownFrame = (await page.locator(".pane-frame:not(.is-hidden)").getAttribute("data-layout-pane"))!;
     const hiddenFrame = (await page.locator(".pane-frame.is-hidden").getAttribute("data-layout-pane"))!;
@@ -801,7 +802,7 @@ async function focusReports(browser: Browser): Promise<Record<string, unknown>> 
     const nothingFocused = (): Promise<boolean> => page.evaluate(() => document.activeElement === null || document.activeElement === document.body);
     // input-ready precedes fixture playback, whose last frame can outlast flushTimers. Let the clock
     // run until that frame is drawn before adding output its cursor moves could overwrite.
-    await page.locator(".pane-frame:not(.is-hidden) .xterm-rows", { hasText: "0 fail" }).waitFor();
+    await page.locator(shownRows(".pane-frame:not(.is-hidden)"), { hasText: "0 fail" }).waitFor();
     // a known start: whatever the load leaves for later has run, then nothing is focused when the mode
     // goes on, so no focus or blur of the load's can report inside the window the assertions read
     await flushTimers(page);
@@ -809,7 +810,7 @@ async function focusReports(browser: Browser): Promise<Record<string, unknown>> 
     assert.equal(await nothingFocused(), true, "nothing focused before focus reporting goes on");
     // xterm parses its input in order: the marker after DECSET 1004 drawn is proof the mode is on
     await socket(page, { type: "pty-data", pane_id: panes.shell, data: "\r\n\u001b[?1004hfocus reporting on" });
-    await page.locator(".pane-frame:not(.is-hidden) .xterm-rows", { hasText: "focus reporting on" }).waitFor();
+    await page.locator(shownRows(".pane-frame:not(.is-hidden)"), { hasText: "focus reporting on" }).waitFor();
     await flushTimers(page);
     assert.equal(await nothingFocused(), true, "still nothing focused once the mode is on");
     const xterm = page.locator(".pane-frame:not(.is-hidden) .xterm-helper-textarea");

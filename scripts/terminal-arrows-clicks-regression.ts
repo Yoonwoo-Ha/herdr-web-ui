@@ -8,6 +8,7 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { workspaceCreate, workspaceClose, paneSendText, paneSendKeys, paneRead, herdrRpc } from "../server/herdr/client.ts";
 import { chromePath } from "./chrome-path.ts";
+import { shownRow } from "./shown-rows.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-arrows-clicks-"));
 const owned: string[] = [];
@@ -312,8 +313,8 @@ try {
     // the mouse for every pane, so nothing tells a program that wants Cmd/Ctrl+click from a shell:
     // a plain click on the name is the program's, as on any text, and Cmd+click (Ctrl+click off a
     // Mac), the key that draws the name as a link, opens it and sends the program no button.
-    const name = await s.page.evaluate(() => {
-      const row = document.querySelector(".xterm-rows > div")!;
+    const name = await s.page.evaluate((shown) => {
+      const row = document.querySelector(shown)!;
       const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         const at = (node as Text).data.indexOf("notes.md");
@@ -325,7 +326,7 @@ try {
         return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
       }
       throw new Error("notes.md is not on the first row");
-    });
+    }, shownRow());
     await s.page.mouse.move(name.x, name.y);
     await until(async () => (await s.page.locator(".xterm-screen.xterm-cursor-pointer").count()) === 0, "a bare name is no link without the key");
     got = "";

@@ -7,6 +7,7 @@ import { appFaces } from "./app-faces.ts";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { openSettingsPage } from "./settings-page.ts";
+import { shownRows } from "./shown-rows.ts";
 import { keyBarItemLabel } from "../src/lib/keyBar.ts";
 
 // Production client over the demo's synthetic transport. Editing and typing stay in this
@@ -621,7 +622,7 @@ try {
         await shell.goto(`http://127.0.0.1:${server.port}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.shell)}`);
         await ready(shell);
         const shellBar = shell.locator(".key-bar");
-        const screen = (): Promise<string> => shell.evaluate(() => (document.querySelector(".pane-terminal .xterm-rows")?.textContent ?? "").replaceAll("\u00a0", " "));
+        const screen = (): Promise<string> => shell.evaluate((shown) => (document.querySelector(shown)?.textContent ?? "").replaceAll("\u00a0", " "), shownRows());
         const shows = async (wanted: string): Promise<void> => {
           const deadline = Date.now() + 5_000;
           while (!(await screen()).includes(wanted)) {

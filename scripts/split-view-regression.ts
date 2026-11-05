@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Browser, BrowserContext, Page, Route, WebSocket } from "playwright-core";
 import { herdrRpc, paneFocus, paneRead, paneSplit, sessionSnapshot, tabCreate, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import type { TabMovedToWorkspace } from "../shared/protocol.ts";
+import { shownRows } from "./shown-rows.ts";
 
 /**
  * The split view's edges (lib/split.ts), each on a browser context of its own: the other half's
@@ -644,15 +645,15 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       await half(page, "right").getByRole("button", { name: "Show the terminal", exact: true }).click();
       await settled(page);
       await isActive(page, "left");
-      const grids = await page.evaluate((pane) => [...document.querySelectorAll<HTMLElement>(`[data-layout-pane="${pane}"]`)].map((frame) => {
+      const grids = await page.evaluate(([pane, shown]) => [...document.querySelectorAll<HTMLElement>(`[data-layout-pane="${pane}"]`)].map((frame) => {
         const screen = frame.querySelector<HTMLElement>(".xterm-screen")!;
-        const rows = frame.querySelector<HTMLElement>(".xterm-rows")!;
+        const rows = frame.querySelector<HTMLElement>(shown)!;
         const style = getComputedStyle(rows);
         const canvas = document.createElement("canvas");
         const measure = canvas.getContext("2d")!;
         measure.font = `${style.fontSize} ${style.fontFamily}`;
         return { cols: Math.round(parseFloat(screen.style.width) / measure.measureText("W").width), rows: rows.childElementCount };
-      }), first);
+      }), [first, shownRows()] as const);
       assert.equal(grids.length, 2);
       assert.ok(grids[0]!.cols > 0 && grids[0]!.rows > 0, "the active half has a measurable grid");
       assert.deepEqual(grids[1], grids[0], `the inactive Chat-to-Terminal lens keeps the active half's grid: ${JSON.stringify(grids)}`);

@@ -7,9 +7,9 @@ const HELD_BYTES_MAX = 32 * 1024 * 1024;
 
 /**
  * Settings > Terminal > Draw with libghostty, for one terminal from its mount: every byte xterm is
- * given is held from the first one, so libghostty, loaded once the server says herdr-core
- * (`terminal-history`), starts from the same screen and history xterm has. herdr's own server, a
- * module that fails to load, or more held bytes than HELD_BYTES_MAX leave the terminal to xterm.
+ * given is held from the first one, so libghostty, loaded once the server has listed its features,
+ * starts from the same screen and history xterm has, on herdr-core and herdr's own server alike. A
+ * module that fails to load, or more held bytes than HELD_BYTES_MAX, leave the terminal to xterm.
  * Returns the release for the terminal's unmount.
  */
 export function captureForGhostty(term: Terminal, socket: HerdrSocket, host: HTMLElement): () => void {
@@ -47,7 +47,6 @@ export function captureForGhostty(term: Terminal, socket: HerdrSocket, host: HTM
   const decide = (): void => {
     if (decided || stopped || !socket.featuresListed()) return;
     decided = true;
-    if (!socket.hasTerminalHistory()) { giveUp(); return; }
     // the hold ends only inside the overlay, in the same task its own takes over: no byte falls between
     const takeBacklog = (): (string | Uint8Array)[] | null => {
       if (stopped || !held) return null;

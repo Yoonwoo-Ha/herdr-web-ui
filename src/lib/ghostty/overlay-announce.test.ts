@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, spyOn, test } from "bun:test";
 import { attachGhosttyOverlay } from "./overlay.ts";
 
 /** just enough of an element for the overlay: children, attributes, style and a box */
@@ -20,6 +20,11 @@ class FakeElement {
   append(...nodes: FakeElement[]): void { for (const node of nodes) { node.parent = this; this.children.push(node); } }
   remove(): void { if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1); }
   getBoundingClientRect(): { width: number; height: number } { return this.box; }
+  /** a canvas with no 2D context: glyph widths read as 0, so every glyph is drawn as libghostty gives it */
+  getContext(): null { return null; }
+  listeners = new Map<string, () => void>();
+  addEventListener(type: string, listener: () => void): void { this.listeners.set(type, listener); }
+  removeEventListener(type: string): void { this.listeners.delete(type); }
   querySelector(): FakeElement | null { return screen; }
 }
 
@@ -120,6 +125,69 @@ test("only lines a program writes are announced: not a scroll back through histo
     term.rows = 4;
     screen.box = { width: COLS * 8, height: 4 * 16 };
     expect(frame("resize")).toBe("SHORTER");
+  } finally {
+    overlay?.dispose();
+  }
+});
+
+test("on herdr's own server, the screen herdr repaints for a wheel is not announced as output; a line after it is", async () => {
+  const COLS = 40, ROWS = 6;
+  screen.box = { width: COLS * 8, height: ROWS * 16 };
+  screen.children = [];
+  const render: (() => void)[] = [];
+  const term: any = {
+    cols: COLS, rows: ROWS, element: screen, buffer: { active: { baseY: 0, viewportY: 0 } },
+    options: { fontFamily: "monospace", fontSize: 13, theme: {}, scrollback: 0 },
+    write: () => {}, reset: () => {}, refresh: () => {},
+    onResize: () => ({ dispose: () => {} }), onRender: (listener: () => void) => { render.push(listener); return { dispose: () => {} }; }, onScroll: () => ({ dispose: () => {} }),
+  };
+  const host = new FakeElement();
+  let now = 1000;
+  const clock = spyOn(performance, "now").mockImplementation(() => now);
+  const screenOf = (from: number) => `\x1b[H\x1b[2J${Array.from({ length: ROWS - 1 }, (_, i) => `L${from + i}`).join("\r\n")}`;
+  const overlay = await attachGhosttyOverlay(term, host as unknown as HTMLElement, () => [screenOf(100)]);
+  try {
+    const announcer = screen.children[0]!.children.find((child) => child.hasAttribute("aria-live"))!;
+    const frame = (): string => { for (const callback of render) callback(); flush(); return announcer.textContent; };
+    flush();
+    term.write("\r\nNEWLINE");
+    expect(frame()).toBe("NEWLINE");
+    // a wheel goes to herdr, which paints the screen scrolled up and later back at the bottom
+    host.listeners.get("wheel")!();
+    term.write(screenOf(90));
+    expect(frame()).toBe("NEWLINE");
+    now += 200;
+    term.write(`${screenOf(101)}\r\nNEWLINE`);
+    expect(frame()).toBe("NEWLINE");
+    // output once the gesture is over is told again
+    now += 2000;
+    term.write("\r\nAFTER");
+    expect(frame()).toBe("AFTER");
+  } finally {
+    overlay?.dispose();
+    clock.mockRestore();
+  }
+});
+
+test("colours as xterm draws them: readable at its minimum contrast except a Powerline glyph, faint text dimmed by half, a bold box bold", async () => {
+  screen.box = { width: 40 * 8, height: 4 * 16 };
+  screen.children = [];
+  const term: any = {
+    cols: 40, rows: 4, element: screen, buffer: { active: { baseY: 0, viewportY: 0 } },
+    options: { fontFamily: "monospace", fontSize: 13, theme: { background: "#000000", foreground: "#ffffff" }, scrollback: 0, minimumContrastRatio: 4.5 },
+    write: () => {}, reset: () => {}, refresh: () => {},
+    onResize: () => ({ dispose: () => {} }), onRender: () => ({ dispose: () => {} }), onScroll: () => ({ dispose: () => {} }),
+  };
+  const backlog = "\x1b[38;2;52;101;164;48;2;78;154;6m\ue0b0X\x1b[0m\r\n\x1b[2mDIM\x1b[0m\r\n\x1b[1m\uAC00\x1b[0m";
+  const overlay = await attachGhosttyOverlay(term, new FakeElement() as unknown as HTMLElement, () => [backlog]);
+  try {
+    flush();
+    const rows = screen.children[0]!.children.find((child) => child.className === "ghostty-text")!.children.map((row) => row.innerHTML);
+    // the separator keeps its blue on the green; the letter beside it is made readable
+    expect(rows[0]).toContain(`<span style="color:#3465a4">\ue0b0</span>`);
+    expect(rows[0]).not.toMatch(/^<span style="[^"]*color:#3465a4/);
+    expect(rows[1]).toContain("color-mix(in srgb, currentColor 50%, transparent)");
+    expect(rows[2]).toContain(`class="ghostty-wide xterm-bold"`);
   } finally {
     overlay?.dispose();
   }

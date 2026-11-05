@@ -130,8 +130,8 @@ export interface Settings {
   /** draw the pictures a pane program prints as sixel or iTerm2 inline images (lib/terminalImages.ts); off by
    *  default. Only herdr-core passes them on: herdr redraws a pane from its own grid, which keeps no pictures. */
   terminalImages: boolean;
-  /** a herdr-core pane is drawn by libghostty over its xterm, Kitty graphics pictures included (lib/ghostty/overlay.ts);
-   *  off by default. herdr's own server redraws a pane from its grid, which keeps no pictures, so it stays with xterm. */
+  /** a pane is drawn by libghostty over its xterm (lib/ghostty/overlay.ts), with Kitty graphics pictures on herdr-core:
+   *  herdr's own server redraws a pane from its grid, which keeps no pictures */
   terminalGhostty: boolean;
   /** on a touch screen, an Attach files button in the terminal's input line and a key in the key bar while typing
    *  straight into the grid pick files to store beside the pane (POST /api/pane/image); off by default */
@@ -422,7 +422,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalFontFamily: "",
   paneClipboard: true,
   terminalImages: false,
-  // on by default; it only takes over on a herdr-core server (terminal-history), elsewhere xterm draws
+  // on by default, on herdr-core and herdr's own server alike; a device that turned it off keeps it off
   terminalGhostty: true,
   terminalAttachButton: false,
   terminalKeyboardOnRequest: false,

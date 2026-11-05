@@ -602,7 +602,7 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
       <SettingsRow label={t("Pictures in the terminal")} description={t("Shows the pictures a program draws in a pane (imgcat, img2sixel, chafa) as sixel or iTerm2 images, on this device. Only on a PC that runs herdr-core, as the desktop app does: herdr does not pass pictures on. A picture is gone once the pane is drawn again.")}>
         <Toggle label={t("Pictures in the terminal")} checked={settings.terminalImages} onChange={(terminalImages) => update({ terminalImages })} />
       </SettingsRow>
-      <SettingsRow label={t("Draw with libghostty")} description={t("Draws a pane with libghostty, the terminal engine of Ghostty, on this device, with the pictures a program sends with the Kitty graphics protocol (kitty icat, timg, chafa). Only on a PC that runs herdr-core, as the desktop app does, and from the next time a pane is opened. A preview: typing, selection, links and search still go through xterm.js underneath.")}>
+      <SettingsRow label={t("Draw with libghostty")} description={t("Draws a pane with libghostty, the terminal engine of Ghostty, on this device, from the next time a pane is opened. On a PC that runs herdr-core, as the desktop app does, it also shows the pictures a program sends with the Kitty graphics protocol (kitty icat, timg, chafa). A preview: typing, selection, links and search still go through xterm.js underneath.")}>
         <Toggle label={t("Draw with libghostty")} checked={settings.terminalGhostty} onChange={(terminalGhostty) => update({ terminalGhostty })} />
       </SettingsRow>
       {/* the button and the key are drawn on a touch screen only (TerminalInput.tsx, KeyBar.tsx), so it is offered only there */}

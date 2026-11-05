@@ -4,6 +4,7 @@ import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { paneSendKeys, paneSendText } from "../server/herdr/client.ts";
+import { shownRows } from "./shown-rows.ts";
 
 const MODIFIED_CTRL_ENTER = "\x1b[27;5;13~";
 /** how long a send that should not happen gets to show up */
@@ -81,7 +82,7 @@ process.stdin.on("data", (data) => {
       : typed(modified ? MODIFIED_CTRL_ENTER : "\r");
     const isModifiedCtrlEnter = (sent: Sent): boolean => sent.type === "keys" ? sent.keys.includes("ctrl+enter")
       : sent.text === MODIFIED_CTRL_ENTER;
-    const screen = (text: string) => page.locator(".pane-terminal .xterm-rows", { hasText: text }).waitFor();
+    const screen = (text: string) => page.locator(shownRows(), { hasText: text }).waitFor();
     const press = async (shortcut: string, expected: Sent): Promise<void> => {
       const before = inputs.length;
       await input.press(shortcut);

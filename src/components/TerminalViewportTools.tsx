@@ -8,6 +8,7 @@ import { ApiError } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
 import { PAGE_OVERLAP_ROWS, pageScrollDistance } from "../lib/pageScroll.ts";
 import { SCROLL_POLL_BUSY_MS, SCROLL_POLL_SETTLE_MS, scrollPollDelay, validScroll, visibleFindRects, type FindCellRect } from "../lib/terminalViewport.ts";
+import { VIEW_MOVED_EVENT } from "../lib/ghostty/viewMoved.ts";
 import "./TerminalViewportTools.css";
 
 export interface TerminalSearchState { query: string; result: PaneFindResponse }
@@ -227,6 +228,8 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       const metrics = scrollRef.current;
       if (!interactive || !alive || viewportIntent.isSearching() || !validScroll(metrics) || !showing()) return;
       desired = Math.max(0, Math.min(metrics.max_offset_from_bottom, Math.round(offset)));
+      // herdr paints the moved view as output: libghostty's layer tells it apart from new lines (ghostty/overlay.ts)
+      terminal.element?.dispatchEvent(new Event(VIEW_MOVED_EVENT, { bubbles: true }));
       previewRef.current = desired;
       void flush();
     };

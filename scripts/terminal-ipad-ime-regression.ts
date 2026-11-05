@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { mkdirSync } from "node:fs";
 import type { Browser } from "playwright-core";
+import { shownRows } from "./shown-rows.ts";
 
 /**
  * iPadOS 27 Safari with a Magic Keyboard sends each jamo as a printable keydown (its own keyCode,
@@ -227,15 +228,19 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
       // the syllable being typed is drawn at the size its row gives the committed ones
       // (terminalGlyphs enlarges a two-cell glyph that leaves its cells half empty)
       toPage("\r\n한 ");
-      await page.waitForFunction(() => [...document.querySelectorAll(".xterm-rows span")].some((span) => span.textContent?.includes("한")));
+      await page.waitForFunction((shown) => [...document.querySelector(shown)?.querySelectorAll("span") ?? []].some((span) => span.textContent?.includes("한")), shownRows());
       await fresh("ㄱ"); await replace("ㅡ", "그");
-      const sizes = await page.evaluate(() => {
-        const row = [...document.querySelectorAll<HTMLElement>(".xterm-rows span")].find((span) => span.textContent?.includes("한"))!;
-        // the fit is drawn by a span inside the row's (terminalGlyphs.ts), which carries any enlarged size
-        const glyph = row.querySelector<HTMLElement>(".herdr-box-glyph") ?? row;
+      const sizes = await page.evaluate((shown) => {
+        const row = [...document.querySelector(shown)!.querySelectorAll<HTMLElement>("span")].find((span) => span.textContent?.includes("한"))!;
+        // the fit is drawn by a span inside the row's (terminalGlyphs.ts, or the one in libghostty's two-cell box), which carries any enlarged size
+        const glyph = row.querySelector<HTMLElement>(".herdr-box-glyph, .ghostty-fit") ?? row.querySelector<HTMLElement>(".ghostty-wide") ?? row;
         const view = document.querySelector<HTMLElement>(".composition-view")!;
-        return { row: getComputedStyle(glyph).fontSize, view: getComputedStyle(view).fontSize, pending: view.classList.contains("active") ? view.textContent : null };
-      });
+        // where the pending syllable stands against the cursor cell libghostty draws (xterm's own cursor is hidden under it)
+        const cursor = document.querySelector<HTMLElement>(".pane-terminal[data-renderer='ghostty'] .ghostty-cursor");
+        const at = cursor ? { view: view.getBoundingClientRect().left, cursor: cursor.getBoundingClientRect().left, top: view.getBoundingClientRect().top, cursorTop: cursor.getBoundingClientRect().top } : null;
+        return { row: getComputedStyle(glyph).fontSize, view: getComputedStyle(view).fontSize, pending: view.classList.contains("active") ? view.textContent : null, at };
+      }, shownRows());
+      console.log(`  ${platform}: pending syllable at ${JSON.stringify(sizes.at)}`);
       assert.equal(sizes.pending, "그", "a syllable is pending");
       assert(Math.abs(Number.parseFloat(sizes.view) - Number.parseFloat(sizes.row)) < 0.01,
         `the pending syllable is drawn at its row's size: ${sizes.view} against ${sizes.row} (platform ${platform})`);
@@ -269,7 +274,7 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
       if (process.env.UI_EVIDENCE_DIR) {
         mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
         toPage("\r\nCaret replay passed: 한 日本\r\n");
-        await page.waitForFunction(() => [...document.querySelectorAll(".xterm-rows span")].some((span) => span.textContent?.includes("Caret replay passed")));
+        await page.waitForFunction((shown) => [...document.querySelector(shown)?.querySelectorAll("span") ?? []].some((span) => span.textContent?.includes("Caret replay passed")), shownRows());
         for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
           await page.setViewportSize(viewport);
           await page.locator('.view-switch button[title^="Live terminal"]').click();
