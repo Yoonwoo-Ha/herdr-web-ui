@@ -197,6 +197,8 @@ export function createServer(
     alertTiming?: Partial<AlertTiming>;
     /** accept plain-http loopback push endpoints (server/push.ts); only tests delivering to push.fake.ts set it */
     pushLoopbackHttp?: boolean;
+    /** keep desktop-activity.json in the state dir for the desktop app (server/desktop-activity.ts) */
+    desktopActivity?: boolean;
     /** how long a turn's end is held for its background work (server/background-wait.ts); tests shorten it */
     backgroundWait?: { grace: number; limit: number };
     /** Clock for background holds and alert turn durations; tests advance it explicitly. */
@@ -526,7 +528,8 @@ if (import.meta.main) {
     instance = createServer({ updates, herdrUpdate: new HerdrUpdater(), herdrCoreFacts,
       launchAccepted: () => launchAccepted,
       runtimeService: runtimeService({ stateDir, port: Number(startEnv["PORT"] || DEFAULT_PORT), serving: choice.runtime, source: choice.source, ...(fallback ? { fallback } : {}), env: startEnv, core: herdrCoreFacts, accepted: () => launchAccepted, restart: (id) => process.send?.({ type: "runtime-restart", id }) }),
-      portal, relay, telemetry, registerBridge: true, herdrProfiles: readHerdrProfiles, shellAgents: new ShellAgentLocator(), agentDetector: new AgentDetector({ locate: catalogLocator({ probe: defaultLoginProbe() }) }), stateDir, siblingStateDir: siblingStateDir(stateDir) });
+      portal, relay, telemetry, registerBridge: true, herdrProfiles: readHerdrProfiles, shellAgents: new ShellAgentLocator(), agentDetector: new AgentDetector({ locate: catalogLocator({ probe: defaultLoginProbe() }) }), stateDir, siblingStateDir: siblingStateDir(stateDir),
+      desktopActivity: process.env["OVIS_DESKTOP_APP"] === "1" });
     instance.warmAgentCatalog();
   } catch (err) {
     const { code, syscall } = err as { code?: string; syscall?: string };

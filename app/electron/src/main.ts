@@ -4,13 +4,14 @@
  * connection screen (renderer/connect.html) with what failed. Closing the window keeps Ovis in
  * the tray; Quit stops the server. The core and its terminals keep running, as for every hc client.
  */
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, session, shell, Tray, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, session, shell, Tray, type MenuItemConstructorOptions } from "electron";
 import { existsSync, readFileSync, type WriteStream } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ChildProcess } from "node:child_process";
 import { choosePort, coreEnv, endLeftover, installCore, isFile, layout, openLog, processCommand, processStartSync, readSaved, serverEnv, startCore, startServer, stopServer, writeSaved, type RunningServer } from "./children.ts";
 import { startLoopbackSignIn, type LoopbackSignIn } from "./accountSignIn.ts";
+import { awakeLabel, DESKTOP_ACTIVITY_FILE, holdAwake, readAwakeSettings, readWorking, writeAwakeSettings, type AwakeSettings } from "./awake.ts";
 import { debInstallCommand, updateChannel, updatePlan } from "./updates.ts";
 
 type StepState = "pending" | "ok" | "failed";
@@ -46,6 +47,11 @@ let quitting = false;
 let stopped = false;
 let updateReady: (() => void) | null = null;
 let status: Status = { core: "pending", server: "pending", detail: "", versions };
+const awakePath = join(app.getPath("userData"), "awake.json");
+let awake = readAwakeSettings(awakePath);
+/** the powerSaveBlocker held while an agent works (awake.ts), and how many worked when last read */
+let awakeBlocker: number | null = null;
+let awakeWorking = 0;
 
 /** The account service this app signs in with: OVIS_ACCOUNT_SERVICE_URL's https origin; none, and the app offers no sign-in. */
 const accountService = (() => {
@@ -236,12 +242,44 @@ function guard(contents: Electron.WebContents, blank?: BrowserWindow): void {
   });
 }
 
+/** holds off system sleep while the setting is on and an agent works, and lets go as soon as none does */
+function updateAwake(): void {
+  const working = server ? readWorking(join(stateDir, DESKTOP_ACTIVITY_FILE)) : 0;
+  const hold = holdAwake({ settings: awake, working, onBattery: powerMonitor.isOnBatteryPower(), serverRunning: server !== null });
+  const changed = hold !== (awakeBlocker !== null) || (hold && working !== awakeWorking);
+  awakeWorking = working;
+  if (hold && awakeBlocker === null) awakeBlocker = powerSaveBlocker.start("prevent-app-suspension");
+  if (!hold && awakeBlocker !== null) {
+    powerSaveBlocker.stop(awakeBlocker);
+    awakeBlocker = null;
+  }
+  if (changed) rebuildTrayMenu();
+}
+
+function setAwake(next: AwakeSettings): void {
+  awake = next;
+  try { writeAwakeSettings(awakePath, next); } catch (error) { console.error(`Saving ${awakePath} failed: ${message(error)}`); }
+  updateAwake();
+  rebuildTrayMenu();
+}
+
 function rebuildTrayMenu(): void {
   if (!tray) return;
   const url = server?.url ?? null;
+  const holding = awakeBlocker !== null ? awakeLabel(awakeWorking) : null;
+  tray.setToolTip(holding ? `Ovis: ${holding}` : "Ovis");
   const items: MenuItemConstructorOptions[] = [
+    ...(holding ? [{ label: holding, enabled: false }, { type: "separator" as const }] : []),
     { label: "Open Ovis", click: showWindow },
     { label: "Open in Browser", enabled: url !== null, click: () => url && openOutside(url) },
+    { type: "separator" },
+    {
+      label: "Keep Computer Awake",
+      submenu: [
+        { label: "While an Agent Is Working", type: "checkbox", checked: awake.whileWorking, click: (item) => setAwake({ ...awake, whileWorking: item.checked }) },
+        { label: "Also on Battery", type: "checkbox", checked: awake.onBattery, enabled: awake.whileWorking, click: (item) => setAwake({ ...awake, onBattery: item.checked }) },
+      ],
+    },
     { type: "separator" },
     { label: "Restart Ovis Server", enabled: busy === null, click: () => void restart() },
     ...(updateReady ? [{ label: "Restart to Update", click: updateReady }] : []),
@@ -396,6 +434,9 @@ if (!app.requestSingleInstanceLock()) {
     createMenu();
     createWindow();
     createTray();
+    setInterval(updateAwake, 5_000);
+    powerMonitor.on("on-ac", updateAwake);
+    powerMonitor.on("on-battery", updateAwake);
     void start().then(startUpdates);
   });
 }

@@ -29,10 +29,17 @@ Until the server answers, or when it stops, the window shows the connection scre
 (`renderer/connect.html`): which step failed, the end of its output, **Try again** and
 **Show logs**. The logs are in `<user data>/logs/ovis.log` (the run before in `ovis.log.1`).
 
-- **Tray**: Open Ovis, Open in Browser, Restart Ovis Server, Restart to Update (once an update is
-  downloaded), Quit Ovis. Closing the window keeps Ovis running in the tray; Quit stops the server.
+- **Tray**: Open Ovis, Open in Browser, Keep Computer Awake, Restart Ovis Server, Restart to Update
+  (once an update is downloaded), Quit Ovis. Closing the window keeps Ovis running in the tray; Quit stops the server.
   On a Linux desktop without a tray (GNOME without an AppIndicator extension), starting the app
   again shows the window: only one copy runs.
+- **Keep Computer Awake** (tray, off by default): **While an Agent Is Working** holds off system sleep
+  while any of this PC's agents works, so phones and browsers keep reaching it; the display may still
+  turn off (`powerSaveBlocker` with `prevent-app-suspension`). On battery only with **Also on
+  Battery**. While it holds, the tray's menu and tooltip say so and how many agents work; it lets go
+  within a few seconds of the last one stopping. The server says how many work in
+  `desktop-activity.json` in its state folder (`server/desktop-activity.ts`); the choice is kept in
+  `<user data>/awake.json`.
 - **Links**: the server's own pages may open more Ovis windows; any other address opens in the
   default browser. A blank window a page opens for a sign-in sends its address to the default
   browser and closes. Only the microphone (dictation, never the camera), the clipboard,
