@@ -40,6 +40,7 @@ import { readStatuslineContext } from "./statusline.ts";
 import { transcriptReader, type TranscriptFile } from "./transcript-reader.ts";
 import nodePath, { basename, dirname, relative, sep, type PlatformPath } from "node:path";
 import { isDshProcess, resolveDshTranscript, dshConversation, dshToolOutput, type DshTranscript } from "./dsh.ts";
+import { isKiroChatProcess, resolveKiroTranscript, kiroConversation, kiroToolOutput, type KiroTranscript } from "./kiro.ts";
 import { authorizedTranscript } from "./transcript-store.ts";
 
 import type { ConversationMetadata, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
@@ -1801,7 +1802,8 @@ type ResolvedTranscript =
   ))
   | { source: "opencode-transcript"; path: string; session: string }
   | { source: "hermes-transcript"; path: string; sessionId: string }
-  | ({ source: "dsh-transcript" } & DshTranscript);
+  | ({ source: "dsh-transcript" } & DshTranscript)
+  | ({ source: "kiro-transcript" } & KiroTranscript);
 
 /** A native file or database session, resolved without parsing conversation turns. */
 export type NativeTranscript =
@@ -1839,10 +1841,15 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
       agent = "dsh";
       if (known === undefined) known = (info?.process_info as KnownProcesses) ?? null;
     }
+    // herdr labels Kiro from its screen: before that shows, its chat TUI in front says the same
+    else if (foreground.some((process) => Array.isArray(process.argv) && isKiroChatProcess(process.argv))) {
+      agent = "kiro";
+      if (known === undefined) known = (info?.process_info as KnownProcesses) ?? null;
+    }
     else if (await kiroCodexProcess(info?.process_info as ProcessInfo | undefined) !== null) agent = "codex";
   }
-  // a Muse, Letta or dsh pane's processes are asked for once, for omo and for its own binding
-  if ((agent === "muse" || agent === "letta" || agent === "dsh" || agent === "dsh-tui") && known === undefined) known = (await paneProcessInfo(paneId).catch(() => undefined)) ?? null;
+  // a Muse, Letta, dsh or Kiro pane's processes are asked for once, for omo and for its own binding
+  if ((agent === "muse" || agent === "letta" || agent === "dsh" || agent === "dsh-tui" || agent === "kiro") && known === undefined) known = (await paneProcessInfo(paneId).catch(() => undefined)) ?? null;
   if (await paneRunsOmo(paneId, known)) {
     return { source: "omo-transcript", path: await omoTranscriptPath(paneId, cwd, panes) };
   }
@@ -1852,6 +1859,7 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
   try {
     // dsh-tui reports itself to herdr as `dsh-tui`; the other dsh TUIs are found by their process above
     if (agent === "dsh" || agent === "dsh-tui") return { source: "dsh-transcript", ...await resolveDshTranscript(known) };
+    if (agent === "kiro") return { source: "kiro-transcript", ...await resolveKiroTranscript(known) };
     if (agent === "copilot") return { source: "copilot-transcript", ...await copilotTranscriptPath(pane, panes ?? [pane]) };
     if (agent === "grok") {
       const found = await resolveGrokStore(pane, grokHome);
@@ -2106,6 +2114,10 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
   if (resolved.source === "dsh-transcript") {
     rememberPaneRead(paneId, resolved.path);
     return await dshConversation(resolved, page);
+  }
+  if (resolved.source === "kiro-transcript") {
+    rememberPaneRead(paneId, resolved.path);
+    return await kiroConversation(resolved, page);
   }
   if (resolved.source === "devin-transcript") {
     try {
@@ -3206,6 +3218,7 @@ export async function toolOutput(paneId: string, ref: string, codexHome?: string
   }
   rememberPaneRead(paneId, resolved.path);
   if (resolved.source === "dsh-transcript") return await dshToolOutput(resolved, ref);
+  if (resolved.source === "kiro-transcript") return await kiroToolOutput(resolved, ref);
   if (resolved.source === "hermes-transcript") return hermesToolOutput(resolved.sessionId, resolved.path, ref, TOOL_OUTPUT_MAX);
   let nativeRef = ref;
   if (resolved.source === "copilot-transcript") {
