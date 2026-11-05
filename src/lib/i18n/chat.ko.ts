@@ -172,7 +172,7 @@ export const CHAT_KO: Record<string, string> = {
   "The agent wrote more than this view reads.": "에이전트가 쓴 내용이 이 보기에서 읽는 양보다 많습니다.",
   "The middle part is left out.": "중간 부분은 빠졌습니다.",
   "Update this PC's bridge to see what a running agent is doing.": "실행 중인 에이전트의 작업을 보려면 이\u00a0PC의\u00a0브리지를\u00a0업데이트하세요.",
-  "Only a running Claude Code subagent's work can be opened here.": "여기서는 실행 중인 Claude Code 하위\u00a0에이전트만\u00a0열\u00a0수\u00a0있습니다.",
+  "Only a running Claude Code or OpenCode subagent's work can be opened here.": "여기서는 실행 중인 Claude Code 또는 OpenCode 하위\u00a0에이전트만\u00a0열\u00a0수\u00a0있습니다.",
   "It may have ended. Close this and look at the task list again.": "이미 끝났을\u00a0수\u00a0있습니다. 이\u00a0창을\u00a0닫고 작업\u00a0목록을\u00a0다시\u00a0확인하세요.",
   "Close this and open the task again from the list.": "이 창을 닫고 목록에서 작업을 다시 여세요.",
   "Refresh once the PC is connected again.": "PC가 다시 연결되면 새로 고치세요.",

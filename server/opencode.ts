@@ -349,7 +349,7 @@ interface SessionView {
 }
 
 /** The session's visible extent, its history id and what any change to it changes. */
-function sessionView(db: Database, sessionId: string): SessionView | null {
+export function sessionView(db: Database, sessionId: string): SessionView | null {
   const session = db.query<{ revert: string | null }, [string]>("SELECT revert FROM session_v2 WHERE id = ?").get(sessionId);
   if (session === null) return null;
   const stats = db.query<{ count: number; last: number | null; updated: number | null }, [string]>(
@@ -450,7 +450,7 @@ export const OPENCODE_ROW_SIZE = { octets: "octet_length(data)", bytes: "length(
 export type OpencodeRowSize = (typeof OPENCODE_ROW_SIZE)[keyof typeof OPENCODE_ROW_SIZE];
 
 let supported: OpencodeRowSize | null = null;
-function supportedRowSize(db: Database): OpencodeRowSize {
+export function supportedRowSize(db: Database): OpencodeRowSize {
   if (supported === null) {
     try { db.query("SELECT octet_length('')").get(); supported = OPENCODE_ROW_SIZE.octets; }
     catch { supported = OPENCODE_ROW_SIZE.bytes; }

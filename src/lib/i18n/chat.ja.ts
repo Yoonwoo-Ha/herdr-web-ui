@@ -172,7 +172,7 @@ export const CHAT_JA: Record<string, string> = {
   "The agent wrote more than this view reads.": "エージェントの記録はこの表示で読む量より多くなっています。",
   "The middle part is left out.": "中間部分は省かれています。",
   "Update this PC's bridge to see what a running agent is doing.": "実行中のエージェントの作業を見るには、このPCのブリッジを更新してください。",
-  "Only a running Claude Code subagent's work can be opened here.": "ここで開けるのは、実行中の Claude Code サブエージェントの作業だけです。",
+  "Only a running Claude Code or OpenCode subagent's work can be opened here.": "ここで開けるのは、実行中の Claude Code または OpenCode サブエージェントの作業だけです。",
   "It may have ended. Close this and look at the task list again.": "すでに終わっている可能性があります。これを閉じて、タスク一覧をもう一度確認してください。",
   "Close this and open the task again from the list.": "これを閉じて、一覧からタスクを開き直してください。",
   "Refresh once the PC is connected again.": "PCが再び接続されたら更新してください。",

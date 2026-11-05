@@ -172,7 +172,7 @@ export const CHAT_ZH: Record<string, string> = {
   "The agent wrote more than this view reads.": "代理写入的内容超过了此视图读取的范围。",
   "The middle part is left out.": "中间部分已省略。",
   "Update this PC's bridge to see what a running agent is doing.": "更新此电脑的桥接，即可查看正在运行的代理在做什么。",
-  "Only a running Claude Code subagent's work can be opened here.": "这里只能打开正在运行的 Claude Code 子代理的工作。",
+  "Only a running Claude Code or OpenCode subagent's work can be opened here.": "这里只能打开正在运行的 Claude Code 或 OpenCode 子代理的工作。",
   "It may have ended. Close this and look at the task list again.": "它可能已经结束。请关闭此窗口，再查看任务列表。",
   "Close this and open the task again from the list.": "请关闭此窗口，再从列表中重新打开该任务。",
   "Refresh once the PC is connected again.": "电脑重新连接后请刷新。",

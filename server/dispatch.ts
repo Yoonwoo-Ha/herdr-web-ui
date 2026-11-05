@@ -614,7 +614,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // a GET a watching device may make on purpose: a subagent's prose and tool-call arguments (which can carry file
   // contents) are what the live conversation already shows it of the agents of this pane
   if (pathname === BACKGROUND_AGENT_PATH) {
-    return handleBackgroundAgentRequest(request, url, { paneGet, omoPane: (paneId) => omo.sessionOf(paneId) !== null, claudeAgents, read: options.backgroundAgentRead });
+    return handleBackgroundAgentRequest(request, url, { paneGet, omoPane: (paneId) => omo.sessionOf(paneId) !== null, claudeAgents, opencodeAgents, read: options.backgroundAgentRead });
   }
 
   const planResponse = await handlePlanRequest(request, url, pathname, { omo, claudeAgents, plans });
