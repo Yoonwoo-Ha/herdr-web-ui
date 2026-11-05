@@ -49,7 +49,7 @@ class FakeSocket implements RelaySocket {
   }
 }
 
-async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" | "auth-ok" | "features" | "assigned" | "receipt" | "silence" | "protocol", onClose?: (error: Error) => void) {
+async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" | "auth-ok" | "features" | "assigned" | "receipt" | "silence" | "protocol" | "early-welcome", onClose?: (error: Error) => void) {
   const dir = mkdtempSync(join(tmpdir(), "relay-channel-"));
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   const registry = new DeviceStore(dir);
@@ -107,8 +107,16 @@ async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" |
       onHttp: (stream) => { httpSeen.resolve(stream.request.target); stream.headers(200); stream.end(); },
       onSession: (frame) => { void handle(frame).catch(fail); },
     });
+    // a PC that sends WELCOME right behind its handshake answer, before the phone's HELLO arrives
+    if (attack === "early-welcome") {
+      trace.push("server:WELCOME");
+      server.sendSession({ type: FrameType.WELCOME, flags: 0, stream_id: 0, payload: welcome() });
+    }
   });
   void daemonOpening.catch(() => {});
+  const welcome = () => ({ protocol: "ovis-mux" as const, version: 1 as const, features: attack === "features" ? ["unoffered"] : [],
+    limits: { ...LIMITS_V1, max_streams: 2 }, nonce: attack === "nonce" ? base64url(nonce.slice(1)) : base64url(nonce),
+    server_version: "test", relay_protocol: attack === "protocol" ? 2 : 1, min_supported_client: "0.0.0" });
   const raw = (type: number, payload: unknown): Uint8Array => {
     const body = new TextEncoder().encode(JSON.stringify(payload));
     const bytes = new Uint8Array(8 + body.length);
@@ -118,7 +126,7 @@ async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" |
   const handle = async (frame: MuxFrame): Promise<void> => {
     if (frame.type === FrameType.HELLO) {
       // a PC that finished the handshake and then hung: nothing answers HELLO
-      if (attack === "silence") return;
+      if (attack === "silence" || attack === "early-welcome") return;
       if (attack === "receipt") {
         await secure.send(encodeFrame({ type: FrameType.RECEIVED, flags: 0, stream_id: 0, payload: 99n }).slice().buffer);
         return;
@@ -132,14 +140,11 @@ async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" |
           payload: { device_id: "ab".repeat(8), session_id: "cd".repeat(16), role: "drive" } }).slice().buffer);
         return;
       }
-      const welcome = { protocol: "ovis-mux" as const, version: 1 as const, features: attack === "features" ? ["unoffered"] : [],
-        limits: { ...LIMITS_V1, max_streams: 2 }, nonce: attack === "nonce" ? base64url(nonce.slice(1)) : base64url(nonce),
-        server_version: "test", relay_protocol: attack === "protocol" ? 2 : 1, min_supported_client: "0.0.0" };
       trace.push("server:WELCOME");
       if (attack === "welcome" || attack === "nonce") {
-        await secure.send(raw(FrameType.WELCOME, attack === "welcome" ? { ...welcome, protocol: "wrong" } : welcome).slice().buffer);
+        await secure.send(raw(FrameType.WELCOME, attack === "welcome" ? { ...welcome(), protocol: "wrong" } : welcome()).slice().buffer);
       } else {
-        server.sendSession({ type: FrameType.WELCOME, flags: 0, stream_id: 0, payload: welcome });
+        server.sendSession({ type: FrameType.WELCOME, flags: 0, stream_id: 0, payload: welcome() });
       }
       return;
     }
@@ -185,6 +190,20 @@ for (const pairing of [false, true]) {
     expect(channel.server).toEqual({ version: "test", relayProtocol: 1 });
     expect(f.trace.slice(0, 4)).toEqual(["client:HELLO", "server:WELCOME", `client:${pairing ? "PAIR" : "AUTH"}`, "server:AUTH_OK"]);
     console.log(`ORDER: ${f.trace.slice(0, 4).join(" -> ")}; no other client frame before AUTH_OK`);
+    channel.mux.openHttp({ method: "GET", target: "/api/test", headers: [], body: "none" });
+    expect(await f.httpSeen.promise).toBe("/api/test");
+    channel.close();
+  });
+
+  it(`signs in with ${pairing ? "PAIR" : "AUTH"} on a WELCOME the PC sent without waiting for HELLO`, async () => {
+    const f = await fixture(pairing, "early-welcome");
+    await f.authSeen.promise;
+    // this PC never answers HELLO: its one WELCOME went out as soon as its channel opened
+    expect(f.trace.filter((entry) => entry === "server:WELCOME")).toHaveLength(1);
+    expect(f.trace.filter((entry) => entry.startsWith("client:"))).toEqual(["client:HELLO", `client:${pairing ? "PAIR" : "AUTH"}`]);
+    f.allowAuth.resolve();
+    const channel = await f.opening;
+    expect(channel.server).toEqual({ version: "test", relayProtocol: 1 });
     channel.mux.openHttp({ method: "GET", target: "/api/test", headers: [], body: "none" });
     expect(await f.httpSeen.promise).toBe("/api/test");
     channel.close();

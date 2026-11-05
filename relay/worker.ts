@@ -66,7 +66,7 @@ interface Runtime {
 }
 const runtime = () => globalThis as unknown as Runtime;
 
-const ROLES = new Set(["control", "data", "client"]);
+const ROLES = new Set(["control", "data", "client", "warm"]);
 function isInfo(value: unknown): value is SocketInfo {
   if (typeof value !== "object" || value === null) return false;
   const info = value as Record<string, unknown>;
@@ -78,6 +78,7 @@ function isInfo(value: unknown): value is SocketInfo {
     && (info["arrived"] === undefined || typeof info["arrived"] === "number")
     && (proof === undefined || (typeof proof === "object" && proof !== null && typeof proof["expected"] === "string" && typeof proof["expires"] === "number"))
     && (info["server_id"] === undefined || typeof info["server_id"] === "string")
+    && (info["generation"] === undefined || typeof info["generation"] === "string")
     && (info["usage"] === undefined || isUsage(info["usage"]))
     && (info["ended"] === undefined || info["ended"] === true);
 }

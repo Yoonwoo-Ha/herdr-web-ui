@@ -47,9 +47,29 @@ interface DataConnection {
   signedIn?: number;
 }
 
+/** The relay's word on a warm socket that a client took: `{"type":"bound","connection_id":"<32 hex>"}`. */
+function boundConnection(frame: unknown): string | null {
+  if (typeof frame !== "string" || frame.length > 128) return null;
+  try {
+    const value: unknown = JSON.parse(frame);
+    return typeof value === "object" && value !== null && "type" in value && value.type === "bound" && "connection_id" in value
+      && typeof value.connection_id === "string" && /^[0-9a-f]{32}$/.test(value.connection_id) ? value.connection_id : null;
+  } catch { return null; }
+}
+
 /** Physical relay I/O only: admission and dispatch remain in RelaySession. */
 export class RelayLink {
   private control: WebSocket | undefined;
+  /**
+   * A data socket opened and proven before any client came, for the relay to hand the next client
+   * (relay/core.ts): that client's handshake then waits for no socket of ours. Only while the current
+   * control socket's relay said it takes one.
+   */
+  private warm: WebSocket | undefined;
+  /** The control socket a warm socket is opened under, and the generation its relay named for it. */
+  private warmControl: { socket: WebSocket; generation: string } | undefined;
+  private warmAttempts = 0;
+  private cancelWarmRetry: (() => void) | undefined;
   private readonly data = new Map<string, DataConnection>();
   private stopped = false;
   private attempts = 0;
@@ -66,7 +86,7 @@ export class RelayLink {
 
   start(): void { if (!this.stopped && !this.control) this.openControl(); }
 
-  private socket(connectionId?: string): WebSocket {
+  private socket(connectionId?: string, warm?: string): WebSocket {
     const url = new URL("/v1/ws", this.options.relay);
     url.searchParams.set("server_id", this.options.identity.server_id);
     url.searchParams.set("role", "server");
@@ -74,6 +94,7 @@ export class RelayLink {
     url.searchParams.set("proof", "1");
     url.searchParams.set("public_key", bytesToHex(importPublicKey(this.options.identity.public_key)));
     if (connectionId) url.searchParams.set("connection_id", connectionId);
+    if (warm) url.searchParams.set("warm", warm);
     return (this.options.connect ?? ((address) => new WebSocket(address)))(url.href);
   }
 
@@ -105,7 +126,7 @@ export class RelayLink {
       // Bounded before parsing; no rate limit, since client arrivals and departures drive this traffic.
       if (event.data.length > CONTROL_MESSAGE_BYTES) { socket.close(); return; }
       if (!proofAnswered) {
-        proofAnswered = this.prove(socket, event.data, null);
+        proofAnswered = this.prove(socket, event.data, "control", null);
         return;
       }
       let value: unknown;
@@ -117,6 +138,10 @@ export class RelayLink {
         this.attempts = 0;
         this.options.onState("online", null);
         for (const id of value.connection_ids) this.openData(id);
+        if ("warm" in value && typeof value.warm === "string" && /^[0-9a-f]{32}$/.test(value.warm)) {
+          this.warmControl = { socket, generation: value.warm };
+          this.openWarm();
+        }
       } else if ("connection_id" in value && typeof value.connection_id === "string" && /^[0-9a-f]{32}$/.test(value.connection_id)) {
         if (value.type === "connected") this.openData(value.connection_id);
         else if (value.type === "disconnected") this.data.get(value.connection_id)?.socket.close();
@@ -128,6 +153,7 @@ export class RelayLink {
       if (this.control !== socket) return;
       this.control = undefined;
       this.cancelKeepalive?.();
+      this.endWarm();
       // The relay also uses 4401 for late answers. Only an explicit key mismatch is permanent.
       if (event.code === SERVER_PROOF_CLOSE && PERMANENT_SERVER_PROOF_REFUSALS.includes(event.reason)) {
         console.error(JSON.stringify({ event: "relay.server_proof.failed", code: event.code, reason: event.reason }));
@@ -138,9 +164,9 @@ export class RelayLink {
     };
   }
 
-  private prove(socket: WebSocket, frame: unknown, connectionId: string | null): boolean {
+  private prove(socket: WebSocket, frame: unknown, role: "control" | "data" | "warm", connectionId: string | null): boolean {
     const answer = answerServerChallenge(frame, importSecretKey(this.options.identity.secret_key), {
-      server_id: this.options.identity.server_id, role: connectionId === null ? "control" : "data", connection_id: connectionId,
+      server_id: this.options.identity.server_id, role, connection_id: connectionId,
     });
     if (!answer) { socket.close(4000, "invalid relay server challenge"); return false; }
     socket.send(answer);
@@ -154,15 +180,90 @@ export class RelayLink {
     this.cancelRetry = this.clock.setTimeout(() => this.openControl(), delay);
   }
 
+  /** Whether one more client may start signing in; the relay bounds who reaches this PC (relay/core.ts: MAX_CLIENTS answered, MAX_PENDING waiting). */
+  private hasRoom(id: string): boolean {
+    if (this.stopped || this.data.has(id)) return false;
+    // a client still signing in holds no session place and is closed at its deadline (serveData)
+    if (this.data.size >= MAX_SESSIONS + MAX_PENDING) return false;
+    return [...this.data.values()].filter((entry) => entry.deviceId).length < MAX_SESSIONS;
+  }
+
   private openData(id: string): void {
-    if (this.stopped || this.data.has(id)) return;
-    // The relay bounds who reaches this PC (relay/core.ts: MAX_CLIENTS answered, MAX_PENDING waiting);
-    // a client still signing in holds no session place and is closed at its deadline below.
-    if (this.data.size >= MAX_SESSIONS + MAX_PENDING) return;
-    if ([...this.data.values()].filter((entry) => entry.deviceId).length >= MAX_SESSIONS) return;
+    if (!this.hasRoom(id)) return;
     let socket: WebSocket;
     try { socket = this.socket(id); } catch { return; }
     socket.binaryType = "arraybuffer";
+    this.serveData(id, socket, false);
+  }
+
+  private openWarm(): void {
+    const control = this.warmControl;
+    if (this.stopped || this.warm || this.cancelWarmRetry || !control || control.socket !== this.control) return;
+    let socket: WebSocket;
+    try { socket = this.socket(undefined, control.generation); } catch { this.retryWarm(); return; }
+    socket.binaryType = "arraybuffer";
+    this.warm = socket;
+    let proofAnswered = false;
+    let lastHeard = this.clock.now();
+    let cancelKeepalive: (() => void) | undefined;
+    // Given up on (it stalled, or closed): another is opened after a pause, without waiting for a close
+    // event a half-open socket may never deliver.
+    const abandon = () => {
+      cancelKeepalive?.();
+      if (this.warm !== socket) return;
+      this.warm = undefined;
+      socket.close();
+      if (this.control === control.socket) this.retryWarm();
+    };
+    // As the control socket: a socket the relay has not answered for 30 s (its upgrade, challenge or pong) is lost.
+    const heartbeat = () => {
+      if (this.warm !== socket) return;
+      if (this.clock.now() - lastHeard >= 30_000) { abandon(); return; }
+      if (proofAnswered) socket.send('{"type":"ping"}');
+      cancelKeepalive = this.clock.setTimeout(heartbeat, 10_000);
+    };
+    cancelKeepalive = this.clock.setTimeout(heartbeat, 10_000);
+    socket.onmessage = (event) => {
+      if (this.warm !== socket) return;
+      lastHeard = this.clock.now();
+      if (!proofAnswered) {
+        proofAnswered = this.prove(socket, event.data, "warm", control.generation);
+        return;
+      }
+      if (event.data === '{"type":"pong"}') return;
+      const id = boundConnection(event.data);
+      if (!id) { socket.close(); return; }
+      cancelKeepalive?.();
+      this.warm = undefined;
+      this.warmAttempts = 0;
+      // the client's frames follow on this socket: its handshake consumer is installed before this returns
+      if (this.hasRoom(id)) this.serveData(id, socket, true);
+      else socket.close();
+      this.openWarm();
+    };
+    socket.onerror = abandon;
+    socket.onclose = abandon;
+  }
+
+  /** Another warm socket after a pause that grows as the control link's does; clients are served through `connected` meanwhile. */
+  private retryWarm(): void {
+    if (this.stopped || this.cancelWarmRetry) return;
+    const delay = Math.round(Math.min(++this.warmAttempts, 30) * 1000 * (0.8 + (this.options.random ?? Math.random)() * 0.4));
+    this.cancelWarmRetry = this.clock.setTimeout(() => { this.cancelWarmRetry = undefined; this.openWarm(); }, delay);
+  }
+
+  private endWarm(): void {
+    this.cancelWarmRetry?.();
+    this.cancelWarmRetry = undefined;
+    this.warmControl = undefined;
+    this.warmAttempts = 0;
+    const warm = this.warm;
+    this.warm = undefined;
+    warm?.close();
+  }
+
+  /** One client's data socket, whether opened for it or a warm socket it took (`proven`, already open). */
+  private serveData(id: string, socket: WebSocket, proven: boolean): void {
     // Runs until the client signs in or pairs, not just until the protected channel opens.
     const deadline = () => {
       // A pairing may already be saved: let its acknowledgment through once, then close regardless.
@@ -185,7 +286,7 @@ export class RelayLink {
         oldest[1].socket.close();
       }
     }
-    let proofAnswered = false;
+    let proofAnswered = proven;
     const transport: Transport = {
       onmessage: null, onclose: null, onerror: null,
       send: (data) => { socket.send(data); },
@@ -193,7 +294,7 @@ export class RelayLink {
     };
     socket.onmessage = (event) => {
       if (!proofAnswered) {
-        proofAnswered = this.prove(socket, event.data, id);
+        proofAnswered = this.prove(socket, event.data, "data", id);
         return;
       }
       if (event.data === '{"type":"pong"}') return;
@@ -208,14 +309,13 @@ export class RelayLink {
       transport.onclose?.(event.code, event.reason);
       if (this.data.get(id) === entry) this.data.delete(id);
     };
-    socket.onopen = () => {
-      const heartbeat = () => {
-        if (this.stopped || this.data.get(id) !== entry) return;
-        if (proofAnswered) socket.send('{"type":"ping"}');
-        entry.cancelKeepalive = this.clock.setTimeout(heartbeat, 10_000);
-      };
+    const heartbeat = () => {
+      if (this.stopped || this.data.get(id) !== entry) return;
+      if (proofAnswered) socket.send('{"type":"ping"}');
       entry.cancelKeepalive = this.clock.setTimeout(heartbeat, 10_000);
     };
+    if (proven) entry.cancelKeepalive = this.clock.setTimeout(heartbeat, 10_000);
+    else socket.onopen = () => { entry.cancelKeepalive = this.clock.setTimeout(heartbeat, 10_000); };
     // Install the handshake consumer before the data socket can receive held client frames.
     void openDaemonSecureChannel(transport, {
       daemonKeyPair: {
@@ -257,6 +357,7 @@ export class RelayLink {
     this.stopped = true;
     this.cancelRetry?.();
     this.cancelKeepalive?.();
+    this.endWarm();
     const control = this.control;
     this.control = undefined;
     await Promise.all([...this.data.values()].map(async (entry) => {

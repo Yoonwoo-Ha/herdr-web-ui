@@ -14,7 +14,7 @@ export const PERMANENT_SERVER_PROOF_REFUSALS: readonly string[] = [SERVER_KEY_MI
 
 export interface ProofRoute {
   readonly server_id: string;
-  readonly role: "control" | "data" | "client";
+  readonly role: "control" | "data" | "client" | "warm";
   readonly connection_id: string | null;
 }
 

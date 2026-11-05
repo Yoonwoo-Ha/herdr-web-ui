@@ -12,6 +12,14 @@
  *   in its first frame, `{"type":"assigned","connection_id":"..."}`.
  * - data (`role=server&connection_id=..`): the PC's socket for one client, opened once the PC
  *   hears `connected` (or `sync`) for it. Frames then pass between client and data as they came.
+ * - warm (`role=server&warm=<generation>`): a data socket the PC opened and proved before any
+ *   client came, once `sync` said this relay takes one and named the control socket's generation
+ *   (`"warm":"<32 hex>"`, new for every control socket). The next client to arrive while that
+ *   control socket is connected takes it at once: it hears `{"type":"bound","connection_id":".."}`
+ *   before any of the client's frames and is that client's data socket from then on, and the
+ *   control socket hears no `connected` for that client. The PC then opens the next one. At most
+ *   MAX_WARM wait per PC; one of another generation is refused, and one not bound closes with its
+ *   control socket.
  *
  * A PC socket (control or data) offers the PC's public key, from which its `server_id` is derived,
  * and is no part of the room until it answers a challenge only the matching secret key can answer
@@ -44,6 +52,13 @@ export const MAX_PENDING = 4;
  * arrivals within that round trip.
  */
 export const MAX_PROVING = 16;
+/** proven warm sockets one server_id may keep waiting for a client; past it the oldest is closed */
+export const MAX_WARM = 1;
+/**
+ * A warm socket silent this long (the PC pings it every 10 s) is not handed to a client: the PC may have
+ * given it up while its close has not arrived, and the client would wait out its handshake deadline.
+ */
+export const WARM_QUIET_MS = 25_000;
 /** the largest frame passed on, in bytes; Ovis frames stay under about 22 KiB */
 export const MAX_MESSAGE_BYTES = 64 * 1024;
 /** a client's frames held until its data socket attaches: at most this many... */
@@ -86,7 +101,7 @@ export const CLOSE = {
   SERVER_PROOF: SERVER_PROOF_CLOSE,
 } as const;
 
-export type Role = "control" | "data" | "client";
+export type Role = "control" | "data" | "client" | "warm";
 export type Frame = string | ArrayBuffer | Uint8Array;
 
 /** what a socket is, kept with the socket itself so it survives a Durable Object's eviction */
@@ -105,6 +120,8 @@ export interface SocketInfo {
   arrived?: number;
   /** a PC socket that has not answered its challenge yet: no part of the room until it does */
   proof?: { expected: string; expires: number };
+  /** a control socket's generation, new each time one is proven; a warm socket's, the one it was opened under */
+  generation?: string;
   /** the room's server_id, kept with a socket whose usage is counted */
   server_id?: string;
   /** a proven control socket or a client: its usage not reported yet (a client's only once the PC answered it) */
@@ -141,6 +158,8 @@ export interface SocketRequest {
   /** a PC socket's `proof=` and `public_key=` as given, checked once the socket is open (4401) */
   proof?: string | null;
   public_key?: string | null;
+  /** a warm socket's control generation, as given */
+  generation?: string;
 }
 
 /** Cloudflare's Rate Limiting binding, or anything with its shape */
@@ -168,6 +187,11 @@ export function parseSocketRequest(url: URL): SocketRequest | { error: string } 
   }
   if (role !== "server") return { error: "role must be server or client" };
   const proof = { proof: params.get("proof"), public_key: params.get("public_key") };
+  const generation = params.get("warm");
+  if (generation !== null) {
+    if (!HEX32.test(generation) || connectionId !== null) return { error: "warm must be 32 lowercase hex digits, without a connection_id" };
+    return { server_id: serverId, role: "warm", connection_id: null, version, ...proof, generation };
+  }
   if (connectionId === null) return { server_id: serverId, role: "control", connection_id: null, version, ...proof };
   if (!HEX32.test(connectionId)) return { error: "connection_id must be 32 lowercase hex digits" };
   return { server_id: serverId, role: "data", connection_id: connectionId, version, ...proof };
@@ -308,7 +332,7 @@ export class Room<S extends object> {
   }
 
   /** A socket was upgraded: place it, or close it when the room refuses it. */
-  open(socket: S, request: Pick<SocketRequest, "server_id" | "role" | "connection_id" | "version" | "proof" | "public_key">): void {
+  open(socket: S, request: Pick<SocketRequest, "server_id" | "role" | "connection_id" | "version" | "proof" | "public_key" | "generation">): void {
     if (request.version !== WIRE_VERSION) return this.end(socket, CLOSE.POLICY, "unsupported wire version");
     if (request.role === "client") return this.openClient(socket, request.server_id);
     // a PC socket: nothing of the room until it proves it holds the key this server_id derives from
@@ -319,11 +343,13 @@ export class Room<S extends object> {
     // the oldest challenge gives way, so silent sockets cannot keep the PC itself from proving
     for (const peer of proving.slice(0, Math.max(0, proving.length - MAX_PROVING + 1))) this.end(peer.socket, CLOSE.TRY_AGAIN, "too many server proofs pending");
     let challenge: ReturnType<typeof serverChallenge>;
-    try { challenge = serverChallenge(key, { server_id: request.server_id, role: request.role, connection_id: request.connection_id }); }
+    // a warm socket's proof covers its generation, carried where a data socket's covers its connection_id
+    try { challenge = serverChallenge(key, { server_id: request.server_id, role: request.role, connection_id: request.role === "warm" ? request.generation ?? null : request.connection_id }); }
     catch { return this.end(socket, CLOSE.SERVER_PROOF, SERVER_KEY_INVALID); } // a low-order X25519 point
     const now = this.host.now();
     const expires = now + SERVER_PROOF_MS;
-    this.host.setInfo(socket, { role: request.role, connection_id: request.connection_id, seen: now, buffered: false, proof: { expected: challenge.expected, expires }, server_id: request.server_id });
+    this.host.setInfo(socket, { role: request.role, connection_id: request.connection_id, seen: now, buffered: false, proof: { expected: challenge.expected, expires }, server_id: request.server_id,
+      ...(request.role === "warm" ? { generation: request.generation } : {}) });
     this.lastSeen.set(socket, now);
     this.host.send(socket, challenge.frame);
     this.host.wake?.(expires);
@@ -344,9 +370,26 @@ export class Room<S extends object> {
     this.host.setInfo(socket, info);
     this.lastSeen.set(socket, now);
     // with a PC connected, the client must be answered in time; without one it waits a while for the PC
-    this.setDeadline(socket, info, now + (peers.some((peer) => peer.info.role === "control") ? HANDSHAKE_MS : OFFLINE_WAIT_MS));
+    const controlled = peers.some((peer) => peer.info.role === "control");
+    this.setDeadline(socket, info, now + (controlled ? HANDSHAKE_MS : OFFLINE_WAIT_MS));
     this.host.send(socket, JSON.stringify({ type: "assigned", connection_id: connectionId }));
-    this.tellControls({ type: "connected", connection_id: connectionId });
+    const generation = peers.find((peer) => peer.info.role === "control")?.info.generation;
+    let warm = generation ? peers.find((peer) => peer.info.role === "warm" && peer.info.generation === generation) : undefined;
+    // one the PC stopped keeping alive may be gone on its side (half-open): the client is announced instead
+    if (warm && now - Math.max(this.lastSeen.get(warm.socket) ?? warm.info.seen, this.host.keepaliveAt?.(warm.socket) ?? 0) >= WARM_QUIET_MS) {
+      this.end(warm.socket, CLOSE.GOING_AWAY, "warm socket went quiet");
+      warm = undefined;
+    }
+    if (!warm) return this.tellControls({ type: "connected", connection_id: connectionId });
+    // the PC's warm socket becomes this client's data socket, saved as such before any frame passes
+    this.host.setInfo(warm.socket, { role: "data", connection_id: connectionId, seen: now, buffered: false });
+    this.lastSeen.set(warm.socket, now);
+    this.host.send(warm.socket, JSON.stringify({ type: "bound", connection_id: connectionId }));
+  }
+
+  /** Closes the warm sockets no client has taken, those still proving included. */
+  private endWarm(reason: string): void {
+    for (const peer of this.peers(true)) if (peer.info.role === "warm") this.end(peer.socket, CLOSE.GOING_AWAY, reason);
   }
 
   /** A PC socket answered its challenge: it takes its place in the room. */
@@ -356,12 +399,24 @@ export class Room<S extends object> {
     if (info.role === "control") {
       // the newest proven control socket wins: an older one may be half-open after the PC's network moved
       for (const peer of peers) if (peer.info.role === "control") this.end(peer.socket, CLOSE.POLICY, "replaced by a newer control socket");
-      this.host.setInfo(socket, { role: "control", connection_id: null, seen: now, buffered: false, server_id: info.server_id, usage: { since: now, up: 0, down: 0 } });
+      // a warm socket belongs to the control socket it was opened under: the PC opens another for this one
+      this.endWarm("replaced by a newer control socket");
+      const generation = randomHex();
+      this.host.setInfo(socket, { role: "control", connection_id: null, seen: now, buffered: false, server_id: info.server_id, usage: { since: now, up: 0, down: 0 }, generation });
       this.lastSeen.set(socket, now);
       const waiting = peers.filter((peer) => peer.info.role === "client" && !peers.some((other) => other.info.role === "data" && other.info.connection_id === peer.info.connection_id));
       // the PC (back) gets the full HANDSHAKE_MS to answer every client still waiting
       for (const peer of waiting) this.setDeadline(peer.socket, peer.info, now + HANDSHAKE_MS);
-      this.host.send(socket, JSON.stringify({ type: "sync", connection_ids: waiting.map((peer) => peer.info.connection_id) }));
+      this.host.send(socket, JSON.stringify({ type: "sync", connection_ids: waiting.map((peer) => peer.info.connection_id), warm: generation }));
+      return;
+    }
+    if (info.role === "warm") {
+      // opened under a control socket that is gone or replaced: no client may land on it
+      if (!peers.some((peer) => peer.info.role === "control" && peer.info.generation === info.generation)) return this.end(socket, CLOSE.GOING_AWAY, "no control socket of its generation");
+      const warm = peers.filter((peer) => peer.info.role === "warm").sort((a, b) => a.info.seen - b.info.seen);
+      for (const peer of warm.slice(0, Math.max(0, warm.length - MAX_WARM + 1))) this.end(peer.socket, CLOSE.POLICY, "replaced by a newer warm socket");
+      this.host.setInfo(socket, { role: "warm", connection_id: null, seen: now, buffered: false, generation: info.generation! });
+      this.lastSeen.set(socket, now);
       return;
     }
     const connectionId = info.connection_id!;
@@ -396,7 +451,7 @@ export class Room<S extends object> {
     this.lastSeen.set(socket, now);
     if (now - info.seen >= SEEN_WRITE_MS) this.host.setInfo(socket, { ...info, seen: now });
     if (frame === KEEPALIVE_PING) return this.host.send(socket, KEEPALIVE_PONG);
-    if (info.role === "control") return;
+    if (info.role === "control" || info.role === "warm") return;
     const connectionId = info.connection_id!;
     if (info.role === "data") {
       const client = this.find("client", connectionId);
@@ -438,7 +493,11 @@ export class Room<S extends object> {
     this.ended.add(socket);
     if (!info || info.proof) return;
     if (info.usage) this.report(info, info.usage, this.host.now(), true);
-    if (info.role === "control") return this.pauseWaiting();
+    if (info.role === "warm") return;
+    if (info.role === "control") {
+      if (!this.peers().some((peer) => peer.info.role === "control")) this.endWarm("control socket gone");
+      return this.pauseWaiting();
+    }
     const connectionId = info.connection_id!;
     if (info.role === "client") {
       this.held.delete(connectionId);

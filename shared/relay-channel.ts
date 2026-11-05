@@ -149,6 +149,8 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
     let connectionId = "";
     const limits = { ...LIMITS_V1 };
     let welcome: Uint8Array | undefined;
+    /** a provisional WELCOME a phone comparing digits passed over, counted with the setup frames at admission */
+    let passed: Uint8Array | undefined;
     let server: RelayServerInfo = { version: "", relayProtocol: RELAY_PROTOCOL };
     let receipt: Uint8Array | undefined;
     let incoming = Promise.resolve();
@@ -203,6 +205,8 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
         return;
       }
       if (phase === "welcome" && frame.type === FrameType.WELCOME) {
+        // sent before the PC read HELLO, so it cannot select comparing digits: the WELCOME answering HELLO follows
+        if (comparing && frame.payload.provisional && !passed) { passed = bytes; return; }
         // before any credential: a PC of another relay generation is an update, not a pairing
         if (frame.payload.relay_protocol !== RELAY_PROTOCOL) throw new MuxProtocolError("unsupported_version", `The PC speaks relay protocol ${frame.payload.relay_protocol}`);
         server = { version: frame.payload.server_version, relayProtocol: frame.payload.relay_protocol };
@@ -266,6 +270,7 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
       if (options.signal?.aborted || !secure?.isOpen() || !mux || !welcome) return;
       // Defer setup accounting until admission: receive() automatically emits RECEIVED.
       // Outgoing HELLO/AUTH already used the mux ledger, so inbound receipts are safe.
+      if (passed) mux.receive(passed);
       mux.receive(welcome);
       if (challenge) mux.receive(challenge);
       mux.receive(bytes);

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
-import { SERVER_PROOF_CLOSE, SERVER_PROOF_MS } from "../shared/relay-server-proof.ts";
-import { CLOSE, HANDSHAKE_MS, IDLE_MS, KEEPALIVE_PING, KEEPALIVE_PONG, MAX_CLIENTS, MAX_MESSAGE_BYTES, MAX_PENDING, MAX_PROVING, OFFLINE_WAIT_MS, USAGE_REPORT_MS, type Frame } from "./core.ts";
+import { answerServerChallenge, SERVER_PROOF_CLOSE, SERVER_PROOF_MS } from "../shared/relay-server-proof.ts";
+import { CLOSE, HANDSHAKE_MS, IDLE_MS, KEEPALIVE_PING, KEEPALIVE_PONG, MAX_CLIENTS, MAX_MESSAGE_BYTES, MAX_PENDING, MAX_PROVING, OFFLINE_WAIT_MS, USAGE_REPORT_MS, WARM_QUIET_MS, parseSocketRequest, type Frame } from "./core.ts";
 import { answerChallenge, newServer, type TestServer } from "./relay-test-client.ts";
 import { RelayRoom, handle, usageKey, type Env, type HibernatableSocket, type RelayState } from "./worker.ts";
 
@@ -91,11 +91,123 @@ async function connectPair(room: RelayRoom, fake: ReturnType<typeof fakeState>) 
   return { client, connection_id, data: await connectServer(room, fake, connection_id) };
 }
 
+/** The generation a control socket's sync named, which a warm socket opened under it carries. */
+const generationOf = (control: FakeSocket) => (control.json(0) as { warm: string }).warm;
+
+/** Opens a warm PC socket of `generation` and answers its challenge for `role` (a warm socket's own unless another is given). */
+async function connectWarm(room: RelayRoom, fake: ReturnType<typeof fakeState>, generation: string, role: "warm" | "control" | "data" = "warm"): Promise<FakeSocket> {
+  const socket = await connect(room, fake, `role=server&warm=${generation}&${proof()}`);
+  const answer = answerServerChallenge(socket.sent.shift(), PC.secretKey, { server_id: SERVER, role, connection_id: role === "control" ? null : generation });
+  if (answer) room.webSocketMessage(socket, answer);
+  return socket;
+}
+
 /** what the runtime does when a socket closes: the room hears it */
 function closeFromFar(room: RelayRoom, socket: FakeSocket) {
   socket.closedWith ??= { code: 1000, reason: "" };
   room.webSocketClose(socket);
 }
+
+describe("relay warm sockets", () => {
+  test("a client arriving takes the PC's proven warm socket at once, and the control socket hears nothing of it", async () => {
+    const fake = fakeState();
+    let room = new RelayRoom(fake.state);
+    const control = await connectServer(room, fake);
+    const warm = await connectWarm(room, fake, generationOf(control));
+    expect(warm.sent).toEqual([]);
+    expect(warm.closedWith).toBeNull();
+    // an eviction between the proof and the client: the warm socket is found again from what it saved
+    room = new RelayRoom(fake.state);
+    const client = await connect(room, fake, "role=client");
+    const { connection_id } = client.json(0) as { connection_id: string };
+    expect(warm.json(0)).toEqual({ type: "bound", connection_id });
+    expect(control.sent).toHaveLength(1);
+    room.webSocketMessage(client, "hello");
+    room = new RelayRoom(fake.state);
+    room.webSocketMessage(warm, "ready");
+    expect(warm.sent.slice(1)).toEqual(["hello"]);
+    expect(client.sent.slice(1)).toEqual(["ready"]);
+    // with no warm socket left, the next client is announced as before
+    const next = await connect(room, fake, "role=client");
+    expect(control.json(control.sent.length - 1)).toEqual({ type: "connected", connection_id: (next.json(0) as { connection_id: string }).connection_id });
+    closeFromFar(room, client);
+    expect(warm.closedWith?.code).toBe(CLOSE.GOING_AWAY);
+    expect(control.json(control.sent.length - 1)).toEqual({ type: "disconnected", connection_id });
+  });
+
+  test("a warm socket the PC stopped keeping alive is not handed to a client, which is announced instead", async () => {
+    const start = new Date("2026-11-05T12:00:00Z");
+    setSystemTime(start);
+    const fake = fakeState();
+    let room = new RelayRoom(fake.state);
+    const control = await connectServer(room, fake);
+    const generation = generationOf(control);
+    const kept = await connectWarm(room, fake, generation);
+    // kept alive by its pings, the last one answered by the runtime itself, after an eviction
+    setSystemTime(new Date(start.getTime() + 20_000));
+    room.webSocketMessage(kept, KEEPALIVE_PING);
+    room = new RelayRoom(fake.state);
+    setSystemTime(new Date(start.getTime() + 40_000));
+    fake.keepalive.set(kept, new Date(start.getTime() + 39_000));
+    const first = await connect(room, fake, "role=client");
+    expect(kept.json(kept.sent.length - 1)).toEqual({ type: "bound", connection_id: (first.json(0) as { connection_id: string }).connection_id });
+    // the next warm socket goes quiet past WARM_QUIET_MS: the PC may have given it up
+    const quiet = await connectWarm(room, fake, generation);
+    setSystemTime(new Date(start.getTime() + 40_000 + WARM_QUIET_MS));
+    const second = await connect(room, fake, "role=client");
+    expect(quiet.closedWith?.code).toBe(CLOSE.GOING_AWAY);
+    expect(quiet.sent).toEqual([]);
+    expect(control.json(control.sent.length - 1)).toEqual({ type: "connected", connection_id: (second.json(0) as { connection_id: string }).connection_id });
+  });
+
+  test("a warm socket needs a warm proof of its generation, and one at a time waits", async () => {
+    const fake = fakeState();
+    const room = new RelayRoom(fake.state);
+    for (const query of [`warm=1`, `warm=${"ab".repeat(16)}&connection_id=${"ab".repeat(16)}`]) {
+      expect(parseSocketRequest(new URL(url(`role=server&${query}`)))).toHaveProperty("error");
+    }
+    const control = await connectServer(room, fake);
+    const generation = generationOf(control);
+    for (const role of ["control", "data"] as const) {
+      const forged = await connectWarm(room, fake, generation, role);
+      expect(forged.closedWith?.code).toBe(SERVER_PROOF_CLOSE);
+    }
+    const stranger = await connectWarm(room, fake, "cd".repeat(16));
+    expect(stranger.closedWith?.code).toBe(CLOSE.GOING_AWAY);
+    const first = await connectWarm(room, fake, generation);
+    const second = await connectWarm(room, fake, generation);
+    expect(first.closedWith?.code).toBe(CLOSE.POLICY);
+    expect(second.closedWith).toBeNull();
+  });
+
+  test("a warm socket goes with the control socket it was opened under, proven or still proving", async () => {
+    const fake = fakeState();
+    const room = new RelayRoom(fake.state);
+    const control = await connectServer(room, fake);
+    const old = generationOf(control);
+    const proven = await connectWarm(room, fake, old);
+    // still proving when the PC's network moves: its answer arrives after the newer control socket
+    const proving = await connect(room, fake, `role=server&warm=${old}&${proof()}`);
+    const late = answerServerChallenge(proving.sent.shift(), PC.secretKey, { server_id: SERVER, role: "warm", connection_id: old });
+    const replacement = await connectServer(room, fake);
+    expect(control.closedWith?.code).toBe(CLOSE.POLICY);
+    expect(proven.closedWith?.code).toBe(CLOSE.GOING_AWAY);
+    expect(proving.closedWith?.code).toBe(CLOSE.GOING_AWAY);
+    room.webSocketMessage(proving, late!);
+    // a warm socket of the old generation opened after the replacement is refused, and the client is announced
+    const stale = await connectWarm(room, fake, old);
+    expect(stale.closedWith?.code).toBe(CLOSE.GOING_AWAY);
+    const client = await connect(room, fake, "role=client");
+    const { connection_id } = client.json(0) as { connection_id: string };
+    expect(replacement.json(replacement.sent.length - 1)).toEqual({ type: "connected", connection_id });
+    const current = await connectWarm(room, fake, generationOf(replacement));
+    closeFromFar(room, replacement);
+    expect(current.closedWith?.code).toBe(CLOSE.GOING_AWAY);
+    // with no control socket no warm socket is taken
+    const lonely = await connectWarm(room, fake, generationOf(replacement));
+    expect(lonely.closedWith?.code).toBe(CLOSE.GOING_AWAY);
+  });
+});
 
 describe("relay Durable Object", () => {
   test("one failed alarm write does not stop later ones", async () => {
@@ -119,7 +231,7 @@ describe("relay Durable Object", () => {
     const fake = fakeState();
     let room = new RelayRoom(fake.state);
     const control = await connectServer(room, fake);
-    expect(control.json(0)).toEqual({ type: "sync", connection_ids: [] });
+    expect(control.json(0)).toEqual({ type: "sync", connection_ids: [], warm: expect.stringMatching(/^[0-9a-f]{32}$/) });
     const client = await connect(room, fake, "role=client");
     const { connection_id } = client.json(0) as { connection_id: string };
     expect(connection_id).toMatch(/^[0-9a-f]{32}$/);
@@ -370,7 +482,7 @@ describe("relay admission", () => {
     const first = await connect(room, fake, `role=server&${proof()}`);
     const answer = answerChallenge(first.sent.shift()!, PC, null)!;
     room.webSocketMessage(first, answer);
-    expect(first.json(0)).toEqual({ type: "sync", connection_ids: [] });
+    expect(first.json(0)).toEqual({ type: "sync", connection_ids: [], warm: expect.stringMatching(/^[0-9a-f]{32}$/) });
     const replay = await connect(room, fake, `role=server&${proof()}`);
     room.webSocketMessage(replay, answer);
     expect(replay.closedWith?.code).toBe(SERVER_PROOF_CLOSE);
@@ -392,7 +504,7 @@ describe("relay admission", () => {
     room.webSocketMessage(second, answerChallenge(second.sent[0]!, PC, null)!);
     expect(first.closedWith?.code).toBe(CLOSE.POLICY);
     expect(second.closedWith).toBeNull();
-    expect(second.json(1)).toEqual({ type: "sync", connection_ids: [] });
+    expect(second.json(1)).toEqual({ type: "sync", connection_ids: [], warm: expect.stringMatching(/^[0-9a-f]{32}$/) });
   });
 
   test("a PC socket that does not answer its challenge in 10 s is closed, keepalives or not", async () => {

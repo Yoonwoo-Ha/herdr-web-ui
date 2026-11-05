@@ -104,10 +104,15 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
     socket.addEventListener("message", (event) => {
       if (typeof event.data === "string" && event.data.includes('"sync"')) synced.resolve();
     });
-    if (new URL(url).searchParams.has("connection_id")) {
+    const counted = (): void => {
       dataSockets.add(socket);
       socketsChanged.dispatchEvent(new Event("change"));
       socket.addEventListener("close", () => { dataSockets.delete(socket); socketsChanged.dispatchEvent(new Event("change")); });
+    };
+    if (new URL(url).searchParams.has("connection_id")) counted();
+    // a warm socket is a phone's connection from the moment the relay binds it to one
+    else if (new URL(url).searchParams.has("warm")) {
+      socket.addEventListener("message", (event) => { if (typeof event.data === "string" && event.data.includes('"bound"')) counted(); });
     }
     return socket;
   } });

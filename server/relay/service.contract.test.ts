@@ -36,13 +36,34 @@ async function fixture(serveOnly?: boolean, options: Partial<RelayServiceOptions
   let synced = deferred<void>();
   let controlLost = deferred<void>();
   let dataOpened = deferred<WebSocket>();
+  /** every socket the PC opened, by kind, and what its control sockets heard */
+  const opened: { kind: "control" | "data" | "warm"; socket: WebSocket }[] = [];
+  const heard: string[] = [];
+  const warmOpened: ReturnType<typeof deferred<WebSocket>>[] = [deferred<WebSocket>(), deferred<WebSocket>()];
   const relayOptions = {
     stateDir, relay: `wss://127.0.0.1:${localRelay.port}`,
     connect: (url: string) => {
       const target = new URL(url);
       const socket = new WebSocket(`ws://127.0.0.1:${localRelay.port}${target.pathname}${target.search}`);
+      const kind = target.searchParams.has("connection_id") ? "data" : target.searchParams.has("warm") ? "warm" : "control";
+      opened.push({ kind, socket });
+      if (kind === "warm") {
+        // resolved once the PC sent its proof: what the test sends after it reaches the relay after it
+        const proved = warmOpened[opened.filter((entry) => entry.kind === "warm").length - 1];
+        const send = socket.send.bind(socket);
+        socket.send = (data) => {
+          send(data);
+          if (typeof data === "string" && data.includes('"server_proof"')) proved?.resolve(socket);
+        };
+      }
+      if (kind === "control") socket.addEventListener("message", (event) => { if (typeof event.data === "string") heard.push(event.data); });
       if (target.searchParams.has("connection_id")) {
         socket.addEventListener("open", () => dataOpened.resolve(socket));
+      } else if (target.searchParams.has("warm")) {
+        // a warm socket is a client's data socket from the moment the relay binds it
+        socket.addEventListener("message", (event) => {
+          if (typeof event.data === "string" && event.data.includes('"bound"')) dataOpened.resolve(socket);
+        });
       } else socket.addEventListener("close", () => controlLost.resolve());
       socket.addEventListener("message", (event) => {
         if (typeof event.data === "string" && JSON.parse(event.data).type === "sync") synced.resolve();
@@ -62,6 +83,7 @@ async function fixture(serveOnly?: boolean, options: Partial<RelayServiceOptions
     get attempts() { return attempts; },
     get dataOpened() { return dataOpened.promise; },
     get controlLost() { return controlLost.promise; },
+    opened, heard, warmOpened: warmOpened.map((entry) => entry.promise),
     get base() { return `http://127.0.0.1:${app.port}`; },
     async request(path = "", method = "GET", guarded = true) {
       return fetch(this.base + "/api/relay" + path, { method,
@@ -322,6 +344,22 @@ it("starts, decodes an offer, pairs, authenticates, and carries full HTTP and WS
   }
 });
 
+it("hands a phone the PC's proven warm socket, so the PC opens none for it, and keeps the next one ready", async () => {
+  const f = await fixture();
+  await f.start();
+  const warm = await bounded(f.warmOpened[0]!);
+  // a keepalive sent after the proof is answered after the relay took that proof
+  const proven = deferred<void>();
+  warm.addEventListener("message", (event) => { if (event.data === '{"type":"pong"}') proven.resolve(); });
+  warm.send('{"type":"ping"}');
+  await bounded(proven.promise);
+  const paired = await client(f, await f.offer());
+  expect((await paired.http("/api/health")).status).toBe(200);
+  expect(f.opened.filter((entry) => entry.kind === "data")).toEqual([]);
+  expect(f.heard.some((message) => message.includes('"connected"'))).toBe(false);
+  await bounded(f.warmOpened[1]!);
+});
+
 it("relay off closes sessions", async () => {
   const f = await fixture();
   await f.start();
@@ -523,7 +561,10 @@ it("bounds a client's incomplete protected handshake to fifteen seconds", async 
   cleanup.push(() => raw.close());
   const closed = deferred<number>();
   raw.onclose = (event) => closed.resolve(event.code);
-  await bounded(f.dataOpened);
+  const opened = deferred<void>();
+  raw.onopen = () => opened.resolve();
+  // with a warm socket the PC's side is ready before the client hears its socket opened
+  await bounded(Promise.all([f.dataOpened, opened.promise]));
   clock.advance(14_999);
   expect(raw.readyState).toBe(WebSocket.OPEN);
   clock.advance(1);
@@ -651,7 +692,8 @@ async function regionalFixture({ rtt = { global: 130, regional: 13 } as { global
       socket.addEventListener("message", (event) => {
         if (typeof event.data === "string" && JSON.parse(event.data).type === "sync") synced[which].resolve();
       });
-      if (!target.searchParams.has("connection_id")) socket.addEventListener("close", () => lost[which].resolve());
+      // the control socket: data and warm sockets come and go with phones
+      if (!target.searchParams.has("connection_id") && !target.searchParams.has("warm")) socket.addEventListener("close", () => lost[which].resolve());
       return socket;
     },
   });
