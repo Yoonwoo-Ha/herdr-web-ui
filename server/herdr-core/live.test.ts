@@ -249,7 +249,7 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
     const adapter = await startHerdrCoreAdapter(hc, socket);
     // the core is this test's own and stops in afterAll: a failure here leaves nothing for another test
     try {
-      expect((await ping(socket)).layout).toEqual({ rename: true, split: true, move: true, arrange: true });
+      expect((await ping(socket)).layout).toEqual({ rename: true, split: true, move: true, arrange: true, worktrees: true });
       const api = await workspaceCreate({ cwd: dir, label: "api" }, socket);
       const web = await workspaceCreate({ cwd: dir, label: "web" }, socket);
 

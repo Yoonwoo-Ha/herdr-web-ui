@@ -1,4 +1,5 @@
 import { existsSync, rmSync } from "node:fs";
+import { basename } from "node:path";
 import { createConnection } from "node:net";
 import type { Socket } from "bun";
 import { AGENT_LABELS } from "../agents-routes.ts";
@@ -7,7 +8,9 @@ import { SHELL_AGENTS, shellCommandLine } from "../shell-agent.ts";
 import { type HcConnection, HcError } from "./connection.ts";
 import { foreignLayout, leaves, neighbour, OVIS_LAYOUT_DOC, type OvisLayout, type PaneDirection, resizeLeaf, setRatio, splitLeaf, swapLeaves, type TabLayout } from "./layout-doc.ts";
 import { agentInfoOf, agentOfStatus, agentStatusOf, buildSnapshot, type FirstTurn, keptLayout, reportedFacts, type HcStatus, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, onOtherMachine, OTHER_WORKSPACE_ID, PANE_NAME_LABEL, processInfoOf, SEEN_LABEL, shownStatusOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
+import { checkoutHolding, defaultCheckoutPath, factsOf, git, gitDirIdentity, labeledWorktree, realPath, type Checkout, type Repository, repositoryOf, WORKTREE_LABEL, WorktreeError, worktreeFolder, worktreeLabel } from "./worktrees.ts";
 import type { AgentStatus, SessionSnapshot } from "../../shared/herdr-api.generated.ts";
+import type { WorktreeInfo } from "../herdr/client.ts";
 
 /**
  * herdr's socket API, answered from herdr-core. The server talks to herdr through one client
@@ -30,7 +33,8 @@ import type { AgentStatus, SessionSnapshot } from "../../shared/herdr-api.genera
  * Ovis keeps names and a pane's workspace and tab in terminal labels, and the order of workspaces
  * and tabs, each tab's splits and its zoom in a document of its own, `ovis-layout`
  * (layout-doc.ts; `ping` says which in `layout`). Where the app arranges them, they are the app's.
- * Everything else (focus, worktrees, plugins) is refused as `unsupported`.
+ * hc has no worktrees: `worktree.*` runs git itself and opens a checkout as a workspace of its own
+ * (worktrees.ts). Everything else (focus, plugins) is refused as `unsupported`.
  * The live terminal itself is `hc attach`, which the server
  * runs in place of `herdr terminal attach` (server/core/terminal-process.ts).
  *
@@ -492,13 +496,92 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     if (failed) throw failed.reason;
   };
 
+  /** The repository a workspace works in: the checkout its facts name, or its first pane's folder. */
+  const inRepository = async (workspaceId: string): Promise<{ shown: SessionSnapshot; repository: Repository }> => {
+    // a checkout opens as a workspace Ovis places: refused where the Herdr app arranges the core, as ping says
+    const shown = await ownLayout();
+    const workspace = shown.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
+    if (!workspace) throw new AdapterError("workspace_not_found", `workspace ${workspaceId} not found`);
+    const folder = workspace.worktree?.checkout_path ?? shown.panes.find((pane) => pane.workspace_id === workspaceId)?.cwd;
+    if (!folder) throw new AdapterError("not_git_worktree", `workspace ${workspaceId} has no folder`);
+    return { shown, repository: await repositoryOf(folder) };
+  };
+  /**
+   * Which workspace shows each checkout: the one its facts name, else the one whose first pane works
+   * in it. A folder below a checkout's own is that checkout's only when git says so: it may be a
+   * repository of its own nested in it.
+   */
+  const openWorkspaces = async (shown: SessionSnapshot, repository: Repository): Promise<Map<string, string>> => {
+    const open = new Map<string, string>();
+    for (const workspace of shown.workspaces) {
+      if (workspace.workspace_id === OTHER_WORKSPACE_ID) continue;
+      const facts = workspace.worktree;
+      const folder = facts ? (facts.repo_key === repository.repo_key ? facts.checkout_path : null) : shown.panes.find((pane) => pane.workspace_id === workspace.workspace_id)?.cwd;
+      if (!folder) continue;
+      const real = realPath(folder);
+      const checkout = checkoutHolding(repository.checkouts, real);
+      if (!checkout || open.has(checkout)) continue;
+      if (checkout !== real) {
+        const top = await git(real, ["rev-parse", "--show-toplevel"]);
+        if (!top.ok || realPath(top.stdout.trim()) !== checkout) continue;
+      }
+      open.set(checkout, workspace.workspace_id);
+    }
+    return open;
+  };
+  /** create and open one at a time: two asking for the same checkout get one workspace */
+  let opening: Promise<unknown> = Promise.resolve();
+  const oneAtATime = <T>(run: () => Promise<T>): Promise<T> => {
+    const next = opening.then(run, run);
+    opening = next.catch(() => undefined);
+    return next;
+  };
+  const infoOf = (repository: Repository, checkout: Checkout, open: ReadonlyMap<string, string>): WorktreeInfo => ({
+    ...checkout,
+    label: checkout.branch ? worktreeFolder(checkout.branch) : basename(checkout.path),
+    is_linked_worktree: checkout.path !== repository.repo_root,
+    open_workspace_id: open.get(checkout.path) ?? null,
+  });
+  /**
+   * Opens a checkout as a workspace of its own, a shell in its folder carrying its facts. The
+   * repository's own workspace gets its facts too, so the new one is drawn under it.
+   */
+  const openCheckout = async (shown: SessionSnapshot, repository: Repository, checkout: string, name: string) => {
+    const head = (await openWorkspaces(shown, repository)).get(repository.repo_root);
+    // the repository's own checkout keeps its git folder in the common one
+    if (head && !shown.workspaces.find((workspace) => workspace.workspace_id === head)?.worktree) {
+      await label(shown.panes.filter((pane) => pane.workspace_id === head).map((pane) => pane.pane_id), { [WORKTREE_LABEL]: worktreeLabel(factsOf(repository, repository.repo_root), repository.repo_key) });
+    }
+    const own = checkout === repository.repo_root ? repository.repo_key : (await repositoryOf(checkout)).git_dir;
+    return startShell({ cwd: checkout }, {
+      [SPACE_LABEL]: `ovis-${crypto.randomUUID()}`,
+      [TAB_LABEL]: `ovis-${crypto.randomUUID()}`,
+      [WORKSPACE_NAME_LABEL]: name,
+      [WORKTREE_LABEL]: worktreeLabel(factsOf(repository, checkout), own),
+    });
+  };
+  /** The worktree label of a workspace's terminals as written, for a terminal joining it; none for a workspace outside git. */
+  const worktreeLabelOf = async (shown: SessionSnapshot, workspaceId: string): Promise<Record<string, string>> => {
+    if (!shown.workspaces.find((workspace) => workspace.workspace_id === workspaceId)?.worktree) return {};
+    for (const pane of shown.panes.filter((candidate) => candidate.workspace_id === workspaceId)) {
+      const raw = (await terminal(pane.pane_id)).labels?.[WORKTREE_LABEL];
+      if (labeledWorktree({ [WORKTREE_LABEL]: raw ?? "" })) return { [WORKTREE_LABEL]: raw! };
+    }
+    return {};
+  };
+  const textOf = (params: Record<string, unknown>, field: string): string | undefined => {
+    const value = params[field];
+    return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+  };
+
   const methods: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
     async ping() {
       const [hello, doc, ovis] = await Promise.all([hc.hello(), hc.call("doc.get", { name: LAYOUT_DOC }), hc.call("doc.get", { name: OVIS_LAYOUT_DOC })]);
       const own = ownsLayout(doc.value);
       // splits, their ratios, zoom, swap and order live in Ovis's document: only where hc writes one this Ovis may write
       const arrange = own && layoutCalls(hello) && !foreignLayout(ovis.value);
-      return { version: hello.version, protocol: HERDR_PROTOCOL, capabilities: { direct_terminal_attach: true, runtime: "herdr-core", layout: { rename: own, split: arrange, move: own, arrange } } };
+      // a checkout opens as a workspace Ovis places: only where Ovis keeps the layout
+      return { version: hello.version, protocol: HERDR_PROTOCOL, capabilities: { direct_terminal_attach: true, runtime: "herdr-core", layout: { rename: own, split: arrange, move: own, arrange, worktrees: own } } };
     },
     async "session.snapshot"() {
       return { snapshot: await snapshot() };
@@ -647,7 +730,7 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       const label: Record<string, string> = typeof params["label"] === "string" && params["label"] ? { [TAB_NAME_LABEL]: params["label"] } : {};
       // "Other terminals" is no space of the app's: a tab there is a terminal of its own
       // with the workspace's name, which stays when the tab the name was given in closes (snapshot.ts `groups`)
-      const space: Record<string, string> = workspaceId === OTHER_WORKSPACE_ID ? {} : { [SPACE_LABEL]: workspaceId, [TAB_LABEL]: `ovis-${crypto.randomUUID()}`, [WORKSPACE_NAME_LABEL]: workspace!.label };
+      const space: Record<string, string> = workspaceId === OTHER_WORKSPACE_ID ? {} : { [SPACE_LABEL]: workspaceId, [TAB_LABEL]: `ovis-${crypto.randomUUID()}`, [WORKSPACE_NAME_LABEL]: workspace!.label, ...(await worktreeLabelOf(shown, workspaceId)) };
       const { tab, root_pane } = await startShell({ ...params, ...(cwd ? { cwd } : {}) }, { ...space, ...label });
       return { type: "tab_created", tab, root_pane };
     },
@@ -666,9 +749,14 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       const workspaceId = paneIdOf(params, "workspace_id");
       // "Other terminals" is no workspace anyone made: its jobs and agents' workers close one by one
       if (workspaceId === OTHER_WORKSPACE_ID) throw new AdapterError("unsupported", "Other terminals holds terminals no workspace made: close them one by one");
-      const panes = (await snapshot()).panes.filter((pane) => pane.workspace_id === workspaceId);
+      const shown = await snapshot();
+      const panes = shown.panes.filter((pane) => pane.workspace_id === workspaceId);
       if (panes.length === 0) throw new AdapterError("workspace_not_found", `workspace ${workspaceId} not found`);
-      await end(panes.map((pane) => pane.pane_id));
+      // as herdr: a repository's workspace closes over its open worktrees only when the group is meant
+      const facts = shown.workspaces.find((candidate) => candidate.workspace_id === workspaceId)?.worktree;
+      const group = facts && !facts.is_linked_worktree ? shown.workspaces.filter((candidate) => candidate.worktree?.is_linked_worktree && candidate.worktree.repo_key === facts.repo_key).map((candidate) => candidate.workspace_id) : [];
+      if (group.length > 0 && params["close_group"] !== true) throw new AdapterError("workspace_group_close_required", `workspace ${workspaceId} has open worktree workspaces: close the group`);
+      await end([...panes, ...shown.panes.filter((pane) => group.includes(pane.workspace_id))].map((pane) => pane.pane_id));
       return { type: "ok" };
     },
     // A name Ovis gives is a label on each of the workspace's or tab's terminals, so it stays when
@@ -716,7 +804,7 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       if (foreignLayout((await hc.call("doc.get", { name: OVIS_LAYOUT_DOC })).value)) throw new AdapterError("unsupported", "a newer Ovis keeps this core's layout");
       // the workspace's name as shown, and the tab's own where it has one, stay when the split pane closes
       const workspaceName = shown.workspaces.find((candidate) => candidate.workspace_id === pane.workspace_id)?.label;
-      const names = { ...(workspaceName ? { [WORKSPACE_NAME_LABEL]: workspaceName } : {}), ...(labels[TAB_NAME_LABEL] ? { [TAB_NAME_LABEL]: labels[TAB_NAME_LABEL] } : {}) };
+      const names = { ...(workspaceName ? { [WORKSPACE_NAME_LABEL]: workspaceName } : {}), ...(labels[TAB_NAME_LABEL] ? { [TAB_NAME_LABEL]: labels[TAB_NAME_LABEL] } : {}), ...(labels[WORKTREE_LABEL] ? { [WORKTREE_LABEL]: labels[WORKTREE_LABEL] } : {}) };
       const { root_pane } = await startShell({ ...(pane.cwd ? { cwd: pane.cwd } : {}) }, { [SPACE_LABEL]: pane.workspace_id, [TAB_LABEL]: pane.tab_id, ...names });
       try {
         await editLayout((layout) => {
@@ -838,8 +926,8 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       const tabName = typeof destination["label"] === "string" ? destination["label"] : "";
       // `key: ""` takes a label off (hc terminal.label)
       const place = workspaceId === OTHER_WORKSPACE_ID
-        ? { [SPACE_LABEL]: "", [TAB_LABEL]: "", [WORKSPACE_NAME_LABEL]: "" }
-        : { [SPACE_LABEL]: workspaceId, [TAB_LABEL]: `ovis-${crypto.randomUUID()}`, [WORKSPACE_NAME_LABEL]: workspace!.label };
+        ? { [SPACE_LABEL]: "", [TAB_LABEL]: "", [WORKSPACE_NAME_LABEL]: "", [WORKTREE_LABEL]: "" }
+        : { [SPACE_LABEL]: workspaceId, [TAB_LABEL]: `ovis-${crypto.randomUUID()}`, [WORKSPACE_NAME_LABEL]: workspace!.label, [WORKTREE_LABEL]: "", ...(await worktreeLabelOf(before, workspaceId)) };
       await label([paneId], { ...place, [TAB_NAME_LABEL]: tabName });
       const after = await snapshot();
       const moved = after.panes.find((candidate) => candidate.pane_id === paneId);
@@ -852,13 +940,94 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     },
   };
 
+  methods["worktree.list"] = async (params) => {
+    const { shown, repository } = await inRepository(paneIdOf(params, "workspace_id"));
+    const open = await openWorkspaces(shown, repository);
+    return {
+      source: { repo_key: repository.repo_key, repo_name: repository.repo_name, repo_root: repository.repo_root, source_checkout_path: repository.checkout, source_workspace_id: open.get(repository.repo_root) ?? null },
+      worktrees: repository.checkouts.map((checkout) => infoOf(repository, checkout, open)),
+    };
+  };
+  methods["worktree.create"] = (params) => oneAtATime(async () => {
+    const workspaceId = paneIdOf(params, "workspace_id");
+    const branch = textOf(params, "branch");
+    if (!branch) throw new AdapterError("invalid_params", "branch is required");
+    const base = textOf(params, "base");
+    const { shown, repository } = await inRepository(workspaceId);
+    // as herdr: a worktree starts from the repository's own checkout, which the caller can ask instead
+    if (repository.checkout !== repository.repo_root) throw new AdapterError("linked_worktree_source", `workspace ${workspaceId} is on a linked checkout of ${repository.repo_name}`);
+    const path = typeof params["path"] === "string" && params["path"] !== "" ? params["path"] : defaultCheckoutPath(repository.repo_name, branch);
+    // a repository with no commit has nothing to start from: newer git would make an orphan branch, herdr refuses in git's words
+    if (!base && !(await git(repository.repo_root, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])).ok) throw new AdapterError("worktree_create_failed", "fatal: invalid reference: HEAD");
+    // an existing branch is checked out as it is, whatever base was asked (as herdr and the dialog say); a new one starts from `base`, or from HEAD
+    const existing = (await git(repository.repo_root, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])).ok;
+    const added = await git(repository.repo_root, existing ? ["worktree", "add", "--", path, branch] : ["worktree", "add", "-b", branch, "--", path, ...(base ? [base] : [])]);
+    if (!added.ok) throw new AdapterError("worktree_create_failed", added.stderr || `git could not add a worktree at ${path}`);
+    const checkout = realPath(path);
+    // a checkout no workspace shows is undone, with the branch made for it, so the same name can be asked again
+    const opened = await openCheckout(shown, repository, checkout, textOf(params, "label") ?? worktreeFolder(branch)).catch(async (error: unknown) => {
+      await git(repository.repo_root, ["worktree", "remove", "--force", "--", checkout]);
+      if (!existing) await git(repository.repo_root, ["branch", "-D", "--", branch]);
+      throw error;
+    });
+    const made: Checkout = { path: checkout, branch, is_bare: false, is_detached: false, is_prunable: false };
+    return { type: "worktree_created", ...opened, worktree: infoOf(repository, made, new Map([[checkout, opened.workspace.workspace_id]])) };
+  });
+  methods["worktree.open"] = (params) => oneAtATime(async () => {
+    const workspaceId = paneIdOf(params, "workspace_id");
+    // a path is taken as git names it, spaces and all
+    const path = typeof params["path"] === "string" && params["path"] !== "" ? params["path"] : undefined;
+    const branch = textOf(params, "branch");
+    if (!path && !branch) throw new AdapterError("invalid_params", "path or branch is required");
+    const { shown, repository } = await inRepository(workspaceId);
+    const wanted = path ? realPath(path) : null;
+    const matches = repository.checkouts.filter((checkout) => (wanted ? checkout.path === wanted : checkout.branch === branch));
+    if (matches.length === 0) throw new AdapterError("worktree_not_found", `no checkout of ${repository.repo_name} at ${path ?? branch}`);
+    if (matches.length > 1) throw new AdapterError("ambiguous_worktree_branch", `more than one checkout of ${repository.repo_name} has ${branch}`);
+    const checkout = matches[0]!;
+    const open = await openWorkspaces(shown, repository);
+    const already = open.get(checkout.path);
+    if (already) {
+      const workspace = shown.workspaces.find((candidate) => candidate.workspace_id === already)!;
+      const tab = shown.tabs.find((candidate) => candidate.tab_id === workspace.active_tab_id)!;
+      const root_pane = shown.panes.find((pane) => pane.tab_id === tab.tab_id)!;
+      return { type: "worktree_opened", workspace, tab, root_pane, worktree: infoOf(repository, checkout, open), already_open: true };
+    }
+    const opened = await openCheckout(shown, repository, checkout.path, textOf(params, "label") ?? (checkout.branch ? worktreeFolder(checkout.branch) : basename(checkout.path)));
+    return { type: "worktree_opened", ...opened, worktree: infoOf(repository, checkout, new Map([[checkout.path, opened.workspace.workspace_id]])), already_open: false };
+  });
+  methods["worktree.remove"] = (params) => oneAtATime(async () => {
+    const workspaceId = paneIdOf(params, "workspace_id");
+    const shown = await ownLayout();
+    const workspace = shown.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
+    if (!workspace) throw new AdapterError("workspace_not_found", `workspace ${workspaceId} not found`);
+    const facts = workspace.worktree;
+    if (!facts?.is_linked_worktree) throw new AdapterError("not_linked_worktree", `workspace ${workspaceId} is not a linked worktree`);
+    // the folder the label names must still be a linked checkout of that repository, not one moved away or replaced by another
+    const now = await repositoryOf(facts.checkout_path).catch(() => null);
+    let gitId: string | null = null;
+    for (const pane of shown.panes.filter((candidate) => candidate.workspace_id === workspaceId)) {
+      gitId = labeledWorktree((await terminal(pane.pane_id)).labels)?.gitId ?? null;
+      if (gitId) break;
+    }
+    if (!now || now.repo_key !== facts.repo_key || now.checkout !== facts.checkout_path || now.checkout === now.repo_root || (gitId !== null && gitDirIdentity(now.git_dir) !== gitId)) {
+      throw new AdapterError("worktree_not_found", `${facts.checkout_path} is no longer a worktree of ${facts.repo_name}`);
+    }
+    const force = params["force"] === true;
+    // git refuses a checkout with changes before it deletes anything: the workspace stays open then
+    const removed = await git(facts.repo_root, ["worktree", "remove", ...(force ? ["--force"] : []), "--", facts.checkout_path]);
+    if (!removed.ok) throw new AdapterError(/contains modified or untracked files/u.test(removed.stderr) ? "dirty_worktree_requires_force" : "worktree_remove_failed", removed.stderr || `git could not remove ${facts.checkout_path}`);
+    await end(shown.panes.filter((pane) => pane.workspace_id === workspaceId).map((pane) => pane.pane_id));
+    return { type: "worktree_removed", workspace_id: workspaceId, path: facts.checkout_path, forced: force };
+  });
+
   return async (request) => {
     const method = methods[request.method];
     if (!method) return { error: { code: "unsupported", message: `${request.method} is not available on herdr-core` } };
     try {
       return { result: await method(request.params) };
     } catch (error) {
-      if (error instanceof AdapterError) return { error: { code: error.code, message: error.message } };
+      if (error instanceof AdapterError || error instanceof WorktreeError) return { error: { code: error.code, message: error.message } };
       if (error instanceof HcError) return { error: { code: herdrCode(error, "pane_not_found"), message: error.message } };
       // what failed is the server's own business: its log has it, the caller a plain reason
       console.error(`herdr-core adapter: ${request.method} failed:`, error);

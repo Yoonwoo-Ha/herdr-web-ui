@@ -11,8 +11,7 @@ export const useMachineId = () => useContext(MachineContext);
  * clauses leave a command out of its menus where it cannot run: renaming workspaces and tabs,
  * splitting a pane, moving a one-pane tab to another workspace, `arrange` for the rest (reordering,
  * swap, zoom, resize, pane names) and the worktree actions. herdr's TUI server answers all of them;
- * herdr-core (shared/machines.ts HerdrIdentity.runtime) has no worktrees, and the others only as its
- * `layout` says. App provides it per PC beside MachineContext (the selected PC, each half of
+ * herdr-core (shared/machines.ts HerdrIdentity.runtime) only as its `layout` says. App provides it per PC beside MachineContext (the selected PC, each half of
  * the split view, each PC's sidebar); everything outside App, as for herdr's own TUI server.
  */
 export interface LayoutOffer { rename: boolean; split: boolean; move: boolean; arrange: boolean; worktrees: boolean }
@@ -27,10 +26,10 @@ export const useAppLayout = () => useContext(AppLayoutContext);
 export const appLayoutOf = (herdr: HerdrIdentity | undefined): LayoutOffer => {
   if (herdr === undefined) return NO_LAYOUT;
   if (herdr.runtime !== "herdr-core") return FULL_LAYOUT;
-  const { rename = false, split = false, move = false, arrange = false } = herdr.layout ?? {};
-  const key = `${rename}:${split}:${move}:${arrange}`;
+  const { rename = false, split = false, move = false, arrange = false, worktrees = false } = herdr.layout ?? {};
+  const key = `${rename}:${split}:${move}:${arrange}:${worktrees}`;
   let offer = coreOffers.get(key);
-  if (!offer) coreOffers.set(key, offer = Object.freeze({ rename, split, move, arrange, worktrees: false }));
+  if (!offer) coreOffers.set(key, offer = Object.freeze({ rename, split, move, arrange, worktrees }));
   return offer;
 };
 /** App's workspace order for every PC (lib/workspaceOrder.ts); a Sidebar outside App gets its own */

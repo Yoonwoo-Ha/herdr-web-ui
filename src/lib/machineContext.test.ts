@@ -12,13 +12,13 @@ describe("appLayoutOf", () => {
     expect(appLayoutOf(undefined)).toEqual(none);
   });
 
-  it("offers a herdr-core PC only the calls its layout names, and never worktrees", () => {
+  it("offers a herdr-core PC only the calls its layout names", () => {
     expect(appLayoutOf({ ...tui, runtime: "herdr-core" })).toEqual(none);
-    expect(appLayoutOf({ ...tui, runtime: "herdr-core", layout: { rename: false, split: false, move: false, arrange: false } })).toEqual(none);
-    const named = { ...tui, runtime: "herdr-core" as const, layout: { rename: true, split: false, move: true, arrange: false } };
+    expect(appLayoutOf({ ...tui, runtime: "herdr-core", layout: { rename: false, split: false, move: false, arrange: false, worktrees: false } })).toEqual(none);
+    const named = { ...tui, runtime: "herdr-core" as const, layout: { rename: true, split: false, move: true, arrange: false, worktrees: false } };
     expect(appLayoutOf(named)).toEqual({ rename: true, split: false, move: true, arrange: false, worktrees: false });
-    const own = { ...tui, runtime: "herdr-core" as const, layout: { rename: true, split: true, move: true, arrange: true } };
-    expect(appLayoutOf(own)).toEqual({ rename: true, split: true, move: true, arrange: true, worktrees: false });
+    const own = { ...tui, runtime: "herdr-core" as const, layout: { rename: true, split: true, move: true, arrange: true, worktrees: true } };
+    expect(appLayoutOf(own)).toEqual({ rename: true, split: true, move: true, arrange: true, worktrees: true });
     // the same offer object each time, so a context value or a hook's dependency stays put between renders
     expect(appLayoutOf({ ...own })).toBe(appLayoutOf(own));
   });

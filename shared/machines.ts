@@ -87,7 +87,7 @@ export interface HerdrIdentity {
   terminal_mirror?: boolean;
   /**
    * `herdr-core`: the PC's terminals are herdr-core's (OVIS_RUNTIME=herdr-core), which has no
-   * workspaces, tabs or splits of its own: worktrees are never offered there, and the layout calls
+   * workspaces, tabs or splits of its own: the layout calls and the worktree actions are offered
    * only as `layout` says. Absent: herdr's TUI server.
    */
   runtime?: "herdr-core";
@@ -100,14 +100,16 @@ export interface HerdrIdentity {
  * arranges (its `herdr-app` document was never written, as on the desktop app's own core) Ovis keeps
  * names and places in terminal labels (`rename`, `move` a one-pane tab to another workspace) and
  * splits, ratios, zoom, swap and order in its own `ovis-layout` document (`split`, `arrange`: only
- * where the core writes documents). Where the Herdr app arranges them, they are the app's, and none
- * is offered.
+ * where the core writes documents). `worktrees`: Ovis runs git's worktree commands itself and opens
+ * a checkout as a workspace it places. Where the Herdr app arranges them, they are the app's, and
+ * none is offered.
  */
 export interface HerdrCoreLayout {
   rename: boolean;
   split: boolean;
   move: boolean;
   arrange: boolean;
+  worktrees: boolean;
 }
 /**
  * The workspace a herdr-core PC shows its terminals no workspace holds in ("Other terminals"): it has

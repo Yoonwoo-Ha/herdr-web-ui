@@ -17,7 +17,7 @@ import { Sidebar } from "./Sidebar.tsx";
 /** herdr's TUI server, a herdr-core PC the Herdr app lays out, and one whose layout Ovis keeps (lib/machineContext.tsx) */
 const TUI = appLayoutOf({ version: "0.9.5", protocol: 22 });
 const APP_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core" });
-const OVIS_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core", layout: { rename: true, split: true, move: true, arrange: true } });
+const OVIS_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core", layout: { rename: true, split: true, move: true, arrange: true, worktrees: true } });
 
 const worktree = (linked: boolean) => ({ is_linked_worktree: linked, repo_key: "r", repo_name: "r", checkout_path: "/test-project" }) as WorkspaceInfo["worktree"];
 const workspace = (id: string, tree: WorkspaceInfo["worktree"] = null): WorkspaceInfo =>
@@ -101,10 +101,10 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
     expect(await menuOf("child")).toEqual(["pin-workspace", "session-history", "close"]);
   });
 
-  it("offers a core PC's rows their rename where Ovis keeps its layout, still without the worktree actions", async () => {
+  it("offers a core PC's rows their rename and worktree items where Ovis keeps its layout", async () => {
     await draw(roster([workspace("root", worktree(false)), workspace("child", worktree(true))]), OVIS_CORE);
-    expect(await menuOf("root")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close", "fold"]);
-    expect(await menuOf("child")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close"]);
+    expect(await menuOf("root")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close", "new-worktree", "open-worktree", "fold"]);
+    expect(await menuOf("child")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close", "delete-worktree"]);
   });
 
   it("offers no rename for a core's Other terminals, which has no name to change (#2806)", async () => {
