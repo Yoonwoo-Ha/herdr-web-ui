@@ -149,6 +149,9 @@ describe("demo transport", () => {
     "/api/pane/selection": "copying a selection across screens: not part of the demo (listed when this guard was added)",
     "/api/updates/check": "the demo's /api/updates says managed: false, so Settings offers no check",
     "/api/updates/install": "the demo's /api/updates says managed: false, so Settings offers no install",
+    "/api/workspace/git/branches": "a repository's history, for API clients: no screen of the app asks for it yet",
+    "/api/workspace/git/log": "a repository's history, for API clients: no screen of the app asks for it yet",
+    "/api/workspace/git/show": "a repository's history, for API clients: no screen of the app asks for it yet",
   };
   /** Client frames the demo needs no case for, each with its reason; any other frame gets a case in site/demo/transport.ts. */
   const DEMO_IGNORES: Record<string, string> = {
