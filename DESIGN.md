@@ -1244,10 +1244,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   grid with the `+` in the folders' cell and its words in `--text-dim`, left out while a filter is on, while the PC is
   offline and while the empty box offers the same, and there while the PC's first roster loads; the group keeps the PC's name as its accessible name, and the
   filter neither searches nor suggests a name no row shows. The Claude and Codex apps put their New button at the top;
-  here it closes the list, so the workspaces come first. A Host has no manage panel, and Add PC is in Settings and the
-  palette. A lone PC that is not the Host keeps its header: its name says which PC this is, and its manage panel has
+  here it closes the list, so the workspaces come first. A Host has no Manage PC menu, and Add PC is in Settings and the
+  palette. A lone PC that is not the Host keeps its header: its name says which PC this is, and its Manage PC menu has
   no other place. No setting turns this off, since nothing is lost.
-- **Settings → Remote PCs → Show in sidebar** hides a PC on this device (`lib/hiddenMachines.ts`,
+- **Settings → Remote PCs → Show in sidebar**, and Manage PC's **Hide on this device**, hide a PC on this device (`lib/hiddenMachines.ts`,
   its own `ovis:hidden-pcs` key, like the fold): it leaves the PC groups, the Agents list and the
   command palette, stays connected, and a link or an alert to its pane still opens that pane. The
   list shows when there are two PCs or more, the Host first; the last PC shown cannot be hidden, and
@@ -1532,18 +1532,26 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   error, idle = disconnected), then the fold's caret (`.machine-toggle`, always shown; the name
   itself is not a control) and a `+` in the status column that starts a workspace on that
   PC (disabled while it is offline). An SSH PC's manage button sits before the
-  caret and shows on hover, focus, while its panel is open, while the PC is not connected, and always
+  caret and shows on hover, focus, while its menu is open, while the PC is not connected, and always
   on touch. Connected is the dot alone; every other state is also written under the name, with the server's
   error clamped to two lines and complete in the tooltip.
-- SSH PC management stays inline: its rename form and action buttons reflow within the sidebar
-  instead of floating over it. Rename shares the name field's row where both fit and goes under
-  the field in a narrow sidebar; the action buttons wrap into rows that share a height. A
-  one-line button is `--control-h` tall, as the field beside it (`--touch-target` on a coarse
-  pointer, where Rename keeps its own line under the field), and only a wrapped label grows its
-  button. Wrapping labels keep controls contained at narrow widths, with touch-sized buttons
-  on coarse pointers. This follows the
-  width-constrained responsive sidebar in [T3 Code](https://github.com/pingdotgg/t3code/blob/main/apps/web/src/components/ui/sidebar.tsx)
-  but keeps herdr's existing inline panel instead of adopting its mobile sheet; no code is borrowed.
+- Manage PC opens a row menu (`RowMenu`): a popover under the button on a desktop, a bottom sheet on a phone, as a
+  workspace's and an agent's ⋯ do. Its head names the PC, with its state word and "over SSH" (a PC added through the relay:
+  "through the relay") under the name. The items
+  are **Rename…**, **Disconnect** (**Connect** while the PC is disabled), **Reconnect / setup**, **Update bridge…**,
+  **Hide on this device** and, after a rule, **Remove PC…** in the danger colour. Rename… swaps the name in the header
+  for a field (up to 100 characters, its text selected): Enter saves, and Escape or a click away keeps the old name;
+  Enter and Escape give the focus back to the manage button, and on a phone that Escape leaves the drawer out. Remove PC… asks in the dialog a workspace's Close asks
+  in (`ConfirmDialog`), which says only the registration goes and shows a failure in place. Hide on this device
+  follows Show in sidebar's rules: the last PC shown has no such item, and the focus goes to the line under the PCs
+  that says how many are hidden. A PC herdr manages keeps herdr's limits: no Rename…, Disconnect or Remove PC…, and
+  the head says to do those in herdr. A machine of herdr-core (`kind: "hc"`) offers only Hide on this device, and its
+  head says to add, rename or remove it with `hc machine` or in the Herdr app. A PC added through the relay has no Reconnect / setup or Update bridge…, and its
+  Remove PC… dialog says to revoke its access under Phone & devices on that PC too. Reconnect / setup is left out while the PC's own notice offers setup or
+  Connect, Update bridge… while it offers Connect, and both wait while the PC is disabled or has no address. Rename…,
+  Connect or Disconnect and Remove PC… wait while one of them runs. The inline panel this replaces pushed the
+  workspaces down, one button per line. Ovis's own `RowMenu` for workspace and agent rows is the precedent, and the
+  Codex and Claude apps put a row's actions in a menu, not an inline panel; no code is borrowed.
 - A repository's worktree workspaces (`workspace.worktree.is_linked_worktree`)
   sit indented under the row of the workspace on its main checkout (`.worktree-children`), without
   a tree hairline; a worktree whose repository workspace is not open stays at the top level.

@@ -80,6 +80,50 @@
   white-space: nowrap;
 }
 
+/* Rename… (MachineSidebar.tsx): the name's field takes the name's place in the header, as a workspace's
+   rename field takes its row's */
+.machine-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: calc(var(--control-h) - var(--space-2));
+  margin-left: calc(-1 * var(--space-1));
+  padding: 0 var(--space-2) 0 calc(var(--space-1) - var(--hairline));
+  font-weight: var(--fw-semibold);
+}
+
+/* Manage PC's head, in the popover and in a phone's sheet: the name, its state and how it is reached, and for a
+   PC herdr manages where the rest is done */
+.machine-menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  line-height: var(--lh-tight);
+}
+
+.machine-menu-name {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* a phone's sheet names its row a size up (RowMenu.css .row-sheet-title) */
+.row-sheet-head .machine-menu-name { font-size: var(--fs-md); }
+
+.machine-menu-state,
+.machine-menu-note {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.machine-menu-note {
+  margin-top: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
 .machine-kind {
   flex: none;
   margin-left: var(--space-2);
@@ -151,7 +195,7 @@
   .machine-new-row { min-height: var(--touch-target); }
 }
 
-/* An SSH PC's manage button takes no room until its header is hovered or focused, its panel is
+/* An SSH PC's manage button takes no room until its header is hovered or focused, its menu is
    open or the PC is not connected. It stays in the focus order. */
 .machine-manage {
   width: 0;
@@ -228,76 +272,6 @@
 }
 
 .machine-offline { opacity: 0.5; }
-
-.machine-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  min-width: 0;
-  gap: var(--space-2);
-  margin: 0 var(--space-3) var(--space-2);
-  padding: var(--space-3);
-  background: var(--bg-elevated);
-  border: var(--hairline) solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-/* the rename form reflows: Rename sits at the end of the name field's row where the two fit, and
-   under the field, at its start, where they do not (a 240px sidebar, a phone's drawer) */
-.machine-controls form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  min-width: 0;
-  gap: var(--space-2);
-}
-
-.machine-controls form > .field {
-  flex: 1 1 10rem;
-}
-
-/* buttons that share a row share its height (the default stretch), so a wrapped label never
-   leaves its neighbours hanging from the row's bottom edge */
-.machine-control-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  min-width: 0;
-  gap: var(--space-2);
-}
-
-.machine-controls .field {
-  min-width: 0;
-  margin-bottom: 0;
-}
-
-/* a one-line label is the standard control's height (--control-h as a floor; the block padding is
-   small enough to stay under it); only a label that wraps grows its button */
-.machine-controls .btn {
-  max-width: 100%;
-  min-width: 0;
-  min-height: var(--control-h);
-  height: auto;
-  padding-block: var(--space-1);
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-/* fingers: a touch-sized Rename is taller than the field, so it keeps its own line under it */
-@media (pointer: coarse) {
-  .machine-controls .btn {
-    min-height: var(--touch-target);
-  }
-
-  .machine-controls form > .field {
-    flex-basis: 100%;
-  }
-}
-
-/* only the removal in flight (MachineSidebar.tsx marks it aria-busy) keeps its full strength, so its
-   warning stays readable while the request runs: dimmed even to 0.9, its text fell under 4.5:1 in
-   Tokyo Night. Disabled because another action of the panel is running, it dims like its neighbours */
-.machine-controls .btn-danger[aria-busy="true"] {
-  opacity: 1;
-}
 
 .machine-dialog {
   width: min(560px, calc(100vw - 24px));

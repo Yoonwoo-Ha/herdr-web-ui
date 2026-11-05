@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
-import { ArrowLeftRight, ChevronDown, ChevronRight, Monitor, Plus, Settings, SlidersHorizontal, X } from "lucide-react";
+import { ArrowLeftRight, ChevronDown, ChevronRight, Download, EyeOff, Monitor, Pencil, Plug, Plus, RefreshCw, Settings, SlidersHorizontal, Trash2, Unplug, X } from "lucide-react";
 import { OWN_UPDATE_OFFER, type Machine, type MachineState, type MachineUpdate, type RemoteOvis } from "../../shared/machines.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { AppLayoutContext, FULL_LAYOUT, MachineContext, type LayoutOffer } from "../lib/machineContext.tsx";
@@ -15,7 +15,8 @@ import { SidebarActivityProvider, type SidebarActivity } from "../lib/sidebarAct
 import { filterSuggestions, machineFilter, sidebarFilter, type SidebarBranchLabels } from "../lib/sidebarFilter.ts";
 import { SidebarFilterProvider, useSidebarFilter } from "../lib/sidebarFilterContext.ts";
 import { UsageMeters } from "./UsageMeters.tsx";
-import { rowMenuAnchor } from "./RowMenu.tsx";
+import { RowMenu, rowMenuAnchor, type RowMenuItem } from "./RowMenu.tsx";
+import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import "./Machines.css";
 import "./SidebarSections.css";
 import { useT } from "../lib/i18n.ts";
@@ -25,6 +26,7 @@ import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { machineErrorText, saysHerdrAway } from "../lib/userError.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
+import { canHideMachine, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
 
 /**
  * Which list of PCs this page goes back to, when it shows one PC of a phone's list: the phone app's
@@ -49,7 +51,7 @@ export const STATE_WORD: Readonly<Record<MachineState, string>> = {
 
 /** `activity`: App's live counters per PC and finishes looked at here; both sidebar lists draw from it.
  *  `machines` are the PCs this device shows; `hiddenCount` says how many it keeps out (Settings → Remote PCs) */
-interface Props { machines: Machine[]; hiddenCount?: number; selectedMachineId: string; selectedPaneId: string | null; activity: SidebarActivity; actions: AppActions; watching?: boolean; /** whether the Herdr app's window owns a PC's workspaces (lib/machineContext.tsx AppLayoutContext); none without it */ appLayout?: (machineId: string) => LayoutOffer; /** a phone's drawer is out: closing it clears the filter */ drawerOpen?: boolean; /** counts the command palette's Filter workspaces and agents: each new count shows the field and focuses it */ filterRequest?: number; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void; /** a sign-in tab the usage popover opened */ onUsageLogin(paneId: string): void }
+interface Props { machines: Machine[]; hiddenCount?: number; /** every PC of the roster, the hidden ones too: Manage PC's Hide on this device keeps those hidden (lib/hiddenMachines.ts) */ allMachines?: Machine[]; selectedMachineId: string; selectedPaneId: string | null; activity: SidebarActivity; actions: AppActions; watching?: boolean; /** whether the Herdr app's window owns a PC's workspaces (lib/machineContext.tsx AppLayoutContext); none without it */ appLayout?: (machineId: string) => LayoutOffer; /** a phone's drawer is out: closing it clears the filter */ drawerOpen?: boolean; /** counts the command palette's Filter workspaces and agents: each new count shows the field and focuses it */ filterRequest?: number; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void; /** a sign-in tab the usage popover opened */ onUsageLogin(paneId: string): void }
 export function MachineSidebar(props: Props) {
   const t = useT();
   const activity = props.activity;
@@ -208,6 +210,22 @@ export function MachineSidebar(props: Props) {
     setPcsFold(sections.includes("pcs"));
     setAgentsFold((last) => ({ folded: sections.includes("agents"), seq: (last?.seq ?? 0) + 1 }));
   };
+  // Manage PC's Hide on this device is Settings → Remote PCs → Show in sidebar turned off, with its rules: the last
+  // PC shown is not offered, and App moves a selection off the PC. The PC's header goes with it, so the focus goes
+  // to the line that says how many are hidden here and opens that setting
+  const hiddenIds = useHiddenMachines();
+  const roster = props.allMachines ?? props.machines;
+  const hiddenNote = useRef<HTMLButtonElement>(null);
+  const focusHiddenNote = useRef(false);
+  useEffect(() => {
+    if (!focusHiddenNote.current || hiddenNote.current === null) return;
+    focusHiddenNote.current = false;
+    hiddenNote.current.focus({ preventScroll: true });
+  });
+  const hideMachine = (id: string) => {
+    focusHiddenNote.current = true;
+    setHiddenMachines(withMachineHidden(roster, hiddenIds, id, true));
+  };
   useEffect(() => { if (!drawerOpen) { setQuery(""); setFilterAsked(false); } }, [drawerOpen]);
   // the roster's wait is a live region that is in the list from its first render, clipped while empty (never
   // display: none), and its words land a frame after it (lib/useAnnouncedText.ts)
@@ -241,10 +259,10 @@ export function MachineSidebar(props: Props) {
       {/* folded, the list stays mounted, hidden, so the branches its rosters read stay findable to the filter */}
       <div className="machine-list" id={listId} hidden={pcsFolded} aria-label={t("PCs and workspaces")}>
         <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
-        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={machine.id === loneHost} />)}
+        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={machine.id === loneHost} canHide={canHideMachine(roster, hiddenIds, machine.id)} onHide={() => hideMachine(machine.id)} />)}
         <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
         {/* a PC kept out on this device is said, with the way to show it again */}
-        {hiddenCount > 0 && <button type="button" className="machine-hidden-note" title={t("Choose the PCs this device shows")} onClick={() => { requestSettingsPage({ page: "remote", section: "sidebar-pcs" }); props.actions.openSettings(); }}>{hiddenCount === 1 ? t("1 PC hidden on this device") : t("{n} PCs hidden on this device", { n: hiddenCount })}</button>}
+        {hiddenCount > 0 && <button ref={hiddenNote} type="button" className="machine-hidden-note" title={t("Choose the PCs this device shows")} onClick={() => { requestSettingsPage({ page: "remote", section: "sidebar-pcs" }); props.actions.openSettings(); }}>{hiddenCount === 1 ? t("1 PC hidden on this device") : t("{n} PCs hidden on this device", { n: hiddenCount })}</button>}
       </div>
     </section>
     {!settings.agentGroups && <SidebarSplit shell={shell} order={order} split={splits[order]} controls={listId} onSplit={changeSplit} onFold={foldSections} />}
@@ -273,15 +291,46 @@ export function MachineSidebar(props: Props) {
 /** the reader's fold of the PCs section, kept on this device as Agents' is (`ovis:agents-collapsed`) */
 const PCS_FOLD_KEY = "ovis:pcs-collapsed";
 
+/** What Manage PC offers, in its menu's order. */
+export type ManageAction = "rename" | "toggle" | "setup" | "update" | "hide" | "remove";
+
+/**
+ * Manage PC's items for `machine`, and which of them wait. Setup and the bridge update are an SSH PC's alone. A PC
+ * herdr manages is renamed, disconnected and removed in herdr, and a machine of herdr-core with hc machine or in the
+ * Herdr app, so only what is still theirs here is offered: an SSH PC's setup and bridge update, and its place in this
+ * sidebar. Setup and the bridge update need the PC enabled and its address; a rename, a connect or disconnect, Hide
+ * and a removal wait while one of them runs (`busy`): Hide drops the row, and with it the guard on that request. `canHide`: another PC stays shown (lib/hiddenMachines.ts
+ * canHideMachine).
+ */
+export function manageActions(machine: Pick<Machine, "kind" | "herdr_profile_id" | "enabled" | "target" | "action_required">, { busy, canHide }: { busy: boolean; canHide: boolean }): { id: ManageAction; disabled: boolean }[] {
+  const own = !machine.herdr_profile_id && machine.kind !== "hc";
+  const reachable = machine.enabled && Boolean(machine.target);
+  const actions: { id: ManageAction; disabled: boolean }[] = [];
+  if (own) actions.push({ id: "rename", disabled: busy }, { id: "toggle", disabled: busy });
+  // a PC reached through the relay has no SSH setup and no bridge of ours to update
+  if (machine.kind === "ssh") {
+    if (machine.action_required !== "setup" && machine.action_required !== "connect") actions.push({ id: "setup", disabled: !reachable });
+    if (machine.action_required !== "connect") actions.push({ id: "update", disabled: !reachable });
+  }
+  if (canHide) actions.push({ id: "hide", disabled: busy });
+  if (own) actions.push({ id: "remove", disabled: busy });
+  return actions;
+}
+
 /** `headerless`: the sidebar's lone Host, drawn without its header. What the header held is elsewhere: the state
  *  and its notice are lines of their own, the + is the New workspace row under the workspaces, and nothing is
- *  folded with no caret to open it. A Host has no manage panel; Add PC is in Settings and the palette. */
-function MachineGroup({ machine, headerless = false, ...props }: Props & { machine: Machine; headerless?: boolean }) {
+ *  folded with no caret to open it. A Host has no Manage PC menu; Add PC is in Settings and the palette.
+ *  `canHide`/`onHide`: the menu's Hide on this device, under MachineSidebar's rules. */
+function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }: Props & { machine: Machine; headerless?: boolean; canHide: boolean; onHide(): void }) {
   const t = useT();
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`ovis:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
-  const [editing, setEditing] = useState(false);
+  // Manage PC is a row menu (RowMenu: a popover, a sheet on a phone), as a workspace's ⋯ is. Rename… swaps the
+  // name for a field in the header; Remove PC… asks in the dialog a workspace's Close asks in
+  const [menu, setMenu] = useState<HTMLElement | null>(null);
+  const manageButton = useRef<HTMLButtonElement>(null);
+  const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(machine.name);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const online = machine.state === "connected";
   // a PC that waits on the user, or is updating, shows its notice in the state line's place
@@ -294,24 +343,51 @@ function MachineGroup({ machine, headerless = false, ...props }: Props & { machi
   // that PC, not in this browser, so it follows the words
   const nextStep = !noticed && machine.kind === "local" && machine.error !== null && saysHerdrAway(machine.error) ? t("Start herdr on this PC, or check HERDR_SOCKET.") : null;
   // one request at a time: a double-clicked Disconnect/Connect can otherwise race and leave this
-  // UI's idea of the state opposite the server's until the next refetch. The method in flight is
-  // kept so only a removal marks Remove PC busy (Machines.css dims that one less)
-  const [busy, setBusy] = useState<string | null>(null);
-  // the state disables the buttons; the ref refuses a second click that lands before that render
+  // UI's idea of the state opposite the server's until the next refetch
+  const [busy, setBusy] = useState(false);
+  // the state disables the items; the ref refuses a second request that lands before that render
   const inFlight = useRef(false);
-  const mutate = async (method: string, body?: unknown) => {
+  // `inDialog`: Remove PC's confirm runs the request and shows its failure itself (ConfirmDialog), so it is thrown
+  // there instead of written under the header
+  const mutate = async (method: string, body?: unknown, inDialog = false) => {
     if (inFlight.current) return;
     inFlight.current = true;
-    setBusy(method);
+    setBusy(true);
     // The selected PC moves to this one before it is removed: the server tells every tab the
     // roster without it before it answers, and a selection on a PC the roster has dropped reads
     // as one removed elsewhere ("That link's PC is not set up here"). A failure puts it back.
     const leaving = method === "DELETE" && props.selectedMachineId === machine.id ? { pane: props.selectedPaneId } : null;
     if (leaving) props.onSelect("local", null);
     try { await machineRequest(`/${machine.id}`, method, body); setError(null); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); if (leaving) props.onSelect(machine.id, leaving.pane); }
-    finally { inFlight.current = false; setBusy(null); }
+    catch (e) {
+      if (leaving) props.onSelect(machine.id, leaving.pane);
+      if (inDialog) throw e;
+      setError(e instanceof Error ? e.message : String(e));
+    }
+    finally { inFlight.current = false; setBusy(false); }
   };
+  const closeMenu = useCallback(() => setMenu(null), []);
+  // Enter saves a name that changed, Escape and a click away keep the old one; the server trims it and refuses an
+  // empty one, so an empty field keeps the old name too. Enter and Escape give the focus back to the manage button
+  const endRename = (save: boolean) => {
+    setRenaming(false);
+    const typed = name.trim();
+    if (save && typed !== "" && typed !== machine.name) void mutate("PATCH", { name: typed });
+  };
+  // how the PC is reached follows its state word; a machine of herdr-core says where it is managed instead
+  const stateWords = machine.action_required === "setup" ? t("Setup needed") : t(STATE_WORD[machine.state]);
+  const stateLine = machine.kind === "hc" ? stateWords : `${stateWords} · ${machine.kind === "relay" ? t("through the relay") : t("over SSH")}`;
+  const manageNote = machine.kind === "hc" ? t("A machine of herdr-core. Add, rename or remove it with hc machine or in the Herdr app.") : machine.herdr_profile_id ? t("Managed by herdr. Rename, disable or remove it there.") : null;
+  const manageItems = (): RowMenuItem[] => manageActions(machine, { busy, canHide }).map(({ id, disabled }): RowMenuItem => {
+    switch (id) {
+      case "rename": return { id, disabled, label: t("Rename…"), icon: Pencil, run: () => { setName(machine.name); setRenaming(true); } };
+      case "toggle": return { id, disabled, label: t(machine.enabled ? "Disconnect" : "Connect"), icon: machine.enabled ? Unplug : Plug, run: () => void mutate("PATCH", { enabled: !machine.enabled }) };
+      case "setup": return { id, disabled, label: t("Reconnect / setup"), icon: RefreshCw, run: () => props.onSetup(machine) };
+      case "update": return { id, disabled, label: t("Update bridge…"), icon: Download, run: () => props.onSetup(machine, true) };
+      case "hide": return { id, disabled, label: t("Hide on this device"), icon: EyeOff, run: onHide };
+      case "remove": return { id, disabled, label: t("Remove PC…"), icon: Trash2, danger: true, divider: true, run: () => setConfirmRemove(true) };
+    }
+  });
   const actions: AppActions = { ...props.actions, selectPane: (id) => props.onSelect(machine.id, id), openNewSession: () => props.onNew(machine.id) };
   // the filter (lib/sidebarFilter.ts): a PC with nothing kept is hidden, its roster still mounted so the
   // branches it reads stay findable; a folded PC with a match or the selection in it is shown open, its saved
@@ -337,12 +413,30 @@ function MachineGroup({ machine, headerless = false, ...props }: Props & { machi
     {!headerless && <header className="machine-header">
       <div className="machine-title">
         <span className="sidebar-mark" aria-hidden="true"><Monitor /></span>
-        <span className="machine-name">{machine.name}</span>
+        {renaming ? <input
+          className="input machine-rename-input"
+          aria-label={t("PC name")}
+          data-own-escape=""
+          autoFocus
+          maxLength={100}
+          value={name}
+          onFocus={(event) => event.currentTarget.select()}
+          onChange={(event) => setName(event.target.value)}
+          onBlur={() => setRenaming(false)}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+            if (event.key !== "Enter" && event.key !== "Escape") return;
+            event.preventDefault();
+            endRename(event.key === "Enter");
+            manageButton.current?.focus({ preventScroll: true });
+          }}
+        /> : <span className="machine-name">{machine.name}</span>}
         {/* the computer this app's server runs on; on a phone "this PC" read as the phone */}
         {machine.kind === "local" && <span className="machine-kind" title={t("The computer this app runs on")}>{t("Host")}</span>}
         <span className={`machine-dot is-${machine.action_required === "setup" ? "setup" : machine.state}`} title={machine.action_required === "setup" ? t("Setup needed") : t(STATE_WORD[machine.state])} aria-hidden="true" />
       </div>
-      {machine.kind !== "local" && <button className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-expanded={editing} onClick={() => { setEditing(!editing); setConfirmDelete(false); }}><SlidersHorizontal aria-hidden="true" /></button>}
+      {machine.kind !== "local" && <button ref={manageButton} type="button" className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-haspopup="menu" aria-expanded={menu !== null} onClick={(event) => setMenu(menu === null ? event.currentTarget : null)}><SlidersHorizontal aria-hidden="true" /></button>}
       {/* the fold over this PC's workspaces sits beside the + */}
       <button className="sidebar-row-action machine-toggle" aria-expanded={!folded} aria-label={folded ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} title={folded ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} onClick={toggle}>{folded ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}</button>
       <button className="sidebar-row-action machine-new" disabled={!online} aria-label={t("New workspace on {name}", { name: machine.name })} title={t("New workspace")} onClick={() => props.onNew(machine.id)}><Plus aria-hidden="true" /></button>
@@ -354,17 +448,14 @@ function MachineGroup({ machine, headerless = false, ...props }: Props & { machi
       {!noticed && machine.error && <span className="machine-state-detail">{machineErrorText(machine.error, t)}</span>}
       {nextStep !== null && <span className="machine-state-next">{nextStep}</span>}
     </p>
-    {editing && <div className="machine-controls">
-      {machine.kind === "hc" ? <p className="field-hint">{t("A machine of herdr-core. Add, rename or remove it with hc machine or in the Herdr app.")}</p> : machine.herdr_profile_id ? <p className="field-hint">{t("Managed by herdr. Rename, disable or remove it there.")}</p> : <form onSubmit={(e) => { e.preventDefault(); void mutate("PATCH", { name }); }}><label className="field"><span className="field-label">{t("PC name")}</span><input className="input" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} /></label><button className="btn" type="submit" disabled={busy !== null}>{t("Rename")}</button></form>}
-      {/* The first removal click only arms the action; the second is destructive. */}
-      {machine.kind !== "hc" && <div className="machine-control-buttons">
-        {!machine.herdr_profile_id && <button className="btn" disabled={busy !== null} onClick={() => void mutate("PATCH", { enabled: !machine.enabled })}>{t(machine.enabled ? "Disconnect" : "Connect")}</button>}
-        {machine.kind === "ssh" && !["setup", "connect"].includes(machine.action_required ?? "") && <button className="btn" disabled={!machine.enabled || !machine.target} onClick={() => props.onSetup(machine)}>{t("Reconnect / setup")}</button>}
-        {machine.kind === "ssh" && machine.action_required !== "connect" && <button className="btn" disabled={!machine.enabled || !machine.target} onClick={() => props.onSetup(machine, true)}>{t("Update bridge…")}</button>}
-        {!machine.herdr_profile_id && <button className="btn btn-danger" disabled={busy !== null} aria-busy={busy === "DELETE" || undefined} onClick={() => { if (confirmDelete) void mutate("DELETE"); else setConfirmDelete(true); }}>{t(confirmDelete ? "Confirm remove PC" : "Remove PC")}</button>}
-      </div>}
-      {confirmDelete && <p className="field-hint">{t(machine.kind === "relay" ? "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC." : "Removes this registration. Remote sessions keep running.")}</p>}
-    </div>}
+    {/* the menu's head names the PC and how it is reached; a PC herdr or herdr-core manages says where the rest is done */}
+    {menu && <RowMenu anchor={menu} title={machine.name} items={manageItems()} onClose={closeMenu} header={<span className="machine-menu-head">
+      <span className="machine-menu-name">{machine.name}</span>
+      <span className="machine-menu-state">{stateLine}</span>
+      {manageNote !== null && <span className="machine-menu-note">{manageNote}</span>}
+    </span>} />}
+    {confirmRemove && <ConfirmDialog title={t("Remove PC {name}?", { name: machine.name })} body={t(machine.kind === "relay" ? "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC." : "Removes this registration. Remote sessions keep running.")} confirmLabel={t("Remove PC")}
+      onConfirm={async () => { await mutate("DELETE", undefined, true); setConfirmRemove(false); }} onClose={() => setConfirmRemove(false)} />}
     {error && <p className="machine-error" role="alert">{error}</p>}
     {/* under a filter a folded PC's roster is mounted, hidden, so the branches it reads can be found */}
     {(!folded || filtered !== null) && <div className={online ? "" : "machine-offline"} inert={!online} hidden={folded}>

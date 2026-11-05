@@ -201,6 +201,16 @@ async function twoPcs(browser: Browser, scene: Scene): Promise<void> {
       await page.waitForFunction(() => document.querySelectorAll(".machine-list .machine-header").length === 1);
       assert.equal((await page.locator(".machine-list .machine-name").innerText()).trim(), "Work PC", "a lone PC that is not the Host keeps its name");
       assert.equal(await page.locator(".machine-list .machine-manage").count(), 1, "and its manage menu");
+      // the last PC shown cannot be hidden (lib/hiddenMachines.ts): its menu leaves Hide on this device out
+      // a desktop shows the manage button on the header's hover
+      if (!scene.phone) await page.locator(".machine-list .machine-header").hover();
+      await page.locator(".machine-list .machine-manage").click();
+      const menu = page.locator(".row-menu, .row-sheet");
+      await menu.waitFor();
+      assert.ok((await menu.locator(".menu-item, .row-sheet-item").allInnerTexts()).some((label) => label.trim() === "Reconnect / setup"), "the menu lists the PC's actions");
+      assert.equal(await menu.getByText("Hide on this device", { exact: true }).count(), 0, "and no Hide on this device for the last PC shown");
+      await page.keyboard.press("Escape");
+      await menu.waitFor({ state: "detached" });
       assert.equal(await newRow(page).count(), 0);
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
