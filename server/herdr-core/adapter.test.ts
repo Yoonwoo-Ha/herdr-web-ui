@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it, jest } from "bun:test";
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HerdrError, herdrRpc, paneGet, paneRead, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, paneMoveToNewTab, tabClose, tabCreate, tabRename, workspaceClose, workspaceCreate, workspaceRename, agentManifests, agentStart, ping, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "../herdr/client.ts";
+import { HerdrError, herdrRpc, paneGet, paneProcessInfo, paneRead, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, paneMoveToNewTab, tabClose, tabCreate, tabRename, workspaceClose, workspaceCreate, workspaceRename, agentManifests, agentStart, ping, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "../herdr/client.ts";
 import { claudeInputDraft, viewportShowsLive } from "../claude-input.ts";
 import { paintedScreen, type SeenObserver, startHerdrCoreAdapter } from "./adapter.ts";
 import { SeenMarker } from "./seen-label.ts";
 import { encodeFrame, FRAME_CLOSE, FRAME_DATA, HcConnection, HcError, type HcTransport, makeFrameReader } from "./connection.ts";
+import { MachineScopedConnection } from "./machine-scope.ts";
 import type { HerdrPane } from "../../shared/protocol.ts";
 import type { HcTerminal } from "./snapshot.ts";
 
@@ -124,7 +125,8 @@ for (const method of ["call", "open"] as const) {
     }
   });
 }
-async function setup(terminals: HcTerminal[], extra: Record<string, Handler> = {}, observeSeen?: SeenObserver) {
+/** `machine`: the adapter of that other machine's server (machine-scope.ts), as machine-entry.ts starts it */
+async function setup(terminals: HcTerminal[], extra: Record<string, Handler> = {}, observeSeen?: SeenObserver, machine?: string) {
   const dir = mkdtempSync(join(tmpdir(), "ovis-hc-"));
   const socket = join(dir, "herdr.sock");
   const cores: FakeCore[] = [];
@@ -132,20 +134,24 @@ async function setup(terminals: HcTerminal[], extra: Record<string, Handler> = {
     "terminal.list": () => ({ terminals, hidden_finished: 0 }),
     "doc.get": () => ({ value: LAYOUT, version: 1 }),
     "terminal.get": (params) => {
-      const found = terminals.find((entry) => entry.address === params["terminal"]);
+      // as hc: a machine's id in an address names the same terminal as its name, which the record keeps
+      const asked = machine === undefined ? params["terminal"] : String(params["terminal"]).replace(`${machine}-id/`, `${machine}/`);
+      const found = terminals.find((entry) => entry.address === asked);
       if (!found) throw new Error(`no terminal ${String(params["terminal"])}`);
       return found;
     },
     "terminal.attach": () => ({ channel: cores.at(-1)!.channel(), terminal: terminals[0] }),
     "terminal.keys": () => ({ turn: 0 }),
+    "machine.list": () => ({ machines: machine === undefined ? [] : [{ name: machine, id: `${machine}-id`, host: machine, state: "connected", target: machine, version: "0.1.17" }] }),
     ...extra,
   };
-  const hc = new HcConnection(() => {
+  const spawn = () => {
     const core = new FakeCore(handlers);
     cores.push(core);
     return core;
-  });
-  const adapter = await startHerdrCoreAdapter(hc, socket, observeSeen);
+  };
+  const hc = machine === undefined ? new HcConnection(spawn) : new MachineScopedConnection(spawn, machine, `${machine}-id`);
+  const adapter = await startHerdrCoreAdapter(hc, socket, observeSeen, { otherMachine: machine !== undefined });
   cleanups.push(() => { adapter.stop(); hc.close(); rmSync(dir, { recursive: true, force: true }); });
   return { socket, cores, hc };
 }
@@ -1156,5 +1162,86 @@ describe("herdr-core adapter, Ovis's layout document", () => {
     expect((await paneGet("t1", socket)).label).toBe("logs");
     await herdrRpc("pane.rename", { pane_id: "t1", label: null }, socket);
     expect((await paneGet("t1", socket)).label).toBe("shell");
+  });
+});
+
+describe("another machine of the core, as its own PC (#2497)", () => {
+  // as hc lists them: this PC's own t5, lab's t1 and its helper t2, and t1 of another machine
+  const listed = () => [terminal("t5", { cwd: "/here" }), terminal("lab/t1", { cwd: "/there", pid: 41, foreground: { name: "bash", pid: 41 } }), terminal("lab/t2", { parent: "lab/t1" }), terminal("vps/t1")];
+  const LAB_LAYOUT = { spaces: [{ id: "lab-s1", name: "lab work", tabs: [{ id: "lab-s1t1", name: "", root: { type: "row", id: "r", children: [{ type: "block", id: "b1", content: { terminal: "t1" } }] } }] }] };
+
+  it("shows only that machine's terminals, by its own addresses, laid out by its own document", async () => {
+    const { socket, cores } = await setup(listed(), { "doc.get": (params) => ({ value: params["on"] === "lab-id" ? LAB_LAYOUT : LAYOUT, version: 1 }) }, undefined, "lab");
+    const snapshot = await sessionSnapshot(socket);
+    expect(snapshot.workspaces.map((w) => w.label)).toEqual(["lab work"]);
+    expect(snapshot.panes.map((p) => [p.pane_id, p.cwd, p.parent_pane_id ?? null])).toEqual([["t1", "/there", null], ["t2", "/home/u", "t1"]]);
+    expect(cores[0]!.calls.filter((call) => call.method === "doc.get").map((call) => call.params["on"])).toEqual(["lab-id", "lab-id"]);
+  });
+
+  it("reaches each terminal by its address on the core, and starts a new one there", async () => {
+    let started: Record<string, unknown> = {};
+    const { socket, cores } = await setup(listed(), {
+      "terminal.run": (params) => {
+        started = params;
+        return terminal("lab/t9", { labels: params["labels"] as Record<string, string> });
+      },
+    }, undefined, "lab");
+    await paneSendKeys("t1", ["Up"], socket);
+    expect(cores[0]!.calls.find((call) => call.method === "terminal.keys")?.params).toEqual({ terminal: "lab-id/t1", keys: ["up"] });
+    const failure = await paneSendText("vps/t1", "x", socket).then(() => null, (error: unknown) => (error instanceof HerdrError ? error.code : String(error)));
+    expect(failure).toBe("pane_not_found");
+    await workspaceCreate({ label: "new" }, socket).catch(() => null);
+    expect(started["on"]).toBe("lab-id");
+  });
+
+  it("reaches no other machine that took its name after a rename", async () => {
+    // lab was renamed, and vps took the name lab: its id is not lab's
+    const { socket, cores } = await setup(listed(), { "machine.list": () => ({ machines: [{ name: "lab", id: "vps-id", host: "vps", state: "connected", target: "vps", version: "0.1.17" }] }) }, undefined, "lab");
+    const failure = await paneSendText("t1", "x", socket).then(() => null, (error: unknown) => (error instanceof HerdrError ? error.code : String(error)));
+    expect(failure).toBe("connect_failed");
+    expect(cores[0]!.typed).toEqual([]);
+    expect(cores[0]!.calls.filter((call) => call.method !== "machine.list" && call.method !== "hello")).toEqual([]);
+  });
+
+  it("tells no process of that machine, and opens no checkout here", async () => {
+    const { socket } = await setup(listed(), {}, undefined, "lab");
+    expect(await paneProcessInfo("t1", socket)).toEqual({ pane_id: "t1", shell_pid: null, foreground_process_group_id: null, foreground_processes: [] });
+    expect((await ping(socket)).layout?.worktrees).toBe(false);
+    const refused = await worktreeList("lab-s1", socket).then(() => null, (error: unknown) => (error instanceof HerdrError ? error.code : String(error)));
+    expect(refused).toBe("unsupported");
+  });
+
+  it("streams that machine's events as its own, and none of this PC's or another machine's", async () => {
+    let channel = 0;
+    const { socket, cores } = await setup(listed(), {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: listed() };
+      },
+    }, undefined, "lab");
+    const frames: EventFrame[] = [];
+    const started = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.created" }, { type: "layout.updated" }, { type: "pane.agent_status_changed", pane_id: "t1" }], {
+      onEvent: (frame) => frames.push(frame),
+      onStarted: () => started.resolve(),
+      onClose: () => ended.resolve(),
+    }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores.at(-1)!;
+    core.notify(channel, "event", { seq: 2, type: "status", terminal: "t1", data: { status: { app: "codex", state: "working" } } });
+    core.notify(channel, "event", { seq: 3, type: "created", terminal: "vps/t3", data: { address: "vps/t3", state: "live", turn: 0 } });
+    core.notify(channel, "event", { seq: 4, type: "doc", data: { name: "herdr-app", version: 2 } });
+    core.notify(channel, "event", { seq: 5, type: "status", terminal: "lab/t1", data: { status: { app: "codex", state: "working" } } });
+    core.notify(channel, "event", { seq: 6, type: "doc", machine: "lab", data: { name: "herdr-app", version: 2 } });
+    core.notify(channel, "event", { seq: 7, type: "created", terminal: "lab/t4", data: { address: "lab/t4", state: "live", turn: 0, parent: "lab/t1" } });
+    core.notify(channel, "missed", { seq: 8, terminals: [] });
+    await ended.promise;
+    expect(frames).toEqual([
+      { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: "codex" } },
+      { event: "layout.updated", data: { type: "layout_updated" } },
+      { event: "pane.created", data: { type: "pane_created", pane_id: "t4" } },
+    ]);
   });
 });

@@ -19,7 +19,8 @@ export interface Machine {
   herdr_profile_id?: string;
   id: string;
   name: string;
-  kind: "local" | "ssh" | "relay";
+  /** hc: another machine of this PC's herdr-core (`hc machine add`), reached through that core */
+  kind: "local" | "ssh" | "relay" | "hc";
   target?: SshTarget;
   /** a PC added through the Ovis relay (no SSH): its relay ID and the relay it is reached through */
   relay?: { server_id: string; relay: string };

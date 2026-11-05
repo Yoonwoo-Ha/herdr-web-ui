@@ -100,6 +100,12 @@ export interface ListResult {
   terminals: Terminal[];
 }
 
+export type MachineListParams = Record<string, never>;
+
+export interface MachineListResult {
+  machines: MachineView[];
+}
+
 export interface MachineView {
   host: string;
   id: string;
@@ -330,6 +336,7 @@ export interface HcMethods {
   "doc.set": { params: DocSetParams; result: DocSetResult };
   "events.subscribe": { params: EventsSubscribeParams; result: SubscribeResult };
   "hello": { params: HelloParams; result: HelloResult };
+  "machine.list": { params: MachineListParams; result: MachineListResult };
   "server.status": { params: ServerStatusParams; result: StatusResult };
   "terminal.attach": { params: TerminalAttachParams; result: AttachResult };
   "terminal.get": { params: TerminalGetParams; result: Terminal };

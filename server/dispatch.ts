@@ -115,6 +115,9 @@ export interface ServerContext {
   readonly relayBodyBudget?: EventStreamBudget;
 }
 
+/** The routes that read or write files and folders on this disk (or run git and gh in them) for a pane, a workspace or a picker. */
+const OTHER_MACHINE_FILES = /^\/api\/(?:fs\/|pane\/(?:files|image)$|workspace\/(?:diff\/|directories$|pr(?:$|\/)))/;
+
 export async function handleRequest(request: Request, ctx: ServerContext): Promise<Response | undefined> {
   const { options, hostname, token, bridgeToken, bootId, devices, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartupResult, portalStartup } = ctx.services;
   const { sidecar, serialize, push, alertWebhook, logPushError, omo, claudeAgents, opencodeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage } = core;
@@ -289,6 +292,12 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // request gets it: the routes open without sign-in (health, auth, pairing) keep the default,
   // so an unauthenticated client cannot hold idle sockets for a minute.
   if (pathname.startsWith("/api/") && authenticated) ctx.timeout(request, 60);
+
+  // the panes' files are on another machine: this disk's would be shown, listed, diffed or written as theirs
+  if (options.localFiles === false && OTHER_MACHINE_FILES.test(pathname)) {
+    setRequestRoute(pathname);
+    return jsonResponse({ error: { code: "unsupported", message: "Files on another machine of herdr-core are not reachable from Ovis yet" } }, 501);
+  }
 
   if (pathname === "/api/bridge") {
     setRequestRoute(pathname);
@@ -580,7 +589,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     const receipt = orderSequence.moved();
     void machines?.refreshLocal();
     return receipt;
-  }, shellAgents);
+  }, shellAgents, options.localFiles !== false);
   if (workspaceResponse) return workspaceResponse;
 
   const pluginResponse = await handlePluginRequest(request, url, pathname, options);

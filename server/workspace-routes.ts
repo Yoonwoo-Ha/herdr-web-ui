@@ -90,7 +90,9 @@ const notQueued = (error: unknown): { error: { code: string; message: string } }
 export async function handleWorkspaceRequest(request: Request, url: URL, pathname: string, bunServer: Pick<ServerContext, "timeout">, broadcastAll: (message: ServerMessage) => void,
   queueFirstMessage: (paneId: string, text: string, kind: string, requester: string | null, launchedPid: number | null) => Promise<PendingMessage>,
   /** a move herdr confirmed: its receipt in this server's order (server/order-sequence.ts), taken at once */
-  workspaceMoved: () => MoveReceipt, shellAgents?: ShellAgentLocator): Promise<Response | null> {
+  workspaceMoved: () => MoveReceipt, shellAgents?: ShellAgentLocator,
+  /** false: the folders are another machine's, which hc checks as it starts the shell there */
+  localFolders = true): Promise<Response | null> {
   if (pathname === "/api/workspace/directories" && request.method === "POST") {
     setRequestRoute(pathname);
     let payload: unknown;
@@ -186,7 +188,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     const envProblem = envFault(payload.env);
     if (envProblem !== null) return badRequest("invalid_env", envProblem);
     if (payload.cwd !== undefined && typeof payload.cwd !== "string") return badRequest("invalid_cwd", "cwd must be an existing directory");
-    const cwd = payload.cwd === undefined ? undefined : expandedDirectory(payload.cwd);
+    const cwd = payload.cwd === undefined ? undefined : localFolders ? expandedDirectory(payload.cwd) : payload.cwd;
     if (payload.cwd !== undefined && cwd === null) return badRequest("invalid_cwd", "cwd must be an existing directory");
     if (payload.label !== undefined && typeof payload.label !== "string") return badRequest("missing_label", "label must be a string");
     if (typeof payload.label === "string") {

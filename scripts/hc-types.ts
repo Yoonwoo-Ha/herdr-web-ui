@@ -24,6 +24,7 @@ export const HC_METHODS = [
   "doc.set",
   "events.subscribe",
   "hello",
+  "machine.list",
   "server.status",
   "terminal.attach",
   "terminal.get",

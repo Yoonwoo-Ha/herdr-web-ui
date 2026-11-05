@@ -13,7 +13,8 @@ import { ClaudeSubagentStatus } from "../claude-subagents.ts";
 import { codexOpenRollout, paneCodexHome } from "../codex.ts";
 import { startStatusCollector } from "../collector.ts";
 import { CompletionTracker, type OmoRest } from "../completion.ts";
-import { servingCore } from "../herdr-core/runtime.ts";
+import { listHcMachines, startMachineBridge } from "../herdr-core/machine-bridge.ts";
+import { coreConnection, servingCore } from "../herdr-core/runtime.ts";
 import { Finishes, herdrLifetime } from "../finishes.ts";
 import { claudePanePid, claudePaneSession, forgetPaneTranscriptState } from "../conversation.ts";
 import { openCodeNativeState, openCodeVerificationCheckpoint, releaseOpenCodePane, trackVerifiedOpenCodePanes } from "../opencode-native.ts";
@@ -350,6 +351,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     ({ type: "pane-status", pane_id: paneId, agent_status: status, ...finishes.status(paneId, status), ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
   const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot, { bootId: options.orderSequence?.epoch, localFinishEpoch: () => finishes.epoch, relaySocket: options.relayPcSocket, serverId: options.serverId });
   if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
+  // on herdr-core, the core's other machines are PCs too, each reached through this PC's core
+  if (machines && servingCore()) machines.watchHcMachines(() => listHcMachines(coreConnection()), (machine) => startMachineBridge(machine, options.stateDir ?? defaultStateDir()));
 
   const desktopActivity = options.desktopActivity === true ? trackDesktopActivity({
     path: join(options.stateDir ?? defaultStateDir(), DESKTOP_ACTIVITY_FILE),

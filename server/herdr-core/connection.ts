@@ -153,13 +153,13 @@ export interface HcTransport {
   kill: () => void;
 }
 
-/** `hc connect` as a child process; a program that cannot be started is an HcError (`closed`). */
-export function spawnHcConnect(bin: string): HcTransport {
+/** `hc connect` as a child process (in `env`, else this process's); a program that cannot be started is an HcError (`closed`). */
+export function spawnHcConnect(bin: string, env?: Record<string, string | undefined>): HcTransport {
   // runtime.ts hands out this path that cannot exist while a moved hc is found again
   if (bin === "/dev/null/herdr-core-moved") throw new HcError("closed", "herdr-core moved (an update?), and Ovis is looking for it again: try again in a moment");
   let child: Bun.Subprocess<"pipe", "pipe", "ignore">;
   try {
-    child = Bun.spawn([bin, "connect"], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+    child = Bun.spawn([bin, "connect"], { stdin: "pipe", stdout: "pipe", stderr: "ignore", ...(env ? { env } : {}) });
   } catch (error) {
     throw new HcError("closed", `hc could not be started (${bin}): ${error instanceof Error ? error.message : String(error)}`);
   }

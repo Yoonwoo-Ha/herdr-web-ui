@@ -915,7 +915,19 @@ macOS). See [INSTALL.md](../INSTALL.md#2-choose-the-install-method).
   pi); without the extension a pi pane uses Terminal. Other agents whose chat reads only that
   report, OpenCode for example, use Terminal on herdr-core.
 - **Not on herdr-core:** search in a pane, scrolling or selecting the history through the
-  scroll buttons beside it, plugins and worktrees. Remote PCs keep running herdr's TUI server.
+  scroll buttons beside it, plugins and worktrees.
+- **Other machines:** each machine the core reaches (`hc machine add vps`, or added in the Herdr
+  app) is a PC of its own in the sidebar, beside this one: its workspaces and tabs as its own
+  `herdr-app` document lays them out, its live terminals, input, status and alerts, and new
+  workspaces and tabs started there. Ovis reaches it through this PC's core: nothing of Ovis is
+  installed on it, and it is added, renamed or removed with `hc machine` or in the Herdr app.
+  Ovis starts one more server of its own for each (on loopback, with an empty home folder of its
+  own), so its agents' chat history is not read here: their transcripts are on that machine.
+  Its files are not reachable from Ovis yet: file previews, the Files view, diffs, pasted images
+  and the folder picker are refused for it. A folder typed for a new workspace there is passed to
+  that machine as written (empty: its home). Pins and "seen" are not shared with the Herdr app
+  there. Temporary machines (`hc machine add --temp`) are not shown, and
+  PCs added over SSH or through the relay keep working beside them.
 
 ## Configuration
 

@@ -46,6 +46,7 @@ export const MACHINES_JA: Record<string, string> = {
   "This PC runs a bridge from a different version of Ovis. Update it to reconnect; herdr sessions keep running.": "この PC では別バージョンの Ovis のブリッジが動作しています。更新すると再接続されます。herdr のセッションは実行されたままです。",
   "Saved in herdr": "herdr に保存済み",
   "Connect once to enable automatic reconnection. Installation and startup need separate approval.": "一度接続すると、自動で再接続します。インストールと起動には別途承認が必要です。",
+  "A machine of herdr-core. Add, rename or remove it with hc machine or in the Herdr app.": "herdr-core のマシンです。追加、名前の変更、削除は hc machine か Herdr アプリで行ってください。",
   "Managed by herdr. Rename, disable or remove it there.": "herdr で管理されています。名前の変更、無効化、削除は herdr で行ってください。",
   "Browser access uses a bridge on this PC. Review any installation or startup changes before connecting.": "この PC のブリッジを使ってブラウザーからアクセスします。接続前に、インストールや起動に伴う変更を確認してください。",
   "Update bridge": "ブリッジを更新",

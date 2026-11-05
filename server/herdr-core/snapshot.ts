@@ -54,8 +54,8 @@ export type HcTerminal = Pick<Terminal, "address" | "cols" | "rows" | "cwd" | "s
 
 /**
  * A terminal on another machine the core reaches (`hc machine add vps`): hc lists and reports it
- * under that machine's name (`vps/t14`), where this PC's own are bare (`t7`). Until those machines
- * show as PCs of their own, none of their terminals is this PC's: no workspace, tab, pane or event.
+ * under that machine's name (`vps/t14`), where this PC's own are bare (`t7`). Each such machine is
+ * a PC of its own (machine-scope.ts), so none of their terminals is this PC's: no workspace, tab, pane or event.
  */
 export function onOtherMachine(address: string): boolean {
   return address.includes("/");

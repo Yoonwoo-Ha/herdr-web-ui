@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { startHerdrCoreAdapter, type HerdrCoreAdapter } from "./adapter.ts";
 import { HcConnection, spawnHcConnect } from "./connection.ts";
+import { MachineScopedConnection } from "./machine-scope.ts";
 import { SeenMarker } from "./seen-label.ts";
 import { existsSync } from "node:fs";
 import { findHc, type FoundHc } from "./discovery.ts";
@@ -76,6 +77,25 @@ export class NoHerdrCoreError extends Error {
   }
 }
 
+/**
+ * The other machine of the core this server shows as a PC of its own (OVIS_HC_MACHINE, set by
+ * machine-bridge.ts for the server it starts per machine); null for the core's own terminals.
+ */
+export function hcMachine(): { name: string; id: string } | null {
+  const name = process.env["OVIS_HC_MACHINE"];
+  const id = process.env["OVIS_HC_MACHINE_ID"];
+  return name && id ? { name, id } : null;
+}
+
+/**
+ * What `hc connect` runs in: a machine's server runs with a home of its own (machine-bridge.ts), and
+ * OVIS_HC_ENV holds what finds the core (HOME, HC_*, XDG_*) as the server that started it has them.
+ */
+function hcEnv(): Record<string, string | undefined> | undefined {
+  const kept = process.env["OVIS_HC_ENV"];
+  return kept ? { ...process.env, ...(JSON.parse(kept) as Record<string, string>) } : undefined;
+}
+
 let connection: HcConnection | null = null;
 /** whether this process serves herdr-core (startRuntime ran): a remote bridge inheriting OVIS_RUNTIME does not */
 let serving = false;
@@ -94,7 +114,9 @@ export function coreSeenMarker(): SeenMarker {
 
 /** The server's one line to hc, which the adapter answers through and live terminals stream on. */
 export function coreConnection(): HcConnection {
-  connection ??= new HcConnection(() => spawnHcConnect(hcBin()));
+  const spawn = () => spawnHcConnect(hcBin(), hcEnv());
+  const machine = hcMachine();
+  connection ??= machine === null ? new HcConnection(spawn) : new MachineScopedConnection(spawn, machine.name, machine.id);
   return connection;
 }
 
@@ -125,7 +147,7 @@ export async function startRuntime(stateDir: string, find: () => Promise<FoundHc
   if (unix) chmodSync(stateDir, 0o700);
   const hc = coreConnection();
   // on Windows the pipe is named after the folder itself: a junction or a short (8.3) spelling of it names the same pipe
-  const adapter = await startHerdrCoreAdapter(hc, adapterAddress(unix ? stateDir : realpathSync.native(stateDir), platform), (address, turn, labels) => coreSeenMarker().observe(address, turn, labels));
+  const adapter = await startHerdrCoreAdapter(hc, adapterAddress(unix ? stateDir : realpathSync.native(stateDir), platform), (address, turn, labels) => coreSeenMarker().observe(address, turn, labels), { otherMachine: hcMachine() !== null });
   if (unix) chmodSync(adapter.socketPath, 0o600);
   process.env["HERDR_SOCKET"] = adapter.socketPath;
   serving = true;

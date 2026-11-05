@@ -97,7 +97,13 @@ export interface HerdrCoreAdapter {
  */
 export type SeenObserver = (address: string, turn: number, labels: Record<string, string>) => void;
 
-export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string, observeSeen?: SeenObserver): Promise<HerdrCoreAdapter> {
+/**
+ * `otherMachine`: the terminals are another machine's, reached through this PC's core (machine-scope.ts):
+ * their processes and folders are not this PC's, so no process facts are told and no checkout opened.
+ */
+export interface AdapterOptions { otherMachine?: boolean }
+
+export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string, observeSeen?: SeenObserver, options: AdapterOptions = {}): Promise<HerdrCoreAdapter> {
   if (existsSync(socketPath)) {
     const live = await new Promise<boolean>((resolve, reject) => {
       const probe = createConnection(socketPath);
@@ -118,7 +124,7 @@ export async function startHerdrCoreAdapter(hc: HcConnection, socketPath: string
     return firstTurns.get(terminal.address)!;
   };
   const forgetTurns = (live: ReadonlySet<string>) => { for (const address of firstTurns.keys()) if (!live.has(address)) firstTurns.delete(address); };
-  const answers = createAnswers(hc, firstTurn, forgetTurns);
+  const answers = createAnswers(hc, firstTurn, forgetTurns, options);
   const listener = Bun.listen<ConnectionState>({
     unix: socketPath,
     socket: {
@@ -303,7 +309,7 @@ function herdrCode(error: HcError, missing: string): string {
   }
 }
 
-function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (live: ReadonlySet<string>) => void): (request: Request) => Promise<Reply> {
+function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (live: ReadonlySet<string>) => void, options: AdapterOptions): (request: Request) => Promise<Reply> {
   const terminal = async (address: string, missing = "pane_not_found"): Promise<HcTerminal> => {
     const found = await hc.call("terminal.get", { terminal: address }).catch((error: unknown) => {
       throw error instanceof HcError ? new AdapterError(herdrCode(error, missing), error.message) : error;
@@ -581,7 +587,7 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       // splits, their ratios, zoom, swap and order live in Ovis's document: only where hc writes one this Ovis may write
       const arrange = own && layoutCalls(hello) && !foreignLayout(ovis.value);
       // a checkout opens as a workspace Ovis places: only where Ovis keeps the layout
-      return { version: hello.version, protocol: HERDR_PROTOCOL, capabilities: { direct_terminal_attach: true, runtime: "herdr-core", layout: { rename: own, split: arrange, move: own, arrange, worktrees: own } } };
+      return { version: hello.version, protocol: HERDR_PROTOCOL, capabilities: { direct_terminal_attach: true, runtime: "herdr-core", layout: { rename: own, split: arrange, move: own, arrange, worktrees: own && !options.otherMachine } } };
     },
     async "session.snapshot"() {
       return { snapshot: await snapshot() };
@@ -595,7 +601,10 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       return { type: "agent_info", agent: agentInfoOf(pane) };
     },
     async "pane.process_info"(params) {
-      return { type: "pane_process_info", process_info: processInfoOf(await terminal(paneIdOf(params))) };
+      const found = await terminal(paneIdOf(params));
+      // another machine's pids name nothing here: a reader must not take one of this PC's processes for it
+      if (options.otherMachine) return { type: "pane_process_info", process_info: { pane_id: found.address, shell_pid: null, foreground_process_group_id: null, foreground_processes: [] } };
+      return { type: "pane_process_info", process_info: processInfoOf(found) };
     },
     async "pane.read"(params) {
       const paneId = paneIdOf(params);
@@ -1023,6 +1032,8 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
 
   return async (request) => {
     const method = methods[request.method];
+    // git runs here, and another machine's checkouts are there
+    if (options.otherMachine && request.method.startsWith("worktree.")) return { error: { code: "unsupported", message: "worktrees open only on the PC that runs Ovis" } };
     if (!method) return { error: { code: "unsupported", message: `${request.method} is not available on herdr-core` } };
     try {
       return { result: await method(request.params) };

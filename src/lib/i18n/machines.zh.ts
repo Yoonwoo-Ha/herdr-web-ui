@@ -46,6 +46,7 @@ export const MACHINES_ZH: Record<string, string> = {
   "This PC runs a bridge from a different version of Ovis. Update it to reconnect; herdr sessions keep running.": "此 PC 运行的 bridge 来自其他版本的 Ovis。更新后即可重新连接，herdr 会话会继续运行。",
   "Saved in herdr": "已保存在 herdr 中",
   "Connect once to enable automatic reconnection. Installation and startup need separate approval.": "连接一次后即可自动重新连接。安装和启动仍需单独批准。",
+  "A machine of herdr-core. Add, rename or remove it with hc machine or in the Herdr app.": "这是 herdr-core 的机器。请用 hc machine 或在 Herdr 应用中添加、重命名或移除。",
   "Managed by herdr. Rename, disable or remove it there.": "由 herdr 管理。请在 herdr 中重命名、禁用或移除。",
   "Browser access uses a bridge on this PC. Review any installation or startup changes before connecting.": "浏览器通过此 PC 上的桥接服务访问。连接前，请查看安装或启动所需的更改。",
   "Update bridge": "更新 bridge",

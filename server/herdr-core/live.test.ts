@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { herdrRpc, paneMoveToNewTab, ping, sessionSnapshot, tabRename, workspaceClose, workspaceCreate, workspaceRename } from "../herdr/client.ts";
+import { herdrRpc, paneMoveToNewTab, paneRead, paneSendText, ping, sessionSnapshot, tabRename, workspaceClose, workspaceCreate, workspaceRename } from "../herdr/client.ts";
 import { startHerdrCoreAdapter } from "./adapter.ts";
 import { CoreAttachSession } from "./attach-session.ts";
 import { HcConnection } from "./connection.ts";
+import { listHcMachines } from "./machine-bridge.ts";
+import { MachineScopedConnection } from "./machine-scope.ts";
 import { buildSnapshot } from "./snapshot.ts";
 import type { HerdrPane } from "../../shared/protocol.ts";
 
@@ -291,5 +293,103 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
     } finally {
       adapter.stop();
     }
+  }, TEST_MS);
+});
+
+/**
+ * Another machine of a real hc's core, shown as a PC of its own (#2497): two cores of their own
+ * (sessions, state, config and runtime folders nobody else uses), the second added to the first as
+ * `lab` through a `--via` command that runs its `hc connect` in its own env, as SSH would there. Runs
+ * only where OVIS_TEST_HC_BIN names an hc.
+ */
+describe.skipIf(!bin)("another machine of a real hc's core", () => {
+  let dir = "";
+  /** each core's env, set only once every isolating variable is in it */
+  const envs: Record<string, string>[] = [];
+  let hc: MachineScopedConnection | null = null;
+  let stopAdapter: (() => void) | null = null;
+  let socket = "";
+
+  const until = async <T>(label: string, read: () => Promise<T | null>): Promise<T> => {
+    const deadline = Date.now() + WAIT_MS;
+    for (;;) {
+      const value = await read();
+      if (value !== null) return value;
+      if (Date.now() > deadline) throw new Error(`no ${label} within ${WAIT_MS}ms`);
+      await Bun.sleep(25);
+    }
+  };
+  const run = async (env: Record<string, string>, args: string[]) => {
+    const proc = Bun.spawn([bin!, ...args], { env, stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    expect({ args, code, err: code === 0 ? "" : err }).toEqual({ args, code: 0, err: "" });
+    return out;
+  };
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "ovis-hc-machine-"));
+    // `--via` finds hc on the PATH as `herdr-core`
+    mkdirSync(join(dir, "bin"));
+    symlinkSync(bin!, join(dir, "bin", "herdr-core"));
+    const inherited = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => !entry[0].startsWith("HC_") && entry[1] !== undefined));
+    for (const name of ["here", "lab"]) {
+      for (const sub of ["state", "config", "run"]) mkdirSync(join(dir, name, sub), { recursive: true, mode: 0o700 });
+      envs.push({
+        ...inherited,
+        PATH: `${join(dir, "bin")}:${process.env["PATH"] ?? "/usr/bin:/bin"}`,
+        HC_SESSION: `ovis-test-${name}-${process.pid}`,
+        XDG_STATE_HOME: join(dir, name, "state"),
+        XDG_CONFIG_HOME: join(dir, name, "config"),
+        XDG_RUNTIME_DIR: join(dir, name, "run"),
+        HC_SOCKET: join(dir, name, "run", "hc.sock"),
+      });
+    }
+    const [here, lab] = envs as [Record<string, string>, Record<string, string>];
+    await run(here, ["server", "start"]);
+    await run(lab, ["server", "start"]);
+    const via = join(dir, "bin", "via-lab");
+    const assignments = Object.entries(lab).filter(([key]) => key.startsWith("HC_") || key.startsWith("XDG_") || key === "PATH").map(([key, value]) => `${key}='${value}'`).join(" ");
+    writeFileSync(via, `#!/bin/sh\nexec env ${assignments} sh -c "$1"\n`);
+    chmodSync(via, 0o755);
+    await run(here, ["machine", "add", "--name", "lab", "--via", via]);
+    await run(here, ["run", "--bg", "bash"]);
+    hc = new MachineScopedConnection(() => {
+      const child = Bun.spawn([bin!, "connect"], { env: here, stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+      return {
+        readable: child.stdout,
+        write: (bytes: Uint8Array) => { child.stdin.write(bytes); void child.stdin.flush(); },
+        exited: child.exited,
+        kill: () => child.kill(),
+      };
+    }, "lab", (JSON.parse(await run(here, ["machine", "ls", "--json"])) as { machines: { id: string }[] }).machines[0]!.id);
+    socket = join(dir, "lab.sock");
+    stopAdapter = (await startHerdrCoreAdapter(hc, socket, undefined, { otherMachine: true })).stop;
+  }, TEST_MS);
+
+  afterAll(async () => {
+    stopAdapter?.();
+    hc?.close();
+    // only this test's cores, each by its own isolated env
+    const stopped = await Promise.all(envs.map((env) => Bun.spawn([bin!, "server", "stop"], { env, stdout: "ignore", stderr: "ignore" }).exited));
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    expect(stopped.every((code) => code === 0)).toBe(true);
+  }, TEST_MS);
+
+  it("lists the machine, then starts, types into and reads a terminal there by its own address", async () => {
+    expect((await listHcMachines(hc!)).map((machine) => [machine.name, machine.connected])).toEqual([["lab", true]]);
+    // this PC's own terminal is none of lab's
+    expect((await sessionSnapshot(socket)).panes).toEqual([]);
+    const made = await workspaceCreate({ label: "on lab" }, socket);
+    const paneId = made.root_pane.pane_id;
+    expect(paneId).not.toContain("/");
+    const listed = JSON.parse(await run(envs[1]!, ["ls", "--json"])) as { terminals: { address: string }[] };
+    expect(listed.terminals.map((terminal) => terminal.address)).toContain(paneId);
+    expect((await sessionSnapshot(socket)).workspaces.map((workspace) => workspace.label)).toEqual(["on lab"]);
+    await paneSendText(paneId, "echo lab-$((40+2))\r", socket);
+    const text = await until("echo", async () => {
+      const read = await paneRead({ paneId, source: "recent", format: "text", lines: 50 }, socket);
+      return read.text.includes("lab-42") ? read.text : null;
+    });
+    expect(text).toContain("lab-42");
   }, TEST_MS);
 });
