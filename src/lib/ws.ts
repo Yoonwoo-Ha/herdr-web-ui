@@ -904,6 +904,11 @@ export class HerdrSocket {
     return !this.featuresKnown || this.features.has("watch");
   }
 
+  /** Whether this connection's server has listed its features yet (hasTerminalHistory is final once it has). */
+  featuresListed(): boolean {
+    return this.featuresKnown;
+  }
+
   /** Whether the browser keeps a pane's scrollback (`terminal-history`); false until the features come. */
   hasTerminalHistory(): boolean {
     return this.terminalHistory;
