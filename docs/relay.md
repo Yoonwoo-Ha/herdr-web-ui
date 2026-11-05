@@ -32,8 +32,10 @@ when and for how long, and how much goes each way. The rhythm of the traffic sho
 in a terminal goes out at once as a small frame, so the timing of keystrokes is visible, and so is
 the size of what the PC sends back. Nothing is padded, and no cover traffic hides any of this.
 
-`relay.ovis.sh` keeps none of it: it writes no logs, stores nothing, and uses the address only to
-rate-limit connections ([what it keeps](../relay/README.md#what-it-sees-and-keeps)). That is how
+`relay.ovis.sh` writes no logs and uses the address only to rate-limit connections. It keeps only
+usage counters for capacity planning: per PC (under a hash of its relay ID), bytes each way, time
+connected and sessions, kept three months; no content, address or device identity
+([what it keeps](../relay/README.md#what-it-sees-and-keeps)). That is how
 it's run, not something you can check from outside, so assume that whoever runs a relay, and the
 network in front of it (Cloudflare, for `relay.ovis.sh`), can record everything above.
 
@@ -502,7 +504,8 @@ is always up.
   to `relay/` or `shared/relay-server-proof.ts` reaches main
   and passes CI or when run by hand from main, and always with the maintainer's approval. A deploy
   drops every connection; PCs and phones reconnect by themselves, and nothing is sent again. Workers
-  Logs are off and the relay stores nothing ([relay/README.md](../relay/README.md#deploy)).
+  Logs are off and the relay stores only its usage counters
+  ([relay/README.md](../relay/README.md#usage-counters)).
 - **`app.ovis.sh`** is a Cloudflare Pages project. The Release workflow deploys it from each release
   tag, and [Releasing](development.md#releasing) has its one-time setup. A build of main can be
   deployed by hand to `preview.ovis-app.pages.dev` to try before a release; it never changes `app.ovis.sh`.

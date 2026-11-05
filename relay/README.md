@@ -119,12 +119,47 @@ large they are, and the connecting address (as the key of the per-address rate l
 does not see what a frame says: frames are encrypted end to end, and the relay neither parses nor
 logs them.
 
-It keeps nothing. Who each socket is lives in memory and, on Cloudflare, in the socket's own
-attachment, which is gone with the socket. A client's frames are held in memory only until its
-data socket attaches. The Durable Object's SQLite storage stays empty (it holds the idle alarm
-only), Workers Logs are off (`[observability] enabled = false`), and nothing writes a log line. A
-relay restart or a Cloudflare deploy drops every socket; the PC reconnects and announces itself
-again, and clients reconnect.
+It keeps usage counters and nothing else. Who each socket is lives in memory and, on Cloudflare, in
+the socket's own attachment, which is gone with the socket. A client's frames are held in memory
+only until its data socket attaches. The Durable Object's SQLite storage stays empty (it holds the
+idle alarm only), Workers Logs are off (`[observability] enabled = false`), and nothing writes a
+log line. A relay restart or a Cloudflare deploy drops every socket; the PC reconnects and
+announces itself again, and clients reconnect.
+
+### Usage counters
+
+For capacity planning, the Cloudflare relay counts how much each PC uses it. When a PC's control
+socket or a phone's socket closes, and every 5 minutes while it stays open, it writes one data
+point to the `ovis_relay_usage` Workers Analytics Engine dataset (`USAGE` in `wrangler.toml`):
+
+| Field | Holds |
+|---|---|
+| `index1` | the PC's usage key: the first 32 hex digits of `SHA256(UTF8("ovis-relay-usage-v1:" + server_id))`, not the `server_id` itself |
+| `blob1` | `pc` (the PC's control socket) or `device` (a phone or browser, both directions of its pair) |
+| `double1`, `double2` | bytes from the device to the PC, and from the PC to the device (frames passed on; keepalives not counted) |
+| `double3` | seconds connected |
+| `double4` | `1` when the socket closed with this point (one session), `0` for a 5-minute point |
+
+A device's time counts from the PC's first answer, and its bytes from its first frame; a phone the
+PC never answered is no session and writes nothing. The relay tells devices apart only by their random per-connection `connection_id`,
+which is not written: a point says "a device of this PC", never which one. No frame content,
+address, public key or `connection_id` is written. The counts live in the socket's attachment
+until they are written, so an eviction loses none; a deploy or a reset of the Durable Object, which
+drops the sockets without their close, loses at most the last 5 minutes of each. Analytics Engine keeps each point three months
+and then drops it. The Bun server counts nothing.
+
+Only the Cloudflare account that runs the relay can read them, through the Analytics Engine SQL API
+with a token that has Account Analytics Read:
+
+```sh
+curl -s "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/analytics_engine/sql" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --data "
+    SELECT toStartOfDay(timestamp) AS day, index1 AS pc, blob1 AS side,
+      SUM(_sample_interval * double1) AS bytes_up, SUM(_sample_interval * double2) AS bytes_down,
+      SUM(_sample_interval * double3) / 60 AS minutes, SUM(_sample_interval * double4) AS sessions
+    FROM ovis_relay_usage WHERE timestamp > NOW() - INTERVAL '30' DAY
+    GROUP BY day, pc, side ORDER BY day, pc, side FORMAT JSON"
+```
 
 ## Deploy
 

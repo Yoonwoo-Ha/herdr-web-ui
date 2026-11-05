@@ -6,8 +6,13 @@
  * attachment, so the object may be evicted between frames and the room picks up where it was.
  * The PC's keepalive is answered by the runtime itself (`setWebSocketAutoResponse`), so an idle
  * PC never wakes it; an alarm closes sockets idle for IDLE_MS.
+ *
+ * Usage counters (core.ts `UsageReport`) go to the `USAGE` Workers Analytics Engine dataset, one
+ * data point per report, under a hash of the server_id; README.md has the query.
  */
-import { CLOSE, IDLE_MS, KEEPALIVE_PING, KEEPALIVE_PONG, Room, admit, parseSocketRequest, type Frame, type RateLimiter, type RoomHost, type SocketInfo } from "./core.ts";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
+import { CLOSE, IDLE_MS, KEEPALIVE_PING, KEEPALIVE_PONG, Room, admit, parseSocketRequest, type Frame, type RateLimiter, type RoomHost, type SocketInfo, type UsageReport } from "./core.ts";
 
 /** the part of a Cloudflare server-side WebSocket the relay uses */
 export interface HibernatableSocket {
@@ -33,7 +38,26 @@ export interface Env {
   RELAY_LIMITER: RateLimiter;
   /** the backstop over all addresses together */
   RELAY_GLOBAL_LIMITER: RateLimiter;
+  /** Workers Analytics Engine dataset for usage counters (wrangler.toml); without it nothing is counted */
+  USAGE?: { writeDataPoint(point: { indexes: string[]; blobs: string[]; doubles: number[] }): void };
 }
+
+/** the key a PC's usage is kept under: not its server_id itself */
+export const usageKey = (serverId: string) => bytesToHex(sha256(utf8ToBytes(`ovis-relay-usage-v1:${serverId}`))).slice(0, 32);
+
+/**
+ * One report as a data point: index1 the PC's usage key, blob1 the side (`pc` or `device`),
+ * double1 bytes up (device to PC), double2 bytes down, double3 seconds connected, double4 sessions
+ * that ended (1 or 0).
+ */
+export const usagePoint = (report: UsageReport) => ({
+  indexes: [usageKey(report.server_id)],
+  blobs: [report.side],
+  doubles: [report.up, report.down, report.ms / 1000, report.ended ? 1 : 0],
+});
+
+const isUsage = (value: unknown) => typeof value === "object" && value !== null
+  && ["since", "up", "down"].every((key) => typeof (value as Record<string, unknown>)[key] === "number");
 
 /** the Workers runtime's globals the Durable Object needs (tests put fakes in their place) */
 interface Runtime {
@@ -52,7 +76,9 @@ function isInfo(value: unknown): value is SocketInfo {
     && (info["answered"] === undefined || info["answered"] === true)
     && (info["deadline"] === undefined || typeof info["deadline"] === "number")
     && (info["arrived"] === undefined || typeof info["arrived"] === "number")
-    && (proof === undefined || (typeof proof === "object" && proof !== null && typeof proof["expected"] === "string" && typeof proof["expires"] === "number"));
+    && (proof === undefined || (typeof proof === "object" && proof !== null && typeof proof["expected"] === "string" && typeof proof["expires"] === "number"))
+    && (info["server_id"] === undefined || typeof info["server_id"] === "string")
+    && (info["usage"] === undefined || isUsage(info["usage"]));
 }
 
 export class RelayRoom {
@@ -60,7 +86,7 @@ export class RelayRoom {
   /** alarm reads and writes, one after another, so a later one never undoes an earlier one */
   private alarmWrites: Promise<void> = Promise.resolve();
 
-  constructor(private readonly state: RelayState, _env?: Env) {
+  constructor(private readonly state: RelayState, env?: Pick<Env, "USAGE">) {
     state.setWebSocketAutoResponse(new (runtime().WebSocketRequestResponsePair)(KEEPALIVE_PING, KEEPALIVE_PONG));
     const infos = new WeakMap<HibernatableSocket, SocketInfo>();
     const host: RoomHost<HibernatableSocket> = {
@@ -94,6 +120,7 @@ export class RelayRoom {
         try { socket.close(code, reason); } catch { /* see above */ }
       },
       keepaliveAt: (socket) => state.getWebSocketAutoResponseTimestamp(socket)?.getTime() ?? null,
+      usage: (report) => env?.USAGE?.writeDataPoint(usagePoint(report)),
       wake: (at) => { void this.armBy(at); },
       now: () => Date.now(),
     };
