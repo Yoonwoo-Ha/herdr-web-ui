@@ -25,6 +25,8 @@ import { RELAY_KO } from "./i18n/relay.ko.ts";
  * braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "붙여넣지 않았습니다: 파일 경로에 줄바꿈이 있어 터미널이 Enter로 받아들입니다.",
+  "Attach files": "파일 첨부",
   "Sign out": "로그아웃",
 
   "Only for {pc}": "{pc}에만",

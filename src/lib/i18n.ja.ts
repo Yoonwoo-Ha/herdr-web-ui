@@ -27,6 +27,8 @@ import { RELAY_JA } from "./i18n/relay.ja.ts";
  * in English. Placeholders in braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "貼り付けていません: ファイルのパスに改行があり、ターミナルが Enter として受け取ります。",
+  "Attach files": "ファイルを添付",
   "Sign out": "サインアウト",
 
   "Only for {pc}": "{pc} のみ",

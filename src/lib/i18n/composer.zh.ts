@@ -67,7 +67,7 @@ export const COMPOSER_ZH: Record<string, string> = {
   "Attached": "已附加",
   "Remove {file}": "移除 {file}",
   "Message": "消息",
-  "Attach files": "附加文件",
+  "Attach": "附加",
   "Next turn": "下一轮",
   "Waits for Send now": "按“立即发送”后发送",
   "Discard saved copy": "丢弃已保存的副本",

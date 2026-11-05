@@ -15,6 +15,7 @@ import { alertsOffMarked, alertsState, runMoreItem } from "./header-more.ts";
 import { routeDrained } from "./drained-route.ts";
 import { contextMenuKey } from "./context-menu-key.ts";
 import { checkTerminalFileInput } from "./terminal-file-input-regression.ts";
+import { checkTerminalAttach } from "./terminal-attach-regression.ts";
 import { checkTerminalInput } from "./terminal-input-regression.ts";
 import { checkSafariIme } from "./terminal-safari-ime-regression.ts";
 import { checkIpadIme } from "./terminal-ipad-ime-regression.ts";
@@ -2408,6 +2409,7 @@ try {
   if (touchEvidence) await touchEvidence.finish();
   await touch.close();
   console.log("PASS touch terminal input line sends whole lines, Enter alone, and yields to direct typing");
+  await checkTerminalAttach(browser, origin, paneB);
 
   // A closed pane and an obsolete saved pane both yield to a live pane. Local access
   // is automatic, so it must not offer a sign-out action that cannot lock the app.

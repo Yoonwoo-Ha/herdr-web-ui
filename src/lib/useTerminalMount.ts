@@ -39,7 +39,7 @@ import { userInputTracker } from "./terminalReplies.ts";
 import { visibleTerminalInputBounds } from "./terminalViewport.ts";
 import type { PaneSubmitRetention } from "./paneSubmitRetention.ts";
 import type { ShortcutOverrides } from "./shortcutBindings.ts";
-import { RESIZE_SETTLE_MS, RELEASE_AFTER_MS, IDLE_RELEASE_MS, RESUME_INPUT_WAIT_MS, VIEW_BUFFER_MAX, afterSwitch, dropViewChange, holdViews, inUse, connectedSockets, plainError, releaseViews } from "./paneTerminalShared.ts";
+import { RESIZE_SETTLE_MS, RELEASE_AFTER_MS, IDLE_RELEASE_MS, RESUME_INPUT_WAIT_MS, VIEW_BUFFER_MAX, afterSwitch, dropViewChange, holdViews, inUse, connectedSockets, plainError, releaseViews, CONTROL_CHARACTER } from "./paneTerminalShared.ts";
 import { copyOnSelect, herdrUiKnown, loadHerdrUi } from "./herdrUi.ts";
 import { captureForGhostty } from "./ghostty/capture.ts";
 
@@ -178,12 +178,15 @@ export interface TerminalMountDeps {
   theme: ResolvedTheme;
   updateSettings: (patch: Partial<Settings>) => void;
   uploadFileRef: RefObject<(pane: string, image: Blob) => Promise<string>>;
+  /** set here: files picked from the key bar's Attach files key, stored and pasted as a drop's are, while
+   * `still()` holds when they are stored (the pane, connection, input lease and mode they were picked for) */
+  attachFilesRef: RefObject<(files: File[], still: () => boolean) => void>;
   watchingRef: RefObject<boolean>;
   wheelStateRef: RefObject<{ speed: number; omoQuestion: boolean; }>;
 }
 
 export function useTerminalMount(deps: TerminalMountDeps): void {
-  const { activeRef, agentRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, watchedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, consumeModifiers, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, ghosttyRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, reuseExternalLinkTabRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setViewHeld, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, watchingRef, wheelStateRef } = deps;
+  const { activeRef, agentRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, watchedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, consumeModifiers, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, ghosttyRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, reuseExternalLinkTabRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setViewHeld, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, attachFilesRef, watchingRef, wheelStateRef } = deps;
 
     // Where this terminal is: its pane, and whether it is active, presented, shown and not the chat view.
     // Counted on every commit that changes it: an explicit copy still waiting for herdr's text is
@@ -1708,12 +1711,12 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       // the pane and paste the returned paths; never send Enter with a drop.
       // Batches upload one after another, so overlapping drops paste their paths in the order dropped.
       let fileQueue: Promise<void> = Promise.resolve();
-      const uploadFiles = (files: File[]): void => {
+      const uploadFiles = (files: File[], still: () => boolean = () => true): void => {
         const pane = paneRef.current;
         if (!pane || !socket.connected || term.options.disableStdin) return;
-        fileQueue = fileQueue.then(() => uploadBatch(pane, files));
+        fileQueue = fileQueue.then(() => uploadBatch(pane, files, still));
       };
-      const uploadBatch = async (pane: string, files: File[]): Promise<void> => {
+      const uploadBatch = async (pane: string, files: File[], still: () => boolean): Promise<void> => {
         if (paneRef.current !== pane || !socket.connected || term.options.disableStdin) return;
         try {
           // the paths of a batch are pasted together: one file too large and none is uploaded
@@ -1721,7 +1724,13 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           const paths: string[] = [];
           for (const file of files) paths.push(await uploadFileRef.current(pane, file));
           // An upload can finish after the user has switched panes or lost input access.
-          if (paneRef.current !== pane || !activeRef.current || chatViewRef.current || !socket.connected || term.options.disableStdin) return;
+          if (paneRef.current !== pane || !activeRef.current || chatViewRef.current || !socket.connected || term.options.disableStdin || !still()) return;
+          // a line break in a path (a pane's folder may hold one) would reach the program as Enter
+          if (paths.some((path) => CONTROL_CHARACTER.test(path))) {
+            const t = tRef.current;
+            noteClipboard(t("Not pasted: the file's path holds a line break, which the terminal would take as Enter."));
+            return;
+          }
           pasteText(paths.map((path) => `'${path.replaceAll("'", "'\\''")}'`).join(" ") + " ");
           if (activeRef.current && !findOpenRef.current) term.focus();
         } catch (error) {
@@ -1729,6 +1738,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           if (paneRef.current === pane) noteClipboard(error instanceof AttachmentTooLargeError ? error.message : plainError(error));
         }
       };
+      attachFilesRef.current = uploadFiles;
       const onFilePaste = (event: ClipboardEvent): void => {
         // xterm handles text (and bracketed paste) itself. A file-only clipboard
         // needs the upload route instead; copied paths must remain native text.
@@ -2465,6 +2475,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         leaveRef.current = () => {};
         cancelLeaveRef.current = () => {};
         reattachRef.current = () => {};
+        attachFilesRef.current = () => {};
         keyboardHoldsRef.current = () => false;
         fittedRef.current = () => {};
         deferAttachRef.current = () => false;

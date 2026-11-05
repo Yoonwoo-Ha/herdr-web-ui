@@ -3807,6 +3807,17 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   draft with a separate no-Enter insert; agent-of-empires' compose sheet has Insert beside Send but
   clears its draft on a synchronous boolean, which this design rejects: the draft is cleared on the
   bridge's acknowledgement, as Send's is, and nothing typed is queued across a disconnect.
+- **Attach files** in the terminal lens (#1633; Settings > Terminal > **Attach files button**, the
+  device setting `terminalAttachButton`, off by default and offered on a touch screen only, so the
+  input line and the key bar stay as they were). On, the input line gets **Attach**
+  (`.terminal-input-attach`, lucide paperclip, caption "Attach") before Insert, outlined as Insert
+  is, and direct typing gets a key (`[data-key="attach"]`, "Attach files") right after the
+  keyboard control; both live in rows that already exist, so no height is added. Each opens the
+  system picker (`<input type="file" multiple>`); the picked files take the paths a paste or a drop
+  already takes: into the line at its caret under the paste's staleness rule with "Uploading
+  file…" meanwhile, or pasted into the grid as a drop is, never with Enter. It follows the
+  attach action mobile SSH clients put beside their terminal input and the composer's own Attach
+  files; the composer's `+` glyph is not used, since a `+` on a key bar reads as the character.
 
 ### In-app alert
 - While the app is on screen, a pane that needs input, finishes a turn (by the device's Finished

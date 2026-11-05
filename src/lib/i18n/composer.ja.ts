@@ -67,7 +67,7 @@ export const COMPOSER_JA: Record<string, string> = {
   "Attached": "添付済み",
   "Remove {file}": "{file} を削除",
   "Message": "メッセージ",
-  "Attach files": "ファイルを添付",
+  "Attach": "添付",
   "Next turn": "次のターン",
   "Waits for Send now": "「今すぐ送信」で送信します",
   "Discard saved copy": "保存したコピーを破棄",

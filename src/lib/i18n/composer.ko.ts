@@ -67,7 +67,7 @@ export const COMPOSER_KO: Record<string, string> = {
   "Attached": "첨부됨",
   "Remove {file}": "{file} 제거",
   "Message": "메시지",
-  "Attach files": "파일 첨부",
+  "Attach": "첨부",
   "Next turn": "다음 차례",
   "Waits for Send now": "지금 보내기를 누르면 보냅니다",
   "Discard saved copy": "저장된 사본 버리기",

@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type MouseEvent, type PointerEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, ClipboardPaste, Keyboard, PanelBottomClose, PanelBottomOpen } from "lucide-react";
+import { ChevronDown, ChevronUp, ClipboardPaste, Keyboard, PanelBottomClose, PanelBottomOpen, Paperclip } from "lucide-react";
 
 import "./KeyBar.css";
 
@@ -54,6 +54,9 @@ export interface KeyBarProps {
   /** the keyboard control refuses its tap, keeping the focus and the composition a blur would end,
    * and while a paste reads the clipboard (the paste's own focus would bring a hidden keyboard back) */
   keyboardRefused?: boolean;
+  /** on a touch screen in direct typing: the Attach files key's tap (Settings > Terminal, off by default), which
+   * fixes what the files are for and answers where the picked files go, or null (with nothing opened) */
+  onAttach?: () => ((files: File[]) => void) | null;
 }
 
 /**
@@ -249,7 +252,7 @@ export const KEY_SPOKEN_NAMES: ReadonlyArray<{ key: string; label: string }> = [
  * | ~ / -) stands over it, and an arrow pad (an inverted T, as a hardware keyboard's) takes the
  * right-hand end of both rows, so the arrows never scroll out of reach (KeyBar.css).
  */
-export function KeyBar({ onKey, onKeyHoldEnd, modifiers, lockedModifiers, onToggleModifier, items, expanded = false, onToggleExpanded, directTyping, onToggleDirect, directDisabled, onPaste, pasteDisabled, note, onNoteDismiss, onToggleKeyboard, keyboardOwner = "", keyboardDisabled, keyboardRefused, disabled, holdScope }: KeyBarProps) {
+export function KeyBar({ onKey, onKeyHoldEnd, modifiers, lockedModifiers, onToggleModifier, items, expanded = false, onToggleExpanded, directTyping, onToggleDirect, directDisabled, onPaste, pasteDisabled, note, onNoteDismiss, onToggleKeyboard, keyboardOwner = "", keyboardDisabled, keyboardRefused, onAttach, disabled, holdScope }: KeyBarProps) {
   const t = useT();
   // the control says what its next tap does, not what a mid-animation keyboard measures
   const keyboardView = useCallback(() => keyboardControl.view(keyboardOwner), [keyboardOwner]);
@@ -280,6 +283,9 @@ export function KeyBar({ onKey, onKeyHoldEnd, modifiers, lockedModifiers, onTogg
   const hasDirectToggle = onToggleDirect !== undefined;
   const hasPaste = onPaste !== undefined;
   const hasKeyboardToggle = onToggleKeyboard !== undefined;
+  const hasAttach = onAttach !== undefined;
+  const picker = useRef<HTMLInputElement | null>(null);
+  const attachTo = useRef<((files: File[]) => void) | null>(null);
   useLayoutEffect(() => {
     const bar = barRef.current;
     const row = rowRef.current;
@@ -311,7 +317,7 @@ export function KeyBar({ onKey, onKeyHoldEnd, modifiers, lockedModifiers, onTogg
       row.removeEventListener("scroll", schedule);
       observer.disconnect();
     };
-  }, [rowItems, hasDirectToggle, hasPaste, hasKeyboardToggle, note, expanded]);
+  }, [rowItems, hasDirectToggle, hasPaste, hasKeyboardToggle, hasAttach, note, expanded]);
   /** The key's name as it is said: its spoken name where its cap is notation, else its cap. */
   const spokenKey = (item: KeyBarKeyItem): string => {
     const spoken = ARROWS.find((candidate) => candidate.key === item.key)?.label ?? KEY_SPOKEN_NAMES.find((candidate) => candidate.key === item.key)?.label;
@@ -364,6 +370,15 @@ export function KeyBar({ onKey, onKeyHoldEnd, modifiers, lockedModifiers, onTogg
             {keyboard.direction === "hide" ? <PanelBottomClose aria-hidden="true" /> : <PanelBottomOpen aria-hidden="true" />}
           </Key>
         )}
+        {/* beside the keyboard control, a tap that opens the system picker; never a hold */}
+        {onAttach && (
+          <Key disabled={disabled} dataKey="attach" label={t("Attach files")} onPress={() => {
+            attachTo.current = onAttach();
+            if (attachTo.current !== null) picker.current?.click();
+          }}>
+            <Paperclip aria-hidden="true" />
+          </Key>
+        )}
         {note ? <p className="key-bar-note" role="status" onClick={onNoteDismiss}>{note}</p>
           : rowItems.map((item) => item.type === "modifier" ? renderModifier(item.modifier) : renderKey(item))}
       </div>
@@ -371,6 +386,13 @@ export function KeyBar({ onKey, onKeyHoldEnd, modifiers, lockedModifiers, onTogg
       {expanded && <div className="key-bar-arrow-pad">
         {(["ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"] as const).map((key) => renderKey({ type: "key", key }))}
       </div>}
+      {onAttach && <input ref={picker} type="file" multiple hidden onChange={(event) => {
+        const picked = Array.from(event.currentTarget.files ?? []);
+        event.currentTarget.value = "";
+        const attach = attachTo.current;
+        attachTo.current = null;
+        if (picked.length > 0 && attach !== null) attach(picked);
+      }} />}
       {/* pinned at the row's end, out of its scroll: the way to the second row is never scrolled away */}
       {onToggleExpanded && (
         <Key command dataKey="more" label={t(expanded ? "Fewer keys" : "More keys")} expanded={expanded} onPress={onToggleExpanded}>

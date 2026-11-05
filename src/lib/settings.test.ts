@@ -186,6 +186,18 @@ describe("saved theme migration", () => {
     expect(loadSettings().terminalGhostty).toBe(false);
   });
 
+  it("keeps the terminal's Attach files button in its own key, out of an old tab's whole-record save", () => {
+    expect(loadSettings().terminalAttachButton).toBe(false);
+    saveSettings(sanitizeSettings({ terminalAttachButton: true }));
+    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("terminalAttachButton");
+    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
+    expect(loadSettings().terminalAttachButton).toBe(true);
+    saveSettings({ ...loadSettings(), terminalAttachButton: false });
+    expect(loadSettings().terminalAttachButton).toBe(false);
+    records.set("ovis:terminal-attach-button", "\"true\"");
+    expect(loadSettings().terminalAttachButton).toBe(false);
+  });
+
   it("keeps the composer's Artifacts chip in its own key, out of an old tab's whole-record save", () => {
     expect(loadSettings().composerArtifacts).toBe(false);
     saveSettings(sanitizeSettings({ composerArtifacts: true }));
@@ -599,6 +611,13 @@ it("draws with xterm until this device turns libghostty on", () => {
   expect(sanitizeSettings({ terminalGhostty: "true" }).terminalGhostty).toBe(false);
   expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ terminalGhostty: true })))).terminalGhostty).toBe(true);
   expect(SETTING_SCOPE.terminalGhostty).toBe("device");
+});
+
+it("draws no Attach files control in the terminal until this device turns it on", () => {
+  expect(sanitizeSettings({}).terminalAttachButton).toBe(false);
+  expect(sanitizeSettings({ terminalAttachButton: "true" }).terminalAttachButton).toBe(false);
+  expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ terminalAttachButton: true })))).terminalAttachButton).toBe(true);
+  expect(SETTING_SCOPE.terminalAttachButton).toBe("device");
 });
 
 it("drops the folder grouping an older version stored", () => {
