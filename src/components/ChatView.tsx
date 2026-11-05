@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleQuestionMark, CircleSlash, CircleX, Copy, Layers, SquareTerminal, Target,
+  ArrowDown, BookOpen, Check, ChevronDown, ChevronRight, Circle, CircleAlert, CircleCheck, CircleDot, CircleQuestionMark, CircleSlash, CircleX, Copy, Hourglass, Layers, SquareTerminal, Target,
   type LucideProps,
 } from "lucide-react";
 
@@ -37,7 +37,7 @@ import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.
 import { endedOnAnswer, isLiveWorkTurn, isWaitingWorkTurn, formatWorkDuration, runNames, splitTurn, turnSegments, type WorkSegment, todoGroups, visibleWorkParts, workBlockStartsOpen, workFailed, workSummary, type TodoAttempt, type TodoGroup, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
 import { phaseRows, planRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
 import { isTodoTool, parseTodoAnswer, todoCallSummary, type TodoItem, type TodoStatus } from "../lib/todos.ts";
-import { formatGoalTime, turnGoal, type GoalState, type GoalStatus } from "../lib/goals.ts";
+import { formatGoalTime, goalWaitSources, goalWaitUntil, turnGoal, type GoalState, type GoalStatus } from "../lib/goals.ts";
 import { publishSessionStats, sessionStats } from "../lib/sessionStats.ts";
 import { HISTORY_PROMPTS, useSettings } from "../lib/settings.ts";
 import { learnFromConversation } from "../lib/tabLabels.ts";
@@ -107,7 +107,7 @@ import { pickAhead, pickedTurn, pickSettled } from "../../shared/conversation-se
 import type { AgentStatus, CommandOutcome, ConversationMetadata, ConversationPart, ConversationResponse, ConversationTurn, InteractivePrompt, OmoTaskResult, PendingMessage, SlashCommand } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
 import { TurnTime } from "./TurnTime.tsx";
-import { useT } from "../lib/i18n.ts";
+import { currentLocale, useT } from "../lib/i18n.ts";
 import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { replyCommentsKey } from "../lib/replyComments.ts";
@@ -1061,12 +1061,49 @@ function TeammateMessageRow({ message, stateKey }: { message: TeammateMessage; s
 /** what a runtime notice was: a background result by name, anything else by its own first line */
 function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPart, { kind: "notice" }>): string {
   if (notice.source === undefined || notice.source === "async-result") return t("Background result delivered");
+  // OmO went on with its goal by itself: the TUI's "goal continues" line, the objective on request
+  if (notice.source === "goal-continuation") return t("Goal continues");
   if (notice.source.startsWith("peer:")) {
     const name = notice.source.slice(5);
     return name ? t("Message from another session: {name}", { name }) : t("Message from another session");
   }
   const first = notice.text.split("\n").find((line) => line.trim().length > 0)?.trim() ?? notice.source;
   return first.length > 96 ? `${first.slice(0, 95)}…` : first;
+}
+
+type GoalWait = Extract<ConversationPart, { kind: "goal_wait" }>;
+
+function goalWaitSource(t: ReturnType<typeof useT>, kind: keyof GoalWait["waiting_on"], n: number): string {
+  switch (kind) {
+    case "tasks": return n === 1 ? t("1 task") : t("{n} tasks", { n });
+    case "monitors": return n === 1 ? t("1 monitor") : t("{n} monitors", { n });
+    case "terminals": return n === 1 ? t("1 terminal") : t("{n} terminals", { n });
+    case "dags": return n === 1 ? t("1 DAG run") : t("{n} DAG runs", { n });
+    case "cells": return n === 1 ? t("1 code cell") : t("{n} code cells", { n });
+  }
+}
+
+/** OmO's goal waiting on background work: the divider's look with nothing to open, gone once its
+ * due time is long past (the server drops it as soon as anything follows it) */
+function GoalWaitRow({ wait }: { wait: GoalWait }) {
+  const t = useT();
+  const until = goalWaitUntil(wait);
+  // the due time this row has seen pass; a newer wait in its place is checked afresh
+  const [expired, setExpired] = useState<number | null>(() => Date.now() < until ? null : until);
+  const [checks, setChecks] = useState(0);
+  useEffect(() => {
+    const left = until - Date.now();
+    if (!(left > 0)) { setExpired(until); return; }
+    // a timer holds at most 2^31-1 ms; a later due time is checked again then
+    const timer = setTimeout(() => left > 2_147_483_647 ? setChecks((n) => n + 1) : setExpired(until), Math.min(left, 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [until, checks]);
+  if (expired === until) return null;
+  const locale = currentLocale();
+  const sources = goalWaitSources(wait).map(([kind, n]) => goalWaitSource(t, kind, n));
+  const what = sources.length === 0 ? t("background work") : new Intl.ListFormat(locale, { type: "conjunction" }).format(sources);
+  const time = new Date(wait.due_at).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  return <p className="chat-goal-wait"><span><Hourglass aria-hidden="true" />{t("Goal waits on {what} · continues around {time}", { what, time })}</span></p>;
 }
 
 // a turn that did not change keeps its object across polls: skip re-rendering it
@@ -1089,6 +1126,8 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, sh
   const copyError = copyFailed && <p className="chat-copy-error" role="alert">{t("Couldn't copy. Select the text and copy it manually.")}</p>;
   const copied = (ok: boolean): void => setCopyFailed(!ok);
   const time = turn.ts === null ? null : <TurnTime ts={turn.ts} />;
+  const wait = turn.parts.find((part): part is GoalWait => part.kind === "goal_wait");
+  if (wait !== undefined) return <GoalWaitRow wait={wait} />;
   const compact = turn.parts.find((part): part is Extract<ConversationPart, { kind: "compact" }> => part.kind === "compact");
   if (compact !== undefined) {
     return <ChatDetails memoryKey="compact" className="chat-compact">

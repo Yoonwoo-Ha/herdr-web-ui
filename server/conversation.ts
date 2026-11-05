@@ -2538,7 +2538,12 @@ function transcriptPageRead(source: StreamSource, path: string, page: Conversati
   // the store decides the parser, not the pane's label: omo writes omp's
   // session shape while herdr may be calling that same pane `claude`. The page
   // bounds the turns, so none are cut: they must meet the next page exactly.
-  const turns = live?.turns ?? parseTurns(source, path, text, undefined, undefined, start);
+  // a page is parsed in stretches (before and after the newest turn start), and OmO's goal wait is
+  // only ever the conversation's last word: on an older page, or anywhere but the end, it is over
+  const parsed = live?.turns ?? parseTurns(source, path, text, undefined, undefined, start);
+  const turns = parsed.some((turn, index) => turn.parts[0]?.kind === "goal_wait" && (page.before !== undefined || index < parsed.length - 1))
+    ? parsed.filter((turn, index) => turn.parts[0]?.kind !== "goal_wait" || (page.before === undefined && index === parsed.length - 1))
+    : parsed;
   const metadata = live?.metadata ?? parseConversationMetadata(`${head}\n${text}`, source, undefined, piAgentDir);
   // Record the stat from BEFORE the read: an append during parsing must cause
   // another read on the next poll, not permanently cache a torn tail.

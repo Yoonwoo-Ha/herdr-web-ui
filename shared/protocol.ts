@@ -610,7 +610,20 @@ export type ConversationPart =
    * stderr until the agent records them */
   | { kind: "shell"; command: string; stdout?: string; stderr?: string }
   /** OmO's background tasks that ended, as OmO reported them back to the agent, or a Claude Code subagent that ended (its task notification): it starts a turn, nobody typed it */
-  | { kind: "task_result"; tasks: OmoTaskResult[] };
+  | { kind: "task_result"; tasks: OmoTaskResult[] }
+  /** OmO's goal waiting on background work before it continues on its own (its `goal-cache-warmup`
+   * record): a turn of its own while it is the conversation's last, gone once it resumes or anything
+   * else follows. `due_at`: when OmO continues if nothing wakes it first */
+  | { kind: "goal_wait"; due_at: string; waiting_on: GoalWaitSources };
+
+/** What an OmO goal's wait waits on, by kind: background tasks, monitors, background terminals, DAG runs and detached code cells. */
+export interface GoalWaitSources {
+  tasks: number;
+  monitors: number;
+  terminals: number;
+  dags: number;
+  cells: number;
+}
 
 /** One OmO background task that ended (the `senpi-task.completion` OmO wakes its agent with). */
 export interface OmoTaskResult {

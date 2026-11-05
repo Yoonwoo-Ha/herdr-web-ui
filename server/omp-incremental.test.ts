@@ -190,6 +190,24 @@ test("a valid clear preview is detached, committed clear drops old tools but pre
   expect(older[1]?.parts).toEqual([{ kind: "compact", text: "Keep this history until clear" }]);
 });
 
+test("a goal's wait is withdrawn the same way record by record, in previews and in one-shot parses", () => {
+  const warmup = (phase: string) => ({ type: "custom", customType: "goal-cache-warmup", data: { phase, dueAtMs: 1_790_000_000_000, wakeSources: { "terminal-monitors": 1 } } });
+  const parser = appendRecords([
+    message("user", "Watch the build"),
+    answer("Watching", "stop"),
+    warmup("scheduled"),
+    { type: "custom", customType: "engine-turn-start", data: { customType: "senpi-monitor:notification" } },
+    answer("Build passed", "stop"),
+    warmup("scheduled"),
+    warmup("scheduled"),
+    warmup("resumed"),
+    { type: "custom_message", customType: "goal-continuation", display: false, content: "<untrusted_objective>\nShip it\n</untrusted_objective>" },
+    warmup("scheduled"),
+    answer("Shipped", "stop"),
+  ]);
+  expect(parser.snapshot().map((turn) => turn.parts[0]?.kind)).toEqual(["text", "text", "text", "notice", "text"]);
+});
+
 test("snapshots retain the normalized window while one-shot turn limits and final-line handling stay compatible", () => {
   const rows = Array.from({ length: 105 }, (_, i) => message("user", `request ${i}`));
   const parser = createOmpTranscriptParser();
