@@ -1669,8 +1669,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   note is dim, red for an expired sign-in or a failed request.
 - Under the limits, only when the provider reports them: **Usage credits** (Claude's extra usage,
   spent against its monthly cap in the provider's currency, over a bar counted like the limits) or
-  **Credits** (Codex's balance, in whole credits), then **Limit resets** (how many are left, and
-  when the soonest expires). Reference: Claude Code's `/usage` (its "Usage credits" row) and
+  **Credits** (Codex's balance, in whole credits), then **Limit resets** (Codex's: how many are
+  left, and when the soonest expires). Reference: Claude Code's `/usage` (its "Usage credits" row) and
   Codex's `/status` (its "Credits" row), whose own readings these are; no code is borrowed.
 
 ### PC load (`.machine-stats`)

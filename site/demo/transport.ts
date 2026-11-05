@@ -1106,7 +1106,7 @@ function usageReport(): UsageReport {
         { kind: "session", scope: null, used_percent: 38, ...session(2.4) },
         { kind: "week", scope: null, used_percent: 61, ...week(78) },
         ...(demoStatusline ? [] : [{ kind: "week" as const, scope: "Sonnet", used_percent: 12, ...week(78) }]),
-      ], credits: { kind: "spend", currency: "USD", used: 12.19, limit: 15.39, used_percent: 79.2 }, resets: { available: 2, expires_at: at(30) } },
+      ], credits: { kind: "spend", currency: "USD", used: 12.19, limit: 15.39, used_percent: 79.2 } },
     { id: "codex", key: "codex:demo-codex-work", account: "sam@work.example", plan: "pro", problem: null, checked_at: checked, windows: [
       { kind: "session", scope: null, used_percent: 22, ...session(1.2) },
       { kind: "week", scope: null, used_percent: 84, ...week(97) },
