@@ -6,7 +6,7 @@ import type { GhosttyOverlay } from "./overlay.ts";
 const HELD_BYTES_MAX = 32 * 1024 * 1024;
 
 /**
- * Settings > Terminal > Draw with libghostty, for one terminal from its mount: every byte xterm is
+ * libghostty draws every terminal, from its mount: every byte xterm is
  * given is held from the first one, so libghostty, loaded once the server has listed its features,
  * starts from the same screen and history xterm has, on herdr-core and herdr's own server alike. A
  * module that fails to load, or more held bytes than HELD_BYTES_MAX, leave the terminal to xterm.

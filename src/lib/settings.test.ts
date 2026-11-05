@@ -199,19 +199,6 @@ describe("saved theme migration", () => {
     expect(loadSettings().terminalImages).toBe(false);
   });
 
-  it("keeps Draw with libghostty in its own key, out of an old tab's whole-record save", () => {
-    expect(loadSettings().terminalGhostty).toBe(true);
-    saveSettings(sanitizeSettings({ terminalGhostty: false }));
-    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("terminalGhostty");
-    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
-    expect(loadSettings().terminalGhostty).toBe(false);
-    expect(loadSettings().terminalFontSize).toBe(18);
-    saveSettings({ ...loadSettings(), terminalGhostty: true });
-    expect(loadSettings().terminalGhostty).toBe(true);
-    records.set("ovis:terminal-ghostty", "\"false\"");
-    expect(loadSettings().terminalGhostty).toBe(true);
-  });
-
   it("keeps the terminal's Attach files button in its own key, out of an old tab's whole-record save", () => {
     expect(loadSettings().terminalAttachButton).toBe(false);
     saveSettings(sanitizeSettings({ terminalAttachButton: true }));
@@ -701,13 +688,6 @@ it("draws no terminal pictures until this device turns them on", () => {
   expect(sanitizeSettings({ terminalImages: "true" }).terminalImages).toBe(false);
   expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ terminalImages: true })))).terminalImages).toBe(true);
   expect(SETTING_SCOPE.terminalImages).toBe("device");
-});
-
-it("draws with libghostty until this device turns it off", () => {
-  expect(sanitizeSettings({}).terminalGhostty).toBe(true);
-  expect(sanitizeSettings({ terminalGhostty: "false" }).terminalGhostty).toBe(true);
-  expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ terminalGhostty: false })))).terminalGhostty).toBe(false);
-  expect(SETTING_SCOPE.terminalGhostty).toBe("device");
 });
 
 it("raises the terminal's keyboard on every tap until this device asks for it only from the key bar", () => {

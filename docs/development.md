@@ -272,7 +272,7 @@ bun scripts/pane-input-focus-demo-regression.ts # the input focus shortcut again
 bun scripts/mirror-scroll-demo-regression.ts # fixed mirror wheel/touch, native history, no guessed program input, observe guards
 bun scripts/terminal-images-demo-regression.ts # Settings -> Pictures in the terminal: a picture is drawn, goes while off, and on again the next one is drawn only where it was printed
 bun scripts/core-history-scroll-demo-regression.ts # a herdr-core server's history kept in xterm: wheel and swipe scroll it, a replay erases the last one, nothing typed; herdr's own keeps none (#2663)
-bun scripts/terminal-ghostty-demo-regression.ts # Settings -> Draw with libghostty: a herdr-core pane drawn from its first byte, a Kitty picture placed and deleted, typing still through xterm; herdr's own and off stay xterm without fetching the module
+bun scripts/terminal-ghostty-demo-regression.ts # libghostty draws every pane: a herdr-core pane from its first byte, a Kitty picture placed and deleted, typing still through xterm, herdr's own panes too; xterm draws an iTerm2 picture by itself
 bun scripts/mirror-fold-demo-regression.ts # a mirror, or an attached pane a phone watches at a wider grid, folded whole (portrait, landscape), Original width from the pane menu, driving phones and desktops unfolded
 bun scripts/shortcut-exact-modifiers-demo-regression.ts # recording exact-modifier chords: confirm, refusals, dispatch
 bun scripts/output-browser-qa.ts # terminal output flow control end to end

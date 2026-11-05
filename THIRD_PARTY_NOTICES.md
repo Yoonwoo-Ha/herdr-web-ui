@@ -1522,8 +1522,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 `src/lib/ghostty/ghostty-vt.wasm` is libghostty-vt from [Ghostty](https://github.com/ghostty-org/ghostty) at
 commit e95bed6, built for wasm32 by `scripts/ghostty-vt/build.sh` with the small change in
-`scripts/ghostty-vt/kitty-on-wasm.patch` (Kitty graphics on, file media off). It draws a terminal when
-Settings > Terminal > Draw with libghostty is on, under the MIT License below. The module links two
+`scripts/ghostty-vt/kitty-on-wasm.patch` (Kitty graphics on, file media off). It draws every terminal, under the
+MIT License below. The module links two
 packages Ghostty's build brings in: [Wuffs](https://github.com/google/wuffs) 0.4.0-alpha.10, which decodes
 Kitty PNG pictures, under the MIT License (it is offered under MIT or Apache-2.0), and
 [uucode](https://github.com/jacobsandlund/uucode) 0.2.0, Unicode tables, under the MIT License.

@@ -1,6 +1,7 @@
 /**
- * Settings > Terminal > Draw with libghostty: libghostty-vt draws an xterm terminal's screen, Kitty
- * graphics pictures included, while xterm stays the engine under it.
+ * libghostty-vt draws every xterm terminal's screen, Kitty graphics pictures included, while xterm stays
+ * the engine under it. xterm draws by itself only where this layer cannot: a module that does not load or
+ * fails, and an iTerm2 or sixel picture (Pictures in the terminal), which libghostty does not take.
  *
  * xterm still takes every key, IME syllable, paste, click, selection, link, search and scroll, and
  * still answers the program's queries: everything Ovis built on it keeps working. Its text layer
@@ -52,6 +53,17 @@ export function hasXtermPicture(data: string | Uint8Array): boolean {
   return text.includes("\x1b]1337;File=") || /\x1bP[0-9;]*q/.test(text);
 }
 
+/** hasXtermPicture over a stream of writes: a picture's start split between two writes is told too */
+export function xtermPictureScanner(): (data: string | Uint8Array) => boolean {
+  let tail = "";
+  return (data) => {
+    const text = tail + (typeof data === "string" ? data : latin1.decode(data));
+    // longer than any start it looks for (`ESC ] 1337 ; File =`, a sixel DCS with its parameters)
+    tail = text.slice(-64);
+    return hasXtermPicture(text);
+  };
+}
+
 /** how long after a wheel or a swipe a frame is taken for herdr's repaint of the scrolled screen, not for output */
 const VIEW_REPAINT_MS = 1000;
 /** a wheel or swipe, and herdr's view moved by the viewport tools (TerminalViewportTools.tsx) */
@@ -92,7 +104,9 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
   const vt = await GhosttyVt.create(term.cols, term.rows);
   const backlog = takeBacklog();
   // a picture only xterm draws already moved xterm's rows: xterm keeps drawing this pane (#2980)
-  if (!backlog || (terminalDrawsPictures(term) && backlog.some(hasXtermPicture))) {
+  // one scanner from the first byte on, so a picture's start split across the backlog and a later write is told
+  const pictureIn = xtermPictureScanner();
+  if (!backlog || (terminalDrawsPictures(term) && backlog.some(pictureIn))) {
     vt.dispose();
     return null;
   }
@@ -440,7 +454,7 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     // libghostty takes Kitty pictures but not iTerm2 or sixel ones: when xterm draws one (Pictures in the terminal),
     // its cursor moves past the picture and libghostty's would not, so the text after it would sit on other rows.
     // xterm draws the pane from that picture on (#2980)
-    if (!disposed && terminalDrawsPictures(term) && hasXtermPicture(data)) overlay.dispose();
+    if (!disposed && pictureIn(data) && terminalDrawsPictures(term)) overlay.dispose();
     if (!disposed) {
       try {
         vt.write(data);
@@ -462,12 +476,13 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     reset();
   };
 
-  optionsChanged();
-  colors();
-  vt.setScrollback(term.options.scrollback ?? 0);
-  fit();
-  // at xterm's grid and cell size, so a picture in the backlog is placed as xterm's cells are
+  // at xterm's grid and cell size, so a picture in the backlog is placed as xterm's cells are. Any of it failing
+  // gives the terminal back to xterm, its own write and reset included: no write waits on a failed module
   try {
+    optionsChanged();
+    colors();
+    vt.setScrollback(term.options.scrollback ?? 0);
+    fit();
     for (const chunk of backlog) vt.write(chunk);
     written = backlog.length > 0;
   } catch (error) {
@@ -480,13 +495,23 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     vt.dispose();
     throw error;
   }
+  // a resize the module fails gives the pane back to xterm, as a failed frame does
+  const refit = (): void => {
+    if (disposed) return;
+    try {
+      fit();
+    } catch (error) {
+      console.warn("libghostty stopped drawing this terminal; xterm draws it", error);
+      overlay.dispose();
+    }
+  };
   const subscriptions: IDisposable[] = [
-    term.onResize(() => fit()),
+    term.onResize(refit),
     term.onRender(() => schedule()),
     term.onScroll(() => schedule()),
   ];
   for (const gesture of VIEW_GESTURES) host.addEventListener(gesture, viewMoved, { capture: true, passive: true });
-  const screenResize = new ResizeObserver(() => fit());
+  const screenResize = new ResizeObserver(refit);
   screenResize.observe(screen);
 
   // xterm still parses every byte (its buffer serves input, selection, search and the input row), but its

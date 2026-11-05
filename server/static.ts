@@ -65,8 +65,8 @@ function cacheControlFor(pathname: string): string {
  *   directive that matters: KaTeX output and the agent marks are the two places that put
  *   third-party HTML into the page. `'wasm-unsafe-eval'` lets the page compile WebAssembly
  *   and nothing else (no eval, no string to script): the terminal's sixel decoder
- *   (@xterm/addon-image, Settings -> Pictures in the terminal) and libghostty-vt (Settings ->
- *   Draw with libghostty) are modules bundled in the app.
+ *   (@xterm/addon-image, Settings -> Pictures in the terminal) and libghostty-vt (which draws
+ *   every terminal) are modules bundled in the app.
  * - `style-src 'self' 'unsafe-inline'`: inline style attributes are how measured layout
  *   reaches the DOM (AgentPicker, RowMenu, Droplet, UsageMeters), and KaTeX writes one on
  *   every expression it cannot render. It is also load-bearing for the terminal itself:
