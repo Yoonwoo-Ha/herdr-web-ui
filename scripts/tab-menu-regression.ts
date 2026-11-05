@@ -532,9 +532,9 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
       assert.equal(survivingDetaches(), beforeCloseDetaches, "the surviving panes do not detach while selection is pending");
       releaseSelection();
       await page.locator('.pane-canvas[aria-busy="true"]').waitFor({ state: "detached" });
-      const focused = (await layout(tabId)).focused_pane_id;
-      assert.ok(focused === first || focused === second, "herdr selects a surviving sibling");
-      await currentPane(page, focused);
+      // the selection moves as herdr's TUI focus would (lib/paneAfterClose.ts): to the pane selected
+      // before the closed one, not to herdr's own focus, which the browser's picks never moved
+      await currentPane(page, second);
       assert.equal(await page.locator(".pane-frame:visible").count(), 2, "closing a pane restores the surviving split");
       assert.equal(await frame(page, first).locator(".xterm").evaluate((node, old) => node === old, firstTerm), true, "the first terminal remains the same after confirmation");
       assert.equal(await frame(page, second).locator(".xterm").evaluate((node, old) => node === old, secondTerm), true, "the second terminal remains the same after confirmation");
