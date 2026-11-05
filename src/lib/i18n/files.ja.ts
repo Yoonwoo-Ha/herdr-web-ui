@@ -4,7 +4,8 @@
  * components/TextFileView.tsx, components/TextFileEditor.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
  * components/HighlightedCode.tsx, components/RepoDiffViewer.tsx, components/RepoChanges.tsx,
  * components/RepoDiff.tsx, lib/repoDiff.ts, lib/diffLineNotes.ts, components/WebPanel.tsx,
- * components/PullRequestPanel.tsx, lib/pullRequest.ts.
+ * components/PullRequestPanel.tsx, lib/pullRequest.ts, components/MarkdownOutline.tsx,
+ * components/MarkdownOutlineRow.tsx.
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const FILES_JA: Record<string, string> = {
@@ -187,6 +188,7 @@ export const FILES_JA: Record<string, string> = {
   "Increase file text size": "ファイルの文字を大きく",
   "Files beside the pane": "ペインの横にファイル一覧",
   "On a wide window, Browse files opens as a panel on the right of the pane instead of a popup. With Open files set to Beside the pane, a file opened from it shows in its place, and closing the file brings the list back.": "広いウィンドウでは、ファイルの参照がポップアップではなくペインの右側のパネルで開きます。「ファイルを開く」が「ペインの横」のときは、一覧から開いたファイルがその場所に表示され、閉じると一覧に戻ります。",
+  "Outline": "目次",
   "Edit file": "ファイルを編集",
   "Unsaved changes": "未保存の変更",
   "Save changes to {name}?": "{name} に変更を保存しますか？",
@@ -203,4 +205,6 @@ export const FILES_JA: Record<string, string> = {
   "Only a device that drives this PC can edit its files.": "この PC を操作できるデバイスだけがファイルを編集できます。",
   "The file could not be saved.": "ファイルを保存できませんでした。",
   "Text of {name}": "{name} の内容",
+  "Markdown outline": "Markdown の目次",
+  "A Markdown preview lists its headings beside the text and marks the one you are reading. On a narrow screen, the Outline button in the header opens the list.": "Markdown のプレビューの横に見出しの一覧を表示し、読んでいる見出しを示します。狭い画面では、ヘッダーの目次ボタンで一覧を開きます。",
 };

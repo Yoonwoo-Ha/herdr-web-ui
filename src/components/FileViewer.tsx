@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Braces, Check, Code, Copy, Download, Ellipsis, ExternalLink, Link2, Maximize2, PanelRight, Pencil, TriangleAlert, X } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { Braces, Check, Code, Copy, Download, Ellipsis, ExternalLink, Link2, Maximize2, PanelRight, Pencil, TableOfContents, TriangleAlert, X } from "lucide-react";
 
 import "./FileViewer.css";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
@@ -10,6 +10,7 @@ import { RelayRenderedPage } from "./RelayRenderedPage.tsx";
 import { hasDraft, TextFileEditor } from "./TextFileEditor.tsx";
 import { TextFileView } from "./TextFileView.tsx";
 import { MarkdownImageContext } from "./Markdown.tsx";
+import { MarkdownOutline, OUTLINE_COLUMN_MIN_PX, useWideEnough } from "./MarkdownOutline.tsx";
 
 import type { FileInfo } from "../../shared/protocol.ts";
 import { MAX_EDITABLE_TEXT_BYTES } from "../../shared/files.ts";
@@ -29,6 +30,7 @@ import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useAppWindow } from "../lib/install.ts";
 import type { MarkdownBlock } from "../../shared/markdown.ts";
 import { knownPreview, parsePreviewOffThread } from "../lib/markdownPreview.ts";
+import { outlineOf } from "../lib/markdownOutline.ts";
 import { hasPreview, type TextViewMode } from "../lib/textPreview.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -368,6 +370,30 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const previewRefused = preview.status === "failed";
   const previewable = hasPreview(language) && !previewRefused;
   const view = previewable && mode === "preview" ? "markdown" : "code";
+  // Settings > File viewer > Markdown outline: a drawn Preview (not the editor) with two headings or more lists them,
+  // beside it on a wide viewer, in a drawer over it (from the header's Outline button) on a narrow one
+  const previewBlocks = !editing && view === "markdown" && preview.status === "ready" ? preview.blocks : null;
+  const outline = useMemo(() => settings.markdownOutline && previewBlocks !== null ? outlineOf(previewBlocks) : [], [settings.markdownOutline, previewBlocks]);
+  const outlined = outline.length > 1;
+  const [split, setSplit] = useState<HTMLDivElement | null>(null);
+  const outlineColumn = useWideEnough(outlined ? split : null, OUTLINE_COLUMN_MIN_PX);
+  // shown as the width has it (a column shows, a drawer waits) until the button says otherwise
+  const [outlineChoice, setOutlineChoice] = useState<boolean | null>(null);
+  const outlineShown = outlined && (outlineChoice ?? outlineColumn);
+  const outlineToggle = useRef<HTMLButtonElement>(null);
+  const outlineId = useId();
+  const closeOutline = useCallback((refocus: boolean) => {
+    setOutlineChoice(null);
+    if (refocus) outlineToggle.current?.focus();
+  }, []);
+  const outlineButton = outlined && <button ref={outlineToggle} type="button" className="icon-button file-viewer-action file-viewer-outline-toggle" aria-expanded={outlineShown} aria-controls={outlineShown ? outlineId : undefined} aria-label={t("Outline")} title={t("Outline")} onClick={() => setOutlineChoice(!outlineShown)}>
+    <TableOfContents aria-hidden="true" />
+  </button>;
+  /** The body with the outline after it. The wrapper is always there (`display: contents` without an outline), so the body is never remounted, its focus and scroll kept, as an outline comes and goes. */
+  const withOutline = (box: ReactNode) => <div ref={setSplit} className={outlined ? "file-viewer-split is-outlined" : "file-viewer-split"}>
+    {box}
+    {outlineShown && <MarkdownOutline id={outlineId} entries={outline} scroller={bodyRef} drawer={!outlineColumn} toggle={outlineToggle} onClose={closeOutline} />}
+  </div>;
   const codeShown = textFile && loaded !== null && view === "code" && (!htmlPage || source);
   // the source as shown (a cut prefix without the row after its final newline): past
   // VIRTUAL_SOURCE_LINES it is the virtualizer's rows, colored in its worker while small enough
@@ -545,6 +571,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
         {/* how the text shows: Preview or source is one choice of two, so one toggle; wrapping is a
             setting (Settings → File viewer), not an action here */}
         {textFile && previewable && !editing && <div className="file-viewer-group">
+          {outlineButton}
           <button type="button" className="icon-button file-viewer-action" aria-pressed={mode === "code"} aria-label={t("Show source")} title={t("Show source")} onClick={() => setChosen({ path, mode: mode === "code" ? "preview" : "code" })}><Braces aria-hidden="true" /></button>
         </div>}
         <div className="file-viewer-group">{fileActions}</div>
@@ -559,6 +586,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       <button type="button" aria-pressed={mode === "preview"} onClick={() => setChosen({ path, mode: "preview" })}>{t("Preview")}</button>
       <button type="button" aria-pressed={mode === "code"} onClick={() => setChosen({ path, mode: "code" })}>{t("Source")}</button>
     </div>}
+    {outlineButton}
     {htmlPage && modes}
   </div>;
   // a virtualized source fills the viewer: its rows are a window the user scrolls, so the body
@@ -568,7 +596,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
     <main ref={surface} className="file-reader">
       {header}
       {/* the focus starts here, as in the popup: a scroll box takes Space and the arrows */}
-      <div ref={bodyRef} className={`${bodyClass} file-reader-body`} tabIndex={-1}>{body}{openingNote}</div>
+      {withOutline(<div ref={bodyRef} className={`${bodyClass} file-reader-body`} tabIndex={-1}>{body}{openingNote}</div>)}
     </main>
   );
 
@@ -578,7 +606,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       <section className="file-viewer file-viewer-docked">
         {header}
         {toolbar}
-        <div className={bodyClass}>{body}</div>
+        {withOutline(<div ref={bodyRef} className={bodyClass}>{body}</div>)}
       </section>
     </aside>
   );
@@ -588,7 +616,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       <section className={virtual !== null && view === "code" ? "modal file-viewer file-viewer-virtual" : "modal file-viewer"} role="dialog" aria-modal="true" aria-label={info?.name ?? path} ref={surface} tabIndex={-1}>
         {header}
         {/* the focus starts here (a scroll box takes Space and the arrows), and moves on to a player */}
-        <div ref={bodyRef} className={bodyClass} tabIndex={-1}>{body}{openingNote}</div>
+        {withOutline(<div ref={bodyRef} className={bodyClass} tabIndex={-1}>{body}{openingNote}</div>)}
       </section>
     </div>
   );

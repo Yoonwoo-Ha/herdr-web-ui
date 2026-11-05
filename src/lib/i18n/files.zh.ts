@@ -4,7 +4,8 @@
  * components/TextFileView.tsx, components/TextFileEditor.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
  * components/HighlightedCode.tsx, components/RepoDiffViewer.tsx, components/RepoChanges.tsx,
  * components/RepoDiff.tsx, lib/repoDiff.ts, lib/diffLineNotes.ts, components/WebPanel.tsx,
- * components/PullRequestPanel.tsx, lib/pullRequest.ts.
+ * components/PullRequestPanel.tsx, lib/pullRequest.ts, components/MarkdownOutline.tsx,
+ * components/MarkdownOutlineRow.tsx.
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const FILES_ZH: Record<string, string> = {
@@ -187,6 +188,7 @@ export const FILES_ZH: Record<string, string> = {
   "Increase file text size": "增大文件字号",
   "Files beside the pane": "在窗格旁显示文件",
   "On a wide window, Browse files opens as a panel on the right of the pane instead of a popup. With Open files set to Beside the pane, a file opened from it shows in its place, and closing the file brings the list back.": "在宽窗口中，浏览文件会在窗格右侧的面板中打开，而不是弹出窗口。当“打开文件”设为“在窗格旁”时，从列表打开的文件会显示在该位置，关闭文件后会回到列表。",
+  "Outline": "大纲",
   "Edit file": "编辑文件",
   "Unsaved changes": "未保存的更改",
   "Save changes to {name}?": "将更改保存到 {name}？",
@@ -203,4 +205,6 @@ export const FILES_ZH: Record<string, string> = {
   "Only a device that drives this PC can edit its files.": "只有能操作这台电脑的设备才能编辑其文件。",
   "The file could not be saved.": "无法保存文件。",
   "Text of {name}": "{name} 的内容",
+  "Markdown outline": "Markdown 大纲",
+  "A Markdown preview lists its headings beside the text and marks the one you are reading. On a narrow screen, the Outline button in the header opens the list.": "在 Markdown 预览旁列出标题，并标出正在阅读的标题。在窄屏上，用标题栏中的大纲按钮打开列表。",
 };
