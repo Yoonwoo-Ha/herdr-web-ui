@@ -631,11 +631,18 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
     await cancel.tap();
     await tabSheet.waitFor({ state: "detached" });
     // A zoom originating in another client must be reversible from the phone.
+    // The phone hears of it from its pushed roster; a sheet opened before that came lists Zoom, so
+    // the sheet is opened again until it offers Unzoom.
     await paneZoom(first, "on");
-    await touchMenu.tap();
-    await tabSheet.waitFor();
     const unzoom = tabSheet.getByRole("button", { name: "Unzoom pane", exact: true });
-    await unzoom.waitFor();
+    await until(async () => {
+      await touchMenu.tap();
+      await tabSheet.waitFor();
+      if (await unzoom.isVisible()) return true;
+      await cancel.tap();
+      await tabSheet.waitFor({ state: "detached" });
+      return false;
+    }, "the phone's tab sheet offers Unzoom for a zoom made elsewhere");
     await sheetsSettled(page);
     await screenshot(page, `unzoom-phone-${viewport.width}`);
     const unzoomed = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/pane/zoom"));
