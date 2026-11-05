@@ -4,7 +4,7 @@ import { HcConnection, spawnHcConnect } from "./connection.ts";
 import { MachineScopedConnection } from "./machine-scope.ts";
 import { SeenMarker } from "./seen-label.ts";
 import { existsSync } from "node:fs";
-import { findHc, type FoundHc } from "./discovery.ts";
+import { coreSocket, findHc, type FoundHc } from "./discovery.ts";
 import { adapterAddress } from "./pipe.ts";
 import { opencodeDatabasePath, opencodeSessionsTitled } from "../opencode.ts";
 
@@ -95,6 +95,11 @@ export function hcMachine(): { name: string; id: string } | null {
 function hcEnv(): Record<string, string | undefined> | undefined {
   const kept = process.env["OVIS_HC_ENV"];
   return kept ? { ...process.env, ...(JSON.parse(kept) as Record<string, string>) } : undefined;
+}
+
+/** Where the core this server's `hc connect` reaches listens, found as hc finds it (discovery.ts coreSocket). */
+export function coreSocketPath(): string {
+  return coreSocket({ env: hcEnv() ?? process.env }).path;
 }
 
 let connection: HcConnection | null = null;

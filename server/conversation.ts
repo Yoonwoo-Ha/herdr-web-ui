@@ -48,7 +48,9 @@ import { resolveAgent } from "./pane-context.ts";
 import { codexFreshSession, codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHomePlaced, parseCodexTranscript, readRange } from "./codex.ts";
 import { awaited, CODEX_IMAGE_REF, CODEX_TOOL_IMAGE_REF, codexOutputPicture, codexTranscriptImage, DataUrlPictureScan, finish, finishAsync, forgetOmpBlobTypes, InlinePictureScan, MAX_IMAGE_BYTES, ompBlobAnchor, ompBlobDigest, ompBlobPictureSteps, type Steps } from "./codex-images.ts";
 import { type Held, heldOpenPlatform, openHeldDirectory } from "./held-open.ts";
-import { AmbiguousClaudeStore, claudeAttachSession, claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir, windowsShellClaude } from "./claude-store.ts";
+import { AmbiguousClaudeStore, claudeAttachSession, claudeProcessSession, claudeTranscriptFile, darwinProcess, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, jobClaude, processClaudeConfigDir, windowsShellClaude } from "./claude-store.ts";
+import { coreSocket } from "./herdr-core/discovery.ts";
+import { coreSocketPath, servingCore } from "./herdr-core/runtime.ts";
 import { forgetGjcPane, forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
 import { isOmoProcess, omoProcessIdentity, omoSessionForPane, processEnviron } from "./omo.ts";
 import { processAlive, processStartedAtAsync } from "./process-start.ts";
@@ -1442,11 +1444,52 @@ export async function labelOmoPanes(snapshot: SessionSnapshot): Promise<SessionS
 }
 
 /**
+ * The local terminal an `hc attach <t>` in front shows, by the address hc itself reports for it: the
+ * word typed must be that address, never a name hc resolves to another terminal, nor another
+ * machine's terminal (whose pids name nothing here).
+ */
+function hcAttachWord(argv: readonly string[] | null | undefined): string | null {
+  if (!argv || argv.length !== 3 || argv[1] !== "attach") return null;
+  const program = programName(argv[0]!);
+  return (program === "hc" || program === "herdr-core") && /^[A-Za-z0-9]+$/.test(argv[2]!) ? argv[2]! : null;
+}
+
+/** A process's environment as it started (Linux /proc, macOS sysctl), the first value of each name; null when it cannot be read. */
+function startEnvironment(pid: number): Record<string, string> | null {
+  const entries = process.platform === "linux" ? processEnviron(pid) : process.platform === "darwin" ? darwinProcess.environment(pid)?.split("\0") ?? null : null;
+  const env: Record<string, string> = {};
+  for (const entry of entries ?? []) {
+    const at = entry.indexOf("=");
+    if (at > 0 && !Object.hasOwn(env, entry.slice(0, at))) env[entry.slice(0, at)] = entry.slice(at + 1);
+  }
+  // an environment read empty is a process gone or not ours to read
+  return Object.keys(env).length === 0 ? null : env;
+}
+
+/**
+ * Whether an `hc attach` client reaches the core this server serves: a client goes to whatever core its
+ * own environment names (HC_SOCKET, HC_SESSION, its runtime and config folders), where the terminal
+ * numbers (t1, t2...) repeat. Its socket, found from that environment as hc finds it, must be this
+ * server's core's; an environment that cannot be read follows nothing.
+ */
+function reachesOwnCore(client: number): boolean {
+  const env = startEnvironment(client);
+  if (env === null) return false;
+  const theirs = coreSocket({ env }).path;
+  const ours = coreSocketPath();
+  if (theirs === ours) return true;
+  try { return realpathSync(theirs) === realpathSync(ours); } catch { return false; }
+}
+
+/**
  * The Claude processes in a pane's foreground (`known`: herdr's answer already read); none when herdr cannot say.
  * On Windows herdr and herdr-core name only the shell in front, even while Claude runs in it, and
  * herdr-core reports no session for it: the Claude below the shell is taken from the process table (#2896).
+ * Elsewhere herdr-core names only the first process of the foreground job, where herdr names them all: the one
+ * Claude below it in the job (a launcher's child), or, in a tab running `hc attach <t>`, the Claude of the
+ * terminal it shows (#3009). `viewed`: the terminal such a tab shows, which is followed no further.
  */
-async function claudeProcesses(paneId: string, known?: KnownProcesses): Promise<{ pid: number; name?: string; argv0?: string; argv?: string[] }[]> {
+async function claudeProcesses(paneId: string, known?: KnownProcesses, viewed = false): Promise<{ pid: number; name?: string; argv0?: string; argv?: string[] }[]> {
   let info: KnownProcesses;
   if (known !== undefined) info = known;
   else {
@@ -1457,9 +1500,15 @@ async function claudeProcesses(paneId: string, known?: KnownProcesses): Promise<
   const front = (info?.foreground_processes ?? []).map(({ pid, name, argv0, argv }) => ({
     pid, name, ...(typeof argv0 === "string" ? { argv0 } : {}), ...(Array.isArray(argv) ? { argv } : {}),
   })).filter(isClaudeProcess);
+  if (viewed && info?.pane_id !== paneId) return [];
+  if (front.length > 0) return front;
   const shell = info?.shell_pid;
-  if (front.length > 0 || process.platform !== "win32" || typeof shell !== "number") return front;
-  return (await windowsShellClaude(shell).catch(() => null)) ?? [];
+  if (process.platform === "win32") return typeof shell === "number" ? (await windowsShellClaude(shell).catch(() => null)) ?? [] : [];
+  const leader = info?.foreground_processes?.[0];
+  if (!servingCore() || leader === undefined || typeof leader.pid !== "number") return [];
+  const word = viewed ? null : hcAttachWord(leader.argv);
+  if (word !== null) return reachesOwnCore(leader.pid) ? claudeProcesses(word, undefined, true) : [];
+  return (await jobClaude(leader.pid)) ?? [];
 }
 
 /** The pid of the one Claude process in a pane's foreground, or null. */

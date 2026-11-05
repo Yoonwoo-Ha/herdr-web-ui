@@ -22,6 +22,7 @@ import { directoryKey, withoutVerbatimPrefix } from "./codex.ts";
 import { darwinStartTime, sysctlCall } from "./darwin-process.ts";
 import { recentProcessTable } from "./gjc-runtime.ts";
 import { processAlive, processStartUpperBoundAsync } from "./process-start.ts";
+import { jobProcessesBelow, type JobProcess } from "./foreground-job.ts";
 import { descendantProcesses, type ProcessRow } from "./windows-processes.ts";
 import { userHome } from "./user-home.ts";
 
@@ -56,6 +57,18 @@ export async function windowsShellClaude(shellPid: number, table: () => Promise<
   if (first === undefined) return [];
   const below = new Set(descendantProcesses(rows, first.pid).map((entry) => entry.pid));
   return claude.filter((entry) => entry === first || !below.has(entry.pid));
+}
+
+/**
+ * The Claude below a herdr-core terminal's foreground process, in its job (foreground-job.ts): a
+ * launcher or script that runs Claude as its child (#3009). Only one Claude there is taken: with two,
+ * which one the terminal shows cannot be told, and none is. Null when the job cannot be read.
+ */
+export async function jobClaude(pid: number): Promise<JobProcess[] | null> {
+  const job = await jobProcessesBelow(pid);
+  if (job === null) return null;
+  const claude = job.filter((entry) => isClaudeProcess({ name: entry.name, argv: entry.argv, ...(entry.argv[0] === undefined ? {} : { argv0: entry.argv[0] }) }));
+  return claude.length === 1 ? claude : [];
 }
 
 /** Java's String.hashCode, which Claude Code uses for the suffix of a long name. */
