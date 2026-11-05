@@ -270,6 +270,20 @@ describe("signing in to the fake account service", () => {
     expect((await poll()).error?.code).toBe("expired_token");
   });
 
+  test("a device sign-in started with a challenge says so, and redeems only with its verifier", async () => {
+    let now = 0;
+    const service = new FakeAccountService(() => now);
+    const { verifier, challenge } = await pkce();
+    const started = await (await service.fetch(post("/v1/signin/github/device", { code_challenge: challenge, code_challenge_method: "S256" }))).json() as { device_code: string; user_code: string; code_challenge_method?: string };
+    expect(started.code_challenge_method).toBe("S256");
+    service.approveDevice(started.user_code, "acct_page");
+    const poll = async (code_verifier?: string) => (await (await token(service, { grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code: started.device_code, ...(code_verifier ? { code_verifier } : {}) })).json()) as { error?: { code: string }; account?: string };
+    expect((await poll()).error?.code).toBe("invalid_grant");
+    expect((await poll((await pkce()).verifier)).error?.code).toBe("invalid_grant");
+    // the refused polls did not move the interval: the right verifier gets the tokens at once
+    expect((await poll(verifier)).account).toBe("acct_page");
+  });
+
   test("a device sign-in refused at GitHub answers access_denied", async () => {
     const service = new FakeAccountService();
     const started = await (await service.fetch(post("/v1/signin/github/device", {}))).json() as { device_code: string; user_code: string };

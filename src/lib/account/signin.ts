@@ -12,7 +12,7 @@ import type { AccountProvider, AccountSession, AccountStore, PendingSignIn } fro
 export const SIGN_IN_MS = 10 * 60_000;
 
 export class SignInError extends Error {
-  constructor(readonly code: "no_sign_in" | "expired" | "denied", message: string) {
+  constructor(readonly code: "no_sign_in" | "expired" | "denied" | "unsupported", message: string) {
     super(message);
     this.name = "SignInError";
   }

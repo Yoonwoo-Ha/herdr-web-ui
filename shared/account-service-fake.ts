@@ -71,7 +71,7 @@ export class FakeAccountService {
   private readonly revokedFamilies = new Set<string>();
   private readonly appleTokens = new Map<string, { account: string; nonce: string }>();
   private readonly signIns = new Map<SignInProvider, string>();
-  private readonly deviceSignIns = new Map<string, { userCode: string; account: string | null; denied: boolean; interval: number; nextPoll: number; expires: number }>();
+  private readonly deviceSignIns = new Map<string, { userCode: string; account: string | null; denied: boolean; interval: number; nextPoll: number; expires: number; challenge: string | null }>();
   private readonly pushes = new Map<string, { account: string; endpoint: string }>();
   private readonly counters = new Map<string, { start: number; count: number }>();
   private readonly ringList: FakeRing[] = [];
@@ -191,6 +191,10 @@ export class FakeAccountService {
       case "urn:ietf:params:oauth:grant-type:device_code": {
         const entry = typeof body.device_code === "string" ? this.deviceSignIns.get(body.device_code) : undefined;
         if (!entry || this.now() >= entry.expires) return problem(400, "expired_token", "Start the sign-in again");
+        // a bound sign-in: refused before anything else, so a poll without the verifier moves nothing
+        if (entry.challenge !== null && (typeof body.code_verifier !== "string" || !PKCE.test(body.code_verifier) || await s256(body.code_verifier) !== entry.challenge)) {
+          return invalid("That verifier is not this sign-in's");
+        }
         if (this.now() < entry.nextPoll) {
           entry.interval += DEVICE_POLL_S;
           entry.nextPoll = this.now() + entry.interval * 1000;
@@ -238,10 +242,16 @@ export class FakeAccountService {
       if (provider !== undefined && request.method === "GET") return this.signIn(url, provider);
       if (url.pathname === "/v1/token" && request.method === "POST") return await this.token(request);
       if (url.pathname === "/v1/signin/github/device" && request.method === "POST") {
+        const text = await request.text();
+        const body = (text.trim() === "" ? {} : JSON.parse(text)) as Record<string, unknown>;
+        const bound = Object.keys(body).length > 0;
+        if (bound && (body.code_challenge_method !== "S256" || typeof body.code_challenge !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(body.code_challenge) || Object.keys(body).length !== 2)) {
+          return problem(400, "invalid_request", "Start a device sign-in with nothing, or an S256 code_challenge");
+        }
         const deviceCode = randomHex(32);
         const userCode = `${randomHex(2).toUpperCase()}-${randomHex(2).toUpperCase()}`;
-        this.deviceSignIns.set(deviceCode, { userCode, account: null, denied: false, interval: DEVICE_POLL_S, nextPoll: this.now(), expires: this.now() + DEVICE_CODE_TTL_S * 1000 });
-        return json({ device_code: deviceCode, user_code: userCode, verification_uri: "https://github.com/login/device", expires_in: DEVICE_CODE_TTL_S, interval: DEVICE_POLL_S });
+        this.deviceSignIns.set(deviceCode, { userCode, account: null, denied: false, interval: DEVICE_POLL_S, nextPoll: this.now(), expires: this.now() + DEVICE_CODE_TTL_S * 1000, challenge: bound ? body.code_challenge as string : null });
+        return json({ device_code: deviceCode, user_code: userCode, verification_uri: "https://github.com/login/device", expires_in: DEVICE_CODE_TTL_S, interval: DEVICE_POLL_S, ...(bound ? { code_challenge_method: "S256" } : {}) });
       }
       if (url.pathname === "/v1/push/key" && request.method === "GET") return json({ public_key: "BFakeVapidPublicKeyForTests" });
       return await this.client(request, url.pathname);

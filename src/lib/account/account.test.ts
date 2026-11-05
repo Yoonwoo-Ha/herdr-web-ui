@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { FakeAccountService, WEB_REDIRECT } from "../../../shared/account-service-fake.ts";
+import { DEVICE_CODE_TTL_S, FakeAccountService, WEB_REDIRECT } from "../../../shared/account-service-fake.ts";
+import { startDeviceSignIn } from "./deviceSignIn.ts";
 import type { RelayDevice } from "../relay/device.ts";
 import { myPcs, OFFLINE_AFTER_MS } from "./myPcs.ts";
-import { accountProvidersOf, AccountService, AccountServiceError, accountServiceOf, SignedOutError } from "./service.ts";
+import { accountProvidersOf, AccountService, AccountServiceError, accountServiceOf, pcAccountServiceOf, SignedOutError } from "./service.ts";
 import { beginSignIn, finishOwnSignIn, finishSignIn, SignInError, signInReturn } from "./signin.ts";
 import { memoryAccountStore, memoryLock } from "./store.ts";
 import { desktopProviders } from "./desktop.ts";
@@ -164,8 +165,131 @@ describe("a sign-in shared by tabs", () => {
   });
 });
 
+describe("signing in on a PC's own page, with GitHub's device flow", () => {
+  function setup() {
+    let now = 1_000_000;
+    const fake = new FakeAccountService(() => now);
+    const store = memoryAccountStore();
+    const polls: string[] = [];
+    const fetch = async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (new URL(request.url).pathname === "/v1/token") polls.push(String(now));
+      return fake.fetch(request);
+    };
+    const waits: number[] = [];
+    const wait = async (ms: number) => { waits.push(ms); now += ms; };
+    return { fake, store, fetch, wait, waits, polls, advance: (ms: number) => { now += ms; }, options: { service: SERVICE, store, fetch, wait, now: () => now, lock: memoryLock() } };
+  }
+
+  it("shows GitHub's code, polls at its interval with the verifier, and keeps the session once approved", async () => {
+    const { fake, store, options, waits } = setup();
+    const started = await startDeviceSignIn(options);
+    expect(started.verificationUri).toBe("https://github.com/login/device");
+    const finishing = started.finish(new AbortController().signal);
+    fake.approveDevice(started.userCode, "acct_page");
+    const session = await finishing;
+    expect(session.account).toBe("acct_page");
+    expect((await store.get("session"))?.account).toBe("acct_page");
+    expect(waits[0]).toBe(5_000);
+  });
+
+  it("shows no code and polls nothing when the service did not bind the sign-in to this page", async () => {
+    const { fake, polls, options } = setup();
+    const unbound = async (input: Request | string | URL, init?: RequestInit) => {
+      const answer = await fake.fetch(input instanceof Request ? input : new Request(input, init));
+      const body = await answer.json() as Record<string, unknown>;
+      delete body["code_challenge_method"];
+      return Response.json(body, { status: answer.status });
+    };
+    await expect(startDeviceSignIn({ ...options, fetch: unbound })).rejects.toMatchObject({ code: "unsupported" });
+    expect(polls).toEqual([]);
+  });
+
+  it("waits as long as a 429 asks, then keeps polling", async () => {
+    const { fake, options, waits } = setup();
+    let limited = false;
+    const fetch = async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (!limited && new URL(request.url).pathname === "/v1/token") {
+        limited = true;
+        return Response.json({ error: { code: "rate_limited", message: "" } }, { status: 429, headers: { "retry-after": "30" } });
+      }
+      return fake.fetch(request);
+    };
+    const started = await startDeviceSignIn({ ...options, fetch });
+    fake.approveDevice(started.userCode, "acct_page");
+    expect((await started.finish(new AbortController().signal)).account).toBe("acct_page");
+    expect(waits).toEqual([5_000, 30_000]);
+  });
+
+  it("ends with denied when GitHub refused, and expired once the code ran out", async () => {
+    const denied = setup();
+    const refused = await startDeviceSignIn(denied.options);
+    denied.fake.denyDevice(refused.userCode);
+    await expect(refused.finish(new AbortController().signal)).rejects.toMatchObject({ code: "denied" });
+    const late = setup();
+    const lapsed = await startDeviceSignIn(late.options);
+    late.advance(DEVICE_CODE_TTL_S * 1000);
+    await expect(lapsed.finish(new AbortController().signal)).rejects.toMatchObject({ code: "expired" });
+    expect(await late.store.get("session")).toBeUndefined();
+  });
+
+  it("keeps no session from a sign-in cancelled while it waited", async () => {
+    const { fake, store, options } = setup();
+    const cancel = new AbortController();
+    const started = await startDeviceSignIn({ ...options, wait: async () => { fake.approveDevice(started.userCode, "acct_page"); cancel.abort(); } });
+    await expect(started.finish(cancel.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(await store.get("session")).toBeUndefined();
+    expect(fake.requests).toContain("POST /v1/signout");
+  });
+
+  it("takes back the session of a sign-in cancelled while it was being written", async () => {
+    const { fake, store, options } = setup();
+    const cancel = new AbortController();
+    const slow = { ...store, set: async (...args: Parameters<typeof store.set>) => { await store.set(...args); cancel.abort(); } };
+    const started = await startDeviceSignIn({ ...options, store: slow });
+    fake.approveDevice(started.userCode, "acct_page");
+    await expect(started.finish(cancel.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(await store.get("session")).toBeUndefined();
+  });
+
+  it("never waits past the code's lifetime, however long a 429 asks", async () => {
+    const { fake, options, waits } = setup();
+    const fetch = async (input: Request | string | URL, init?: RequestInit) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      return new URL(request.url).pathname === "/v1/token"
+        ? Response.json({ error: { code: "rate_limited", message: "" } }, { status: 429, headers: { "retry-after": "3600" } })
+        : fake.fetch(request);
+    };
+    const started = await startDeviceSignIn({ ...options, fetch });
+    await expect(started.finish(new AbortController().signal)).rejects.toMatchObject({ code: "expired" });
+    expect(waits).toEqual([5_000, DEVICE_CODE_TTL_S * 1000 - 5_000]);
+  });
+
+  it("links only to GitHub's own device page, whatever the service names", async () => {
+    const { fake, options } = setup();
+    const elsewhere = async (input: Request | string | URL, init?: RequestInit) => {
+      const answer = await fake.fetch(input instanceof Request ? input : new Request(input, init));
+      const body = await answer.json() as Record<string, unknown>;
+      return Response.json({ ...body, verification_uri: "https://github.com.evil.example/login/device" }, { status: answer.status });
+    };
+    expect((await startDeviceSignIn({ ...options, fetch: elsewhere })).verificationUri).toBe("https://github.com/login/device");
+  });
+});
+
 describe("which account service a page signs in with", () => {
   const page = (content: string | null) => ({ querySelector: () => content === null ? null : { getAttribute: () => content } });
+
+  it("signs in on the PC's own page only with the PC's own meta, an https service and a secure page", () => {
+    const named = (name: string) => (content: string | null) => ({ querySelector: (selector: string) => selector === `meta[name="${name}"]` && content !== null ? { getAttribute: () => content } : null });
+    const pc = named("ovis-pc-account-service");
+    expect(pcAccountServiceOf(pc("https://account.example/"), true)).toBe("https://account.example");
+    expect(pcAccountServiceOf(pc("https://account.example"), false)).toBeNull();
+    expect(pcAccountServiceOf(pc("http://account.example"), true)).toBeNull();
+    expect(pcAccountServiceOf(pc(null), true)).toBeNull();
+    // the hosted shell's meta is not the PC's: that page signs in with its own redirect
+    expect(pcAccountServiceOf(named("ovis-account-service")("https://account.example"), true)).toBeNull();
+  });
 
   it("offers no sign-in without a service named, or with one reached over plain http beyond this machine", () => {
     expect(accountServiceOf(page(null))).toBeNull();

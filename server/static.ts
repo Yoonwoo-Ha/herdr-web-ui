@@ -30,7 +30,7 @@ const MIME: Record<string, string> = {
 };
 
 /** Files whose URL never changes but whose contents decide what the app becomes. */
-const REVALIDATED_PATHS = new Set(["/sw.js", "/manifest.webmanifest"]);
+const REVALIDATED_PATHS = new Set(["/sw.js", "/manifest.webmanifest", "/index.html"]);
 
 /** The hosted shell's Pages `_headers` (scripts/shell-build.ts) caches by the same rules. */
 export const IMMUTABLE_CACHE = "public, max-age=31536000, immutable";
@@ -251,12 +251,23 @@ export function renameShell(html: string, name: string): string {
   return html.replace(APPLE_TITLE, (_, start: string, end: string) => `${start}${content}${end}`);
 }
 
-/** The file as built, or the manifest and the shell under OVIS_APP_NAME. */
+/**
+ * The shell with the account service its own pages sign in to (`ovis-pc-account-service`, read by
+ * src/lib/account/service.ts): the very origin `connect-src` admits, so the two never disagree, and
+ * none when the account is off. The hosted shell's `ovis-account-service` is another meta.
+ */
+export function accountShell(html: string): string {
+  const origin = accountServiceOrigin();
+  return origin === null ? html : html.replace("</head>", `<meta name="ovis-pc-account-service" content="${origin}" />\n</head>`);
+}
+
+/** The file as built, or the manifest under OVIS_APP_NAME, and the shell with its account service and name. */
 async function body(file: BunFile, kind: "manifest" | "shell" | null, origin?: string): Promise<BunFile | string> {
   if (kind === "manifest" && origin !== undefined) return manifestBody(await file.text(), origin);
   const name = appName();
+  if (kind === "shell") return accountShell(name ? renameShell(await file.text(), name) : await file.text());
   if (!name || !kind) return file;
-  return kind === "manifest" ? renameManifest(await file.text(), name) : renameShell(await file.text(), name);
+  return renameManifest(await file.text(), name);
 }
 
 /** Accepted representations, with a server preference for br over gzip on ties.

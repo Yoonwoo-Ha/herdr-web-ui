@@ -356,6 +356,15 @@ OAuth's authorization code flow with PKCE, `S256` only:
    "device_code" }` every `interval` seconds: 400 `authorization_pending` until the person approves,
    `slow_down` for a poll too soon (the interval grows by five seconds), `access_denied` if they
    refused, `expired_token` once it ran out; then the same answer as the other grants, once.
+   A browser on a PC's own address signs in the same way, bound to a verifier: it starts with
+   `{ "code_challenge", "code_challenge_method": "S256" }` (as in step 1, from 32 random bytes),
+   the service answers with `"code_challenge_method": "S256"` added, and every poll carries
+   `"code_verifier"`. A bound poll without that verifier, or with another, answers 400
+   `invalid_grant` before GitHub is asked and without moving the interval, so the `device_code`
+   alone redeems nothing. The page keeps the verifier in memory only, uses the service only when
+   it named the method, links only to `https://github.com/login/device`, waits `Retry-After` on a
+   429, and keeps no session from a sign-in cancelled meanwhile (it is stored under the same
+   lock as a refresh or a sign-out).
 6. `POST /v1/signout` (Bearer) answers 204 and ends that sign-in's family.
 
 The client makes `state` (at least 128 bits) and `code_verifier` (32 random bytes, base64url) fresh
@@ -370,8 +379,13 @@ sign-in. The hosted shell's Content-Security-Policy lets it reach `https://accou
 The desktop app offers sign-in in **Settings → Phone & devices** with `https://account.ovis.sh`
 unless `OVIS_ACCOUNT_SERVICE_URL` names another https service. `OVIS_ACCOUNT_SERVICE_URL=off`
 turns the account off for the app and its server alike: no sign-in, no account origin in the
-pages' policy, no mailbox. A browser on the PC's own address offers no sign-in either way: the
-service sends a sign-in back only to the three redirects above, none of which is that address. Token errors are 400 `invalid_grant` (a wrong, spent or expired code, verifier, refresh
+pages' policy, no mailbox. A browser on the PC's own address cannot take a redirect (the service
+sends a sign-in back only to the three above, none of which is that address), so it signs in
+with GitHub's device flow (step 5), in the same place, with GitHub only: the PC writes
+`<meta name="ovis-pc-account-service">` into its own shell with exactly the origin its policy
+admits (none when the account is `off`), and the page offers the sign-in only on a secure page
+(https, or `localhost`), where no one on the network could have rewritten the script that holds
+the sign-in. The hosted shell keeps its redirect sign-in, and the desktop app its loopback one. Token errors are 400 `invalid_grant` (a wrong, spent or expired code, verifier, refresh
 token or identity token) and 400 `unsupported_grant_type`; an access token that expired or was
 signed out answers 401 `unauthorized` on every other request.
 
@@ -452,7 +466,16 @@ the account service gets an answer the relay refuses.
   together with a stolen sign-in still could.
 - **A PC that stays off while the account service hides a removal** keeps the removed device until a
   client connects to it and hands over the record directly.
-- **A coding agent on the desktop app's machine** can drive the app's account key (rule 3).
+- **A coding agent on the desktop app's machine** can drive the app's account key (rule 3). The same
+  holds for a sign-in made in a browser on a PC's own address: that page's script is the PC's, so a
+  compromised PC can use the sign-in kept there. Its account key is linked to no PC (a browser
+  paired with a code holds a cookie), so its signatures admit nobody.
+- **Someone who gets a person to type their device code at GitHub** (device-code phishing, true of
+  every RFC 8628 sign-in) gets a sign-in to that person's account: they can list, rename and remove
+  its PCs in the directory, fill mailboxes, post admissions and spend the ring budget. They still
+  cannot add a device to a PC: that takes a member's signature and the PC's own `devices.json`, and
+  a join is still compared digit by digit on a device already linked. The page asks to enter a
+  code only if this page showed it, and GitHub's page names the app (Ovis).
 
 ## Code
 

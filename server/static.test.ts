@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { accountServiceUrl } from "./account/mailbox.ts";
-import { accountServiceOrigin, appName, CONTENT_SECURITY_POLICY, contentSecurityPolicy, manifestBody, relateManifest, renameManifest, renameShell, requestOrigin, shellContentSecurityPolicy } from "./static.ts";
+import { accountServiceOrigin, accountShell, appName, CONTENT_SECURITY_POLICY, contentSecurityPolicy, manifestBody, relateManifest, renameManifest, renameShell, requestOrigin, shellContentSecurityPolicy } from "./static.ts";
 
 // The sources Vite builds from: public/ is copied into dist/ as it is, and the meta survives the build.
 const root = join(import.meta.dir, "..");
@@ -125,6 +125,20 @@ describe("the PC's own pages and the account service", () => {
       process.env["OVIS_ACCOUNT_SERVICE_URL"] = "http://127.0.0.1:8787";
       expect(connect()).toBe("connect-src 'self'");
       expect(accountServiceOrigin("https://bad host")).toBeNull();
+    } finally { restore(); }
+  });
+
+  it("names the same service in the shell's own meta as its policy admits, and none when it is off or not https", () => {
+    const meta = (html: string) => /<meta name="ovis-pc-account-service" content="([^"]*)" \/>\n<\/head>/.exec(html)?.[1] ?? null;
+    try {
+      delete process.env["OVIS_ACCOUNT_SERVICE_URL"];
+      expect(meta(accountShell(shell))).toBe("https://account.ovis.sh");
+      process.env["OVIS_ACCOUNT_SERVICE_URL"] = "https://account.example.com/some/path";
+      expect(meta(accountShell(shell))).toBe("https://account.example.com");
+      for (const value of ["off", "http://127.0.0.1:8787"]) {
+        process.env["OVIS_ACCOUNT_SERVICE_URL"] = value;
+        expect(accountShell(shell)).toBe(shell);
+      }
     } finally { restore(); }
   });
 
