@@ -93,7 +93,19 @@ const RS_DATA_IMAGE_ITERATOR = 22, RS_DATA_IMAGE_PLACEMENTS_GENERATION = 23;
 const ROW_DATA_CELLS = 3, ROW_DATA_CELLS_RAW = 5;
 const CELLS_STYLE = 2, CELLS_BG = 5, CELLS_FG = 6, CELLS_GRAPHEMES_UTF8 = 9;
 const OPT_COLOR_FOREGROUND = 11, OPT_COLOR_BACKGROUND = 12, OPT_COLOR_CURSOR = 13, OPT_COLOR_PALETTE = 14;
-const OPT_KITTY_IMAGE_STORAGE_LIMIT = 15, OPT_SCROLLBACK_MAX_LINES = 28;
+const OPT_KITTY_IMAGE_STORAGE_LIMIT = 15, OPT_SCROLLBACK_MAX_LINES = 28, OPT_MODE = 34;
+/** DEC private mode 2027 as ghostty_mode_new(2027, false) encodes it */
+const MODE_GRAPHEME_CLUSTER = 2027;
+const CSI_GROUND = 0, CSI_ESC = 1, CSI_BRACKET = 2, CSI_PRIVATE = 3, CSI_OTHER = 4, CSI_STRING = 5;
+/**
+ * Whether a code point joins the emoji before it into one cell: ZWJ, the emoji-presentation selector,
+ * skin tones, the keycap mark, tags (subdivision flags) and regional indicators (country flags).
+ */
+const joinsEmoji = (codepoint: number): boolean =>
+  codepoint === 0x200d || codepoint === 0xfe0f || codepoint === 0x20e3
+  || (codepoint >= 0x1f3fb && codepoint <= 0x1f3ff) || (codepoint >= 0xe0020 && codepoint <= 0xe007f)
+  || (codepoint >= 0x1f1e6 && codepoint <= 0x1f1ff);
+const PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
 const DATA_KITTY_GRAPHICS = 30;
 const SCROLL_BOTTOM = 1, SCROLL_DELTA = 2;
 const IMAGE_ID = 2, IMAGE_GENERATION = 3, IMAGE_LAYER = 4, IMAGE_Z = 5, IMAGE_COL = 6, IMAGE_ROW = 7, IMAGE_OFFSET_X = 10, IMAGE_OFFSET_Y = 11;
@@ -158,6 +170,13 @@ export class GhosttyVt {
   private readonly bit: Record<"codepoint" | "content_tag" | "wide" | "style_id", Bits>;
   private readonly flagsOffset: number;
   private readonly encoder = new TextEncoder();
+  /** where the bytes so far stand in a `CSI ? Pm l`, carried from one write to the next */
+  private csi = CSI_GROUND;
+  private param = 0;
+  private sawGraphemeMode = false;
+  /** whether the last code point printed was a ZWJ, and whether an escape sequence came since the last one */
+  private afterZwj = false;
+  private broken = true;
 
   private constructor(exports: Exports, layout: TypeLayout, cols: number, rows: number) {
     this.x = exports;
@@ -216,10 +235,89 @@ export class GhosttyVt {
       this.input = this.x.ghostty_wasm_alloc(this.inputCap);
     }
     new Uint8Array(this.x.memory.buffer, this.input, bytes.length).set(bytes);
-    this.x.ghostty_terminal_vt_write(this.terminal, this.input, bytes.length);
+    // xterm (terminalWidths.ts) and herdr give an emoji sequence (ZWJ family, skin tone, flag, keycap,
+    // an emoji-presentation selector) one two-column cell, and otherwise lay out as libghostty does with
+    // grapheme clustering (mode 2027) off: clustering also joins spacing marks, Indic conjuncts and text
+    // selectors that they keep apart. So mode 2027 stays off, and each code point that joins an emoji
+    // (joinsEmoji, or a pictograph right after a ZWJ) is printed with it on. A program's own 2027 on
+    // (CSI ? ... 2027 ... h, or r restoring it), which xterm ignores, is turned off again right after;
+    // the sequence may span writes.
+    let start = 0;
+    const flush = (end: number): void => {
+      if (end > start) this.x.ghostty_terminal_vt_write(this.terminal, this.input + start, end - start);
+      start = end;
+    };
+    for (let at = 0; at < bytes.length; at++) {
+      const byte = bytes[at]!;
+      if (byte === 0x1b) { this.csi = CSI_ESC; this.broken = true; continue; }
+      if (this.csi === CSI_GROUND) {
+        if (byte < 0x20) continue;
+        if (byte >= 0x80 && byte < 0xc0) continue;
+        if (byte < 0xe0 || byte >= 0xf8) { this.afterZwj = false; this.broken = false; continue; }
+        const length = byte >= 0xf0 ? 4 : 3;
+        if (at + length > bytes.length) continue;
+        const codepoint = length === 3
+          ? ((byte & 0x0f) << 12) | ((bytes[at + 1]! & 0x3f) << 6) | (bytes[at + 2]! & 0x3f)
+          : ((byte & 0x07) << 18) | ((bytes[at + 1]! & 0x3f) << 12) | ((bytes[at + 2]! & 0x3f) << 6) | (bytes[at + 3]! & 0x3f);
+        // xterm starts a new cell after an escape sequence, so nothing joins across one
+        const joins = !this.broken && (joinsEmoji(codepoint) || (this.afterZwj && codepoint <= 0x10ffff && PICTOGRAPHIC.test(String.fromCodePoint(codepoint))));
+        if (joins) {
+          flush(at);
+          this.setGraphemeClusters(true);
+          flush(at + length);
+          this.setGraphemeClusters(false);
+        }
+        this.afterZwj = codepoint === 0x200d && !this.broken;
+        this.broken = false;
+        at += length - 1;
+        continue;
+      }
+      // an OSC, DCS or APC (a title, a Kitty picture) prints nothing up to its BEL or ST (ESC \)
+      if (this.csi === CSI_STRING) {
+        if (byte === 0x07 || byte === 0x18 || byte === 0x1a) this.csi = CSI_GROUND;
+        continue;
+      }
+      // a C0 control or DEL inside an escape sequence runs without ending it; CAN and SUB cancel it
+      if ((byte < 0x20 && byte !== 0x18 && byte !== 0x1a) || byte === 0x7f) continue;
+      switch (this.csi) {
+        case CSI_ESC:
+          this.csi = byte === 0x5b ? CSI_BRACKET : byte === 0x5d || byte === 0x50 || byte === 0x5f || byte === 0x5e || byte === 0x58 ? CSI_STRING : CSI_GROUND;
+          continue;
+        case CSI_BRACKET:
+          // another CSI (a style, a cursor move) is skipped to its final byte: its parameters print nothing
+          this.csi = byte === 0x3f ? CSI_PRIVATE : byte >= 0x40 && byte <= 0x7e ? CSI_GROUND : CSI_OTHER;
+          this.param = 0;
+          this.sawGraphemeMode = false;
+          continue;
+        case CSI_OTHER:
+          if (byte >= 0x40 && byte <= 0x7e) this.csi = CSI_GROUND;
+          continue;
+      }
+      if (byte >= 0x30 && byte <= 0x39) this.param = Math.min(this.param * 10 + byte - 0x30, 1e6);
+      else if (byte === 0x3b || byte === 0x3a) {
+        if (this.param === MODE_GRAPHEME_CLUSTER) this.sawGraphemeMode = true;
+        this.param = 0;
+      } else {
+        if ((byte === 0x68 || byte === 0x72) && (this.sawGraphemeMode || this.param === MODE_GRAPHEME_CLUSTER)) {
+          flush(at + 1);
+          this.setGraphemeClusters(false);
+        }
+        this.csi = CSI_GROUND;
+      }
+    }
+    flush(bytes.length);
+  }
+
+  private setGraphemeClusters(on: boolean): void {
+    // GhosttyTerminalModeConfig { uint16_t mode; bool value }
+    const dv = this.view();
+    dv.setUint16(this.scratch + 1000, MODE_GRAPHEME_CLUSTER, true);
+    dv.setUint8(this.scratch + 1002, on ? 1 : 0);
+    this.check(this.x.ghostty_terminal_set(this.terminal, OPT_MODE, this.scratch + 1000), "grapheme clusters");
   }
 
   reset(): void {
+    // libghostty keeps a sequence it is in the middle of across a reset, and so does the scanner
     this.x.ghostty_terminal_reset(this.terminal);
     this.placementsGeneration = -1;
   }
@@ -378,7 +476,23 @@ export class GhosttyVt {
     dv.setUint32(this.scratch + 240, buf, true);
     dv.setUint32(this.scratch + 244, cap, true);
     dv.setUint32(this.scratch + 248, 0, true);
-    if (x.ghostty_render_state_row_cells_get(this.cells, CELLS_GRAPHEMES_UTF8, this.scratch + 240) !== 0) return " ";
+    if (x.ghostty_render_state_row_cells_get(this.cells, CELLS_GRAPHEMES_UTF8, this.scratch + 240) !== 0) {
+      // a long ZWJ sequence: the call names the room it needs
+      const need = this.view().getUint32(this.scratch + 248, true);
+      if (need <= cap) return " ";
+      const big = x.ghostty_wasm_alloc(need);
+      try {
+        dv = this.view();
+        dv.setUint32(this.scratch + 240, big, true);
+        dv.setUint32(this.scratch + 244, need, true);
+        dv.setUint32(this.scratch + 248, 0, true);
+        if (x.ghostty_render_state_row_cells_get(this.cells, CELLS_GRAPHEMES_UTF8, this.scratch + 240) !== 0) return " ";
+        const n = this.view().getUint32(this.scratch + 248, true);
+        return new TextDecoder().decode(new Uint8Array(this.x.memory.buffer, big, n).slice()) || " ";
+      } finally {
+        x.ghostty_wasm_free(big, need);
+      }
+    }
     dv = this.view();
     const n = dv.getUint32(this.scratch + 248, true);
     return new TextDecoder().decode(new Uint8Array(this.x.memory.buffer, buf, n)) || " ";

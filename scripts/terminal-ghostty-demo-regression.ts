@@ -154,6 +154,21 @@ try {
         await print(page, "e\u0301\u754cX\r\n", "COMBINED");
         assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll(".pane-frame.is-current .ghostty-wide")].map((cell) => cell.textContent)), ["\u754c"], "core: the wide cell is the CJK character, not the accent");
 
+        // an emoji ZWJ sequence is one two-column cell, as xterm (the cursor, selection and links) counts it
+        await print(page, "ABC\u{1F468}\u200D\u{1F469}\u200D\u{1F467}XYZ\r\n", "ZWJ");
+        const zwj = await page.evaluate(() => {
+          const layer = document.querySelector(".pane-frame.is-current .ghostty-layer")!;
+          const span = [...layer.querySelectorAll<HTMLElement>(".ghostty-row > span")].find((s) => s.textContent?.includes("XYZ"))!;
+          const node = [...span.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.startsWith("XYZ"))!;
+          const range = document.createRange();
+          range.setStart(node, 0);
+          range.setEnd(node, 1);
+          const cw = parseFloat(getComputedStyle(layer).getPropertyValue("--ghostty-cw"));
+          return { column: (range.getBoundingClientRect().left - layer.getBoundingClientRect().left) / cw, wide: [...span.querySelectorAll(".ghostty-wide")].map((cell) => cell.textContent) };
+        });
+        assert.deepEqual(zwj.wide, ["\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"], "core: the ZWJ family is one wide cell");
+        assert.ok(Math.abs(zwj.column - 5) < 0.1, `core: the text after a ZWJ family starts at xterm's column 5 (${zwj.column})`);
+
         await print(page, "\x1b_Ga=d,d=I,i=7,q=2\x1b\\", "RED-DELETED");
         assert.equal(await picture(page), null, "core: a picture the program deletes goes");
 
