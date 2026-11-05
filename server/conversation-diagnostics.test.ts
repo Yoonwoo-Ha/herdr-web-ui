@@ -99,8 +99,9 @@ it("keeps the logging interval monotonic across wall-clock corrections", () => {
 });
 
 it("accepts every code-owned Copilot diagnostic without accepting a forged stage", () => {
-  const { diagnostics, records } = fixture();
+  const { diagnostics, records, advance } = fixture();
   for (const diagnostic of COPILOT_UNAVAILABLE_REASONS) {
+    advance(30_000);
     diagnostics.unavailable(diagnostic, new ConversationUnavailable("no_session_path", undefined, diagnostic));
   }
   const forged = new ConversationUnavailable("no_session_path");

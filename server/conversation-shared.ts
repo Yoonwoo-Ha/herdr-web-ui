@@ -14,6 +14,10 @@ export const COPILOT_UNAVAILABLE_REASONS = [
   "copilot_report_invalid", "copilot_process_lookup_failed", "copilot_process_set_unproved",
   "copilot_peer_process_replaced", "copilot_handoff_unproved", "copilot_peer_conflict",
   "copilot_foreground_unproved", "copilot_resume_unproved",
+  "copilot_api_unsupported_platform", "copilot_api_process_unproved", "copilot_api_endpoint_unproved",
+  "copilot_api_process_changed", "copilot_api_rpc_failed", "copilot_api_rpc_timeout",
+  "copilot_api_malformed_rpc", "copilot_api_rpc_rejected", "copilot_api_unsupported_protocol",
+  "copilot_api_foreground_changed", "copilot_api_no_foreground", "copilot_api_transcript_unproved",
 ] as const;
 /** Fixed stages a diagnostic may name: Copilot's rejections, and an agent pane herdr gives no folder. */
 export const UNAVAILABLE_DIAGNOSTICS = [...COPILOT_UNAVAILABLE_REASONS, "agent_cwd_missing", "devin_current_session_unverified"] as const;

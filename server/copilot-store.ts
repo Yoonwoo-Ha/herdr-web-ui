@@ -286,9 +286,8 @@ type ProcessSession = { sessionId: string; path: string } & (
   | { logged: false }
 );
 
-/** Resolve once per validation pass; never reuse this evidence across a transcript read. */
-export function copilotProcessSession(environment: readonly string[] | null, argv: readonly string[], pid: number, mode: "current" | "unregistered" = "current"): ProcessSession | null {
-  if (environment === null || !Number.isSafeInteger(pid) || pid < 1) return null;
+function copilotStoreLayout(environment: readonly string[] | null, argv: readonly string[]): { store: string; logs: string[] } | null {
+  if (environment === null) return null;
   const values = (key: string) => environment.filter((item) => item.startsWith(`${key}=`)).map((item) => item.slice(key.length + 1));
   const home = values("HOME");
   const explicit = values("COPILOT_HOME");
@@ -316,6 +315,32 @@ export function copilotProcessSession(environment: readonly string[] | null, arg
     }
     if (logOptions.length > 1 || (logOptions.length && !isAbsolute(logOptions[0]!))) return null;
     const logs = logOptions.length ? logOptions : [join(canonicalHome, "logs"), ...(home[0] ? [join(home[0], ".copilot", "logs")] : [])];
+    return { store, logs };
+  } catch { return null; }
+}
+
+/** The API names the session; its file must still belong to this process's canonical store. */
+export function copilotApiTranscript(sessionId: string, environment: readonly string[] | null, argv: readonly string[]): string | null {
+  if (!SESSION_ID.test(sessionId)) return null;
+  const layout = copilotStoreLayout(environment, argv);
+  if (layout === null) return null;
+  try {
+    const directory = join(layout.store, sessionId);
+    if (realpathSync(directory) !== directory) return null;
+    const path = join(directory, "events.jsonl");
+    const fd = openCopilotFile(path);
+    closeSync(fd);
+    return path;
+  } catch { return null; }
+}
+
+/** Resolve once per validation pass; never reuse this evidence across a transcript read. */
+export function copilotProcessSession(environment: readonly string[] | null, argv: readonly string[], pid: number, mode: "current" | "unregistered" = "current"): ProcessSession | null {
+  if (!Number.isSafeInteger(pid) || pid < 1) return null;
+  const layout = copilotStoreLayout(environment, argv);
+  if (layout === null) return null;
+  const { store, logs } = layout;
+  try {
     const foreground = loggedForeground(pid, logs);
     if (mode === "unregistered") {
       const checkpoint = foregroundCheckpoints.get(pid);

@@ -68,7 +68,8 @@ import { lettaLocalSettings, resolveLettaTranscript } from "./letta-store.ts";
 import { withinRetentionBudget } from "./retention-budget.ts";
 import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchRecords, piBranchSegments } from "./pi-tree.ts";
 import { COPILOT_IMAGE_REF, copilotImage, copilotOffsetOutput, copilotOutput, copilotRootRecord, parseCopilotTranscript } from "./copilot.ts";
-import { copilotExplicitResume, copilotHandoffSession, copilotProcessSession, copilotTranscriptFile, copilotUnwrittenSession, openCopilotFile } from "./copilot-store.ts";
+import { copilotApiTranscript, copilotExplicitResume, copilotHandoffSession, copilotProcessSession, copilotTranscriptFile, copilotUnwrittenSession, openCopilotFile } from "./copilot-store.ts";
+import { forgetCopilotForeground, readCopilotForeground } from "./copilot-foreground.ts";
 import { claudeSetting, parseConversationMetadata } from "./conversation-metadata.ts";
 import { answerVersion, ConversationNotStarted, ConversationReadPending, ConversationUnavailable, type ConversationPage, HistoryChanged, type RecognizedConversation, type StreamSource, TRANSCRIPT_WINDOW_BYTES } from "./conversation-shared.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
@@ -1155,6 +1156,7 @@ export function forgetTranscriptState(): void {
   pictureChecks.clear();
   paneReads.clear();
   copilotBindings.clear();
+  forgetCopilotForeground();
   forgetAllCodexState();
   forgetAllPiIndexes();
   forgetGrokState();
@@ -1547,7 +1549,7 @@ export async function ompTranscriptPath(paneId: string, cwd: string, known?: Kno
   return authorized === null ? { path: held, blobs: null } : ompAuthorizedTranscript(authorized);
 }
 
-/** A process-owned lifecycle registration, or a trusted report plus a unique held marker. */
+/** The process's live API selection, lifecycle registration, or trusted report plus a unique held marker. */
 async function copilotTranscriptPath(pane: HerdrPane, panes: readonly HerdrPane[], previousClaims?: ReadonlySet<string>, peerInfo?: Map<string, Awaited<ReturnType<typeof paneProcessInfo>> | null>): Promise<{ path: string; binding: string; peerClaims: ReadonlySet<string> }> {
   const report = pane.agent_session;
   // A request shares its peer snapshot across the read; the pane's own process
@@ -1555,10 +1557,11 @@ async function copilotTranscriptPath(pane: HerdrPane, panes: readonly HerdrPane[
   // With `peerInfo`, peers' processes come from (and fill) that cache, while their
   // lifecycle logs are read again here, after this pane's own binding.
   let peerClaims: Promise<ReadonlySet<string>> | undefined = previousClaims === undefined ? undefined : Promise.resolve(previousClaims);
+  // Peers are asked at once: each API read may wait out its own deadline, and they must not add up.
   const gatherPeerClaims = async (): Promise<Set<string>> => {
     const claims = new Set<string>();
-    for (const peer of panes) {
-      if (peer.pane_id === pane.pane_id || peer.agent !== "copilot") continue;
+    await Promise.all(panes.map(async (peer) => {
+      if (peer.pane_id === pane.pane_id || peer.agent !== "copilot") return;
       const cached = peerInfo?.has(peer.pane_id) === true;
       const info = cached ? peerInfo!.get(peer.pane_id) : await paneProcessInfo(peer.pane_id).catch(() => null);
       peerInfo?.set(peer.pane_id, info ?? null);
@@ -1566,19 +1569,24 @@ async function copilotTranscriptPath(pane: HerdrPane, panes: readonly HerdrPane[
       // A cached peer process that has exited may have been replaced by one we never asked about.
       if (cached && processes.some((entry) => typeof entry.pid === "number" && !processAlive(entry.pid))) throw new ConversationUnavailable("no_session_path", undefined, "copilot_peer_process_replaced");
       if (processes.length === 1 && typeof processes[0]?.pid === "number") {
+        const api = await readCopilotForeground(processes[0].pid);
+        if (api.state === "selected") {
+          claims.add(api.sessionId);
+          return;
+        }
+        // A peer whose API cannot answer still has its lifecycle log and report: one unreadable peer does not take Chat from this pane.
         const live = copilotProcessSession(processEnviron(processes[0].pid), processes[0].argv ?? [], processes[0].pid);
         if (live?.logged) {
           claims.add(live.sessionId);
-          continue;
+          return;
         }
       }
       if (peer.agent_session?.agent === "copilot" && peer.agent_session.kind === "id" && typeof peer.agent_session.value === "string") claims.add(peer.agent_session.value);
-    }
+    }));
     return claims;
   };
   const claimedByPeer = async (session: string): Promise<boolean> => (await (peerClaims ??= gatherPeerClaims())).has(session);
-  if (pane.agent !== "copilot" || (report != null && (report.agent !== "copilot" || report.kind !== "id"
-    || report.source !== "herdr:copilot" || typeof report.value !== "string" || !SESSION_ID.test(report.value)))) {
+  if (pane.agent !== "copilot") {
     throw new ConversationUnavailable("no_session_id", undefined, "copilot_report_invalid");
   }
   // A failed RPC does not prove an ownership change. Retry that read once; an answered
@@ -1589,6 +1597,27 @@ async function copilotTranscriptPath(pane: HerdrPane, panes: readonly HerdrPane[
   const foreground = processes[0];
   if (process.platform !== "linux" || ![1, 2].includes(processes.length) || typeof foreground?.pid !== "number") {
     throw new ConversationUnavailable("no_session_path", undefined, "copilot_process_set_unproved");
+  }
+  if (processes.length === 1) {
+    const api = await readCopilotForeground(foreground.pid);
+    if (api.state === "selected") {
+      const path = copilotApiTranscript(api.sessionId, processEnviron(foreground.pid), foreground.argv ?? []);
+      if (path === null) throw new ConversationUnavailable("no_session_path", undefined, "copilot_api_transcript_unproved");
+      // API checks yield: peers are read after this pane's selection, not from the pre-read snapshot,
+      // and this pane's selection is read once more after them.
+      peerClaims = undefined;
+      if (await claimedByPeer(api.sessionId)) throw new ConversationUnavailable("no_session_path", undefined, "copilot_peer_conflict");
+      const current = await readCopilotForeground(foreground.pid);
+      if (current.state !== "selected" || current.binding !== api.binding || current.sessionId !== api.sessionId) {
+        throw new ConversationUnavailable("no_session_path", undefined, "copilot_api_foreground_changed");
+      }
+      return { path, binding: `api:${foreground.pid}:${api.binding}`, peerClaims: await peerClaims! };
+    }
+    if (api.diagnostic !== "not_opted_in") throw new ConversationUnavailable("no_session_path", undefined, `copilot_api_${api.diagnostic}`);
+  }
+  if (report != null && (report.agent !== "copilot" || report.kind !== "id"
+    || report.source !== "herdr:copilot" || typeof report.value !== "string" || !SESSION_ID.test(report.value))) {
+    throw new ConversationUnavailable("no_session_id", undefined, "copilot_report_invalid");
   }
   if (processes.length === 2) {
     if (report == null) throw new ConversationUnavailable("no_session_id", undefined, "copilot_report_invalid");
