@@ -350,6 +350,18 @@ describe("a Portal that signs its visitors in", () => {
     }
   });
 
+  it("refuses a saved-drive visitor an alert webhook, which would keep its alerts after access ends", async () => {
+    const portal = serving(undefined, true);
+    const visitor = { ...identity, "x-portal-proof": await portal.start(credential), "content-type": "application/json" };
+    for (const [method, target] of [["PUT", "/api/alerts/webhook"], ["DELETE", "/api/alerts/webhook"], ["POST", "/api/alerts/webhook/test"]] as const) {
+      const denied = await fetch(`${portal.main}${target}`, {
+        method, headers: { ...visitor, origin: `https://${HOST}`, "x-herdr-update": "1" }, body: JSON.stringify({ preset: "json", url: "https://example.com/hook" }),
+      });
+      expect(denied.status, `${method} ${target}`).toBe(403);
+      expect(await denied.json()).toMatchObject({ error: { code: "owner_only" } });
+    }
+  });
+
   it("refuses push status before handling a Portal visitor's subscription", async () => {
     const portal = serving();
     const visitor = { ...identity, "x-portal-proof": await portal.start(credential), "content-type": "application/json" };

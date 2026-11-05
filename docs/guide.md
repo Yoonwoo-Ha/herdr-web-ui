@@ -528,6 +528,15 @@ The test push is always sent.
 Each pane keeps one alert: a new one replaces its last. iOS lets an alert be removed only
 30 seconds after it arrived, so a quicker repeat stays until the pane's next alert.
 
+To get the same alerts in a chat app, choose a destination under **Settings → Alerts → Also send
+to**: an ntfy topic, a Slack or Discord webhook, a Telegram bot (its token and a chat id), or
+plain JSON to any URL. It has its own choice of alerts, waits and holds back like a device does,
+and is saved on this PC, owner-only, and shown masked afterwards. A message names the PC, the pane
+and what happened, with a link to the pane, never what the agent asked or said; the pane goes by its
+terminal title, which an agent may take from your task. **Send a test**
+checks it; a destination that fails shows its last error and is retried a few times, with at most
+one alert waiting.
+
 ### Using the app
 
 On a phone:
@@ -1122,6 +1131,7 @@ Optional features can send data off the PC:
 - [Subscription usage](#subscription-usage), when enabled, sends each provider's credentials to that provider's usage endpoint.
 - Updates and remote-PC setup fetch releases or configured runtime bundles over the network; remote panes are reached over SSH.
 - Enabled push alerts go through the browser vendor's push service as encrypted notifications.
+- A destination under **Settings → Alerts → Also send to** gets each alert it chose in plain text: the PC's and the pane's names (a pane's is its terminal title, which an agent may take from your task), what happened and a link to the pane.
 - [Portal](#behind-a-reverse-proxy), while it runs, carries every connection to the app through the relay you chose: the relay sees connection addresses, timing and volume, and holds the certificate for the address.
 - The [Ovis relay](#through-the-ovis-relay), while it's on, carries everything between a paired phone and this PC through `relay.ovis.sh`, end-to-end encrypted: the relay sees connection addresses, timing and sizes, down to the timing of keystrokes, but none of the content. The app on the phone comes from `app.ovis.sh`, which itself sees only requests for the app's files, whose path names the PC. You have to trust whoever serves that app, since it's the code that holds the phone's key and shows you the PC ([trust model](relay.md#trust-model)).
 
@@ -1145,7 +1155,7 @@ Samsung Internet has a forced dark mode that repaints every page, including one 
 
 All three are in the herdr plugin marketplace too, and each does something this app does not. [collie](https://github.com/AltanS/collie) is a mobile terminal for herdr, tmux and zellij, with a status dashboard, a key pad, quick replies and voice input, served over Tailscale by its own bridge. [roamgate](https://github.com/powerfooI/roamgate) is a browser client for herdr with a file explorer and diff annotations, installed by its own script. [herdr-remote](https://github.com/dcolinmorgan/herdr-remote) is a macOS menu-bar app with a phone dashboard and a Telegram bot behind a relay and a free tunnel.
 
-Ovis reads the agent's own transcript, so Claude Code, Codex, omp, omo, gjc, pi, OpenCode and identifiable Devin CLI panes are a chat with the work folded per turn. Supported prompt cards are checked against the live menu before an answer is typed; Devin prompts use Terminal. The terminal is the same live pane as your TUI, other PCs join over SSH from the sidebar, and it installs and updates as a herdr plugin, with no account of its own. You reach it over Tailscale, SSH, your own HTTPS proxy, or the Ovis relay, which is end-to-end encrypted and off until you turn it on. If you want tmux or zellij, diffs or Telegram, one of the others is the better fit.
+Ovis reads the agent's own transcript, so Claude Code, Codex, omp, omo, gjc, pi, OpenCode and identifiable Devin CLI panes are a chat with the work folded per turn. Supported prompt cards are checked against the live menu before an answer is typed; Devin prompts use Terminal. The terminal is the same live pane as your TUI, other PCs join over SSH from the sidebar, and it installs and updates as a herdr plugin, with no account of its own. You reach it over Tailscale, SSH, your own HTTPS proxy, or the Ovis relay, which is end-to-end encrypted and off until you turn it on. If you want tmux or zellij, diffs or to answer agents from Telegram, one of the others is the better fit.
 </details>
 
 <details>

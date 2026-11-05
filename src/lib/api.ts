@@ -1,5 +1,6 @@
 import { apiFetch } from "./api-request-id.ts";
 import type { PreferencesChange, SharedPreferences } from "../../shared/preferences.ts";
+import type { AlertWebhookSave, AlertWebhookView } from "../../shared/alert-webhook.ts";
 import type { SeenFinish, SeenPresentation } from "../../shared/seen.ts";
 import type { AgentCatalogResponse, AgentTabStarted } from "../../shared/agent-catalog.ts";
 import { resumeConnectionTraces } from "./connectionTrace.ts";
@@ -1439,6 +1440,29 @@ export async function fetchVoiceStatus(): Promise<VoiceStatus> {
   const response = await apiFetch("/api/voice", { cache: "no-store" });
   if (!response.ok) throw await errorFrom("/api/voice", response);
   return (await response.json()) as VoiceStatus;
+}
+
+/** Settings → Alerts → Also send to: the destination this PC also posts its alerts to, its URL or token masked. */
+export function fetchAlertWebhook(): Promise<AlertWebhookView> {
+  return getJson<AlertWebhookView>("/api/alerts/webhook", { cache: "no-store" });
+}
+
+/** ApiError 400 `invalid_webhook` names what is wrong with the destination. */
+export async function saveAlertWebhook(save: AlertWebhookSave): Promise<AlertWebhookView> {
+  const response = await apiFetch("/api/alerts/webhook", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(save) });
+  if (!response.ok) throw await errorFrom("/api/alerts/webhook", response);
+  return (await response.json()) as AlertWebhookView;
+}
+
+export async function removeAlertWebhook(): Promise<void> {
+  const response = await apiFetch("/api/alerts/webhook", { method: "DELETE" });
+  if (!response.ok) throw await errorFrom("/api/alerts/webhook", response);
+}
+
+/** ApiError 502 `webhook_failed` with what the destination answered. */
+export async function testAlertWebhook(): Promise<void> {
+  const response = await apiFetch("/api/alerts/webhook/test", { method: "POST" });
+  if (!response.ok) throw await errorFrom("/api/alerts/webhook/test", response);
 }
 
 /** PUT /api/voice/config: ApiError 409 `key_from_env` when the key comes from OVIS_OPENAI_API_KEY. */

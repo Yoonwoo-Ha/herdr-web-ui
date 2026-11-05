@@ -48,6 +48,7 @@ import { statusText } from "./RelayPanel.tsx";
 import { AccountSection } from "./AccountSection.tsx";
 import { ConnectPhoneDialog, defaultRoute, relayOffered, type ConnectRoute } from "./ConnectPhoneDialog.tsx";
 import { PushTestControls } from "./PushTestControls.tsx";
+import { AlertWebhookGroup } from "./AlertWebhookGroup.tsx";
 import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
@@ -623,6 +624,7 @@ function AlertsPage({ onEnableNotifications, machines }: { onEnableNotifications
       </SettingsRow>
     </SettingsGroup>
     <AlertPcsGroup machines={machines} />
+    <AlertWebhookGroup />
     </>
   );
 }

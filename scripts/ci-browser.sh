@@ -102,6 +102,7 @@ run_script scripts/boot-loading-demo-regression.ts
 run_script scripts/old-safari-demo-regression.ts
 run_script scripts/security-summary-demo-regression.ts
 run_script scripts/push-health-demo-regression.ts
+run_script scripts/alert-webhook-demo-regression.ts
 run_script scripts/install-hint-demo-regression.ts
 run_script scripts/device-security-demo-regression.ts
 run_script scripts/cliproxy-settings-regression.ts
