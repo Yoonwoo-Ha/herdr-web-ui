@@ -173,6 +173,10 @@ describe("saved theme migration", () => {
     expect(loadSettings().fileFontSize).toBeNull();
     records.set("ovis:file-font-size", "not json");
     expect(loadSettings().fileFontSize).toBeNull();
+    saveSettings(sanitizeSettings({ fileFontSize: 20, fileFontFrom: 16 }));
+    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("fileFontFrom");
+    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
+    expect(loadSettings()).toMatchObject({ fileFontSize: 20, fileFontFrom: 16 });
   });
 
   it("keeps Pictures in the terminal in its own key, out of an old tab's whole-record save", () => {
@@ -348,6 +352,13 @@ describe("saved theme migration", () => {
     expect(Number(props.get("--file-source-scale"))).toBeLessThan(1);
     apply({ chatFontSize: 11, fileFontSize: 12 });
     expect(Number(props.get("--file-source-scale"))).toBeGreaterThan(1);
+    // the chat's size when the file size was chosen is kept with it: a later chat size leaves the source be
+    apply({ chatFontSize: 21, fileFontSize: 24, fileFontFrom: 21 });
+    const chosen = props.get("--file-source-scale");
+    apply({ chatFontSize: 11, fileFontSize: 24, fileFontFrom: 21 });
+    expect(props.get("--file-source-scale")).toBe(chosen);
+    apply({ chatFontSize: 24, fileFontSize: 24, fileFontFrom: 21 });
+    expect(props.get("--file-source-scale")).toBe(chosen);
     apply({ chatFontSize: 21 });
     expect(props.has("--file-source-scale")).toBe(false);
   });
