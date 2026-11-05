@@ -1,3 +1,6 @@
+diff --git a/node_modules/@xterm/xterm/.bun-tag-e1e69684691299b1 b/.bun-tag-e1e69684691299b1
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/css/xterm.css b/css/xterm.css
 index 819654e4537eeb7b64364249e52274b7197b9c8a..6df7cfb20f4b5f16cb770377d029ba7088d7af4d 100644
 --- a/css/xterm.css
@@ -291,7 +294,7 @@ index 10e604114ae9fffc25c931497413800b0b6bd7bb..f99f000ed8b1b28d8ee35e22f1ebd609
    compositionstart(): void;
    compositionupdate(ev: CompositionEvent): void;
 diff --git a/src/browser/input/CompositionHelper.ts b/src/browser/input/CompositionHelper.ts
-index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf25472643e8d42b8 100644
+index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..ecfe12d0346d6e623130e3fab8ddef8b74bdbcac 100644
 --- a/src/browser/input/CompositionHelper.ts
 +++ b/src/browser/input/CompositionHelper.ts
 @@ -6,6 +6,19 @@
@@ -314,7 +317,7 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf2547264
  
  interface IPosition {
    start: number;
-@@ -30,11 +43,19 @@ export class CompositionHelper {
+@@ -30,17 +43,28 @@ export class CompositionHelper {
     */
    private _compositionPosition: IPosition;
  
@@ -339,7 +342,16 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf2547264
  
    /**
     * Data already sent due to keydown event.
-@@ -50,17 +71,158 @@ export class CompositionHelper {
+    */
+   private _dataAlreadySent: string;
+ 
++  /** The 229 fallback's deferred textarea diff, until it runs or a following key flushes it. */
++  private _pendingTextareaChange: (() => void) | undefined;
++
+   constructor(
+     private readonly _textarea: HTMLTextAreaElement,
+     private readonly _compositionView: HTMLElement,
+@@ -50,17 +74,166 @@ export class CompositionHelper {
      @IRenderService private readonly _renderService: IRenderService
    ) {
      this._isComposing = false;
@@ -356,6 +368,7 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf2547264
 +    this._editAwaitingKey = false;
 +    this._commitInsert = undefined;
 +    this._pendingSends.length = 0;
++    this._pendingTextareaChange = undefined;
 +    this._isComposing = false;
 +    this._sentUpTo = 0;
 +    this._dataAlreadySent = '';
@@ -414,7 +427,8 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf2547264
 +    // keydown() held back this key while the syllable was pending, so Terminal will treat
 +    // its insertion as already handled by keydown. Mark it to be forwarded once.
 +    const commitInsert = this._replacementComposition && keyDownSeen && ev.inputType === 'insertText' ? ev.data ?? undefined : undefined;
-+    this.finishReplacement();
++    // Not finishReplacement(): this event precedes the edit a pending 229 diff waits for.
++    this._finishReplacementComposition();
 +    this._commitInsert = commitInsert;
 +    // Only a Hangul preedit or a dictation hypothesis starts this path. Paste, emoji and browsers
 +    // emitting real composition events retain their existing input handling. iPadOS puts two
@@ -482,6 +496,12 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf2547264
 +
 +  /** Commit the corrected DOM range before a following key, paste, syllable or blur. */
 +  public finishReplacement(): void {
++    // A paste, blur or embedder key clears or extends the textarea: diff the 229 edit first.
++    this._pendingTextareaChange?.();
++    this._finishReplacementComposition();
++  }
++
++  private _finishReplacementComposition(): void {
 +    if (this._replacementComposition) {
 +      this._editAwaitingKey = false;
 +      this._finalizeComposition(false);
@@ -500,7 +520,7 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf2547264
      this._compositionView.textContent = '';
      this._dataAlreadySent = '';
      this._compositionView.classList.add('active');
-@@ -71,9 +233,12 @@ export class CompositionHelper {
+@@ -71,9 +244,12 @@ export class CompositionHelper {
     * @param ev The event.
     */
    public compositionupdate(ev: Pick<CompositionEvent, 'data'>): void {
@@ -513,7 +533,7 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf2547264
        this._compositionPosition.end = this._textarea.value.length;
      }, 0);
    }
-@@ -83,6 +248,7 @@ export class CompositionHelper {
+@@ -83,6 +259,7 @@ export class CompositionHelper {
     * the handler.
     */
    public compositionend(): void {
@@ -521,11 +541,13 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf2547264
      this._finalizeComposition(true);
    }
  
-@@ -92,7 +258,24 @@ export class CompositionHelper {
+@@ -92,7 +269,26 @@ export class CompositionHelper {
     * @returns Whether the Terminal should continue processing the keydown event.
     */
    public keydown(ev: KeyboardEvent): boolean {
 -    if (this._isComposing || this._isSendingComposition) {
++    // Enter, Ctrl+C and Backspace clear the textarea: send the earlier 229 edit before that.
++    this._pendingTextareaChange?.();
 +    const editBefore = this._editAwaitingKey;
 +    this._editAwaitingKey = false;
 +    this._commitInsert = undefined;
@@ -547,7 +569,7 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf2547264
        if (ev.keyCode === 20 || ev.keyCode === 229) {
          // 20 is CapsLock, 229 is Enter
          // Continue composing if the keyCode is the "composition character"
-@@ -126,57 +309,46 @@ export class CompositionHelper {
+@@ -126,57 +322,46 @@ export class CompositionHelper {
     *   the command is executed.
     */
    private _finalizeComposition(waitForPropagation: boolean): void {
@@ -633,17 +655,64 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..90d18912693a79ea9ce4f1cdf2547264
    /**
     * Apply any changes made to the textarea after the current event chain is allowed to complete.
     * This should be called when not currently composing but a keydown event with the "composition
-@@ -185,7 +357,9 @@ export class CompositionHelper {
+@@ -185,25 +370,39 @@ export class CompositionHelper {
     */
    private _handleAnyTextareaChanges(): void {
      const oldValue = this._textarea.value;
-+    const generation = this._generation;
-     setTimeout(() => {
-+      if (generation !== this._generation) return;
+-    setTimeout(() => {
++    const caret = this._textarea.selectionEnd ?? oldValue.length;
++    const change = (): void => {
++      if (this._pendingTextareaChange !== change) return;
++      this._pendingTextareaChange = undefined;
        // Ignore if a composition has started since the timeout
-       if (!this._isComposing) {
-         const newValue = this._textarea.value;
-@@ -218,25 +392,44 @@ export class CompositionHelper {
+-      if (!this._isComposing) {
+-        const newValue = this._textarea.value;
+-
+-        const diff = newValue.replace(oldValue, '');
+-
+-        this._dataAlreadySent = diff;
+-
+-        if (newValue.length > oldValue.length) {
+-          this._coreService.triggerDataEvent(diff, true);
+-        } else if (newValue.length < oldValue.length) {
+-          this._coreService.triggerDataEvent(`${C0.DEL}`, true);
+-        } else if ((newValue.length === oldValue.length) && (newValue !== oldValue)) {
+-          this._coreService.triggerDataEvent(newValue, true);
+-        }
+-
++      if (this._isComposing) return;
++      const newValue = this._textarea.value;
++      let input: string;
++      if (caret < oldValue.length) {
++        // An edit before the end of what was sent: the PTY cursor is not at the caret, so DEL
++        // would erase other text. Forward only a plain insertion at the caret.
++        const head = oldValue.substring(0, caret);
++        const tail = oldValue.substring(caret);
++        input = newValue.length > oldValue.length && newValue.startsWith(head) && newValue.endsWith(tail)
++          ? newValue.substring(caret, newValue.length - tail.length) : '';
++        this._dataAlreadySent = input;
++      } else {
++        // Gboard can replace a trailing space with ". ". The old value is then no
++        // longer a substring: replace(oldValue, '') would resend the whole line.
++        // Keep the shared prefix and replace only the edited suffix. Compare code
++        // points so an emoji is never split into two surrogate halves.
++        const before = Array.from(oldValue);
++        const after = Array.from(newValue);
++        let prefix = 0;
++        while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
++        const inserted = after.slice(prefix).join('');
++        this._dataAlreadySent = inserted;
++        input = C0.DEL.repeat(before.length - prefix) + inserted;
+       }
+-    }, 0);
++      if (input) this._coreService.triggerDataEvent(input, true);
++    };
++    this._pendingTextareaChange = change;
++    setTimeout(change, 0);
+   }
+ 
+   /**
+@@ -218,25 +417,44 @@ export class CompositionHelper {
      }
  
      if (this._bufferService.buffer.isCursorInViewport) {
@@ -854,7 +923,7 @@ index 2ed4acdcaf9fde4894f0615dc8ccda942a8bce97..0b26defe50bdf4597d8115eacf0b7f60
    end(success: boolean, promiseResult?: boolean): void | Promise<boolean>;
  }
 diff --git a/src/common/services/CoreMouseService.ts b/src/common/services/CoreMouseService.ts
-index a10ddafb1a1408c97b47dcac68efeff9f6d3c8a9..586d999d8f3585e14695acf8faa5858074e14af5 100644
+index a10ddafb1a1408c97b47dcac68efeff9f6d3c8a9..603ce86eca1c9621e7557eea3ec662953f49e9f7 100644
 --- a/src/common/services/CoreMouseService.ts
 +++ b/src/common/services/CoreMouseService.ts
 @@ -253,11 +253,8 @@ export class CoreMouseService extends Disposable implements ICoreMouseService {
