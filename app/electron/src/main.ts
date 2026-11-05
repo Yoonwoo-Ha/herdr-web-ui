@@ -12,7 +12,7 @@ import type { ChildProcess } from "node:child_process";
 import { choosePort, coreEnv, endLeftover, installCore, isFile, layout, openLog, processCommand, processStartSync, readSaved, serverEnv, startCore, startServer, stopServer, writeSaved, type RunningServer } from "./children.ts";
 import { accountServiceOf, startLoopbackSignIn, type LoopbackSignIn } from "./accountSignIn.ts";
 import { awakeLabel, DESKTOP_ACTIVITY_FILE, holdAwake, readAwakeSettings, readWorking, writeAwakeSettings, type AwakeSettings } from "./awake.ts";
-import { debInstallCommand, updateChannel, updatePlan } from "./updates.ts";
+import { checkForUpdates, debInstallCommand, updateChannel, updatePlan } from "./updates.ts";
 
 type StepState = "pending" | "ok" | "failed";
 export interface Status {
@@ -377,7 +377,7 @@ async function startUpdates(): Promise<void> {
     updateReady = plan.installer === "deb" ? () => autoUpdater.quitAndInstall() : () => void stopForQuit().then(() => autoUpdater.quitAndInstall());
     rebuildTrayMenu();
   });
-  const check = () => void autoUpdater.checkForUpdates().catch((error: unknown) => console.error(`Update check failed: ${message(error)}`));
+  const check = () => void checkForUpdates(autoUpdater, (line) => console.error(line));
   check();
   setInterval(check, 6 * 60 * 60 * 1000);
 }

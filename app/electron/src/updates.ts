@@ -12,6 +12,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { AppUpdater } from "electron-updater";
 import { readUpdateChannel, type UpdateChannel } from "../../../shared/update.ts";
 
 type Env = Record<string, string | undefined>;
@@ -79,4 +80,18 @@ export function updatePlan(options: { packaged: boolean; env: Env; platform: str
   // feed and its stable channel (latest.yml), since the release publishes no beta.yml
   if (channel === "beta" && options.platform === "win32") return { enabled: true, feed: null, channel: "stable", installer };
   return { enabled: true, feed: channel === "beta" ? BETA_FEED : null, channel, installer };
+}
+
+/**
+ * One check of the feed, as the app runs it after it starts and every 6 hours. A failed check is
+ * logged. A newer version found starts its download, whose failure the updater's error event already
+ * reports (a cancelled one is no error): the promise of that download is only caught, where left alone
+ * it was logged a second time as an unhandled rejection (#2831).
+ */
+export async function checkForUpdates(updater: Pick<AppUpdater, "checkForUpdates">, log: (line: string) => void): Promise<void> {
+  const result = await updater.checkForUpdates().catch((error: unknown) => {
+    log(`Update check failed: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  });
+  result?.downloadPromise?.catch(() => {});
 }

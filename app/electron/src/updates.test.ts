@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BETA_FEED, debInstallCommand, updateChannel, updatePlan } from "./updates.ts";
+// not the package itself: it sets up an updater for this platform as its exports are read, which needs Electron
+import { DebUpdater } from "electron-updater/out/DebUpdater";
+import { BETA_FEED, checkForUpdates, debInstallCommand, updateChannel, updatePlan } from "./updates.ts";
 
 const packaged = { packaged: true, platform: "darwin", builtWithFeed: true, env: {} };
 
@@ -73,6 +75,47 @@ describe.skipIf(process.platform === "win32")("debInstallCommand", () => {
     expect(printed(`/bin/bash -c 'printf %s ${prompted}'`)).toBe(path);
     const asRoot = debInstallCommand(escaped(path), false).at(-1);
     expect(printed(`printf %s ${asRoot}`)).toBe(path);
+  });
+});
+
+describe("checkForUpdates", () => {
+  it("leaves a failed download to the updater's error event, never an unhandled rejection", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ovis-desktop-check-"));
+    try {
+      // a packaged build with a feed, offering a newer .deb whose download fails
+      const app = { version: "0.4.22", name: "Ovis", isPackaged: true, appUpdateConfigPath: join(root, "resources", "app-update.yml"),
+        userDataPath: join(root, "user-data"), baseCachePath: join(root, "cache"), whenReady: () => Promise.resolve(), quit() {}, relaunch() {}, onQuit() {} };
+      mkdirSync(join(root, "resources"));
+      writeFileSync(app.appUpdateConfigPath, "provider: generic\nurl: https://updates.example/desktop\nupdaterCacheDirName: ovis-desktop-updater\n");
+      const httpExecutor = {
+        request: async () => "version: 99.0.0\nfiles:\n  - url: Ovis-linux-x64.deb\n    sha512: c2hhNTEy\n    size: 12\n",
+        download: async () => { throw new Error("connection reset"); },
+      };
+      const updater = Object.assign(new DebUpdater(null, app), { httpExecutor, logger: null, autoInstallOnAppQuit: false });
+      const failed = new Promise<string>((resolve) => updater.on("error", (error: Error) => resolve(error.message)));
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        const lines: string[] = [];
+        await checkForUpdates(updater, (line) => lines.push(line));
+        expect(await failed).toBe("connection reset");
+        // a rejection nobody handles is reported once the turn's own work is done
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(unhandled).toEqual([]);
+        expect(lines).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("logs a check that fails", async () => {
+    const lines: string[] = [];
+    await checkForUpdates({ checkForUpdates: () => Promise.reject(new Error("feed is down")) }, (line) => lines.push(line));
+    expect(lines).toEqual(["Update check failed: feed is down"]);
   });
 });
 
