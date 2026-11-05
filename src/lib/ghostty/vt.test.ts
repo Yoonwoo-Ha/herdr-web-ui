@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { Terminal } from "@xterm/xterm";
+import { join } from "node:path";
 
+import { patchedTerminal } from "../../../scripts/build-xterm.ts";
 import { matchHerdrWidths } from "../terminalWidths.ts";
 import { GhosttyVt } from "./vt.ts";
+
+const Terminal = await patchedTerminal(join(import.meta.dir, "../../.."));
 
 interface Layout { cells: [number, string][]; cursor: number }
 
@@ -70,6 +73,8 @@ describe("GhosttyVt widths", () => {
     ["Bengali", "aবাংলাb"],
     ["Indic conjunct", "aक्षb"],
     ["text-presentation selector", "a⚽︎b"],
+    ["text-presentation selector in the Enclosed Ideographic Supplement", "a\u{1f21a}\ufe0eb"],
+    ["text-presentation selector on a text symbol", "a#\ufe0e\u26a0\ufe0eb"],
     ["subdivision flag", "a🏴󠁧󠁢󠁳󠁣󠁴󠁿b"],
   ] as const) {
     it(`draws each grapheme in xterm's cell: ${name}`, async () => {
@@ -78,11 +83,17 @@ describe("GhosttyVt widths", () => {
   }
 
   // libghostty draws a cluster with a spacing mark as one two-column cell where xterm has two cells over the
-  // same columns, and drops a zero-width space xterm keeps in the cell before it: nothing after them moves
+  // same columns, and drops a zero-width space or a selector it does not apply that xterm keeps in the cell
+  // before it: nothing after them moves
   for (const [name, text] of [
     ["Thai SARA AM", "aน้ำb c"],
     ["Devanagari vowel sign", "aकाb c"],
     ["zero-width space", "a\u200bb c"],
+    ["text-presentation selector on an emoji without a text form", "a\u{1f600}\ufe0eb c"],
+    ["text- then emoji-presentation selector", "a\u26bd\ufe0e\ufe0fb c"],
+    ["text-presentation selector after a skin tone", "a\u{1f44d}\u{1f3fd}\ufe0eb c"],
+    ["a ZWJ sequence after a text-presentation selector", "a\u231a\ufe0e\u200d\u231ab c"],
+    ["a skin tone after a text-presentation selector", "a\u{1f44d}\ufe0e\u{1f3fd}b c"],
     ["a style change before a skin tone", "a👍\x1b[31m🏽b c"],
     ["a style change before a ZWJ", "a👨\x1b[31m‍👩b c"],
     ["a style change after a ZWJ", "a👨‍\x1b[31m👩b c"],

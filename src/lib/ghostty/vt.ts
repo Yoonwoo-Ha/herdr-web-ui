@@ -98,11 +98,11 @@ const OPT_KITTY_IMAGE_STORAGE_LIMIT = 15, OPT_SCROLLBACK_MAX_LINES = 28, OPT_MOD
 const MODE_GRAPHEME_CLUSTER = 2027;
 const CSI_GROUND = 0, CSI_ESC = 1, CSI_BRACKET = 2, CSI_PRIVATE = 3, CSI_OTHER = 4, CSI_STRING = 5;
 /**
- * Whether a code point joins the emoji before it into one cell: ZWJ, the emoji-presentation selector,
- * skin tones, the keycap mark, tags (subdivision flags) and regional indicators (country flags).
+ * Whether a code point joins the emoji before it into one cell: ZWJ, the emoji- and text-presentation
+ * selectors, skin tones, the keycap mark, tags (subdivision flags) and regional indicators (country flags).
  */
 const joinsEmoji = (codepoint: number): boolean =>
-  codepoint === 0x200d || codepoint === 0xfe0f || codepoint === 0x20e3
+  codepoint === 0x200d || codepoint === 0xfe0f || codepoint === 0xfe0e || codepoint === 0x20e3
   || (codepoint >= 0x1f3fb && codepoint <= 0x1f3ff) || (codepoint >= 0xe0020 && codepoint <= 0xe007f)
   || (codepoint >= 0x1f1e6 && codepoint <= 0x1f1ff);
 const PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
@@ -236,9 +236,10 @@ export class GhosttyVt {
     }
     new Uint8Array(this.x.memory.buffer, this.input, bytes.length).set(bytes);
     // xterm (terminalWidths.ts) and herdr give an emoji sequence (ZWJ family, skin tone, flag, keycap,
-    // an emoji-presentation selector) one two-column cell, and otherwise lay out as libghostty does with
-    // grapheme clustering (mode 2027) off: clustering also joins spacing marks, Indic conjuncts and text
-    // selectors that they keep apart. So mode 2027 stays off, and each code point that joins an emoji
+    // an emoji-presentation selector) one two-column cell, an emoji with a text form and the
+    // text-presentation selector (\u26bd\ufe0e) one one-column cell, and otherwise lay out as libghostty
+    // does with grapheme clustering (mode 2027) off: clustering also joins spacing marks and Indic
+    // conjuncts that they keep apart. So mode 2027 stays off, and each code point that joins an emoji
     // (joinsEmoji, or a pictograph right after a ZWJ) is printed with it on. A program's own 2027 on
     // (CSI ? ... 2027 ... h, or r restoring it), which xterm ignores, is turned off again right after;
     // the sequence may span writes.
