@@ -9,7 +9,7 @@ import type { SecureChannel, Transport } from "../../../shared/relay-e2ee.ts";
 import { decodeFrame, encodeFrame, FrameType, LIMITS_V1, MuxProtocolError } from "../../../shared/relay-mux.ts";
 import type { MuxFrame } from "../../../shared/relay-mux.ts";
 import { MuxEngine } from "../../../shared/relay-mux-engine.ts";
-import { ADMISSION_MS, ASSIGNMENT_MS, openRelayChannel, PC_ANSWER_MS, RelayAdmissionTimeoutError, RelayUnreachableError } from "./channel.ts";
+import { ADMISSION_MS, ASSIGNMENT_MS, openRelayChannel, PC_ANSWER_MS, RelayAdmissionTimeoutError, RelayPcOfflineError, RelayUnreachableError } from "./channel.ts";
 import type { RelaySocket } from "./channel.ts";
 import { failureOf } from "./shellState.ts";
 import { base64url, getDevice } from "./device.ts";
@@ -277,10 +277,31 @@ it("calls the PC offline when the relay assigned the connection but nothing answ
   await flush();
   // Then the failure is the PC's silence, the screen is pc-offline, and the socket is closed.
   const error = outcome.get()?.error;
+  expect(error).toBeInstanceOf(RelayPcOfflineError);
   expect(error).toBeInstanceOf(MuxProtocolError);
   expect(error).toMatchObject({ code: "timeout" });
   expect(failureOf(error, { code: false, paired: true })).toBe("pc-offline");
   expect(socket.closed).toBe(4000);
+});
+
+it("waits for the PC as long as pcAnswerMs says, for a reconnect behind the app", async () => {
+  // Given a relay that assigns the connection, a PC that never attaches, and a longer wait asked for.
+  jest.useFakeTimers();
+  const socket = new SilentSocket();
+  const created = Promise.withResolvers<void>();
+  const offer = { v: 1 as const, server_id: "12".repeat(16), server_public_key: exportPublicKey(generateKeyPair().publicKey), relay: "wss://relay.example" };
+  const outcome = settled(openRelayChannel(offer, { store: new MemoryDeviceStore(), pcAnswerMs: 25_000, socket: () => { created.resolve(); return socket; } }));
+  await created.promise;
+  socket.deliver(JSON.stringify({ type: "assigned", connection_id: "ef".repeat(16) }));
+  await socket.sent.promise;
+  // When PC_ANSWER_MS passes, then the asked-for wait.
+  jest.advanceTimersByTime(PC_ANSWER_MS);
+  await flush();
+  expect(outcome.get()).toBeNull();
+  jest.advanceTimersByTime(25_000 - PC_ANSWER_MS);
+  await flush();
+  // Then the PC is called offline only at the end of that wait.
+  expect(outcome.get()?.error).toBeInstanceOf(RelayPcOfflineError);
 });
 
 it("calls a PC that answered the handshake but never finished admission unresponsive, not offline", async () => {

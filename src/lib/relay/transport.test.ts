@@ -8,8 +8,9 @@ import { nativeTransport, setTransport } from "../transport.ts";
 import type { WebSocketLike } from "../transport.ts";
 import { useResourceUrlState } from "../useResourceUrl.ts";
 import type { ResourceUrlState } from "../useResourceUrl.ts";
+import { RelayPcOfflineError } from "./channel.ts";
 import type { RelayChannelOptions } from "./channel.ts";
-import { isFatalRelayError, openRelayTransport, RelayWebSocket, SSE_BUFFER_LIMIT } from "./transport.ts";
+import { isFatalRelayError, openRelayTransport, RECONNECT_PC_ANSWER_MS, RelayWebSocket, SSE_BUFFER_LIMIT } from "./transport.ts";
 import { LIMITS_V1, MuxProtocolError } from "../../../shared/relay-mux.ts";
 import { RelayResourceTooLargeError } from "./resources.ts";
 import { writeFileSync } from "node:fs";
@@ -30,7 +31,7 @@ async function fixture(options: Partial<RelaySessionOptions> = {}) {
   /** each channel's relay socket: `open` false is one closing with no close event yet */
   const carriers: { open: boolean }[] = [];
   const callbacks: NonNullable<RelayChannelOptions["onClose"]>[] = [];
-  const attempts = { count: 0, failures: 0, refusal: null as Error | null };
+  const attempts = { count: 0, failures: 0, offline: 0, refusal: null as Error | null, pcAnswerMs: [] as (number | undefined)[] };
   const fatal: Error[] = [];
   const offer = { v: 1 as const, server_id: "0123456789abcdef0123456789abcdef",
     server_public_key: "", relay: "wss://relay.example" };
@@ -39,8 +40,10 @@ async function fixture(options: Partial<RelaySessionOptions> = {}) {
     onFatal: (error) => fatal.push(error),
     openChannel: async (_offer, config = {}) => {
       attempts.count++;
+      attempts.pcAnswerMs.push(config.pcAnswerMs);
       if (attempts.refusal !== null) { const refusal = attempts.refusal; attempts.refusal = null; throw refusal; }
       if (attempts.failures > 0) { attempts.failures--; throw new TypeError("Network offline"); }
+      if (attempts.offline > 0) { attempts.offline--; throw new RelayPcOfflineError(); }
       const connection = await relayConnection(app, options);
       connections.push(connection);
       await connection.auth(device);
@@ -569,6 +572,47 @@ it("reconnects only the carrier with backoff from one second capped at thirty se
   expect(f.clock.tasks.size).toBe(0);
   await f.drop();
   expect([...f.clock.tasks.values()].map((task) => task.at - f.clock.now())).toEqual([1000]);
+});
+
+it("tries again a second after each attempt the relay held waiting for a PC that is away, so a restarted PC is reached at once", async () => {
+  // Given an established carrier whose PC goes away for six attempts: each waited PC_ANSWER_MS at the relay.
+  const f = await fixture({ dispatch: async () => Response.json({ ok: true }) });
+  f.attempts.offline = 6;
+  await f.drop();
+  // When every retry deadline fires.
+  for (let attempt = 0; attempt < 6; attempt++) {
+    expect([...f.clock.tasks.values()].map((task) => task.at - f.clock.now())).toEqual([1000]);
+    f.clock.advance(1000);
+    await expect(f.transport.connect()).rejects.toBeInstanceOf(RelayPcOfflineError);
+  }
+  // Then the next attempt still comes a second later, and reaches the PC once it is back.
+  expect([...f.clock.tasks.values()].map((task) => task.at - f.clock.now())).toEqual([1000]);
+  f.clock.advance(1000);
+  await f.transport.connect();
+  expect(f.attempts.count).toBe(8);
+  // the first open waits the shell's PC_ANSWER_MS; every reconnect waits nearly the relay's whole hold
+  expect(f.attempts.pcAnswerMs).toEqual([undefined, ...Array<number>(7).fill(RECONNECT_PC_ANSWER_MS)]);
+  expect(await (await f.transport.fetch("/api/back")).json()).toEqual({ ok: true });
+  expect(f.fatal).toEqual([]);
+});
+
+it("keeps the growing pause after such waits while the page is hidden", async () => {
+  // Given a hidden page whose PC goes away for two attempts.
+  const page = Object.assign(new EventTarget(), { visibilityState: "hidden" });
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: page });
+  cleanups.push(() => { if (descriptor) Object.defineProperty(globalThis, "document", descriptor); else Reflect.deleteProperty(globalThis, "document"); });
+  const f = await fixture({ dispatch: async () => Response.json({ ok: true }) });
+  f.attempts.offline = 2;
+  await f.drop();
+  // When each retry deadline fires.
+  for (const delay of [1000, 2000]) {
+    expect([...f.clock.tasks.values()].map((task) => task.at - f.clock.now())).toEqual([delay]);
+    f.clock.advance(delay);
+    await expect(f.transport.connect()).rejects.toBeInstanceOf(RelayPcOfflineError);
+  }
+  // Then the pause still doubles: a hidden page reconnects when it is shown, not on the fast cadence.
+  expect([...f.clock.tasks.values()].map((task) => task.at - f.clock.now())).toEqual([4000]);
 });
 
 it("stops reconnecting once the PC refuses the device for good, and tells the shell", async () => {

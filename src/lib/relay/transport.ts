@@ -4,7 +4,7 @@ import { LIMITS_V1, REQUEST_HEADERS } from "../../../shared/relay-mux.ts";
 import { MuxProtocolError } from "../../../shared/relay-mux.ts";
 import type { RelayOffer } from "../../../shared/relay-offer.ts";
 import type { EventSourceLike, Transport, WebSocketLike } from "../transport.ts";
-import { openRelayChannel, UnsafeRelayDestinationError } from "./channel.ts";
+import { openRelayChannel, RelayPcOfflineError, UnsafeRelayDestinationError } from "./channel.ts";
 import type { RelayChannel, RelayChannelOptions, RelayServerInfo } from "./channel.ts";
 import { ServerIdentityChangedError } from "./device.ts";
 import { relayResourceUrl, serveRelayResources } from "./resources.ts";
@@ -98,6 +98,13 @@ function eventProperties(target: EventTarget, names: readonly string[]): void {
   }
 }
 
+/**
+ * How long a reconnect waits at the relay for a PC that is away, under the relay's own 30 s hold
+ * (relay/core.ts OFFLINE_WAIT_MS): with the one-second pause between such waits, a phone opens
+ * about two relay sockets a minute while its PC is away, well under the relay's per-address limit.
+ */
+export const RECONNECT_PC_ANSWER_MS = 25_000;
+
 /** Establish once before boot installs it. A reconnect replaces only the carrier, never streams. */
 export async function openRelayTransport(offer: RelayOffer, options: RelayTransportOptions = {}): Promise<RelayTransport> {
   const transport = new RelayTransport(offer, options);
@@ -149,6 +156,8 @@ export class RelayTransport implements Transport {
     const { code, ...savedOffer } = this.offer;
     const channel = await (this.options.openChannel ?? openRelayChannel)(generation === 1 ? this.offer : savedOffer, {
       ...this.options, signal: this.abort.signal,
+      // a reconnect runs behind the app, not on a waiting screen: it waits at the relay nearly as long as the relay holds it
+      ...(generation === 1 ? {} : { pcAnswerMs: RECONNECT_PC_ANSWER_MS }),
       onClose: (error) => {
         if (generation !== this.generation || this.stopped) return;
         this.channel = undefined;
@@ -175,7 +184,14 @@ export class RelayTransport implements Transport {
   /** A reconnect that failed: tried again later, unless no later attempt could succeed. */
   private failed(error: unknown): void {
     if (this.stopped) return;
-    if (!isFatalRelayError(error)) { this.retry(); return; }
+    if (!isFatalRelayError(error)) {
+      // an attempt the relay held for an absent PC was a wait, not a hammering: no growing pause
+      // between such waits, so a PC back from a restart is reached within a second
+      // (a hidden page keeps the growing pause: showing it again reconnects at once, through wake)
+      if (error instanceof RelayPcOfflineError && globalThis.document?.visibilityState !== "hidden") this.delay = 1000;
+      this.retry();
+      return;
+    }
     this.close();
     this.options.onFatal?.(error);
   }
