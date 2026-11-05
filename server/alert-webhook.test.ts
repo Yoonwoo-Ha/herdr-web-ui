@@ -124,6 +124,22 @@ describe("alert webhook presets", () => {
     expect(JSON.parse(destination.received[0]!.body).url).toBe("https://pc.example:7421/?pane=w1%3Ap1&view=chat");
   });
 
+  it("keeps a reachable link base when this PC's own loopback address saves, and says when none is known", async () => {
+    const hook = webhook();
+    // a first save over the relay knows no address a phone opens
+    expect(hook.save({ preset: "json", url: destination.url() }, "https://relay.ovis.invalid").reachable_link).toBe(false);
+    expect(hook.save({ preset: "json" }, "http://127.0.0.1:7317").reachable_link).toBe(false);
+    expect(hook.save({ preset: "json" }, "https://pc.tailnet.example").reachable_link).toBe(true);
+    expect(hook.save({ preset: "json", alerts: { input: true, done: "always" } }, "http://127.0.0.1:7317").reachable_link).toBe(true);
+    expect(hook.save({ preset: "json" }, "http://[::ffff:127.0.0.1]:7317").reachable_link).toBe(true);
+    expect(hook.save({ preset: "json" }, "http://0.0.0.0:7317").reachable_link).toBe(true);
+    expect(hook.save({ preset: "json" }, "http://[::]:7317").reachable_link).toBe(true);
+    hook.send(alert);
+    await hook.settled();
+    expect(JSON.parse(destination.received[0]!.body).url).toBe("https://pc.tailnet.example/?pane=w1%3Ap1&view=chat");
+    expect(webhook().view().reachable_link).toBe(true);
+  });
+
   it("refuses a destination it could not post to", () => {
     const hook = webhook();
     expect(() => hook.save({ preset: "slack", url: "http://hooks.slack.com/services/x" }, undefined)).toThrow("https://");
@@ -285,6 +301,25 @@ describe("web push alerts reach the webhook", () => {
     expect(destination.received).toHaveLength(3);
   });
 
+  it("does not tell a destination set after the alert arose", async () => {
+    const hook = webhook();
+    hook.save({ preset: "json", url: destination.url("/a") }, undefined);
+    const push = createPushService({ stateDir, timing: { short: 0, long: 0, longTurn: 0 }, webhook: hook });
+    push.seed([pane("w1:p1", "working")]);
+    // scheduled for A; the timer has not fired when B replaces A
+    await push.onStatus("w1:p1", "blocked");
+    hook.save({ preset: "json", url: destination.url("/b") }, undefined);
+    await push.settled();
+    await hook.settled();
+    expect(destination.received).toHaveLength(0);
+    // the next alert, which arose with B set, reaches B
+    await push.onStatus("w1:p1", "working");
+    await push.onStatus("w1:p1", "blocked");
+    await push.settled();
+    await hook.settled();
+    expect(destination.received.map((post) => post.path)).toEqual(["/b"]);
+  });
+
   it.each([
     ["the terminal ended", async (push: ReturnType<typeof createPushService>) => { await push.onEnded("w1:p1"); }],
     // the new blocked alert is held back by a window in use; only the old one's retry could reach the destination
@@ -297,7 +332,7 @@ describe("web push alerts reach the webhook", () => {
     const hook = createAlertWebhook({ stateDir, loopbackHttp: true, retryDelays: [1] });
     hook.save({ preset: "json", url: destination.url(), alerts: { input: true, done: "off" } }, undefined);
     const push = createPushService({ stateDir, timing: { short: 0, long: 0, longTurn: 0 }, inUse: () => inUseNow, muted: () => mutedNow,
-      webhook: { prefs: hook.prefs, wants: hook.wants, send: (sent) => { hook.send(sent); release(); } } });
+      webhook: { prefs: hook.prefs, wants: hook.wants, generation: hook.generation, send: (sent) => { hook.send(sent); release(); } } });
     push.seed([pane("w1:p1", "working")]);
     const answer = destination.hold();
     await push.onStatus("w1:p1", "blocked");
@@ -316,7 +351,7 @@ describe("web push alerts reach the webhook", () => {
     const held = new Promise<void>((resolve) => { release = resolve; });
     const hook = createAlertWebhook({ stateDir, loopbackHttp: true, retryDelays: [1] });
     hook.save({ preset: "json", url: destination.url() }, undefined);
-    const push = createPushService({ stateDir, timing: { short: 0, long: 0, longTurn: 0 }, webhook: { prefs: hook.prefs, wants: hook.wants, send: (sent) => { hook.send(sent); release(); } } });
+    const push = createPushService({ stateDir, timing: { short: 0, long: 0, longTurn: 0 }, webhook: { prefs: hook.prefs, wants: hook.wants, generation: hook.generation, send: (sent) => { hook.send(sent); release(); } } });
     push.seed([pane("w1:p1", "working")]);
     await push.onStatus("w1:p1", "blocked");
     await held;

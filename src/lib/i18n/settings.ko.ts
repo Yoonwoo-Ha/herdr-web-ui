@@ -383,6 +383,7 @@ export const SETTINGS_KO: Record<string, string> = {
   "Removed": "삭제했습니다",
   "Saved": "저장했습니다",
   "Saved on this PC. Leave the field empty to keep it.": "이 PC에 저장되어 있습니다. 칸을 비워 두면 그대로 씁니다.",
+  "Messages have no link a phone can open yet. Save once from this PC's network address, not localhost or the relay.": "아직 메시지에 폰에서 열리는 링크가 없습니다. localhost나 릴레이가 아닌 이 PC의 네트워크 주소로 접속해 한 번 저장하세요.",
   "Send a test": "테스트 보내기",
   "Test sent. Check the destination.": "테스트를 보냈습니다. 받는 곳을 확인하세요.",
   "This PC also posts its alerts to a chat app or any URL. A message names the PC, the pane and what happened, with a link to the pane. The pane goes by its terminal title, which an agent may take from your task.": "이 PC가 알림을 채팅 앱이나 원하는 URL에도 보냅니다. 메시지에는 PC, 창, 무슨 일이 있었는지와 창을 여는 링크가 담깁니다. 창 이름은 터미널 제목이며, 에이전트가 작업 내용으로 정할 수도 있습니다.",

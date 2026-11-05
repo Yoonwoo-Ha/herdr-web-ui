@@ -245,7 +245,7 @@ export interface PushServiceOptions {
   /** a pane's alert reached one device (the push service took it); not the test push or a pairing notice */
   onAlertDelivered?: () => void;
   /** Settings → Alerts → Also send to (server/alert-webhook.ts): told the alerts it chose, with the same waits and holds as a device */
-  webhook?: Pick<AlertWebhook, "prefs" | "wants" | "send">;
+  webhook?: Pick<AlertWebhook, "prefs" | "wants" | "generation" | "send">;
 }
 
 export { defaultStateDir } from "./update-state.ts";
@@ -796,7 +796,7 @@ export function createPushService(options: PushServiceOptions): PushService {
   const changes = new Map<string, number>();
 
   /** The alert, as the webhook says it: a pane of this PC is named with the PC, one of another PC's title already is. */
-  function tellWebhook(key: string, machineId: string, paneId: string, message: PushPayload): void {
+  function tellWebhook(key: string, machineId: string, paneId: string, message: PushPayload, generation?: number): void {
     const workspace = workspaces.get(key);
     const at = epochs.get(key) ?? 0;
     hooked.set(key, { machineId, paneId });
@@ -806,6 +806,7 @@ export function createPushService(options: PushServiceOptions): PushService {
       current: () => (epochs.get(key) ?? 0) === at && !muted(machineId, paneId) && options.inUse?.() !== true,
       ...(machineId === "local" ? { pc: pcKeys(machineId)[0] } : { machine_id: machineId }),
       ...(workspace ? { workspace_id: workspace } : {}),
+      ...(generation === undefined ? {} : { generation }),
     });
   }
 
@@ -1028,6 +1029,8 @@ export function createPushService(options: PushServiceOptions): PushService {
       const hookDelay = hookPrefs === null ? null : delayFor(hookPrefs, status, worked);
       if (hookDelay !== null && !groups.has(hookDelay)) groups.set(hookDelay, []);
       if (groups.size === 0) return;
+      // the destination the alert arose for: one set before the timer fires was not there to be told
+      const hookAt = options.webhook?.generation();
       schedule(key, machineId, paneId, groups, async (to, silenced, delay) => {
         if (options.inUse?.() || muted(machineId, paneId)) return;
         // only this PC's prompts are read here, and only a question's alert carries buttons
@@ -1048,7 +1051,7 @@ export function createPushService(options: PushServiceOptions): PushService {
         const hook = delay === hookDelay && options.webhook?.wants(kind) === true;
         if (live.length === 0 && !hook) return;
         const message = statusMessage(paneId, title, status, kind);
-        if (hook) tellWebhook(key, machineId, paneId, message);
+        if (hook) tellWebhook(key, machineId, paneId, message, hookAt);
         if (live.length === 0) return;
         const alert: PushPayload = { ...message, ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) };
         const urgency = status === "blocked" ? "high" : "normal";
@@ -1072,6 +1075,7 @@ export function createPushService(options: PushServiceOptions): PushService {
       });
       const hooked = options.webhook?.wants("error") === true;
       if (to.length === 0 && !hooked) return;
+      const hookAt = options.webhook?.generation();
       // it waits like a question does: a retry at the desk meanwhile is the pane's next change, which calls it off
       schedule(key, machineId, paneId, new Map([[timing.short, to]]), async (group, silenced) => {
         if (options.inUse?.() || muted(machineId, paneId)) return;
@@ -1084,7 +1088,7 @@ export function createPushService(options: PushServiceOptions): PushService {
         const hook = options.webhook?.wants("error") === true;
         if (live.length === 0 && !hook) return;
         const message = failedMessage(paneId, title);
-        if (hook) tellWebhook(key, machineId, paneId, message);
+        if (hook) tellWebhook(key, machineId, paneId, message, hookAt);
         if (live.length === 0) return;
         await broadcast({ ...message, ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, "normal", live, true);
       });

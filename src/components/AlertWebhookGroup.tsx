@@ -113,6 +113,7 @@ export function AlertWebhookGroup() {
             <button type="button" className="btn" disabled={busy || !saved} onClick={() => void test()}>{t("Send a test")}</button>
           </form>
           {saved && <p className="settings-hint">{t("Saved on this PC. Leave the field empty to keep it.")}</p>}
+          {saved && !view.reachable_link && <p className="settings-hint">{t("Messages have no link a phone can open yet. Save once from this PC's network address, not localhost or the relay.")}</p>}
           <p className={line?.error || lastError ? "settings-hint alert-webhook-error" : "settings-hint"} role="status">{line?.text ?? lastError}</p>
         </div>
         <SettingsRow label={t("Needs input")}>

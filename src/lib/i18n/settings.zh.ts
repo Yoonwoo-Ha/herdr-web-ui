@@ -383,6 +383,7 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Removed": "已删除",
   "Saved": "已保存",
   "Saved on this PC. Leave the field empty to keep it.": "已保存在这台电脑上。留空则保持不变。",
+  "Messages have no link a phone can open yet. Save once from this PC's network address, not localhost or the relay.": "消息中还没有手机能打开的链接。请通过这台电脑的网络地址（不是 localhost 或中继）保存一次。",
   "Send a test": "发送测试",
   "Test sent. Check the destination.": "已发送测试，请查看发送目标。",
   "This PC also posts its alerts to a chat app or any URL. A message names the PC, the pane and what happened, with a link to the pane. The pane goes by its terminal title, which an agent may take from your task.": "这台电脑也会把提醒发送到聊天应用或任意 URL。消息包含电脑、窗格、发生了什么以及打开窗格的链接。窗格名称是终端标题，代理可能会根据你的任务来设置它。",

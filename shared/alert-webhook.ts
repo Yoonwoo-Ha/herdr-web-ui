@@ -21,6 +21,8 @@ export interface AlertWebhookView {
   /** Telegram only */
   chat_id: string | null;
   alerts: AlertPrefs;
+  /** whether messages link to an address another device opens: false until a save comes from one (not the relay, not this PC's localhost) */
+  reachable_link: boolean;
   /** ISO times of the last post that went through and the last that did not, since this server started */
   last_success_at: string | null;
   last_failure_at: string | null;
