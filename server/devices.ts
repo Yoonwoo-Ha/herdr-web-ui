@@ -234,6 +234,8 @@ export class DeviceStore {
   private unconfirmedFirstPairs: UnconfirmedFirstPair[] = [];
   private readonly path: string;
   private readonly revocations = new Map<string, Set<() => void>>();
+  /** Sessions of a row, told when a `link` moves it to another key (onLinked). */
+  private readonly relinks = new Map<string, Set<(sessionId: string) => void>>();
   private readonly revokeAllListeners = new Set<() => void>();
   private readonly pairings = new Set<(event: DevicePairedEvent, origin: readonly string[]) => void>();
   private readonly removals = new Set<(event: DeviceRemovedEvent) => void>();
@@ -331,6 +333,17 @@ export class DeviceStore {
     this.gateClosedAt = gate;
     this.pending = null;
     this.unconfirmedFirstPairs = [];
+  }
+
+  /** Hears of a `link` moving row `id` to another key, with the id of the session that sent it. */
+  onLinked(id: string, listener: (sessionId: string) => void): () => void {
+    const listeners = this.relinks.get(id) ?? new Set<(sessionId: string) => void>();
+    listeners.add(listener);
+    this.relinks.set(id, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.relinks.delete(id);
+    };
   }
 
   /** Ends stale authority on revocation or role changes, never a label-only update. Called immediately for an already-revoked identity. */
@@ -759,10 +772,11 @@ export class DeviceStore {
   }
 
   /**
-   * A `link` the device `deviceId` sent over its own session: its row takes `key` and joins `account`
-   * in one write. Its sessions stay: the device is the same, and a role change is what ends them.
+   * A `link` the device `deviceId` sent over its own session `sessionId`: its row takes `key` and joins
+   * `account` in one write. The row's other sessions signed in with a key it no longer has, so they end
+   * (`auth_changed`); the linking one goes on until it signs in again with the new key.
    */
-  linkAccountKey(deviceId: string, oldKey: string, key: string, account: string): PairedDevice | null {
+  linkAccountKey(deviceId: string, oldKey: string, key: string, account: string, sessionId = ""): PairedDevice | null {
     this.assertAccountWritable();
     const device = this.devices.find((d) => d.id === deviceId && d.relay_public_key === oldKey);
     if (!device) return null;
@@ -770,6 +784,7 @@ export class DeviceStore {
     const next = this.devices.map((d) => d === device ? updated : d);
     this.save(next);
     this.devices = next;
+    for (const listener of [...this.relinks.get(deviceId) ?? []]) listener(sessionId);
     return this.list(null).find((d) => d.id === deviceId) ?? null;
   }
 

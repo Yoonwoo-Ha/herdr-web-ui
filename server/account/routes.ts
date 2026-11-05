@@ -51,7 +51,7 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       setRequestRoute(pathname);
       // a link proves the key of the row whose session sends it, and only the relay carries a row's key
       if (peer.kind !== "relay") return fail("link_not_owner", "Link a device from its own connection through the relay", 403);
-      const linked = await applyLink(devices, body.record, { deviceId: peer.device.id, serverId: peer.serverId, sessionKey: peer.key });
+      const linked = await applyLink(devices, body.record, { deviceId: peer.device.id, serverId: peer.serverId, sessionKey: peer.key, sessionId: peer.sessionId });
       if ("refused" in linked) return fail(linked.refused, `The link was refused: ${linked.refused}`, LINK_STATUS[linked.refused]);
       return reply({ device: linked.device });
     }

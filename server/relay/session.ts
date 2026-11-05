@@ -377,7 +377,10 @@ export class RelaySession {
     const devices = this.options.services.devices;
     if (!this.mux.active) return;
     if (!device) { this.close("auth_failed"); return; }
-    this.unwatch = devices.onRevoke(device.id, () => this.close(devices.has(device.id) ? "auth_changed" : "auth_revoked"));
+    const unrevoke = devices.onRevoke(device.id, () => this.close(devices.has(device.id) ? "auth_changed" : "auth_revoked"));
+    // a link moves the row to another key: a session signed in with the one it had ends, all but the linking one
+    const unlinked = devices.onLinked(device.id, (sessionId) => { if (sessionId !== this.sessionId) this.close("auth_changed"); });
+    this.unwatch = () => { unrevoke(); unlinked(); };
     if (!devices.has(device.id) || !this.mux.active) { this.unwatch(); return; }
     if (devices.list(null).find((current) => current.id === device.id)?.role !== device.role) {
       this.close("auth_changed");

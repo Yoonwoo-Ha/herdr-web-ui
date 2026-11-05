@@ -203,7 +203,9 @@ the relay too. Mutations need the app's mutation guard, like the other routes.
 `POST /api/account/link` `{ "record": <link> }`: the request's own device must be the record's
 `device_id`, with `old_key` its current key, `server_id` this PC's. The row's key becomes `key` and it
 becomes a member, in one write. `old_key` equal to `key` makes a row whose key already is the account
-key a member. Answers `{ "device": <paired device> }`.
+key a member. Answers `{ "device": <paired device> }`. The row's other sessions end (`auth_changed`):
+they signed in with a key it no longer has. The linking session goes on, with no member's rights,
+until it signs in again with the new key.
 
 `POST /api/account/records` `{ "records": [<record>, …] }`: at most 32. Applies each in order and
 answers every outcome, never failing the whole batch for one record:

@@ -496,16 +496,16 @@ test("the device list shows account members' account, key and adder to a driving
   for (const row of await list(watcher)) for (const field of ["account", "account_key", "added_by"]) expect(row).not.toHaveProperty(field);
 });
 
-test("a session signed in with a row's key before it was linked acts as no member", async () => {
+test("the session that linked a row, still on the row's former key, acts as no member", async () => {
   const f = fixture();
   const legacy = await relayDevice(f);
-  const [first, second] = [await signedIn(f, legacy), await signedIn(f, legacy)];
+  const first = await signedIn(f, legacy);
   const key = await accountKey();
   expect((await post(first, "/api/account/link", { record: await linkRecord(legacy, key) })).status).toBe(200);
   const joining = await accountKey();
   const fresh = await signedIn(f, { keys: key.keys, publicKey: key.spki, id: legacy.id });
   await post(fresh, "/api/account/records", { records: [await add(key, joining.spki)] });
-  expect((await post(second, "/api/account/introduce", { key: joining.spki, pcs: [introducedPc()] })).body.error?.code).toBe("account_required");
+  expect((await post(first, "/api/account/introduce", { key: joining.spki, pcs: [introducedPc()] })).body.error?.code).toBe("account_required");
 });
 
 test("a device paired with a code, which sent its key but never signed with it, can neither read nor link as that key", async () => {
@@ -543,13 +543,15 @@ test("a device paired with a code a relay device started on a PC in no account i
   expect(f.app.context.services.devices.hasKey(target.spki)).toBe(false);
 });
 
-test("a session from a row's former key cannot start a member's pairing code", async () => {
+test("a link ends the row's other sessions from its former key, and keeps the one that linked", async () => {
   const f = fixture();
   const legacy = await relayDevice(f);
   const [first, stale] = [await signedIn(f, legacy), await signedIn(f, legacy)];
   const key = await accountKey();
   expect((await post(first, "/api/account/link", { record: await linkRecord(legacy, key) })).status).toBe(200);
-  expect((await post(stale, "/api/devices/pair/start", {})).body.error?.code).toBe("account_required");
+  expect(await bounded(stale.serverError)).toBe("auth_changed");
+  // the linking session goes on (with the old key's rights until it signs in again)
+  expect((await first.open("/api/devices").response).status).toBe(200);
 });
 
 test("a watching device added by a member reads its own introduction", async () => {
