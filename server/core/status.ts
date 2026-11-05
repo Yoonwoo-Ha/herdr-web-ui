@@ -32,7 +32,7 @@ import { OMO_ALIASES, OmoStatus } from "../omo-status.ts";
 import type { OrderSequence } from "../order-sequence.ts";
 import type { PendingInputs } from "../pending-input.ts";
 import type { PreferenceStore } from "../preferences.ts";
-import { onChatSubmitted, promptWaitEnded, type OpenCodePromptState } from "../prompt.ts";
+import { currentPrompt, onChatSubmitted, promptWaitEnded, type OpenCodePromptState } from "../prompt.ts";
 import { type AlertTiming, createPushService, defaultStateDir } from "../push.ts";
 import { SessionPlans } from "../session-plan.ts";
 import type { Telemetry } from "../telemetry.ts";
@@ -95,6 +95,9 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     now: options.statusNow,
     loopbackHttp: options.pushLoopbackHttp === true,
     canDeliver,
+    // a device paired to watch gets the alert, never its answer buttons
+    canAnswer: (id) => id === null || (id === undefined ? !devices.gated : devices.canDrive(id)),
+    lookupPrompt: (paneId, signal) => currentPrompt(paneId, { codexHome: options.codexHome, openCodeStateDir: options.openCodeStateDir, openCodeState: options.openCodeState, signal }),
     inUse: () => present.size > 0,
     // the persisted list, read as each alert is scheduled and again as it goes out
     muted: (machineId, paneId) => paneAlertsMuted(preferences.get().muted_panes, machineId, paneId),

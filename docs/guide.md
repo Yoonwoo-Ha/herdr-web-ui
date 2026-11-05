@@ -528,6 +528,14 @@ The test push is always sent.
 Each pane keeps one alert: a new one replaces its last. iOS lets an alert be removed only
 30 seconds after it arrived, so a quicker repeat stays until the pane's next alert.
 
+An alert for an approval or a question with two short options (**Allow** / **Deny**, **Yes** /
+**No**) carries them as buttons on desktop browsers and Android, under the question and what it is
+about (the command or the file): a tap answers it without opening the app, and the card closes
+everywhere. If the question changed or was answered on another device meanwhile, nothing is sent
+and a new alert says so; tap it to open the pane. Questions with more or longer options, a command
+too long to show whole, typed answers and forms of several questions open the pane, as do alerts
+on iOS, in the relay app, and on a device paired to watch only.
+
 To get the same alerts in a chat app, choose a destination under **Settings → Alerts → Also send
 to**: an ntfy topic, a Slack or Discord webhook, a Telegram bot (its token and a chat id), or
 plain JSON to any URL. It has its own choice of alerts, waits and holds back like a device does,

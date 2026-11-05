@@ -25,6 +25,19 @@ export interface PushPayload {
    * want this kind or this PC: a device shows what it gets.
    */
   kind?: AlertKind;
+  /**
+   * The prompt the pane shows, when its alert can answer it: the id POST /api/pane/prompt/answer
+   * checks, and the options its buttons pick. Only for a single-choice approval or question of at
+   * most two short options, to a device that may answer it; any other alert opens the pane.
+   */
+  prompt_id?: string;
+  actions?: PushAction[];
+}
+
+/** One answer button on an alert: the prompt's option it picks, and that option's label. */
+export interface PushAction {
+  option_index: number;
+  label: string;
 }
 
 /**

@@ -720,6 +720,9 @@ export class DeviceStore {
 
   has(id: string): boolean { return this.devices.some((device) => device.id === id); }
 
+  /** Whether the device may answer a pane's prompt: paired to drive, not to watch. */
+  canDrive(id: string): boolean { return this.devices.some((device) => device.id === id && device.role === "drive"); }
+
   private pruneUnconfirmedFirstPairs(now: number): void {
     this.unconfirmedFirstPairs = this.unconfirmedFirstPairs.filter(({ expires }) => now <= expires);
   }

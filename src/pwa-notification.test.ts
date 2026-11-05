@@ -553,3 +553,151 @@ describe("one alert per pane", () => {
     expect(bare.shown).toHaveLength(1);
   });
 });
+
+describe("answer buttons (#2916)", () => {
+  type Shown = { title: string; options: { body?: string; tag: string; actions?: Array<{ action: string; title: string }>; data: Record<string, unknown> } };
+  const alert = {
+    pane_id: "w1:p1", workspace_id: "w1", title: "omp", body: "needs your permission", tag: "herdr-pane-w1:p1", kind: "permission",
+    prompt_id: "prompt-1", actions: [{ option_index: 0, label: "Allow once" }, { option_index: 1, label: "Deny" }],
+  };
+  function worker(answer: () => Promise<Response> = async () => Response.json({ ok: true }), scope?: string) {
+    const listeners = new Map<string, (event: unknown) => void>();
+    const shown: Shown[] = [];
+    const opened: string[] = [];
+    const posted: Array<{ url: string; body: unknown; headers: Record<string, string> }> = [];
+    loadWorker({
+      addEventListener: (type: string, listener: (event: unknown) => void) => listeners.set(type, listener),
+      clients: { matchAll: async () => [], openWindow: async (url: string) => { opened.push(url); return null; } },
+      registration: { scope, showNotification: async (title: string, options: Shown["options"]) => { shown.push({ title, options }); } },
+      fetch: async (url: string, init: RequestInit = {}) => {
+        if ((init.method ?? "GET") === "GET") return new Response(null, { status: 401 });
+        posted.push({ url, body: JSON.parse(String(init.body)), headers: init.headers as Record<string, string> });
+        return answer();
+      },
+    });
+    const run = async (type: string, event: Record<string, unknown>) => {
+      const waits: Promise<unknown>[] = [];
+      listeners.get(type)!({ ...event, waitUntil: (promise: Promise<unknown>) => waits.push(promise) });
+      await Promise.all(waits);
+    };
+    const push = (payload: unknown) => run("push", { data: { json: () => payload, text: () => JSON.stringify(payload) } });
+    const click = (action = "") => run("notificationclick", { action, notification: { data: shown.at(-1)!.options.data, close: () => {} } });
+    return { push, click, shown, opened, posted };
+  }
+
+  it("shows the prompt's options as the alert's buttons", async () => {
+    const local = worker();
+    await local.push(alert);
+    expect(local.shown[0]!.options.actions).toEqual([{ action: "answer-0", title: "Allow once" }, { action: "answer-1", title: "Deny" }]);
+    // the hosted shell's worker cannot reach its PC (only a window holds the relay channel): no buttons there
+    const hosted = worker(undefined, `https://app.ovis.test/s/${"a".repeat(32)}/`);
+    await hosted.push(alert);
+    expect(hosted.shown[0]!.options.actions).toBeUndefined();
+    // an alert without them, as before
+    const plain = worker();
+    await plain.push({ ...alert, prompt_id: undefined, actions: undefined });
+    expect(plain.shown[0]!.options.actions).toBeUndefined();
+  });
+
+  it("answers through the prompt answer route with the prompt's identity, without opening the app", async () => {
+    const w = worker();
+    await w.push(alert);
+    await w.click("answer-1");
+    expect(w.posted.map(({ url, body, headers }) => [url, body, headers["x-herdr-machine"]]))
+      .toEqual([["/api/pane/prompt/answer", { pane_id: "w1:p1", prompt_id: "prompt-1", option_index: 1 }, "1"]]);
+    expect(w.opened).toEqual([]);
+    expect(w.shown).toHaveLength(1);
+  });
+
+  it("says so in a new alert when the prompt changed, or the answer did not get through", async () => {
+    for (const answer of [
+      async () => Response.json({ error: { code: "prompt_changed" } }, { status: 409 }),
+      async () => new Response(null, { status: 403 }),
+      async () => { throw new TypeError("Failed to fetch"); },
+    ]) {
+      const w = worker(answer);
+      await w.push(alert);
+      await w.click("answer-0");
+      expect(w.opened).toEqual([]);
+      expect(w.shown).toHaveLength(2);
+      const followUp = w.shown[1]!;
+      // no buttons: its tap opens the pane as any alert's does
+      expect(followUp.options.actions).toBeUndefined();
+      expect(followUp.options.tag).toBe(alert.tag);
+      expect(followUp.options.data).toMatchObject({ pane_id: "w1:p1", machine_id: "local", workspace_id: "w1" });
+      expect(followUp.options.data.prompt_id).toBeUndefined();
+    }
+  });
+
+  it("leaves the pane's newer alert alone when an earlier answer comes back refused", async () => {
+    const answered = deferred();
+    const posted = deferred();
+    const listeners = new Map<string, (event: unknown) => void>();
+    const centre = notificationCentre("tagged");
+    loadWorker({
+      addEventListener: (type: string, listener: (event: unknown) => void) => listeners.set(type, listener),
+      clients: { matchAll: async () => [], openWindow: async () => null },
+      registration: centre,
+      fetch: async () => { posted.resolve(); await answered.promise; return Response.json({ error: { code: "prompt_changed" } }, { status: 409 }); },
+    });
+    const run = (type: string, event: Record<string, unknown>) => {
+      let completion!: Promise<unknown>;
+      listeners.get(type)!({ ...event, waitUntil: (promise: Promise<unknown>) => { completion = promise; } });
+      return completion;
+    };
+    const push = (payload: unknown) => run("push", { data: { json: () => payload, text: () => JSON.stringify(payload) } });
+    await push(alert);
+    const first = centre.shown()[0]!;
+    const tapped = run("notificationclick", { action: "answer-0", notification: { data: first, close: () => centre.getNotifications().then((all) => all[0]?.close()) } });
+    await posted.promise;
+    await push({ ...alert, title: "newer", prompt_id: "prompt-2" });
+    answered.resolve();
+    await tapped;
+    expect(centre.shown().map((shown) => shown.title)).toEqual(["newer"]);
+  });
+
+  it("leaves a newer alert alone when its push comes in while the worker looks for one", async () => {
+    const listing = deferred();
+    const listed = deferred();
+    const listeners = new Map<string, (event: unknown) => void>();
+    const centre = notificationCentre("tagged");
+    let holdListing = false;
+    loadWorker({
+      addEventListener: (type: string, listener: (event: unknown) => void) => listeners.set(type, listener),
+      clients: { matchAll: async () => [], openWindow: async () => null },
+      registration: {
+        ...centre,
+        getNotifications: async (filter?: { tag?: string }) => {
+          const now = await centre.getNotifications(filter);
+          if (holdListing) { holdListing = false; listing.resolve(); await listed.promise; }
+          return now;
+        },
+      },
+      fetch: async () => Response.json({ error: { code: "prompt_changed" } }, { status: 409 }),
+    });
+    const run = (type: string, event: Record<string, unknown>) => {
+      let completion!: Promise<unknown>;
+      listeners.get(type)!({ ...event, waitUntil: (promise: Promise<unknown>) => { completion = promise; } });
+      return completion;
+    };
+    const push = (payload: unknown) => run("push", { data: { json: () => payload, text: () => JSON.stringify(payload) } });
+    await push(alert);
+    const first = centre.shown()[0]!;
+    holdListing = true;
+    const tapped = run("notificationclick", { action: "answer-0", notification: { data: first, close: () => centre.getNotifications().then((all) => all[0]?.close()) } });
+    // the listing found nothing under the tag; the newer push lands before it returns
+    await listing.promise;
+    await push({ ...alert, title: "newer", prompt_id: "prompt-2" });
+    listed.resolve();
+    await tapped;
+    expect(centre.shown().map((shown) => shown.title)).toEqual(["newer"]);
+  });
+
+  it("opens the pane on a tap of the alert itself, as before", async () => {
+    const w = worker();
+    await w.push(alert);
+    await w.click();
+    expect(w.posted).toEqual([]);
+    expect(w.opened).toEqual(["/?machine=local&ws=w1&pane=w1%3Ap1&view=chat"]);
+  });
+});

@@ -62,7 +62,7 @@ import { dirname, join } from "node:path";
 import webpush from "web-push";
 
 import { paneStorageId } from "../shared/machines.ts";
-import type { AgentStatus, DevicePairedEvent, HerdrPane, PushDeliveryFailure, PushPayload, PushSubscriptionStatus } from "../shared/protocol.ts";
+import type { AgentStatus, DevicePairedEvent, HerdrPane, InteractivePrompt, PushAction, PushDeliveryFailure, PushPayload, PushSubscriptionStatus } from "../shared/protocol.ts";
 import {
   type AlertKind,
   type AlertPrefs,
@@ -79,6 +79,7 @@ import {
   shouldNotifyStatus,
   statusNotificationBody,
 } from "../shared/notify-policy.ts";
+import { cleanLine, isDivider, parsedByPublicPrompt } from "./dialogs/shared.ts";
 import { badRequest, jsonResponse, setRequestRoute } from "./http.ts";
 import { isLoopbackHost } from "./access.ts";
 import type { AlertWebhook } from "./alert-webhook.ts";
@@ -87,6 +88,13 @@ import { writePrivateState } from "./private-state.ts";
 /** A blocked agent is still blocked when the phone gets signal back; a newer push for the pane replaces it anyway. */
 const PUSH_TTL_SECONDS = 12 * 60 * 60;
 const PUSH_TIMEOUT_MS = 10_000;
+/** How long a question's alert waits to read the prompt for its buttons; past it, the alert goes without them. */
+const PROMPT_LOOKUP_MS = 3_000;
+/** The longest option label an alert's button carries: a longer one is cut by the platform, so its alert opens the pane. */
+const ACTION_LABEL_MAX = 24;
+/** The most of a prompt an alert with buttons shows whole: the lines of its body, and its length in all. A longer one gets no buttons. */
+const PROMPT_SUMMARY_LINES = 4;
+const PROMPT_SUMMARY_MAX = 300;
 const DEFAULT_SUBJECT = "https://github.com/devswha/ovis";
 /** How many retired endpoints are remembered; the oldest is forgotten first. */
 const RETIRED_LIMIT = 1000;
@@ -217,6 +225,10 @@ export interface PushServiceOptions {
    * waits for. Falls back to what was last seeded.
    */
   lookupPane?: (paneId: string) => Promise<{ title: string; agent_kind?: string } | undefined>;
+  /** The prompt this PC's pane shows now and the screen it was read from (absent for one not read off a screen), read when a question's alert fires, for its answer buttons (promptActions). */
+  lookupPrompt?: (paneId: string, signal: AbortSignal) => Promise<{ prompt: InteractivePrompt; screen?: string } | null>;
+  /** whether a subscription's device may answer a prompt (not one paired to watch only): only it gets the buttons */
+  canAnswer?: (deviceId: string | null | undefined) => boolean;
   /** This PC's name, as the roster gives it to devices (server/machines.ts): what an older `pcs_off` names it by */
   localName?: string;
   /** This PC's relay ID, where it has one (server/relay/service.ts serverId): what `pcs_off` names it by (shared/machines.ts pcAlertKey) */
@@ -308,6 +320,60 @@ export function parseSubscription(value: unknown, options: { loopbackHttp?: bool
 
 export function statusMessage(paneId: string, title: string, status: AgentStatus, kind: AlertKind = status === "blocked" ? "input" : "done"): PushPayload {
   return { pane_id: paneId, title, body: kind === "permission" ? PERMISSION_NOTIFICATION_BODY : statusNotificationBody(status), tag: paneNotificationTag(paneId), kind };
+}
+
+/**
+ * The buttons an alert for `prompt` carries: each option, when the prompt is one choice between at
+ * most two short options (Allow / Deny, Yes / No) that nothing else goes with, and `screen` shows
+ * all of what it is about (shownWhole). A plan, a menu, a form of several questions, a typed answer,
+ * a queued question, or a prompt not read off a screen opens the pane instead.
+ */
+export function promptActions(prompt: InteractivePrompt | null, screen?: string): PushAction[] | null {
+  if (!prompt || (prompt.kind !== "approval" && prompt.kind !== "question")) return null;
+  // omp cut its own question short on the screen: what the alert would show is cut too
+  if (screen === undefined || !shownWhole(prompt, screen) || parsedByPublicPrompt.get(prompt)?.ompQuestionCut) return null;
+  if (prompt.multi_select || prompt.custom_option_index !== null || prompt.queued !== undefined || prompt.checks_with_text) return null;
+  if (prompt.steps !== undefined || prompt.answers !== undefined || prompt.can_step_back || prompt.can_step_next) return null;
+  if (prompt.options.length === 0 || prompt.options.length > 2) return null;
+  // an option whose meaning is in its description is not answered by its label alone
+  if (prompt.options.some((option) => option.label.trim() === "" || option.label.length > ACTION_LABEL_MAX || option.description)) return null;
+  return prompt.options.map((option, index) => ({ option_index: index, label: option.label.trim() }));
+}
+
+/**
+ * Whether the alert's text is the prompt as the screen shows it, verbatim: the body's lines are the
+ * screen's lines right over the question, in order, with nothing between (a line a reader left out,
+ * a key hint, a marker); over them is the prompt's title or a divider, so nothing of it is above the
+ * screen or above a window the reader cut; under the question come the options, one line each. Any
+ * line a reader dropped, filtered, joined or cut fails this, whichever agent's reader it is: a button
+ * must approve only what the alert shows.
+ */
+export function shownWhole(prompt: InteractivePrompt, screen: string): boolean {
+  const lines = screen.split("\n").map(cleanLine).filter((line) => line !== "");
+  const body = (prompt.body ?? "").split("\n").map((line) => line.trim()).filter((line) => line !== "");
+  const question = prompt.question.trim();
+  // the asking nearest the bottom: what the screen asks now
+  const at = lines.lastIndexOf(question);
+  if (at < 0) return false;
+  if (!prompt.options.every((option, index) => lines[at + 1 + index]?.includes(option.label.trim()))) return false;
+  const start = at - body.length;
+  // the screen's first line has nothing over it to say it is where the prompt begins
+  if (start < 1 || !body.every((line, index) => lines[start + index] === line)) return false;
+  const over = lines[start - 1]!;
+  return over === prompt.title.trim() || isDivider(over);
+}
+
+/**
+ * What an alert with buttons says: the prompt's title, its question and what it shows (the command, the file).
+ * Null when that does not fit an alert whole: a button must not approve what the alert cut off.
+ */
+export function promptSummary(prompt: InteractivePrompt): string | null {
+  const body = (prompt.body ?? "").split("\n");
+  if (body.length > PROMPT_SUMMARY_LINES) return null;
+  // every line of what is approved stays, a repeated one too: only a title that repeats the question goes
+  const head = prompt.title.trim() === prompt.question.trim() ? [prompt.question] : [prompt.title, prompt.question];
+  const text = [...head, ...body].map((line) => line.trim()).filter((line) => line !== "").join("\n");
+  return text.length > PROMPT_SUMMARY_MAX ? null : text;
 }
 
 export function endedMessage(paneId: string, title: string): PushPayload {
@@ -693,6 +759,25 @@ export function createPushService(options: PushServiceOptions): PushService {
     return { title: titles.get(key) ?? paneId, agentKind: kinds.get(key) };
   }
 
+  /** The prompt's identity and buttons for its alert; null when it has none, or the read failed or took too long. */
+  async function readActions(paneId: string): Promise<{ promptId: string; body: string; actions: PushAction[] } | null> {
+    if (!options.lookupPrompt) return null;
+    const signal = AbortSignal.timeout(PROMPT_LOOKUP_MS);
+    try {
+      const read = await Promise.race([
+        options.lookupPrompt(paneId, signal),
+        new Promise<null>((resolve) => signal.addEventListener("abort", () => resolve(null), { once: true })),
+      ]);
+      const prompt = read?.prompt ?? null;
+      const actions = promptActions(prompt, read?.screen);
+      const body = prompt && actions ? promptSummary(prompt) : null;
+      return prompt && actions && body !== null ? { promptId: prompt.id, body, actions } : null;
+    } catch {
+      // herdr busy or the pane gone: the alert opens the pane, as it always did
+      return null;
+    }
+  }
+
   const timing = { ...DEFAULT_ALERT_TIMING, ...options.timing };
   const now = options.now ?? Date.now;
   /** when each pane's current turn began: from `working`/`blocked` entered, until idle or done */
@@ -706,6 +791,9 @@ export function createPushService(options: PushServiceOptions): PushService {
   const unsent = new Set<Scheduled>();
   /** every alert not yet sent or called off, for `settled()` */
   const inFlight = new Set<Promise<void>>();
+
+  /** how many times each pane's waiting alert was called off: an alert that fired before a change sees it after its lookups */
+  const changes = new Map<string, number>();
 
   /** The alert, as the webhook says it: a pane of this PC is named with the PC, one of another PC's title already is. */
   function tellWebhook(key: string, machineId: string, paneId: string, message: PushPayload): void {
@@ -731,6 +819,7 @@ export function createPushService(options: PushServiceOptions): PushService {
   const bump = (key: string): void => { epochs.set(key, (epochs.get(key) ?? 0) + 1); };
 
   function callOff(key: string): void {
+    changes.set(key, (changes.get(key) ?? 0) + 1);
     bump(key);
     waiting.get(key)?.cancel();
     waiting.delete(key);
@@ -887,6 +976,8 @@ export function createPushService(options: PushServiceOptions): PushService {
         if (!onThisPc(key) || present.has(key) || newerKeys.has(key)) continue;
         // closed while events were lost: no alert may still speak for it
         callOff(key);
+        // gone: a question still reading its prompt finds no count, which is no longer the one it saw
+        changes.delete(key);
         turnStart.delete(key);
         lastStatus.delete(key);
       }
@@ -939,9 +1030,15 @@ export function createPushService(options: PushServiceOptions): PushService {
       if (groups.size === 0) return;
       schedule(key, machineId, paneId, groups, async (to, silenced, delay) => {
         if (options.inUse?.() || muted(machineId, paneId)) return;
-        const { title, agentKind } = await lookUp(key, machineId, paneId);
+        // only this PC's prompts are read here, and only a question's alert carries buttons
+        const reading = status === "blocked" && machineId === "local" ? readActions(paneId) : Promise.resolve(null);
+        const asked = changes.get(key);
+        const [{ title, agentKind }, answer] = await Promise.all([lookUp(key, machineId, paneId), reading]);
         // the title can wait for herdr: a window that came into use, or a mute made (even one undone since), meanwhile still holds the alert
         if (options.inUse?.() || silenced() || muted(machineId, paneId)) return;
+        // a question whose pane changed while its prompt was read: the next asking's alert, under the same tag, holds what
+        // the pane asks now, and this one's buttons must not replace it. A finish already under way still goes out
+        if (status === "blocked" && changes.get(key) !== asked) return;
         const kind: AlertKind = status === "blocked" ? blockedAlertKind(agentKind) : "done";
         // a device that dropped out meanwhile is not written to, nor one that does not want this kind
         const live = to.flatMap((subscription) => {
@@ -953,7 +1050,14 @@ export function createPushService(options: PushServiceOptions): PushService {
         const message = statusMessage(paneId, title, status, kind);
         if (hook) tellWebhook(key, machineId, paneId, message);
         if (live.length === 0) return;
-        await broadcast({ ...message, ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, status === "blocked" ? "high" : "normal", live, true);
+        const alert: PushPayload = { ...message, ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) };
+        const urgency = status === "blocked" ? "high" : "normal";
+        const answering = answer === null ? [] : live.filter((subscription) => options.canAnswer?.(subscription.device_id) ?? true);
+        await Promise.all([
+          // the buttons go with what they answer: a bare "Yes" under "waiting for your input" says nothing of what it allows
+          broadcast({ ...alert, ...(answer === null ? {} : { body: answer.body, prompt_id: answer.promptId, actions: answer.actions }) }, urgency, answering, true),
+          broadcast(alert, urgency, live.filter((subscription) => !answering.includes(subscription)), true),
+        ]);
       });
     },
 
@@ -989,6 +1093,7 @@ export function createPushService(options: PushServiceOptions): PushService {
     async onEnded(paneId, machineId = "local") {
       const key = paneStorageId(machineId, paneId);
       callOff(key);
+      changes.delete(key);
       turnStart.delete(key);
       if (muted(machineId, paneId)) return;
       // an ended terminal is a finish of its own: a device that wants none hears none

@@ -514,7 +514,7 @@ export interface DevicesRevokedAll {
   readonly revoked: number;
 }
 
-export type { PushDeliveryFailure, PushKey, PushPayload, PushSubscriptionStatus } from "./push.ts";
+export type { PushAction, PushDeliveryFailure, PushKey, PushPayload, PushSubscriptionStatus } from "./push.ts";
 
 /** One turn of a structured agent conversation (the chat lens source). */
 export interface ConversationTurn {
