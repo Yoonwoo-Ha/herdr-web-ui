@@ -9,7 +9,8 @@ import { chromePath } from "./chrome-path.ts";
 
 // Search conversation (#2018) in the unmodified app over the demo's fixture transport: offered in
 // the pane's menu and the palette where the PC's bridge searches, opened there, a pick opening the
-// chat at its message; and nowhere for a bridge that does not list `conversation-search`. All files
+// chat at its message, also one whose message changed since it was searched (#2958); and nowhere
+// for a bridge that does not list `conversation-search`. All files
 // and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "ovis-search-demo-"));
 const evidence = process.env.UI_EVIDENCE_DIR;
@@ -29,6 +30,18 @@ const paletteActions = async (page: Page): Promise<string[]> => {
   return palette.locator('[role="option"] .menu-item-main').allTextContents();
 };
 
+/** The last match picked: the search closes, and the turn that holds the answer starts at the top of the view. */
+const pickOpensAnswer = async (page: Page): Promise<void> => {
+  const dialog = page.getByRole("dialog", { name: "Search conversation" });
+  await dialog.getByRole("option").last().click();
+  await dialog.waitFor({ state: "detached", timeout: 5_000 });
+  await page.waitForFunction(() => {
+    const view = document.querySelector(".pane-frame.is-current .chat-view")?.getBoundingClientRect();
+    const row = [...document.querySelectorAll<HTMLElement>(".pane-frame.is-current [data-chat-row]")].find((node) => node.textContent?.includes("I'll look at how payments are created"));
+    return view !== undefined && row !== undefined && Math.abs(row.getBoundingClientRect().top - view.top) <= 2;
+  }, undefined, { timeout: 5_000 });
+};
+
 try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
@@ -45,7 +58,19 @@ try {
     for (const name of ["CONNECTING", "OPEN", "CLOSING", "CLOSED"]) Object.defineProperty(Older, name, { value: Demo[name] });
     window.WebSocket = Older;
   })();</script>`;
-  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    ${older}\n    <script type="module"`));
+  // `changed` names every match as its turn was named before it changed (an answer that went on,
+  // a tool's output that came): no row has that name any more
+  const changed = `<script>(() => {
+    if (!location.search.includes("changed=1")) return;
+    const demo = window.fetch;
+    window.fetch = async (input, init) => {
+      const answer = await demo(input, init);
+      if (!new URL(input instanceof Request ? input.url : String(input), location.href).pathname.endsWith("/api/pane/conversation/search")) return answer;
+      const body = await answer.json();
+      return new Response(JSON.stringify({ ...body, matches: body.matches.map((match) => ({ ...match, turn: match.turn.slice(0, -1) })) }), { status: answer.status, headers: answer.headers });
+    };
+  })();</script>`;
+  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    ${older}\n    ${changed}\n    <script type="module"`));
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
     if (!path.startsWith("/herdr-web-ui/demo/app/")) return new Response("not found", { status: 404 });
@@ -83,15 +108,18 @@ try {
         "…colliding. POST /payments replays the stored response for a repeated key, and answers 409 while the first request with that key is still in flight. A repeated key with a different body is…",
       ]);
       if (evidence) await page.screenshot({ path: join(evidence, `conversation-search-dialog-${width}.png`) });
-      await dialog.getByRole("option").last().click();
-      await dialog.waitFor({ state: "detached" });
-      // the turn that holds the answer starts at the top of the view
-      await page.waitForFunction(() => {
-        const view = document.querySelector(".pane-frame.is-current .chat-view")?.getBoundingClientRect();
-        const row = [...document.querySelectorAll<HTMLElement>(".pane-frame.is-current [data-chat-row]")].find((node) => node.textContent?.includes("I'll look at how payments are created"));
-        return view !== undefined && row !== undefined && Math.abs(row.getBoundingClientRect().top - view.top) <= 2;
-      }, undefined, { timeout: 5_000 });
+      await pickOpensAnswer(page);
       console.log(`PASS ${width}: the pane's menu opens the search, and a pick opens the chat at its message`);
+
+      // the answer changed since it was searched: the one turn that still holds the match opens
+      await page.goto(url("&changed=1"));
+      await page.locator(".pane-frame.is-current .chat-turn").first().waitFor();
+      await paneMenu(page, width);
+      await page.getByText("Search conversation", { exact: true }).click();
+      await dialog.getByRole("searchbox").fill("replay");
+      await dialog.getByText("Searched the whole conversation.").waitFor();
+      await pickOpensAnswer(page);
+      console.log(`PASS ${width}: a pick opens a message that changed since it was searched`);
 
       if (width >= 640) {
         assert.ok((await paletteActions(page)).includes("Search conversation"), "the palette offers the search for the selected chat");

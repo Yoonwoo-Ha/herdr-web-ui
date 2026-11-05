@@ -93,6 +93,60 @@ export function matchSnippet(text: string, pattern: RegExp): Pick<ConversationSe
   return { before, match: squash(found[0]), after };
 }
 
+/**
+ * Whether `turn` may be the one `match` was found in after it changed since the search, so its name
+ * (conversationTurnAnchor) changed too: an answer that went on, or whose first tool's output came. It
+ * has the match's role and time, goes on from how the searched turn began (its first text grew, or
+ * its first tool is the same call up to its output), and still holds the match after the same words
+ * (a Markdown mark that streamed in may close: `[deploy` became a link). Two answers of one time
+ * (Codex, when the user steers mid-task) can both pass: see pickedTurn.
+ */
+export function searchedTurnChanged(turn: ConversationTurn, match: ConversationSearchMatch): boolean {
+  if (turn.role !== match.role || turn.ts !== match.ts) return false;
+  const name = conversationTurnAnchor(turn);
+  const prefix = `${turn.role}|${turn.ts ?? ""}|`;
+  if (!match.turn.startsWith(prefix)) return false;
+  const began = match.turn.slice(prefix.length), now = name.slice(prefix.length);
+  const output = began.startsWith("tool|") ? began.indexOf('"output":') : -1;
+  if (!now.startsWith(output < 0 ? began : began.slice(0, output))) return false;
+  // the matched words find what the query found: the same words, any whitespace, case ignored
+  const pattern = searchPattern(match.match);
+  const snippet = pattern === null ? null : matchSnippet(searchableText(turn), pattern);
+  if (snippet === null || snippet.match !== match.match) return false;
+  // a snippet keeps the last words before the match, so a mark gone moves where a long one is cut:
+  // then one ends the other
+  const words = (before: string): string => before.replace(/^…/, "").replace(/!?\[|[\]*`]/g, "");
+  const was = words(match.before), after = words(snippet.before);
+  const sameBefore = !match.before.startsWith("…") && !snippet.before.startsWith("…") ? was === after
+    : was !== "" && after !== "" && (after.endsWith(was) || was.endsWith(after));
+  // and the words after it go on as they did (a turn grows at its end; a snippet's end may be cut)
+  const marks = (text: string): string => text.replace(/…$/, "").replace(/!?\[|[\]*`]/g, "");
+  const went = marks(match.after), goes = marks(snippet.after);
+  return sameBefore && (goes.startsWith(went) || went.startsWith(goes));
+}
+
+/**
+ * The row a pick opens among the turns shown (null: a row that is no turn): the first with the
+ * match's name, as before, unless a turn of its time before it changed into the match; else the one
+ * turn changed since (searchedTurnChanged). `several` when an earlier turn changed into the match and
+ * a later one has its name (an answer grew and a later answer of its time took its old name), or two
+ * changed ones: none is opened, never the wrong one. Turns without a time are found by name only:
+ * a time that is missing tells no turn apart.
+ */
+export function pickedTurn(turns: readonly (ConversationTurn | null)[], match: ConversationSearchMatch): number | "none" | "several" {
+  const named = turns.findIndex((turn) => turn != null && conversationTurnAnchor(turn) === match.turn);
+  if (match.ts === null) return named >= 0 ? named : "none";
+  let changed: number | null = null;
+  // a turn that grew can lose its old name only to a later turn
+  for (let index = 0; index < (named >= 0 ? named : turns.length); index++) {
+    const turn = turns[index];
+    if (turn == null || !searchedTurnChanged(turn, match)) continue;
+    if (changed !== null || named >= 0) return "several";
+    changed = index;
+  }
+  return named >= 0 ? named : changed ?? "none";
+}
+
 /** The turns that hold the pattern, newest first, each with its first match. */
 export function searchTurns(turns: readonly ConversationTurn[], pattern: RegExp): ConversationSearchMatch[] {
   const matches: ConversationSearchMatch[] = [];
