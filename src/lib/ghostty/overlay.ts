@@ -321,6 +321,10 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
   try {
     for (const chunk of backlog) vt.write(chunk);
   } catch (error) {
+    // the caller falls back to xterm: it gets its own write and reset back, so nothing reaches the freed module
+    disposed = true;
+    term.write = write;
+    term.reset = reset;
     layer.remove();
     vt.dispose();
     throw error;

@@ -383,7 +383,8 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalFontFamily: "",
   paneClipboard: true,
   terminalImages: false,
-  terminalGhostty: false,
+  // on by default; it only takes over on a herdr-core server (terminal-history), elsewhere xterm draws
+  terminalGhostty: true,
   terminalAttachButton: false,
   terminalMirrorWrap: null,
   releasePaneAway: false,
@@ -584,7 +585,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     uiFontFamily: sanitizeFontFamily(record["uiFontFamily"]),
     paneClipboard: typeof record["paneClipboard"] === "boolean" ? record["paneClipboard"] : DEFAULT_SETTINGS.paneClipboard,
     terminalImages: record["terminalImages"] === true,
-    terminalGhostty: record["terminalGhostty"] === true,
+    terminalGhostty: record["terminalGhostty"] !== false,
     terminalAttachButton: record["terminalAttachButton"] === true,
     terminalMirrorWrap: typeof record["terminalMirrorWrap"] === "boolean" ? record["terminalMirrorWrap"] : null,
     releasePaneAway: typeof record["releasePaneAway"] === "boolean" ? record["releasePaneAway"] : DEFAULT_SETTINGS.releasePaneAway,

@@ -174,16 +174,16 @@ describe("saved theme migration", () => {
   });
 
   it("keeps Draw with libghostty in its own key, out of an old tab's whole-record save", () => {
-    expect(loadSettings().terminalGhostty).toBe(false);
-    saveSettings(sanitizeSettings({ terminalGhostty: true }));
+    expect(loadSettings().terminalGhostty).toBe(true);
+    saveSettings(sanitizeSettings({ terminalGhostty: false }));
     expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("terminalGhostty");
     oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
-    expect(loadSettings().terminalGhostty).toBe(true);
+    expect(loadSettings().terminalGhostty).toBe(false);
     expect(loadSettings().terminalFontSize).toBe(18);
-    saveSettings({ ...loadSettings(), terminalGhostty: false });
-    expect(loadSettings().terminalGhostty).toBe(false);
-    records.set("ovis:terminal-ghostty", "\"true\"");
-    expect(loadSettings().terminalGhostty).toBe(false);
+    saveSettings({ ...loadSettings(), terminalGhostty: true });
+    expect(loadSettings().terminalGhostty).toBe(true);
+    records.set("ovis:terminal-ghostty", "\"false\"");
+    expect(loadSettings().terminalGhostty).toBe(true);
   });
 
   it("keeps the terminal's Attach files button in its own key, out of an old tab's whole-record save", () => {
@@ -606,10 +606,10 @@ it("draws no terminal pictures until this device turns them on", () => {
   expect(SETTING_SCOPE.terminalImages).toBe("device");
 });
 
-it("draws with xterm until this device turns libghostty on", () => {
-  expect(sanitizeSettings({}).terminalGhostty).toBe(false);
-  expect(sanitizeSettings({ terminalGhostty: "true" }).terminalGhostty).toBe(false);
-  expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ terminalGhostty: true })))).terminalGhostty).toBe(true);
+it("draws with libghostty until this device turns it off", () => {
+  expect(sanitizeSettings({}).terminalGhostty).toBe(true);
+  expect(sanitizeSettings({ terminalGhostty: "false" }).terminalGhostty).toBe(true);
+  expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ terminalGhostty: false })))).terminalGhostty).toBe(false);
   expect(SETTING_SCOPE.terminalGhostty).toBe("device");
 });
 
