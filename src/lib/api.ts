@@ -74,6 +74,8 @@ import type {
   SplitPaneDirection,
   SplitPaneRequest,
   SwapPaneRequest,
+  MovePaneRequest,
+  PaneMoved,
   TabCreated,
   UpdateInstallRequest,
   StatuslineState, UsageReport,
@@ -1034,6 +1036,13 @@ export async function swapPane(paneId: string, direction: PaneDirection, machine
 export async function swapPaneWith(paneId: string, targetPaneId: string, machineId = "local"): Promise<PaneSwapped> {
   const request = sendJson(machinePath(machineId, "pane/swap"), "POST", { pane_id: paneId, target_pane_id: targetPaneId } satisfies SwapPaneRequest)
     .then(async (response) => (await response.json()) as PaneSwapped);
+  return movingHerdrFocus(machineId, request);
+}
+
+/** POST /api/pane/move: the pane goes to that side of another pane of its tab; herdr's focus moves on the way and back, so its events wait as a swap's do. */
+export async function movePaneBeside(paneId: string, targetPaneId: string, side: PaneDirection, machineId = "local"): Promise<PaneMoved> {
+  const request = sendJson(machinePath(machineId, "pane/move"), "POST", { pane_id: paneId, target_pane_id: targetPaneId, side } satisfies MovePaneRequest)
+    .then(async (response) => (await response.json()) as PaneMoved);
   return movingHerdrFocus(machineId, request);
 }
 

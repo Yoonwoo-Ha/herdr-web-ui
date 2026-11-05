@@ -347,6 +347,8 @@ const BASE: Record<string, string> = {
   "Pane swap was refused: {reason}": "窗格交换被拒绝：{reason}",
   "The panes are in different tabs.": "窗格位于不同的标签页中。",
   "Choose two different panes.": "请选择两个不同的窗格。",
+  "The pane moved to the right instead.": "窗格改为移到了右侧。",
+  "The pane moved below instead.": "窗格改为移到了下方。",
   "A pane is no longer available.": "窗格已不可用。",
   "There is no pane on that side.": "该方向没有窗格。",
   "Split pane right": "向右拆分窗格",

@@ -918,11 +918,32 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     },
     // A pane goes to a new tab of another workspace by its labels alone: its terminal, its program and
     // its id stay. It takes that workspace's name with it, so it never renames the workspace by
-    // becoming its first terminal. Only `new_tab` is a destination Ovis asks for.
+    // becoming its first terminal. Beside another pane of its own tab it moves in one edit of the
+    // document, where herdr moves only into another tab (client.ts `paneMoveBeside`): its leaf leaves
+    // the tree and the target's becomes a split holding both, as a split makes it. `new_tab` and
+    // that are the destinations Ovis asks for.
     async "pane.move"(params) {
       const paneId = paneIdOf(params);
       const destination = params["destination"];
-      if (!isRecord(destination) || destination["type"] !== "new_tab") throw new AdapterError("unsupported", "herdr-core moves a pane only to a new tab");
+      if (isRecord(destination) && destination["type"] === "tab") {
+        const targetId = paneIdOf(destination, "target_pane_id");
+        const split = destination["split"];
+        if (split !== "right" && split !== "down") throw new AdapterError("invalid_params", "split must be right or down");
+        let reason: string | null = null;
+        const changed = await editLayout((layout) => {
+          const tab = tabHolding(layout, paneId);
+          if (tab.id !== destination["tab_id"]) throw new AdapterError("unsupported", "herdr-core moves a pane into a tab only beside a pane of its own tab");
+          if (!leaves(tab.root).includes(targetId)) throw new AdapterError("pane_not_found", `pane ${targetId} not found in tab ${tab.id}`);
+          if (targetId === paneId) { reason = "same_pane"; return null; }
+          const root = splitLeaf(tab.root, targetId, paneId, split);
+          // a zoomed tab shows every pane again, so the moved one is in view
+          return root && withTab(layout, tab.id, { root, zoomed: null });
+        });
+        const moved = (await snapshot()).panes.find((candidate) => candidate.pane_id === paneId);
+        if (!moved) throw new AdapterError("pane_not_found", `pane ${paneId} not found`);
+        return { move_result: { changed, reason: changed ? null : reason, pane: moved, closed_tab_id: null, closed_workspace_id: null } };
+      }
+      if (!isRecord(destination) || destination["type"] !== "new_tab") throw new AdapterError("unsupported", "herdr-core moves a pane only to a new tab or beside a pane of its own tab");
       const workspaceId = paneIdOf(destination, "workspace_id");
       const before = await ownLayout();
       const pane = before.panes.find((candidate) => candidate.pane_id === paneId);

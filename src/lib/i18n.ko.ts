@@ -343,6 +343,8 @@ const BASE: Record<string, string> = {
   "Pane swap was refused: {reason}": "패널 교환이 거부되었습니다: {reason}",
   "The panes are in different tabs.": "패널이 서로 다른 탭에 있습니다.",
   "Choose two different panes.": "서로 다른 두 패널을 선택하세요.",
+  "The pane moved to the right instead.": "패널이 대신 오른쪽으로 옮겨졌습니다.",
+  "The pane moved below instead.": "패널이 대신 아래쪽으로 옮겨졌습니다.",
   "A pane is no longer available.": "패널을 더 이상 사용할 수 없습니다.",
   "There is no pane on that side.": "해당 방향에 패널이 없습니다.",
   "Split pane right": "패널을 오른쪽으로 분할",

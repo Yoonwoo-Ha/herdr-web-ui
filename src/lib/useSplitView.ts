@@ -1,8 +1,8 @@
 import { type Dispatch, type DragEvent, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { HerdrPane } from "../../shared/protocol.ts";
+import type { HerdrPane, PaneDirection } from "../../shared/protocol.ts";
 import { paneStorageId, type Machine } from "../../shared/machines.ts";
 import { fetchSession, type HealthInfo } from "./api.ts";
-import { dockPane, draggedPane, dropSide, otherSlot, PANE_DRAG_TYPE, sameTarget, storedSplit, storeSplit, type SplitSide, type SplitSlot, type SplitState, type SplitTarget } from "./split.ts";
+import { besideSide, dockPane, draggedPane, dropSide, otherSlot, PANE_DRAG_TYPE, sameTarget, storedSplit, storeSplit, type SplitSide, type SplitSlot, type SplitState, type SplitTarget } from "./split.ts";
 import { paneDrag, type PaneDrag } from "./paneDrag.ts";
 
 const SELECTION_KEY = "ovis:selection";
@@ -71,9 +71,10 @@ export function useSplitState() {
     dropAtRef.current = side;
     setDropAt(side);
   }, []);
-  // the pane being dragged, read at dragstart (a dragover cannot read the drag's data), and the
-  // title it would trade places with if dropped now. Only a drag from the pane's own title swaps:
-  // a sidebar row, a tab or a half's bar dropped on a title still opens a half
+  // the pane being dragged, read at dragstart (a dragover cannot read the drag's data), the title it
+  // would trade places with if dropped now, and the pane it would go beside, its frame showing the
+  // side (PaneCanvas.css). Only a drag from the pane's own title arranges its tab: a sidebar row, a
+  // tab or a half's bar dropped there still opens a half
   const draggedPaneRef = useRef<SplitTarget | null>(null);
   const swapHeadRef = useRef<HTMLElement | null>(null);
   const markSwap = useCallback((head: HTMLElement | null): void => {
@@ -82,19 +83,26 @@ export function useSplitState() {
     head?.classList.add("is-swap-target");
     swapHeadRef.current = head;
   }, []);
+  const moveFrameRef = useRef<HTMLElement | null>(null);
+  const markMove = useCallback((frame: HTMLElement | null, side: PaneDirection | null = null): void => {
+    if (moveFrameRef.current !== frame) moveFrameRef.current?.removeAttribute("data-move-side");
+    if (frame && side) frame.setAttribute("data-move-side", side);
+    moveFrameRef.current = frame;
+  }, []);
   const clearDropPreview = useCallback((): void => {
     setPaneDragging(false);
     showDropTarget(null);
     markSwap(null);
+    markMove(null);
     draggedPaneRef.current = null;
-  }, [showDropTarget, markSwap]);
+  }, [showDropTarget, markSwap, markMove]);
   const paneAreaRef = useRef<HTMLDivElement>(null);
   // a tab dragged out of its strip (lib/paneDrag.ts)
   const tabDrag = useSyncExternalStore(paneDrag.subscribe, paneDrag.snapshot);
-  return { split, setSplit, soloSlot, endSplit, splitRef, splitShownRef, lastKeyAtRef, paneDragging, setPaneDragging, dropAt, dropAtRef, showDropTarget, clearDropPreview, paneAreaRef, tabDrag, draggedPaneRef, markSwap };
+  return { split, setSplit, soloSlot, endSplit, splitRef, splitShownRef, lastKeyAtRef, paneDragging, setPaneDragging, dropAt, dropAtRef, showDropTarget, clearDropPreview, paneAreaRef, tabDrag, draggedPaneRef, markSwap, markMove };
 }
 
-export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, selectedPane, selectedMachineId, splitShownRef, health, machineRosterLoaded, endSplit, otherRecheck, otherRosterTick, setSplit, soloSlot, setConnected, setConnectedBefore, setSelectedMachineId, setSelectedPaneId, setAutoSelected, setOutputStopped, splitRef, selectPane, paneAreaRef, dropAtRef, clearDropPreview, tabDrag, showDropTarget, setPaneDragging, movingPanes, draggedPaneRef, markSwap, swapPanes, swapRefused }: {
+export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, selectedPane, selectedMachineId, splitShownRef, health, machineRosterLoaded, endSplit, otherRecheck, otherRosterTick, setSplit, soloSlot, setConnected, setConnectedBefore, setSelectedMachineId, setSelectedPaneId, setAutoSelected, setOutputStopped, splitRef, selectPane, paneAreaRef, dropAtRef, clearDropPreview, tabDrag, showDropTarget, setPaneDragging, movingPanes, draggedPaneRef, markSwap, markMove, swapPanes, movePanes, arrangeRefused }: {
   machines: Machine[];
   split: SplitState | null;
   wideScreen: boolean;
@@ -127,10 +135,13 @@ export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, se
   movingPanes: RefObject<Set<string>>;
   draggedPaneRef: RefObject<SplitTarget | null>;
   markSwap: (head: HTMLElement | null) => void;
+  markMove: (frame: HTMLElement | null, side?: PaneDirection | null) => void;
   /** herdr's pane.swap of the dragged pane and another pane of its tab */
   swapPanes: (dragged: SplitTarget, targetPaneId: string) => void;
-  /** a PC whose panes cannot swap (herdr-core: the Herdr app owns its splits): its pane docks in a half instead */
-  swapRefused: (machineId: string) => boolean;
+  /** the dragged pane to that side of another pane of its tab (POST /api/pane/move) */
+  movePanes: (dragged: SplitTarget, targetPaneId: string, side: PaneDirection) => void;
+  /** a PC whose panes cannot be arranged (herdr-core: the Herdr app owns its splits): its pane docks in a half instead */
+  arrangeRefused: (machineId: string) => boolean;
 }) {
   // The split view (lib/split.ts): drawn only where the sidebar stands beside the pane, and only
   // while a pane is selected; a narrower window shows the active half alone and keeps the split
@@ -257,15 +268,34 @@ export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, se
     // the dragged pane drawn in the same canvas is in the same tab, the only place herdr swaps in
     return slot.querySelector(`.pane-frame:not(.is-hidden)[data-layout-pane="${CSS.escape(dragged.paneId)}"]`) ? head : null;
   };
+  /** Over the canvas of its own tab, drawn with another pane, a pane's title arranges the tab: dropped
+   *  on another pane's body, it goes to the side of it nearest the pointer (herdr's pane.move), and on
+   *  itself nowhere ("none"). Null elsewhere, where a drop opens a half as before: the other half
+   *  showing another tab, a single pane's canvas, anything outside a canvas. */
+  const besideAt = (target: EventTarget | null, x: number, y: number): { frame: HTMLElement; paneId: string; side: PaneDirection } | "none" | null => {
+    const dragged = draggedPaneRef.current;
+    const canvas = target instanceof Element ? target.closest<HTMLElement>(".pane-canvas") : null;
+    if (!dragged || !canvas || canvas.closest<HTMLElement>(".pane-slot")?.dataset.machine !== dragged.machineId) return null;
+    const shown = [...canvas.querySelectorAll<HTMLElement>(".pane-frame:not(.is-hidden)")];
+    if (shown.length < 2 || !shown.some((frame) => frame.dataset.layoutPane === dragged.paneId)) return null;
+    const frame = (target as Element).closest<HTMLElement>(".pane-frame:not(.is-hidden)");
+    const paneId = frame?.dataset.layoutPane;
+    if (!frame || !paneId || paneId === dragged.paneId) return "none";
+    return { frame, paneId, side: besideSide(x, y, frame.getBoundingClientRect(), frame.getAttribute("data-move-side") as PaneDirection | null) };
+  };
   const paneDragOver = (event: DragEvent<HTMLDivElement>): void => {
     if (!splitDragOn || !event.dataTransfer.types.includes(PANE_DRAG_TYPE)) return;
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
     const dragging = draggedPaneRef.current;
-    const head = dragging && swapRefused(dragging.machineId) ? null : swapHead(event.target);
+    const refused = dragging !== null && arrangeRefused(dragging.machineId);
+    const head = refused ? null : swapHead(event.target);
+    const beside = refused || head ? null : besideAt(event.target, event.clientX, event.clientY);
+    // over the dragged pane itself a drop does nothing, and the pointer says so
+    event.dataTransfer.dropEffect = beside === "none" ? "none" : "move";
     markSwap(head);
-    setPaneDragging(head === null);
-    if (head) { showDropTarget(null); return; }
+    if (beside && beside !== "none") markMove(beside.frame, beside.side); else markMove(null);
+    setPaneDragging(head === null && beside === null);
+    if (head || beside) { showDropTarget(null); return; }
     const box = paneAreaRef.current?.getBoundingClientRect();
     if (box) showDropTarget(dropSide(event.clientX, box.left, box.width, dropAtRef.current));
   };
@@ -277,6 +307,7 @@ export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, se
     if (event.relatedTarget === null && event.clientX >= box.left && event.clientX < box.right && event.clientY >= box.top && event.clientY < box.bottom) return;
     showDropTarget(null);
     markSwap(null);
+    markMove(null);
   };
   const paneDrop = (event: DragEvent<HTMLDivElement>): void => {
     if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) return;
@@ -284,10 +315,16 @@ export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, se
     event.preventDefault();
     event.stopPropagation();
     const dragged = draggedPane(event.dataTransfer.getData(PANE_DRAG_TYPE));
-    const target = dragged && swapRefused(dragged.machineId) ? null : swapHead(event.target)?.parentElement?.getAttribute("data-layout-pane");
+    const refused = !dragged || arrangeRefused(dragged.machineId);
+    const target = refused ? null : swapHead(event.target)?.parentElement?.getAttribute("data-layout-pane");
+    // read before the preview clears: the side shown is the side taken
+    const beside = refused || target ? null : besideAt(event.target, event.clientX, event.clientY);
     if (dragged && target) {
       clearDropPreview();
       swapPanes(dragged, target);
+    } else if (dragged && beside) {
+      clearDropPreview();
+      if (beside !== "none") movePanes(dragged, beside.paneId, beside.side);
     } else if (dragged) dockAt(dragged, event.clientX, event.clientY);
     else clearDropPreview();
   };
@@ -299,7 +336,8 @@ export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, se
         const fromTitle = event.target instanceof Element && event.target.closest(".pane-frame-head") !== null;
         draggedPaneRef.current = fromTitle ? draggedPane(event.dataTransfer.getData(PANE_DRAG_TYPE)) : null;
         showDropTarget(null);
-        setPaneDragging(true);
+        // a title starts over its own tab, where it arranges the tab: the guide waits for a dragover that offers a half
+        setPaneDragging(!fromTitle);
       }
     };
     const cancel = (event: KeyboardEvent): void => { if (event.key === "Escape") clearDropPreview(); };

@@ -15,7 +15,7 @@
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
 import { NO_AGENT_MESSAGE } from "../../shared/submit-outcome.ts";
-import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, DevicePairedEvent, DevicesRevokedAll, HealthAuth, IntegrationsResponse, Machine, MachineEvent, OmoActivity, OmoTask, PairedDevice, PairingCode, PaneBackgroundAgentDetail, PaneDirection, PaneFindMatch, PaneFindRequest, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, RelayStatus, SecuritySummary, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, TabMovedToWorkspace, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, DevicePairedEvent, DevicesRevokedAll, HealthAuth, IntegrationsResponse, Machine, MachineEvent, OmoActivity, OmoTask, PairedDevice, PairingCode, PaneBackgroundAgentDetail, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, RelayStatus, SecuritySummary, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, TabMovedToWorkspace, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import type { PushSubscriptionStatus, RepoBranchComparison, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRefs, RepoDiffRepository, RepoDiffScope, SessionHistoryAgent, SessionHistoryResponse, SessionResumeResponse } from "../../shared/protocol.ts";
 import { nextTabLabels, normalizeThemeChange, sharedPreferencesBody, type SharedPreferences } from "../../shared/preferences.ts";
 import type { PullRequestCheckLog, PullRequestView } from "../../shared/pull-request.ts";
@@ -28,7 +28,7 @@ import { firstMessageFault } from "../../shared/launch-rules.ts";
 import { insertTextProblem } from "../../shared/terminal-insert.ts";
 import { encodeOffer } from "../../shared/relay-offer.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
-import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
+import { closeLayoutPane, moveLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
 import { deviceLabel } from "../../src/lib/phone.ts";
 import { rollupStatus } from "../../src/lib/status.ts";
 import { movedTabOrder } from "../../src/lib/tabOrder.ts";
@@ -1774,9 +1774,10 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   }
   // herdr's layout operations on the demo's own layouts: a split halves the pane's rect for a new
   // shell pane, a zoom flips the tab's flag (after focusing the pane, as herdr does), a swap
-  // exchanges two rects, a resize moves the ratio of the split the border belongs to and lays its
-  // panes out again (src/lib/layoutTree.ts), and a clear blanks the pane's screen on every socket attached to it
-  if (path === "/api/pane/split" || path === "/api/pane/zoom" || path === "/api/pane/swap" || path === "/api/pane/resize" || path === "/api/pane/clear" || path === "/api/pane/focus") {
+  // exchanges two rects, a move takes the pane out as a close does and into half of another's as a
+  // split does, a resize moves the ratio of the split the border belongs to and lays its panes out
+  // again (src/lib/layoutTree.ts), and a clear blanks the pane's screen on every socket attached to it
+  if (path === "/api/pane/split" || path === "/api/pane/zoom" || path === "/api/pane/swap" || path === "/api/pane/move" || path === "/api/pane/resize" || path === "/api/pane/clear" || path === "/api/pane/focus") {
     const body = await layoutBodyOf(method, init, input);
     if (body instanceof Response) return body;
     if (typeof body["pane_id"] !== "string" || !body["pane_id"].trim()) return error("missing_pane_id", "pane_id is required", 400);
@@ -1829,6 +1830,24 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
       if (zoomed === layout.zoomed) return answer(zoomed, false, zoomed ? "already_zoomed" : "already_unzoomed");
       layout.zoomed = zoomed;
       return answer(zoomed, true, null);
+    }
+    if (path === "/api/pane/move") {
+      const target = body["target_pane_id"];
+      const side = body["side"];
+      if (typeof target !== "string" || !target.trim()) return error("invalid_target_pane_id", "target_pane_id must be a non-empty string", 400);
+      if (side !== "left" && side !== "right" && side !== "up" && side !== "down") return error("invalid_side", "side must be left, right, up or down", 400);
+      const other = paneOf(target);
+      if (!other) return error("pane_not_found", "pane not found", 404);
+      const reason = other.pane_id === pane.pane_id ? "same_pane" : other.tab_id !== pane.tab_id ? "cross_tab" : null;
+      if (reason) return json({ ok: true, changed: false, reason } satisfies PaneMoved);
+      const split = side === "left" || side === "right" ? "right" : "down";
+      if (!moveLayoutPane(layout, pane.pane_id, target, split)) return error("split_failed", "The demo pane is too small to split.", 400);
+      // herdr puts a moved pane right of or below its target: a swap puts it before
+      if (side === "left" || side === "up") swapLayoutPanes(layout, pane.pane_id, target);
+      // a zoomed tab shows every pane again, as herdr-core's move makes it, so the moved one is in view
+      layout.zoomed = false;
+      structureChanged();
+      return json({ ok: true, changed: true, reason: null } satisfies PaneMoved);
     }
     const direction = body["direction"];
     const beside = (side: PaneDirection) => { const id = neighborPane(layout, pane.pane_id, side); return id === null ? undefined : layout.panes.find((candidate) => candidate.pane_id === id); };

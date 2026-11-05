@@ -1,10 +1,10 @@
 /**
  * The pane routes: what the browser reads from a pane (its screen, scroll, selection, commands,
  * files and native conversation) and what it does to one (type, rename, close, split, zoom, swap,
- * resize, clear, focus, paste an image). Each answers from herdr alone, so none needs the
+ * move beside another, resize, clear, focus, paste an image). Each answers from herdr alone, so none needs the
  * server's own state. The dispatcher in index.ts runs the access gate first.
  */
-import type { AgentRenameRequest, PaneDirection, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, ReadFormat, ReadSource } from "../shared/protocol.ts";
+import type { AgentRenameRequest, PaneDirection, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, ReadFormat, ReadSource } from "../shared/protocol.ts";
 import { mergeCatalogSources } from "./catalog-sources.ts";
 import { rememberPaneCommands, scanPaneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
@@ -14,7 +14,7 @@ import { copilotRecoverable } from "./conversation-shared.ts";
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { openCodeFlagVersion, openCodeInstalledVersion } from "./opencode-service.ts";
 import { DevinHistoryChanged } from "./devin.ts";
-import { agentRename, HerdrError, layoutSetSplitRatio, paneClear, paneClose, paneFind, paneFocus, paneRead, paneRename, paneResize, paneScroll, paneScrollInfo, paneSelectionRead, paneSendKeys, paneSendText, paneSplit, paneSwap, paneSwapWith, paneZoom } from "./herdr/client.ts";
+import { agentRename, HerdrError, layoutSetSplitRatio, paneClear, paneClose, paneFind, paneFocus, paneMoveBeside, paneRead, paneRename, paneResize, paneScroll, paneScrollInfo, paneSelectionRead, paneSendKeys, paneSendText, paneSplit, paneSwap, paneSwapWith, paneZoom } from "./herdr/client.ts";
 import { paneContext, resolveAgent, versionSourceOf } from "./pane-context.ts";
 import { ompScreenContext } from "./omp-status.ts";
 import { PasteImageError, readImageBody, savePaneImage } from "./paste.ts";
@@ -28,7 +28,7 @@ const conversationDiagnostics = new ConversationDiagnostics();
 /** the native stores createServer was given; unset, each reader finds its own */
 export type PaneStores = { codexHome?: string; grokHome?: string; museData?: string; opencodeDb?: string; devinDbPath?: string; hermesHome?: string; openCodeStateDir?: string };
 
-/** the sides herdr's pane.swap and pane.resize take; anything else is refused before the RPC, which would answer invalid_request */
+/** the sides herdr's pane.swap and pane.resize take, and a move's side of its target; anything else is refused before the RPC, which would answer invalid_request */
 const isPaneDirection = (value: unknown): value is PaneDirection => value === "left" || value === "right" || value === "up" || value === "down";
 /** pane.read's own enums; a read outside them is refused here rather than sent to herdr as a guess (the generated types are open-ended) */
 const READ_SOURCES = new Set<ReadSource>(["detection", "recent", "recent_unwrapped", "visible"]);
@@ -366,6 +366,24 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
       await layoutSetSplitRatio(payload.tab_id, payload.path, payload.ratio);
       return jsonResponse({ ok: true });
     } catch (error) { return errorResponse(error); }
+  }
+
+  // a pane put beside another of its own tab (client.ts `paneMoveBeside`): herdr's focus stays where
+  // it was, and the layout reaches every client as a swap's does, through layout.updated
+  if (pathname === "/api/pane/move") {
+    setRequestRoute(pathname);
+    if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    const payload = await readJsonObject<{ pane_id?: unknown; target_pane_id?: unknown; side?: unknown }>(request);
+    if (payload instanceof Response) return payload;
+    if (typeof payload.pane_id !== "string" || !payload.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required");
+    if (typeof payload.target_pane_id !== "string" || !payload.target_pane_id.trim()) return badRequest("invalid_target_pane_id", "target_pane_id must be a non-empty string");
+    if (!isPaneDirection(payload.side)) return badRequest("invalid_side", "side must be left, right, up or down");
+    try {
+      const move = await paneMoveBeside(payload.pane_id, payload.target_pane_id, payload.side);
+      return jsonResponse({ ok: true, changed: move.changed, reason: move.reason } satisfies PaneMoved);
+    } catch (error) {
+      return errorResponse(error);
+    }
   }
 
   // herdr's own layout operations, as its TUI has them: prefix+v and prefix+- (split), prefix+z

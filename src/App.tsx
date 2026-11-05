@@ -1,8 +1,8 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, CircleHelp, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, Target, X } from "lucide-react";
 
-import type { HerdrPane } from "../shared/protocol.ts";
-import { authenticate, createTab, moveTabToWorkspace, paneSessionKey, shareSeen, swapPaneWith } from "./lib/api.ts";
+import type { HerdrPane, PaneDirection } from "../shared/protocol.ts";
+import { authenticate, createTab, movePaneBeside, moveTabToWorkspace, paneSessionKey, shareSeen, swapPaneWith } from "./lib/api.ts";
 import { layoutActions } from "./lib/layoutActions.ts";
 import { displayPaneTitle, storedWorktreeCollapsed, tabPaneTitle } from "./components/Sidebar.tsx";
 import { endSignIn } from "./lib/signOut.ts";
@@ -103,7 +103,7 @@ import { alertsBell } from "./lib/alertsBell.ts";
 import { Droplet } from "./components/Droplet.tsx";
 import { MarkdownLinkMenu } from "./components/MarkdownLinkMenu.tsx";
 import { paneDragData, PANE_DRAG_TYPE, slotSide, type SplitSlot, type SplitTarget } from "./lib/split.ts";
-import { useLayoutNotice, useLayoutRefused, useMoveRefused } from "./lib/useLayoutNotice.ts";
+import { paneMoveNotice, useLayoutNotice, useLayoutRefused, useMoveRefused } from "./lib/useLayoutNotice.ts";
 import { PaneFollowContext, PanePressContext } from "./lib/paneSubmitContext.ts";
 import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { CrashProbe, RegionCrash } from "./components/AppCrash.tsx";
@@ -205,7 +205,7 @@ export function App() {
   const { drawerOpen, setDrawerOpen, drawerOpenRef, wideScreen, sidebarCollapsed, setSidebarCollapsed, sidebarWidth, setSidebarWidth, filePanelAvailable, filePanelWidth, setFilePanelWidth, sidebarFilterRequest, openSidebarFilter } = useSidebarLayout({ initialLink });
   const { selectionRef, movingPanes } = useSelectionMark({ selectedMachineId, selectedPaneId });
   const { lens, setLens, viewPicks, setViewPicks } = usePaneLensState();
-  const { split, setSplit, soloSlot, endSplit, splitRef, splitShownRef, lastKeyAtRef, paneDragging, setPaneDragging, dropAt, dropAtRef, showDropTarget, clearDropPreview, paneAreaRef, tabDrag, draggedPaneRef, markSwap } = useSplitState();
+  const { split, setSplit, soloSlot, endSplit, splitRef, splitShownRef, lastKeyAtRef, paneDragging, setPaneDragging, dropAt, dropAtRef, showDropTarget, clearDropPreview, paneAreaRef, tabDrag, draggedPaneRef, markSwap, markMove } = useSplitState();
   const { paletteOpen, paletteQuery, openPalette, setPaletteOpen } = useCommandPalette();
   const paneControls = useRef<PaneControls | null>(null);
   const [findRequest, setFindRequest] = useState<{ paneId: string | null; serial: number }>({ paneId: null, serial: 0 });
@@ -332,6 +332,14 @@ export function App() {
       void load();
     }).catch((err) => layoutRefused("pane swap failed", err));
   };
+  // a pane's title dropped on another pane's body in its tab: it goes to that side of it (#1819)
+  const movePanes = (dragged: SplitTarget, targetPaneId: string, side: PaneDirection): void => {
+    void movePaneBeside(dragged.paneId, targetPaneId, side, dragged.machineId).then((move) => {
+      const notice = paneMoveNotice(move, side, t);
+      if (notice !== null) setLayoutNotice(notice);
+      void load();
+    }).catch((err: unknown) => { moveRefused(err); void load(); });
+  };
 
   // what this browser keeps under the moved pane's ID goes to its new ID (lib/paneMove.ts), and wherever the old ID is
   // shown, in either half, the view goes with it (#1503). Nothing is sent: held text waits for its Send or Discard
@@ -390,7 +398,7 @@ export function App() {
   // up under a sheet or Settings opened over it: their close, or a Back, comes back to the peek
   usePhoneSheetBack(() => endPeek(), terminalPeek !== null, true);
 
-  const { otherMachine, otherPane, splitOn, sameTabs, otherWorkspace, otherHerdr, otherAttach, activateSlot, closeSlot, selectInSlot, dockSide, splitDragOn, paneDragOver, paneDragLeave, paneDrop } = useSplitLayout({ machines, split, wideScreen, selectedPaneId, selectedPane, selectedMachineId, splitShownRef, health, machineRosterLoaded, endSplit, otherRecheck, otherRosterTick, setSplit, soloSlot, setConnected, setConnectedBefore, setSelectedMachineId, setSelectedPaneId, setAutoSelected, setOutputStopped, splitRef, selectPane, paneAreaRef, dropAtRef, clearDropPreview, tabDrag, showDropTarget, setPaneDragging, movingPanes, draggedPaneRef, markSwap, swapPanes, swapRefused: (machineId) => !appLayoutOn(machineId).arrange });
+  const { otherMachine, otherPane, splitOn, sameTabs, otherWorkspace, otherHerdr, otherAttach, activateSlot, closeSlot, selectInSlot, dockSide, splitDragOn, paneDragOver, paneDragLeave, paneDrop } = useSplitLayout({ machines, split, wideScreen, selectedPaneId, selectedPane, selectedMachineId, splitShownRef, health, machineRosterLoaded, endSplit, otherRecheck, otherRosterTick, setSplit, soloSlot, setConnected, setConnectedBefore, setSelectedMachineId, setSelectedPaneId, setAutoSelected, setOutputStopped, splitRef, selectPane, paneAreaRef, dropAtRef, clearDropPreview, tabDrag, showDropTarget, setPaneDragging, movingPanes, draggedPaneRef, markSwap, markMove, swapPanes, movePanes, arrangeRefused: (machineId) => !appLayoutOn(machineId).arrange });
 
   useAddressBar({ newSessionOpen, selectedPane, selectedPaneId, selectedWorkspace, viewing, selectedMachineId, releaseFile, locked, machines, snapshot, linkLanded, view, settingsOpen, settingsPage, settingsLinkPage, settingsLinkSection, wideScreen, sidebarCollapsed, newTab, newFields, autoSelected, pendingFile, selectedMachine, openFile, machinesRef, selectTargetRef, pendingLink, setLinkLanded, linkSince, rosterSeq, setNewSessionOpen, pendingCreate, setHeaderNote, selectionRef });
 

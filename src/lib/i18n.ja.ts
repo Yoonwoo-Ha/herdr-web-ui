@@ -345,6 +345,8 @@ const BASE: Record<string, string> = {
   "Pane swap was refused: {reason}": "ペインの入れ替えが拒否されました: {reason}",
   "The panes are in different tabs.": "ペインが別々のタブにあります。",
   "Choose two different panes.": "異なる2つのペインを選んでください。",
+  "The pane moved to the right instead.": "ペインは代わりに右側へ移動しました。",
+  "The pane moved below instead.": "ペインは代わりに下側へ移動しました。",
   "A pane is no longer available.": "ペインは利用できなくなりました。",
   "There is no pane on that side.": "その方向にペインはありません。",
   "Split pane right": "ペインを右に分割",

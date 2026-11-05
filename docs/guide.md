@@ -111,7 +111,9 @@ a half's bar onto the left or right half of the pane area. A pick in the sidebar
 list then opens in the active half only, and the focus stays there. Both halves can show the same
 tab, and you type in whichever half is active; the other half shows that tab at the active half's size.
 To rearrange a split tab instead, drop a pane's title on another pane's title in the same tab: the
-two panes trade places.
+two panes trade places. Drop it on another pane's body to move it beside that pane, on the side
+nearest the pointer; the highlighted half shows where it goes. Within its own tab a title only
+arranges the tab: to open it in a half, drop it on the other half while that half shows another tab.
 
 A tool that starts background workers or subagents can keep them out of the way: tag each such
 pane with `herdr pane report-metadata <pane_id> --source <id> --token role=background`. The

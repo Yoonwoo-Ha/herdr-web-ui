@@ -1,7 +1,8 @@
 /**
  * Two panes side by side on a desktop, as a window snapped to half the screen: a tab, a sidebar or
  * Agents row, or a pane's title dragged to the left or right half of the pane area opens its pane
- * there, beside the one already open. The selected pane (App's) is the active half's; the other half
+ * there, beside the one already open (a title over its own tab's panes arranges that tab instead:
+ * useSplitLayout). The selected pane (App's) is the active half's; the other half
  * keeps its own. The halves are independent: both may show the same tab (the other half draws it on a
  * connection of its own), and a pick from the sidebar changes the active half alone.
  *
@@ -10,6 +11,7 @@
  * one of them (App's solo slot, `a` at first); split, `b` is on `bSide` and `a` on the other side.
  * The half left when a split ends stays in its slot, so its terminal keeps its connection.
  */
+import type { PaneDirection } from "../../shared/protocol.ts";
 
 export type SplitSide = "left" | "right";
 export type SplitSlot = "a" | "b";
@@ -57,6 +59,25 @@ export function dropSide(x: number, left: number, width: number, previous: Split
   if (previous === "left" && x <= middle + margin) return "left";
   if (previous === "right" && x >= middle - margin) return "right";
   return x < middle ? "left" : "right";
+}
+
+/** The amount another side's share must be nearer before it replaces the side shown. */
+const BESIDE_MARGIN = 0.05;
+
+/**
+ * The side of a pane a pane dropped at the pointer goes to (herdr's pane.move within the tab): the
+ * nearest edge, its distance counted as a share of the pane's width or height so each side takes a
+ * quarter of a pane of any shape. Where shares meet, the side shown stays, as a half does near the middle.
+ */
+export function besideSide(x: number, y: number, box: { left: number; top: number; width: number; height: number }, previous: PaneDirection | null = null): PaneDirection {
+  const width = Math.max(1, box.width);
+  const height = Math.max(1, box.height);
+  const shares: Record<PaneDirection, number> = {
+    left: (x - box.left) / width, right: (box.left + width - x) / width,
+    up: (y - box.top) / height, down: (box.top + height - y) / height,
+  };
+  const nearest = (["left", "right", "up", "down"] as const).reduce((best, side) => (shares[side] < shares[best] ? side : best));
+  return previous !== null && shares[previous] - shares[nearest] < BESIDE_MARGIN ? previous : nearest;
 }
 
 /**

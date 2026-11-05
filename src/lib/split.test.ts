@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { activateOther, dockPane, draggedPane, dropSide, paneDragData, slotSide, storedSplit, storeSplit, type SplitState } from "./split.ts";
+import { activateOther, besideSide, dockPane, draggedPane, dropSide, paneDragData, slotSide, storedSplit, storeSplit, type SplitState } from "./split.ts";
 
 const A = { machineId: "local", paneId: "w1:p1" };
 const B = { machineId: "local", paneId: "w1:p2" };
@@ -86,6 +86,25 @@ describe("split view", () => {
       previous = dropSide(x, 0, 400, previous);
       expect(previous).toBe("right");
     }
+  });
+
+  it("puts a pane beside another on the side nearest the pointer, each edge's distance a share of the pane", () => {
+    const pane = { left: 100, top: 50, width: 800, height: 200 };
+    expect(besideSide(150, 150, pane)).toBe("left");
+    expect(besideSide(850, 150, pane)).toBe("right");
+    expect(besideSide(500, 70, pane)).toBe("up");
+    expect(besideSide(500, 240, pane)).toBe("down");
+    // 100px of an 800px width is nearer than 40px of a 200px height: each side takes a quarter of a wide pane too
+    expect(besideSide(200, 90, pane)).toBe("left");
+  });
+
+  it("keeps the side shown where two sides' shares meet, as the halves keep theirs around the middle", () => {
+    const pane = { left: 100, top: 50, width: 800, height: 200 };
+    expect(besideSide(160, 66, pane)).toBe("left");
+    expect(besideSide(160, 66, pane, "up")).toBe("up");
+    expect(besideSide(160, 90, pane, "up")).toBe("left");
+    expect(besideSide(500, 150, pane, "right")).toBe("right");
+    expect(besideSide(500, 150, pane, "down")).toBe("down");
   });
 
   it("shrinks the band for narrow areas and caps it for wide ones", () => {

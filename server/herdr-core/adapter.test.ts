@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, jest } from "bun:test";
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HerdrError, herdrRpc, paneGet, paneProcessInfo, paneRead, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, paneMoveToNewTab, tabClose, tabCreate, tabRename, workspaceClose, workspaceCreate, workspaceRename, agentManifests, agentStart, ping, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "../herdr/client.ts";
+import { HerdrError, herdrRpc, paneGet, paneProcessInfo, paneRead, paneSendKeys, paneSendText, sessionSnapshot, subscribeEvents, type EventFrame, paneClose, paneMoveBeside, paneMoveToNewTab, tabClose, tabCreate, tabRename, workspaceClose, workspaceCreate, workspaceRename, agentManifests, agentStart, ping, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "../herdr/client.ts";
 import { claudeInputDraft, viewportShowsLive } from "../claude-input.ts";
 import { paintedScreen, type SeenObserver, startHerdrCoreAdapter } from "./adapter.ts";
 import { SeenMarker } from "./seen-label.ts";
@@ -1084,6 +1084,36 @@ describe("herdr-core adapter, Ovis's layout document", () => {
     await herdrRpc("pane.zoom", { pane_id: "t1", mode: "on" }, socket);
     await herdrRpc("pane.split", { target_pane_id: "t1", direction: "down" }, socket);
     expect((await sessionSnapshot(socket)).layouts[0]).toMatchObject({ zoomed: false });
+  });
+
+  it("moves a pane beside another of its tab in one edit of the document, on every side (#1819)", async () => {
+    const { socket, store } = await core([labeled("t1")]);
+    await herdrRpc("pane.split", { target_pane_id: "t1", direction: "right" }, socket);
+    const writes = store.writes.length;
+    // below t2, t2's half of the tab: herdr-core moves within a tab, so no tab of its own in between
+    expect(await paneMoveBeside("t1", "t2", "down", socket)).toEqual({ changed: true, reason: null });
+    expect(store.writes).toHaveLength(writes + 1);
+    expect(await rects(socket)).toEqual({ t2: { x: 0, y: 0, width: 1000, height: 500 }, t1: { x: 0, y: 500, width: 1000, height: 500 } });
+    await paneMoveBeside("t1", "t2", "up", socket);
+    expect(await rects(socket)).toEqual({ t1: { x: 0, y: 0, width: 1000, height: 500 }, t2: { x: 0, y: 500, width: 1000, height: 500 } });
+    await paneMoveBeside("t1", "t2", "right", socket);
+    expect(await rects(socket)).toEqual({ t2: { x: 0, y: 0, width: 500, height: 1000 }, t1: { x: 500, y: 0, width: 500, height: 1000 } });
+    await paneMoveBeside("t1", "t2", "left", socket);
+    expect(await rects(socket)).toEqual({ t1: { x: 0, y: 0, width: 500, height: 1000 }, t2: { x: 500, y: 0, width: 500, height: 1000 } });
+    // a zoomed tab shows every pane again, the moved one with them
+    await herdrRpc("pane.zoom", { pane_id: "t2", mode: "on" }, socket);
+    await paneMoveBeside("t1", "t2", "down", socket);
+    expect((await sessionSnapshot(socket)).layouts[0]).toMatchObject({ zoomed: false });
+  });
+
+  it("moves a pane beside another tab's pane in no tab of its own and refuses where the Herdr app arranges", async () => {
+    const { socket, store } = await core([labeled("t1"), labeled("t2"), labeled("t3", "S", "U")]);
+    expect(await paneMoveBeside("t1", "t3", "right", socket)).toEqual({ changed: false, reason: "cross_tab" });
+    await expect(herdrRpc("pane.move", { pane_id: "t1", destination: { type: "tab", tab_id: "U", target_pane_id: "t3", split: "right" } }, socket)).rejects.toMatchObject({ code: "unsupported" });
+    expect(store.writes).toEqual([]);
+    store.docs.set("herdr-app", { value: { spaces: [] }, version: 1 });
+    await expect(paneMoveBeside("t1", "t2", "down", socket)).rejects.toMatchObject({ code: "unsupported" });
+    expect(store.writes).toEqual([]);
   });
 
   it("reorders workspaces and tabs, Other terminals staying last", async () => {

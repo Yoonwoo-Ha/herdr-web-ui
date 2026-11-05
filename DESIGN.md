@@ -1711,8 +1711,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   pane with the previously selected pane and retains the browser's selection. On a desktop,
   dragging a pane's title onto another pane's title in the same tab on the same PC exchanges
   their positions too. The eligible title is highlighted instead of offering a split-view
-  half. Sidebar drags, drops outside an eligible title, and drops across tabs or PCs keep
-  their existing docking behavior. This follows tmux's explicit `swap-pane` operation,
+  half. Sidebar drags and drops across tabs or PCs keep their existing docking behavior; a
+  title dropped on another pane's body of its tab moves it (below). This follows tmux's explicit `swap-pane` operation,
   exposed through a title drop like VS Code's editor-group drag targets rather than a new
   layout setting. Explicit swaps leave herdr's focused pane, tab and workspace where they
   were: the bridge serializes Ovis focus-changing calls (focus, swaps, split, zoom and close)
@@ -1730,6 +1730,24 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   caused by restoration. No sequence fields, pane-name tokens, or held/replayed events are
   added. The root fix needs native `pane.swap focus:false` or correlated event identifiers.
   A refused title swap shows a layout notice with a localized reason.
+- Dropping a pane's title on another pane's body in the same tab moves it to the side of that pane
+  nearest the pointer (#1819). While it is over that body, the half the dragged pane would take is
+  outlined in `--accent` over `--accent-tint`, from the nearest edge, each edge's distance counted
+  as a share of the pane's width or height so each side takes a quarter of a pane of any shape; the
+  side shown stays where two shares meet. The split view guide stays hidden over the tab, and over
+  the dragged pane itself nothing is offered (the pointer shows no drop). A title over the other half
+  showing another tab, over a canvas drawing one pane, and a sidebar row, a tab or a half's bar
+  anywhere still open a half: a drag within the tab arranges it, a drag that brings a pane in opens
+  split view. `POST /api/pane/move` runs it. herdr 0.9.5 refuses `pane.move` within the tab
+  (`same_tab`) and places a moved pane only right of or below its target, so the bridge moves the
+  pane to a new tab of its workspace, back beside the target, and swaps the two for left or up; the
+  pane keeps its ID and terminal, and herdr closes the passing tab. A herdr that moves within a tab,
+  and herdr-core (one edit of Ovis's layout document), take the first call. A pane herdr will not
+  bring back beside its target goes back into its tab beside another pane, and a refused swap leaves
+  it right of or below; the layout notice says so. herdr's focus goes back where it was, as after a
+  swap: only from the pane herdr picked when the focused pane left, or from the swap's source. This follows VS Code's editor-group drop overlay (the half a dragged
+  editor would take, by the nearest edge) without its centre target: a pane joins no other pane, and
+  its title is the swap target.
   A close confirms when
   the pane is busy or is the last pane of the workspace. Rename is herdr's label; clearing it
   returns to its automatic title. Herdr owns every resulting layout and name.
