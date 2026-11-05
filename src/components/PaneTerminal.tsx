@@ -45,6 +45,7 @@ import { Composer } from "./Composer.tsx";
 import { ComposerNotices, type ComposerNoticeRow } from "./ComposerNotices.tsx";
 import { PendingMessages } from "./PendingMessages.tsx";
 import type { AgentStatus, ClientRole, PlanSummary, ServerMessage } from "../../shared/protocol.ts";
+import type { ChatLaunch } from "../lib/agentLaunchMode.ts";
 import type { PaneControls, PaneView } from "../lib/actions.ts";
 import { usePaneLane } from "../lib/chatLane.ts";
 import { useSettings, type Palette, type ResolvedTheme } from "../lib/settings.ts";
@@ -127,7 +128,7 @@ export interface PaneTerminalProps {
   /** opens the folder's earlier sessions for the pane's agent (App's SessionHistory): the composer's /resume */
   onOpenHistory?: () => void;
   /** opens the New tab dialog on the pane's workspace (App's NewSessionDialog): the composer's new-agent button */
-  onOpenNewSession?: () => void;
+  onOpenNewSession?: (chat: ChatLaunch | null) => void;
   findRequest?: number;
   /** bumped to open Search conversation over the pane's chat (ChatView searchRequest) */
   searchRequest?: number;

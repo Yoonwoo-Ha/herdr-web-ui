@@ -1750,7 +1750,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - In a mouse-driven window wider than 640px (the composer's own `(max-width: 640px), (pointer:
   coarse)` query) the chat's composer can show a **New tab with an agent…** icon button
   (lucide `MessageSquarePlus`, beside Attach) that opens this dialog as New tab on the pane's
-  workspace, as the tab menu does. It is off until this device turns it on (Settings → Chat →
+  workspace, as the tab menu does, but on the chat's own agent and the model and effort its
+  transcript recorded last (`ConversationMetadata`, the composer's model pill), each only where
+  the agent's launch takes it (`recordedChoices`); every field stays editable before Start. The tab
+  menu and the shortcuts keep the last agent picked and the agent's own model. This follows the
+  Codex app's new thread, which starts on the model and reasoning effort already shown in its
+  composer rather than resetting them. It is off until this device turns it on (Settings → Chat →
   Composer, **New tab button**, the device setting `composerNewTabButton`): the composer's row stays
   minimal, as the Codex and Claude apps keep theirs (attach and the mic; a new thread starts from the
   sidebar), and the tab menu opens the same dialog either way. A phone's card has no row to spare for

@@ -17,6 +17,7 @@ import { ArrowUp, ClipboardPaste, FileText, Folder, FolderGit2, GitBranch, Loade
 import "./Composer.css";
 
 import type { AgentStatus, ClientRole, ConversationMetadata, PlanSummary, SlashCommand } from "../../shared/protocol.ts";
+import type { ChatLaunch } from "../lib/agentLaunchMode.ts";
 import { skillSyntax } from "../../shared/skill-syntax.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { composerDraftKey, composerDrafts, underSendLock } from "../lib/composerDraft.ts";
@@ -110,8 +111,9 @@ export interface ComposerProps {
   /** opens the folder's earlier sessions instead of submitting /resume */
   onOpenHistory?: () => void;
   /** opens the New tab dialog on this pane's workspace, to start another agent with its model, effort, skills
-   * and first message (NewSessionDialog); none: the pane has no workspace to add a tab to */
-  onOpenNewSession?: () => void;
+   * and first message (NewSessionDialog), on this chat's agent and the model and effort it recorded; none: the pane has no
+   * workspace to add a tab to */
+  onOpenNewSession?: (chat: ChatLaunch | null) => void;
   /** the pane's working folder, named in the strip tucked under the card; nothing is drawn for it while absent */
   cwd?: string | null;
   /** the pane's branch, beside the folder in that strip; nothing is drawn for it while absent */
@@ -1529,7 +1531,7 @@ export function Composer({
               className="icon-button composer-new-session"
               aria-label={t("New tab with an agent…")}
               title={t("New tab with an agent…")}
-              onClick={onOpenNewSession}
+              onClick={() => onOpenNewSession(agent ? { agent, model: metadata?.model ?? null, effort: metadata?.reasoning_effort ?? null } : null)}
             >
               <MessageSquarePlus aria-hidden="true" />
             </button>
