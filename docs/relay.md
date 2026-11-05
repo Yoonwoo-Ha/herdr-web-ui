@@ -187,6 +187,47 @@ The phone's screen asks **Does {name} show this number?** with **The numbers mat
 then waits for the approval. A PC that declines, or does not approve in time, leaves the phone at
 **{name} did not approve this phone**, with no key saved.
 
+**Pairing with a typed code.** For a device with no camera pointed at the PC, **Show a code to
+type** under the QR code shows ten characters, `XXXXX-XXXXX` (Crockford base32: no I, L, O or U;
+O, I and L typed are read as 0, 1 and 1), and **Pair with a code** on app.ovis.sh's front page takes
+them. The code finds the PC and hands the device the same offer the QR code carries, then the
+device pairs with the six-digit code in it as a scanned QR code does: nothing else admits it
+([`shared/relay-pair-code.ts`](../shared/relay-pair-code.ts),
+[`server/relay/pair-code.ts`](../server/relay/pair-code.ts),
+[`src/lib/relay/pairCode.ts`](../src/lib/relay/pairCode.ts)).
+
+1. Its first three characters are a public **nameplate**: the PC holds a rendezvous for it on
+   `relay.ovis.sh` (`/v1/pair`, [relay/README.md](../relay/README.md#what-it-answers)), and the
+   device joins it. The other seven (35 bits) are the **password**, which never leaves either end.
+2. The two run CPace ([draft-irtf-cfrg-cpace-21](https://datatracker.ietf.org/doc/draft-irtf-cfrg-cpace/),
+   `CPACE-RISTR255-SHA512`, the PC as initiator) with the password, `CI = lv_cat("ovis-pair-code/1",
+   nameplate)`, a fresh 16-byte `sid` per try and role labels as associated data. The device answers
+   with its share and a confirmation (HKDF of the session key). The PC checks it in constant time and
+   only then sends the offer, sealed with ChaCha20-Poly1305 under another key from the session key.
+3. The device checks the offer as it checks a scanned link (its key must give its `server_id`, and
+   it must carry a pairing code), then shows **Does {name}'s screen show this ID?** with the PC's full
+   ID in eight groups of four. The PC shows its ID under the code. Only **It matches** goes on to
+   pairing, through the PC's own page as a QR code does.
+
+Why it holds: someone reading the frames, the relay included, cannot test guesses offline; each
+guess takes a live exchange. The PC counts the tries itself: one is taken before its first message,
+three end the code, and a correct one spends it (single use). With 35 bits and three tries a code,
+an attacker who tried every one of ten million codes would get one in about a thousand. A relay
+that plays the PC can test one guess against a device's confirmation without the PC counting it,
+so the device runs exactly one exchange per tap and never retries with the code; even a right
+guess gives it only an offer whose ID the person must match against the PC's screen.
+
+Limits: minting a code starts a fresh six-digit code (under its 10 codes in 10 minutes) and lives as
+long as it; the PC checks that code is still the pending one before it sends the offer, and tells a
+device that knew the code it ran out otherwise. Wrong typed codes do not count toward the 20 failed
+relay pairings that pause QR pairing. A code is a relay control like the QR code: made on the PC or
+a direct connection, never through the relay (`local_required`) or by a Portal visitor. The PC
+offers codes only on `relay.ovis.sh` (409 `code_unavailable` on a relay of its own), where the hosted
+app looks for them. The relay sees the nameplate, when the two meet and how big the frames are.
+CPace asks for the password's mapping to run in constant time; this one is JavaScript (noble), which
+promises no such thing. The PC works out its first message before a device arrives and every try
+hashes a fresh `sid`, so the relay cannot time it against an arrival or measure one input twice.
+
 **Device keys.** Pairing makes a key pair on the phone for that one PC: ECDSA P-256, made by
 WebCrypto as non-extractable, so no script, the app's own included, can read the private half out.
 The phone keeps it in IndexedDB (`ovis-relay`), never in `localStorage`. The PC keeps only the public
@@ -609,12 +650,13 @@ is always up.
 - To report abuse that goes through `relay.ovis.sh`, see [SECURITY.md](../SECURITY.md#the-ovis-relay).
 
 A relay you run with Bun limits connections by default: 120 a minute from one address, 600 a minute
-in all, 1024 sockets, 256 PCs, 4096 addresses tracked at once and 64 open sockets per address
-(waiting, connected or still upgrading). A new socket past the per-address cap gets `429` with
+in all, 1024 sockets, 256 PCs, 256 typed-code pairing rooms (apart from the PCs', since anyone may
+open one), 4096 addresses tracked at once and 64 open sockets per address (waiting, connected or
+still upgrading). A new socket past the per-address cap gets `429` with
 `Retry-After: 60`; sockets already open keep their place. Raise the limits with
-`--per-address-per-minute`, `--global-per-minute`, `--max-sockets`, `--max-rooms`,
+`--per-address-per-minute`, `--global-per-minute`, `--max-sockets`, `--max-rooms`, `--max-pair-rooms`,
 `--max-addresses` and `--max-sockets-per-address`, or `RELAY_PER_ADDRESS_PER_MINUTE`,
-`RELAY_GLOBAL_PER_MINUTE`, `RELAY_MAX_SOCKETS`, `RELAY_MAX_ROOMS`, `RELAY_MAX_ADDRESSES` and
+`RELAY_GLOBAL_PER_MINUTE`, `RELAY_MAX_SOCKETS`, `RELAY_MAX_ROOMS`, `RELAY_MAX_PAIR_ROOMS`, `RELAY_MAX_ADDRESSES` and
 `RELAY_MAX_SOCKETS_PER_ADDRESS`. Behind a TLS proxy on the same machine every
 connection comes from the proxy's address, so size the per-address limit for the whole deployment
 and limit addresses at the proxy instead.

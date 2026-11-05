@@ -16,6 +16,7 @@ import { inNativeApp } from "../nativeApp.ts";
 import { serverIdOfPath } from "../shellMode.ts";
 import { RelayAdmissionTimeoutError, RelayUnreachableError, UnsafeRelayDestinationError } from "./channel.ts";
 import { ServerIdentityChangedError } from "./device.ts";
+import type { TypedCodeFailure } from "./pairCode.ts";
 import type { RelayDevice } from "./device.ts";
 
 /** Where a relay key the phone holds came from: the link it opened, or the pairing it saved. */
@@ -77,6 +78,11 @@ export type RelayShellState =
   | { kind: "empty"; account?: AccountView | null }
   | { kind: "confirm"; offer: RelayOffer }
   | { kind: "connecting"; name: string | null }
+  /** Pair with a code: the field to type it in, with why the last code gave no PC */
+  | { kind: "code-entry"; failure: TypedCodeFailure | null }
+  | { kind: "code-looking" }
+  /** a typed code found a PC: its full ID to compare with the PC's screen before anything is paired */
+  | { kind: "code-compare"; offer: RelayOffer }
   /** pairing without a code: the digits to compare with the PC's screen; `confirmed` once this phone said they match */
   | { kind: "compare"; name: string | null; digits: string; confirmed: boolean }
   /** the phone's key for a PC whose identity changed is gone; only a new QR code from the PC pairs it again */

@@ -547,7 +547,9 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
         assert.equal(await page.evaluate(() => document.documentElement.dataset["theme"]), theme);
         await state(page, "empty").waitFor();
         await page.getByRole("heading", { name: "Scan the QR code on your PC" }).waitFor();
-        assert.equal(await page.locator("main button").count(), 0, "the front page offers no Back");
+        assert.equal(await page.getByRole("button", { name: "Back" }).count(), 0, "the front page offers no Back");
+        // its one action: a PC with no camera pointed at it shows a code to type instead (pairCode.ts)
+        assert.deepEqual(await page.locator("main button").allInnerTexts(), ["Pair with a code"], "the front page offers Pair with a code");
         await shot(page, `empty-${device}-${theme}`);
         await context.close();
       }

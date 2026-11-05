@@ -25,6 +25,17 @@ upgrade, and a request that is not an upgrade is `426`.
 | data | `role=server&connection_id=<id>` | the PC, one per client |
 | warm | `role=server&warm=<generation>` | the PC, at most one: a data socket opened before its client arrives |
 
+`GET /v1/pair?nameplate=<3 Crockford base32>&role=host|guest&v=1`, a WebSocket upgrade: the
+rendezvous for pairing with a typed code (`pair-room.ts`, [docs/relay.md](../docs/relay.md#who-gets-in), "Pairing with a typed code").
+The PC holds a nameplate (`host`, one per nameplate, else `4409`; at most 11 minutes); a device
+joins it (`guest`: `4404` with no host, `1013` while another guest is there, past 12 guests in the
+room's life or within 2 seconds of the last). Each guest gets a random attempt id the host hears in
+`{"type":"guest","attempt"}` and `{"type":"gone","attempt"}`; a guest's binary frames reach the
+host prefixed with that id, and the host's must start with the current guest's id, which is
+stripped (a stale one goes nowhere). `{"type":"drop","attempt"}` ends that guest. Frames are at
+most 4096 bytes; a guest has 30 seconds. The relay reads none of the exchange and keeps no limit
+the PC relies on.
+
 The PC proves every socket it opens (control and data): its query also carries
 `proof=1&public_key=<64 lowercase hex>`, its static X25519 public key, and its `server_id` must be
 the first 16 bytes of `SHA256(UTF8("ovis-relay-server-id-v1") || public_key)` as 32 lowercase hex
@@ -238,13 +249,14 @@ The global cap remains a backstop.
 | `--global-per-minute` | `RELAY_GLOBAL_PER_MINUTE` | 600 |
 | `--max-sockets` | `RELAY_MAX_SOCKETS` | 1024 |
 | `--max-rooms` | `RELAY_MAX_ROOMS` | 256 |
+| `--max-pair-rooms` | `RELAY_MAX_PAIR_ROOMS` | 256 (pairing rooms for typed codes, apart from PCs' rooms) |
 | `--max-addresses` | `RELAY_MAX_ADDRESSES` | 4096 |
 | `--max-sockets-per-address` | `RELAY_MAX_SOCKETS_PER_ADDRESS` | 64 |
 
 Flags override environment. Values must be positive safe integers; zero, infinity, fractions
 and missing flag values fail startup. `startBunRelay({ limits: { maxSockets: 2048, ... } })`
 accepts the same budgets as camel-case options (`perAddressPerMinute`, `globalPerMinute`,
-`maxSockets`, `maxRooms`, `maxAddresses`, `maxSocketsPerAddress`). Programmatic options do not read environment.
+`maxSockets`, `maxRooms`, `maxPairRooms`, `maxAddresses`, `maxSocketsPerAddress`). Programmatic options do not read environment.
 `startBunRelay({ limiters })` can replace just the rate limiters; room/socket caps still hold.
 Admission reserves both caps synchronously before upgrade, rolls back failed upgrades and
 reclaims a room when its last pending/open socket leaves. `/health` remains available at capacity.

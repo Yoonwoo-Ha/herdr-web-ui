@@ -38,6 +38,7 @@
  * way and the time; never a frame, an address or a connection_id.
  */
 
+import { parsePairRequest, type PairSocketRequest } from "./pair-room.ts";
 import { SERVER_KEY_INVALID, SERVER_KEY_MISMATCH, SERVER_PROOF_CLOSE, SERVER_PROOF_MS, SERVER_PROOF_REQUIRED, deriveServerId, proofKey, serverChallenge, verifyServerProof } from "../shared/relay-server-proof.ts";
 
 /** the wire version this relay speaks, `v=` in the socket URL */
@@ -205,12 +206,13 @@ const text = (status: number, body: string, headers?: Record<string, string>) =>
  * upgraded. Returns the response to send, or the socket to open. `address` keys the per-address
  * limiter only; it is never kept.
  */
-export async function admit(request: Request, address: string, limiters?: Limiters): Promise<Response | SocketRequest> {
+export async function admit(request: Request, address: string, limiters?: Limiters): Promise<Response | SocketRequest | PairSocketRequest> {
   const url = new URL(request.url);
   if (url.pathname === "/health") return request.method === "GET" || request.method === "HEAD" ? text(200, "ok") : text(405, "", { allow: "GET" });
-  if (url.pathname !== "/v1/ws") return text(404, "not found");
+  if (url.pathname !== "/v1/ws" && url.pathname !== "/v1/pair") return text(404, "not found");
   if (request.method !== "GET") return text(405, "", { allow: "GET" });
-  const socket = parseSocketRequest(url);
+  // the rendezvous for pairing with a typed code (pair-room.ts), under the same limits
+  const socket = url.pathname === "/v1/pair" ? parsePairRequest(url) : parseSocketRequest(url);
   if ("error" in socket) return text(400, socket.error);
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return text(426, "expected a WebSocket upgrade", { upgrade: "websocket" });
   if (limiters) {

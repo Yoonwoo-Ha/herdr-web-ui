@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test }
 import { answerServerChallenge, SERVER_PROOF_CLOSE, SERVER_PROOF_MS } from "../shared/relay-server-proof.ts";
 import { CLOSE, HANDSHAKE_MS, IDLE_MS, KEEPALIVE_PING, KEEPALIVE_PONG, MAX_CLIENTS, MAX_MESSAGE_BYTES, MAX_PENDING, MAX_PROVING, OFFLINE_WAIT_MS, USAGE_REPORT_MS, WARM_QUIET_MS, parseSocketRequest, type Frame } from "./core.ts";
 import { answerChallenge, newServer, type TestServer } from "./relay-test-client.ts";
+import { PAIR_GUEST_MS } from "./pair-room.ts";
 import { RelayRoom, handle, usageKey, type Env, type HibernatableSocket, type RelayState } from "./worker.ts";
 
 /** the server end of a Cloudflare WebSocketPair: records what the room sends and how it closes */
@@ -698,6 +699,65 @@ describe("relay Worker", () => {
     expect((await handle(bad, e)).status).toBe(400);
     expect(asked).toEqual([]);
     expect(rooms).toEqual([]);
+  });
+});
+
+describe("relay Worker pairing rendezvous", () => {
+  const pairUrl = (role: string, plate = "AB1") => `https://relay.test/v1/pair?nameplate=${plate}&role=${role}&v=1`;
+  const openPair = async (room: RelayRoom, fake: ReturnType<typeof fakeState>, role: string) => {
+    expect((await room.fetch(new Request(pairUrl(role), upgrade))).status).toBe(101);
+    return fake.sockets.at(-1)!;
+  };
+
+  test("routes a pairing socket to the nameplate's own Durable Object, apart from every server_id", async () => {
+    const rooms: string[] = [];
+    const allow = { limit: async () => ({ success: true }) };
+    const e = { RELAY: { idFromName: (name: string) => name, get: (id: unknown) => ({ fetch: async () => { rooms.push(id as string); return new Response(null, { status: 101 }); } }) }, RELAY_LIMITER: allow, RELAY_GLOBAL_LIMITER: allow } satisfies Env;
+    expect((await handle(new Request(pairUrl("host"), { headers: { upgrade: "websocket" } }), e)).status).toBe(101);
+    expect(rooms).toEqual(["pair:AB1"]);
+  });
+
+  test("host and guest meet, frames pass scoped to the attempt, and it survives an eviction", async () => {
+    const fake = fakeState();
+    let room = new RelayRoom(fake.state);
+    const host = await openPair(room, fake, "host");
+    expect(host.json(0)).toEqual({ type: "waiting" });
+    const guest = await openPair(room, fake, "guest");
+    const { attempt } = host.json(1) as { attempt: string };
+    room = new RelayRoom(fake.state);
+    room.webSocketMessage(guest, new Uint8Array([7]).buffer);
+    const up = host.sent[2] as Uint8Array;
+    expect(Array.from(up.slice(16))).toEqual([7]);
+    expect(Array.from(up.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("")).toBe(attempt);
+    room.webSocketMessage(host, up.buffer.slice(0) as ArrayBuffer);
+    expect(Array.from(guest.sent[0] as Uint8Array)).toEqual([7]);
+    closeFromFar(room, host);
+    expect(guest.closedWith?.code).toBe(1001);
+  });
+
+  test("a guest past its deadline passes nothing on, before any sweep", async () => {
+    const fake = fakeState();
+    setSystemTime(new Date(1_000_000));
+    const room = new RelayRoom(fake.state);
+    const host = await openPair(room, fake, "host");
+    const guest = await openPair(room, fake, "guest");
+    const before = host.sent.length;
+    setSystemTime(new Date(1_000_000 + PAIR_GUEST_MS));
+    room.webSocketMessage(guest, new Uint8Array([1]).buffer);
+    expect(host.sent.length).toBe(before + 1);
+    expect(host.json(before)).toMatchObject({ type: "gone" });
+    expect(guest.closedWith?.code).toBe(1001);
+  });
+
+  test("a host the runtime keeps answering keepalives for is not closed as idle", async () => {
+    const fake = fakeState();
+    setSystemTime(new Date(1_000_000));
+    const room = new RelayRoom(fake.state);
+    const host = await openPair(room, fake, "host");
+    setSystemTime(new Date(1_000_000 + IDLE_MS + 1000));
+    fake.keepalive.set(host, new Date(1_000_000 + IDLE_MS));
+    await room.alarm();
+    expect(host.closedWith).toBeNull();
   });
 });
 

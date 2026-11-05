@@ -45,3 +45,16 @@
 .relay-pairing-id {
   margin-top: var(--space-3);
 }
+
+/* a code to type on the other device: large, monospaced, in its two groups, as the pairing code is drawn */
+.relay-typed-code {
+  margin-top: var(--space-2);
+}
+
+.relay-typed-code-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-pairing);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.12em;
+  user-select: all;
+}

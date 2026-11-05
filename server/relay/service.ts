@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { encodeOffer } from "../../shared/relay-offer.ts";
+import type { RelayOffer } from "../../shared/relay-offer.ts";
 import { GLOBAL_RELAY, REGIONAL_RELAYS } from "../../shared/relay-regions.ts";
 import type { RelayStatus } from "../../shared/protocol.ts";
 import type { RequestServices } from "../dispatch.ts";
@@ -12,6 +13,7 @@ import type { RelayIdentity } from "./identity.ts";
 import { RelayLink } from "./link.ts";
 import type { RelayLinkOptions } from "./link.ts";
 import { RelayPairingApprovals } from "./pairing-approvals.ts";
+import { RelayPairCodes } from "./pair-code.ts";
 
 export interface RelayServiceOptions {
   readonly stateDir: string;
@@ -30,6 +32,11 @@ export interface RelayServiceOptions {
   readonly regionalRelays?: readonly string[];
   /** The round trip to a relay in ms, or null when it does not answer; `/health` over HTTPS by default. */
   readonly probe?: (relay: string, signal: AbortSignal) => Promise<number | null>;
+  /**
+   * The relay typed pairing codes meet on (server/relay/pair-code.ts): Ovis's global one, where the
+   * hosted app looks for them, when this PC is on it; none on a relay of its own. Tests name theirs.
+   */
+  readonly pairCodeRelay?: string;
 }
 
 /** A regional relay is advertised only when it answers in at most this share of the global one's round trip. */
@@ -88,6 +95,7 @@ export class RelayService {
   readonly app: string;
   /** Phones that compared digits with this PC and wait for the owner's approval. */
   readonly approvals = new RelayPairingApprovals();
+  private pairCodes: RelayPairCodes | undefined;
 
   constructor(private readonly options: RelayServiceOptions) {
     const named = options.relay ?? process.env["OVIS_RELAY_URL"];
@@ -249,6 +257,8 @@ export class RelayService {
     this.measuring = undefined;
     this.phase = "off";
     this.error = null;
+    // a code names this PC's key: it goes with the link
+    this.pairCodes?.cancel();
     this.ending = Promise.all([this.ending, link?.stop(), regional?.stop()]).then(() => undefined);
     return this.ending;
   }
@@ -264,6 +274,31 @@ export class RelayService {
   shutdown(): Promise<void> {
     this.shuttingDown = true;
     return this.disconnect();
+  }
+
+  /** The offer a QR code shows, for a given six-digit code. */
+  private offerFor(code: string): RelayOffer {
+    // the phone lists the PC under the name Ovis shows for it (server/machines.ts), not its scope URL
+    const name = hostname().slice(0, 64);
+    return { v: 1, server_id: this.identity!.server_id, server_public_key: this.identity!.public_key,
+      relay: this.advertised, code, ...(name ? { name } : {}) };
+  }
+
+  /**
+   * A code to type on the device being paired (server/relay/pair-code.ts), replacing any showing; null
+   * when this PC's relay has none (it is not Ovis's own).
+   */
+  async pairCode(): Promise<{ code: string; expires_at: string; server_id: string } | null> {
+    if (!this.enabled || !this.identity || !this.services || this.blocked) throw new Error("Start the relay before pairing.");
+    const relay = this.options.pairCodeRelay ?? (this.relay === GLOBAL_RELAY ? GLOBAL_RELAY : null);
+    if (relay === null) return null;
+    this.pairCodes ??= new RelayPairCodes({ relay, devices: this.services.devices, offer: (code) => this.offerFor(code), connect: this.options.connect });
+    return { ...await this.pairCodes.mint(), server_id: this.identity.server_id };
+  }
+
+  /** Takes the code showing off the relay. */
+  cancelPairCode(): void {
+    this.pairCodes?.cancel();
   }
 
   offer(): { url: string; expires_at: string } {

@@ -9,7 +9,7 @@ const EXPECTED = "0123456789abcdef0123456789abcdef";
 /** the same id but for its third and last groups */
 const RECEIVED = "01234567ffffcdef0123456789abeeee";
 const none = () => {};
-const props = (state: RelayShellProps["state"]): RelayShellProps => ({ state, scoped: true, iosTab: false, onPair: none, onRetry: none, onCancel: none, onBack: none, onForget: none, onUpdate: none, onMatch: none });
+const props = (state: RelayShellProps["state"]): RelayShellProps => ({ state, scoped: true, iosTab: false, onPair: none, onRetry: none, onCancel: none, onBack: none, onForget: none, onUpdate: none, onMatch: none, onCodeStart: none, onCodeSubmit: none, onCodeMatch: none });
 const render = (shown: RelayShellProps): string => {
   const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
   Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
@@ -90,5 +90,21 @@ describe("a key that is not the PC's", () => {
     const html = render(props({ kind: "forged", name: null, mismatch: { expected: EXPECTED, received: null, from: "link" } }));
     expect(html).toContain("Not a valid key");
     expect(groupsOf(html)).toHaveLength(8);
+  });
+});
+
+describe("pairing with a typed code", () => {
+  it("shows every group of the ID a code found before anything is paired", () => {
+    const html = render(props({ kind: "code-compare", offer: { v: 1, server_id: EXPECTED, server_public_key: "k", relay: "wss://relay.example", code: "123456", name: "Desk" } }));
+    for (const group of keyIdGroups(EXPECTED)) expect(html).toContain(`>${group}<`);
+    expect(html).toContain("It matches");
+    expect(html).toContain('data-relay-state="code-compare"');
+  });
+
+  it("keeps the code in its field only, and says why the last one gave no PC", () => {
+    const html = render(props({ kind: "code-entry", failure: "no-pc" }));
+    expect(html).toMatch(/<input[^>]*name="code"/);
+    expect(html).not.toMatch(/<input[^>]*name="code"[^>]*value=/);
+    expect(html).toContain("No PC shows this code");
   });
 });

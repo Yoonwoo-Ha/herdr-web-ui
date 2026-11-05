@@ -169,3 +169,25 @@
 .relay-shell-keys dd {
   margin: var(--space-1) 0 var(--space-3);
 }
+
+/* Pair with a code: one wide field for the code, spaced as the PC draws it */
+.relay-shell-code-form {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.relay-shell-code-input {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xl);
+  letter-spacing: 0.12em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+/* the ID a typed code found, in the groups the PC draws it in under its code */
+.relay-shell-code-id {
+  margin: var(--space-4) 0;
+}

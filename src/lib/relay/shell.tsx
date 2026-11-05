@@ -41,6 +41,7 @@ import type { AccountView, PcUpdate, RelayShellState } from "./shellState.ts";
 import { relaySkew, reloadOnce } from "./skew.ts";
 import type { ReloadMemory } from "./skew.ts";
 import { openRelayTransport } from "./transport.ts";
+import { offerFromCode, TypedCodeError } from "./pairCode.ts";
 import type { RelayTransport } from "./transport.ts";
 
 export interface RelayShellMount {
@@ -59,6 +60,8 @@ export interface RelayShellMount {
   shellVersion?: string;
   /** brings in a newer shell: the worker checks for one, then the page reloads */
   reload?: () => Promise<void>;
+  /** finds a PC by a typed code (pairCode.ts); tests hand in their own */
+  findByCode?: typeof offerFromCode;
   /** this client's account key and sign-in; the `ovis-account` database by default */
   accountStore?: AccountStore;
   /** the account service's origin; the page's `ovis-account-service` meta by default, and no sign-in without one */
@@ -161,6 +164,9 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   let updating = false;
   /** the comparison on screen: its digits, and the phone's answer that they match */
   let comparison: { name: string | null; digits: string; matched: () => void } | null = null;
+  /** the offer a typed code found, until its ID is compared on screen */
+  let codeOffer: RelayOffer | null = null;
+  const findByCode = mount.findByCode ?? offerFromCode;
 
   // the push subscription this PC's worker kept while no window could hand it over (public/sw.js
   // pushsubscriptionchange): registered with the PC once it is connected, and when the worker says
@@ -184,7 +190,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const show = (state: RelayShellState): void => {
     shell ??= createRoot(mount.container);
     shell.render(createElement(StrictMode, null, createElement(SettingsProvider, null,
-      createElement(RelayShell, { state, scoped, iosTab, onPair: pair, onRetry: retry, onCancel: cancel, onBack: toFront, onForget: forget, onUpdate: update, onMatch: match, ...(accountService === null ? {} : { onSignIn: signIn, accountProviders, onJoin: joinPc, onSignOut: signOut, onLeave: leave }) }))));
+      createElement(RelayShell, { state, scoped, iosTab, onPair: pair, onRetry: retry, onCancel: cancel, onBack: toFront, onForget: forget, onUpdate: update, onMatch: match, onCodeStart: codeStart, onCodeSubmit: codeSubmit, onCodeMatch: codeMatch, ...(accountService === null ? {} : { onSignIn: signIn, accountProviders, onJoin: joinPc, onSignOut: signOut, onLeave: leave }) }))));
   };
 
   /** The front page: the saved PCs, or the account's once signed in. */
@@ -509,8 +515,41 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     current.matched();
   };
 
+  const codeStart = (): void => {
+    opening?.abort();
+    opening = null;
+    codeOffer = null;
+    show({ kind: "code-entry", failure: null });
+  };
+
+  /** One tap, one exchange (pairCode.ts): a failure goes back to the field, and nothing retries with the code. */
+  const codeSubmit = (input: string): void => {
+    opening?.abort();
+    const controller = new AbortController();
+    opening = controller;
+    codeOffer = null;
+    show({ kind: "code-looking" });
+    findByCode(input, { signal: controller.signal }).then((offer) => {
+      if (controller.signal.aborted) return;
+      codeOffer = offer;
+      show({ kind: "code-compare", offer });
+    }, (error: unknown) => {
+      if (controller.signal.aborted) return;
+      show({ kind: "code-entry", failure: error instanceof TypedCodeError ? error.failure : "unreachable" });
+    });
+  };
+
+  // the IDs matched: the PC's own page takes the offer as it takes a scanned QR code's, and pairs from there
+  const codeMatch = (): void => {
+    const offer = codeOffer;
+    codeOffer = null;
+    if (offer === null) return;
+    navigate(encodeOffer(offer, window.location.origin));
+  };
+
   const cancel = (): void => {
     comparison = null;
+    codeOffer = null;
     opening?.abort();
     opening = null;
     toFront();

@@ -6,7 +6,10 @@ import { startBunRelay } from "../../relay/bun.ts";
 import { Room } from "../../relay/core.ts";
 import { openClientSecureChannel } from "../../shared/relay-e2ee.ts";
 import type { Transport } from "../../shared/relay-e2ee.ts";
-import { decodeOffer } from "../../shared/relay-offer.ts";
+import { decodeOffer, validateOffer } from "../../shared/relay-offer.ts";
+import { normalizePairCode, PairCodeExpiredError, PairCodeGuest, splitPairCode } from "../../shared/relay-pair-code.ts";
+import { PAIR_CLOSE } from "../../relay/pair-room.ts";
+import { offerFromCode } from "../../src/lib/relay/pairCode.ts";
 import type { RelayOffer } from "../../shared/relay-offer.ts";
 import { MuxEngine } from "../../shared/relay-mux-engine.ts";
 import type { HttpRequest, SessionFrame } from "../../shared/relay-mux-engine.ts";
@@ -25,7 +28,7 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 
 async function fixture(serveOnly?: boolean, options: Partial<RelayServiceOptions> = {}) {
   let attempts = 0;
-  const hostOptions = { port: 0, limiters: {
+  const hostOptions = { port: 0, pairGuestGapMs: 0, limiters: {
     perAddress: { async limit() { attempts++; return { success: true }; } },
     global: { async limit() { return { success: true }; } },
   } };
@@ -337,7 +340,7 @@ it("starts, decodes an offer, pairs, authenticates, and carries full HTTP and WS
   const returning = await client(f, offer, false, paired.device);
   expect((await returning.http("/api/relay")).status).toBe(200);
   expect(await (await returning.http("/api/access")).json()).toMatchObject({ relay: { phase: "online" } });
-  for (const path of ["/api/relay/offer", "/api/relay/reset-identity", "/api/relay/start", "/api/relay/stop"]) {
+  for (const path of ["/api/relay/offer", "/api/relay/code", "/api/relay/code/cancel", "/api/relay/reset-identity", "/api/relay/start", "/api/relay/stop"]) {
     const refused = await returning.http(path, { method: "POST", headers: [["x-herdr-update", "1"]] });
     expect(refused.status).toBe(403);
     expect(await refused.json()).toMatchObject({ error: { code: "local_required" } });
@@ -815,4 +818,101 @@ it("opens the regional link and keeps running when the choice cannot be saved", 
   // Then the PC is on both relays all the same, and offers name the regional one
   await bounded(Promise.all([f.synced.global.promise, f.synced.regional.promise]));
   expect((await f.offer()).relay).toBe("wss://regional.test");
+});
+
+/** A device typing `code`: one exchange on the rendezvous; the offer's JSON, the error it ended in, or the relay's close code. */
+async function typeCode(f: Awaited<ReturnType<typeof fixture>>, code: string): Promise<{ offer?: string; error?: unknown; close?: number }> {
+  const { nameplate } = splitPairCode(code);
+  const socket = new WebSocket(`ws://127.0.0.1:${f.localRelay.port}/v1/pair?nameplate=${nameplate}&role=guest&v=1`);
+  socket.binaryType = "arraybuffer";
+  cleanup.push(() => socket.close());
+  const guest = new PairCodeGuest(code);
+  const done = deferred<{ offer?: string; error?: unknown; close?: number }>();
+  let answered = false;
+  socket.onmessage = (event) => {
+    if (typeof event.data === "string") return;
+    const frame = new Uint8Array(event.data as ArrayBuffer);
+    try {
+      if (!answered) { answered = true; socket.send(guest.answer(frame)); return; }
+      done.resolve({ offer: guest.open(frame) });
+    } catch (error) { done.resolve({ error }); }
+  };
+  socket.onclose = (event) => done.resolve({ close: event.code });
+  return bounded(done.promise);
+}
+
+async function mintCode(f: Awaited<ReturnType<typeof fixture>>) {
+  const response = await f.request("/code", "POST");
+  expect(response.status).toBe(200);
+  const body = await response.json() as { code: string; expires_at: string; server_id: string };
+  expect(body.code).toMatch(/^[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}$/);
+  return body;
+}
+
+/** The same code with its last password character changed. */
+const wrong = (code: string) => { const canonical = normalizePairCode(code)!; return canonical.slice(0, -1) + (canonical.endsWith("Z") ? "Y" : "Z"); };
+
+it("a device that types the code gets the QR code's offer, pairs with its six-digit code, and the code is spent", async () => {
+  const f = await fixture(false, { pairCodeRelay: "wss://pair.test" });
+  await f.start();
+  const minted = await mintCode(f);
+  const devices = f.app.context.services.devices;
+  expect(Date.parse(minted.expires_at)).toBe(Date.parse(devices.activePairing()!.expires_at));
+  const typed = await typeCode(f, minted.code.toLowerCase());
+  const offer = validateOffer(JSON.parse(typed.offer!));
+  expect(offer.server_id).toBe(minted.server_id);
+  expect(offer.code).toBe(devices.activePairing()!.code);
+  const paired = await client(f, offer);
+  expect((await paired.http("/api/health")).status).toBe(200);
+  expect(await typeCode(f, minted.code)).toEqual({ close: PAIR_CLOSE.NO_HOST });
+});
+
+it("three wrong codes end it, deliver nothing, and never pause pairing with the QR code", async () => {
+  const f = await fixture(false, { pairCodeRelay: "wss://pair.test" });
+  await f.start();
+  const minted = await mintCode(f);
+  for (let index = 0; index < 3; index++) {
+    // the PC heard a wrong confirmation and ended that try itself
+    expect(await typeCode(f, wrong(minted.code))).toEqual({ close: PAIR_CLOSE.DROPPED });
+  }
+  expect(await typeCode(f, minted.code)).toEqual({ close: PAIR_CLOSE.NO_HOST });
+  const devices = f.app.context.services.devices;
+  expect(() => devices.assertRelayPairing()).not.toThrow();
+  expect((await client(f, await f.offer())).device).toBeDefined();
+});
+
+it("a code whose six-digit code a phone spent with the QR code tells a device that knew it, and hands over no offer", async () => {
+  const f = await fixture(false, { pairCodeRelay: "wss://pair.test" });
+  await f.start();
+  const minted = await mintCode(f);
+  await client(f, await f.offer());
+  const typed = await typeCode(f, minted.code);
+  expect(typed.error).toBeInstanceOf(PairCodeExpiredError);
+});
+
+it("a new six-digit code takes the typed code off the relay", async () => {
+  const f = await fixture(false, { pairCodeRelay: "wss://pair.test" });
+  await f.start();
+  const minted = await mintCode(f);
+  f.app.context.services.devices.startPairing();
+  expect(await typeCode(f, minted.code)).toEqual({ close: PAIR_CLOSE.NO_HOST });
+});
+
+it("a relay that is not Ovis's own has no codes to type", async () => {
+  const f = await fixture();
+  await f.start();
+  const response = await f.request("/code", "POST");
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({ error: { code: "code_unavailable" } });
+});
+
+it("end to end: the hosted app's code screen finds the PC through the relay and the phone pairs with what it gets", async () => {
+  const f = await fixture(false, { pairCodeRelay: "wss://relay.ovis.sh" });
+  await f.start();
+  const minted = await mintCode(f);
+  const offer = await offerFromCode(minted.code, { connect: (url) => new WebSocket(url.replace("wss://relay.ovis.sh", `ws://127.0.0.1:${f.localRelay.port}`)) });
+  expect(offer.server_id).toBe(minted.server_id);
+  const paired = await client(f, offer);
+  expect((await paired.http("/api/health")).status).toBe(200);
+  expect(f.app.context.services.devices.list(null).some((device) => device.via_relay)).toBe(true);
 });

@@ -267,6 +267,22 @@ export function requestRelayOffer(): Promise<RelayOffer> {
   return getJson<RelayOffer>("/api/relay/offer", { method: "POST", headers: { "x-herdr-update": "1" } });
 }
 
+/** POST /api/relay/code: a code to type on the device being paired, good until `expires_at`; it replaces any showing. */
+export interface RelayCode {
+  readonly code: string;
+  readonly expires_at: string;
+  readonly server_id: string;
+}
+
+export function requestRelayCode(): Promise<RelayCode> {
+  return getJson<RelayCode>("/api/relay/code", { method: "POST", headers: { "x-herdr-update": "1" } });
+}
+
+/** POST /api/relay/code/cancel: takes the code showing off the relay. */
+export function cancelRelayCode(): Promise<{ readonly ok: true }> {
+  return getJson<{ readonly ok: true }>("/api/relay/code/cancel", { method: "POST", headers: { "x-herdr-update": "1" } });
+}
+
 /** POST /api/relay/link: a pairing link without a code; the phone that opens it compares six digits with this PC. */
 export function requestRelayLink(): Promise<{ readonly url: string }> {
   return getJson<{ readonly url: string }>("/api/relay/link", { method: "POST", headers: { "x-herdr-update": "1" } });
