@@ -118,4 +118,5 @@ export const MACHINES_KO: Record<string, string> = {
   "Update this PC's Ovis and connect": "이 PC의 Ovis를 업데이트하고 연결",
   "Updating {name}'s own Ovis": "{name}의 Ovis 업데이트 중",
   "That PC's own updater installs it there. Existing herdr sessions keep running.": "그 PC의 자체 업데이터가 그곳에 설치합니다. 기존 herdr 세션은 계속 돕니다.",
+  "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "이 PC에서만 지웁니다. 접근까지 끊으려면 그 PC의 폰 및 기기에서 취소하세요.",
 };

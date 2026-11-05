@@ -118,4 +118,5 @@ export const MACHINES_JA: Record<string, string> = {
   "Update this PC's Ovis and connect": "この PC の Ovis を更新して接続",
   "Updating {name}'s own Ovis": "{name} の Ovis を更新しています",
   "That PC's own updater installs it there. Existing herdr sessions keep running.": "その PC 自身のアップデーターがそこにインストールします。既存の herdr セッションは動き続けます。",
+  "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "この PC からだけ削除します。アクセスも止めるには、その PC の スマートフォンとデバイス で取り消してください。",
 };

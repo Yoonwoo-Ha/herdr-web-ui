@@ -1,4 +1,5 @@
 import "./adopt-legacy-env.ts";
+import type { RelaySocket } from "../shared/relay-channel.ts";
 import { createCore, type SocketData } from "./core/index.ts";
 import { ClientConnectionLog } from "./client-connection-log.ts";
 import { RequestLog } from "./request-log.ts";
@@ -167,6 +168,8 @@ export function createServer(
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
     voice?: VoiceService;
     machines?: boolean;
+    /** how PCs added through the relay reach it (server/relay-pc.ts); tests point it at a local relay */
+    relayPcSocket?: (url: string) => RelaySocket;
     /** a bridge this app starts on a PC (server/remote-entry.ts): its token is the credential its connection server holds, and no browser reaches it, so its snapshots go whole (#2160) */
     bridgeOnly?: boolean;
     /** Read-only saved profiles from the local herdr client; tests supply their own catalog. */

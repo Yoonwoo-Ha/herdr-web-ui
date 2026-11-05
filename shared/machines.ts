@@ -19,8 +19,10 @@ export interface Machine {
   herdr_profile_id?: string;
   id: string;
   name: string;
-  kind: "local" | "ssh";
+  kind: "local" | "ssh" | "relay";
   target?: SshTarget;
+  /** a PC added through the Ovis relay (no SSH): its relay ID and the relay it is reached through */
+  relay?: { server_id: string; relay: string };
   enabled: boolean;
   state: MachineState;
   error: string | null;

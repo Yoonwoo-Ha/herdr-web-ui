@@ -30,7 +30,7 @@ import type { UpdatesModel } from "../lib/updates.ts";
 import type { UserError } from "../lib/userError.ts";
 import { LOCAL_MACHINE, type HerdrCoreFacts, type HerdrRuntimeFacts, type Machine, type MachineSettings } from "../../shared/machines.ts";
 import { canHideMachine, isMachineShown, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
-import { fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
+import { addRelayPc, fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
 import type { PushActionResult } from "../lib/pushHealth.ts";
 import type { HealthAuth, PluginActions, RemoteAccess } from "../../shared/protocol.ts";
@@ -994,6 +994,42 @@ function SidebarPcsGroup({ machines }: { machines: readonly Machine[] }) {
   );
 }
 
+/**
+ * Another PC through the Ovis relay, no SSH: its pairing link (Settings → Phone & devices → Copy link there) pairs this
+ * PC's server with it as a phone would. The link holds a one-time code, so it stays in the input, never in state.
+ */
+function AddRelayPc() {
+  const t = useT();
+  const input = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ error: boolean; text: string } | null>(null);
+  const add = async () => {
+    const link = input.current?.value.trim() ?? "";
+    if (!link) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const { machine } = await addRelayPc(link);
+      if (input.current) input.current.value = "";
+      setResult({ error: false, text: t("{name} was added. Its workspaces join the sidebar.", { name: machine.name }) });
+    } catch (error) {
+      setResult({ error: true, text: error instanceof Error ? error.message : String(error) });
+    } finally { setBusy(false); }
+  };
+  return (
+    <>
+      <SettingsRow label={t("Add a PC through the relay")} description={t("No SSH or open port. On the other PC, turn the relay on in Settings → Phone & devices, choose Copy link, and paste it here.")} wide>
+        <form className="relay-pc-form" onSubmit={(event) => { event.preventDefault(); void add(); }}>
+          <input ref={input} className="input relay-pc-input" type="url" placeholder="https://app.ovis.sh/s/…" aria-label={t("Pairing link")}
+            autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={busy} />
+          <button type="submit" className="btn" disabled={busy} aria-busy={busy || undefined} aria-label={t("Add a PC through the relay")}>{t("Add PC")}</button>
+        </form>
+      </SettingsRow>
+      {result && <p className="settings-item settings-hint" role={result.error ? "alert" : "status"}>{result.text}</p>}
+    </>
+  );
+}
+
 /** a set-aside copy of machines.json (the PCs added in this app), not of herdr-profile-state.json */
 const heldAddedPcs = (name: string): boolean => name.startsWith("machines.json.");
 
@@ -1005,6 +1041,7 @@ function RemotePcsPage({ actions, machines, pcSettings, pcSettingsError, onPcSet
       <SettingsRow label={t("Add PC")} description={t("Connect another PC over an SSH alias or user@host. Its workspaces join the sidebar.")}>
         <button type="button" className="btn" onClick={actions.openAddPc}><Monitor aria-hidden="true" />{t("Add PC")}</button>
       </SettingsRow>
+      <AddRelayPc />
       {/* the switch is the server's and waits for its answer; Add PC never does */}
       {pcSettings && (
         <SettingsRow label={t("Update PC bridges automatically")} description={t("When an app update needs a newer bridge, PCs that connect with their saved key are updated in the background. PCs that need a password ask first.")}>

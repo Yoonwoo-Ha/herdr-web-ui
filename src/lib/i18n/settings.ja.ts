@@ -375,4 +375,8 @@ export const SETTINGS_JA: Record<string, string> = {
   "Ovis restarts and shows herdr TUI's terminals instead of the Herdr app's; this page reconnects by itself. The app's terminals keep running.": "Ovis が再起動し、Herdr アプリの代わりに herdr TUI のターミナルを表示して、このページは自動で再接続します。アプリのターミナルは動き続けます。",
   "Switch and restart": "切り替えて再起動",
   "Ovis has not answered since the restart. Reload this page in a moment; if it stays away, start Ovis again on this PC.": "再起動してから Ovis が応答しません。少ししてからこのページを再読み込みし、それでも応答がなければこの PC で Ovis を起動し直してください。",
+  "Add a PC through the relay": "リレー経由で PC を追加",
+  "No SSH or open port. On the other PC, turn the relay on in Settings → Phone & devices, choose Copy link, and paste it here.": "SSH も開いたポートも不要です。もう一方の PC の 設定 → スマートフォンとデバイス でリレーをオンにし、リンクをコピー を選んでここに貼り付けてください。",
+  "Pairing link": "ペアリングリンク",
+  "{name} was added. Its workspaces join the sidebar.": "{name} を追加しました。ワークスペースはサイドバーに並びます。",
 };

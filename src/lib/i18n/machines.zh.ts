@@ -118,4 +118,5 @@ export const MACHINES_ZH: Record<string, string> = {
   "Update this PC's Ovis and connect": "更新此 PC 的 Ovis 并连接",
   "Updating {name}'s own Ovis": "正在更新 {name} 的 Ovis",
   "That PC's own updater installs it there. Existing herdr sessions keep running.": "由那台 PC 自己的更新程序在那里安装。现有的 herdr 会话继续运行。",
+  "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "仅从这台 PC 移除。要同时取消它的访问权限，请在那台 PC 的 手机和设备 中撤销。",
 };

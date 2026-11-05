@@ -375,4 +375,8 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Ovis restarts and shows herdr TUI's terminals instead of the Herdr app's; this page reconnects by itself. The app's terminals keep running.": "Ovis 会重启并显示 herdr TUI 的终端而不是 Herdr 应用的，本页会自动重新连接。应用的终端继续运行。",
   "Switch and restart": "切换并重启",
   "Ovis has not answered since the restart. Reload this page in a moment; if it stays away, start Ovis again on this PC.": "重启后 Ovis 一直没有响应。请稍后重新加载本页；如果仍无响应，请在这台电脑上重新启动 Ovis。",
+  "Add a PC through the relay": "通过中继添加 PC",
+  "No SSH or open port. On the other PC, turn the relay on in Settings → Phone & devices, choose Copy link, and paste it here.": "无需 SSH，也无需开放端口。在另一台 PC 的 设置 → 手机和设备 中打开中继，选择 复制链接，然后粘贴到这里。",
+  "Pairing link": "配对链接",
+  "{name} was added. Its workspaces join the sidebar.": "已添加 {name}。它的工作区会显示在侧栏中。",
 };
