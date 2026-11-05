@@ -94,6 +94,14 @@ What keeps that in check:
   never leaves the phone either, unless such a file address is copied out and opened in a browser
   without the app.
 
+Once a phone has opened a PC, the app's service worker starts that PC's page from the copy of the
+app it kept and fetches `app.ovis.sh`'s in the background for the next open
+([`public/sw.js`](../public/sw.js)), so a reopen doesn't wait on the host. A new release, a fix
+included, therefore reaches a phone on the open after the one that fetched it. A copy kept more
+than a day ago is not opened first: the host is asked, the copy is used only when it doesn't
+answer. A PC newer than the app reloads the page once onto the host's copy at once (`reloadPage` in
+[`src/lib/relay/shell.tsx`](../src/lib/relay/shell.tsx)).
+
 To take `app.ovis.sh` out of the picture, [host the app yourself](guide.md#running-your-own-relay).
 
 ### Who gets in

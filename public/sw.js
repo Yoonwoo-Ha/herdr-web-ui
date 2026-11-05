@@ -95,9 +95,10 @@ async function fileFor(path) {
  * starts with: the worker before may have answered them, and a network that drops before the
  * page asks again must not leave a shell without them. Until then the old caches and their
  * shell stay, a complete start offline. Then the caches of other names go, their typefaces and
- * icons moved to FILES first.
+ * icons moved to FILES first, except `spare`: the cache whose shell a page is running right now,
+ * which may still ask for a file of its build. The next open, from the shell kept here, retires it.
  */
-async function keepShell(response) {
+async function keepShell(response, spare) {
   const html = await response.clone().text();
   const cache = await caches.open(CACHE);
   for (const path of shellFiles(html)) {
@@ -108,7 +109,7 @@ async function keepShell(response) {
   }
   await cache.put("/", response);
   const files = await caches.open(FILES);
-  const names = (await caches.keys()).filter((name) => name !== CACHE && name !== FILES);
+  const names = (await caches.keys()).filter((name) => name !== CACHE && name !== FILES && name !== spare);
   for (const name of names) {
     const old = await caches.open(name);
     // the files the retired cache's shell starts with: a page given that shell may not have asked yet
@@ -128,8 +129,33 @@ async function keepShell(response) {
 
 /** The shell to start from offline: this cache's, else the one a cache not yet deleted holds. */
 async function cachedShell() {
-  const cache = await caches.open(CACHE);
-  return (await cache.match("/")) || (await caches.match("/"));
+  return (await keptShell())?.response;
+}
+
+/**
+ * A page that needs the host's shell (src/lib/shellMode.ts requestFreshShell) leaves this entry in
+ * FILES: the next navigation takes it and asks the network first, its kept shell still the fallback.
+ */
+const FRESH_SHELL = "/__ovis-fresh-shell";
+/** How long a kept shell is opened without asking the host first: past it, a refresh that kept failing shows. */
+const KEPT_SHELL_MS = 24 * 60 * 60 * 1000;
+
+async function takeFreshRequest() {
+  return (await caches.open(FILES)).delete(`${FRESH_SHELL}/${shellServerId()}`);
+}
+
+function keptRecently(response) {
+  const at = Date.parse(response.headers.get("date") || "");
+  return Number.isFinite(at) && Date.now() - at < KEPT_SHELL_MS;
+}
+
+/** The shell kept for the next start and the cache that holds it; null when none was kept. */
+async function keptShell() {
+  for (const name of [CACHE, ...(await caches.keys()).filter((name) => name !== CACHE && name !== FILES)]) {
+    const response = await (await caches.open(name)).match("/");
+    if (response) return { response, cache: name };
+  }
+  return null;
 }
 
 // Only the shell build stamps this contract. Server-served workers keep their fetch behavior.
@@ -260,6 +286,20 @@ self.addEventListener("fetch", (event) => {
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {
+        // The hosted shell starts from the shell it kept: its host may be a slow ocean away, and
+        // which build a page runs is told apart from the PC's by the version policy, not by being
+        // fresh. The network's shell is kept for the next open.
+        let kept = null;
+        try {
+          const fresh = RELAY_RESOURCES ? await takeFreshRequest() : false;
+          kept = RELAY_RESOURCES && !fresh ? await keptShell() : null;
+        } catch (err) { /* storage that fails costs only the head start: the network is asked */ }
+        if (kept && keptRecently(kept.response)) {
+          event.waitUntil(fetch(request)
+            .then((response) => (response.ok ? keepShell(response, kept.cache) : undefined))
+            .catch(() => undefined));
+          return kept.response;
+        }
         let response;
         try {
           response = await fetch(request);

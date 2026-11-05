@@ -16,6 +16,8 @@ import { deviceLabel } from "../phone.ts";
 import { registerPendingPush } from "../push.ts";
 import type { PendingPushStore } from "../push.ts";
 import { alertPrefs, loadSettings, SettingsProvider } from "../settings.ts";
+import { onLazyChunkFailure } from "../lazyChunk.ts";
+import { requestFreshShell } from "../shellMode.ts";
 import { setTransport } from "../transport.ts";
 import { takeEntryUrl } from "./boot.ts";
 import { RelayUnreachableError } from "./channel.ts";
@@ -55,13 +57,18 @@ const UPDATE_POLL_MS = 1000;
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-async function reloadPage(): Promise<void> {
+async function reloadPage(serverId: string | null): Promise<void> {
   try {
     const registration = await navigator.serviceWorker?.getRegistration();
     // a worker check that hangs must not keep the stale shell up: the reload goes on without it
     await Promise.race([registration?.update(), wait(5000)]);
   } catch (error) { console.warn("Ovis: the service worker did not check for a newer shell", error); }
+  if (serverId !== null) await freshShellNext(serverId);
   window.location.reload();
+}
+
+async function freshShellNext(serverId: string): Promise<void> {
+  try { await requestFreshShell(caches, serverId); } catch (error) { console.warn("Ovis: the worker was not asked for a fresh shell", error); }
 }
 
 function tabMemory(): ReloadMemory | null {
@@ -92,8 +99,11 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const navigate = mount.navigate ?? ((path: string) => { window.location.assign(path); });
   const label = mount.label ?? deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0);
   const shellVersion = mount.shellVersion ?? __APP_VERSION__;
-  const reload = mount.reload ?? reloadPage;
   let entry = shellEntry(mount.entryUrl);
+  const reload = mount.reload ?? (() => reloadPage(entry.serverId));
+  // a part of the app the host no longer has (the kept shell is a release behind): the reload the
+  // app then offers asks the host for the shell, not the kept one
+  onLazyChunkFailure(() => { if (entry.serverId !== null) void freshShellNext(entry.serverId); });
   const scoped = entry.serverId !== null;
   const iosTab = iosBrowserTab({ userAgent: navigator.userAgent, maxTouchPoints: navigator.maxTouchPoints ?? 0, standalone: (navigator as Navigator & { standalone?: boolean }).standalone });
   let shell: Root | null = null;
