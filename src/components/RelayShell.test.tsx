@@ -9,7 +9,7 @@ const EXPECTED = "0123456789abcdef0123456789abcdef";
 /** the same id but for its third and last groups */
 const RECEIVED = "01234567ffffcdef0123456789abeeee";
 const none = () => {};
-const props = (state: RelayShellProps["state"]): RelayShellProps => ({ state, scoped: true, iosTab: false, onPair: none, onRetry: none, onCancel: none, onBack: none, onForget: none, onUpdate: none });
+const props = (state: RelayShellProps["state"]): RelayShellProps => ({ state, scoped: true, iosTab: false, onPair: none, onRetry: none, onCancel: none, onBack: none, onForget: none, onUpdate: none, onMatch: none });
 const render = (shown: RelayShellProps): string => {
   const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
   Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });

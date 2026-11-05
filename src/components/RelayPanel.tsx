@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Link2, RefreshCw } from "lucide-react";
 
 import "./RelayPanel.css";
 
-import { ApiError, requestRelayOffer, startPairing, type RelayOffer } from "../lib/api.ts";
+import { copyText } from "../lib/clipboard.ts";
+import { ApiError, requestRelayLink, requestRelayOffer, startPairing, type RelayOffer } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
 import { callNative, hasNativePlugin } from "../lib/nativeApp.ts";
 import { announcePairingCode, PAIRING_CODE_EVENT } from "../lib/useRelay.ts";
@@ -192,8 +193,43 @@ export function RelayPairing({ phone = false }: { phone?: boolean }) {
         <div className="phone-actions">
           <button type="button" className="btn" disabled={state === "minting"} onClick={() => void renew()}><RefreshCw aria-hidden="true" />{t("New code")}</button>
         </div>
+        <CodelessLink />
         {pcId}
       </div>
     </div>
+  );
+}
+
+/**
+ * No camera: a link without a code, sent to the phone any way at all. It holds nothing secret, so
+ * the phone that opens it and this PC show six digits to compare, and the owner approves the
+ * phone here (RelayPairingPrompt).
+ */
+function CodelessLink() {
+  const t = useT();
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  // the link to select once drawn, unless focus moved on while the copy was refused (the user is elsewhere, as copyText leaves it)
+  const [link, setLink] = useState<{ url: string; select: boolean } | null>(null);
+  const linkRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (link?.select && linkRef.current) window.getSelection()?.selectAllChildren(linkRef.current);
+  }, [link]);
+  const copy = async () => {
+    const initiator = document.activeElement;
+    try {
+      const { url } = await requestRelayLink();
+      // where the browser refuses the clipboard (plain http on the LAN), the link stays on screen, selected once drawn
+      if (await copyText(url)) { setLink(null); setNote({ ok: true, text: t("Copied. Open it on the phone within 10 minutes: both screens show six digits to compare, and you approve the phone here.") }); }
+      else { setLink({ url, select: document.activeElement === initiator }); setNote(null); }
+    } catch (reason) { setNote({ ok: false, text: failureText(reason) }); }
+  };
+  return (
+    <>
+      <div className="phone-actions">
+        <button type="button" className="btn" onClick={() => void copy()}><Link2 aria-hidden="true" />{t("Copy a link without a code")}</button>
+      </div>
+      {link !== null && <code className="settings-hint relay-codeless-link" ref={linkRef}>{link.url}</code>}
+      {note !== null && <p className={note.ok ? "settings-hint" : "settings-hint relay-error"} role={note.ok ? "status" : "alert"}>{note.text}</p>}
+    </>
   );
 }

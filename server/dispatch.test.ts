@@ -113,3 +113,23 @@ it("keys relay request budgets by device rather than session or forged source ad
     rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+it("refuses pairing without a code to an open LAN window, which never hears of a phone waiting", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-dispatch-open-"));
+  const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, machines: false, sidecar: false });
+  try {
+    const base = `http://192.168.1.10:${app.port}`;
+    const ctx: ServerContext = { ...app.context, requestIP: () => ({ address: "192.168.1.50" }), timeout: () => {}, upgrade: () => false };
+    for (const path of ["/api/relay/link", "/api/relay/pairing"]) {
+      const response = await handleRequest(new Request(base + path, {
+        method: "POST", headers: { host: `192.168.1.10:${app.port}`, origin: base, "x-herdr-update": "1", "content-type": "application/json" },
+        body: JSON.stringify({ id: "0011223344556677", decision: "approve" }),
+      }), ctx);
+      expect(response?.status).toBe(403);
+      expect(((await response!.json()) as { error: { code: string } }).error.code).toBe("owner_only");
+    }
+  } finally {
+    app.stop();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});

@@ -351,6 +351,10 @@ const BASE: Record<string, string> = {
   "Weekly": "週次",
   "Open terminal": "ターミナルを開く",
   "Sign in to {agent}": "{agent} にサインイン",
+  "Approve": "承認",
+  "Pair a phone through the relay": "リレー経由でスマートフォンをペアリング",
+  "{name} wants to pair through the relay. Approve it only if its screen shows": "{name} がリレー経由でペアリングしようとしています。その画面に次の数字が表示されている場合だけ承認してください:",
+  "Decline": "拒否",
   "differs": "不一致",
 };
 

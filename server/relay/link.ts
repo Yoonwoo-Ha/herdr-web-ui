@@ -3,6 +3,7 @@ import type { Transport } from "../../shared/relay-e2ee.ts";
 import type { MuxClock } from "../../shared/relay-mux-engine.ts";
 import type { RequestServices } from "../dispatch.ts";
 import type { RelayIdentity } from "./identity.ts";
+import { PAIR_APPROVAL_MS } from "../../shared/relay-pair-sas.ts";
 import { RelaySession, relayClock } from "./session.ts";
 import type { RelaySocketHandlers } from "./virtual-socket.ts";
 import { version } from "../../package.json";
@@ -163,20 +164,22 @@ export class RelayLink {
     try { socket = this.socket(id); } catch { return; }
     socket.binaryType = "arraybuffer";
     // Runs until the client signs in or pairs, not just until the protected channel opens.
-    const entry: DataConnection = {
-      socket, sockets: new Set(),
-      cancelTimeout: this.clock.setTimeout(() => {
-        // A pairing may already be saved: let its acknowledgment through once, then close regardless.
-        if (entry.session?.verifying) entry.cancelTimeout = this.clock.setTimeout(() => socket.close(), SIGN_IN_GRACE_MS);
-        else socket.close();
-      }, 15_000),
+    const deadline = () => {
+      // A pairing may already be saved: let its acknowledgment through once, then close regardless.
+      if (entry.session?.verifying) entry.cancelTimeout = this.clock.setTimeout(() => socket.close(), SIGN_IN_GRACE_MS);
+      // a comparison of digits ends the session itself at PAIR_APPROVAL_MS; this is only the backstop
+      else if (entry.session?.pairing) entry.cancelTimeout = this.clock.setTimeout(deadline, PAIR_APPROVAL_MS);
+      else socket.close();
     };
+    const entry: DataConnection = { socket, sockets: new Set(), cancelTimeout: this.clock.setTimeout(deadline, 15_000) };
     this.data.set(id, entry);
     // The relay refuses a client outright once 8 are answered, before this PC hears of it, so a room full
     // of clients that never sign in would turn everyone away. Keep a place free: the oldest client not
     // signed in gives way to a new one. A signed-in session is never evicted.
     if (this.data.size >= MAX_SESSIONS) {
-      const oldest = [...this.data].find(([other, candidate]) => other !== id && !candidate.deviceId);
+      // a phone comparing digits waits for a person: it gives way last
+      const waiting = [...this.data].filter(([other, candidate]) => other !== id && !candidate.deviceId);
+      const oldest = waiting.find(([, candidate]) => !candidate.session?.pairing) ?? waiting[0];
       if (oldest) {
         this.data.delete(oldest[0]);
         oldest[1].socket.close();

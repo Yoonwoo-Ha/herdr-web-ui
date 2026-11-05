@@ -3,9 +3,10 @@
  * (docs/relay.md). The hosted app uses it (src/lib/relay/channel.ts), and so does a PC's server for a PC it added
  * through the relay (server/relay-pc.ts).
  */
-import { openClientSecureChannel } from "./relay-e2ee.ts";
+import { channelBinding, openClientSecureChannel } from "./relay-e2ee.ts";
+import { fromBase64Url, PAIR_APPROVAL_MS, pairCommitment, pairDigits, randomPairNonce, toBase64Url } from "./relay-pair-sas.ts";
 import type { SecureChannel, Transport } from "./relay-e2ee.ts";
-import { decodeFrame, FrameType, LIMITS_V1, MuxProtocolError, RELAY_PROTOCOL } from "./relay-mux.ts";
+import { decodeFrame, FrameType, LIMITS_V1, MuxProtocolError, PAIR_SAS_FEATURE, RELAY_PROTOCOL } from "./relay-mux.ts";
 import { MuxEngine } from "./relay-mux-engine.ts";
 import type { MuxOptions, SessionFrame } from "./relay-mux-engine.ts";
 import { isWssOrigin, SERVER_ID_PATTERN } from "./relay-offer.ts";
@@ -92,6 +93,12 @@ export interface RelayChannelOptions {
   readonly carrier?: string;
   /** each request's deadline (MuxOptions.requestTimeoutMs); 60 s by default */
   readonly requestTimeoutMs?: MuxOptions["requestTimeoutMs"];
+  /**
+   * A new device with no pairing code pairs by comparing digits (shared/relay-pair-sas.ts): this
+   * shows them, and resolves once the person says the PC shows the same. Without it such a device
+   * cannot pair. The PC's owner still has to approve it there.
+   */
+  readonly compare?: (digits: string) => Promise<void>;
 }
 export interface RelayChannel {
   readonly mux: MuxEngine;
@@ -129,7 +136,14 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
   const socket = (options.socket ?? ((address) => new WebSocket(address)))(url.href);
   socket.binaryType = "arraybuffer";
   return new Promise<RelayChannel>((resolve, reject) => {
-    let phase: "assigned" | "handshake" | "welcome" | "auth" | "ready" | "closed" = "assigned";
+    let phase: "assigned" | "handshake" | "welcome" | "pair" | "auth" | "ready" | "closed" = "assigned";
+    // a device with neither a code nor a saved admission pairs by comparing digits, when the PC selects it
+    const comparing = offer.code === undefined && device.device_id === null && options.compare !== undefined;
+    let phoneNonce: Uint8Array | undefined;
+    let binding: Uint8Array | undefined;
+    let challenge: Uint8Array | undefined;
+    /** set once PAIR_CONFIRM went out: before it, AUTH_OK would be a PC skipping the comparison on this phone */
+    let confirmed = false;
     let secure: SecureChannel | undefined;
     let mux: MuxEngine | undefined;
     let connectionId = "";
@@ -192,11 +206,23 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
         // before any credential: a PC of another relay generation is an update, not a pairing
         if (frame.payload.relay_protocol !== RELAY_PROTOCOL) throw new MuxProtocolError("unsupported_version", `The PC speaks relay protocol ${frame.payload.relay_protocol}`);
         server = { version: frame.payload.server_version, relayProtocol: frame.payload.relay_protocol };
-        if (frame.payload.features.length) throw new MuxProtocolError("unsupported_extension", "Server selected unoffered features");
+        if (frame.payload.features.some((feature) => !comparing || feature !== PAIR_SAS_FEATURE)) throw new MuxProtocolError("unsupported_extension", "Server selected unoffered features");
         phase = "auth";
         Object.assign(limits, frame.payload.limits);
         welcome = bytes;
-        if (offer.code !== undefined) {
+        if (comparing) {
+          // an older PC pairs only with a code from its QR code
+          if (!frame.payload.features.includes(PAIR_SAS_FEATURE)) throw new MuxProtocolError("unsupported_extension", "The PC cannot pair without a code");
+          binding = secure ? channelBinding(secure) : undefined;
+          if (!binding) throw new MuxProtocolError("internal_error", "The relay channel has no binding");
+          phoneNonce = randomPairNonce();
+          phase = "pair";
+          // both people now have PAIR_APPROVAL_MS; the PC ends the comparison first, and says why
+          expect(PAIR_APPROVAL_MS + 5_000, () => new RelayAdmissionTimeoutError("auth"));
+          mux?.extendSetup(PAIR_APPROVAL_MS + 5_000);
+          await send({ type: FrameType.PAIR_REQUEST, flags: 0, stream_id: 0,
+            payload: { label: device.label, public_key: device.public_spki, commitment: toBase64Url(pairCommitment(binding, device.public_spki, phoneNonce)) } });
+        } else if (offer.code !== undefined) {
           await send({ type: FrameType.PAIR, flags: 0, stream_id: 0,
             payload: { code: offer.code, label: device.label, public_key: device.public_spki } });
         } else {
@@ -208,10 +234,25 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
         }
         return;
       }
+      if (phase === "pair" && frame.type === FrameType.PAIR_CHALLENGE && binding && phoneNonce) {
+        challenge = bytes;
+        phase = "auth";
+        const digits = pairDigits(binding, device.public_spki, phoneNonce, fromBase64Url(frame.payload.nonce));
+        await send({ type: FrameType.PAIR_REVEAL, flags: 0, stream_id: 0, payload: { nonce: toBase64Url(phoneNonce) } });
+        // never awaited here: the PC's refusal or timeout must still come through while the person looks
+        void options.compare?.(digits).then(() => {
+          if (phase !== "auth") return;
+          confirmed = true;
+          return send({ type: FrameType.PAIR_CONFIRM, flags: 0, stream_id: 0, payload: { confirmed: true } });
+        }).catch(failed);
+        return;
+      }
       if (phase !== "auth" || frame.type !== FrameType.AUTH_OK) {
         throw new MuxProtocolError("protocol_error", "Unexpected frame before AUTH_OK");
       }
-      if (offer.code === undefined && frame.payload.device_id !== device.device_id) {
+      if (comparing && !confirmed) throw new MuxProtocolError("protocol_error", "AUTH_OK before the digits were confirmed");
+      // a sign-in names this phone's own device; a pairing (a code, or digits compared) is given a new one
+      if (offer.code === undefined && !comparing && frame.payload.device_id !== device.device_id) {
         throw new MuxProtocolError("auth_failed", "AUTH_OK named a different device");
       }
       const admitted = await store.update(offer.server_id, (current) => {
@@ -226,6 +267,7 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
       // Defer setup accounting until admission: receive() automatically emits RECEIVED.
       // Outgoing HELLO/AUTH already used the mux ledger, so inbound receipts are safe.
       mux.receive(welcome);
+      if (challenge) mux.receive(challenge);
       mux.receive(bytes);
       if (receipt) mux.receive(receipt);
       mux.authenticate(admitted.device_id ?? frame.payload.device_id);
@@ -300,7 +342,7 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
           onClose: (error) => stop(error),
         });
         await send({ type: FrameType.HELLO, flags: 0, stream_id: 0,
-          payload: { protocol: "ovis-mux", versions: [1], features: [], required_features: [] } });
+          payload: { protocol: "ovis-mux", versions: [1], features: comparing ? [PAIR_SAS_FEATURE] : [], required_features: [] } });
       }).catch(failed);
     };
   });

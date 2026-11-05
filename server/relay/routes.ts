@@ -1,4 +1,4 @@
-import { errorResponse, jsonResponse, setRequestRoute } from "../http.ts";
+import { errorResponse, jsonResponse, readJsonObject, setRequestRoute } from "../http.ts";
 import type { ServerContext } from "../dispatch.ts";
 import { updateRequestAllowed } from "../update-api.ts";
 
@@ -32,6 +32,22 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         // While connecting, a client the offer reaches waits at the relay for this PC; in error nothing may answer it.
         if (service.status().phase === "error") return fail("relay_offline", "The relay is not reachable; wait until it is online before pairing.", 409);
         return reply(service.offer());
+      case "/api/relay/link":
+        setRequestRoute("/api/relay/link");
+        if (service.status().phase === "off" || service.status().blocked) return fail("relay_off", "Start the relay before pairing.", 409);
+        return reply(service.pairingLink());
+      case "/api/relay/pairing": {
+        setRequestRoute("/api/relay/pairing");
+        const body = await readJsonObject(request);
+        if (body instanceof Response) return body;
+        if (typeof body.id !== "string" || (body.decision !== "approve" && body.decision !== "decline")) {
+          return fail("invalid_relay_pairing", "Send the pairing's id and a decision of approve or decline.", 400);
+        }
+        if (!service.approvals.decide(body.id, body.decision === "approve")) {
+          return fail("relay_pairing_gone", "That phone is no longer waiting: it left, was decided, or its time ran out.", 404);
+        }
+        return reply({ ok: true });
+      }
       case "/api/relay/reset-identity": {
         setRequestRoute("/api/relay/reset-identity");
         const status = await service.resetIdentity();

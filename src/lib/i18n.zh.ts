@@ -353,6 +353,10 @@ const BASE: Record<string, string> = {
   "Weekly": "每周",
   "Open terminal": "打开终端",
   "Sign in to {agent}": "登录 {agent}",
+  "Approve": "批准",
+  "Pair a phone through the relay": "通过中继配对手机",
+  "{name} wants to pair through the relay. Approve it only if its screen shows": "{name} 想通过中继配对。只有它的屏幕显示以下数字时才批准:",
+  "Decline": "拒绝",
   "differs": "不同",
 };
 

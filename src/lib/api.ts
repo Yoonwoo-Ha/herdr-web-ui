@@ -267,6 +267,18 @@ export function requestRelayOffer(): Promise<RelayOffer> {
   return getJson<RelayOffer>("/api/relay/offer", { method: "POST", headers: { "x-herdr-update": "1" } });
 }
 
+/** POST /api/relay/link: a pairing link without a code; the phone that opens it compares six digits with this PC. */
+export function requestRelayLink(): Promise<{ readonly url: string }> {
+  return getJson<{ readonly url: string }>("/api/relay/link", { method: "POST", headers: { "x-herdr-update": "1" } });
+}
+
+/** POST /api/relay/pairing: the owner's answer to a phone waiting with the same digits (`relay-pairings` events). */
+export async function decideRelayPairing(id: string, decision: "approve" | "decline"): Promise<void> {
+  const url = "/api/relay/pairing";
+  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ id, decision }) });
+  if (!response.ok) throw await errorFrom(url, response);
+}
+
 /** Anonymous install and update counts; null from a server that sends none (404). */
 /** What every browser of this server shares (shared/preferences.ts); null where the server predates it. */
 export async function fetchPreferences(): Promise<SharedPreferences | null> {

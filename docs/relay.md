@@ -112,6 +112,62 @@ pairing codes in 10 minutes, and after 20 failed relay pairings in 10 minutes it
 next 10: a pairing tried then ends with `auth_failed`, and the phone shows **That pairing code no
 longer works**.
 
+**Pairing by comparing digits.** A phone can also pair without a code, from a link that holds the
+PC's `server_id`, public key and relay only (**Copy a link without a code** under the QR code; it
+holds nothing secret). Copying it opens a 10-minute window, as a Bluetooth device's pairing mode
+does: outside it the PC refuses a comparison with `auth_failed` before any prompt, and does not count
+it as a failed pairing, so nobody the owner did not invite can raise a prompt. Such a link may have come through a channel nobody vouches
+for, so its key is not trusted on its own: a relay, or whoever handed the link over, could have put
+its own key there and sit between the phone and the PC. Trust comes from two people looking at
+two screens instead, as in Bluetooth's numeric comparison:
+
+1. The phone offers the feature `pair-sas` in `HELLO`; a PC that supports it selects it in
+   `WELCOME`. An older PC selects nothing, and the phone says to update Ovis on the PC. An older
+   phone never offers it, and pairs with a code as before.
+2. Both ends work out a **channel binding**: SHA-256 over `ovis-relay-channel-binding/1`, the PC's
+   static key and the two Noise handshake messages, each length-prefixed
+   (`channelBinding` in [`shared/relay-e2ee.ts`](../shared/relay-e2ee.ts)). The two ends of one
+   handshake hold the same binding. A relay in the middle runs one handshake with the phone (with
+   its own key) and another with the PC, so the two ends hold different ones: it cannot make the
+   PC's handshake message, whose DH needs the PC's secret key, appear on the phone's side.
+3. **Commit.** The phone picks 32 random bytes `Np` and sends `PAIR_REQUEST` with its label, its new
+   device key and `commitment = SHA-256("ovis-relay-pair-commit/1" || binding || device key || Np)`.
+4. **Challenge.** The PC answers `PAIR_CHALLENGE` with 32 random bytes `Nc` of its own.
+5. **Reveal.** The phone sends `PAIR_REVEAL` with `Np`. The PC checks it against the commitment
+   (in constant time) and ends the session with `auth_failed` if it does not hold.
+6. **Compare.** Both show `SHA-256("ovis-relay-pair-digits/1" || binding || device key || Np || Nc)`,
+   its first 8 bytes as a number modulo 10^6, as six digits. The PC shows them in every one of
+   its own windows that may approve a phone (driving, direct, not a Portal visitor, not an open LAN
+   window, which also gets 403 `owner_only` for the codeless link and the approval): **{name} wants to
+   pair through the relay. Approve it only if its screen shows 123 456**, with Approve and Decline.
+7. **Confirm and approve.** The phone sends `PAIR_CONFIRM` once its person taps **The numbers
+   match**, and the PC's owner approves (`POST /api/relay/pairing`). Only both together make the
+   device, the same record and key a pairing with a code makes, and `AUTH_OK` follows as usual.
+   Neither the phone nor the PC can finish alone.
+
+Why it holds: the phone is bound to `Np` before it sees `Nc`, and the PC chooses `Nc` before it sees
+`Np`, so neither end, nor a relay that is both ends at once, can steer the digits. A relay that
+passes the comparison on unchanged is refused at step 5, since the commitment is bound to the
+phone's channel. A relay that runs a comparison of its own with each end gets the same six digits
+on both screens once in a million tries. Not every try shows: the PC's digits are known to the
+other end once `PAIR_CHALLENGE` arrives, so a peer may abandon a comparison before its reveal, and
+then no prompt appears. Each abandoned comparison still counts as a failed relay pairing, so within
+the 20 failures allowed in 10 minutes a relay gets about 20 tries, one in fifty thousand, before
+relay pairing pauses. Without step 3, a relay could try handshakes until the digits matched; the
+commitment is what stops that.
+
+Limits: a comparison starts only inside the window opened by copying the link; both people have 90 seconds from `PAIR_REQUEST` (under the relay's 120-second idle close),
+after which the session ends with `timeout` and the prompt goes. At most three phones wait for
+approval at once; a fourth gets `auth_failed`. Every comparison that ends without a device
+(declined, abandoned, timed out, a broken commitment) counts toward the same 20 failed relay
+pairings in 10 minutes as a wrong code, after which the PC takes no relay pairing for 10 minutes.
+**Revoke all** ends every comparison under way, an approved one included, and withdraws its prompt. The prompt lives in memory only. The relay learns nothing new: the comparison travels inside the
+encrypted channel, so it sees only a few more frames and their sizes and timing.
+
+The phone's screen asks **Does {name} show this number?** with **The numbers match** and **Cancel**,
+then waits for the approval. A PC that declines, or does not approve in time, leaves the phone at
+**{name} did not approve this phone**, with no key saved.
+
 **Device keys.** Pairing makes a key pair on the phone for that one PC: ECDSA P-256, made by
 WebCrypto as non-extractable, so no script, the app's own included, can read the private half out.
 The phone keeps it in IndexedDB (`ovis-relay`), never in `localStorage`. The PC keeps only the public
@@ -270,6 +326,10 @@ oversized frame ends the session before anything in it is parsed.
 | `0x02` | `WELCOME` | PC | version 1, the limits, `nonce` (32 random bytes), `server_version`, `relay_protocol`, `min_supported_client` |
 | `0x03` | `AUTH` | phone | `scheme: "device-key"`, `device_id`, `signature` (64 bytes, P-256 `r` and `s`, base64url) |
 | `0x0A` | `PAIR` | phone | the six-digit `code`, a `label` of up to 64 characters, `public_key` (P-256 SPKI, base64url) |
+| `0x0B` | `PAIR_REQUEST` | phone | with `pair-sas`: `label`, `public_key` and `commitment` (32 bytes, base64url) ([comparing digits](#who-gets-in)) |
+| `0x0C` | `PAIR_CHALLENGE` | PC | `nonce`: the PC's 32 random bytes |
+| `0x0D` | `PAIR_REVEAL` | phone | `nonce`: the 32 bytes the commitment was made with |
+| `0x0E` | `PAIR_CONFIRM` | phone | `confirmed: true`: the person said both screens show the same digits |
 | `0x04` | `AUTH_OK` | PC | `session_id`, `device_id`, `role` (`drive` or `watch`) |
 | `0x05` | `SESSION_ERROR` | either | a `code` from [Errors](#errors-and-close-codes) and a short `message` |
 | `0x06` | `GOAWAY` | either | `shutdown` or `id_exhausted`, the last stream ID taken, how long to drain (up to 5 seconds) |
@@ -415,12 +475,12 @@ The relay service has limits of its own (frame size, phones per PC, connections 
 | `unsupported_extension` | one side requires a feature the other lacks |
 | `unsupported_transport` | the connection can't carry a full-size frame |
 | `protocol_error` | a malformed frame, or one out of order, such as a request before `AUTH_OK` |
-| `auth_failed` | a wrong, spent or expired pairing code, an unknown device or a bad signature, a pairing while the PC takes none after too many failures, and every admission on a serve-only PC |
+| `auth_failed` | a wrong, spent or expired pairing code, an unknown device or a bad signature, a pairing while the PC takes none after too many failures, and every admission on a serve-only PC; for a comparison of digits, a commitment that does not hold, three phones already waiting, or the owner declining |
 | `auth_revoked` | the device was revoked |
 | `auth_changed` | the device's role changed while it was connected; its terminal sockets close with 1008 and the app reconnects by itself with the new role. Renaming a device ends no session |
 | `flow_control_error` | data past a stream's window |
 | `resource_exhausted` | too many new streams or frames a second, or a queue over its limit |
-| `timeout` | admission or a keepalive took too long |
+| `timeout` | admission or a keepalive took too long, or a comparison of digits was not finished in 90 seconds |
 | `internal_error` | something failed on the other side |
 
 `RESET` ends one stream and leaves the others: `cancelled`, `refused` (over a stream limit, or the
@@ -465,6 +525,7 @@ What the app on the phone shows when a connection doesn't come up
 | … is offline | the relay answered, but the PC didn't within 15 seconds: its Ovis is stopped or not connected to the relay |
 | … did not finish connecting | the PC answered, but admission didn't finish within 10 seconds |
 | That pairing code no longer works | the code was wrong, spent or expired |
+| … did not approve this phone | a pairing by comparing digits was declined on the PC, or not approved in time; no key is saved |
 | This phone was removed from … | the device was revoked; the phone has deleted its key |
 | … has a new identity | the PC's key isn't the one the phone paired with, or the saved key isn't the one the PC's `server_id` is worked out from |
 | This link is not …'s | the link's key isn't the one its `server_id` is worked out from: refused before any connection every time it's opened, Forget or not, with only **Back**; nothing is saved or removed |
@@ -563,6 +624,7 @@ encrypt end to end whichever relay passes the frames on, and each relay sees wha
 | [`shared/relay-e2ee.ts`](../shared/relay-e2ee.ts) | the encryption, from paseo's code vendored in `shared/vendor/paseo-e2ee/` (never edited; `bun scripts/vendor-paseo.ts <commit>` updates it) |
 | [`shared/relay-mux.ts`](../shared/relay-mux.ts), [`shared/relay-mux-engine.ts`](../shared/relay-mux-engine.ts) | Ovis Mux v1 |
 | [`shared/relay-offer.ts`](../shared/relay-offer.ts) | the pairing link |
+| [`shared/relay-pair-sas.ts`](../shared/relay-pair-sas.ts), [`server/relay/pairing-approvals.ts`](../server/relay/pairing-approvals.ts) | pairing by comparing digits: the commitment and digits, and the prompts waiting on the PC |
 | [`src/lib/relay/`](../src/lib/relay) | the hosted app: channel, device key, transport, file loading and screens |
 | [`public/sw.js`](../public/sw.js) | the service worker; in the hosted app it also answers file addresses through the relay |
 | [`scripts/shell-build.ts`](../scripts/shell-build.ts) | the hosted app's build (`bun run build:shell`, into `dist-shell/`) |

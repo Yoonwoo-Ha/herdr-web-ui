@@ -3,7 +3,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DeviceStore } from "../../../server/devices.ts";
-import { bounded } from "../../../server/relay/test-helpers.ts";
+import { RelaySession } from "../../../server/relay/session.ts";
+import { bounded, relayFixture } from "../../../server/relay/test-helpers.ts";
+import type { RelayPairingRequest } from "../../../shared/machines.ts";
+import type { RelayOffer } from "../../../shared/relay-offer.ts";
 import { exportPublicKey, generateKeyPair, openDaemonSecureChannel } from "../../../shared/relay-e2ee.ts";
 import type { SecureChannel, Transport } from "../../../shared/relay-e2ee.ts";
 import { decodeFrame, encodeFrame, FrameType, LIMITS_V1, MuxProtocolError } from "../../../shared/relay-mux.ts";
@@ -11,7 +14,7 @@ import type { MuxFrame } from "../../../shared/relay-mux.ts";
 import { MuxEngine } from "../../../shared/relay-mux-engine.ts";
 import { ADMISSION_MS, ASSIGNMENT_MS, openRelayChannel, PC_ANSWER_MS, RelayAdmissionTimeoutError, RelayPcOfflineError, RelayUnreachableError } from "./channel.ts";
 import type { RelaySocket } from "./channel.ts";
-import { failureOf } from "./shellState.ts";
+import { failureOf, pairsAgainWithoutKey } from "./shellState.ts";
 import { base64url, getDevice } from "./device.ts";
 import { MemoryDeviceStore } from "./device.test.ts";
 
@@ -385,3 +388,155 @@ for (const attack of ["welcome", "nonce", "ping", "auth-ok", "features", "assign
     expect(f.trace.filter((entry) => entry.startsWith("client:"))).toEqual(attack === "assigned" ? [] : ["client:HELLO"]);
   });
 }
+
+/** One relay connection from the phone's real channel to the PC's real session, passing frames on. */
+function connectReal(f: ReturnType<typeof relayFixture>, keys: ReturnType<typeof generateKeyPair>, offer: RelayOffer, store: MemoryDeviceStore,
+  compare?: (digits: string) => Promise<void>) {
+  let session: RelaySession | undefined;
+  let socket: FakeSocket;
+  const daemon: Transport = {
+    onmessage: null, onclose: null, onerror: null,
+    send: (data) => socket.deliver(data),
+    // as on a WebSocket, the PC's close reaches the phone in a later task than the frames it sent first
+    close: (code, reason) => { setImmediate(() => socket.close(code, reason)); },
+  };
+  socket = new FakeSocket(daemon);
+  // frames the phone sends as soon as its side opens wait for the session, as a relay's latency would make them
+  const early: (string | ArrayBuffer)[] = [];
+  void openDaemonSecureChannel(daemon, { daemonKeyPair: keys, events: { onmessage: (data) => { if (session) session.receive(data); else early.push(data); } } }).then((channel) => {
+    session = new RelaySession({
+      channel, services: f.app.context.services, port: f.app.port, serverId: offer.server_id, serverVersion: "0.4.20",
+      minSupportedClient: "0.4.20", routingOverhead: 0, maxWireMessageBytes: 64 * 1024,
+    });
+    for (const data of early.splice(0)) session.receive(data);
+  }, () => {});
+  const opening = openRelayChannel(offer, {
+    store, ...(compare ? { compare } : {}),
+    socket: () => {
+      queueMicrotask(() => socket.deliver(JSON.stringify({ type: "assigned", connection_id: "ab".repeat(16) })));
+      return socket;
+    },
+  });
+  void opening.catch(() => {});
+  return opening;
+}
+
+async function comparing(compare: (digits: string) => Promise<void>) {
+  const f = relayFixture();
+  cleanups.push(() => f.close());
+  // as copying a link without a code does
+  f.app.context.services.relay.approvals.openWindow();
+  const keys = generateKeyPair();
+  const store = new MemoryDeviceStore();
+  const offer = { v: 1 as const, server_id: "12".repeat(16), server_public_key: exportPublicKey(keys.publicKey), relay: "wss://relay.example" };
+  const waiting = Promise.withResolvers<RelayPairingRequest>();
+  const cleared = Promise.withResolvers<void>();
+  let seen = false;
+  cleanups.push(f.app.context.services.relay.approvals.subscribe((list) => {
+    if (list[0]) { seen = true; waiting.resolve(list[0]); } else if (seen) cleared.resolve();
+  }));
+  const opening = connectReal(f, keys, offer, store, compare);
+  return { f, store, offer, opening, waiting: bounded(waiting.promise), cleared: bounded(cleared.promise) };
+}
+
+it("pairs again with a new code a phone that already holds a key for the PC", async () => {
+  const f = relayFixture();
+  cleanups.push(() => f.close());
+  const keys = generateKeyPair();
+  const store = new MemoryDeviceStore();
+  const base = { v: 1 as const, server_id: "12".repeat(16), server_public_key: exportPublicKey(keys.publicKey), relay: "wss://relay.example" };
+  const devices = f.app.context.services.devices;
+  const first = await bounded(connectReal(f, keys, { ...base, code: devices.startPairing().code }, store));
+  first.close();
+  // a fresh QR code scanned on the same phone: the PC makes a new device for the same key, and the phone keeps it
+  const second = await bounded(connectReal(f, keys, { ...base, code: devices.startPairing().code }, store));
+  cleanups.push(() => second.close());
+  expect(second.device.device_id).not.toBe(first.device.device_id);
+  expect((await store.get(base.server_id))?.device_id).toBe(second.device.device_id);
+});
+
+it("pairs a new device without a code once both screens show the same digits and the PC approves it", async () => {
+  const shown = Promise.withResolvers<string>();
+  const matched = Promise.withResolvers<void>();
+  const { f, store, offer, opening, waiting } = await comparing((digits) => { shown.resolve(digits); return matched.promise; });
+  const request = await waiting;
+  expect(await bounded(shown.promise)).toBe(request.digits);
+  expect(f.app.context.services.relay.approvals.decide(request.id, true)).toBe(true);
+  matched.resolve();
+  const channel = await bounded(opening);
+  cleanups.push(() => channel.close());
+  const saved = await store.get(offer.server_id);
+  expect(saved?.device_id).toBe(channel.device.device_id);
+  expect(f.app.context.services.devices.list(null).find((device) => device.id === saved?.device_id)?.via_relay).toBe(true);
+});
+
+it("saves no key when the PC declines, and lands on the not-approved screen", async () => {
+  const { f, store, offer, opening, waiting, cleared } = await comparing(() => new Promise(() => {}));
+  const request = await waiting;
+  expect(f.app.context.services.relay.approvals.decide(request.id, false)).toBe(true);
+  const error = await bounded(opening.then(() => null, (reason: unknown) => reason));
+  expect(error).toBeInstanceOf(MuxProtocolError);
+  expect(failureOf(error, { code: false, paired: false, compared: true })).toBe("pair-declined");
+  expect(await store.get(offer.server_id)).toBeUndefined();
+  await cleared;
+});
+
+it("does not take AUTH_OK from a PC before this phone said the digits match", async () => {
+  const keys = generateKeyPair();
+  let socket: FakeSocket;
+  const daemon: Transport = {
+    onmessage: null, onclose: null, onerror: null,
+    send: (data) => socket.deliver(data),
+    close: (code, reason) => { setImmediate(() => socket.close(code, reason)); },
+  };
+  socket = new FakeSocket(daemon);
+  const ready = Promise.withResolvers<SecureChannel>();
+  const send = (frame: MuxFrame) => ready.promise.then((channel) => channel.send(encodeFrame(frame).slice().buffer));
+  // a PC endpoint that skips the comparison: it admits the phone as soon as the phone reveals its nonce
+  void openDaemonSecureChannel(daemon, { daemonKeyPair: keys, events: { onmessage: (data) => {
+    const frame = decodeFrame(new Uint8Array(data as ArrayBuffer));
+    if (frame.type === FrameType.HELLO) void send({ type: FrameType.WELCOME, flags: 0, stream_id: 0, payload: { protocol: "ovis-mux", version: 1,
+      features: ["pair-sas"], limits: LIMITS_V1, nonce: base64url(new Uint8Array(32)), server_version: "0.4.21", relay_protocol: 1, min_supported_client: "0.4.20" } });
+    if (frame.type === FrameType.PAIR_REQUEST) void send({ type: FrameType.PAIR_CHALLENGE, flags: 0, stream_id: 0, payload: { nonce: base64url(new Uint8Array(32).fill(7)) } });
+    if (frame.type === FrameType.PAIR_REVEAL) void send({ type: FrameType.AUTH_OK, flags: 0, stream_id: 0, payload: { session_id: "ab".repeat(16), device_id: "cd".repeat(8), role: "drive" } });
+  } } }).then((channel) => ready.resolve(channel), () => {});
+  const store = new MemoryDeviceStore();
+  const offer = { v: 1 as const, server_id: "12".repeat(16), server_public_key: exportPublicKey(keys.publicKey), relay: "wss://relay.example" };
+  const shown = Promise.withResolvers<void>();
+  const opening = openRelayChannel(offer, { store, compare: () => { shown.resolve(); return new Promise(() => {}); },
+    socket: () => { queueMicrotask(() => socket.deliver(JSON.stringify({ type: "assigned", connection_id: "ab".repeat(16) }))); return socket; } });
+  cleanups.push(() => socket.close());
+  const error = await bounded(opening.then(() => null, (reason: unknown) => reason));
+  await bounded(shown.promise);
+  expect(error).toBeInstanceOf(MuxProtocolError);
+  expect((error as MuxProtocolError).code).toBe("protocol_error");
+  expect(await store.get(offer.server_id)).toBeUndefined();
+});
+
+it("a phone the PC removed is refused at sign-in from a link without a code, and pairs by digits once its old key is gone", async () => {
+  const f = relayFixture();
+  cleanups.push(() => f.close());
+  f.app.context.services.relay.approvals.openWindow();
+  const keys = generateKeyPair();
+  const store = new MemoryDeviceStore();
+  const base = { v: 1 as const, server_id: "12".repeat(16), server_public_key: exportPublicKey(keys.publicKey), relay: "wss://relay.example" };
+  const devices = f.app.context.services.devices;
+  const first = await bounded(connectReal(f, keys, { ...base, code: devices.startPairing().code }, store));
+  first.close();
+  devices.revoke(first.device.device_id!);
+  const shown = Promise.withResolvers<string>();
+  const compare = (digits: string) => { shown.resolve(digits); return Promise.resolve(); };
+  // what the shell gets from the first try: the PC's refusal of the old key (shellState.ts pairsAgainWithoutKey)
+  const refused = await bounded(connectReal(f, keys, base, store, compare).then(() => null, (reason: unknown) => reason));
+  expect(pairsAgainWithoutKey(refused, { code: false, paired: false, codeless: true })).toBe(true);
+  await store.remove(base.server_id);
+  const waiting = Promise.withResolvers<RelayPairingRequest>();
+  cleanups.push(f.app.context.services.relay.approvals.subscribe((list) => { if (list[0]) waiting.resolve(list[0]); }));
+  const again = connectReal(f, keys, base, store, compare);
+  const request = await bounded(waiting.promise);
+  expect(await bounded(shown.promise)).toBe(request.digits);
+  f.app.context.services.relay.approvals.decide(request.id, true);
+  const channel = await bounded(again);
+  cleanups.push(() => channel.close());
+  expect((await store.get(base.server_id))?.device_id).toBe(channel.device.device_id);
+});

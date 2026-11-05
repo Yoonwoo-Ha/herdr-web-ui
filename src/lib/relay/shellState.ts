@@ -43,7 +43,7 @@ export function keyMismatch(serverId: string, keys: readonly { key: string; from
 }
 
 /** Why a connection did not come up; each is a screen with its own `data-relay-state`. */
-export type RelayFailure = "pc-offline" | "pc-unresponsive" | "relay-unreachable" | "needs-update" | "revoked" | "identity-changed" | "code-expired" | "bad-offer";
+export type RelayFailure = "pc-offline" | "pc-unresponsive" | "relay-unreachable" | "needs-update" | "revoked" | "identity-changed" | "code-expired" | "pair-declined" | "pair-unavailable" | "bad-offer";
 
 /**
  * Where a PC below MIN_SERVER_VERSION is in its update (skew.ts): its update status being read, an
@@ -64,6 +64,8 @@ export type RelayShellState =
   | { kind: "empty" }
   | { kind: "confirm"; offer: RelayOffer }
   | { kind: "connecting"; name: string | null }
+  /** pairing without a code: the digits to compare with the PC's screen; `confirmed` once this phone said they match */
+  | { kind: "compare"; name: string | null; digits: string; confirmed: boolean }
   /** the phone's key for a PC whose identity changed is gone; only a new QR code from the PC pairs it again */
   | { kind: "forgotten"; name: string | null }
   /** a link with another key under a PC's id (forgedOffer): refused every time, and no saved key is touched */
@@ -110,8 +112,15 @@ export function offerOf(device: RelayDevice): RelayOffer {
  * never assigned the connection could not be reached, a PC that never answered once it had is
  * offline, and a PC that answered but never finished admitting the device is unresponsive.
  */
-export function failureOf(error: unknown, attempt: { code: boolean; paired: boolean }): RelayFailure {
+export function failureOf(error: unknown, attempt: { code: boolean; paired: boolean; compared?: boolean; codeless?: boolean }): RelayFailure {
   if (error instanceof UnsafeRelayDestinationError) return "bad-offer";
+  // a link without a code that the PC refused before any digits: no code to blame, and the wire does not say why
+  // (pairing paused after failures, three phones already waiting, a serve-only PC)
+  if (attempt.codeless && !attempt.code && !attempt.paired && !attempt.compared
+    && error instanceof MuxProtocolError && error.code === "auth_failed") return "pair-unavailable";
+  // once digits were shown, the PC answered: a refusal or a deadline there means it was not approved in time
+  if (attempt.compared && (error instanceof RelayAdmissionTimeoutError
+    || error instanceof MuxProtocolError && (error.code === "auth_failed" || error.code === "timeout"))) return "pair-declined";
   if (error instanceof ServerIdentityChangedError) return "identity-changed";
   if (error instanceof RelayUnreachableError) return "relay-unreachable";
   if (error instanceof RelayAdmissionTimeoutError) return "pc-unresponsive";
@@ -123,6 +132,17 @@ export function failureOf(error: unknown, attempt: { code: boolean; paired: bool
     case "unsupported_version": case "unsupported_extension": case "unsupported_transport": return "needs-update";
     default: return "relay-unreachable";
   }
+}
+
+/**
+ * A link without a code that this phone opened while it still held a key for that PC, refused at
+ * sign-in: the PC no longer knows the key (it removed this phone). The link is there to pair again
+ * by comparing digits, so the old key goes and the attempt runs once more without it. A code
+ * attempt, one already compared, or one that already did this never does.
+ */
+export function pairsAgainWithoutKey(error: unknown, attempt: { code: boolean; paired: boolean; compared?: boolean; refreshed?: boolean; codeless: boolean }): boolean {
+  return attempt.codeless && !attempt.code && !attempt.compared && !attempt.refreshed
+    && error instanceof MuxProtocolError && error.code === "auth_failed";
 }
 
 /** The failures after which the saved key is no good: the PC removed this phone, or never admitted it. */

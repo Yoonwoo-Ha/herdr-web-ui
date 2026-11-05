@@ -22,6 +22,8 @@ export interface RelayShellProps {
   onForget: () => void;
   /** a PC below the shell's minimum version with a managed install: install its latest release */
   onUpdate: () => void;
+  /** pairing without a code: the digits on this screen are the ones the PC shows */
+  onMatch: () => void;
 }
 
 /**
@@ -60,7 +62,7 @@ export const PLUGIN_COMMANDS = "herdr plugin install devswha/ovis\nherdr plugin 
  * `data-relay-state` for scripts. One card in the token gate's frame (AccessGate.css), so a phone
  * that pairs through the relay and one that pairs with a code see the same room.
  */
-export function RelayShell({ state, scoped, iosTab, onPair, onRetry, onCancel, onBack, onForget, onUpdate }: RelayShellProps) {
+export function RelayShell({ state, scoped, iosTab, onPair, onRetry, onCancel, onBack, onForget, onUpdate, onMatch }: RelayShellProps) {
   const t = useT();
   const name = state.kind === "confirm" ? state.offer.name ?? null : state.kind === "list" || state.kind === "empty" ? null : state.name;
   const pc = name ?? t("this PC");
@@ -111,6 +113,38 @@ export function RelayShell({ state, scoped, iosTab, onPair, onRetry, onCancel, o
             <h1 className="relay-shell-title">{t("Connecting to {name}…", { name: pc })}</h1>
             <div className="relay-shell-wait" role="status"><div className="boot-spinner" aria-hidden="true" /><span className="visually-hidden">{t("Connecting to {name}…", { name: pc })}</span></div>
             <div className="relay-shell-actions"><button type="button" className="btn" onClick={onCancel}>{t("Cancel")}</button></div>
+          </>
+        )}
+        {state.kind === "compare" && (
+          <>
+            <h1 className="relay-shell-title">{t("Does {name} show this number?", { name: pc })}</h1>
+            <p className="relay-shell-digits" aria-label={state.digits.split("").join(" ")}>{`${state.digits.slice(0, 3)} ${state.digits.slice(3)}`}</p>
+            {state.confirmed ? (
+              <div className="relay-shell-wait" role="status">
+                <div className="boot-spinner" aria-hidden="true" />
+                <p className="relay-shell-detail">{t("Approve this phone on {name} to finish.", { name: pc })}</p>
+              </div>
+            ) : (
+              <p className="relay-shell-copy">{t("Pair only if the PC's screen shows the same six digits. Then approve this phone on the PC.")}</p>
+            )}
+            <div className="relay-shell-actions">
+              {!state.confirmed && <button type="button" className="btn btn-primary" onClick={onMatch}>{t("The numbers match")}</button>}
+              <button type="button" className="btn" onClick={onCancel}>{t("Cancel")}</button>
+            </div>
+          </>
+        )}
+        {state.kind === "failed" && state.failure === "pair-declined" && (
+          <>
+            <h1 className="relay-shell-title">{t("{name} did not approve this phone", { name: pc })}</h1>
+            <p className="relay-shell-copy">{t("It was declined on the PC, or not approved in time. Open the link again to compare new numbers.")}</p>
+            {back && <div className="relay-shell-actions">{back}</div>}
+          </>
+        )}
+        {state.kind === "failed" && state.failure === "pair-unavailable" && (
+          <>
+            <h1 className="relay-shell-title">{t("{name} is not taking new phones right now", { name: pc })}</h1>
+            <p className="relay-shell-copy">{t("Its link may have run out (it works for 10 minutes), or it may be paused after too many tries or busy with other phones. Copy a new link on the PC, or wait a few minutes.")}</p>
+            {back && <div className="relay-shell-actions">{back}</div>}
           </>
         )}
         {state.kind === "failed" && state.failure === "pc-offline" && (

@@ -349,6 +349,10 @@ const BASE: Record<string, string> = {
   "Weekly": "주간",
   "Open terminal": "터미널 열기",
   "Sign in to {agent}": "{agent}에 로그인",
+  "Approve": "승인",
+  "Pair a phone through the relay": "릴레이로 휴대폰 연결",
+  "{name} wants to pair through the relay. Approve it only if its screen shows": "{name}이(가) 릴레이로 연결하려고 합니다. 그 화면에 다음 숫자가 보일 때만 승인하세요:",
+  "Decline": "거절",
   "differs": "다름",
 };
 

@@ -8,7 +8,9 @@ type Payload<T extends MuxFrame["type"]> = Extract<MuxFrame, { type: T }>["paylo
 export type HttpRequest = Payload<typeof FrameType.HTTP_OPEN>;
 export type HttpResponse = Payload<typeof FrameType.HTTP_HEADERS>;
 export type WsRequest = Payload<typeof FrameType.WS_OPEN>;
-export type SessionFrame = Extract<MuxFrame, { type: 1 | 2 | 3 | 4 | 10 }>;
+export type SessionFrame = Extract<MuxFrame, { type: 1 | 2 | 3 | 4 | 10 | 11 | 12 | 13 | 14 }>;
+/** Setup frames only a phone sends; the others (WELCOME, PAIR_CHALLENGE, AUTH_OK) come from the PC. */
+const CLIENT_SETUP: readonly number[] = [FrameType.HELLO, FrameType.AUTH, FrameType.PAIR, FrameType.PAIR_REQUEST, FrameType.PAIR_REVEAL, FrameType.PAIR_CONFIRM];
 type Traffic = "interactive" | "bulk" | "control";
 type CancelTimer = () => void;
 const U64_MAX = 0xffffffffffffffffn;
@@ -624,9 +626,18 @@ export class MuxEngine {
     this.setupTimer();
     this.refreshIdle();
   }
+  /**
+   * Replaces the setup deadline: a pairing by comparing digits waits for a person on both ends
+   * (shared/relay-pair-sas.ts PAIR_APPROVAL_MS), not the 10 seconds a code or a signature takes.
+   */
+  extendSetup(ms: number): void {
+    check(this.active && this.deviceId === undefined, "Session setup already ended");
+    this.setupTimer();
+    this.setupTimer = this.timer(() => this.fail("timeout", "Mux setup timed out"), ms);
+  }
   sendSession(frame: SessionFrame): void {
     check(this.active && this.deviceId === undefined, "Session setup already ended");
-    const clientFrame = frame.type === FrameType.HELLO || frame.type === FrameType.AUTH || frame.type === FrameType.PAIR;
+    const clientFrame = CLIENT_SETUP.includes(frame.type);
     check(clientFrame === (this.options.role === "client"), "Wrong setup direction");
     this.enqueueControl(frame);
   }
@@ -979,8 +990,9 @@ export class MuxEngine {
         for (const stream of this.streams) if (stream.id === undefined || stream.id > frame.payload.last_open_id) this.reset(stream, "refused", false);
         this.timer(() => this.carrierLost(new MuxProtocolError("timeout", "GOAWAY drained")), frame.payload.drain_ms);
         return;
-      case FrameType.HELLO: case FrameType.WELCOME: case FrameType.AUTH: case FrameType.AUTH_OK: case FrameType.PAIR: {
-        const clientFrame = frame.type === FrameType.HELLO || frame.type === FrameType.AUTH || frame.type === FrameType.PAIR;
+      case FrameType.HELLO: case FrameType.WELCOME: case FrameType.AUTH: case FrameType.AUTH_OK: case FrameType.PAIR:
+      case FrameType.PAIR_REQUEST: case FrameType.PAIR_CHALLENGE: case FrameType.PAIR_REVEAL: case FrameType.PAIR_CONFIRM: {
+        const clientFrame = CLIENT_SETUP.includes(frame.type);
         check(this.deviceId === undefined && clientFrame === (this.options.role === "server"), "Unexpected setup frame");
         this.options.onSession?.(frame);
         return;

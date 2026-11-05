@@ -198,5 +198,7 @@ export const DEVICES_JA: Record<string, string> = {
   "Pairs this phone through the relay, so Ovis keeps working away from home.": "このスマートフォンをリレー経由でペアリングし、外出先でも Ovis を使えるようにします。",
   "A device with this phone's name ({name}) is already paired through the relay.": "このスマートフォンと同じ名前のデバイス（{name}）がすでにリレー経由でペアリングされています。",
   "Use the relay on this phone": "このスマートフォンでリレーを使う",
+  "Copy a link without a code": "コードなしのリンクをコピー",
+  "Copied. Open it on the phone within 10 minutes: both screens show six digits to compare, and you approve the phone here.": "コピーしました。10 分以内にスマートフォンで開いてください。両方の画面に表示される 6 桁の数字を比べ、ここでスマートフォンを承認します。",
   "This PC's ID": "このPCのID",
 };

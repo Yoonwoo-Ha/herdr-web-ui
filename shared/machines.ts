@@ -203,13 +203,27 @@ export interface DevicePairedEvent {
   enrolled_at: string;
 }
 /** `preferences`: what every browser of this server shares changed (shared/preferences.ts) */
+/**
+ * A phone asking to pair through the relay by comparing digits (docs/relay.md): the six digits its
+ * screen shows too, waiting for the owner to approve it until `expires_at`.
+ */
+export interface RelayPairingRequest {
+  id: string;
+  label: string;
+  digits: string;
+  expires_at: string;
+}
+
 export type MachineEvent = { type: "machines"; machines: Machine[] } | { type: "machine-message"; machine_id: string; message: ServerMessage }
   | { type: "preferences"; preferences: SharedPreferences }
   /** the `$name` tokens herdr's `[ui.sidebar.agents]` rows draw on this server's PC, for every PC's agent rows (server/herdr-sidebar.ts) */
   | { type: "herdr-sidebar"; agents: AgentRowTokens | null }
   /** finishes a browser of this server presented (shared/seen.ts): every record when the stream opens, then each change */
   | { type: "seen"; finishes: SeenFinish[] }
-  | DevicePairedEvent;
+  | DevicePairedEvent
+  | RelayPairingsEvent;
+/** every relay pairing waiting for approval, after each change; only to the PC's own windows that may approve one */
+export interface RelayPairingsEvent { type: "relay-pairings"; pairings: RelayPairingRequest[] }
 /** `security`: authenticated requests only, absent from an older server (shared/protocol.ts SecuritySummary) */
 /**
  * `web_ui.boot_id`: this server lifetime's id, as in the full health answer. `runtime`: the runtime it

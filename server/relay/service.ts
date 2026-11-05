@@ -11,6 +11,7 @@ import { loadRelayIdentity, RelayIdentityError, rotateRelayIdentity } from "./id
 import type { RelayIdentity } from "./identity.ts";
 import { RelayLink } from "./link.ts";
 import type { RelayLinkOptions } from "./link.ts";
+import { RelayPairingApprovals } from "./pairing-approvals.ts";
 
 export interface RelayServiceOptions {
   readonly stateDir: string;
@@ -83,6 +84,8 @@ export class RelayService {
   private ending: Promise<void> = Promise.resolve();
   readonly relay: string;
   readonly app: string;
+  /** Phones that compared digits with this PC and wait for the owner's approval. */
+  readonly approvals = new RelayPairingApprovals();
 
   constructor(private readonly options: RelayServiceOptions) {
     const named = options.relay ?? process.env["OVIS_RELAY_URL"];
@@ -242,6 +245,17 @@ export class RelayService {
         relay: this.advertised, code: pairing.code, ...(name ? { name } : {}) }, this.app),
       expires_at: pairing.expires_at,
     };
+  }
+
+  /**
+   * A pairing link without a code: the phone that opens it pairs by comparing six digits with this
+   * PC, and the owner approves it here (server/relay/session.ts). It holds nothing secret; asking for it
+   * opens the window in which this PC takes comparisons (pairing-approvals.ts PAIRING_WINDOW_MS).
+   */
+  pairingLink(): { url: string } {
+    if (!this.enabled || !this.identity || !this.services || this.blocked) throw new Error("Start the relay before pairing.");
+    this.approvals.openWindow();
+    return { url: encodeOffer({ v: 1, server_id: this.identity.server_id, server_public_key: this.identity.public_key, relay: this.relay }, this.app) };
   }
 
   async resetIdentity(): Promise<RelayStatus> {

@@ -198,5 +198,7 @@ export const DEVICES_KO: Record<string, string> = {
   "Pairs this phone through the relay, so Ovis keeps working away from home.": "이 폰을 릴레이로 페어링해 집 밖에서도 Ovis를 쓸 수 있게 합니다.",
   "A device with this phone's name ({name}) is already paired through the relay.": "이 폰과 이름이 같은 기기({name})가 이미 릴레이로 페어링되어 있습니다.",
   "Use the relay on this phone": "이 폰에서 릴레이 사용",
+  "Copy a link without a code": "코드 없는 링크 복사",
+  "Copied. Open it on the phone within 10 minutes: both screens show six digits to compare, and you approve the phone here.": "복사했습니다. 10분 안에 휴대폰에서 여세요. 두 화면에 같은 여섯 자리 숫자가 뜨면 비교한 뒤 여기서 휴대폰을 승인합니다.",
   "This PC's ID": "이 PC의 ID",
 };

@@ -140,6 +140,18 @@
   color: var(--text-dim);
 }
 
+/* the six digits to compare with the PC's screen: the pairing code's size, in two groups of three */
+.relay-shell-digits {
+  margin: var(--space-4) 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-pairing);
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-caps);
+  text-align: center;
+  color: var(--text-strong);
+}
+
 /* a key that is not the PC's: the two ids, one above the other, the PC's first */
 .relay-shell-keys {
   margin: var(--space-4) 0 0;
