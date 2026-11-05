@@ -14,7 +14,7 @@ import type {
 } from "../../shared/protocol.ts";
 import type { AgentInfo, AgentManifestInfo, AgentStartParams, PaneInfo, PaneLayoutSnapshot, PaneProcessInfo, PaneScrollInfo, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
 import type { HerdrMethod, HerdrMethods, SingleHerdrMethod, UntypedHerdrMethod } from "./methods.ts";
-import type { HerdrIdentity } from "../../shared/machines.ts";
+import type { HerdrCoreLayout, HerdrIdentity } from "../../shared/machines.ts";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const diagnostics = new ConnectionDiagnostics("herdr.rpc");
@@ -370,7 +370,11 @@ export async function ping(socketPath?: string): Promise<HerdrIdentity> {
   const attach = terminalAttachSupported(result.capabilities);
   // without attach the web server repaints the pane's screen instead (server/mirror.ts)
   const core = result.capabilities?.["runtime"] === "herdr-core";
-  return { version: result.version, protocol: result.protocol, terminal_attach: attach, ...(attach ? {} : { terminal_mirror: true }), ...(core ? { runtime: "herdr-core" as const } : {}) };
+  // herdr-core's layout calls (shared/machines.ts HerdrCoreLayout): each one it did not say yes to is off
+  const offered = result.capabilities?.["layout"];
+  const said = (call: keyof HerdrCoreLayout): boolean => typeof offered === "object" && offered !== null && (offered as Record<string, unknown>)[call] === true;
+  const layout: HerdrCoreLayout = { rename: said("rename"), split: said("split"), move: said("move") };
+  return { version: result.version, protocol: result.protocol, terminal_attach: attach, ...(attach ? {} : { terminal_mirror: true }), ...(core ? { runtime: "herdr-core" as const, layout } : {}) };
 }
 
 export async function sessionSnapshot(socketPath?: string, timeoutMs?: number): Promise<SessionSnapshot> {

@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HerdrError, herdrRpc, paneMoveToNewTab, ping, sessionSnapshot, tabRename, workspaceClose, workspaceCreate, workspaceRename } from "../herdr/client.ts";
+import { startHerdrCoreAdapter } from "./adapter.ts";
 import { CoreAttachSession } from "./attach-session.ts";
 import { HcConnection } from "./connection.ts";
 import { buildSnapshot } from "./snapshot.ts";
@@ -240,5 +242,37 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
       await hc.call("terminal.rm", { terminal: address });
     }
     await subscription.channel.close();
+  }, TEST_MS);
+
+  it("renames and moves Ovis's own workspaces and tabs in labels on a core no Herdr app arranges, and splits none", async () => {
+    const socket = join(dir, "herdr.sock");
+    const adapter = await startHerdrCoreAdapter(hc, socket);
+    // the core is this test's own and stops in afterAll: a failure here leaves nothing for another test
+    try {
+      expect((await ping(socket)).layout).toEqual({ rename: true, split: false, move: true });
+      const api = await workspaceCreate({ cwd: dir, label: "api" }, socket);
+      const web = await workspaceCreate({ cwd: dir, label: "web" }, socket);
+
+      await workspaceRename(api.workspace.workspace_id, "backend", socket);
+      await tabRename(api.tab.tab_id, "server", socket);
+      const split = await herdrRpc("pane.split", { target_pane_id: api.root_pane.pane_id, direction: "right" }, socket).then(() => "split", (error: unknown) => (error instanceof HerdrError ? error.code : String(error)));
+      expect(split).toBe("unsupported");
+
+      let snapshot = await sessionSnapshot(socket);
+      expect(snapshot.workspaces.find((workspace) => workspace.workspace_id === api.workspace.workspace_id)?.label).toBe("backend");
+      expect(snapshot.tabs.find((tab) => tab.tab_id === api.tab.tab_id)?.label).toBe("server");
+      expect(snapshot.panes.filter((pane) => pane.tab_id === api.tab.tab_id).map((pane) => pane.pane_id)).toEqual([api.root_pane.pane_id]);
+
+      const moved = await paneMoveToNewTab(web.root_pane.pane_id, api.workspace.workspace_id, "moved", socket);
+      expect(moved).toMatchObject({ pane: { pane_id: web.root_pane.pane_id, workspace_id: api.workspace.workspace_id }, closed_tab_id: web.tab.tab_id, closed_workspace_id: web.workspace.workspace_id });
+      snapshot = await sessionSnapshot(socket);
+      expect(snapshot.workspaces.some((workspace) => workspace.workspace_id === web.workspace.workspace_id)).toBe(false);
+      expect(snapshot.tabs.filter((tab) => tab.workspace_id === api.workspace.workspace_id).map((tab) => tab.label)).toEqual(["server", "moved"]);
+      // the moved pane takes its new workspace's name, so it never renames it
+      expect(snapshot.workspaces.find((workspace) => workspace.workspace_id === api.workspace.workspace_id)?.label).toBe("backend");
+      await workspaceClose(api.workspace.workspace_id, socket);
+    } finally {
+      adapter.stop();
+    }
   }, TEST_MS);
 });

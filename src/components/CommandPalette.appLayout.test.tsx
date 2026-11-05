@@ -5,10 +5,14 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import type { Machine } from "../../shared/machines.ts";
 import type { PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import type { AppActions } from "../lib/actions.ts";
-import { AppLayoutContext } from "../lib/machineContext.tsx";
+import { AppLayoutContext, appLayoutOf, type LayoutOffer } from "../lib/machineContext.tsx";
 import { SettingsProvider } from "../lib/settings.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
 
+/** herdr's TUI server, a herdr-core PC the Herdr app lays out, and one whose layout Ovis keeps (lib/machineContext.tsx) */
+const TUI = appLayoutOf({ version: "0.9.5", protocol: 22 });
+const APP_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core" });
+const OVIS_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core", layout: { rename: true, split: false, move: true } });
 const workspace = (id: string, tabs: number): WorkspaceInfo =>
   ({ workspace_id: id, label: id, active_tab_id: `${id}:t1`, number: 1, tab_count: tabs, pane_count: tabs, focused: false, agent_status: "idle", worktree: null });
 const pane = (id: string, workspaceId: string, tabId: string): PaneInfo =>
@@ -28,8 +32,8 @@ const snapshot: SessionSnapshot = {
   }],
 };
 const machines: Machine[] = [{ id: "local", name: "Host", kind: "local", enabled: true, state: "connected", error: null, snapshot }];
-// App's actions on each PC: split and zoom on a TUI PC, none on a core PC (lib/layoutActions.ts, tested there)
-const actionsOf = (core: boolean) => new Proxy({ splitPane: core ? null : () => {}, zoomPane: core ? null : () => {}, enableNotifications: null, openFiles: null, lock: null }, { get: (own, key) => key in own ? own[key as keyof typeof own] : () => {} }) as unknown as AppActions;
+// App's actions on each PC: split and zoom as the PC offers them (lib/layoutActions.ts, tested there)
+const actionsOf = (offer: LayoutOffer) => new Proxy({ splitPane: offer.split ? () => {} : null, zoomPane: offer.arrange ? () => {} : null, enableNotifications: null, openFiles: null, lock: null }, { get: (own, key) => key in own ? own[key as keyof typeof own] : () => {} }) as unknown as AppActions;
 const LAYOUT_ROWS = ["Rename tab", "Split pane right", "Split pane down", "Split pane right and open it", "Split pane down and open it", "Zoom pane"];
 
 describe("the command palette on a PC the Herdr app lays out", () => {
@@ -66,31 +70,38 @@ describe("the command palette on a PC the Herdr app lays out", () => {
     }
   });
 
-  async function rows(appLayout: boolean, selectedPaneId: string, initialQuery: string): Promise<string[]> {
+  async function rows(offer: LayoutOffer, selectedPaneId: string, initialQuery: string): Promise<string[]> {
     await act(async () => { renderer?.unmount(); });
     await act(async () => {
-      renderer = create(createElement(SettingsProvider, null, createElement(AppLayoutContext.Provider, { value: appLayout },
-        createElement(CommandPalette, { open: true, initialQuery, onClose: () => {}, machines, onSelect: () => {}, snapshot, online: false, selectedPaneId, view: "chat", actions: actionsOf(appLayout) }))));
+      renderer = create(createElement(SettingsProvider, null, createElement(AppLayoutContext.Provider, { value: offer },
+        createElement(CommandPalette, { open: true, initialQuery, onClose: () => {}, machines, onSelect: () => {}, snapshot, online: false, selectedPaneId, view: "chat", actions: actionsOf(offer) }))));
     });
     return renderer!.root.findAll((node) => node.props.className === "menu-item-main" && typeof node.props.children === "string").map((node) => node.props.children as string);
   }
 
   it("lists a TUI PC's rename, split, zoom and move rows", async () => {
-    const listed = await rows(false, "p1", ">");
+    const listed = await rows(TUI, "p1", ">");
     for (const row of LAYOUT_ROWS) expect(listed).toContain(row);
-    expect(await rows(false, "p3", ">move tab")).toEqual(["Move tab to w1"]);
+    expect(await rows(TUI, "p3", ">move tab")).toEqual(["Move tab to w1"]);
   });
 
   it("keeps Rename tab where a lone tab draws no row, whose dialog stands in for the row's field", async () => {
     phone = true;
-    expect(await rows(false, "p3", ">rename tab")).toEqual(["Rename tab"]);
+    expect(await rows(TUI, "p3", ">rename tab")).toEqual(["Rename tab"]);
   });
 
   it("lists none of them on a core PC, and keeps New workspace and New tab", async () => {
-    const listed = await rows(true, "p1", ">");
+    const listed = await rows(APP_CORE, "p1", ">");
     for (const row of LAYOUT_ROWS) expect(listed).not.toContain(row);
     expect(listed).toContain("New workspace");
     expect(listed).toContain("New tab");
-    expect(await rows(true, "p3", ">move tab")).toEqual([]);
+    expect(await rows(APP_CORE, "p3", ">move tab")).toEqual([]);
+  });
+
+  it("lists a core PC's rename and move rows where Ovis keeps its layout, but no split or zoom", async () => {
+    const listed = await rows(OVIS_CORE, "p1", ">");
+    expect(listed).toContain("Rename tab");
+    for (const row of LAYOUT_ROWS.filter((row) => row !== "Rename tab")) expect(listed).not.toContain(row);
+    expect(await rows(OVIS_CORE, "p3", ">move tab")).toEqual(["Move tab to w1"]);
   });
 });

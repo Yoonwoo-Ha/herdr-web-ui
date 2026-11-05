@@ -1,27 +1,28 @@
 import type { AppActions } from "./actions.ts";
 import { splitPane, zoomPane } from "./api.ts";
+import type { LayoutOffer } from "./machineContext.tsx";
 import { selectionStill, type SelectionMark } from "./selectionMark.ts";
 
 /**
  * herdr's layout calls on the selected pane, for the palette and the split shortcuts
  * (components/TabStrip.tsx has the same for the tab's own menu): the new layout reaches every
  * client as session-changed, so only a refusal is left to say, and that is logged as other
- * background failures are. Both are null without a pane, and on a PC whose layout the Herdr app's
- * window owns (lib/machineContext.tsx AppLayoutContext): herdr-core refuses them, so the palette
- * lists neither and the shortcut does nothing there.
+ * background failures are. Both are null without a pane, and each on a PC whose herdr does not
+ * answer it (lib/machineContext.tsx AppLayoutContext: herdr-core never zooms, and splits only where
+ * Ovis keeps its layout), so the palette does not list it and the shortcut does nothing there.
  */
-export function layoutActions({ selectedPaneId, appLayout, selection, load, selectPane, layoutRefused }: {
+export function layoutActions({ selectedPaneId, offer, selection, load, selectPane, layoutRefused }: {
   selectedPaneId: string | null;
-  appLayout: boolean;
+  offer: Pick<LayoutOffer, "split" | "arrange">;
   /** App's selection as it is when herdr answers, not as it was when the call was made */
   selection: { readonly current: SelectionMark };
   load: () => unknown;
   selectPane: (paneId: string) => void;
   layoutRefused: (what: string, err: unknown) => void;
 }): Pick<AppActions, "splitPane" | "zoomPane"> {
-  if (selectedPaneId === null || appLayout) return { splitPane: null, zoomPane: null };
+  if (selectedPaneId === null) return { splitPane: null, zoomPane: null };
   return {
-    splitPane: (direction, focus = false) => {
+    splitPane: !offer.split ? null : (direction, focus = false) => {
       const asked = selection.current;
       if (asked.paneId === null) return;
       void splitPane(asked.paneId, direction, focus, asked.machineId)
@@ -33,7 +34,7 @@ export function layoutActions({ selectedPaneId, appLayout, selection, load, sele
         })
         .catch((err) => layoutRefused("pane split failed", err));
     },
-    zoomPane: (mode) => {
+    zoomPane: !offer.arrange ? null : (mode) => {
       const { machineId, paneId } = selection.current;
       if (paneId === null) return;
       void zoomPane(paneId, mode, machineId).then(() => void load()).catch((err) => layoutRefused("pane zoom failed", err));

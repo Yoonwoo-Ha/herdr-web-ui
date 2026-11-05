@@ -3,10 +3,15 @@ import { act, createElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 
 import type { PaneInfo, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
-import { AppLayoutContext } from "../lib/machineContext.tsx";
+import { AppLayoutContext, appLayoutOf, type LayoutOffer } from "../lib/machineContext.tsx";
 import { SettingsProvider } from "../lib/settings.ts";
 import { RowMenu } from "./RowMenu.tsx";
 import { TabStrip } from "./TabStrip.tsx";
+
+/** herdr's TUI server, a herdr-core PC the Herdr app lays out, and one whose layout Ovis keeps (lib/machineContext.tsx) */
+const TUI = appLayoutOf({ version: "0.9.5", protocol: 22 });
+const APP_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core" });
+const OVIS_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core", layout: { rename: true, split: false, move: true } });
 
 const workspace = (id: string, tabs: number): WorkspaceInfo =>
   ({ workspace_id: id, label: id, active_tab_id: `${id}:t1`, number: 1, tab_count: tabs, pane_count: tabs, focused: false, agent_status: "idle", worktree: null });
@@ -66,9 +71,9 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
     }
   });
 
-  async function draw(appLayout: boolean): Promise<void> {
+  async function draw(offer: LayoutOffer): Promise<void> {
     await act(async () => {
-      renderer = create(createElement(SettingsProvider, null, createElement(AppLayoutContext.Provider, { value: appLayout },
+      renderer = create(createElement(SettingsProvider, null, createElement(AppLayoutContext.Provider, { value: offer },
         createElement(TabStrip, { snapshot, workspace: snapshot.workspaces[0]!, selectedPane: snapshot.panes[0]!, onSelectPane: () => {}, onNewTab: () => {}, onNewTerminal: async () => {}, onMoveToWorkspace: async () => {} }))), { createNodeMock: node });
     });
   }
@@ -92,7 +97,7 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
 
   it("offers a TUI PC's tab its moves and rename, by menu, keys and a double-click", async () => {
     await withFetch(async () => {
-      await draw(false);
+      await draw(TUI);
       expect(await menuOf()).toEqual(["move-right", "move-workspace", "new-agent-tab", "rename-tab", "close-tab"]);
       expect(tab().props["aria-keyshortcuts"]).toBe("Shift+F10 Alt+Shift+ArrowLeft Alt+Shift+ArrowRight");
       expect(typeof tab().props.onDoubleClick).toBe("function");
@@ -106,7 +111,7 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
 
   it("keeps a core PC's tab as the Herdr app names and orders it: New tab with agent and Close stay", async () => {
     await withFetch(async () => {
-      await draw(true);
+      await draw(APP_CORE);
       expect(await menuOf()).toEqual(["new-agent-tab", "close-tab"]);
       expect(tab().props["aria-keyshortcuts"]).toBe("Shift+F10");
       expect(tab().props.onDoubleClick).toBeUndefined();
@@ -114,6 +119,19 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
       expect(renameFields()).toBe(0);
       await keyDown("ArrowRight", { altKey: true, shiftKey: true });
       expect(strip().props["aria-busy"]).toBe(false);
+      expect(requested).toEqual([]);
+    });
+  });
+
+  it("renames a core PC's tab and moves it to another workspace where Ovis keeps its layout, but keeps its order", async () => {
+    await withFetch(async () => {
+      await draw(OVIS_CORE);
+      expect(await menuOf()).toEqual(["move-workspace", "new-agent-tab", "rename-tab", "close-tab"]);
+      expect(tab().props["aria-keyshortcuts"]).toBe("Shift+F10");
+      expect(typeof tab().props.onDoubleClick).toBe("function");
+      await keyDown("F2");
+      expect(renameFields()).toBe(1);
+      await keyDown("ArrowRight", { altKey: true, shiftKey: true });
       expect(requested).toEqual([]);
     });
   });

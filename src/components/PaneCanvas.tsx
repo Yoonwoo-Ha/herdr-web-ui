@@ -153,7 +153,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   useEffect(() => { setMenu(null); setRenaming(null); setRenamingTab(null); setMovingTab(null); setClosingTab(null); setClosing(null); setError(null); }, [presented?.tab_id]);
   // one press each: the request depends on itself alone, as the row's does (TabStrip)
   useLayoutEffect(() => {
-    if (renameRequest === null || !loneRowHidden || appLayout || !presented) return;
+    if (renameRequest === null || !loneRowHidden || !appLayout.rename || !presented) return;
     const tab = snapshot?.tabs.find((entry) => entry.tab_id === presented.tab_id);
     if (tab) setRenamingTab(tab);
   }, [renameRequest]);
@@ -194,20 +194,23 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     else run(() => api.closePane(target.pane_id));
   };
   const target = menu ? snapshot?.panes.find((item) => item.pane_id === menu.paneId) : null;
-  const layoutItems = (target: HerdrPane): RowMenuItem[] => appLayout ? [] : [
-    { id: "rename", label: t("Rename pane"), icon: Pencil, run: () => setRenaming(target) },
-    ...(target.label ? [{ id: "clear-name", label: t("Clear pane name"), icon: Eraser, run: () => run(() => api.renamePane(target.pane_id, "")) }] : []),
-    ...(pane && target.pane_id !== pane.pane_id ? [{ id: "swap-focused", label: t("Swap with focused pane"), icon: ArrowLeftRight,
+  const layoutItems = (target: HerdrPane): RowMenuItem[] => [
+    // herdr-core names no pane, and swaps, zooms and resizes none (lib/machineContext.tsx `arrange`)
+    ...(!appLayout.arrange ? [] : [{ id: "rename", label: t("Rename pane"), icon: Pencil, run: () => setRenaming(target) }]),
+    ...(appLayout.arrange && target.label ? [{ id: "clear-name", label: t("Clear pane name"), icon: Eraser, run: () => run(() => api.renamePane(target.pane_id, "")) }] : []),
+    ...(appLayout.arrange && pane && target.pane_id !== pane.pane_id ? [{ id: "swap-focused", label: t("Swap with focused pane"), icon: ArrowLeftRight,
       run: () => run(() => api.swapPaneWith(pane.pane_id, target.pane_id)) }] : []),
-    { id: "split-right", label: t("Split right"), icon: Columns2, run: () => run(() => split(target, "right")) },
-    { id: "split-down", label: t("Split down"), icon: Rows2, run: () => run(() => split(target, "down")) },
-    { id: "zoom", label: t(layout && zoomMode(layout, target.pane_id) === "off" ? "Unzoom pane" : "Zoom pane"), icon: Maximize2,
+    ...(!appLayout.split ? [] : [
+      { id: "split-right", label: t("Split right"), icon: Columns2, run: () => run(() => split(target, "right")) },
+      { id: "split-down", label: t("Split down"), icon: Rows2, run: () => run(() => split(target, "down")) },
+    ]),
+    ...(!appLayout.arrange ? [] : [{ id: "zoom", label: t(layout && zoomMode(layout, target.pane_id) === "off" ? "Unzoom pane" : "Zoom pane"), icon: Maximize2,
       run: () => run(async () => {
         const tabId = latest.current.tabId;
         const selection = latest.current.selection;
         await api.zoomPane(target.pane_id, layout ? zoomMode(layout, target.pane_id) : "on");
         if (alive.current && latest.current.tabId === tabId && latest.current.selection === selection) onSelect(target.pane_id);
-      }) },
+      }) }]),
   ];
   // A lone tab on a cramped phone has no row (TabStrip), so the pane's menu carries what the row's
   // menu would: the tab's other panes, shown one at a time there, and the way to a new tab. There
@@ -234,7 +237,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         // herdr moves a tab to another workspace only as its one pane, a DAG viewer the roster hides
         // counted too; the workspaces are picked in a second menu at the header's More, which this
         // menu opened from, as the row's menu lists them in place (TabStrip)
-        ...(onMoveToWorkspace && !appLayout && tab && (snapshot?.panes.filter((item) => item.tab_id === target.tab_id).length ?? 0) === 1
+        ...(onMoveToWorkspace && appLayout.move && tab && (snapshot?.panes.filter((item) => item.tab_id === target.tab_id).length ?? 0) === 1
           && snapshot?.workspaces.some((entry) => entry.workspace_id !== target.workspace_id)
           ? [{ id: "move-workspace", label: t("Move to workspace…"), icon: FolderInput, run: () => {
             const anchor = document.querySelector<HTMLElement>(".header-more-button") ?? canvas.current;
@@ -242,7 +245,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
           } }] : []),
         ...(onNewTab ? [{ id: "new-agent-tab", label: t("New tab with agent…"), icon: Bot, run: onNewTab }] : []),
         // the row's inline name field is gone with it: the tab is named in a dialog, as a pane is
-        ...(appLayout || !tab ? [] : [{ id: "rename-tab", label: t("Rename tab"), icon: Pencil, run: () => setRenamingTab(tab) }]),
+        ...(!appLayout.rename || !tab ? [] : [{ id: "rename-tab", label: t("Rename tab"), icon: Pencil, run: () => setRenamingTab(tab) }]),
         // the tab's last pane closes it too, but a split tab has no other way to close as one (the row's confirmation: it is the workspace's last tab)
         ...(tab ? [{ id: "close-tab", label: t("Close tab"), icon: X, danger: true, run: () => setClosingTab(tab) }] : []),
       ],
@@ -416,7 +419,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         <div className="pane-frame-body"><PaneCachedContext.Provider value={cell.cached && !cell.retained}><PaneWatchedContext.Provider value={cell.cached && !cell.retained && watchedTabs.has(item.tab_id)}><PanePresentedContext.Provider value={!offTab}><PaneShownContext.Provider value={!hidden}>{renderPane(item, active, alone === null && cells.length > 1)}</PaneShownContext.Provider></PanePresentedContext.Provider></PaneWatchedContext.Provider></PaneCachedContext.Provider></div>
       </section>;
     })}
-    {alone === null && !appLayout && layout?.splits.map((item) => {
+    {alone === null && appLayout.arrange && layout?.splits.map((item) => {
       const vertical = item.direction === "right";
       const path = splitPath(item.id);
       if (path === null) return null;

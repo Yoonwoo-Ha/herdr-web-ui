@@ -4,7 +4,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 
 import type { SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import type { AppActions } from "../lib/actions.ts";
-import { AppLayoutContext, ReorderContext } from "../lib/machineContext.tsx";
+import { AppLayoutContext, appLayoutOf, type LayoutOffer, ReorderContext } from "../lib/machineContext.tsx";
 import { SettingsProvider } from "../lib/settings.ts";
 import { inactiveSidebarFilter } from "../lib/sidebarFilter.ts";
 import { SidebarFilterProvider } from "../lib/sidebarFilterContext.ts";
@@ -12,6 +12,11 @@ import { currentSidebarPins, setSidebarPins } from "../lib/sidebarPins.ts";
 import { ReorderCoordinator } from "../lib/workspaceOrder.ts";
 import { RowMenu } from "./RowMenu.tsx";
 import { Sidebar } from "./Sidebar.tsx";
+
+/** herdr's TUI server, a herdr-core PC the Herdr app lays out, and one whose layout Ovis keeps (lib/machineContext.tsx) */
+const TUI = appLayoutOf({ version: "0.9.5", protocol: 22 });
+const APP_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core" });
+const OVIS_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core", layout: { rename: true, split: false, move: true } });
 
 const worktree = (linked: boolean) => ({ is_linked_worktree: linked, repo_key: "r", repo_name: "r", checkout_path: "/test-project" }) as WorkspaceInfo["worktree"];
 const workspace = (id: string, tree: WorkspaceInfo["worktree"] = null): WorkspaceInfo =>
@@ -68,11 +73,11 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
     }
   });
 
-  async function draw(snapshot: SessionSnapshot, appLayout: boolean, online = false): Promise<ReorderCoordinator> {
+  async function draw(snapshot: SessionSnapshot, offer: LayoutOffer, online = false): Promise<ReorderCoordinator> {
     const coordinator = new ReorderCoordinator();
     await act(async () => {
       renderer = create(createElement(SettingsProvider, null, createElement(SidebarFilterProvider, { value: { filter: inactiveSidebarFilter(), reportBranches: () => {} } },
-        createElement(AppLayoutContext.Provider, { value: appLayout }, createElement(ReorderContext.Provider, { value: coordinator },
+        createElement(AppLayoutContext.Provider, { value: offer }, createElement(ReorderContext.Provider, { value: coordinator },
           createElement(Sidebar, { snapshot, online, selectedPaneId: `${snapshot.workspaces[0]!.workspace_id}:p`, actions }))))), { createNodeMock: node });
     });
     return coordinator;
@@ -84,19 +89,25 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
   const row = (id: string) => renderer!.root.findByProps({ "data-pane": `${id}:p` });
 
   it("offers a TUI PC's rows their rename, worktree and delete items", async () => {
-    await draw(roster([workspace("root", worktree(false)), workspace("child", worktree(true))]), false);
+    await draw(roster([workspace("root", worktree(false)), workspace("child", worktree(true))]), TUI);
     expect(await menuOf("root")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close", "new-worktree", "open-worktree", "fold"]);
     expect(await menuOf("child")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close", "delete-worktree"]);
   });
 
   it("leaves rename, the worktree actions and the checkout's delete out on a core PC, and keeps pin, earlier sessions, close and the fold", async () => {
-    await draw(roster([workspace("root", worktree(false)), workspace("child", worktree(true))]), true);
+    await draw(roster([workspace("root", worktree(false)), workspace("child", worktree(true))]), APP_CORE);
     expect(await menuOf("root")).toEqual(["pin-workspace", "session-history", "close", "fold"]);
     expect(await menuOf("child")).toEqual(["pin-workspace", "session-history", "close"]);
   });
 
+  it("offers a core PC's rows their rename where Ovis keeps its layout, still without the worktree actions", async () => {
+    await draw(roster([workspace("root", worktree(false)), workspace("child", worktree(true))]), OVIS_CORE);
+    expect(await menuOf("root")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close", "fold"]);
+    expect(await menuOf("child")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close"]);
+  });
+
   it("lets a TUI PC's rows be dragged and moved with Alt+arrows", async () => {
-    const coordinator = await draw(roster([workspace("a"), workspace("b")]), false);
+    const coordinator = await draw(roster([workspace("a"), workspace("b")]), TUI);
     const reorder = spyOn(coordinator, "reorder").mockImplementation(async () => undefined);
     expect(row("a").props.draggable).toBe(true);
     expect(row("a").props["aria-keyshortcuts"]).toBe("Alt+ArrowUp Alt+ArrowDown");
@@ -106,7 +117,7 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
   });
 
   it("keeps a core PC's rows where the Herdr app put them, still draggable into half of the pane area", async () => {
-    const coordinator = await draw(roster([workspace("a"), workspace("b")]), true);
+    const coordinator = await draw(roster([workspace("a"), workspace("b")]), APP_CORE);
     const reorder = spyOn(coordinator, "reorder").mockImplementation(async () => undefined);
     expect(row("a").props.draggable).toBe(true);
     expect(row("a").props["aria-keyshortcuts"]).toBeUndefined();
@@ -120,12 +131,12 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
       return Response.json({ error: "not_found" }, { status: 404 });
     }, { preconnect: globalThis.fetch.preconnect }));
     try {
-      await draw(roster([workspace("a"), workspace("b")]), false, true);
+      await draw(roster([workspace("a"), workspace("b")]), TUI, true);
       expect(requested.filter((url) => url.includes("/api/worktree/list?")).sort()).toEqual(["/api/worktree/list?workspace_id=a", "/api/worktree/list?workspace_id=b"]);
       await act(async () => renderer!.unmount());
       renderer = undefined;
       requested = [];
-      await draw(roster([workspace("a"), workspace("b")]), true, true);
+      await draw(roster([workspace("a"), workspace("b")]), APP_CORE, true);
       expect(requested.filter((url) => url.includes("/api/worktree/list?"))).toEqual([]);
     } finally {
       fetch.mockRestore();
@@ -143,7 +154,7 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
     const asked = () => requested.filter((url) => url === "/api/worktree/list?workspace_id=a").length;
     const settle = async () => { for (let turn = 0; turn < 50; turn++) await act(async () => { await Promise.resolve(); }); };
     try {
-      await draw(roster([workspace("a")]), false, true);
+      await draw(roster([workspace("a")]), TUI, true);
       await settle();
       expect(asked()).toBe(2);
       dropped = true;
@@ -171,7 +182,7 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
     const asked = () => requested.filter((url) => url === "/api/worktree/list?workspace_id=a").length;
     const settle = async () => { for (let turn = 0; turn < 50; turn++) await act(async () => { await Promise.resolve(); }); };
     try {
-      await draw(roster([workspace("a")]), false, true);
+      await draw(roster([workspace("a")]), TUI, true);
       await settle();
       // asked once whether it is a repository, then once by the branch poll
       expect(asked()).toBe(2);

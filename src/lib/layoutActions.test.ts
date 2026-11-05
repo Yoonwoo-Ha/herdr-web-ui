@@ -10,20 +10,22 @@ import { useShortcuts } from "./shortcuts.ts";
 import { SETTINGS_STORAGE_KEY } from "./themeBoot.ts";
 
 const selection = { current: { machineId: "local", paneId: "p1", generation: 0 } satisfies SelectionMark };
-const layout = (appLayout: boolean, selectedPaneId: string | null = "p1") =>
-  layoutActions({ selectedPaneId, appLayout, selection, load: () => undefined, selectPane: () => {}, layoutRefused: () => {} });
+/** herdr's TUI server, and a herdr-core PC, which splits and zooms no pane (lib/machineContext.tsx) */
+const OFFERS = { tui: { split: true, arrange: true }, core: { split: false, arrange: false } };
+const layout = (pc: keyof typeof OFFERS, selectedPaneId: string | null = "p1") =>
+  layoutActions({ selectedPaneId, offer: OFFERS[pc], selection, load: () => undefined, selectPane: () => {}, layoutRefused: () => {} });
 const chord = (key: string) => Object.assign(new Event("keydown", { cancelable: true }), { key, code: `Key${key.toUpperCase()}`, ctrlKey: true, shiftKey: true, altKey: false, metaKey: false, repeat: false });
 
 describe("layoutActions", () => {
   it("gives the palette and the shortcuts herdr's split and zoom on a TUI PC with a pane", () => {
-    const offered = layout(false);
+    const offered = layout("tui");
     expect(typeof offered.splitPane).toBe("function");
     expect(typeof offered.zoomPane).toBe("function");
   });
 
   it("gives neither without a pane, nor on a PC the Herdr app lays out", () => {
-    expect(layout(false, null)).toEqual({ splitPane: null, zoomPane: null });
-    expect(layout(true)).toEqual({ splitPane: null, zoomPane: null });
+    expect(layout("tui", null)).toEqual({ splitPane: null, zoomPane: null });
+    expect(layout("core")).toEqual({ splitPane: null, zoomPane: null });
   });
 });
 
@@ -62,8 +64,8 @@ describe("the split shortcut", () => {
     useShortcuts(actions, true);
     return null;
   }
-  async function press(appLayout: boolean): Promise<void> {
-    const actions = { ...layout(appLayout) } as AppActions;
+  async function press(pc: keyof typeof OFFERS): Promise<void> {
+    const actions = { ...layout(pc) } as AppActions;
     const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (input: string | URL | Request) => {
       requested.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
       return Response.json({ pane_id: "p2", workspace_id: "w1", tab_id: "t1", terminal_id: "p2:term", revision: 1, focused: true, agent_status: "idle" });
@@ -77,12 +79,12 @@ describe("the split shortcut", () => {
   }
 
   it("splits the selected pane on a TUI PC", async () => {
-    await press(false);
+    await press("tui");
     expect(requested).toEqual(["/api/pane/split"]);
   });
 
   it("does nothing on a PC the Herdr app lays out", async () => {
-    await press(true);
+    await press("core");
     expect(requested).toEqual([]);
   });
 });
