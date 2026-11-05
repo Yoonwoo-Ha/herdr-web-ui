@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ChildProcess } from "node:child_process";
 import { choosePort, coreEnv, endLeftover, installCore, isFile, layout, openLog, processCommand, processStartSync, readSaved, serverEnv, startCore, startServer, stopServer, writeSaved, type RunningServer } from "./children.ts";
-import { updatePlan } from "./updates.ts";
+import { updateChannel, updatePlan } from "./updates.ts";
 
 type StepState = "pending" | "ok" | "failed";
 export interface Status {
@@ -287,13 +287,19 @@ function allowPermissions(): void {
 }
 
 async function startUpdates(): Promise<void> {
-  const plan = updatePlan({ packaged: app.isPackaged, env: process.env, platform: process.platform, builtWithFeed: existsSync(join(process.resourcesPath, "app-update.yml")) });
+  const plan = updatePlan({ packaged: app.isPackaged, env: process.env, platform: process.platform, builtWithFeed: existsSync(join(process.resourcesPath, "app-update.yml")),
+    channel: updateChannel(process.env, stateDir) });
   if (!plan.enabled) {
     console.log(`Updates are off: ${plan.reason}.`);
     return;
   }
   const { autoUpdater } = await import("electron-updater");
   if (plan.feed) autoUpdater.setFeedURL({ provider: "generic", url: plan.feed });
+  // beta-mac.yml and beta-linux.yml on beta, latest-*.yml otherwise; setting a channel allows downgrades, which stay off
+  autoUpdater.channel = plan.channel === "beta" ? "beta" : "latest";
+  autoUpdater.allowPrerelease = plan.channel === "beta";
+  autoUpdater.allowDowngrade = false;
+  console.log(`Updates: ${plan.channel} channel.`);
   autoUpdater.on("error", (error) => console.error(`Update check failed: ${message(error)}`));
   autoUpdater.on("update-downloaded", () => {
     updateReady = () => void stopForQuit().then(() => autoUpdater.quitAndInstall());

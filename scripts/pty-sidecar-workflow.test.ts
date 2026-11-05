@@ -20,9 +20,10 @@ test("release and repair runs attest every Rust PTY host binary; pull requests a
   expect(step?.with).toEqual({ "subject-path": "pty-sidecar/ovis-pty-sidecar-*" });
 });
 
-test("both callers grant the attest job its permissions, and Release publishes only after it", () => {
+test("every caller grants the attest job its permissions, and Release publishes only after it", () => {
   const release = workflow("release.yml");
   expect(release.jobs["pty-sidecar"]!.permissions).toEqual(ATTESTS);
   expect(release.jobs["publish"]!.needs).toContain("pty-sidecar");
   expect(workflow("pty-sidecar-attach.yml").jobs["build"]!.permissions).toEqual(ATTESTS);
+  expect(workflow("beta.yml").jobs["host-build"]!.permissions).toEqual(ATTESTS);
 });

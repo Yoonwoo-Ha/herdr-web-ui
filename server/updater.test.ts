@@ -3,7 +3,7 @@ import { appendFileSync, closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, 
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { releaseSupervisor as launcherSupervisor } from "./managed.ts";
-import { isReleaseFolder, NOTES_FILE_LIMIT, readNotesFile, RELEASE_FOLDER_REASON, Updater, runCommand, type Release } from "./updater.ts";
+import { isReleaseFolder, latestTag, NOTES_FILE_LIMIT, readNotesFile, RELEASE_FOLDER_REASON, UPDATE_CHANNEL_FILE, updateChannel, Updater, runCommand, type Release } from "./updater.ts";
 import { updateStateDir } from "./update-state.ts";
 import { spawnSync } from "node:child_process";
 import { symlinkSync } from "node:fs";
@@ -560,6 +560,49 @@ describe("managed source updates with real Git repositories and builds", () => {
     await updater.request("install");
     expect(updater.status.error).toBeNull();
     expect(updater.status.current_revision).toBe(target);
+  });
+
+  it("never offers a beta build on the stable channel", async () => {
+    await release("beta", "beta/v0.2.0-beta.3");
+    await git(upstream, "tag", "v0.3.0-beta.1");
+    await updater.request("check");
+    expect(updater.status.channel).toBe("stable");
+    expect(updater.status.available).toBe(false);
+    expect(updater.status.latest_version).toBeNull();
+    // a stable updater fetches refs/tags/v* alone, as every released one did (v0.4.18 to v0.4.22):
+    // the beta/* tags never reach its checkout
+    expect(await git(root, "for-each-ref", "refs/tags/beta/")).toBe("");
+    expect(await git(root, "tag", "--list", "v0.3.0-beta.1")).toBe("v0.3.0-beta.1");
+  });
+
+  it("on the beta channel, installs the newest beta build, and takes the release after it", async () => {
+    const appState = join(directory, "app-state");
+    mkdirSync(appState);
+    const beta = new Updater({ root, stateDir, autoUpdate: false, activate: async (_next, persist) => persist(), publish() {},
+      channel: () => updateChannel({}, appState) });
+    await beta.initialize();
+    await release("released", "v0.2.0");
+    await release("beta nine", "beta/v0.2.1-beta.9");
+    // a pre-release under v* is no beta build: never taken, on either channel
+    await release("rc", "v0.2.1-rc.1");
+    const newest = await release("beta ten", "beta/v0.2.1-beta.10");
+    await beta.request("check");
+    // no setting file yet: the PC has not opted in
+    expect(beta.status.channel).toBe("stable");
+    expect(beta.status.latest_version).toBe("0.2.0");
+
+    // the file takes effect at the next check, without a restart
+    writeFileSync(join(appState, UPDATE_CHANNEL_FILE), "beta\n");
+    await beta.request("install");
+    expect(beta.status.error).toBeNull();
+    expect(beta.status.channel).toBe("beta");
+    expect(beta.status.current_revision).toBe(newest);
+
+    const stable = await release("release", "v0.2.1");
+    await beta.request("check");
+    expect(beta.status.latest_version).toBe("0.2.1");
+    expect(beta.status.latest_revision).toBe(stable);
+    expect(beta.status.available).toBe(true);
   });
 
   it("treats a shallow plugin checkout ahead of the latest release as up to date", async () => {
@@ -1391,5 +1434,28 @@ describe("a release's notes file", () => {
       if (spawnSync("mkfifo", [join(dir, "fifo.md")]).status === 0) expect(() => readNotesFile(join(dir, "fifo.md"))).toThrow(/not notes/);
       expect(() => readNotesFile(join(dir, "missing.md"))).toThrow();
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe("update channels", () => {
+  it("orders releases after their betas and betas by number, and keeps betas off stable", () => {
+    const tags = ["v0.4.22", "beta/v0.4.23-beta.9", "beta/v0.4.23-beta.10", "v0.4.24-beta.1", "remote-v9", "v1.0.0-rc1", ""];
+    expect(latestTag(tags, "stable")).toBe("v0.4.22");
+    expect(latestTag(tags, "beta")).toBe("beta/v0.4.23-beta.10");
+    expect(latestTag([...tags, "v0.4.23"], "beta")).toBe("v0.4.23");
+    expect(latestTag(["beta/v0.4.23-beta.2"], "stable")).toBeUndefined();
+  });
+
+  it("reads the channel from OVIS_UPDATE_CHANNEL first, then the state dir's file, else stable", () => {
+    const appState = mkdtempSync(join(tmpdir(), "ovis-channel-"));
+    try {
+      expect(updateChannel({}, appState)).toBe("stable");
+      writeFileSync(join(appState, UPDATE_CHANNEL_FILE), " Beta\n");
+      expect(updateChannel({}, appState)).toBe("beta");
+      expect(updateChannel({ OVIS_UPDATE_CHANNEL: "stable" }, appState)).toBe("stable");
+      writeFileSync(join(appState, UPDATE_CHANNEL_FILE), "nightly");
+      expect(updateChannel({}, appState)).toBe("stable");
+      expect(updateChannel({ OVIS_UPDATE_CHANNEL: "beta" }, appState)).toBe("beta");
+    } finally { rmSync(appState, { recursive: true, force: true }); }
   });
 });
