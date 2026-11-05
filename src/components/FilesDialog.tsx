@@ -89,7 +89,8 @@ export function FilesDialog({ start, paneId, viewing, onOpenFile, onOpenDiff, on
       {/* the dialog stays open across a pane switch (Next pane): the browser starts over on the new
           pane's folder, as Changes reads the new pane, instead of listing the pane it was opened on */}
       <div hidden={tab !== "browse"}><DirectoryBrowser key={`${machineId}:${paneId}`} start={start} onOpenFile={onOpenFile} onFolder={(path) => { folder.current = { pane: paneId, path }; }} /></div>
-      {changesVisited && <div hidden={tab !== "changes"}><RepoChanges key={`${machineId}:${paneId}`} paneId={paneId} directory={start} onOpenDiff={onOpenDiff} /></div>}
+      {/* not keyed by PC and pane: Changes keeps its scope (Branch) across a switch and itself drops answers for the target left behind */}
+      {changesVisited && <div hidden={tab !== "changes"}><RepoChanges paneId={paneId} directory={start} onOpenDiff={onOpenDiff} /></div>}
       {/* one panel per PC and pane: an answer or a merge still on its way for the last pane never lands in this one */}
       {prVisited && <div hidden={tab !== "pr"}><PullRequestPanel key={`${machineId}:${paneId}`} paneId={paneId} directory={start} /></div>}
     </div>
