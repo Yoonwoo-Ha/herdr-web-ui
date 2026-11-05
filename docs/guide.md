@@ -895,8 +895,8 @@ Whether the core runs is read from its socket file (`HC_SOCKET`, `socket` in hc'
 `config.toml`, else `<session>.sock` under `$XDG_RUNTIME_DIR/herdr-core/`; `HC_SESSION` names the
 session, `default` otherwise); nothing connects to it.
 
-`OVIS_RUNTIME=herdr-core` is Linux/macOS only: there is no Windows named pipe support yet.
-Ovis refuses to start with this runtime on Windows; use the default `herdr` runtime there.
+On Windows Ovis serves herdr-core only when `OVIS_RUNTIME=herdr-core` is set, as the desktop app
+sets it: the automatic choice stays on herdr there, and Settings offers no switch.
 
 On a Linux or macOS PC with herdr-core and no herdr, the one-line installer
 (`curl -fsSL https://ovis.sh/install.sh | sh`) sets this up by itself: no herdr and no plugin, Ovis
@@ -918,7 +918,26 @@ macOS). See [INSTALL.md](../INSTALL.md#2-choose-the-install-method).
 - **Starting an agent:** the agent's command is typed into the pane's shell, so it starts only
   in a pane that runs a plain shell of its own (sh, bash, dash, zsh, ksh, mksh, ash or fish), and
   only while nothing else runs in front of it. A pane the app started with a program directly
-  cannot take one.
+  cannot take one. On Windows that shell is PowerShell (herdr-core's own, or one started with
+  interactive switches only) or cmd (without `/c`, `/k`, `/r` or `/v`). A POSIX shell cannot take
+  one there: Git Bash rewrites an argument that looks like a path on its way to the agent, and this
+  PC's process table does not show what runs in WSL. herdr-core names only the shell in front of a
+  Windows pane, so that table says the rest: the pane is busy while any program runs below its
+  shell, console hosts aside, or the table cannot be read, and the agent has started once a
+  program named for it runs there. A command PowerShell runs in itself (`Read-Host`) shows no
+  program there and takes the line as its input, and text left at a Windows prompt runs with the
+  line, as no key clears it in every editing mode. An argument the shell would change is refused
+  before anything is typed: in Windows PowerShell one whose whitespace all follows an odd number of
+  `"` (`"fix the bug"`, `x="a b"`); in PowerShell 7 an empty one, one holding a `"`, or one holding
+  whitespace and ending in a backslash; in cmd one holding a `"` or a `%`. In PowerShell one
+  holding `&`, `|`, `<`, `>`, `^` or `%` is refused too: an agent PowerShell starts through a
+  `.cmd` file alone (an npm install also has a `.ps1`, which PowerShell prefers) has its arguments
+  read by cmd as well, where an `&` outside cmd's quotes would end the agent's line and run the
+  rest, and which file the agent's name finds is not known before. Where the execution policy blocks scripts (`Restricted`, the Windows
+  default), PowerShell refuses that `.ps1` and does not fall back to the `.cmd`: the start fails,
+  and the pane says why. cmd looks in the pane's folder before the `PATH`, as it does for what you
+  type. Command Code is not offered on Windows, where its command `cmd` is cmd.exe, and a Windows
+  PC offers no agent on another machine of its core, whose shells its process table does not show.
 - **Status and alerts:** an agent's status is what it reports to herdr-core (OSC 7501), so an
   agent that reports none shows no status. A turn is done only when the program itself reports
   its turn finished (`done`, or `working` then `idle`); `error` shows no status. When a blocked
