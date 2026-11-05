@@ -173,6 +173,20 @@ try {
         const scrolled = await announced();
         assert.ok(scrolled?.includes("NEW-ONLY-LINE") && !scrolled.includes("OLD-"), `core: a scroll announces only the new line (${JSON.stringify(scrolled)})`);
 
+        // scrolling back through the history writes nothing: the rows it brings in are not announced (#2963)
+        const topRow = () => page.evaluate(() => document.querySelector(".pane-frame.is-current .ghostty-row")?.textContent ?? "");
+        const screenBox = (await page.locator(".pane-frame.is-current .xterm-screen").boundingBox())!;
+        await page.mouse.move(screenBox.x + screenBox.width / 2, screenBox.y + screenBox.height / 3);
+        const shownTop = await topRow();
+        await page.mouse.wheel(0, -600);
+        await page.waitForFunction((top) => document.querySelector(".pane-frame.is-current .ghostty-row")?.textContent !== top, shownTop);
+        await settled(page);
+        assert.equal(await announced(), scrolled, "core: scrolling back announces nothing");
+        await page.mouse.wheel(0, 20000);
+        await page.waitForFunction((top) => document.querySelector(".pane-frame.is-current .ghostty-row")?.textContent === top, shownTop);
+        await settled(page);
+        assert.equal(await announced(), scrolled, "core: scrolling back down announces nothing");
+
         await print(page, `\x1b[5;3H${kittySquare(7, [255, 0, 0])}`, "RED-PLACED");
         const red = await picture(page);
         assert.deepEqual(red?.rgb, [255, 0, 0], `core: the Kitty picture is drawn (${JSON.stringify(red)})`);
