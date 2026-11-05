@@ -188,6 +188,15 @@ export class RelayTransport implements Transport {
   /** What the PC said of itself on the latest admission: a reconnect after its update names the new version. */
   get server(): RelayServerInfo | undefined { return this.known; }
 
+  /**
+   * Ends this carrier and connects again, signing in with the key the saved pairing holds now: after
+   * a link swapped it for the account key, the PC takes this device's account actions only from a
+   * session that proved that key.
+   */
+  renew(): void {
+    this.channel?.close();
+  }
+
   /** A reconnect that failed: tried again later, unless no later attempt could succeed. */
   private failed(error: unknown): void {
     if (this.stopped) return;

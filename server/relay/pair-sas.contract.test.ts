@@ -1,15 +1,22 @@
+import { join } from "node:path";
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import {
   channelBinding, exportPublicKey, generateKeyPair, openClientSecureChannel, openDaemonSecureChannel,
 } from "../../shared/relay-e2ee.ts";
 import type { KeyPair, SecureChannel, Transport } from "../../shared/relay-e2ee.ts";
-import { decodeFrame, encodeFrame, FrameType, PAIR_SAS_FEATURE } from "../../shared/relay-mux.ts";
+import { decodeFrame, encodeFrame, FrameType, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_SAS_FEATURE } from "../../shared/relay-mux.ts";
 import type { MuxFrame } from "../../shared/relay-mux.ts";
 import type { MuxClock } from "../../shared/relay-mux-engine.ts";
 import { fromBase64Url, PAIR_APPROVAL_MS, pairCommitment, pairDigits, randomPairNonce, toBase64Url } from "../../shared/relay-pair-sas.ts";
-import type { RelayPairingRequest } from "../../shared/machines.ts";
+import type { RelayPairingRequest, RemotePairingRequest } from "../../shared/machines.ts";
+import { readDeviceRegistry } from "../devices.ts";
+import { FakeAccountService } from "../../shared/account-service-fake.ts";
+import { rotateRelayIdentity } from "./identity.ts";
+import { bytesToHex } from "@noble/hashes/utils.js";
+import { importPublicKey } from "../../shared/relay-e2ee.ts";
+import { accountDeviceId } from "../../shared/account-records.ts";
 import { RelaySession } from "./session.ts";
-import { bounded, deferred, relayFixture, TestClock } from "./test-helpers.ts";
+import { bounded, deferred, relayAccountFixture, relayConnection, relayDevice, relayFixture, TestClock } from "./test-helpers.ts";
 
 type Fixture = ReturnType<typeof relayFixture>;
 const fixtures: Fixture[] = [];
@@ -101,7 +108,9 @@ async function phone(transport: Transport, serverKey: string) {
     binding: () => { const binding = channelBinding(channel); if (!binding) throw new Error("No binding"); return binding; },
     async hello(features = [PAIR_SAS_FEATURE]) {
       await send({ type: FrameType.HELLO, flags: 0, stream_id: 0, payload: { protocol: "ovis-mux", versions: [1], features, required_features: [] } });
-      const welcome = await inbox.next();
+      let welcome = await inbox.next();
+      // outside the owner's pairing window a provisional WELCOME comes before HELLO; the answer that selects follows it
+      if (welcome.type === FrameType.WELCOME && welcome.payload.provisional && features.length > 0) welcome = await inbox.next();
       if (welcome.type !== FrameType.WELCOME) throw new Error(`Expected WELCOME, got ${welcome.type}`);
       return welcome.payload;
     },
@@ -523,4 +532,342 @@ test("a relay in the middle that runs its own comparison with the PC shows the o
   // the PC shows the relay's comparison, made over the relay's own handshake with it, never the phone's
   expect(request?.digits).toBe(pairDigits(relay.binding, relay.deviceKey, relay.phoneNonce, relay.pcNonce));
   expect(Buffer.from(relay.binding).equals(Buffer.from(p.binding()))).toBe(false);
+});
+
+// One admission rule (docs/account.md, "Who may admit a device"): this PC itself, or a drive account
+// member connected through the relay who picks the new device's digits out of three.
+
+const guard = [["content-type", "application/json"], ["x-herdr-machine", "1"]] as const;
+
+async function accountFixture(role: "drive" | "watch" = "drive") {
+  const made = await relayAccountFixture(role);
+  fixtures.push(made.fixture);
+  made.fixture.app.context.services.relay.approvals.openWindow();
+  return { f: made.fixture, member: made.member };
+}
+
+type Link = Awaited<ReturnType<typeof relayConnection>>;
+
+async function signedIn(f: Fixture, device: Awaited<ReturnType<typeof relayDevice>>): Promise<Link> {
+  const link = await relayConnection(f);
+  await link.auth(device);
+  return link;
+}
+
+async function post(link: Link, target: string, body: unknown) {
+  const request = link.open(target, { method: "POST", headers: guard, body: "stream" });
+  void request.stream.sendBody(new Response(JSON.stringify(body)).body ?? new ReadableStream()).catch(() => {});
+  const response = await request.response;
+  return { status: response.status, body: await response.json() as { error?: { code: string }; ok?: boolean; device_id?: string } };
+}
+
+async function remoteList(link: Link) {
+  const response = await link.open("/api/relay/pairings").response;
+  return { status: response.status, body: await response.json() as { pairings?: RemotePairingRequest[]; error?: { code: string } } };
+}
+
+async function accountComparison(f: Fixture) {
+  const { p } = await direct(f);
+  await p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_ACCOUNT]);
+  const waiting = prompts(f, (list) => list.length === 1);
+  const digits = await compare(p);
+  const [request] = await waiting;
+  return { p, digits, request: request! };
+}
+
+test("a phone may ask to join the account with its comparison, with one intent and only alongside pair-sas", async () => {
+  const f = fixture();
+  expect((await (await direct(f)).p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_ACCOUNT])).features).toEqual([PAIR_SAS_FEATURE, PAIR_INTENT_ACCOUNT]);
+  expect((await (await direct(f)).p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_PC])).features).toEqual([PAIR_SAS_FEATURE, PAIR_INTENT_PC]);
+  expect((await (await direct(f)).p.hello([PAIR_INTENT_ACCOUNT])).features).toEqual([]);
+  const { p } = await direct(f);
+  await p.send({ type: FrameType.HELLO, flags: 0, stream_id: 0,
+    payload: { protocol: "ovis-mux", versions: [1], features: [PAIR_SAS_FEATURE, PAIR_INTENT_PC, PAIR_INTENT_ACCOUNT], required_features: [] } });
+  expect(await sessionError(p)).toBe("protocol_error");
+});
+
+test("a drive account member through the relay admits a device by picking its digits, and the PC records who approved it", async () => {
+  const { f, member } = await accountFixture();
+  const link = await signedIn(f, member);
+  const { p, digits, request } = await accountComparison(f);
+  expect(request.intent).toBe("account");
+  const remote = (await remoteList(link)).body.pairings?.[0];
+  expect(remote).toMatchObject({ id: request.id, label: "New phone", intent: "account" });
+  expect(remote).not.toHaveProperty("digits");
+  expect(new Set(remote?.choices)).toEqual(new Set([digits, ...remote!.choices.filter((choice) => choice !== digits)]));
+  expect(new Set(remote?.choices).size).toBe(3);
+
+  expect(remote?.key).toBe(p.publicKey);
+  const approved = await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", digits });
+  const deviceId = accountDeviceId("0123456789abcdef0123456789abcdef", p.publicKey);
+  expect(approved.body).toEqual({ ok: true, device_id: deviceId });
+  await confirm(p);
+  const admitted = await p.inbox.next();
+  expect(admitted.type === FrameType.AUTH_OK && admitted.payload.device_id).toBe(deviceId);
+  const registry = readDeviceRegistry(join(f.stateDir, "devices.json"));
+  expect(registry.kind === "ok" && registry.devices.find((device) => device.label === "New phone")?.added_by).toBe(member.id);
+});
+
+test("every connected device hears of the admission and of the member that approved it", async () => {
+  const { f, member } = await accountFixture();
+  const approver = await signedIn(f, member);
+  const bystander = await signedIn(f, await relayDevice(f));
+  const streams = await Promise.all([approver, bystander].map(async (link) => (await link.open("/api/machines/events").response).body!.getReader()));
+  const texts = ["", ""];
+  const until = async (index: number, needle: string) => {
+    while (!texts[index]!.includes(needle)) {
+      const chunk = await bounded(streams[index]!.read());
+      if (chunk.done) throw new Error(`The event stream ended before ${needle}`);
+      texts[index] += new TextDecoder().decode(chunk.value);
+    }
+  };
+  const { p, digits, request } = await accountComparison(f);
+  // the member is told of the waiting device, with candidates and no digits
+  await until(0, `"type":"remote-pairings","pairings":[{"id":"${request.id}"`);
+  await post(approver, "/api/relay/pairing", { id: request.id, decision: "approve", digits });
+  await confirm(p);
+  expect((await p.inbox.next()).type).toBe(FrameType.AUTH_OK);
+  for (const index of [0, 1]) {
+    await until(index, '"type":"device-paired"');
+    expect(texts[index]).toContain(`"approved_by":{"device_id":"${member.id}","label":"Account phone"}`);
+    expect(texts[index]).not.toContain(`"digits":"${digits}"`);
+    await streams[index]!.cancel();
+  }
+  expect(texts[1]).not.toContain('"type":"remote-pairings"');
+});
+
+test("a relay device that is not a drive account member can neither see nor decide a pairing, and the request keeps waiting", async () => {
+  const { f } = await accountFixture();
+  const outsider = await signedIn(f, await relayDevice(f));
+  const { request } = await accountComparison(f);
+  expect((await remoteList(outsider)).body.error?.code).toBe("account_required");
+  expect((await post(outsider, "/api/relay/pairing", { id: request.id, decision: "approve", digits: request.digits })).body.error?.code).toBe("account_required");
+  const watching = await accountFixture("watch");
+  const watcher = await signedIn(watching.f, watching.member);
+  const other = await accountComparison(watching.f);
+  expect((await post(watcher, "/api/relay/pairing", { id: other.request.id, decision: "approve", digits: other.request.digits })).body.error?.code).toBe("read_only");
+  expect(f.app.context.services.relay.approvals.list().map(({ id }) => id)).toEqual([request.id]);
+  expect(watching.f.app.context.services.relay.approvals.list().map(({ id }) => id)).toEqual([other.request.id]);
+});
+
+test("a wrong pick refuses the device and counts against account pairings only", async () => {
+  const { f, member } = await accountFixture();
+  const link = await signedIn(f, member);
+  for (let failure = 0; failure < 19; failure++) f.app.context.services.devices.noteRelayFailure("account");
+  const { p, digits, request } = await accountComparison(f);
+  const decoy = (await remoteList(link)).body.pairings![0]!.choices.find((choice) => choice !== digits)!;
+  expect((await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", digits: decoy })).body.error?.code).toBe("wrong_digits");
+  expect(await sessionError(p)).toBe("auth_failed");
+  expect(f.app.context.services.devices.list(null).some((device) => device.label === "New phone")).toBe(false);
+  // the twentieth failure paused account pairings, and nothing else
+  const next = await direct(f);
+  await next.p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_ACCOUNT]);
+  await next.p.send({ type: FrameType.PAIR_REQUEST, flags: 0, stream_id: 0, payload: { label: "Again", public_key: next.p.publicKey, commitment: toBase64Url(randomPairNonce()) } });
+  expect(await sessionError(next.p)).toBe("auth_failed");
+  const local = await direct(f);
+  await local.p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_PC]);
+  const waiting = prompts(f, (list) => list.length === 1);
+  await compare(local.p);
+  expect((await waiting)[0]?.intent).toBe("pc");
+});
+
+test("account pairing failures do not pause pairing with a code", async () => {
+  const f = fixture();
+  for (let failure = 0; failure < 20; failure++) f.app.context.services.devices.noteRelayFailure("account");
+  const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign", "verify"]);
+  const publicKey = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64url");
+  const link = await relayConnection(f);
+  const admitted = await link.pair(f.app.context.services.devices.startPairing().code, publicKey);
+  expect(admitted.role).toBe("drive");
+});
+
+test("through the relay to a PC in an account only a drive account member may start a pairing code", async () => {
+  const { f, member } = await accountFixture();
+  const outsider = await signedIn(f, await relayDevice(f));
+  expect((await post(outsider, "/api/devices/pair/start", {})).body.error?.code).toBe("account_required");
+  const started = await post(await signedIn(f, member), "/api/devices/pair/start", {});
+  expect(started.status).toBe(200);
+});
+
+test("a PC in no account still lets a driving relay device start a pairing code", async () => {
+  const f = fixture();
+  expect((await post(await signedIn(f, await relayDevice(f)), "/api/devices/pair/start", {})).status).toBe(200);
+});
+
+test("an approver revoked before the phone confirms admits nothing", async () => {
+  const { f, member } = await accountFixture();
+  const link = await signedIn(f, member);
+  const { p, digits, request } = await accountComparison(f);
+  expect((await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", digits })).status).toBe(200);
+  f.app.context.services.devices.revoke(member.id);
+  await confirm(p);
+  expect(await sessionError(p)).toBe("auth_failed");
+  expect(f.app.context.services.devices.list(null)).toEqual([]);
+});
+
+test("a comparison asking to join the account waits in the same three places as any other", async () => {
+  const f = fixture();
+  for (let index = 0; index < 3; index++) {
+    const { p } = await direct(f);
+    await p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_PC]);
+    const waiting = prompts(f, (list) => list.length === index + 1);
+    await compare(p);
+    await waiting;
+  }
+  const { p } = await direct(f);
+  await p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_ACCOUNT]);
+  await compare(p);
+  expect(await sessionError(p)).toBe("auth_failed");
+});
+
+test("an approval ends for good when its approver is given another role before the phone confirms", async () => {
+  const { f, member } = await accountFixture();
+  const link = await signedIn(f, member);
+  const { p, digits, request } = await accountComparison(f);
+  expect((await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", digits })).status).toBe(200);
+  f.app.context.services.devices.update(member.id, { role: "watch" });
+  f.app.context.services.devices.update(member.id, { role: "drive" });
+  await confirm(p);
+  expect(await sessionError(p)).toBe("auth_failed");
+  expect(f.app.context.services.devices.list(null).some((device) => device.label === "New phone")).toBe(false);
+});
+
+test("a watch device on the PC's own address cannot read the digits of a waiting comparison", async () => {
+  const f = fixture();
+  const store = f.app.context.services.devices;
+  const paired = store.pair(store.startPairing().code, "Watcher", "watch")!;
+  store.match(paired.token);
+  const { request } = await accountComparison(f);
+  const response = await fetch(`http://127.0.0.1:${f.app.port}/api/relay/pairings`, { headers: { cookie: `ovis_device=${paired.token}` } });
+  expect(response.status).toBe(403);
+  expect(await response.text()).not.toContain(request.digits);
+});
+
+// Joining through the account outside the pairing window (docs/account.md, design 5.3).
+
+async function joinFixture(clock: () => number = Date.now) {
+  const service = new FakeAccountService(clock);
+  const made = await relayAccountFixture("drive", "acct_1", { accountService: { url: "https://account.test", fetch: service.fetch } });
+  fixtures.push(made.fixture);
+  const identity = rotateRelayIdentity(made.fixture.stateDir);
+  const tokens = { acct_1: service.issueToken("acct_1"), acct_2: service.issueToken("acct_2") };
+  for (const token of Object.values(tokens)) {
+    await service.fetch(new Request(`https://account.test/v1/pcs/${identity.server_id}`, { method: "PUT", headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ label: "PC", public_key: bytesToHex(importPublicKey(identity.public_key)), relay: "wss://relay.ovis.sh" }) }));
+  }
+  const admit = (key: string, account: keyof typeof tokens = "acct_1") => service.fetch(new Request("https://account.test/v1/admissions", {
+    method: "POST", headers: { authorization: `Bearer ${tokens[account]}` }, body: JSON.stringify({ server_id: identity.server_id, label: "Mac app", key }),
+  }));
+  return { f: made.fixture, member: made.member, service, admit };
+}
+
+/** Asks to join the account by comparing digits; the digits when the PC took the request, else the session's error. */
+async function askToJoin(f: Fixture, admitKey?: (key: string) => Promise<unknown>, intent = PAIR_INTENT_ACCOUNT) {
+  const { p } = await direct(f);
+  await p.hello([PAIR_SAS_FEATURE, intent]);
+  await admitKey?.(p.publicKey);
+  const nonce = randomPairNonce();
+  await p.send({ type: FrameType.PAIR_REQUEST, flags: 0, stream_id: 0, payload: { label: "Mac app", public_key: p.publicKey, commitment: toBase64Url(pairCommitment(p.binding(), p.publicKey, nonce)) } });
+  const answer = await p.inbox.next();
+  if (answer.type !== FrameType.PAIR_CHALLENGE) return { p, refused: answer.type === FrameType.SESSION_ERROR ? answer.payload.code : String(answer.type) };
+  await p.send({ type: FrameType.PAIR_REVEAL, flags: 0, stream_id: 0, payload: { nonce: toBase64Url(nonce) } });
+  return { p, digits: pairDigits(p.binding(), p.publicKey, nonce, fromBase64Url(answer.payload.nonce)) };
+}
+
+function remotePrompt(f: Fixture): Promise<RemotePairingRequest> {
+  const found = deferred<RemotePairingRequest>();
+  const stop = f.app.context.services.relay.approvals.subscribeRemote((list) => { if (list[0]) found.resolve(list[0]); });
+  return bounded(found.promise).finally(stop);
+}
+
+test("an account join outside the pairing window is refused without an admission, before any prompt and uncounted", async () => {
+  const { f } = await joinFixture();
+  expect((await askToJoin(f)).refused).toBe("auth_failed");
+  expect(f.app.context.services.relay.approvals.remoteList()).toEqual([]);
+  for (let index = 0; index < 19; index++) f.app.context.services.devices.noteRelayFailure("account");
+  // the refusal above counted nothing: one more failure is still under the pause
+  expect(() => f.app.context.services.devices.assertRelayPairing("account")).not.toThrow();
+});
+
+test("an admission for another key or another account does not open the way", async () => {
+  const { f, admit } = await joinFixture();
+  const otherKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("spki", (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])).publicKey)));
+  expect((await askToJoin(f, () => admit(otherKey))).refused).toBe("auth_failed");
+  expect((await askToJoin(f, (key) => admit(key, "acct_2"))).refused).toBe("auth_failed");
+});
+
+test("an admission older than ten minutes does not open the way", async () => {
+  const { f, admit } = await joinFixture(() => Date.now() - 11 * 60_000);
+  expect((await askToJoin(f, (key) => admit(key))).refused).toBe("auth_failed");
+});
+
+test("a fresh admission for this key lets the join wait for a member, who still has to pick the digits", async () => {
+  const { f, member, admit } = await joinFixture();
+  const link = await signedIn(f, member);
+  const prompt = remotePrompt(f);
+  const { p, digits } = await askToJoin(f, (key) => admit(key));
+  const request = await prompt;
+  // the PC's own windows never see it, and cannot decide it
+  expect(f.app.context.services.relay.approvals.list()).toEqual([]);
+  expect(f.app.context.services.relay.approvals.decide(request.id, true)).toBe(false);
+  expect((await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", digits })).status).toBe(200);
+  await confirm(p);
+  expect((await p.inbox.next()).type).toBe(FrameType.AUTH_OK);
+});
+
+test("outside the window only the account intent may join, and at most five a minute", async () => {
+  const { f, admit } = await joinFixture();
+  expect((await askToJoin(f, (key) => admit(key), PAIR_INTENT_PC)).refused).toBe("auth_failed");
+  const outcomes: string[] = [];
+  for (let index = 0; index < 6; index++) {
+    const asked = await askToJoin(f, (key) => admit(key));
+    outcomes.push(asked.refused ?? "taken");
+    asked.p.channel.close();
+  }
+  expect(outcomes.filter((outcome) => outcome === "taken").length).toBeLessThanOrEqual(5);
+  expect(outcomes.at(-1)).toBe("auth_failed");
+});
+
+test("refused requests do not spend the PC's account joins", async () => {
+  const { f, admit } = await joinFixture();
+  for (let index = 0; index < 5; index++) expect((await askToJoin(f)).refused).toBe("auth_failed");
+  // the PC's regular pull sees the admission (a miss pulls at most every 10 seconds)
+  const admitted = (key: string) => admit(key).then(() => f.app.context.services.accountMailbox.pull());
+  expect((await askToJoin(f, admitted)).refused).toBeUndefined();
+});
+
+// Machine events over the WebSocket, the default client's path (#2862)
+
+async function memberSocket(f: Fixture, device: Awaited<ReturnType<typeof relayDevice>>) {
+  const link = await relayConnection(f, { websocket: f.app.context.services.core.socketHandlers });
+  await link.auth(device);
+  const socket = link.openSocket();
+  await socket.opened;
+  socket.send({ type: "machine-events", enabled: true });
+  return socket;
+}
+
+const remotePairings = (count: number) => (message: { type: string; event?: { type: string; pairings?: unknown[] } }) =>
+  message.type === "machine-event" && message.event?.type === "remote-pairings" && message.event.pairings?.length === count;
+
+test("a drive account member's machine-event socket is told of account joins waiting for it, with their key", async () => {
+  const { f, member } = await accountFixture();
+  const socket = await memberSocket(f, member);
+  await socket.until(remotePairings(0) as never);
+  f.app.context.services.relay.approvals.ask("Mac app", "123456", Date.now() + 90_000, { intent: "account", key: member.publicKey, deviceId: "00112233445566aa" });
+  const shown = await socket.until(remotePairings(1) as never) as unknown as { event: { pairings: { key: string; choices: string[] }[] } };
+  expect(shown.event.pairings[0]?.key).toBe(member.publicKey);
+  expect(shown.event.pairings[0]?.choices).toContain("123456");
+});
+
+test("a watching account member's machine-event socket hears of no account join", async () => {
+  const { f, member } = await accountFixture("watch");
+  const socket = await memberSocket(f, member);
+  // the subscription is live once a window that may not approve is told no relay pairing waits
+  await socket.until(((message: { type: string; event?: { type: string } }) => message.type === "machine-event" && message.event?.type === "relay-pairings") as never);
+  f.app.context.services.relay.approvals.ask("Mac app", "123456", Date.now() + 90_000, { intent: "account", key: member.publicKey, deviceId: "00112233445566aa" });
+  // a pairing after it reaches every socket in order: by then a prompt would have arrived
+  await relayDevice(f);
+  await socket.until(((message: { type: string; event?: { type: string } }) => message.type === "machine-event" && message.event?.type === "device-paired") as never);
+  expect(socket.messages.some((message) => remotePairings(1)(message as never))).toBe(false);
 });

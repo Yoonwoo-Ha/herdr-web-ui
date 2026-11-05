@@ -50,7 +50,7 @@ class FakeSocket implements RelaySocket {
   }
 }
 
-async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" | "auth-ok" | "features" | "assigned" | "receipt" | "silence" | "protocol" | "early-welcome", onClose?: (error: Error) => void,
+async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" | "auth-ok" | "features" | "assigned" | "receipt" | "silence" | "protocol" | "early-welcome" | "account", onClose?: (error: Error) => void,
   pc: { relay?: string; hints?: readonly string[] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "relay-channel-"));
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
@@ -118,7 +118,7 @@ async function fixture(pairing: boolean, attack?: "welcome" | "nonce" | "ping" |
     }
   });
   void daemonOpening.catch(() => {});
-  const welcome = () => ({ protocol: "ovis-mux" as const, version: 1 as const, features: attack === "features" ? ["unoffered"] : [],
+  const welcome = () => ({ protocol: "ovis-mux" as const, version: 1 as const, features: attack === "features" ? ["unoffered"] : attack === "account" ? ["account"] : [],
     limits: { ...LIMITS_V1, max_streams: 2 }, nonce: attack === "nonce" ? base64url(nonce.slice(1)) : base64url(nonce),
     server_version: "test", relay_protocol: attack === "protocol" ? 2 : 1, min_supported_client: "0.0.0" });
   const raw = (type: number, payload: unknown): Uint8Array => {
@@ -193,7 +193,7 @@ for (const pairing of [false, true]) {
     expect(channel.device.device_id).toBe((await f.store.get(f.offer.server_id))?.device_id ?? null);
     expect(channel.connectionId).toBe("ef".repeat(16));
     expect(channel.mux.limits.max_streams).toBe(2);
-    expect(channel.server).toEqual({ version: "test", relayProtocol: 1 });
+    expect(channel.server).toEqual({ version: "test", relayProtocol: 1, features: [] });
     expect(f.trace.slice(0, 4)).toEqual(["client:HELLO", "server:WELCOME", `client:${pairing ? "PAIR" : "AUTH"}`, "server:AUTH_OK"]);
     console.log(`ORDER: ${f.trace.slice(0, 4).join(" -> ")}; no other client frame before AUTH_OK`);
     channel.mux.openHttp({ method: "GET", target: "/api/test", headers: [], body: "none" });
@@ -209,7 +209,7 @@ for (const pairing of [false, true]) {
     expect(f.trace.filter((entry) => entry.startsWith("client:"))).toEqual(["client:HELLO", `client:${pairing ? "PAIR" : "AUTH"}`]);
     f.allowAuth.resolve();
     const channel = await f.opening;
-    expect(channel.server).toEqual({ version: "test", relayProtocol: 1 });
+    expect(channel.server).toEqual({ version: "test", relayProtocol: 1, features: [] });
     channel.mux.openHttp({ method: "GET", target: "/api/test", headers: [], body: "none" });
     expect(await f.httpSeen.promise).toBe("/api/test");
     channel.close();
@@ -400,6 +400,14 @@ it("stops at a PC of another relay protocol before any credential, as an update"
   expect(failureOf(error, { code: false, paired: true })).toBe("needs-update");
   expect(f.trace.filter((entry) => entry.startsWith("client:"))).toEqual(["client:HELLO"]);
   expect(f.socket.closed).toBe(true);
+});
+
+it("offers the account feature in HELLO and keeps what the PC selected, so an older PC can be told apart", async () => {
+  const f = await fixture(false, "account");
+  await f.authSeen.promise;
+  f.allowAuth.resolve();
+  const channel = await f.opening;
+  expect(channel.server.features).toEqual(["account"]);
 });
 
 for (const attack of ["welcome", "nonce", "ping", "auth-ok", "features", "assigned", "receipt"] as const) {

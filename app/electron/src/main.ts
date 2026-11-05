@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ChildProcess } from "node:child_process";
 import { choosePort, coreEnv, endLeftover, installCore, isFile, layout, openLog, processCommand, processStartSync, readSaved, serverEnv, startCore, startServer, stopServer, writeSaved, type RunningServer } from "./children.ts";
+import { startLoopbackSignIn, type LoopbackSignIn } from "./accountSignIn.ts";
 import { debInstallCommand, updateChannel, updatePlan } from "./updates.ts";
 
 type StepState = "pending" | "ok" | "failed";
@@ -45,6 +46,17 @@ let quitting = false;
 let stopped = false;
 let updateReady: (() => void) | null = null;
 let status: Status = { core: "pending", server: "pending", detail: "", versions };
+
+/** The account service this app signs in with: OVIS_ACCOUNT_SERVICE_URL's https origin; none, and the app offers no sign-in. */
+const accountService = (() => {
+  try {
+    const url = new URL(process.env["OVIS_ACCOUNT_SERVICE_URL"] ?? "");
+    return url.protocol === "https:" ? url.origin : null;
+  } catch { return null; }
+})();
+
+/** The sign-ins that service offers: OVIS_ACCOUNT_PROVIDERS (GitHub alone without it), so Apple shows only once it is set up. */
+const accountProviders = (process.env["OVIS_ACCOUNT_PROVIDERS"] ?? "").split(",").map((name) => name.trim()).filter((name) => name === "github" || name === "apple");
 
 function serverOrigin(): string | null {
   return server ? new URL(server.url).origin : null;
@@ -348,6 +360,26 @@ if (!app.requestSingleInstanceLock()) {
   });
   ipcMain.on("ovis:logs", (event) => {
     if (event.senderFrame?.url.startsWith("file:")) void shell.openPath(logs);
+  });
+  // signing in to the account (accountSignIn.ts): only the server's own pages may, and only to the account service named
+  let signIn: LoopbackSignIn | null = null;
+  ipcMain.on("ovis:account-service", (event) => {
+    event.returnValue = ours(event.senderFrame?.url ?? "") && accountService !== null ? { service: accountService, providers: accountProviders } : null;
+  });
+  ipcMain.handle("ovis:account-start", async (event) => {
+    if (!ours(event.senderFrame?.url ?? "") || accountService === null) throw new Error("Signing in is not offered here");
+    signIn = await startLoopbackSignIn();
+    return signIn.redirectUri;
+  });
+  ipcMain.handle("ovis:account-open", async (event, url: unknown) => {
+    if (!ours(event.senderFrame?.url ?? "") || accountService === null || signIn === null) throw new Error("No sign-in is waiting");
+    if (typeof url !== "string" || new URL(url).origin !== accountService) throw new Error("That is not the account service");
+    const waiting = signIn;
+    const state = new URL(url).searchParams.get("state");
+    if (state === null) throw new Error("That sign-in names no state");
+    waiting.expect(state);
+    openOutside(url);
+    try { return await waiting.returned; } finally { if (signIn === waiting) signIn = null; }
   });
   app.on("before-quit", (event) => {
     if (stopped) return;

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { appName, CONTENT_SECURITY_POLICY, contentSecurityPolicy, manifestBody, relateManifest, renameManifest, renameShell, requestOrigin, shellContentSecurityPolicy } from "./static.ts";
+import { accountServiceOrigin, appName, CONTENT_SECURITY_POLICY, contentSecurityPolicy, manifestBody, relateManifest, renameManifest, renameShell, requestOrigin, shellContentSecurityPolicy } from "./static.ts";
 
 // The sources Vite builds from: public/ is copied into dist/ as it is, and the meta survives the build.
 const root = join(import.meta.dir, "..");
@@ -95,7 +95,7 @@ describe("the hosted shell's policy", () => {
     expect([...hosted.keys()]).toEqual([...app.keys()]);
     const changed = [...app.keys()].filter((name) => app.get(name) !== hosted.get(name));
     expect(changed).toEqual(["connect-src", "media-src", "frame-src"]);
-    expect(hosted.get("connect-src")).toBe("connect-src 'self' wss:");
+    expect(hosted.get("connect-src")).toBe("connect-src 'self' wss: https://account.ovis.sh");
     expect(hosted.get("media-src")).toBe("media-src 'self' blob:");
     expect(hosted.get("frame-src")).toBe("frame-src 'self' blob:");
   });
@@ -105,5 +105,23 @@ describe("the hosted shell's policy", () => {
     expect(hosted.get("style-src")).toBe("style-src 'self' 'unsafe-inline'");
     expect(hosted.get("font-src")).toBe("font-src 'self' data:");
     expect(hosted.get("script-src")).toBe("script-src 'self'");
+  });
+});
+
+describe("the PC's own pages and the account service", () => {
+  const connect = () => contentSecurityPolicy().split("; ").find((directive) => directive.startsWith("connect-src "));
+  const saved = process.env["OVIS_ACCOUNT_SERVICE_URL"];
+  const restore = () => { if (saved === undefined) delete process.env["OVIS_ACCOUNT_SERVICE_URL"]; else process.env["OVIS_ACCOUNT_SERVICE_URL"] = saved; };
+
+  it("may reach exactly the https origin OVIS_ACCOUNT_SERVICE_URL names, and nothing when it is unset or not https", () => {
+    try {
+      process.env["OVIS_ACCOUNT_SERVICE_URL"] = "https://account.example.com/some/path";
+      expect(connect()).toBe("connect-src 'self' https://account.example.com");
+      delete process.env["OVIS_ACCOUNT_SERVICE_URL"];
+      expect(connect()).toBe("connect-src 'self'");
+      process.env["OVIS_ACCOUNT_SERVICE_URL"] = "http://127.0.0.1:8787";
+      expect(connect()).toBe("connect-src 'self'");
+      expect(accountServiceOrigin("https://bad host")).toBeNull();
+    } finally { restore(); }
   });
 });

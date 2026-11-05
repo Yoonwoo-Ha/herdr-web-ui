@@ -5,7 +5,7 @@ import type { RequestLog } from "./request-log.ts";
 import { handlePaneRequest } from "./pane-routes.ts";
 import { handleIntegrationsRequest } from "./integrations-routes.ts";
 import type { OrderSequence } from "./order-sequence.ts";
-import type { DevicePairedEvent, HealthAuth, RelayPairingsEvent, SecuritySummary, SessionSnapshot } from "../shared/protocol.ts";
+import type { DevicePairedEvent, DeviceRemovedEvent, HealthAuth, RelayPairingsEvent, RemotePairingsEvent, SecuritySummary, SessionSnapshot } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { authClient, deviceAuthorizationValue, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
 import { bindScope, cameThroughProxy, decideAccess, forwardingHeaders, inTailnet, isLoopbackAddress, isServeOwnerRequest, lanExposed, observedIngress } from "./access.ts";
@@ -36,6 +36,9 @@ import { handleUpdateRequest, updateRequestAllowed } from "./update-api.ts";
 import { handleHerdrUpdateRequest } from "./herdr-update.ts";
 import { handlePortalRequest } from "./portal.ts";
 import { handleRelayRequest } from "./relay/routes.ts";
+import { handleAccountRequest } from "./account/routes.ts";
+import type { AccountMailbox } from "./account/mailbox.ts";
+import type { AccountIntroductions } from "./account/introductions.ts";
 import type { RelayService } from "./relay/service.ts";
 import { handleTelemetryRequest, visitSurface } from "./telemetry.ts";
 import type { TelemetryIngress } from "../shared/telemetry.ts";
@@ -70,6 +73,8 @@ export interface RequestServices {
   readonly bridgeToken: string;
   readonly bootId: string;
   readonly devices: DeviceStore;
+  readonly accountMailbox: AccountMailbox;
+  readonly accountIntroductions: AccountIntroductions;
   readonly preferences: PreferenceStore;
   readonly herdrSidebar: HerdrSidebarConfig;
   /** `loginPath`: the request states a Tailscale login, so the PC's own login must be known, not merely cached as unknown */
@@ -103,7 +108,8 @@ export interface ServerContext {
   timeout(request: Request, seconds: number): void;
   upgrade(request: Request, options: { headers?: HeadersInit; data: SocketData }): boolean;
   readonly port: number | undefined;
-  readonly peer: { kind: "socket" } | { kind: "relay"; device: DeviceMatch; sessionId: string };
+  /** `serverId`: the relay identity the device signed in to, which a `link` must name (docs/account.md). */
+  readonly peer: { kind: "socket" } | { kind: "relay"; device: DeviceMatch; sessionId: string; serverId: string; key: string };
   readonly services: RequestServices;
   readonly relayBodyBudget?: EventStreamBudget;
 }
@@ -229,7 +235,9 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // a repository's checkouts are its folders' paths and branches, those not open in herdr too; the worktree
   // dialog that lists them is a drive feature, and the sidebar names a branch only for a driving device (#2250)
   const worktreeList = /^\/api\/(?:machines\/[^/]+\/)?worktree\/list$/.test(pathname);
-  if (readOnly && (fileRead || directoryListing || repositoryDiff || sessionHistory || commandRows || paneFiles || pluginRun || worktreeList || mutating && !ownPreferences)) {
+  // the digits of a waiting comparison are what approving it takes (docs/account.md, "Who may admit a device")
+  const pairingDigits = pathname === "/api/relay/pairings";
+  if (readOnly && (fileRead || directoryListing || repositoryDiff || sessionHistory || commandRows || paneFiles || pluginRun || worktreeList || pairingDigits || mutating && !ownPreferences)) {
     setRequestRoute("watch-refusal");
     return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
   }
@@ -242,10 +250,21 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     pathname.startsWith("/api/portal/")
     || pathname.startsWith("/api/devices/")
     || pathname === "/api/relay" || pathname.startsWith("/api/relay/")
+    || pathname.startsWith("/api/account/")
     || (request.method === "POST" && (pathname === "/api/push/subscribe" || pathname === "/api/push/status"))
   );
   // pairing without a code ends in an approval only a window that hears of it can give (relay-pairings below):
   // an ungated LAN window never does, so it neither makes such a link nor answers one
+  // the account's members are standing access, like devices: never a Portal visitor's or an open LAN window's
+  if (access.level === "full" && (access.via === "open" || access.via === "portal") && pathname.startsWith("/api/account/")) {
+    setRequestRoute("owner-refusal");
+    return jsonResponse({ error: { code: "owner_only", message: "Manage the account from this PC itself, or from a paired device." } }, 403);
+  }
+  // the list of waiting pairings shows their digits, so it goes only where the approval may come from
+  if (access.level === "full" && (access.via === "open" || access.via === "portal") && pathname === "/api/relay/pairings") {
+    setRequestRoute("owner-refusal");
+    return jsonResponse({ error: { code: "owner_only", message: "Approve pairings on this PC itself, or from a paired device." } }, 403);
+  }
   if (access.level === "full" && access.via === "open" && request.method === "POST"
     && (pathname === "/api/relay/link" || pathname === "/api/relay/pairing")) {
     setRequestRoute("open-refusal");
@@ -298,12 +317,17 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       // a relay pairing waiting for approval reaches only a window that may approve it (server/relay/routes.ts):
       // driving, direct to this PC, and not a Portal visitor
       const approver = access.level === "full" && access.role === "drive" && access.via !== "open" && access.via !== "relay" && access.via !== "portal";
-      const pairings = { subscribe: (listener: (event: DevicePairedEvent | RelayPairingsEvent) => void) => {
+      // and through the relay to a drive account member, with three candidates instead of the digits (docs/account.md)
+      const remoteApprover = ctx.peer.kind === "relay" && devices.isAccountApproverSession(ctx.peer.device.id, ctx.peer.key);
+      const pairings = { subscribe: (listener: (event: DevicePairedEvent | DeviceRemovedEvent | RelayPairingsEvent | RemotePairingsEvent) => void) => {
         const stopPaired = devices.onPaired((event, origin) => { if (!openAccess && event.device_id !== deviceId && !sameBrowser(origin, keys)) listener(event); });
+        // removals go to streams that may drive, as the client lane's device list needs (docs/account.md)
+        const stopRemoved = !openAccess && access.level === "full" && access.role === "drive" ? devices.onRemoved(listener) : undefined;
         // a window that may not approve is told the list is empty, so one that lost the right (drive to watch) drops its prompts
-        const stopRelay = approver ? ctx.services.relay.approvals.subscribe((list) => listener({ type: "relay-pairings", pairings: list })) : undefined;
+        const stopRelay = approver ? ctx.services.relay.approvals.subscribe((list) => listener({ type: "relay-pairings", pairings: list }))
+          : remoteApprover ? ctx.services.relay.approvals.subscribeRemote((list) => listener({ type: "remote-pairings", pairings: list })) : undefined;
         if (!approver) listener({ type: "relay-pairings", pairings: [] });
-        return () => { stopPaired(); stopRelay?.(); };
+        return () => { stopPaired(); stopRemoved?.(); stopRelay?.(); };
       } };
       const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : portalRecheckMs !== undefined ? (close) => { const timer = setTimeout(close, portalRecheckMs); return () => clearTimeout(timer); } : undefined, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget);
       response.headers.set("cache-control", "no-store");
@@ -347,14 +371,18 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     const approver = access.level === "full" && access.role === "drive" && access.via !== "open" && access.via !== "relay" && access.via !== "portal";
     const machineEvents = useMachineEvents ? {
       manager: machines, preferences, herdrSidebar, seen,
-      pairings: { subscribe: (listener: (event: DevicePairedEvent | RelayPairingsEvent) => void) => {
+      pairings: { subscribe: (listener: (event: DevicePairedEvent | DeviceRemovedEvent | RelayPairingsEvent | RemotePairingsEvent) => void) => {
         const stopPaired = devices.onPaired((event, origin) => {
           if (!openAccess && event.device_id !== deviceId && !sameBrowser(origin, keys)) listener(event);
         });
+        const stopRemoved = !openAccess && access.level === "full" && access.role === "drive" ? devices.onRemoved(listener) : undefined;
+        // and through the relay to a drive account member holding its row's current key, as on /api/machines/events
+        const remoteApprover = ctx.peer.kind === "relay" && devices.isAccountApproverSession(ctx.peer.device.id, ctx.peer.key);
         // a window that may not approve is told the list is empty, so one that lost the right (drive to watch) drops its prompts
-        const stopRelay = approver ? ctx.services.relay.approvals.subscribe((list) => listener({ type: "relay-pairings", pairings: list })) : undefined;
+        const stopRelay = approver ? ctx.services.relay.approvals.subscribe((list) => listener({ type: "relay-pairings", pairings: list }))
+          : remoteApprover ? ctx.services.relay.approvals.subscribeRemote((list) => listener({ type: "remote-pairings", pairings: list })) : undefined;
         if (!approver) listener({ type: "relay-pairings", pairings: [] });
-        return () => { stopPaired(); stopRelay?.(); };
+        return () => { stopPaired(); stopRemoved?.(); stopRelay?.(); };
       } },
     } : undefined;
     const upgraded = ctx.upgrade(request, { headers, data: connectionData({ machineEvents, deviceId, readOnly, bridge: bridgeAuthorized, ...(surface ? { surface } : {}), ...(surface === false ? {} : { ingress }), ...recheck }) });
@@ -377,7 +405,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === "/api/devices" || pathname.startsWith("/api/devices/")) {
     try {
       // one device, or all of them: the registry names what was revoked, and the cleanup follows its ids
-      return await handleDeviceRequest(request, pathname, devices, access, (revoked) => {
+      return await handleDeviceRequest(request, pathname, devices, access, ctx.peer.kind === "relay" ? ctx.peer.key : null, (revoked) => {
         for (const id of revoked) {
           // The device registry is the delivery authority even if cleaning the push file fails.
           try { push.revokeDevice(id); } catch (error) { logPushError(error); }
@@ -402,6 +430,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === "/api/portal" || pathname.startsWith("/api/portal/")) {
     return handlePortalRequest(request, pathname, options.portal, { port: ctx.port ?? DEFAULT_PORT, ...portalGuards() });
   }
+  if (pathname.startsWith("/api/account/")) return handleAccountRequest(request, pathname, ctx, access);
   if (pathname === "/api/relay" || pathname.startsWith("/api/relay/")) {
     return handleRelayRequest(request, pathname, ctx);
   }

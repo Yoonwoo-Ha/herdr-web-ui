@@ -34,12 +34,28 @@ const MANIFEST_LINK = /<link rel="manifest" href="\/manifest\.webmanifest(\?[^"]
  * page, so a PC's page at `/s/<id>/` installs from `/s/<id>/manifest.webmanifest` (its own scope)
  * and the front page from `/manifest.webmanifest`.
  */
-export function shellIndexHtml(html: string): string {
+/**
+ * The account metas the shell is built with: `ovis-account-service` from OVIS_ACCOUNT_SERVICE_URL
+ * (an https origin, or none and the shell offers no sign-in) and `ovis-account-providers` from
+ * OVIS_ACCOUNT_PROVIDERS (GitHub alone without it).
+ */
+export function accountMetas(env: Record<string, string | undefined>): string[] {
+  let origin: string | null = null;
+  try {
+    const url = new URL(env["OVIS_ACCOUNT_SERVICE_URL"] ?? "");
+    if (url.protocol === "https:") origin = url.origin;
+  } catch { origin = null; }
+  if (origin === null) return [];
+  const providers = (env["OVIS_ACCOUNT_PROVIDERS"] ?? "").split(",").map((name) => name.trim()).filter((name) => name === "github" || name === "apple");
+  return [`<meta name="ovis-account-service" content="${origin}" />`, ...(providers.length > 0 ? [`<meta name="ovis-account-providers" content="${providers.join(",")}" />`] : [])];
+}
+
+export function shellIndexHtml(html: string, env: Record<string, string | undefined> = {}): string {
   if (!MANIFEST_LINK.test(html)) throw new Error("index.html must link /manifest.webmanifest for the shell to make it relative");
   const linked = html.replace(MANIFEST_LINK, (_, query: string | undefined) => `<link rel="manifest" href="manifest.webmanifest${query ?? ""}"`);
   const head = linked.indexOf("</head>");
   if (head === -1) throw new Error("index.html must hold a </head>");
-  return `${linked.slice(0, head)}  ${SHELL_META}\n  ${linked.slice(head)}`;
+  return `${linked.slice(0, head)}${[SHELL_META, ...accountMetas(env)].map((meta) => `  ${meta}\n`).join("")}  ${linked.slice(head)}`;
 }
 
 /**
@@ -165,7 +181,7 @@ export function shellBuild(): Plugin {
     },
     transformIndexHtml: {
       order: "post",
-      handler: (html) => shellIndexHtml(html),
+      handler: (html) => shellIndexHtml(html, process.env),
     },
     // after Vite copied public/ (the app's manifest among it), which these replace or join
     writeBundle(options) {

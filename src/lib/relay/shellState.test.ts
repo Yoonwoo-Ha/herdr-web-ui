@@ -183,6 +183,12 @@ describe("the offer fragment", () => {
     expect(linked.replaced).toEqual([]);
   });
 
+  it("takes a sign-in's return off the address before the shell loads, and the entry keeps it", () => {
+    const returned = page(`${APP}/#code=secret&state=s1`);
+    expect(takeEntryUrl(returned)).toBe(`${APP}/#code=secret&state=s1`);
+    expect(returned.replaced).toEqual(["/"]);
+  });
+
   it("moves a query from before the fragment carried it into the fragment, off the next request", () => {
     const old = page(`${APP}/s/${"12".repeat(16)}/?file=%2Fhome%2Fme%2Fa.md`);
     expect(takeEntryUrl(old)).toBe(`${APP}/s/${"12".repeat(16)}/?file=%2Fhome%2Fme%2Fa.md`);

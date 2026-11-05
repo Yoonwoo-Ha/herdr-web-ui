@@ -3866,6 +3866,21 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   for the flow; the states and their words are this app's, in the token gate's own frame, so a
   phone that pairs through the relay and one that pairs with a code see the same room. Neither
   the Codex nor the Claude app has a hosted relay shell to follow.
+- Account part (components/AccountPcs.tsx, lib/account/), only on the front page and only when
+  the page names an account service (`<meta name="ovis-account-service">`); without one the front
+  page is the saved-PC list above, unchanged. Signed out: **Continue with GitHub** and **Continue
+  with Apple**, two equal neutral `.btn`s (App Review 4.8 wants Apple wherever another provider
+  is, and neither is the one to pick), a `--fs-xs` dim line on what the account service learns,
+  then the QR route under a hairline (an `h2`, the page keeps one `h1`). With saved PCs the list
+  comes first and the sign-in follows it. Signed in: **Your PCs** with "Signed in with GitHub"
+  under it, one row per PC of the account merged with the PCs this device is paired with: the
+  name, and under it a `--fs-sm` dim line in words (Paired; This device is not approved on it
+  yet; Offline, last seen 3 h ago; Its Ovis needs an update to join the account), no badge. Only
+  a paired PC is a link with a chevron; the others are plain rows. The `<main>` adds
+  `data-account-state` (`signed-out`, `signing-in`, `signed-in`) for scripts; each row
+  `data-pc-state`. Precedent: Tailscale's admin machine list (every machine of the account, its
+  state in words) for the list, and Signal's linked devices for keeping trust on devices already
+  linked rather than on the sign-in.
 - Relay files keep the existing file viewer and its Paseo-style file bar, rather than adding a
   separate remote-files screen. A client without a resource-capable service worker shows the
   usual file note as an alert when the 64 MiB limit is exceeded. Copy link and new-tab actions

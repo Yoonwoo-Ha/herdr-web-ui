@@ -25,6 +25,26 @@ import { RELAY_KO } from "./i18n/relay.ko.ts";
  * braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "Sign out": "로그아웃",
+
+  "Only for {pc}": "{pc}에만",
+  "Could not verify this device. It was declined: approve only a device you are signing in yourself.": "이 기기를 확인할 수 없어 거절했습니다. 직접 로그인 중인 기기만 승인하세요.",
+  "Account": "계정",
+  "Finish signing in in your browser.": "브라우저에서 로그인을 마치세요.",
+  "Signed in with {provider}": "{provider}로 로그인함",
+  "Signing in…": "로그인하는 중…",
+  "The sign-in did not finish. Try again.": "로그인을 끝내지 못했습니다. 다시 시도하세요.",
+  "Your sign-in ended. Sign in again to see every PC of your account.": "로그인이 끝났습니다. 계정의 PC를 모두 보려면 다시 로그인하세요.",
+  "The account service could not be reached. The PCs this device is paired with still work.": "계정 서비스에 연결할 수 없습니다. 이 기기와 연결된 PC는 그대로 쓸 수 있습니다.",
+  "Add {device}?": "{device} 추가할까요?",
+  "Through {pc} · joins your {n} PCs": "{pc}에서 온 요청 · PC {n}대에 추가됩니다",
+  "Pick the number on {device}": "{device} 화면의 숫자를 고르세요",
+  "Didn't ask for this? Deny it.": "요청한 적이 없다면 거절하세요.",
+  "Deny": "거부",
+  "never": "없음",
+  "just now": "방금",
+  "{n} min ago": "{n}분 전",
+  "{n} h ago": "{n}시간 전",
   "Remove": "제거",
   "Remove {name}": "{name} 제거",
   "Save": "저장",

@@ -109,7 +109,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "The permission to connect to the PCs saved in herdr was damaged and could not be read when the app started. It was set aside as {files}; choose Connect on those PCs again.": "herdr 中保存的 PC 的连接许可已损坏，应用启动时无法读取，已另存为 {files}。请在这些 PC 上再次选择“连接”。",
   "Update PC bridges automatically": "自动更新 PC 的 bridge",
   "When an app update needs a newer bridge, PCs that connect with their saved key are updated in the background. PCs that need a password ask first.": "当应用更新需要更新的 bridge 时，使用已保存密钥连接的 PC 会在后台更新。需要密码的 PC 会先询问。",
-  "Sign out": "退出登录",
   "Sign out of this browser?": "要从此浏览器退出登录吗？",
   "Getting back in takes the access token, or a pairing code from the PC: Settings → Phone & devices there, or the pair command in its terminal.": "再次进入需要访问令牌，或 PC 上的配对码：在 PC 的设置 → Phone & devices 中，或在其终端运行 pair 命令获取。",
   "Forget this browser's sign-in. Getting back in takes the access token or a pairing code.": "清除此浏览器的登录。再次进入需要访问令牌或配对码。",

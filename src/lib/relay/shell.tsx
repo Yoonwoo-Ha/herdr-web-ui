@@ -7,11 +7,23 @@
 import { createElement, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import type { Root } from "react-dom/client";
-import { MIN_SERVER_VERSION, MuxProtocolError } from "../../../shared/relay-mux.ts";
+import { ACCOUNT_FEATURE, MIN_SERVER_VERSION, MuxProtocolError } from "../../../shared/relay-mux.ts";
 import type { RelayOffer } from "../../../shared/relay-offer.ts";
 import type { UpdateStatus } from "../../../shared/update.ts";
 import { RelayShell } from "../../components/RelayShell.tsx";
+import { myPcs } from "../account/myPcs.ts";
+import type { MyPc } from "../account/myPcs.ts";
+import { accountProvidersOf, accountServiceOf, AccountService, SignedOutError } from "../account/service.ts";
+import { beginSignIn, finishSignIn, SignInError, signInReturn } from "../account/signin.ts";
+import { linkThisDevice, needsLink, pcAccountStatus, takeIntroduction } from "../account/join.ts";
+import { leaveAccount } from "../account/leave.ts";
+import { nativeSignIn, nativeSignInAvailable } from "../account/native.ts";
+import { indexedAccountStore } from "../account/store.ts";
+import { importPublicKey } from "../../../shared/relay-e2ee.ts";
+import { encodeOffer } from "../../../shared/relay-offer.ts";
+import type { AccountProvider, AccountStore } from "../account/store.ts";
 import { fetchUpdateStatus, requestUpdate } from "../api.ts";
+import { t } from "../i18n.ts";
 import { deviceLabel } from "../phone.ts";
 import { registerPendingPush } from "../push.ts";
 import type { PendingPushStore } from "../push.ts";
@@ -25,7 +37,7 @@ import { RelayUnreachableError } from "./channel.ts";
 import { indexedDeviceStore, indexedPendingPush, ServerIdentityChangedError } from "./device.ts";
 import type { RelayDeviceStore } from "./device.ts";
 import { failureOf, forgedOffer, forgetsDevice, iosBrowserTab, keyMismatch, offerOf, pairsAgainWithoutKey, shellEntry } from "./shellState.ts";
-import type { PcUpdate, RelayShellState } from "./shellState.ts";
+import type { AccountView, PcUpdate, RelayShellState } from "./shellState.ts";
 import { relaySkew, reloadOnce } from "./skew.ts";
 import type { ReloadMemory } from "./skew.ts";
 import { openRelayTransport } from "./transport.ts";
@@ -47,9 +59,25 @@ export interface RelayShellMount {
   shellVersion?: string;
   /** brings in a newer shell: the worker checks for one, then the page reloads */
   reload?: () => Promise<void>;
+  /** this client's account key and sign-in; the `ovis-account` database by default */
+  accountStore?: AccountStore;
+  /** the account service's origin; the page's `ovis-account-service` meta by default, and no sign-in without one */
+  accountService?: string | null;
+  /** the sign-ins offered; the page's `ovis-account-providers` meta by default */
+  accountProviders?: readonly AccountProvider[];
+  accountFetch?: (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
+  /** takes the page to the provider's sign-in; the return comes back to the front page */
+  openSignIn?: (url: string) => void;
 }
 
 declare const __APP_VERSION__: string;
+
+/** How long a PC an introduction named may refuse this device before it is taken as removed: past a few of its mailbox pulls. */
+const INTRODUCED_GRACE_MS = 15 * 60_000;
+
+/** How long a device that just paired looks for its introduction, and how often. */
+const INTRODUCTION_WAIT_MS = 60_000;
+const INTRODUCTION_POLL_MS = 3_000;
 
 /** How long a PC's update may take, from the install request to the restarted server: a build on a slow PC included. */
 const UPDATE_MS = 15 * 60_000;
@@ -87,6 +115,10 @@ interface Attempt {
   codeless?: boolean;
   /** a saved key the PC refused was already dropped for this link (shellState.ts pairsAgainWithoutKey) */
   refreshed?: boolean;
+  /** this attempt paired just now: the PC has not seen the key prove itself on this session yet */
+  fresh?: boolean;
+  /** this attempt already tried the key of a link whose answer was lost */
+  retriedPending?: boolean;
 }
 
 /** Settings' Forget this PC: the phone's key for the PC is gone; the PC lists the device until it is revoked there. */
@@ -94,8 +126,20 @@ export async function forgetSavedPc(serverId: string, store: RelayDeviceStore = 
   await store.remove(serverId);
 }
 
+/** What a failed sign-in says on the front page. */
+function signInFailure(error: unknown): string {
+  if (error instanceof SignInError && error.code === "denied") return t("The sign-in was cancelled.");
+  return t("The sign-in did not finish. Try again.");
+}
+
 export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const store = mount.store ?? indexedDeviceStore;
+  const accountStore = mount.accountStore ?? indexedAccountStore;
+  const accountService = mount.accountService === undefined ? accountServiceOf(document) : mount.accountService;
+  const accountProviders = mount.accountProviders ?? accountProvidersOf(document);
+  const account = new AccountService({ store: accountStore, ...(mount.accountFetch ? { fetch: mount.accountFetch } : {}) });
+  const openSignIn = mount.openSignIn ?? ((url: string) => { window.location.assign(url); });
+  let accountView: AccountView | null = accountService === null ? null : { kind: "signed-out", error: null };
   const open = mount.open ?? openRelayTransport;
   const navigate = mount.navigate ?? ((path: string) => { window.location.assign(path); });
   const label = mount.label ?? deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0);
@@ -140,7 +184,77 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const show = (state: RelayShellState): void => {
     shell ??= createRoot(mount.container);
     shell.render(createElement(StrictMode, null, createElement(SettingsProvider, null,
-      createElement(RelayShell, { state, scoped, iosTab, onPair: pair, onRetry: retry, onCancel: cancel, onBack: toFront, onForget: forget, onUpdate: update, onMatch: match }))));
+      createElement(RelayShell, { state, scoped, iosTab, onPair: pair, onRetry: retry, onCancel: cancel, onBack: toFront, onForget: forget, onUpdate: update, onMatch: match, ...(accountService === null ? {} : { onSignIn: signIn, accountProviders, onJoin: joinPc, onSignOut: signOut, onLeave: leave }) }))));
+  };
+
+  /** The front page: the saved PCs, or the account's once signed in. */
+  const showFront = async (): Promise<void> => {
+    const devices = await store.list();
+    show(devices.length === 0 ? { kind: "empty", account: accountView } : { kind: "list", devices, account: accountView });
+  };
+
+  /** The account's directory merged with the PCs this device is paired with; the pairings work whatever the service says. */
+  const loadAccount = async (): Promise<void> => {
+    if (accountService === null) { await showFront(); return; }
+    const session = await account.session();
+    if (session === undefined) { await showFront(); return; }
+    const signedIn = { kind: "signed-in", provider: session.provider, pcs: null, error: null } as const;
+    accountView = signedIn;
+    await showFront();
+    try {
+      const directory = await account.listPcs();
+      accountView = { ...signedIn, pcs: myPcs(directory, await store.list(), { now: Date.now(), accountKey: (await accountStore.key()).public_spki, account: session.account }) };
+    } catch (error) {
+      if (error instanceof SignedOutError) accountView = { kind: "signed-out", error: t("Your sign-in ended. Sign in again to see every PC of your account.") };
+      else {
+        console.warn("Ovis: the account's PCs could not be read", error);
+        accountView = { ...signedIn, pcs: myPcs([], await store.list(), { now: Date.now(), accountKey: (await accountStore.key()).public_spki, account: session.account }), error: t("The account service could not be reached. The PCs this device is paired with still work.") };
+      }
+    }
+    await showFront();
+  };
+
+  /** A PC of the account this device is not paired with: compare digits with it, as a link without a code does. */
+  const joinPc = (pc: MyPc): void => {
+    const join = pc.join;
+    if (join === undefined) return;
+    const link = new URL(encodeOffer({ v: 1, server_id: pc.server_id, server_public_key: join.server_public_key, relay: join.relay, name: pc.name }, window.location.origin));
+    navigate(link.pathname + link.hash);
+  };
+
+  const signOut = (): void => {
+    void account.signOut().catch((error: unknown) => console.warn("Ovis: the account service did not confirm the sign-out", error instanceof Error ? error.name : error))
+      .finally(async () => { accountView = { kind: "signed-out", error: null }; await showFront(); });
+  };
+
+  const leave = (): void => {
+    void leaveAccount({ service: account, accountStore, relayStore: store }).then(async ({ unconfirmed }) => {
+      // a PC the account does not list kept this device: say so, rather than claim it is gone everywhere
+      const names = new Map((await store.list()).map((device) => [device.server_id, device.name ?? device.server_id.slice(0, 8)]));
+      accountView = { kind: "signed-out", error: unconfirmed.length === 0 ? null
+        : t("This device left the account. These PCs the account does not list still have it, so revoke it on them: {pcs}", { pcs: unconfirmed.map((id) => names.get(id) ?? id.slice(0, 8)).join(", ") }) };
+      await showFront();
+    }, async (error: unknown) => {
+      console.warn("Ovis: this device did not leave the account", error instanceof Error ? error.name : error);
+      if (accountView?.kind === "signed-in") accountView = { ...accountView, error: t("This device could not leave the account. Try again.") };
+      await showFront();
+    });
+  };
+
+
+  const signIn = (provider: AccountProvider): void => {
+    if (accountService === null) return;
+    accountView = { kind: "signing-in" };
+    void showFront();
+    // in the phone app the system's sign-in sheet brings the return back to the page; elsewhere the page goes to the provider
+    const started = nativeSignInAvailable()
+      ? nativeSignIn(provider, { store: accountStore, service: accountService }).then(loadAccount)
+      : beginSignIn(provider, { store: accountStore, service: accountService, redirectUri: `${window.location.origin}/` }).then(openSignIn);
+    started.catch(async (error: unknown) => {
+      console.warn("Ovis: the sign-in did not start", error);
+      accountView = { kind: "signed-out", error: signInFailure(error) };
+      await showFront();
+    });
   };
 
   const failed = async (error: unknown, attempt: Attempt): Promise<void> => {
@@ -153,7 +267,18 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       await connect({ ...attempt, refreshed: true });
       return;
     }
-    const failure = failureOf(error, { code: attempt.code, paired: attempt.paired, compared: attempt.compared === true, codeless: attempt.codeless === true });
+    let failure = failureOf(error, { code: attempt.code, paired: attempt.paired, compared: attempt.compared === true, codeless: attempt.codeless === true });
+    if (failure === "revoked") {
+      const saved = await store.get(attempt.offer.server_id);
+      // a link whose answer was lost: the PC may hold the account key now, so that key is tried once before anything is forgotten
+      if (saved?.pending_key && !attempt.retriedPending) {
+        const { pending_key: pending, ...rest } = saved;
+        await store.update(saved.server_id, () => ({ ...rest, private_key: pending.private_key, public_spki: pending.public_spki }));
+        await connect({ ...attempt, retriedPending: true });
+        return;
+      }
+      if (saved?.introduced_at !== undefined && Date.now() - saved.introduced_at < INTRODUCED_GRACE_MS) failure = "not-added-yet";
+    }
     if (forgetsDevice(failure)) await store.remove(attempt.offer.server_id).catch(() => undefined);
     // the relay's close code is the one fact the sentence does not carry; a plain refusal adds nothing
     const detail = error instanceof RelayUnreachableError && error.closeCode !== null ? error.message : null;
@@ -170,10 +295,21 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     const controller = new AbortController();
     opening = controller;
     show({ kind: "connecting", name: attempt.offer.name ?? null });
+    // signed in, a new pairing takes the account key and asks to join the account, so the PC's prompt says so
+    const signedIn = accountService !== null && await account.session() !== undefined;
+    const accountKey = signedIn ? await accountStore.key() : undefined;
+    // a comparison that asks to join the account is taken only after this device rang through the account
+    // service (approvers check that ring); without one, it asks to pair this PC only
+    let intent: "pc" | "account" = "pc";
+    if (accountKey && attempt.offer.code === undefined && (await store.get(attempt.offer.server_id))?.device_id == null) {
+      try { await account.postAdmission(attempt.offer.server_id, label.slice(0, 48), accountKey.public_spki); intent = "account"; }
+      catch (error) { console.warn("Ovis: the account service did not take the join; pairing this PC only", error instanceof Error ? error.name : error); }
+    }
     let opened: RelayTransport;
     try {
       opened = await open(attempt.offer, {
         store, label, signal: controller.signal,
+        ...(accountKey ? { accountKey, intent } : {}),
         // a link without a code: the digits wait on screen until this phone says they match
         compare: (digits) => new Promise<void>((resolve) => {
           if (controller.signal.aborted) return;
@@ -200,7 +336,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     // the PC admitted this phone: a pairing code is spent, and every later attempt (Try again on
     // the update screen included) signs with the saved device key instead of pairing again
     const { code, ...saved } = attempt.offer;
-    const enrolled: Attempt = { offer: saved, code: false, paired: true };
+    const enrolled: Attempt = { offer: saved, code: false, paired: true, ...(attempt.paired ? {} : { fresh: true }) };
     last = enrolled;
     if (code !== undefined && entry.offer !== null) entry = { ...entry, offer: null };
     await admitted(opened, enrolled);
@@ -214,7 +350,56 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     shell = null;
     app = mount.renderApp();
     registerPending(attempt.offer.server_id);
+    void joinAccount(opened, attempt.offer.server_id, attempt.fresh === true);
   };
+
+  /**
+   * Once in a PC that has accounts, while signed in: this device's pairing joins the account (a QR
+   * pairing is linked to the account key, with no tap), the PC is listed in the account's directory,
+   * and an introduction waiting there saves the account's other PCs. A failure leaves the pairing as
+   * it was; the next connection tries again.
+   */
+  const joinAccount = async (opened: RelayTransport, serverId: string, fresh: boolean): Promise<void> => {
+    if (accountService === null || !opened.server?.features?.includes(ACCOUNT_FEATURE)) return;
+    const session = await account.session();
+    if (session === undefined) return;
+    // a session that just paired has not proved its key to the PC, which then refuses a link and
+    // keeps an introduction from it: the account's steps take a connection of their own, signed in
+    let own: RelayTransport | null = null;
+    try {
+      const key = await accountStore.key();
+      let device = await store.get(serverId);
+      if (device === undefined || device.device_id === null) return;
+      if (fresh) own = await open(offerOf(device), { store, label });
+      const through = own ?? opened;
+      const fetch = (path: string, init?: RequestInit) => through.fetch(path, init);
+      const status = await pcAccountStatus(fetch);
+      const linking = needsLink(status, device, session.account);
+      if (linking) device = await linkThisDevice({ fetch, device, key, account: session.account, store });
+      // the app's session proved the old key, or none: it signs in again with the account key, so this device can approve
+      if (linking || fresh) opened.renew();
+      // a PC of another account is not this account's to list or introduce from
+      if (device.public_spki !== key.public_spki || (!linking && status.account !== session.account)) return;
+      // the PC lists this row as a member: only now does it count as in the account here
+      if (!linking && device.account !== session.account && device.device_id !== null && !status.unlinked.includes(device.device_id)) {
+        const known = device;
+        device = await store.update(serverId, (current) => ({ ...(current ?? known), account: session.account }));
+      }
+      const publicKey = Array.from(importPublicKey(device.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      await account.putPc(serverId, { label: (device.name ?? serverId.slice(0, 8)).slice(0, 48), public_key: publicKey, relay: device.relay });
+      // the approver hands the introduction over once this device's row exists, which may be a moment after it
+      const deadline = Date.now() + (fresh ? INTRODUCTION_WAIT_MS : 0);
+      for (;;) {
+        if ((await takeIntroduction({ fetch, key, label, store, relay: device.relay })).length > 0 || Date.now() >= deadline) break;
+        await wait(INTRODUCTION_POLL_MS);
+      }
+    } catch (error) {
+      console.warn("Ovis: this PC did not join the account yet", error instanceof Error ? error.name : error);
+    } finally {
+      own?.close();
+    }
+  };
+
 
   /** The PC let this phone in: the version policy (skew.ts) decides between the app, the update screen and a newer shell. */
   const admitted = async (opened: RelayTransport, attempt: Attempt): Promise<void> => {
@@ -374,6 +559,9 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     arrived();
   });
 
+  // a sign-in coming back; boot.ts already took it off the address, as it does an offer
+  const returned = accountService !== null && entry.serverId === null && entry.offer === null ? signInReturn(new URL(mount.entryUrl).hash) : null;
+
   if (arrived()) return;
   if (entry.serverId !== null) {
     const saved = await store.get(entry.serverId);
@@ -383,6 +571,15 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     else await connect({ offer: offerOf(saved), code: false, paired: saved.device_id !== null });
     return;
   }
-  const devices = await store.list();
-  show(devices.length === 0 ? { kind: "empty" } : { kind: "list", devices });
+  if (returned !== null) {
+    accountView = { kind: "signing-in" };
+    await showFront();
+    try {
+      await finishSignIn(returned, { store: accountStore, ...(mount.accountFetch ? { fetch: mount.accountFetch } : {}) });
+    } catch (error) {
+      console.warn("Ovis: the sign-in did not finish", error instanceof Error ? error.name : error);
+      accountView = { kind: "signed-out", error: signInFailure(error) };
+    }
+  }
+  await loadAccount();
 }

@@ -29,6 +29,26 @@ import { RELAY_ZH } from "./i18n/relay.zh.ts";
  * Placeholders in braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "Sign out": "退出登录",
+
+  "Only for {pc}": "仅限 {pc}",
+  "Could not verify this device. It was declined: approve only a device you are signing in yourself.": "无法验证此设备，已拒绝。请只批准你自己正在登录的设备。",
+  "Account": "账户",
+  "Finish signing in in your browser.": "请在浏览器中完成登录。",
+  "Signed in with {provider}": "已使用 {provider} 登录",
+  "Signing in…": "正在登录…",
+  "The sign-in did not finish. Try again.": "登录未完成。请重试。",
+  "Your sign-in ended. Sign in again to see every PC of your account.": "登录已失效。请重新登录以查看账户中的所有 PC。",
+  "The account service could not be reached. The PCs this device is paired with still work.": "无法连接账户服务。已与此设备配对的 PC 仍可正常使用。",
+  "Add {device}?": "添加 {device}？",
+  "Through {pc} · joins your {n} PCs": "经由 {pc} · 将加入你的 {n} 台 PC",
+  "Pick the number on {device}": "选择 {device} 上显示的数字",
+  "Didn't ask for this? Deny it.": "如果不是你发起的，请拒绝。",
+  "Deny": "拒绝",
+  "never": "从未",
+  "just now": "刚刚",
+  "{n} min ago": "{n} 分钟前",
+  "{n} h ago": "{n} 小时前",
   "Remove": "移除",
   "Remove {name}": "移除 {name}",
   "Save": "保存",

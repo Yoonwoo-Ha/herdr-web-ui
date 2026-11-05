@@ -649,6 +649,20 @@ it("tells a refusal that cannot change from a carrier that may come back", () =>
   expect(isFatalRelayError(new TypeError("Network offline"))).toBe(false);
 });
 
+it("signs in again on renew, so a session proves the key the saved pairing holds now", async () => {
+  const f = await fixture({ dispatch: async () => Response.json({ ok: true }) });
+  const first = f.connections.at(-1);
+  if (!first) throw new Error("Missing relay connection");
+  f.transport.renew();
+  await bounded(first.closed);
+  expect([...f.clock.tasks.values()].map((task) => task.at - f.clock.now())).toEqual([1000]);
+  f.clock.advance(1000);
+  await f.transport.connect();
+  expect(f.attempts.count).toBe(2);
+  expect(f.fatal).toEqual([]);
+  expect((await f.transport.fetch("/api/health")).status).toBe(200);
+});
+
 it("reconnects after an authorization change without telling the shell to forget the PC", async () => {
   // Keep the post-reconnect request independent of herdr, which unit runs never start.
   const f = await fixture({ dispatch: async () => Response.json({ ok: true }) });

@@ -47,7 +47,7 @@ describe("roster and health polling beside the event stream", () => {
     const loader = useRosterLoader({ locked, healthFailing, lockedRef, refetchTimer, loadHealth, rosterIn: noop, setMachines: noop, setMachineRosterLoaded: noop, setError: noop, setLocked: noop });
     useRosterEvents({
       ...loader, locked, machineSessions, onPaneMoved: noop, receivePreferencesRef: { current: noop }, onRoster: noop,
-      setMachines: noop, rosterIn: noop, setMachineRosterLoaded: noop, machinesRef: { current: [] },
+      setMachines: noop, rosterIn: noop, setMachineRosterLoaded: noop, machinesRef: { current: [] }, setRemotePairings: noop, setRemovedNotices: noop,
       onPaneStatus: noop, onPaneExited: noop, followFocusRef: { current: false },
       selectionRef: { current: { machineId: "local", paneId: null, generation: 0 } },
       splitShownRef: { current: false }, splitRef: { current: null }, pendingLink: { current: null },

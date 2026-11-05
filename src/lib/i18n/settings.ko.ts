@@ -109,7 +109,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "The permission to connect to the PCs saved in herdr was damaged and could not be read when the app started. It was set aside as {files}; choose Connect on those PCs again.": "herdr에 저장된 PC의 연결 허용 정보가 손상되어 앱을 시작할 때 읽을 수 없었습니다. {files}(으)로 옮겨 두었으니, 그 PC에서 연결을 다시 선택하세요.",
   "Update PC bridges automatically": "PC 브리지 자동 업데이트",
   "When an app update needs a newer bridge, PCs that connect with their saved key are updated in the background. PCs that need a password ask first.": "앱 업데이트에 새 브리지가 필요하면, 저장된 키로 연결되는 PC는 뒤에서 업데이트됩니다. 비밀번호가 필요한 PC는 먼저 묻습니다.",
-  "Sign out": "로그아웃",
   "Sign out of this browser?": "이 브라우저에서 로그아웃할까요?",
   "Getting back in takes the access token, or a pairing code from the PC: Settings → Phone & devices there, or the pair command in its terminal.": "다시 들어오려면 액세스 토큰이나 PC의 페어링 코드가 필요합니다. 코드는 PC의 설정 → Phone & devices나 PC 터미널의 pair 명령에서 받습니다.",
   "Forget this browser's sign-in. Getting back in takes the access token or a pairing code.": "이 브라우저의 로그인을 지웁니다. 다시 들어오려면 액세스 토큰이나 페어링 코드가 필요합니다.",

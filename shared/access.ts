@@ -74,6 +74,12 @@ export interface PairedDevice {
   readonly current: boolean;
   /** paired with a public key for relay access, not a browser cookie */
   readonly via_relay?: true;
+  /** account members only, and only to a caller that may drive (docs/account.md, "Account members") */
+  readonly account?: string;
+  /** that member's account key: its `relay_public_key`, which is public */
+  readonly account_key?: string;
+  /** the member on this PC that added it */
+  readonly added_by?: string;
 }
 
 /** POST /api/devices/pair/start */

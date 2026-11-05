@@ -45,6 +45,7 @@ import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { PortalPanel } from "./PortalPanel.tsx";
 import { SignOutRow } from "./SignOutRow.tsx";
 import { statusText } from "./RelayPanel.tsx";
+import { AccountSection } from "./AccountSection.tsx";
 import { ConnectPhoneDialog, defaultRoute, relayOffered, type ConnectRoute } from "./ConnectPhoneDialog.tsx";
 import { PushTestControls } from "./PushTestControls.tsx";
 import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
@@ -1002,6 +1003,8 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll }: { auth: Health
       </SettingsGroup>
 
       <PortalPanel readOnly={auth?.role === "watch" || auth?.via === "portal"} />
+
+      <AccountSection />
 
       <SettingsGroup title={t("Devices")} section="devices">
         <div className="settings-item"><DevicesPanel onPair={() => setConnecting({ route: "code", startCode: true })} onDevicePaired={closeConnect} auth={auth} onRevokedAll={onRevokedAll} /></div>

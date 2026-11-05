@@ -59,6 +59,17 @@ describe("the shell's page", () => {
     expect(() => shellIndexHtml("<html><head></head></html>")).toThrow(/manifest/);
   });
 
+  it("names the account service and its sign-ins only when the build is given an https one", () => {
+    expect(shellIndexHtml(indexHtml)).not.toContain("ovis-account");
+    expect(shellIndexHtml(indexHtml, { OVIS_ACCOUNT_SERVICE_URL: "http://account.example" })).not.toContain("ovis-account");
+    const github = shellIndexHtml(indexHtml, { OVIS_ACCOUNT_SERVICE_URL: "https://account.example/v1/" });
+    expect(github).toContain('<meta name="ovis-account-service" content="https://account.example" />');
+    expect(github).not.toContain("ovis-account-providers");
+    const both = shellIndexHtml(indexHtml, { OVIS_ACCOUNT_SERVICE_URL: "https://account.example", OVIS_ACCOUNT_PROVIDERS: "github, apple, \"><script>" });
+    expect(both).toContain('<meta name="ovis-account-providers" content="github,apple" />');
+    expect(both.indexOf("ovis-account-providers")).toBeLessThan(both.indexOf("</head>"));
+  });
+
   it("changes nothing else in the page", () => {
     const html = shellIndexHtml(indexHtml).replace(`  ${SHELL_META}\n  `, "").replace('href="manifest.webmanifest', 'href="/manifest.webmanifest');
     expect(html).toBe(indexHtml);

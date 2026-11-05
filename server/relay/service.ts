@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { encodeOffer } from "../../shared/relay-offer.ts";
@@ -7,7 +7,7 @@ import type { RelayStatus } from "../../shared/protocol.ts";
 import type { RequestServices } from "../dispatch.ts";
 import { isJsonObject } from "../http.ts";
 import { writePrivateState } from "../private-state.ts";
-import { loadRelayIdentity, RelayIdentityError, rotateRelayIdentity } from "./identity.ts";
+import { loadRelayIdentity, relayIdentityPath, RelayIdentityError, rotateRelayIdentity } from "./identity.ts";
 import type { RelayIdentity } from "./identity.ts";
 import { RelayLink } from "./link.ts";
 import type { RelayLinkOptions } from "./link.ts";
@@ -98,6 +98,18 @@ export class RelayService {
       : (options.regionalRelays ?? (origin === undefined ? REGIONAL_RELAYS : []))
         .map((relay) => relayEndpoint(relay, "wss:")).filter((relay) => relay !== this.relay);
   }
+
+  /** This PC's relay identity once the relay has started: what the account service knows it by (server/account/mailbox.ts). */
+  currentIdentity(): RelayIdentity | undefined {
+    if (this.identity) return this.identity;
+    // one already on disk (the relay off since a restart) still names the PC; none is ever made here
+    if (!existsSync(relayIdentityPath(this.options.stateDir))) return undefined;
+    try { return loadRelayIdentity(this.options.stateDir); } catch (error) {
+      if (error instanceof RelayIdentityError) return undefined;
+      throw error;
+    }
+  }
+
 
   /** The relay new pairing offers name: the regional one while its link is online, else the global one. */
   private get advertised(): string {

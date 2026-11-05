@@ -1,5 +1,5 @@
 import { subscribeMachineEvents } from "./machine-events.ts";
-import type { DevicePairedEvent, MachineRoster, RelayPairingsEvent, SetupAction, SetupRequest } from "../shared/machines.ts";
+import type { DevicePairedEvent, DeviceRemovedEvent, MachineRoster, RelayPairingsEvent, RemotePairingsEvent, SetupAction, SetupRequest } from "../shared/machines.ts";
 import type { AgentRowTokens } from "../shared/pane-tokens.ts";
 import type { SharedPreferences } from "../shared/preferences.ts";
 import type { PanePromptResponse, SessionSnapshot } from "../shared/protocol.ts";
@@ -119,7 +119,7 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
   herdrSidebar?: { get(): AgentRowTokens | null; subscribe(listener: (agents: AgentRowTokens | null) => void): () => void },
   seen?: { list(): SeenFinish[]; subscribe(listener: (finish: SeenFinish) => void): () => void },
   /** durable device enrollments (server/devices.ts), already without the ones this stream's own device made, and relay pairings waiting for approval */
-  pairings?: { subscribe(listener: (event: DevicePairedEvent | RelayPairingsEvent) => void): () => void },
+  pairings?: { subscribe(listener: (event: DevicePairedEvent | DeviceRemovedEvent | RelayPairingsEvent | RemotePairingsEvent) => void): () => void },
   relayBudget?: EventStreamBudget): Promise<Response> {
   const url = new URL(request.url);
   // A PC's file opens as this PC's /api/fs/file does, from any navigation: reading it changes

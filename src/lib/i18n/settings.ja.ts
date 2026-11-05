@@ -109,7 +109,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "The permission to connect to the PCs saved in herdr was damaged and could not be read when the app started. It was set aside as {files}; choose Connect on those PCs again.": "herdr に保存された PC への接続許可が壊れていたため、アプリの起動時に読み込めませんでした。{files} として退避したので、それらの PC で「接続」をもう一度選んでください。",
   "Update PC bridges automatically": "PC ブリッジを自動更新",
   "When an app update needs a newer bridge, PCs that connect with their saved key are updated in the background. PCs that need a password ask first.": "アプリの更新で新しいブリッジが必要になった場合、保存済みのキーで接続する PC はバックグラウンドで更新されます。パスワードが必要な PC では先に確認します。",
-  "Sign out": "サインアウト",
   "Sign out of this browser?": "このブラウザーからサインアウトしますか？",
   "Getting back in takes the access token, or a pairing code from the PC: Settings → Phone & devices there, or the pair command in its terminal.": "再び入るにはアクセストークンか、PC のペアリングコードが必要です。コードは PC の設定 → Phone & devices か、PC のターミナルの pair コマンドで表示されます。",
   "Forget this browser's sign-in. Getting back in takes the access token or a pairing code.": "このブラウザーのサインインを消去します。再び入るにはアクセストークンかペアリングコードが必要です。",

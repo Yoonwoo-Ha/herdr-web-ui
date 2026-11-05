@@ -481,6 +481,16 @@ gets `429` and `Retry-After: 60`, without closing sockets already open.
 
 To stop trusting `app.ovis.sh` too, host the app yourself. `bun run build:shell` builds it into `dist-shell/`. Serve that folder over HTTPS from a host that follows its `_redirects` and `_headers` files, as Cloudflare Pages does (another host needs the same rewrites and headers), and set `OVIS_RELAY_APP_URL` on the PC to its address: the PC's QR codes then open your copy. Build it from the same release as the PC's Ovis.
 
+### Through an account
+
+Signing in links your devices once instead of pairing each phone with each PC. It's optional: a QR code and a pairing code work as before, with or without an account.
+
+1. At `app.ovis.sh`, choose **Continue with GitHub** or **Continue with Apple**. **Your PCs** lists the PCs of your account and the ones this phone is already paired with.
+2. A phone already paired by QR code needs nothing more: the next time it opens each PC, it moves that pairing into the account by itself. Until then the PC's row says **Ready · not in the account yet**, since removing the phone through the account would not reach it.
+3. A PC marked **Needs approval** has not let this device in yet. Tap it: this device and the PC show the same six digits, as with a link without a code. The first device of an account is approved on the PC itself. After that, any device already in the account can approve: it asks whether to add the new device and shows three numbers, and you pick the one the new device shows. One approval adds the device to every PC of the account: the approving device signs a record that adds it to each PC, and a PC that was off picks that record up when it comes back.
+
+Who gets into a PC is still decided by that PC alone, in **Settings → Phone & devices**, where **Revoke** always works. The account service at `account.ovis.sh` lists your PCs and carries signed messages between your devices; it can't read your sessions or add a device by itself ([how it works](account.md)). [The privacy policy](https://ovis.sh/privacy/) says what it stores.
+
 ### Through Tailscale
 
 Serve the app over **HTTPS** to install it and receive push alerts. The simplest way is Tailscale: keep the server on `127.0.0.1` and let Tailscale add the HTTPS address.
@@ -1095,7 +1105,7 @@ No, but a phone needs two things Tailscale gives at once: a way to reach the PC 
 <details>
 <summary><b>Does my code or conversation leave my machine?</b></summary>
 
-Session files stay on the PC running each agent, and their contents are sent to browsers connected to the app. Ovis has no account service, and its relay is off unless you turn it on. The agents' own connections to model providers depend on their configuration.
+Session files stay on the PC running each agent, and their contents are sent to browsers connected to the app. Signing in to the account service is optional (see [Through an account](#through-an-account)), and the relay is off unless you turn it on. The agents' own connections to model providers depend on their configuration.
 
 Optional features can send data off the PC:
 - [Voice input](#voice-input) sends recordings to the configured transcription provider; polishing also sends the transcribed text. Without a configured API key, browser speech recognition may use the browser vendor's service.

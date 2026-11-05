@@ -39,6 +39,11 @@ export type FrameType = typeof FrameType[keyof typeof FrameType];
  * digits (shared/relay-pair-sas.ts): PAIR_REQUEST, PAIR_CHALLENGE, PAIR_REVEAL and PAIR_CONFIRM.
  */
 export const PAIR_SAS_FEATURE = "pair-sas";
+/** The PC has `/api/account/*` and applies account records (docs/account.md, "Negotiation"). */
+export const ACCOUNT_FEATURE = "account";
+/** What a comparison asks for, offered with `pair-sas` (at most one) and shown in the approval prompt. */
+export const PAIR_INTENT_PC = "pair-intent-pc";
+export const PAIR_INTENT_ACCOUNT = "pair-intent-account";
 /**
  * The optional mux feature by which a phone says it takes WebSocket messages up to
  * MAX_LARGE_WS_MESSAGE_BYTES (a large session's snapshot, #2773), not only the v1 limit. A phone

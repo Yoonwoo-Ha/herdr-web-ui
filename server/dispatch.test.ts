@@ -49,7 +49,7 @@ it("uses only the relay principal, even with valid driving cookies, bridge token
   const proof = spyOn(portal, "vouches").mockReturnValue(true);
   const principal = { id: "0123456789abcdef", label: "Relay watcher", role: "watch" as const };
   const ctx: ServerContext = {
-    ...app.context, peer: { kind: "relay", device: principal, sessionId: "session-a" },
+    ...app.context, peer: { kind: "relay", device: principal, sessionId: "session-a", serverId: "0123456789abcdef0123456789abcdef", key: "" },
     requestIP: () => { throw new Error("Relay must not inspect the socket"); },
     timeout: () => {},
     upgrade: (_request, options) => {
@@ -99,7 +99,7 @@ it("keys relay request budgets by device rather than session or forged source ad
   const send = (id: string, sessionId: string, forwarded: string) => handleRequest(new Request("https://relay.ovis.invalid/api/connection-diagnostics", {
     method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": forwarded }, body: "{}",
   }), {
-    ...app.context, peer: { kind: "relay", device: { id, label: "Relay", role: "drive" }, sessionId }, timeout: () => {},
+    ...app.context, peer: { kind: "relay", device: { id, label: "Relay", role: "drive" }, sessionId, serverId: "0123456789abcdef0123456789abcdef", key: "" }, timeout: () => {},
   });
   const log = spyOn(app.context.services.clientConnectionLog, "handle");
   try {
@@ -120,7 +120,7 @@ it("refuses pairing without a code to an open LAN window, which never hears of a
   try {
     const base = `http://192.168.1.10:${app.port}`;
     const ctx: ServerContext = { ...app.context, requestIP: () => ({ address: "192.168.1.50" }), timeout: () => {}, upgrade: () => false };
-    for (const path of ["/api/relay/link", "/api/relay/pairing"]) {
+    for (const path of ["/api/relay/link", "/api/relay/pairing", "/api/account/records"]) {
       const response = await handleRequest(new Request(base + path, {
         method: "POST", headers: { host: `192.168.1.10:${app.port}`, origin: base, "x-herdr-update": "1", "content-type": "application/json" },
         body: JSON.stringify({ id: "0011223344556677", decision: "approve" }),

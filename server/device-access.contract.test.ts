@@ -33,7 +33,7 @@ it("pairs a relay device, authenticates its key, and dispatches with the stored 
       const device = await store.matchRelay(paired.device.id, nonce, signature, "server-contract");
       expect(device?.role).toBe(role);
       if (!device) throw new Error("Expected authenticated relay device");
-      const ctx: ServerContext = { ...app.context, peer: { kind: "relay", device, sessionId: `session-${role}` }, requestIP: () => null, timeout: () => {} };
+      const ctx: ServerContext = { ...app.context, peer: { kind: "relay", device, sessionId: `session-${role}`, serverId: "0123456789abcdef0123456789abcdef", key: "" }, requestIP: () => null, timeout: () => {} };
       const health = await handleRequest(new Request("https://relay.ovis.invalid/api/health"), ctx);
       expect(health?.status).toBe(200);
       expect(await health?.json()).toMatchObject({ auth: { via: "relay", role }, security: { observed_ingress: "relay", pairing_gate: "closed" } });
