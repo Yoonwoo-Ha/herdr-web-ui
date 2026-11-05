@@ -75,6 +75,8 @@ export interface Settings {
   keyBarExtras: KeyBarExtra[];
   /** This device's terminal keys, sticky modifiers and exact chords, in display order. */
   keyBarItems: KeyBarItem[];
+  /** the touch key bar's second row (Esc, Tab, | ~ / -) and its arrow pad, opened from the bar's own toggle */
+  keyBarExpanded: boolean;
   shortcutOverrides: ShortcutOverrides;
   theme: ThemeSetting;
   density: Density;
@@ -224,11 +226,11 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 
 /** Raw custom text, key combinations and account keys are never copied. Requiring every other
  * Settings field in the projection makes a new field require an explicit collection decision.
- * fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, autoTabNames, composerNewTabButton, composerArtifacts, terminalMirrorWrap, sidebarFilter, voiceEngine, the agent groups, the
+ * keyBarExpanded, fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, autoTabNames, composerNewTabButton, composerArtifacts, terminalMirrorWrap, sidebarFilter, voiceEngine, the agent groups, the
  * interface font, the chat's history page size and the folds its blocks start in are not collected: the telemetry schema
  * (shared/telemetry.ts) does not carry them. */
 type TelemetrySourceSettings = Omit<Settings,
-  "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily"
+  "keyBarExtras" | "keyBarItems" | "keyBarExpanded" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily"
   | "quickReplies" | "usageOrder" | "usageHidden" | "fileOpen" | "webLinks" | "reuseExternalLinkTab" | "claudeLaunchMode" | "codexLaunchMode"
   | "followHerdrFocus" | "composerNewTabButton" | "composerArtifacts" | "terminalMirrorWrap" | "sidebarFilter" | "historyPrompts"
   | "expandThinking" | "foldWork" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort">;
@@ -305,7 +307,7 @@ export const SETTING_SCOPE = {
   agentMarks: "shared", autoSendQueued: "shared", autoTabNames: "shared", showThinking: "shared", quickReplies: "shared",
   showQuickReplies: "shared", showUsage: "shared", usageCount: "shared",
   usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", defaultView: "device", suggestionChip: "device",
-  terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", shortcutOverrides: "device", density: "device",
+  terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", keyBarExpanded: "device", shortcutOverrides: "device", density: "device",
   terminalFontSize: "device",
   terminalWheelSpeed: "device", terminalFontFamily: "device", paneClipboard: "device", releasePaneAway: "device",
   // a phone folds a wide mirror, a desk's window may draw it whole
@@ -341,6 +343,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalInputMode: "auto",
   keyBarExtras: ["alt"],
   keyBarItems: DEFAULT_KEY_BAR_ITEMS,
+  keyBarExpanded: false,
   shortcutOverrides: {},
   theme: "dark",
   density: "comfortable",
@@ -527,6 +530,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     terminalInputMode: record["terminalInputMode"] === "line" || record["terminalInputMode"] === "direct" ? record["terminalInputMode"] : "auto",
     keyBarExtras,
     keyBarItems: sanitizeKeyBarItems(record["keyBarItems"], keyBarFallback),
+    keyBarExpanded: typeof record["keyBarExpanded"] === "boolean" ? record["keyBarExpanded"] : DEFAULT_SETTINGS.keyBarExpanded,
     shortcutOverrides: sanitizeShortcutOverrides(record["shortcutOverrides"]),
     theme,
     density: density === "compact" || density === "comfortable" ? density : DEFAULT_SETTINGS.density,

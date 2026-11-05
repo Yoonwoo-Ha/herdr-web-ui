@@ -337,8 +337,8 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
         report(`SwiftKey repeats a word without duplication: ${label}`);
       }
 
-      // The key bar's Ctrl stays held until tapped again, and turns a typed letter or a key-bar key
-      // into a chord. A syllable still being typed is text: it goes first, never as the chord, and the
+      // The key bar's Ctrl, tapped once, is held for the next key, and turns a typed letter or a
+      // key-bar key into a chord; the chord lets go of it. A syllable still being typed is text: it goes first, never as the chord, and the
       // next syllable starts clean (no c, no DEL).
       const ctrl = page.locator('.key-bar .key[data-key="Control"]');
       await reset(); await fresh("ㅎ"); await replace("ㅏ", "하");
@@ -347,13 +347,13 @@ export async function checkIpadIme(browser: Browser, origin: string, pane: strin
       let chord = signal("keys");
       await input.press("c");
       await chord.catch((error) => { throw new Error(`no key frame for the held Ctrl and c (platform ${platform}): input ${JSON.stringify(sent)}`, { cause: error }); });
-      await ctrl.evaluate((node: HTMLElement) => node.click());
+      await page.waitForFunction(() => document.querySelector('.key-bar .key[data-key="Control"]')?.getAttribute("aria-pressed") === "false");
       await fresh("ㄱ"); await replace("ㅡ", "그");
       await ctrl.evaluate((node: HTMLElement) => node.click());
       chord = signal("keys");
       await page.locator('.key-bar .key[data-key="Escape"]').evaluate((node: HTMLElement) => node.click());
       await chord.catch((error) => { throw new Error(`no key frame for the held Ctrl and the key bar's Esc (platform ${platform}): input ${JSON.stringify(sent)}`, { cause: error }); });
-      await ctrl.evaluate((node: HTMLElement) => node.click());
+      await page.waitForFunction(() => document.querySelector('.key-bar .key[data-key="Control"]')?.getAttribute("aria-pressed") === "false");
       await fresh("ㅎ");
       await check("하그ㅎ", "refused context cannot seed the next accepted rewrite: a held Ctrl chord");
       assert.deepEqual(keyed, [{ pane_id: pane, keys: ["ctrl+c"], after: 1 }, { pane_id: pane, keys: ["ctrl+esc"], after: 2 }],

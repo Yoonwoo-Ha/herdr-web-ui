@@ -67,6 +67,8 @@ export interface TerminalMountDeps {
   chatOutputRef: RefObject<(() => void) | null>;
   chatViewRef: RefObject<boolean>;
   clearModifiers: () => void;
+  /** after a key that carried the key bar's held modifiers: lets go of those held for one key */
+  consumeModifiers: () => void;
   clipboardTimerRef: RefObject<number | null>;
   coarseRef: RefObject<boolean>;
   /** sends a pending Safari syllable or dictation phrase as an IME commit, ahead of a chord */
@@ -177,7 +179,7 @@ export interface TerminalMountDeps {
 }
 
 export function useTerminalMount(deps: TerminalMountDeps): void {
-  const { activeRef, agentRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, watchedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, reuseExternalLinkTabRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setViewHeld, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, watchingRef, wheelStateRef } = deps;
+  const { activeRef, agentRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, watchedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, consumeModifiers, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, reuseExternalLinkTabRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setViewHeld, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, watchingRef, wheelStateRef } = deps;
 
     // Where this terminal is: its pane, and whether it is active, presented, shown and not the chat view.
     // Counted on every commit that changes it: an explicit copy still waiting for herdr's text is
@@ -342,7 +344,14 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       // An app shortcut is the app's alone: xterm would still type it, and Ctrl+Shift+↓ reached the
       // pane it had just switched to as ESC[1;6B.
       let typedChord: string | null = null;
+      // the physical key that took the key bar's modifiers held for one key: they last through its
+      // own auto-repeat and go when it is let up, or when another key comes down first
+      let releaseOnKeyUp: string | null = null;
       term.attachCustomKeyEventHandler((event) => {
+        if (releaseOnKeyUp !== null && (event.type === "keyup" ? event.code === releaseOnKeyUp : event.type === "keydown" && event.code !== releaseOnKeyUp)) {
+          releaseOnKeyUp = null;
+          consumeModifiers();
+        }
         if (isAppShortcut(event, shortcutSettings.current)) return false;
         if (hasModifiers(modifiersRef.current) && !term.options.disableStdin && !composingRef.current && !compositionCommitPendingRef.current
             && !event.isComposing && event.keyCode !== 229 && !event.metaKey) {
@@ -355,7 +364,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           const chord = terminalChord(physicalKey(event.key, event.code), combined);
           const navigation = navigationSequence(event.key, combined);
           if (navigation !== null) {
-            if (event.type === "keydown") { event.preventDefault(); commitPendingText(); term.input(navigation); }
+            if (event.type === "keydown") { event.preventDefault(); commitPendingText(); term.input(navigation); releaseOnKeyUp = event.code; }
             return false;
           }
           // A real clipboard shortcut still belongs to the browser. Soft Ctrl+V
@@ -371,6 +380,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
               // Go through the same readiness/role/secret checks as other input.
               term.input(event.key);
               typedChord = null;
+              releaseOnKeyUp = event.code;
             }
             return false;
           }
@@ -1591,6 +1601,8 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           ? barKey !== null ? barKey.chord
             : physicalChord ?? (hasModifiers(modifiersRef.current) && key !== null ? terminalChord(key, modifiersRef.current) : null)
           : null);
+        // a soft keyboard's key (no keydown to read) that took the held modifiers lets go of those held for it
+        if (chord !== null && barKey === null && physicalChord === null && enterChord === null) consumeModifiers();
         if (draftHeldForRef.current === current) {
           // A chord or a modified Enter is never held, and never sent beside held text either
           // (Ctrl+J, or Ctrl+Enter under modifyOtherKeys, would run the line).

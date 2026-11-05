@@ -36,6 +36,7 @@ export const TERMINAL_ZH: Record<string, string> = {
   "Pipe": "竖线",
   "Tilde": "波浪号",
   "Slash": "斜杠",
+  "Minus": "减号",
   "Control": "控制键",
   "Press {key}": "按下 {key}",
   "Not sent: the agent started working since. Check the terminal, then send again.": "未发送：此后代理已开始工作。请先查看终端，再重新发送。",
@@ -119,5 +120,8 @@ export const TERMINAL_ZH: Record<string, string> = {
   "Paste into the input line": "粘贴到输入行",
   "Show keyboard": "显示键盘",
   "Hide keyboard": "隐藏键盘",
+  "More keys": "更多按键",
+  "Fewer keys": "收起按键",
+  "{key}, locked": "{key}，已锁定",
   "Recover unsent text": "恢复未发送的文本",
 };

@@ -36,6 +36,7 @@ export const TERMINAL_KO: Record<string, string> = {
   "Pipe": "파이프",
   "Tilde": "물결표",
   "Slash": "슬래시",
+  "Minus": "빼기",
   "Control": "컨트롤",
   "Press {key}": "{key} 누르기",
   "Not sent: the agent started working since. Check the terminal, then send again.": "보내지 않음: 그사이 에이전트가 작업을 시작했습니다. 터미널을 확인한 뒤 다시 보내세요.",
@@ -119,5 +120,8 @@ export const TERMINAL_KO: Record<string, string> = {
   "Paste into the input line": "입력창에 붙여넣기",
   "Show keyboard": "키보드 보이기",
   "Hide keyboard": "키보드 숨기기",
+  "More keys": "키 더 보기",
+  "Fewer keys": "키 줄이기",
+  "{key}, locked": "{key}, 고정됨",
   "Recover unsent text": "보내지 않은 글 복구",
 };

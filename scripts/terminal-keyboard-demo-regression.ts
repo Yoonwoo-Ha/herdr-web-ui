@@ -757,10 +757,10 @@ async function captureSet(browser: Browser, dir: string): Promise<Capture[]> {
       for (const word of [" && git log --oneline -20", " && bun test ./src/lib/keyboard.test.ts", " && echo a line long enough to wrap the box", " && echo the last line of a long draft"]) await page.keyboard.type(word);
       await lineOf(page).evaluate((node: HTMLTextAreaElement) => { node.scrollTop = node.scrollHeight; });
       await shot(page, `390-${theme}-line-long-draft-end`, meta("line mode, keyboard up, a long draft scrolled to its end"));
-      await page.evaluate(() => { const bar = document.querySelector<HTMLElement>(".pane-frame:not(.is-hidden) .key-bar")!; bar.scrollLeft = bar.scrollWidth; });
-      await page.waitForFunction(() => document.querySelector(".pane-frame:not(.is-hidden) .key-bar")?.hasAttribute("data-overflow-start"));
+      await page.evaluate(() => { const bar = document.querySelector<HTMLElement>(".pane-frame:not(.is-hidden) .key-bar-row")!; bar.scrollLeft = bar.scrollWidth; });
+      await page.waitForFunction(() => document.querySelector(".pane-frame:not(.is-hidden) .key-bar-row")?.hasAttribute("data-overflow-start"));
       await shot(page, `390-${theme}-bar-end`, meta("line mode, keyboard up, the key bar scrolled to its end"));
-      await page.evaluate(() => { document.querySelector<HTMLElement>(".pane-frame:not(.is-hidden) .key-bar")!.scrollLeft = 0; });
+      await page.evaluate(() => { document.querySelector<HTMLElement>(".pane-frame:not(.is-hidden) .key-bar-row")!.scrollLeft = 0; });
       await key.tap();
       await lower(page);
       // the ring: the control is a Tab stop, reached from the input line by Tab alone

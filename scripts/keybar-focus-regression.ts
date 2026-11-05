@@ -64,7 +64,8 @@ export async function checkKeyBarKeepsKeyboardDown(browser: Browser, origin: str
         const before = await focus();
         assert.equal(before.active, "BODY", `${tag}: nothing focused to start with`);
         await page.locator(".key-bar").waitFor();
-        for (const key of ["Control", "Control", "Enter", "Escape"]) {
+        // Ctrl steps through held for one key and locked back to off, so Enter goes out plain
+        for (const key of ["Control", "Control", "Control", "Enter", "Escape"]) {
           const sentBefore = await page.evaluate(() => (window as unknown as InputWindow).typed_.length);
           const button = page.locator(`.key-bar [data-key="${key}"]`);
           if (touch) await button.tap();

@@ -36,6 +36,7 @@ export const TERMINAL_JA: Record<string, string> = {
   "Pipe": "パイプ",
   "Tilde": "チルダ",
   "Slash": "スラッシュ",
+  "Minus": "マイナス",
   "Control": "コントロール",
   "Press {key}": "{key} を押す",
   "Not sent: the agent started working since. Check the terminal, then send again.": "未送信: その間にエージェントが作業を始めました。ターミナルを確認してから、もう一度送信してください。",
@@ -119,5 +120,8 @@ export const TERMINAL_JA: Record<string, string> = {
   "Paste into the input line": "入力行に貼り付け",
   "Show keyboard": "キーボードを表示",
   "Hide keyboard": "キーボードを非表示",
+  "More keys": "キーをもっと表示",
+  "Fewer keys": "キーを減らす",
+  "{key}, locked": "{key}、ロック中",
   "Recover unsent text": "未送信のテキストを復元",
 };

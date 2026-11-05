@@ -3601,8 +3601,25 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   with the keyboard put away leaves it away (only the keyboard key or a tap on the line or the grid
   raises it). That follows the platform's own rule rather than an app's: a button never raises a
   phone's keyboard, only a text field does. A fine pointer, which raises no keyboard, still moves
-  the focus to the grid. Modifiers remain highlighted until toggled off,
-  leaving the pane/lens or disconnecting; each exposes `aria-pressed`.
+  the focus to the grid. A modifier steps by taps, off → once → locked → off, as a phone keyboard's
+  Shift goes from one capital to Caps Lock (iOS and Gboard), by taps rather than a double tap's
+  timing. Once, it has the accent edge and carries the next key only: a key-bar key (a held key's
+  repeats keep it until the finger lifts), a typed key, or the input line's Enter lets it go; a
+  saved combination sends its own chord and leaves it held. Locked, it is also filled
+  (`--accent-tint`) and underlined, carries every key, and says "…, locked" in its name. Both end
+  on leaving the pane/lens or disconnecting; each exposes `aria-pressed` and `data-latch`.
+- **More keys** (`ChevronUp`, then **Fewer keys** with `ChevronDown`, `aria-expanded`) is pinned at
+  the bar's end, out of the row's scroll, and is a Tab stop like the keyboard control. Under
+  `360px` (a cover screen) it scrolls at the row's end instead, so `^C` stays in the first view. It opens a
+  second row over the first: Esc, Tab, `|`, `~`, `/`, `-` (the keys a phone keyboard hides behind
+  its symbol pages), which narrow below `--touch-target` on a narrow phone rather than scroll, and
+  an arrow pad at the right-hand end of both rows in a hardware keyboard's inverted T (Up over Down,
+  Left and Right beside it), each a `--touch-target` column, whose arrows repeat while held. The
+  first row then leaves out the plain keys the second row and the pad show. Rows are
+  `--touch-target` tall so the keys' expanders meet without overlapping, and the keys keep the
+  compact bar's room above and below them. The choice is the device's (`keyBarExpanded`). Termux's
+  two rows of extra keys with their inverted-T arrows are the model; here the second row is opened
+  on demand, since the terminal gives up a row's height for it.
 - That is the default row. Settings → Terminal → Key bar can add, remove and reorder every
   terminal key and register exact combinations. Removing a held modifier clears it immediately.
   A deliberately empty row retains only the Input line switch, Paste and the keyboard control on a
