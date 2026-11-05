@@ -26,6 +26,7 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
+  ".wasm": "application/wasm",
 };
 
 /** Files whose URL never changes but whose contents decide what the app becomes. */
@@ -279,9 +280,9 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
   if (candidate.startsWith(DIST_DIR) && relative !== "/" && existsSync(candidate)) {
     const file = Bun.file(candidate);
     if ((await file.exists()) && !(await file.stat()).isDirectory()) {
-      // Only immutable JS/CSS get build-time sidecars. Never compress user/API
-      // data, the service worker, or the shell on a request's hot path.
-      if (pathname.startsWith("/assets/") && /\.(?:js|css)$/.test(pathname)) {
+      // Only immutable JS/CSS/WebAssembly get build-time sidecars (scripts/compressed-assets.ts).
+      // Never compress user/API data, the service worker, or the shell on a request's hot path.
+      if (pathname.startsWith("/assets/") && /\.(?:js|css|wasm)$/.test(pathname)) {
         for (const encoding of encodings(acceptEncoding)) {
           const body = encoding === "identity" ? file : Bun.file(`${candidate}.${encoding === "br" ? "br" : "gz"}`);
           if (!await body.exists()) continue;
