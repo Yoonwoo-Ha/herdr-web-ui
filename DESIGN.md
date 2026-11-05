@@ -2611,6 +2611,13 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   `--space-1` tall), then ONE row of controls under it:
   on the left the add button (lucide `Plus`, named "Attach files"), the mic when voice input
   shows it (see Voice input), and the background-task chip; on the right the status content and ONE round Send/Stop button.
+  Once this device turns it on (Settings → Chat → Composer, **Paste and send button**, the device
+  setting `composerPasteSend`, off by default), **Paste and send** (lucide `ClipboardPaste`, beside
+  Attach) reads this device's clipboard on the press, never the PC's, and sends its text through
+  Send's own path (queued while the agent works, kept in the box when refused). It is on only for an
+  empty box with no files; a read that answers after the pane, the connection or the box changed
+  sends nothing, and an empty, refused or too-long clipboard is said in the note, never cut to fit.
+  The Codex and Claude apps have no such button; it follows the terminal key bar's Paste here.
   The message's text starts `--space-4` in (`--space-3` on a phone, `480px` and below).
 - The strip (`.composer-strip`) tucked under the card, as t3code's composer context strip: the
   card's own `--bg-elevated` with a `--border` hairline, inset on each side by the card's radius
@@ -3173,7 +3180,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   (panes open in, show thinking, chat width, chat font size and family; then
   **Composer**: Enter sends, send queued messages automatically, in a mouse-driven window wider than
   640px the New tab button (off by default), the Artifacts chip (off by default, the device setting
-  `composerArtifacts`), and on a touch screen the suggestion chip (off by default); then
+  `composerArtifacts`), the Paste and send button (off by default, the device setting
+  `composerPasteSend`), and on a touch screen the suggestion chip (off by default); then
   **Quick replies**; then **File viewer**: wrap long lines, Markdown width, Diff layout), **Terminal** (font size, font family, wheel
   speed, input mode, Key bar, Clipboard from a pane, Pictures in the terminal (off by default, the
   device setting `terminalImages`), Use alongside herdr's own window, Follow

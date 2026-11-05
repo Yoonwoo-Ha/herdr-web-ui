@@ -482,6 +482,9 @@ function ChatPage() {
         <SettingsRow label={t("Artifacts chip")} description={t("A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.")}>
           <Toggle label={t("Artifacts chip")} checked={settings.composerArtifacts} onChange={(composerArtifacts) => update({ composerArtifacts })} />
         </SettingsRow>
+        <SettingsRow label={t("Paste and send button")} description={t("A button in the empty message box sends the text copied on this device as a message.")}>
+          <Toggle label={t("Paste and send button")} checked={settings.composerPasteSend} onChange={(composerPasteSend) => update({ composerPasteSend })} />
+        </SettingsRow>
         {touch && (
           <SettingsRow label={t("Suggestion chip")} description={t("A chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.")}>
             <Toggle label={t("Suggestion chip")} checked={settings.suggestionChip} onChange={(suggestionChip) => update({ suggestionChip })} />

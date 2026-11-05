@@ -167,6 +167,8 @@ export const SETTINGS_JA: Record<string, string> = {
   "New tab button": "新しいタブボタン",
   "Artifacts chip": "アーティファクトチップ",
   "A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.": "Claude Code のペインの入力欄に、セッションが Artifact ツールで公開したページの一覧を出すチップを表示します。",
+  "Paste and send button": "貼り付けて送信ボタン",
+  "A button in the empty message box sends the text copied on this device as a message.": "空の入力欄のボタンで、このデバイスでコピーしたテキストをメッセージとして送ります。",
   "A button in the message box opens New tab with an agent… on the pane's workspace. The tab menu offers it either way.": "入力欄のボタンで、このペインのワークスペースに「エージェント付きの新しいタブ…」を開きます。タブメニューからはいつでも開けます。",
   "Clipboard from a pane": "ペインからクリップボードへ",
   "A program in a pane that copies (vim, tmux, Claude Code) puts its text on this device's clipboard, as a copy you made yourself would. Turn it off if a pane runs output you do not trust: it could replace what you paste next.": "ペインでコピーするプログラム（vim、tmux、Claude Code）は、自分でコピーしたときと同じようにこのデバイスのクリップボードにテキストを入れます。信頼できない出力を実行するペインがある場合はオフにしてください。次に貼り付ける内容が置き換えられることがあります。",

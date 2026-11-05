@@ -167,6 +167,8 @@ export const SETTINGS_KO: Record<string, string> = {
   "New tab button": "새 탭 버튼",
   "Artifacts chip": "아티팩트 칩",
   "A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.": "Claude Code 패널의 입력창에 세션이 Artifact 도구로 게시한 페이지 목록을 여는 칩을 표시합니다.",
+  "Paste and send button": "붙여넣고 보내기 버튼",
+  "A button in the empty message box sends the text copied on this device as a message.": "빈 입력창의 버튼으로 이 기기에서 복사한 글을 메시지로 보냅니다.",
   "A button in the message box opens New tab with an agent… on the pane's workspace. The tab menu offers it either way.": "입력창의 버튼으로 이 패널의 워크스페이스에 에이전트와 함께 새 탭…을 엽니다. 탭 메뉴에서는 언제든 열 수 있습니다.",
   "Clipboard from a pane": "패널에서 클립보드로 복사",
   "A program in a pane that copies (vim, tmux, Claude Code) puts its text on this device's clipboard, as a copy you made yourself would. Turn it off if a pane runs output you do not trust: it could replace what you paste next.": "패널에서 복사하는 프로그램(vim, tmux, Claude Code)은 직접 복사한 것과 같이 이 기기의 클립보드에 텍스트를 넣습니다. 믿을 수 없는 출력을 실행하는 패널이 있다면 끄세요. 다음에 붙여 넣을 내용이 바뀔 수 있습니다.",
