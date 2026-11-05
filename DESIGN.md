@@ -3534,8 +3534,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 ### Terminal host, key bar and drawer
 - **Draw with libghostty** (Settings > Terminal, off by default, herdr-core only): libghostty-vt draws the
   pane's text, cursor and Kitty graphics pictures in a layer over xterm's screen, at xterm's cell size;
-  xterm's own text and cursor are hidden under it and xterm keeps input, selection, links, search and
-  scrolling. It follows Ghostty's own split of a terminal core (libghostty-vt) from the renderer an app
+  xterm's own text and cursor are hidden under it, and not redrawn, and xterm keeps input, selection,
+  links, search and scrolling. Screen readers read the libghostty rows, and a polite live log announces
+  the lines a program writes (not the screen a pane opens on). It follows Ghostty's own split of a terminal core (libghostty-vt) from the renderer an app
   draws with, rather than a second terminal widget: everything built on xterm keeps working while the
   drawing moves. The layer takes no pointer events; pictures keep the layer Kitty gave them (below
   the text, or above it).

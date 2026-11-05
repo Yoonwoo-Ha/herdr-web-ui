@@ -139,6 +139,18 @@ try {
         assert.equal(wasm.length, 1, "core: the module is fetched once");
         assert.equal(await page.locator(".pane-frame.is-current .xterm-rows").evaluate((rows) => getComputedStyle(rows).visibility), "hidden", "core: xterm's own text is hidden under libghostty's");
 
+        // what the pane opened on is read, not announced; what comes after is announced, and xterm's hidden rows are left as they were
+        const announced = () => page.evaluate(() => document.querySelector(".pane-frame.is-current .ghostty-layer [aria-live]")?.textContent ?? null);
+        assert.equal(await announced(), "", "core: the screen a pane opens on is not announced");
+        await print(page, "SPOKEN-LINE\r\n", "SPOKEN-DONE");
+        assert.ok((await announced())?.includes("SPOKEN-LINE"), `core: a line the program writes is announced (${JSON.stringify(await announced())})`);
+        assert.equal(await page.locator(".pane-frame.is-current .xterm-rows", { hasText: "SPOKEN-LINE" }).count(), 0, "core: xterm no longer redraws its hidden rows");
+        // a full screen that scrolls by one line announces that line, not every row that moved up
+        await print(page, Array.from({ length: 60 }, (_, i) => `OLD-${String(i).padStart(2, "0")}`).join("\r\n") + "\r\n", "FILL-DONE");
+        await print(page, "NEW-ONLY-LINE\r\n", "NEW-DONE");
+        const scrolled = await announced();
+        assert.ok(scrolled?.includes("NEW-ONLY-LINE") && !scrolled.includes("OLD-"), `core: a scroll announces only the new line (${JSON.stringify(scrolled)})`);
+
         await print(page, `\x1b[5;3H${kittySquare(7, [255, 0, 0])}`, "RED-PLACED");
         const red = await picture(page);
         assert.deepEqual(red?.rgb, [255, 0, 0], `core: the Kitty picture is drawn (${JSON.stringify(red)})`);
