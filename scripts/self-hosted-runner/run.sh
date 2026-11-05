@@ -4,6 +4,7 @@
 # Usage: scripts/self-hosted-runner/run.sh [--repo OWNER/NAME] [--count N] [--labels self-hosted-ovis]
 #          [--reserved N] [--reserved-labels self-hosted-ovis-main] [--env-file FILE] [--build] [--once]
 #          [--cache-dir DIR [--cache-wait SECONDS] | --no-cache] [--build-cache DIR [--build-cache-mb N] [--build-cache-writer LOGIN]]
+#          [--cpuset-cpus LIST]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,9 +24,11 @@ CACHE_WAIT=120
 BUILD_CACHE=""
 BUILD_CACHE_MB=2048
 BUILD_CACHE_WRITER=""
+# docker run's --cpuset-cpus for every container this launcher starts (README "Per-host limits")
+CPUSET_ARGS=()
 
 usage() {
-  sed -n '2,6p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -44,6 +47,7 @@ while [ $# -gt 0 ]; do
     --build-cache) BUILD_CACHE="${2:?--build-cache needs a value}"; shift 2 ;;
     --build-cache-mb) BUILD_CACHE_MB="${2:?--build-cache-mb needs a value}"; shift 2 ;;
     --build-cache-writer) BUILD_CACHE_WRITER="${2:?--build-cache-writer needs a value}"; shift 2 ;;
+    --cpuset-cpus) CPUSET_ARGS=(--cpuset-cpus "${2:?--cpuset-cpus needs a value}"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -97,6 +101,12 @@ NETNS="${PREFIX}net"
 
 if [ "$BUILD" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   docker build -t "$IMAGE" "$SCRIPT_DIR"
+fi
+# A CPU list docker cannot give fails every container, and every slot would then ask for a token every
+# few seconds: refuse it now, with one throwaway container, before anything starts.
+if [ "${#CPUSET_ARGS[@]}" -gt 0 ] && ! docker run --rm "${CPUSET_ARGS[@]}" --network none --entrypoint true "$IMAGE" >/dev/null 2>&1; then
+  echo "--cpuset-cpus ${CPUSET_ARGS[1]}: docker cannot run a container on those CPUs" >&2
+  exit 2
 fi
 
 # Host caches (README "Host caches"): a bare mirror of the repository's branches and tags, and Bun's
@@ -162,7 +172,7 @@ build_cache_args() {
     # the promoter's own verdicts (build-cache-promote.sh)
     find "$outbox" -mindepth 1 -maxdepth 1 -type d -name 'judged-*' -user "$(id -u)" -empty -delete 2>/dev/null || true
     if [ -n "$(find "$outbox" -mindepth 1 -print -quit 2>/dev/null)" ]; then
-      docker run --rm --network none --security-opt no-new-privileges --cap-drop ALL --user 1001:1001 \
+      docker run ${CPUSET_ARGS[@]+"${CPUSET_ARGS[@]}"} --rm --network none --security-opt no-new-privileges --cap-drop ALL --user 1001:1001 \
         -v "$outbox:/outbox" --entrypoint sh "$IMAGE" -c 'chmod -R u+rwX /outbox 2>/dev/null; find /outbox -mindepth 1 -delete' </dev/null >/dev/null 2>&1 || true
     fi
   fi
@@ -176,7 +186,7 @@ build_cache_args() {
 # throwaway container of the image, no network, allowed only past file permissions, removes it.
 clean_taken() {
   [ -n "$(find "$BUILD_CACHE_OUTBOXES/.taken" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ] || return 0
-  docker run --rm --network none --security-opt no-new-privileges --cap-drop ALL --cap-add DAC_OVERRIDE --user 0:0 \
+  docker run ${CPUSET_ARGS[@]+"${CPUSET_ARGS[@]}"} --rm --network none --security-opt no-new-privileges --cap-drop ALL --cap-add DAC_OVERRIDE --user 0:0 \
     -v "$BUILD_CACHE_OUTBOXES/.taken:/taken" --entrypoint find "$IMAGE" /taken -mindepth 1 -delete </dev/null >/dev/null 2>&1 || true
 }
 
@@ -292,7 +302,7 @@ refresh_bun_cache() {
     # the container a PID 1 that passes the deadline's SIGTERM on (a bare PID 1 ignores it), and -k
     # ends the client if it still waits. Whatever ended it, docker rm -f below ends the container.
     status=0
-    timeout --foreground -k 5 900 docker run --rm --init \
+    timeout --foreground -k 5 900 docker run ${CPUSET_ARGS[@]+"${CPUSET_ARGS[@]}"} --rm --init \
       --name "$CACHE_CONTAINER" \
       --security-opt no-new-privileges \
       --cap-drop ALL \
@@ -383,7 +393,7 @@ start_netns() {
   [ "$running" = true ] && return
   # only a stopped one is in the way; a missing one leaves nothing to remove
   if [ "$running" = false ]; then docker rm "$NETNS" >/dev/null 2>&1 || true; fi
-  docker run -d --rm \
+  docker run ${CPUSET_ARGS[@]+"${CPUSET_ARGS[@]}"} -d --rm \
     --name "$NETNS" \
     --security-opt no-new-privileges \
     --cap-drop ALL \
@@ -395,11 +405,20 @@ start_netns() {
 }
 
 slot_loop() {
-  local slot="$1" name token container_status labels="$LABELS"
+  local slot="$1" name token container_status running labels="$LABELS"
   name="${PREFIX}${slot}"
   if [ "$slot" -le "$((10#$RESERVED))" ]; then labels="$RESERVED_LABELS"; fi
   delay=30
   while true; do
+    # A container of this slot that an earlier launcher started may still run its job: a new one would
+    # register the same runner name (--replace) and take that job's registration, so wait for it to end.
+    # One that is not running (created, or stopped without --rm's removal) would hold the name forever.
+    while running="$(docker container inspect -f '{{.State.Running}}' "$name" 2>/dev/null)"; do
+      [ "$running" = true ] && { sleep 5; continue; }
+      echo "[$name] removing a container left in this slot's name that is not running" >&2
+      docker rm -f "$name" >/dev/null 2>&1 || true
+      break
+    done
     if ! token="$(gh api -X POST "repos/$REPO/actions/runners/registration-token" --jq .token)"; then
       echo "[$name] could not fetch a registration token; retrying in ${delay}s" >&2
       [ "$ONCE" = 1 ] && return 1
@@ -418,7 +437,7 @@ slot_loop() {
     start_netns
     cache_args
     build_cache_args "$name"
-    if printf '%s\n' "$token" | docker run --rm -i \
+    if printf '%s\n' "$token" | docker run ${CPUSET_ARGS[@]+"${CPUSET_ARGS[@]}"} --rm -i \
       --name "$name" \
       --network "container:$NETNS" \
       --security-opt no-new-privileges \

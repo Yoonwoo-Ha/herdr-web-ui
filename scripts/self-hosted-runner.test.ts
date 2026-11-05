@@ -160,9 +160,16 @@ esac
 printf 'docker %s\\n' "$(printf '%s' "$*" | tr '\\n' ' ')" >> "$RUNNER_TEST_LOG"
 case "$1" in
   image) exit 0 ;;
+  # a slot's container an earlier launcher left running, while this file exists
+  # (its State.Running is the file's content: true while it runs its job, false once it stopped)
+  container) [ "$2" = inspect ] && [ -n "\${RUNNER_TEST_SLOT_HELD:-}" ] && [ -e "$RUNNER_TEST_SLOT_HELD" ] && { cat "$RUNNER_TEST_SLOT_HELD"; exit 0; }; exit 1 ;;
+  # removing slot 1's own container (the launcher's other docker rm calls name the Bun cache build's)
+  rm) for last; do :; done; case "$last" in *-1) [ -n "\${RUNNER_TEST_SLOT_HELD:-}" ] && rm -f "$RUNNER_TEST_SLOT_HELD" ;; esac; exit 0 ;;
   run)
-    # the shared network namespace container is detached and reads no token
-    [ "$2" = -d ] && exit 0
+    # docker's own refusal of a CPU list the host does not have
+    case " $* " in *" --cpuset-cpus 0-500 "*) echo "docker: Requested CPUs are not available" >&2; exit 125 ;; esac
+    # the launcher's check of its CPU list, and the shared network namespace container: neither reads a token
+    case " $* " in *" --entrypoint true "*|*" -d "*) exit 0 ;; esac
     shift
     name=""
     while [ "$#" -gt 0 ]; do
@@ -301,7 +308,7 @@ exit 0
 }
 
 /** A runner container: it reads its registration token on stdin. */
-const runnerRun = /^docker run --rm -i /;
+const runnerRun = /^docker run (?:--cpuset-cpus \S+ )?--rm -i /;
 /** What the git stub reports for the mirror's default branch and its bun.lock. */
 const commitSha = "1".repeat(40);
 const lockBlob = "2".repeat(40);
@@ -378,6 +385,63 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
       expect(runRunner({ args: ["--build-cache", join(home, "shm"), "--build-cache-writer", "a b"] }).result.status).toBe(2);
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("pins every container it starts to --cpuset-cpus, and none without it", () => {
+    const { result, calls } = runRunner({ count: 2, args: ["--cpuset-cpus", "0-95"] });
+    expect(result.status).toBe(0);
+    const runs = calls.split("\n").filter((call) => call.startsWith("docker run "));
+    // the network namespace container (the stub never reports it running, so each runner starts it again) and both runners, each pinned
+    expect(runs.filter((call) => call.startsWith("docker run --cpuset-cpus 0-95 -d ")).length).toBeGreaterThanOrEqual(1);
+    expect(runs.filter((call) => runnerRun.test(call))).toHaveLength(2);
+    for (const call of runs) expect(call).toContain("--cpuset-cpus 0-95 ");
+    expect(runRunner().calls).not.toContain("--cpuset-cpus");
+  });
+
+  it("refuses a CPU list docker cannot give before starting anything", () => {
+    const { result, calls } = runRunner({ count: 2, args: ["--cpuset-cpus", "0-500"] });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--cpuset-cpus 0-500");
+    expect(calls).not.toContain("registration-token");
+    expect(calls.split("\n").filter((call) => runnerRun.test(call) || call.includes(" -d "))).toEqual([]);
+  });
+
+  it("starts a slot's runner only once the container an earlier launcher left in that slot has ended", async () => {
+    const { tempDir, args, env, logPath } = prepareRunner({});
+    const held = join(tempDir, "slot-held");
+    writeFileSync(held, "true\n");
+    const child = Bun.spawn(["bash", ...args], { env: { ...env, RUNNER_TEST_SLOT_HELD: held }, stdout: "ignore", stderr: "ignore" });
+    try {
+      const calls = () => (existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
+      // it asks about the slot's container before anything else of the slot
+      const deadline = Date.now() + LOADED_BOUND_MS;
+      while (!/docker container inspect .*herdr-ci-\S+-1/.test(calls()) && Date.now() < deadline) await Bun.sleep(25);
+      expect(calls()).toMatch(/docker container inspect .*herdr-ci-\S+-1/);
+      expect(calls()).not.toContain("registration-token");
+      expect(calls().split("\n").filter((call) => runnerRun.test(call))).toEqual([]);
+      rmSync(held);
+      expect(await Promise.race([child.exited, Bun.sleep(LOADED_BOUND_MS).then(() => "still running")])).toBe(0);
+      expect(calls().split("\n").filter((call) => runnerRun.test(call))).toHaveLength(1);
+    } finally {
+      child.kill("SIGKILL");
+      await child.exited;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }, HUNG_RUN_MS);
+
+  it("removes a stopped container left in a slot's name, instead of waiting on it forever", () => {
+    const { tempDir, args, env, logPath } = prepareRunner({});
+    try {
+      const held = join(tempDir, "slot-held");
+      writeFileSync(held, "false\n");
+      const result = spawnSync("bash", args, { encoding: "utf8", timeout: LOADED_BOUND_MS, env: { ...env, RUNNER_TEST_SLOT_HELD: held } });
+      expect(result.status).toBe(0);
+      const calls = readFileSync(logPath, "utf8").split("\n");
+      expect(calls.some((call) => /^docker rm -f herdr-ci-\S+-1$/.test(call))).toBe(true);
+      expect(calls.filter((call) => runnerRun.test(call))).toHaveLength(1);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
     }
   });
 

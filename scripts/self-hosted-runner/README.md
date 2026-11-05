@@ -19,6 +19,19 @@ scripts/self-hosted-runner/run.sh --once                  # one container per sl
 
 The image `herdr-ci-runner:local` is built when missing or with `--build`. Ctrl+C stops the containers and deletes any runner of this host (`herdr-ci-<host>-*`) still registered.
 
+A slot whose container is still running (one an earlier launcher started, say, still in its job)
+waits for it to end before it starts the next: the new runner would register the same name
+(`--replace`) and take the running job's registration. So a launcher can be restarted under running
+jobs by killing its main process alone (`kill -KILL`; its stop trap would stop every container), after
+which systemd starts it again and each slot moves over once its job ends. That relies on the unit's
+`KillMode=mixed`: systemd then SIGKILLs the old launcher's slot loops and `docker run` clients, which
+leaves their containers running. With `KillMode=control-group` they would get SIGTERM, which the
+clients pass on to their containers, ending the jobs. A container that holds a slot's name without
+running (created, or stopped) is removed, so it never holds the slot. Restart with the same `--count`: a container in a
+slot above the new count is no one's to wait for, and the new launcher's stop removes its runner. A
+launcher started with `--build-cache` serves the jobs it took over too, once its first cache refresh is
+done (up to `--cache-wait`).
+
 A slot that cannot fetch a registration token retries after 30 s, doubling up to 10 minutes: GitHub
 limits these requests per hour, and eight slots retrying every 30 s keep the account over that limit,
 which blocks every other API call too. After the repository is renamed, restart the launcher with
@@ -194,6 +207,10 @@ replace the workflow's values for the run, and a host without the file keeps `ci
 | `CHECK_HOST_TEST_SHARDS` | `HERDR_TEST_SHARDS` | Integration tests |
 | `CHECK_HOST_BROWSER_WORKERS` | `BROWSER_WORKERS` | both browser jobs (capped at their script count) |
 | `CHECK_HOST_UNIT_WORKERS` | `UNIT_TEST_WORKERS` | Fast checks |
+
+`run.sh --cpuset-cpus LIST` (docker run's own option, `0-95` say) keeps every container it starts on
+those CPUs, the runners and the cache builds alike, so work beside them keeps the rest. A list docker
+cannot give is refused at start (exit 2), before any slot asks for a registration token.
 
 Every runner of a host must read the same file, since they share the slots. Keep it outside this
 directory (`~/.config/ovis-ci-runner/host.env`), so copying the directory again leaves it alone.
