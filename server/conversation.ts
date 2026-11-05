@@ -300,6 +300,26 @@ function transcriptStream(source: StreamSource, path: string, stat: { dev: numbe
   return { id: `${stat.dev.toString(36)}-${stat.ino.toString(36)}${chain}${transcriptGeneration(path, stat, source === "muse-transcript")}`, files, length: stream, floor: 0, promptStarts: grok?.promptStarts ?? agy?.promptStarts, fd, version };
 }
 
+/** readStream's bytes in `into`, which holds them until the caller reads into it again: no buffer is allocated. */
+function readStreamInto(stream: TranscriptStream, from: number, to: number, into: Buffer): Buffer {
+  let length = 0;
+  for (const file of stream.files) {
+    const low = Math.max(from, file.start);
+    const high = Math.min(to, file.start + file.length);
+    if (low >= high) continue;
+    const fd = stream.fd ?? openSync(file.path, "r");
+    try { length += readSync(fd, into, length, high - low, file.offset + (low - file.start)); }
+    finally { if (stream.fd === undefined) closeSync(fd); }
+  }
+  const bytes = into.subarray(0, length);
+  for (const [start, end] of stream.hidden ?? []) {
+    const low = Math.max(start, from) - from;
+    const high = Math.min(end, to, from + bytes.length) - from;
+    for (let index = low; index < high; index += 1) if (bytes[index] !== 0x0a) bytes[index] = 0x20;
+  }
+  return bytes;
+}
+
 function readStream(stream: TranscriptStream, from: number, to: number): Buffer {
   const chunks: Buffer[] = [];
   for (const file of stream.files) {
@@ -2416,9 +2436,9 @@ function* jsonTextPatternSteps(text: string): Steps<{ pattern: RegExp; span: num
 /**
  * Where the lines `text` is in (as JSON writes it, jsonTextPattern) lie in [from, to) of the stream,
  * found a window at a time, so a transcript is searched and never held whole. A line off the branch
- * reads blank (readStream).
+ * reads blank (readStream). `head`: the first bytes from `from` on, read already (as readStream reads them).
  */
-function* linesWithSteps(stream: TranscriptStream, text: string, from: number, to: number): Steps<[number, number][]> {
+function* linesWithSteps(stream: TranscriptStream, text: string, from: number, to: number, head?: Buffer): Steps<[number, number][]> {
   const { pattern, span } = yield* jsonTextPatternSteps(text);
   const found: [number, number][] = [];
   let start = from;
@@ -2426,14 +2446,18 @@ function* linesWithSteps(stream: TranscriptStream, text: string, from: number, t
   // the end of the line so far: text a window's edge cuts in two is still found
   let tail = "";
   let judged = 0;
-  for (let position = from; position < to; position = Math.min(to, position + IMAGE_SEARCH_WINDOW)) {
-    const bytes = readStream(stream, position, Math.min(to, position + IMAGE_SEARCH_WINDOW)).toString("latin1");
+  for (let position = from, step = 0; position < to; position = Math.min(to, position + step)) {
+    const known = position === from && head !== undefined && head.length > 0 ? head.subarray(0, to - from) : undefined;
+    step = known?.length ?? IMAGE_SEARCH_WINDOW;
+    const bytes = (known ?? readStream(stream, position, Math.min(to, position + IMAGE_SEARCH_WINDOW))).toString("latin1");
     for (let offset = 0; ;) {
       const newline = bytes.indexOf("\n", offset);
       if (!hit) {
-        const seen = tail + bytes.slice(offset, newline === -1 ? bytes.length : newline);
-        hit = pattern.test(seen);
-        tail = span > 1 ? seen.slice(-(span - 1)) : "";
+        const piece = bytes.slice(offset, newline === -1 ? bytes.length : newline);
+        // the piece alone, and text the window's edge cut in two (it starts in the tail, so it ends within
+        // `span` characters of the piece): a long line is not copied onto the tail to be searched
+        hit = pattern.test(piece) || (tail.length > 0 && pattern.test(tail + piece.slice(0, span)));
+        tail = span <= 1 ? "" : piece.length >= span - 1 ? piece.slice(-(span - 1)) : (tail + piece).slice(-(span - 1));
       }
       if (newline === -1) break;
       if (hit) found.push([start, position + newline]);
@@ -2443,7 +2467,8 @@ function* linesWithSteps(stream: TranscriptStream, text: string, from: number, t
       offset = newline + 1;
       if (++judged % RECORDS_PER_STEP === 0) yield;
     }
-    if (position + IMAGE_SEARCH_WINDOW < to) yield;
+    // the bytes known were the probe's step: the window read after them is this one's
+    if (known === undefined && position + step < to) yield;
   }
   if (hit) found.push([start, to]);
   return found;
@@ -2605,25 +2630,36 @@ function* answersDrawnCallSteps(stream: TranscriptStream, id: string, before: nu
   // a call id the parser took from a number can be written in any of a number's spellings
   const numeric = id !== "" && String(Number(id)) === id;
   let judged = 0;
-  // a call is most often just before its result: the first stretch is short, and each one after twice as long
+  // a call is most often just before its result: the first stretch is short, and each one after twice as
+  // long as the one before covered (a stretch reaches back to the start of the line it cuts)
   let span = CALL_SEARCH_START;
-  for (let to = before, from = before; to > stream.floor; to = from, span = Math.min(IMAGE_SEARCH_WINDOW, span * 2), yield) {
-    // the lines that end in the last `span` bytes before `to`, whole: back from `to - span`, a short piece
-    // at a time, to the start of the line it falls in, so the walk costs about what that line has before it
+  // what the pieces back are read into, one buffer for the walk: a line of a MiB is not a MiB allocated a piece
+  let scratch = Buffer.allocUnsafe(CALL_SEARCH_START);
+  for (let to = before, from = before; to > stream.floor; span = Math.min(IMAGE_SEARCH_WINDOW, Math.max(span, to - from) * 2), to = from, yield) {
+    // the lines that end in the last `span` bytes before `to`, whole: back from `to - span`, a piece at a
+    // time, to the start of the line it falls in, so the walk costs about what that line has before it
     from = Math.max(stream.floor, to - span);
-    while (from > stream.floor) {
-      const low = Math.max(stream.floor, from - CALL_SEARCH_START);
-      const newline = readStream(stream, low, from).lastIndexOf(0x0a);
+    // what the piece that found the line's start holds of it: the window is not read again for those bytes
+    let head: Buffer | undefined;
+    // each piece back twice the one before, up to a window: a line of a MiB costs a few reads, not
+    // sixteen, where every read is a round trip (a network home)
+    for (let piece = CALL_SEARCH_START; from > stream.floor; piece = Math.min(IMAGE_SEARCH_WINDOW, piece * 2)) {
+      const low = Math.max(stream.floor, from - piece);
+      if (scratch.length < from - low) scratch = Buffer.allocUnsafe(Math.min(IMAGE_SEARCH_WINDOW, Math.max(from - low, scratch.length * 2)));
+      const bytes = readStreamInto(stream, low, from, scratch);
+      const newline = bytes.lastIndexOf(0x0a);
+      // the walk's buffer: the window takes these bytes in before the next piece is read into it
+      if (newline !== -1) head = bytes.subarray(newline + 1);
       // each read is a step of its own: what reads the lines it found starts on the next one
       yield;
       if (newline !== -1) { from = low + newline + 1; break; }
       from = low;
     }
-    const ranges = yield* linesWithSteps(stream, id, from, to);
+    const ranges = yield* linesWithSteps(stream, id, from, to, head);
     if (numeric) {
       yield;
       const seen = new Set(ranges.map(([start]) => start));
-      for (const range of yield* linesWithSteps(stream, "tool_use", from, to)) if (!seen.has(range[0])) ranges.push(range);
+      for (const range of yield* linesWithSteps(stream, "tool_use", from, to, head)) if (!seen.has(range[0])) ranges.push(range);
       ranges.sort((left, right) => left[0] - right[0]);
     }
     if (ranges.length > 0) yield;

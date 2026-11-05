@@ -490,6 +490,57 @@ describe("finding a picture's record", () => {
     expect(bytes).toBeLessThan(result * 1.2);
   });
 
+  it("goes back over lines of a MiB to a call far back in a few reads per line", async () => {
+    // every read is a round trip on a network home: a window that cuts a long line finds the line's start
+    // in pieces that grow, not 64 KiB at a time, and the next window is as long as that one turned out
+    let text = line({ type: "user", uuid: id(1), parentUuid: null, message: { content: "look" } });
+    text += line({ type: "assistant", uuid: id(2), message: { content: [{ type: "tool_use", id: "read", name: "Read" }] } });
+    const lines = 20;
+    for (let at = 0; at < lines; at += 1) text += line({ type: "progress", uuid: id(100 + at), data: "x".repeat(1024 * 1024) });
+    const path = transcript(text + line({ type: "user", uuid: id(3), message: { content: [{ type: "tool_result", tool_use_id: "read", content: [picture] }] } }));
+    quiet();
+    exact(await transcriptImageAsync(path, `${id(3)}:0:0`));
+    let reads = 0;
+    const read = fs.readSync;
+    const watch = spyOn(fs, "readSync").mockImplementation(((...args: Parameters<typeof fs.readSync>) => {
+      reads += 1;
+      return read(...args);
+    }) as typeof fs.readSync);
+    try { exact(await transcriptImageAsync(path, `${id(3)}:0:0`)); } finally { watch.mockRestore(); }
+    // the piece before a window that finds the line's start, and the window of a MiB, which does not read
+    // again what that piece holds: two reads a line, and a few more for the first windows (64 KiB pieces
+    // took 6 a line)
+    expect(reads).toBeLessThan(3 * lines);
+  });
+
+  it("finds a tool's call whose id a search window's edge cuts in two", async () => {
+    // the forward search reads a MiB at a time from the floor: the call's id is put across the first edge
+    const call = line({ type: "assistant", uuid: id(2), message: { content: [{ type: "tool_use", id: "read-across-the-edge", name: "Read" }] } });
+    const head = (pad: number) => line({ type: "user", uuid: id(1), parentUuid: null, message: { content: "x".repeat(pad) } });
+    const pad = 1024 * 1024 - Buffer.byteLength(head(0)) - call.indexOf("read-across-the-edge") - 8;
+    const text = head(pad) + call;
+    expect(Buffer.byteLength(head(pad)) + call.indexOf("read-across-the-edge")).toBe(1024 * 1024 - 8);
+    const path = transcript(text + line({ type: "user", uuid: id(3), message: { content: [{ type: "tool_result", tool_use_id: "read-across-the-edge", content: [picture] }] } }));
+    exact(await asMain(path, `${id(3)}:0:0`));
+    exact(await transcriptImageAsync(path, `${id(3)}:0:0`));
+  });
+
+  it("finds a tool's call whose id the backward walk's first window cuts where what its probe read ends", async () => {
+    // the result's first window back is 64 KiB: its probe finds the call's line start, and the window
+    // begins with the probe's bytes of that line, up to 64 KiB before the result, which is in the id
+    const id2 = "read-across-the-probe";
+    const call = (pad: number) => line({ type: "assistant", uuid: id(2), message: { content: [{ type: "tool_use", id: id2, name: "Read", input: { pad: "x".repeat(pad) } }] } });
+    const tail = (pad: number) => Buffer.byteLength(call(pad)) - call(pad).indexOf(id2);
+    const pad = 64 * 1024 + 8 - tail(0);
+    expect(tail(pad)).toBe(64 * 1024 + 8);
+    const path = transcript(line({ type: "user", uuid: id(1), parentUuid: null, message: { content: "look" } }) + call(pad)
+      + line({ type: "user", uuid: id(3), message: { content: [{ type: "tool_result", tool_use_id: id2, content: [picture] }] } }));
+    quiet();
+    exact(await transcriptImageAsync(path, `${id(3)}:0:0`));
+    exact(await transcriptImageAsync(path, `${id(3)}:0:0`));
+    exact(await asMain(path, `${id(3)}:0:0`));
+  });
+
   it("finds a tool's call however far back it was made, and only the last block naming it decides", async () => {
     const padding = line({ type: "progress", data: "x".repeat(1024 * 1024) }).repeat(3);
     const call = (uuid: number) => line({ type: "assistant", uuid: id(uuid), message: { content: [{ type: "tool_use", id: "read", name: "Read" }] } });
