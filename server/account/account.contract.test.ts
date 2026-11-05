@@ -15,6 +15,7 @@ import { exportPublicKey, generateKeyPair, importPublicKey } from "../../shared/
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { deriveServerId } from "../../shared/relay-server-proof.ts";
 import { applyAccountRecords } from "./records.ts";
+import { createServer } from "../index.ts";
 
 type Fixture = ReturnType<typeof relayFixture>;
 type Link = Awaited<ReturnType<typeof relayConnection>>;
@@ -750,6 +751,110 @@ test("a waiting remove survives a stop right after the service took its page's a
   await new AccountMailbox({ devices: f.app.context.services.devices, identity: () => identity, service: "https://account.test", fetch: service.fetch, pendingPath }).pull();
   expect(f.app.context.services.devices.hasKey(c.spki)).toBe(false);
 });
+
+test("a key paired again in one of two state dirs stays paired, without its tombstone, when the other starts", async () => {
+  const f = fixture();
+  const { key, link } = await member(f);
+  const gone = await accountKey();
+  await post(link, "/api/account/records", { records: [await add(key, gone.spki)] });
+  await post(link, "/api/account/records", { records: [await remove(key, gone.spki)] });
+  const sibling = mkdtempSync(join(tmpdir(), "ovis-account-sibling-"));
+  // both dirs share the registry and the removal
+  for (const name of ["devices.json", "account-tombstones.json"]) writeFileSync(join(sibling, name), readFileSync(join(f.stateDir, name)), { mode: 0o600 });
+  const store = f.app.context.services.devices;
+  // a second after the removal, as a person pairing again would be
+  const later = Date.now() + 1_000;
+  expect(store.pairRelay(store.startPairing(later).code, "Mac app", gone.spki, later)).not.toBeNull();
+  const other = createServer({ port: 0, hostname: "127.0.0.1", stateDir: sibling, siblingStateDir: f.stateDir, token: "t", tailscaleOwner: null, machines: false, sidecar: false });
+  try {
+    // the merge brings the other dir's tombstone back, and the start-up repair drops it: the row is newer
+    for (const devices of [other.context.services.devices, new DeviceStore(f.stateDir)]) {
+      expect(devices.hasKey(gone.spki)).toBe(true);
+      expect(devices.isTombstoned(gone.spki)).toBe(false);
+    }
+  } finally {
+    other.stop();
+    rmSync(sibling, { recursive: true, force: true });
+  }
+});
+
+test("a key revoked before the PC joined an account stays out: a member's signed add for it is refused", async () => {
+  const f = fixture();
+  const store = f.app.context.services.devices;
+  const revoked = await accountKey();
+  const before = store.pairRelay(store.startPairing().code, "Old phone", revoked.spki);
+  if (!before) throw new Error("Expected relay enrollment");
+  store.revoke(before.device.id);
+  const { key, link } = await member(f);
+  const outcome = await post(link, "/api/account/records", { records: [await add(key, revoked.spki)] });
+  expect((outcome.body as unknown as { results: { outcome: string; code?: string }[] }).results[0]).toMatchObject({ outcome: "refused", code: "tombstoned" });
+  expect(store.hasKey(revoked.spki)).toBe(false);
+});
+
+test("an account remove for a key this PC revoked first makes its tombstone the account's", async () => {
+  const f = fixture();
+  const { key, link } = await member(f);
+  const store = f.app.context.services.devices;
+  const gone = await accountKey();
+  await post(link, "/api/account/records", { records: [await add(key, gone.spki)] });
+  store.revoke(accountDeviceId(SERVER_ID, gone.spki));
+  const removal = await remove(key, gone.spki);
+  await post(link, "/api/account/records", { records: [removal] });
+  const kept = JSON.parse(readFileSync(join(f.stateDir, "account-tombstones.json"), "utf8")) as { tombstones: { key: string; record_id: string }[] };
+  expect(kept.tombstones.find((t) => t.key === gone.spki)?.record_id).toBe(removal.id);
+});
+
+test("a key revoked on this PC stays out when a sibling dir that missed the revoke added it through the account", async () => {
+  const f = fixture();
+  const { key, link } = await member(f);
+  const store = f.app.context.services.devices;
+  const gone = await accountKey();
+  await post(link, "/api/account/records", { records: [await add(key, gone.spki)] });
+  const sibling = mkdtempSync(join(tmpdir(), "ovis-account-sibling-"));
+  try {
+    // the sibling dir still has the account's row; this dir then revokes it on the PC
+    writeFileSync(join(sibling, "devices.json"), readFileSync(join(f.stateDir, "devices.json")), { mode: 0o600 });
+    store.revoke(accountDeviceId(SERVER_ID, gone.spki));
+    const registry = JSON.parse(readFileSync(join(sibling, "devices.json"), "utf8")) as { devices: { relay_public_key?: string; created_at: string }[] };
+    // made a second after the revoke, as the sibling knew nothing of it
+    for (const row of registry.devices) if (row.relay_public_key === gone.spki) row.created_at = new Date(Date.now() + 1_000).toISOString();
+    writeFileSync(join(sibling, "devices.json"), JSON.stringify(registry), { mode: 0o600 });
+    const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir: f.stateDir, siblingStateDir: sibling, token: "t", tailscaleOwner: null, machines: false, sidecar: false });
+    try {
+      expect(app.context.services.devices.hasKey(gone.spki)).toBe(false);
+    } finally { app.stop(); }
+  } finally { rmSync(sibling, { recursive: true, force: true }); }
+});
+
+test("merging two dirs keeps the account's removal of a key over a revoke on the PC, with the later time", () => {
+  const [a, b] = [mkdtempSync(join(tmpdir(), "ovis-account-a-")), mkdtempSync(join(tmpdir(), "ovis-account-b-"))];
+  try {
+    const key = "a-removed-key";
+    writeFileSync(join(a, "account-tombstones.json"), JSON.stringify({ v: 1, tombstones: [{ key, account: ACCOUNT, record_id: "r1", removed_at: "2026-11-01T00:00:00.000Z" }] }));
+    writeFileSync(join(b, "account-tombstones.json"), JSON.stringify({ v: 1, tombstones: [{ key, account: "", record_id: "local", removed_at: "2026-11-02T00:00:00.000Z" }] }));
+    expect(mergeAccountTombstones(a, b)).toBeNull();
+    for (const dir of [a, b]) {
+      const kept = JSON.parse(readFileSync(join(dir, "account-tombstones.json"), "utf8")) as { tombstones: { record_id: string; removed_at: string }[] };
+      expect(kept.tombstones.map((t) => [t.record_id, t.removed_at])).toEqual([["r1", "2026-11-02T00:00:00.000Z"]]);
+    }
+  } finally { for (const dir of [a, b]) rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("merging two dirs rewrites a dir whose tombstone for the key is the PC's revoke at the same time as the account's removal", () => {
+  const [a, b] = [mkdtempSync(join(tmpdir(), "ovis-account-a-")), mkdtempSync(join(tmpdir(), "ovis-account-b-"))];
+  try {
+    const key = "a-removed-key";
+    const at = "2026-11-02T00:00:00.000Z";
+    writeFileSync(join(a, "account-tombstones.json"), JSON.stringify({ v: 1, tombstones: [{ key, account: "", record_id: "local", removed_at: at }] }));
+    writeFileSync(join(b, "account-tombstones.json"), JSON.stringify({ v: 1, tombstones: [{ key, account: ACCOUNT, record_id: "r1", removed_at: at }] }));
+    expect(mergeAccountTombstones(a, b)).toBeNull();
+    for (const dir of [a, b]) {
+      const kept = JSON.parse(readFileSync(join(dir, "account-tombstones.json"), "utf8")) as { tombstones: { record_id: string }[] };
+      expect(kept.tombstones.map((t) => t.record_id)).toEqual(["r1"]);
+    }
+  } finally { for (const dir of [a, b]) rmSync(dir, { recursive: true, force: true }); }
+});
+
 
 test("a watching member leaves the account on a PC with a remove signed by its own key", async () => {
   const f = fixture();
