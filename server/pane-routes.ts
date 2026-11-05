@@ -342,7 +342,7 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
       if (error instanceof ConversationUnavailable) {
         conversationDiagnostics.unavailable(paneId, error, requestIdContext.getStore()?.id);
         const recovery = page.history_id !== undefined && copilotRecoverable(error.diagnostic) ? { recovery: "waiting" } : {};
-        return jsonResponse({ source: "scrollback", turns: [], ...recovery, ...(error.screen ? { metadata: error.screen, screen: true } : {}) });
+        return jsonResponse({ source: "scrollback", turns: [], ...recovery, ...(error.hint ? { hint: error.hint } : {}), ...(error.screen ? { metadata: error.screen, screen: true } : {}) });
       }
       return errorResponse(error);
     }

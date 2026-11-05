@@ -748,6 +748,12 @@ export interface ConversationResponse {
    */
   recovery?: "waiting";
   /**
+   * On a scrollback answer for a Copilot pane on Linux: its one Copilot process was not started with
+   * `--ui-server`, and Chat could not bind its session from the files and herdr's report; starting it
+   * with the flag may help.
+   */
+  hint?: "copilot_ui_server";
+  /**
    * Where the first turn sits in the transcript: pass it as `before` for the page
    * of turns before these (with `since`, never reaching back past that cursor), or
    * as `from` to keep polling from it. A `from` answer starts later than `from` when

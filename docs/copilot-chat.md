@@ -42,6 +42,9 @@ That API has no authentication. With Copilot CLI 1.0.105, any program that can r
 loopback port can control the session, including creating new sessions, and setting
 `COPILOT_CONNECTION_TOKEN` did not change this. Other users on the same PC may be able to reach
 it too. Whether to run Copilot with it is your choice; without it, Chat uses the evidence above.
+On Linux, when a single Copilot process started without it shows terminal output in Chat, a
+notice says the option may help and names its risk, so the choice can be made where the problem
+shows.
 
 ## History and limits
 

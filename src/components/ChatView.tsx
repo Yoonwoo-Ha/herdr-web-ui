@@ -277,6 +277,7 @@ interface ChatState {
   messages: TranscriptMessage[];
   scrollback?: string;
   truncated: boolean;
+  hint?: ConversationResponse["hint"];
 }
 
 const EMPTY_STATE: ChatState = { source: "conversation", turns: [], messages: [], truncated: false };
@@ -1841,7 +1842,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         showAnswerDetails(conversation);
         let next: ChatState;
         if (conversation.source !== "scrollback") next = conversationState(conversation);
-        else if (agent !== null) next = { source: "scrollback", turns: [], messages: [], truncated: false };
+        else if (agent !== null) next = { source: "scrollback", turns: [], messages: [], truncated: false, hint: conversation.hint };
         else {
           // The reader has rejected this history. Hide it before the separate terminal
           // request, which may wait or fail; a transport error must not revive those turns.
@@ -1852,7 +1853,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
           }
           const result = await fetchPaneTranscript(paneId, TRANSCRIPT_LINES, signal);
           if (cancelled || generation !== olderGeneration.current) return;
-          next = { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text).filter((message) => message.role !== "status"), scrollback: result.text, truncated: result.truncated === true };
+          next = { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text).filter((message) => message.role !== "status"), scrollback: result.text, truncated: result.truncated === true, hint: conversation.hint };
         }
         showAnswer(conversation, next, moved);
         setReadPresentation(proved ? readKey : undefined);
@@ -2753,6 +2754,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       {stale && error === null && <p className="chat-inline-state" role="status">{t("Updates paused — waiting for the agent's next activity")}</p>}
       {loaded && error === null && agent === "grok" && state.source !== "conversation" && <p className="chat-inline-state" role="status">{t("Grok chat is unavailable. Open Terminal to see activity and tool calls.")}</p>}
       {loaded && error === null && agent === "agy" && state.source !== "conversation" && <p className="chat-inline-state" role="status">{t("Antigravity chat is unavailable. Open Terminal to see activity and tool calls.")}</p>}
+      {loaded && error === null && agent === "copilot" && state.source === "scrollback" && state.hint === "copilot_ui_server" && <p className="chat-inline-state" role="status">{t("Copilot chat is unavailable. On Linux, starting Copilot with copilot --ui-server --port=0 may help. Its local API has no authentication: any program on this PC can control that session.")}</p>}
       {/* The agent's activity, where no open work block says it: before the turn has an assistant or
           tool row (Claude Code's spinner writes nothing to the transcript), and while a native turn
           thinks (a work block's head says Working). Without native activity the pane status stands

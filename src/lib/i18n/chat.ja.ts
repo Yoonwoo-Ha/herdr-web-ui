@@ -13,6 +13,7 @@ export const CHAT_JA: Record<string, string> = {
   "Thinking…": "思考中…",
   "Updates paused — waiting for the agent's next activity": "更新を一時停止中 — エージェントの次の動作を待っています",
   "Grok chat is unavailable. Open Terminal to see activity and tool calls.": "Grokのチャットを利用できません。ターミナルを開いて動作状況とツール呼び出しを確認してください。",
+  "Copilot chat is unavailable. On Linux, starting Copilot with copilot --ui-server --port=0 may help. Its local API has no authentication: any program on this PC can control that session.": "Copilotのチャットを利用できません。Linuxでは、Copilotを copilot --ui-server --port=0 で起動すると改善する場合があります。そのローカルAPIには認証がないため、このPC上のどのプログラムでもそのセッションを操作できます。",
   "Message from another session: {name}": "別のセッションからのメッセージ: {name}",
   "Message from another session": "別のセッションからのメッセージ",
   "locked — the token gate is asking again": "ロック中 — トークンゲートが再度確認しています",

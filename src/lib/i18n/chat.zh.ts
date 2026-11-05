@@ -13,6 +13,7 @@ export const CHAT_ZH: Record<string, string> = {
   "Thinking…": "思考中…",
   "Updates paused — waiting for the agent's next activity": "更新已暂停 — 正在等待代理的下一次活动",
   "Grok chat is unavailable. Open Terminal to see activity and tool calls.": "Grok 聊天暂不可用。请打开终端查看运行状态和工具调用。",
+  "Copilot chat is unavailable. On Linux, starting Copilot with copilot --ui-server --port=0 may help. Its local API has no authentication: any program on this PC can control that session.": "Copilot 聊天暂不可用。在 Linux 上，使用 copilot --ui-server --port=0 启动 Copilot 或许会有帮助。其本地 API 没有身份验证：此电脑上的任何程序都可以控制该会话。",
   "Message from another session: {name}": "来自另一个会话的消息：{name}",
   "Message from another session": "来自另一个会话的消息",
   "locked — the token gate is asking again": "已锁定 — 令牌门再次要求验证",
