@@ -949,10 +949,10 @@ export interface PromptAnswer {
  *  Client -> server frames: attach {pane_id, cols, rows} | detach {pane_id} | input {pane_id, text}
  *    | keys {pane_id, keys} | resize {pane_id, cols, rows} | release-size {pane_id} | role {mode}
  *    | pty-ack {pane_id, stream_id, offset} | secret {id, pane_id, prompt, secret}
- *    | watch {pane_id, cols, rows} | unwatch {pane_id} | conversation-watch {pane_id, enabled}
- *    | insert {id, pane_id, text}
+ *    | watch {pane_id, cols, rows} | unwatch {pane_id} | conversation-watch {pane_id, enabled, detached?}
+ *    | prompt-watch {pane_id, enabled} | insert {id, pane_id, text}
  *  Server -> client frames: snapshot | pty-data | pty-exit | pane-geometry | role-ack
- *    | pane-status | pane-exited | session-changed | conversation-changed | secret-result
+ *    | pane-status | pane-exited | session-changed | conversation-changed | prompt-changed | secret-result
  *    | insert-result | input-result | watch-data | watch-end | error
  *
  *  attach {flow_control:"ack"} opts into per-subscription output credit.
@@ -1004,8 +1004,16 @@ export type ClientMessage =
   | { type: "attach"; pane_id: string; cols: number; rows: number; flow_control?: "ack"; keep_size?: boolean; /** Opaque browser UUID for device-bound Pi presentation receipts only; never input authority. */ receipt_resume_id?: string }
   | { type: "detach"; pane_id: string }
   /** Native invalidations require "conversation-watch" and an attachment; observers may subscribe.
-   * Detaching clears interest, so reconnect/reattach must enable it again. REST remains authoritative. */
-  | { type: "conversation-watch"; pane_id: string; enabled: boolean }
+   * Detaching clears interest, so reconnect/reattach must enable it again. REST remains authoritative.
+   * `detached: true` (feature "conversation-watch-detached"): an interest that needs no attachment, for a client that
+   * shows the chat and no terminal. It survives attaching and detaching the pane and ends with a `detached: true`
+   * disable or the connection; at most 32 per connection (`too_many_conversation_watches`). */
+  | { type: "conversation-watch"; pane_id: string; enabled: boolean; detached?: boolean }
+  /** feature "prompt-watch": a `prompt-changed` whenever the prompt on the pane's screen opens, closes or becomes
+   * another one, without attaching the pane. Ends with a disable, the connection, or an error `prompt_watch_ended`
+   * (the pane closed, or its screen could not be read 10 times in a row); at most 32 per connection
+   * (`too_many_prompt_watches`). GET /api/pane/prompt stays authoritative. */
+  | { type: "prompt-watch"; pane_id: string; enabled: boolean }
   /** a pane another web bridge holds (`attach_held`): take herdr's attach slot from it, here, now */
   | { type: "take-over"; pane_id: string }
   /** `stop`: the composer's Stop (text a lone ESC). The bridge sends it in the pane's turn, after typing
@@ -1135,8 +1143,10 @@ export interface ClientConnectionTrace {
  * the pane's last TERMINAL_HISTORY_LINES lines, so the client keeps the scrollback and scrolls it itself. Without it herdr
  * owns the scrollback and the client keeps none.
  * `conversation-search`: GET /api/pane/conversation/search answers; without it the browser offers no conversation search.
+ * `conversation-watch-detached` and `prompt-watch`: a client may follow a pane's conversation and prompt without
+ * attaching it (the `conversation-watch` and `prompt-watch` frames).
  */
-export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events" | "terminal-history" | "input-receipt" | "conversation-search";
+export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events" | "terminal-history" | "input-receipt" | "conversation-search" | "conversation-watch-detached" | "prompt-watch";
 
 export type ServerMessage =
   | { type: "machine-event"; event: MachineEvent }
@@ -1197,6 +1207,9 @@ export type ServerMessage =
   | { type: "pane-status"; pane_id: string; agent_status: AgentStatus; finish_id?: number; finish_epoch?: string; /** a pane's running background tasks (OmO's, or a Claude Code pane's subagents and commands), when the frame is about them: it changes no status */ background_tasks?: number; /** every frame says it: absent, the pane does not wait on its turn's background work */ background_wait?: true; /** a pane's plan, when the frame is about it (null: it keeps none now); it changes no status */ plan?: PlanSummary | null }
   /** Native transcript invalidation for an interested attached pane; signature is opaque, not a REST ETag. Refetch the existing conversation endpoint. */
   | { type: "conversation-changed"; pane_id: string; signature: string }
+  /** the prompt on a watched pane's screen (`prompt-watch`) opened, closed or became another one: read GET /api/pane/prompt
+   * again. The first comes with the watch's first read. `signature` is opaque, the same for the same prompt text */
+  | { type: "prompt-changed"; pane_id: string; signature: string }
   /** a pane's process exited (pushed even when nobody is attached to it) */
   | { type: "pane-exited"; pane_id: string }
   /** session structure changed (pane created/closed): refetch /api/session */

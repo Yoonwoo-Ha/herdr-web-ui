@@ -551,6 +551,28 @@ resolves through existing provider/process evidence, checks file identity, size 
 without parsing turns, and rechecks session resolution every 5 s (2 s while a transcript is
 missing). The last interested client, failed/ended attachment and server stop release it.
 
+A client that shows a pane's chat and no terminal follows it without attaching it: bridges that
+advertise `"conversation-watch-detached"` take `conversation-watch {pane_id, enabled, detached:true}`.
+That interest survives the same connection attaching and detaching the pane, and ends with a
+`detached:true` disable or the connection; at most 32 per connection
+(`too_many_conversation_watches`). The browser does not send it.
+
+Prompts an idle agent opens (Codex's or Claude's folder-trust menu) change no agent status.
+Bridges that advertise `"prompt-watch"` take `prompt-watch {pane_id, enabled}` and send
+`prompt-changed {pane_id, signature}` with the watch's first read and whenever the prompt on the
+pane's screen opens, closes or becomes another one; GET `/api/pane/prompt` stays authoritative.
+One 500 ms loop for the whole server reads each watched pane once however many clients watch it,
+at most four at a time, and reads none herdr reports blocked (pane-status says so; the first read
+after it is sent again): a client re-reads GET `/api/pane/prompt` itself while a pane stays
+blocked, as a multi-step prompt can move on without a frame. A working pane is read: Codex asks the
+questions in its queue while it works. A pi pane is not read at all, as its pi-ask card keeps the
+answers to earlier steps in a draft a late read of an older form would replace. The prompt is compared by its text alone, and OpenCode's forms are read into a state of the
+watches' own, so a watch's reads start or end no asking and never move the ids or drafts
+`/api/pane/prompt` hands out. A closed pane, or 10 failed reads of it in a row, ends the watch with
+an error `prompt_watch_ended`; a snapshot herdr does not answer (a restart) ends none. At most 32
+per connection (`too_many_prompt_watches`); a second watcher of a pane already read gets the
+current `prompt-changed` at once. The browser does not send it.
+
 Newest-page refreshes are single-flight. Push-triggered reads start at least 1 s apart using
 monotonic elapsed time, with one trailing refresh at a fixed deadline: continuous writes cannot
 keep postponing it. A push after idle reads immediately. Initial display, explicit sends,
