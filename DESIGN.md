@@ -1430,6 +1430,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   never off the snapshot, so the row still files. The parts are one list, so a row that changes
   part is moved with its focus and open menu. It follows the Codex
   app, which keeps background and subagent work in a box at the bottom of its sidebar (#1369).
+- Settings > Appearance > Background workspaces apart (a device setting, off by default) does the same
+  for a PC's workspace list: workspaces a launcher tags `role=background` (`herdr workspace
+  report-metadata --token`, any case) stand after the other unpinned rows, under a **Background
+  workspaces** heading styled like the Agents one (`.workspace-background-toggle`), folded at first
+  and kept per PC on this device; its count always shows. Only a group's head files it: a tagged
+  worktree stays under its repository. A folded part still shows the open workspace and one whose
+  agent is blocked; a pinned one stays in the pinned card; under the filter the part opens. Alt+arrows
+  and drags move a row only among the rows of its own part, and not while it is folded. An untagged workspace stays where it is.
+  It follows the Codex app's bottom box for background work, as the Agents list does (#770).
 - Settings > Appearance > **Fold helpers under their agent** (the device setting `foldHelpers`,
   off by default, #772) puts one line under each agent row that has helpers in the same list
   (`.agent-helpers`): it hangs from the agent as a helper does, a helper's height, with a caret

@@ -17,6 +17,7 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Unpin workspace": "取消固定工作区",
   "Pinned": "已固定",
   "Background agents": "后台代理",
+  "Background workspaces": "后台工作区",
   "Helpers": "助手",
   "Helpers of {title}": "{title} 的助手",
   "Fold helpers under their agent": "把助手折叠在其代理下",

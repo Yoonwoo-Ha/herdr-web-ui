@@ -17,6 +17,7 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Unpin workspace": "워크스페이스 고정 해제",
   "Pinned": "고정됨",
   "Background agents": "백그라운드 에이전트",
+  "Background workspaces": "백그라운드 워크스페이스",
   "Helpers": "도우미",
   "Helpers of {title}": "{title}의 도우미",
   "Fold helpers under their agent": "도우미를 에이전트 아래에 접기",

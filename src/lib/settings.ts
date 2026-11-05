@@ -164,6 +164,8 @@ export interface Settings {
   followHerdrFocus: boolean;
   /** a mouse resting on the collapsed sidebar's toggle shows the sidebar over the pane for a moment (lib/sidebarPeek.ts, #2588) */
   sidebarPeek: boolean;
+  /** workspaces a launcher tagged `role=background` stand after the others under a folded heading (components/Sidebar.tsx); off until chosen */
+  sidebarBackgroundWorkspaces: boolean;
   /** chat text size in px (its body text; the rest scales with it); null follows the interface size */
   chatFontSize: number | null;
   /** fonts tried before the UI font in the chat's prose (code stays mono), as a CSS font-family list; "" keeps the UI font */
@@ -285,13 +287,13 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 
 /** Raw custom text, key combinations and account keys are never copied. Requiring every other
  * Settings field in the projection makes a new field require an explicit collection decision.
- * keyBarExpanded, agentLocks, lockedAgents, the named agent groups, fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, sidebarPeek, splitGrid, autoTabNames, composerNewTabButton, composerArtifacts, composerPasteSend, composerBtw, terminalMirrorWrap, terminalImages, terminalAttachButton, terminalKeyboardOnRequest, terminalFoldKeyBar, markdownOutline, sidebarFilter, sidebarContext, foldHelpers, pcLoad, voiceEngine, the agent groups, the
+ * keyBarExpanded, agentLocks, lockedAgents, the named agent groups, fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, sidebarPeek, sidebarBackgroundWorkspaces, splitGrid, autoTabNames, composerNewTabButton, composerArtifacts, composerPasteSend, composerBtw, terminalMirrorWrap, terminalImages, terminalAttachButton, terminalKeyboardOnRequest, terminalFoldKeyBar, markdownOutline, sidebarFilter, sidebarContext, foldHelpers, pcLoad, voiceEngine, the agent groups, the
  * interface font, the file text size, the chat's history page size and the folds its blocks start in are not collected: the telemetry schema
  * (shared/telemetry.ts) does not carry them. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "keyBarExpanded" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily"
   | "quickReplies" | "agentLocks" | "lockedAgents" | "agentNamedGroups" | "agentGroupNames" | "agentGroupOf" | "usageOrder" | "usageHidden" | "fileOpen" | "filesPanel" | "filesDocuments" | "webLinks" | "reuseExternalLinkTab" | "claudeLaunchMode" | "codexLaunchMode"
-  | "followHerdrFocus" | "sidebarPeek" | "splitGrid" | "composerNewTabButton" | "composerArtifacts" | "composerPasteSend" | "composerBtw" | "terminalMirrorWrap" | "sidebarFilter" | "sidebarContext" | "foldHelpers" | "pcLoad" | "historyPrompts"
+  | "followHerdrFocus" | "sidebarPeek" | "sidebarBackgroundWorkspaces" | "splitGrid" | "composerNewTabButton" | "composerArtifacts" | "composerPasteSend" | "composerBtw" | "terminalMirrorWrap" | "sidebarFilter" | "sidebarContext" | "foldHelpers" | "pcLoad" | "historyPrompts"
   | "expandThinking" | "foldWork" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort" | "terminalImages" | "terminalAttachButton"
   | "terminalKeyboardOnRequest" | "terminalFoldKeyBar" | "markdownOutline" | "fileFontSize" | "fileFontBase" | "editTextFiles">;
 
@@ -386,6 +388,8 @@ export const SETTING_SCOPE = {
   splitGrid: "device",
   // a desk's mouse, which a phone has not
   sidebarPeek: "device",
+  // a phone's short list may set the workers apart while a desk keeps herdr's order, as with the filter
+  sidebarBackgroundWorkspaces: "device",
   chatFontSize: "device", chatFontFamily: "device", fileFontSize: "device", fileFontBase: "device", historyPrompts: "device", uiFontSize: "device", uiFontFamily: "device", chatWidth: "device", enterSends: "device",
   // the chat's starting folds are this screen's, as its width: a phone may fold the work a desk keeps open
   expandThinking: "device", foldWork: "device",
@@ -460,6 +464,7 @@ export const DEFAULT_SETTINGS: Settings = {
   followHerdrFocus: false,
   splitGrid: false,
   sidebarPeek: false,
+  sidebarBackgroundWorkspaces: false,
   chatFontSize: null,
   fileFontSize: null,
   fileFontBase: null,
@@ -690,6 +695,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     followHerdrFocus: typeof record["followHerdrFocus"] === "boolean" ? record["followHerdrFocus"] : DEFAULT_SETTINGS.followHerdrFocus,
     splitGrid: record["splitGrid"] === true,
     sidebarPeek: record["sidebarPeek"] === true,
+    sidebarBackgroundWorkspaces: record["sidebarBackgroundWorkspaces"] === true,
     chatFontFamily: sanitizeFontFamily(record["chatFontFamily"]),
     chatWidth: CHAT_WIDTHS.includes(record["chatWidth"] as ChatWidth) ? record["chatWidth"] as ChatWidth : DEFAULT_SETTINGS.chatWidth,
     enterSends: typeof record["enterSends"] === "boolean" ? record["enterSends"] : null,

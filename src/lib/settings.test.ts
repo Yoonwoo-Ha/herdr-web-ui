@@ -470,6 +470,15 @@ it("keeps the sidebar's hover peek off until this device turns it on, and keeps 
   expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("sidebarPeek");
 });
 
+it("keeps background workspaces in place until this device turns their part on, and keeps that choice its own", () => {
+  expect(DEFAULT_SETTINGS.sidebarBackgroundWorkspaces).toBe(false);
+  expect(sanitizeSettings({}).sidebarBackgroundWorkspaces).toBe(false);
+  expect(sanitizeSettings({ sidebarBackgroundWorkspaces: true }).sidebarBackgroundWorkspaces).toBe(true);
+  expect(sanitizeSettings({ sidebarBackgroundWorkspaces: "true" }).sidebarBackgroundWorkspaces).toBe(false);
+  expect(SETTING_SCOPE.sidebarBackgroundWorkspaces).toBe("device");
+  expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("sidebarBackgroundWorkspaces");
+});
+
 it("keeps the composer's New tab button off until this device turns it on, and keeps that choice its own", () => {
   expect(sanitizeSettings({}).composerNewTabButton).toBe(false);
   expect(sanitizeSettings({ composerNewTabButton: true }).composerNewTabButton).toBe(true);

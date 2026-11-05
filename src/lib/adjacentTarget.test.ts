@@ -70,6 +70,15 @@ describe("sidebarWorkspaceSteps", () => {
     expect(sidebarWorkspaceSteps(ordered, [], (key) => key === "r", null)).toEqual(["a", "b", "d"]);
     expect(sidebarWorkspaceSteps(ordered, [], (key) => key === "r", "c")).toEqual(["a", "b", "c", "d"]);
   });
+
+  it("puts tagged background workspaces last while their part is apart, a folded part keeping only the selected one", () => {
+    const tagged = [workspace("x", { tokens: { role: "background" } }), workspace("a"), workspace("y", { tokens: { role: "Background" } }), workspace("d")];
+    expect(sidebarWorkspaceSteps(tagged, [], () => false, null)).toEqual(["x", "a", "y", "d"]);
+    expect(sidebarWorkspaceSteps(tagged, [], () => false, null, false)).toEqual(["a", "d", "x", "y"]);
+    expect(sidebarWorkspaceSteps(tagged, [], () => false, "y", true)).toEqual(["a", "d", "y"]);
+    // one whose agent asks a question stays in a folded part, as the sidebar draws it
+    expect(sidebarWorkspaceSteps(tagged, [], () => false, "a", true, new Set(["x"]))).toEqual(["a", "d", "x"]);
+  });
 });
 
 describe("adjacentWorkspacePane", () => {

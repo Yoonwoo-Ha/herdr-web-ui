@@ -1,5 +1,5 @@
 /**
- * Chinese for the settings keys of Settings → Chat → Composer's optional buttons and chips, and of Settings → Terminal → Split into rows and columns: the rest of the
+ * Chinese for the settings keys of Settings → Chat → Composer's optional buttons and chips, of Settings → Terminal → Split into rows and columns, and of Settings → Appearance → Background workspaces apart: the rest of the
  * settings part (./settings.zh.ts), kept apart so each file stays short. Both files are the one settings part,
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
@@ -14,4 +14,6 @@ export const SETTINGS_COMPOSER_ZH: Record<string, string> = {
   "A button in the empty message box sends the text copied on this device as a message.": "空输入框中的按钮会把在此设备上复制的文本作为消息发送。",
   "Split into rows and columns": "按行和列拆分",
   "Drop a pane on the edge of another in the split view to open it beside, above or below that pane, up to four at once, and drag the line between two panes to resize them. Off: the split view keeps two halves side by side.": "在拆分视图中把窗格放到另一个窗格的边缘，即可在它的旁边、上方或下方打开，最多同时四个；拖动两个窗格之间的线可调整大小。关闭时，拆分视图保持左右两半。",
+  "Background workspaces apart": "单独放置后台工作区",
+  "On this device, workspaces a tool tagged role=background (herdr workspace report-metadata --token role=background) stand after the others under a folded Background workspaces heading. The open one, and one whose agent asks a question, stay in sight.": "在此设备上,工具标记了 role=background 的工作区(herdr workspace report-metadata --token role=background)会排在其他工作区之后,放在折叠的“后台工作区”标题下。打开的工作区和代理正在提问的工作区仍然可见。",
 };

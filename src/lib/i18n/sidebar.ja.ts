@@ -17,6 +17,7 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Unpin workspace": "ワークスペースの固定を解除",
   "Pinned": "固定済み",
   "Background agents": "バックグラウンドのエージェント",
+  "Background workspaces": "バックグラウンドのワークスペース",
   "Helpers": "ヘルパー",
   "Helpers of {title}": "{title} のヘルパー",
   "Fold helpers under their agent": "ヘルパーをエージェントの下にたたむ",

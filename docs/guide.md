@@ -127,6 +127,13 @@ pane with `herdr pane report-metadata <pane_id> --source <id> --token role=backg
 moves up with the others until it is answered, and a pinned one stays in the pinned card. Panes
 without the tag stay where they are.
 
+Workspaces can be set apart the same way: tag each one a tool opens for its workers with
+`herdr workspace report-metadata <workspace_id> --source <id> --token role=background`, and turn on
+**Settings > Appearance > Background workspaces apart** (off by default). The sidebar then lists those
+workspaces after the others, under **Background workspaces**, folded at first with their count. The
+workspace you have open, and one whose agent asks a question, stay in sight, and a pinned one stays in
+the pinned card.
+
 
 **3. Take it with you.** Scan the installer's QR code with a phone signed in to the same Tailscale account, then install the app from the browser. No Tailscale? Turn on the [Ovis relay](#through-the-ovis-relay) and scan its QR code instead. See [On your phone](#on-your-phone).
 

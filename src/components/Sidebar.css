@@ -276,6 +276,47 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   height: 1em;
 }
 
+/* Settings → Background workspaces apart: the workspaces a launcher tagged role=background stand after the
+   rest, under a heading like the Agents list's Background agents one (AgentSidebar.css) that folds them and
+   says how many there are; its caret takes the leading cell */
+.workspace-background-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--side-row);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  line-height: var(--lh-tight);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.workspace-background-caret {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin-inline: calc((var(--side-box) - var(--space-4)) / 2);
+}
+
+.workspace-background-count {
+  width: var(--side-box);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+@media (hover: hover) {
+  .workspace-background-toggle:hover { color: var(--text); }
+}
+
 .workspace {
   display: flex;
   flex-direction: column;

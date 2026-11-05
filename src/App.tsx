@@ -4,7 +4,7 @@ import { Bell, CircleHelp, Ellipsis, FolderOpen, Link, Menu, MessageSquare, Pane
 import type { HerdrPane, PaneDirection } from "../shared/protocol.ts";
 import { authenticate, createTab, movePaneBeside, moveTabToWorkspace, paneSessionKey, shareSeen, swapPaneWith } from "./lib/api.ts";
 import { layoutActions } from "./lib/layoutActions.ts";
-import { displayPaneTitle, storedWorktreeCollapsed, tabPaneTitle } from "./components/Sidebar.tsx";
+import { displayPaneTitle, storedBackgroundFolded, storedWorktreeCollapsed, tabPaneTitle } from "./components/Sidebar.tsx";
 import { endSignIn } from "./lib/signOut.ts";
 import { PaneCanvas } from "./components/PaneCanvas.tsx";
 import { MachineSessionsProvider } from "./lib/machineSessionContext.tsx";
@@ -498,7 +498,9 @@ export function App() {
           const ordered = reorderCoordinator.order(selectedMachineId, roster.workspaces.map((workspace) => workspace.workspace_id)).flatMap((id) => byId.get(id) ?? []);
           const selectedWorkspaceId = roster.panes.find((pane) => pane.pane_id === selectedPaneId)?.workspace_id ?? null;
           const folded = (repoKey: string) => repoKey !== "" && storedWorktreeCollapsed(selectedMachineId, [repoKey]).has(repoKey);
-          return sidebarWorkspaceSteps(ordered, pinnedWorkspaceIds(currentSidebarPins(), selectedMachineId), folded, selectedWorkspaceId);
+          const backgroundFolded = settings.sidebarBackgroundWorkspaces ? storedBackgroundFolded(selectedMachineId) : null;
+          const blocked = new Set(roster.panes.filter((pane) => pane.agent_status === "blocked").map((pane) => pane.workspace_id));
+          return sidebarWorkspaceSteps(ordered, pinnedWorkspaceIds(currentSidebarPins(), selectedMachineId), folded, selectedWorkspaceId, backgroundFolded, blocked);
         };
         const order = drawnWorkspaceRows(selectedMachineId) ?? unfolded();
         const viewed: ViewedPane = (scope, id) => lastViewedPane(scope, selectedMachineId, id);
@@ -613,7 +615,7 @@ export function App() {
       // herdr's layout calls on the selected pane (lib/layoutActions.ts): only those the PC's herdr answers
       ...layoutActions({ selectedPaneId, offer: appLayout, paneSplits: !selectedPane?.own_tab, selection: selectionRef, roster: snapshotRef, load, selectPane, layoutRefused }),
     }),
-    [revealFiles, selectPane, selectedPaneId, selectedPane?.own_tab, selectedMachineId, appLayout, reorderCoordinator, tabStripMounted, setView, view, terminalPeek, endPeek, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.run, enableNotifications, load, layoutRefused, moveRefused, lenses, openSidebarFilter, selectedSearchable, requestSearch, split, soloSlot, settings.webLinks, openWebPage],
+    [revealFiles, selectPane, selectedPaneId, selectedPane?.own_tab, selectedMachineId, appLayout, reorderCoordinator, tabStripMounted, setView, view, terminalPeek, endPeek, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.run, enableNotifications, load, layoutRefused, moveRefused, lenses, openSidebarFilter, selectedSearchable, requestSearch, split, soloSlot, settings.webLinks, settings.sidebarBackgroundWorkspaces, openWebPage],
   );
 
   useShortcuts(actions, locked === false);
