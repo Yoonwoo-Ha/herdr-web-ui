@@ -7,7 +7,7 @@ import type { ViewportIntentGate } from "../lib/viewportIntent.ts";
 import { ApiError } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
 import { PAGE_OVERLAP_ROWS, pageScrollDistance } from "../lib/pageScroll.ts";
-import { scrollPollDelay, validScroll, visibleFindRects, type FindCellRect } from "../lib/terminalViewport.ts";
+import { SCROLL_POLL_BUSY_MS, SCROLL_POLL_SETTLE_MS, scrollPollDelay, validScroll, visibleFindRects, type FindCellRect } from "../lib/terminalViewport.ts";
 import "./TerminalViewportTools.css";
 
 export interface TerminalSearchState { query: string; result: PaneFindResponse }
@@ -55,6 +55,8 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     let writing = false;
     let desired: number | null = null;
     let dirty = false;
+    // something other than output (a resize, a scroll, coming into view, a refresh) moved since the read began
+    let urgent = false;
     // metrics reads in a row with nothing in between that could move them: the poll backs off
     let idle = 0;
     let version = 0;
@@ -63,7 +65,15 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     // history back, and until the next read says so its zero-history metrics must not turn a page into
     // keys for the shell. A page asked for meanwhile waits for that read, briefly.
     let metricsOutput = -1;
-    let heldPage: { direction: -1 | 1; at: number } | null = null;
+    // when the read behind the current metrics began
+    let metricsAt = 0;
+    // output timing: the first output after a quiet spell reads at the busy cadence, only sustained output slows down
+    let outputAt = -Infinity, burstFrom = -Infinity;
+    // until when a wheel or swipe keeps the poll off the follow pace: its output may come after the read it woke
+    let gestureUntil = 0;
+    // pages asked for on stale metrics (steps: their sum, signed like a direction); strict: one was held on
+    // zero-history metrics, so they run only on metrics read after the latest output
+    let heldPage: { steps: number; at: number; strict: boolean } | null = null;
     let heldLines: { lines: number; at: number } | null = null;
     let data: PaneFindResponse | null = null;
     let lastKey = "";
@@ -123,10 +133,13 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       if (!alive) return;
       if (pending || writing) { dirty = true; return; }
       if (!showing()) { idle = 0; schedule(1000); return; }
-      pending = true; dirty = false;
+      pending = true; dirty = false; urgent = false;
+      const startedAt = Date.now();
       const revision = version;
       const output = outputVersion;
       const cols = terminal.cols, rows = terminal.rows;
+      // A failed read must not borrow the last valid metrics used by the idle-reset comparison.
+      let readMetrics: PaneScrollInfo | null = null;
       try {
         let found: PaneFindResponse | null = null;
         if (query) {
@@ -135,25 +148,29 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
         }
         const metrics = found?.scroll ?? await api.fetchPaneScroll(paneId);
         if (!alive || revision !== version || cols !== terminal.cols || rows !== terminal.rows) return;
+        readMetrics = metrics;
         setScroll((old) => validScroll(metrics) ? old && old.offset_from_bottom === metrics.offset_from_bottom && old.max_offset_from_bottom === metrics.max_offset_from_bottom && old.viewport_rows === metrics.viewport_rows ? old : metrics : null);
         if (validScroll(metrics)) {
           // metrics that moved without output (another client, history growing under a held view) mean the pane is not idle
           const last = scrollRef.current;
           if (last && (last.offset_from_bottom !== metrics.offset_from_bottom || last.max_offset_from_bottom !== metrics.max_offset_from_bottom)) idle = 0;
-          scrollRef.current = metrics; metricsOutput = output;
+          scrollRef.current = metrics; metricsOutput = output; metricsAt = startedAt;
         }
         data = output === outputVersion ? found : null;
         // also the box: a pane shown again by its visibility style, not its size, gets no ResizeObserver call
         paint();
-        // a page held on stale metrics runs on the first read after the latest output, while it is recent
-        if (heldPage && output === outputVersion) {
+        // a page held on stale metrics runs on the first read after the latest output, while it is recent;
+        // one held only for a fresh read runs on a read that began soon after it, however long that read took
+        if (heldPage && validScroll(metrics) && (output === outputVersion || (!heldPage.strict && heldPage.at <= startedAt))) {
           const held = heldPage;
           heldPage = null;
-          if (Date.now() - held.at < HELD_PAGE_MS) scrollPage(held.direction);
+          if (held.strict ? Date.now() - held.at < HELD_PAGE_MS : startedAt - held.at < HELD_PAGE_MS) {
+            for (let step = 0; step < Math.abs(held.steps); step++) scrollPage(held.steps > 0 ? 1 : -1, true);
+          }
         }
-        if (heldLines && output === outputVersion && validScroll(metrics)) {
+        if (heldLines && validScroll(metrics) && (output === outputVersion || heldLines.at <= startedAt)) {
           const held = heldLines; heldLines = null;
-          if (Date.now() - held.at < HELD_PAGE_MS) scrollLines(held.lines);
+          if (startedAt - held.at < HELD_PAGE_MS) scrollLines(held.lines, true);
         }
       } catch {
         // a failed read retries on the first step, not the idle backoff: page keys wait on it
@@ -161,10 +178,23 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       } finally {
         pending = false;
         // an idle pane at the bottom backs off; output, a scroll, a resize, moved metrics or coming back into view resets it
-        if (alive) schedule(scrollPollDelay(dirty, idle++, scrollRef.current));
+        // a held page or line scroll retries at the busy cadence, well inside its hold
+        if (alive) schedule(scrollPollDelay(dirty || !!heldPage || !!heldLines, idle++, readMetrics, following()));
       }
     };
-    const wake = () => { dirty = true; idle = 0; schedule(); };
+    // only output moved since the last read, and it has been arriving for a while: a view at the bottom reads at the follow pace
+    const following = () => {
+      const now = Date.now();
+      return !urgent && !query && !heldPage && !heldLines && now >= gestureUntil && now - burstFrom >= SCROLL_POLL_SETTLE_MS;
+    };
+    /** Holds a page until a fresh read; presses add up, so two quick pages still move two. */
+    const holdPage = (direction: -1 | 1, strict: boolean) => {
+      const now = Date.now();
+      const live = heldPage && now - heldPage.at < HELD_PAGE_MS ? heldPage : null;
+      heldPage = { steps: (live?.steps ?? 0) + direction, at: now, strict: strict || !!live?.strict };
+      dirty = true; idle = 0; schedule(0);
+    };
+    const wake = () => { dirty = true; urgent = true; idle = 0; schedule(); };
     const flush = async () => {
       if (writing || desired === null || !alive || viewportIntent.isSearching()) return;
       writing = true;
@@ -173,10 +203,11 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       clearHits();
       try {
         const output = outputVersion;
+        const startedAt = Date.now();
         const request = viewportIntent.scroll(() => api.scrollPane(paneId, target));
         if (!request) return;
         const metrics = await request;
-        if (alive && validScroll(metrics)) { scrollRef.current = metrics; metricsOutput = output; setScroll(metrics); }
+        if (alive && validScroll(metrics)) { scrollRef.current = metrics; metricsOutput = output; metricsAt = startedAt; setScroll(metrics); }
       } catch (cause) {
         if (alive) {
           desired = null;
@@ -197,25 +228,35 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       previewRef.current = desired;
       void flush();
     };
-    const scrollPage = (direction: -1 | 1) => {
+    /** `fresh`: the metrics were read after the page was asked for, however long that read took. */
+    const scrollPage = (direction: -1 | 1, fresh = false) => {
       const metrics = scrollRef.current;
       if (!interactive || !alive || viewportIntent.isSearching() || !showing()) return;
       if (validScroll(metrics) && metrics.max_offset_from_bottom === 0) {
         // keys for the program only on metrics read after its latest output: it may just have left
         // its alternate screen, and the shell behind it has history to scroll instead
-        if (metricsOutput !== outputVersion) { heldPage = { direction, at: Date.now() }; dirty = true; schedule(0); return; }
+        if (metricsOutput !== outputVersion) { holdPage(direction, true); return; }
         onApplicationPage?.(direction);
         return;
+      }
+      // metrics that output has overtaken and that are older than the busy cadence (the follow pace reads
+      // them up to 2 s apart): the program may have entered its alternate screen since, so read before
+      // choosing herdr's scroll over the program's page keys
+      if (!fresh && validScroll(metrics) && metricsOutput !== outputVersion && Date.now() - metricsAt > SCROLL_POLL_BUSY_MS) {
+        holdPage(direction, false); return;
       }
       if (validScroll(metrics)) writeRef.current((previewRef.current ?? metrics.offset_from_bottom) - direction * pageScrollDistance(metrics.viewport_rows, 1, PAGE_OVERLAP_ROWS));
       // no metrics (a failed read): ask for a fresh read now rather than at the next poll
       else { dirty = true; idle = 0; schedule(0); }
     };
     if (pageScroll) pageScroll.current = scrollPage;
-    const scrollLines = (lines: number) => {
+    /** `fresh` as for a page: metrics overtaken by output and older than the busy cadence may clamp the
+     * lines to a history size that has since changed, so they are read again first. */
+    const scrollLines = (lines: number, fresh = false) => {
       if (!interactive || !alive || viewportIntent.isSearching() || !showing()) return;
       const metrics = scrollRef.current;
-      if (validScroll(metrics)) writeRef.current((previewRef.current ?? metrics.offset_from_bottom) + lines);
+      const stale = !fresh && metricsOutput !== outputVersion && Date.now() - metricsAt > SCROLL_POLL_BUSY_MS;
+      if (validScroll(metrics) && !stale) writeRef.current((previewRef.current ?? metrics.offset_from_bottom) + lines);
       else {
         heldLines = { lines: (heldLines && Date.now() - heldLines.at < HELD_PAGE_MS ? heldLines.lines : 0) + lines, at: Date.now() };
         dirty = true; idle = 0; schedule(0);
@@ -223,13 +264,25 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     };
     if (lineScroll) lineScroll.current = scrollLines;
     const unregisterCancellation = viewportIntent.registerScrollCancellation(() => {
-      desired = null; heldLines = null; version++;
+      desired = null; heldLines = null; heldPage = null; version++;
       previewRef.current = null;
       clearHits();
     });
-    refreshRef.current = () => { dirty = true; idle = 0; paint(); schedule(0); };
-    const parsed = terminal.onWriteParsed(() => { outputVersion++; clearHits(); wake(); });
+    refreshRef.current = () => { dirty = true; urgent = true; idle = 0; paint(); schedule(0); };
+    // output alone: a view following the bottom only learns the history grew, so it reads at the follow pace
+    const parsed = terminal.onWriteParsed(() => {
+      outputVersion++; clearHits(); dirty = true; idle = 0;
+      const now = Date.now();
+      if (now - outputAt > SCROLL_POLL_SETTLE_MS) burstFrom = now;
+      outputAt = now;
+      schedule(scrollPollDelay(true, 0, scrollRef.current, following()));
+    });
     const rendered = terminal.onRender(paintHits);
+    // a wheel or swipe that xterm sends to herdr as mouse reports comes back only as output, from a view
+    // that left the bottom: read at the busy cadence, not the follow pace
+    const gesture = () => { gestureUntil = Date.now() + SCROLL_POLL_SETTLE_MS; wake(); };
+    terminal.element?.addEventListener("wheel", gesture, { passive: true, capture: true });
+    terminal.element?.addEventListener("touchmove", gesture, { passive: true, capture: true });
     const resized = terminal.onResize(() => { version++; clearHits(); setScroll(null); wake(); paint(); });
     const visibility = () => {
       if (document.visibilityState === "hidden") { if (timer !== null) clearTimeout(timer); timer = null; clearHits(); }
@@ -251,6 +304,8 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       if (timer !== null) clearTimeout(timer);
       parsed.dispose(); rendered.dispose(); resized.dispose(); observer.disconnect();
       mount?.removeEventListener("scroll", paint);
+      terminal.element?.removeEventListener("wheel", gesture, { capture: true });
+      terminal.element?.removeEventListener("touchmove", gesture, { capture: true });
       document.removeEventListener("visibilitychange", visibility);
       refreshRef.current = () => {}; writeRef.current = () => {};
     };
