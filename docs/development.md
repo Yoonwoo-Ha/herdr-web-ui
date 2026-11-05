@@ -733,6 +733,33 @@ signing secrets are unset ([app/mac/README.md](../app/mac/README.md#releases)), 
 `Ovis.exe` ([app/windows/README.md](../app/windows/README.md#releases)); the release becomes GitHub's
 latest only once it has both. A red `mac-dmg` or `windows-app` job leaves the release published: run
 **Actions → Mac app** or **Actions → Windows app** for its tag instead of releasing again.
+
+The **Desktop app** job (`.github/workflows/desktop.yml`) builds the desktop app
+([app/electron](../app/electron/README.md)) from the tag, each on its own OS and CPU, under names
+without the version, so `releases/latest/download/<name>` always gives the newest:
+`Ovis-linux-x64.deb`, `Ovis-linux-arm64.deb` (the download for Ubuntu and Debian),
+`Ovis-linux-x64.AppImage`, `Ovis-linux-arm64.AppImage`, `Ovis-mac-arm64.dmg`, `Ovis-mac-x64.dmg`, and
+`Ovis-mac-arm64.zip`, `Ovis-mac-x64.zip` (what a Mac app updates from), with their `.blockmap` files.
+The AppImage carries the static AppImage runtime (electron-builder's `toolsets.appimage`), so it
+needs no libfuse2, only the fuse3 a desktop has; without FUSE at all it runs with
+`APPIMAGE_EXTRACT_AND_RUN=1`. Its version is the tag's: the build
+stops unless `package.json` says the same. It attaches them with the update feed: `latest-linux.yml`,
+`latest-linux-arm64.yml` and one `latest-mac.yml` for both Macs (the two Mac builds' feeds merged by
+`bun app/electron/scripts/build.ts merge-feed`). The app is built to update from
+`https://github.com/devswha/ovis/releases/latest/download` (electron-updater's generic provider), so
+an installed app sees a version once it is GitHub's latest, the same moment `ovis.sh/Ovis.dmg` and
+`ovis.sh/Ovis.exe` move. Only the AppImage and the Mac app update themselves; a deb is updated by
+installing the new one.
+The Macs' files are unsigned, and a Mac app updates itself only when signed, until the repository
+variable `DESKTOP_MAC_SIGN` is `true`: then the build signs and notarizes with the same
+`MAC_*` secrets as Ovis for Mac ([app/electron](../app/electron/README.md)'s signing, with
+`OVIS_REQUIRE_NOTARIZATION=1`) and fails if one is missing or the dmg is not notarized. The `mac-dmg` and `windows-app` jobs
+wait for `desktop`, so the release becomes latest only with the desktop files in it; a red `desktop`
+job leaves the release published but holds them back: **Re-run failed jobs** on the Release run
+builds and attaches it again (`--clobber`), then runs them. **Actions → Desktop app** from `main`
+with a tag does the same for one release alone, and refuses the latest release, whose feed installed
+apps read (fix that one with a new patch release); without a tag it only builds, as on a pull
+request touching the app. A release build skips the app's unit tests, which its pull requests ran.
 Do not push release tags by hand: installed updaters read Git tags directly, so a tag is
 visible to them even without a GitHub release. Existing tags cannot be reused; fix a
 published version with a new patch release. If publishing fails after a tag was created,

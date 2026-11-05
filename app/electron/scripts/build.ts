@@ -5,20 +5,29 @@
  *   bun scripts/build.ts bundle   the main process and preload into out/
  *   bun scripts/build.ts          both, then the installers into dist/ (AppImage; dmg and zip)
  *   bun scripts/build.ts package  the bundle and the installers from the stage/ already there
+ *   bun scripts/build.ts merge-feed <out> <latest-mac.yml>…   the Mac builds' feeds as one (scripts/feed.ts)
  *
  * OVIS_UPDATE_FEED=https://… builds the app to update itself from that generic feed.
+ * OVIS_RELEASE_TAG=vX.Y.Z (the release workflow) stops the build unless package.json says X.Y.Z.
  */
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { mergeFeeds } from "./feed.ts";
 import { BUN, BUN_LICENSE, BUN_VERSION, download, HC, HC_VERSION, hostTarget, sha256, type Pinned } from "./runtimes.ts";
 
 const here = resolve(import.meta.dir, "..");
 const repo = resolve(here, "..", "..");
+const step = process.argv[2] ?? "dist";
+if (!["stage", "bundle", "package", "dist", "merge-feed"].includes(step)) throw new Error("Usage: bun scripts/build.ts [stage|bundle|package|merge-feed <out> <feed>…]");
+if (step === "merge-feed") {
+  const [out, ...inputs] = process.argv.slice(3);
+  if (!out || inputs.length === 0) throw new Error("Usage: bun scripts/build.ts merge-feed <out> <latest-mac.yml>…");
+  writeFileSync(out, mergeFeeds(inputs.map((name) => ({ name, text: readFileSync(name, "utf8") }))));
+  process.exit(0);
+}
 const target = hostTarget();
 const cache = join(here, ".cache", target);
 const stage = join(here, "stage");
-const step = process.argv[2] ?? "dist";
-if (!["stage", "bundle", "package", "dist"].includes(step)) throw new Error("Usage: bun scripts/build.ts [stage|bundle|package]");
 
 async function sh(argv: string[], cwd: string, env: Record<string, string | undefined> = process.env): Promise<string> {
   const child = Bun.spawn(argv, { cwd, env, stdout: "pipe", stderr: "inherit" });
@@ -122,8 +131,13 @@ async function bundle(): Promise<void> {
 
 async function dist(): Promise<void> {
   const version = (JSON.parse(readFileSync(join(repo, "package.json"), "utf8")) as { version: string }).version;
+  // the app says the release's version, which is also the server's it carries
+  const tag = process.env["OVIS_RELEASE_TAG"]?.trim();
+  if (tag && tag !== `v${version}`) throw new Error(`OVIS_RELEASE_TAG is ${tag}, but package.json says ${version}`);
   const [os, arch] = target.split("-") as [string, string];
-  const args = [join(here, "node_modules", ".bin", "electron-builder"), os === "darwin" ? "--mac" : "--linux", `--${arch}`, "--publish", "never", `-c.extraMetadata.version=${version}`];
+  const platform = os === "darwin" ? "mac" : "linux";
+  // the CPU written out, since electron-builder's ${arch} says x86_64 in an AppImage's name and amd64 in a deb's
+  const args = [join(here, "node_modules", ".bin", "electron-builder"), `--${platform}`, `--${arch}`, "--publish", "never", `-c.extraMetadata.version=${version}`, `-c.${platform}.artifactName=Ovis-${platform}-${arch}.\${ext}`];
   const feed = process.env["OVIS_UPDATE_FEED"]?.trim();
   if (feed) {
     if (new URL(feed).protocol !== "https:") throw new Error("OVIS_UPDATE_FEED must be an https address");
