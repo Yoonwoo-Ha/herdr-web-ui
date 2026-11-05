@@ -10,6 +10,7 @@
  */
 import type { IDisposable, Terminal } from "@xterm/xterm";
 import { terminalDrawsPictures } from "../terminalImages.ts";
+import { followLateFaces, glyphFit, iconScale, oversizedIcon } from "../terminalGlyphs.ts";
 import { GhosttyVt, STYLE_BOLD, STYLE_FAINT, STYLE_INVERSE, STYLE_INVISIBLE, STYLE_ITALIC, STYLE_STRIKE, STYLE_UNDERLINE_MASK, type GhosttyColors, type GhosttyImage, type GhosttyRun } from "./vt.ts";
 
 const escapeHtml = (s: string): string => s.replace(/[&<>"]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;"));
@@ -31,6 +32,13 @@ export function newLines(before: readonly string[], after: readonly string[]): s
   }
   return after.filter((line, y) => line && (y >= rows - best || before[y + best] !== line));
 }
+
+/** Nerd Font icons and the like, which a font means to fill one cell (terminalGlyphs.ts oversizedIcon) */
+const PRIVATE_USE = /[\ue000-\uf8ff\u{f0000}-\u{ffffd}\u{100000}-\u{10fffd}]/u;
+/** Powerline's separators run from the top of the row to the bottom: made smaller, a prompt's coloured segments would not join, so they are only narrowed */
+const POWERLINE = /^[\ue0b0-\ue0d7]$/u;
+/** distinct glyphs measured before the measures start over: a long session of ever new graphemes must not grow without end */
+const MEASURED_MAX = 4096;
 
 const latin1 = new TextDecoder("latin1");
 /** an iTerm2 inline picture (OSC 1337 File=) or a sixel one (DCS ... q): the pictures xterm's image addon draws */
@@ -109,6 +117,8 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
   let bottomText: string[] = [];
   // what each row shows: libghostty hands over only the rows that changed, so fresh row elements are refilled from it
   let rowHtml: string[] = [];
+  // the runs each row was drawn from, to draw it again once a late face changes what its glyphs measure
+  const rowRuns: GhosttyRun[][] = [];
   let cellW = 0;
   let cellH = 0;
   let frameQueued = false;
@@ -152,6 +162,19 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     }
   };
 
+  /** every row drawn again from its runs: a new cell size or a late face changes how its glyphs fit */
+  const redrawRows = (): void => {
+    rowRuns.forEach((runs, y) => {
+      const row = rowEls[y];
+      if (!row) return;
+      let html = "";
+      for (const run of runs) html += runHtml(run);
+      if (rowHtml[y] === html) return;
+      row.innerHTML = html;
+      rowHtml[y] = html;
+    });
+  };
+
   let grid = "";
   const fit = (): void => {
     metrics();
@@ -160,7 +183,10 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     if (now === grid) return;
     grid = now;
     vt.resize(term.cols, term.rows, cellW, cellH);
+    // rows past a shorter grid are gone
+    rowRuns.length = Math.min(rowRuns.length, term.rows);
     rebuildRows();
+    redrawRows();
     schedule();
   };
 
@@ -170,6 +196,52 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     layer.style.color = palette.foreground;
     cursor.style.background = palette.cursor;
   };
+
+  // glyphs are fitted to their cells as xterm's rows are (terminalGlyphs.ts): a wide glyph that leaves its two cells
+  // half empty is drawn larger (Hangul on a 0.6em Latin cell), an icon wider than its one cell smaller
+  let measure: CanvasRenderingContext2D | null | undefined;
+  const widths = new Map<string, number>();
+  const asked = new Set<string>();
+  const glyphWidth = (text: string, flags: number): number => {
+    const key = `${flags & (STYLE_BOLD | STYLE_ITALIC)}${text}`;
+    let width = widths.get(key);
+    if (width === undefined) {
+      measure ??= document.createElement("canvas").getContext("2d");
+      if (!measure) return 0;
+      const { fontFamily, fontSize, fontWeight, fontWeightBold } = term.options;
+      measure.font = `${flags & STYLE_ITALIC ? "italic " : ""}${flags & STYLE_BOLD ? fontWeightBold ?? "bold" : fontWeight ?? "normal"} ${fontSize ?? 13}px ${fontFamily ?? "monospace"}`;
+      width = measure.measureText(text).width;
+      if (widths.size >= MEASURED_MAX) widths.clear();
+      widths.set(key, width);
+    }
+    return width;
+  };
+  const fittedCell = (text: string, wide: boolean, flags: number): string | null => {
+    if (!wide && !PRIVATE_USE.test(text)) return null;
+    // each character asks for its faces once a font, as xterm's rows do
+    if (!asked.has(text)) {
+      if (asked.size >= MEASURED_MAX) asked.clear();
+      asked.add(text);
+      lateFaces.ask(term.options.fontFamily ?? "", text);
+    }
+    const width = glyphWidth(text, flags);
+    const size = term.options.fontSize ?? 13;
+    if (!wide) {
+      if (!oversizedIcon(text, width, cellW)) return null;
+      // a separator keeps its height and is narrowed to its cell, as xterm's rows draw it
+      if (POWERLINE.test(text)) return `<span class="ghostty-icon"><span class="ghostty-fit" style="transform:scaleX(${cellW / width});transform-origin:0 0">${escapeHtml(text)}</span></span>`;
+      return `<span class="ghostty-icon" style="font-size:${size * iconScale([width], cellW)}px">${escapeHtml(text)}</span>`;
+    }
+    const fit = glyphFit(2 * cellW - width, width, cellW);
+    if (!fit) return `<span class="ghostty-wide">${escapeHtml(text)}</span>`;
+    const scale = fit.scale !== 1 ? `font-size:${size * fit.scale}px;` : "";
+    const stretch = fit.stretch !== 1 ? `transform:scaleX(${fit.stretch})` : "";
+    return `<span class="ghostty-wide"><span class="ghostty-fit" style="${scale}${stretch}">${escapeHtml(text)}</span></span>`;
+  };
+  const lateFaces = followLateFaces(document.fonts as Iterable<FontFace> | undefined, (callback) => requestAnimationFrame(callback), () => {
+    widths.clear();
+    redrawRows();
+  });
 
   const runHtml = (run: GhosttyRun): string => {
     let fg = run.fg, bg = run.bg;
@@ -186,9 +258,10 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     let body = "";
     let plain = "";
     for (const cell of run.cells) {
-      if (cell.wide) {
+      const fitted = fittedCell(cell.text, cell.wide, run.flags);
+      if (fitted !== null) {
         if (plain) { body += escapeHtml(plain); plain = ""; }
-        body += `<span class="ghostty-wide">${escapeHtml(cell.text)}</span>`;
+        body += fitted;
       } else plain += cell.text;
     }
     if (plain) body += escapeHtml(plain);
@@ -257,6 +330,9 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
 
   const drawFrame = (): void => {
     if (optionsChanged()) {
+      widths.clear();
+      asked.clear();
+      grid = "";
       colors();
       vt.setScrollback(term.options.scrollback ?? 0);
       fit();
@@ -267,6 +343,7 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     const changed = vt.frame((y, runs) => {
       const row = rowEls[y];
       if (!row) return;
+      rowRuns[y] = runs;
       let html = "";
       for (const run of runs) html += runHtml(run);
       // a row libghostty marks dirty can come out the same (a cursor that moved past it): no DOM write
@@ -282,7 +359,8 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
       // a grid that changed height keeps its bottom rows, as xterm does: the baseline lines up with them
       const before = Array.from({ length: term.rows }, (_, y) => bottomText[bottomText.length - term.rows + y] ?? "");
       if (primed && written) announce(newLines(before, screenText));
-      primed = true;
+      // the screen a pane opens on is the first one written: herdr's own server paints it only after the attach
+      if (written) primed = true;
       written = false;
       bottomText = screenText;
     }
@@ -345,11 +423,13 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
   // at xterm's grid and cell size, so a picture in the backlog is placed as xterm's cells are
   try {
     for (const chunk of backlog) vt.write(chunk);
+    written = backlog.length > 0;
   } catch (error) {
     // the caller falls back to xterm: it gets its own write and reset back, so nothing reaches the freed module
     disposed = true;
     term.write = write;
     term.reset = reset;
+    lateFaces.stop();
     layer.remove();
     vt.dispose();
     throw error;
@@ -391,6 +471,7 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
       term.reset = reset;
       for (const subscription of subscriptions) subscription.dispose();
       screenResize.disconnect();
+      lateFaces.stop();
       layer.remove();
       decoded.clear();
       vt.dispose();

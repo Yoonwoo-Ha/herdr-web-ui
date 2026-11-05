@@ -217,6 +217,53 @@ try {
         assert.deepEqual(zwj.wide, ["\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"], "core: the ZWJ family is one wide cell");
         assert.ok(Math.abs(zwj.column - 5) < 0.1, `core: the text after a ZWJ family starts at xterm's column 5 (${zwj.column})`);
 
+        // glyphs fit their cells as xterm's rows fit them (terminalGlyphs.ts): an underlined Hangul syllable fills its two
+        // cells and keeps its underline, and a Nerd Font icon stays in its one cell, so the text after both keeps its column
+        await print(page, "\x1b[4m\uD55C\x1b[24m\ue0a0Q|\ue0b0\r\nPLAIN-Q\r\n", "GLYPHS");
+        // the icon and Hangul faces load once a row asks for them; the rows are fitted again when they arrive
+        await page.evaluate(() => document.fonts.ready);
+        await settled(page);
+        const glyphs = await page.evaluate(() => {
+          const layer = document.querySelector(".pane-frame.is-current .ghostty-layer")!;
+          const cw = parseFloat(getComputedStyle(layer).getPropertyValue("--ghostty-cw"));
+          const row = [...layer.querySelectorAll<HTMLElement>(".ghostty-row")].find((r) => r.textContent?.includes("Q|"))!;
+          // the box one character of the row is drawn in, wherever its text node starts
+          const plain = [...layer.querySelectorAll<HTMLElement>(".ghostty-row")].find((r) => r.textContent?.includes("PLAIN-Q"))!;
+          const box = (char: string, within = row) => {
+            const walker = document.createTreeWalker(within, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+              const at = node.textContent?.indexOf(char) ?? -1;
+              if (at < 0) continue;
+              const range = document.createRange();
+              range.setStart(node, at);
+              range.setEnd(node, at + char.length);
+              return { rect: range.getBoundingClientRect(), parent: node.parentElement! };
+            }
+            throw new Error(`no ${char} in the row`);
+          };
+          const hangul = box("\uD55C");
+          const icon = box("\ue0a0");
+          const left = layer.getBoundingClientRect().left;
+          const top = row.getBoundingClientRect().top;
+          const ch = parseFloat(getComputedStyle(layer).getPropertyValue("--ghostty-ch"));
+          return {
+            fill: hangul.rect.width / (2 * cw),
+            underline: getComputedStyle(hangul.parent).textDecorationLine,
+            icon: icon.rect.width / cw,
+            iconInRow: icon.rect.top >= top - 0.5 && icon.rect.bottom <= top + ch + 0.5,
+            separator: box("\ue0b0").rect.height / ch,
+            textDrop: (box("Q").rect.top - top) - (box("Q", plain).rect.top - plain.getBoundingClientRect().top),
+            column: (box("Q").rect.left - left) / cw,
+          };
+        });
+        assert.ok(glyphs.fill >= 0.88, `core: a Hangul syllable fills its two cells as xterm draws it (${glyphs.fill})`);
+        assert.ok(glyphs.underline.includes("underline"), `core: an underlined Hangul syllable is underlined (${glyphs.underline})`);
+        assert.ok(glyphs.icon <= 1.05, `core: a Nerd Font icon stays in its one cell (${glyphs.icon} cells)`);
+        assert.ok(glyphs.iconInRow, "core: a fitted icon stands inside its row, not on its clipped box's bottom edge");
+        assert.ok(glyphs.separator >= 0.75, `core: a Powerline separator keeps the row's full height (${glyphs.separator} rows)`);
+        assert.ok(Math.abs(glyphs.textDrop) < 0.5, `core: the text after an icon stands on the row's baseline (${glyphs.textDrop}px lower)`);
+        assert.ok(Math.abs(glyphs.column - 3) < 0.1, `core: the text after them starts at xterm's column 3 (${glyphs.column})`);
+
         await print(page, "\x1b_Ga=d,d=I,i=7,q=2\x1b\\", "RED-DELETED");
         assert.equal(await picture(page), null, "core: a picture the program deletes goes");
 
