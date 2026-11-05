@@ -1025,6 +1025,21 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   apps (the Codex and Claude apps, Paseo, T3 Code), whose session lists we follow for pin and
   archive but which give a session no lock: their sessions are not the pane a user drives the
   others from, which is what this guards.
+  While Settings -> Appearance -> Named agent groups is on (shared, off by default; off, nothing is
+  drawn or offered), the unpinned agent rows split into groups the user names (#2431), in the
+  order Settings lists them, then the rows in no group under No group; with every row in no group
+  the list draws no heading at all. A heading folds its group (kept on this device), and draws its
+  count and a dot for each state that asks for a look (needs you, working), as Slack's sidebar
+  sections do with their unread marks. Nothing is grouped by itself: New workspace and New tab
+  offer a Group field, starting on the group last picked for that PC's folder (kept on this
+  device), and a row's menu offers Move to <group> and Remove from <group>. A helper stays in its
+  agent's group unless it has its own. The groups are the shared `agentGroupNames` and
+  `agentGroupOf` settings (pin keys), so every browser and phone draws the same list; a group
+  moves with its pane when herdr moves it, and the groups of gone panes leave with the next change.
+  With Group agents by state also on, each named group lists its rows needs-you first, without
+  state headings. The coding-agent apps (the Codex and Claude apps, Paseo, T3 Code) group sessions
+  by project only; this follows Slack's user-made sidebar sections instead, since one folder holds
+  both long-lived agents and one-off tasks.
   A desktop (`pointer: fine` wider than 768px, the tab strip's rule) draws no row `⋯`: a
   right-click or the context-menu key opens the menu, at the pointer or at the row, and dismissal
   returns the focus where it was.

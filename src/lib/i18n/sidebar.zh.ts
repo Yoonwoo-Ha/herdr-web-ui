@@ -64,4 +64,7 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Shell": "Shell",
   "Working": "工作中",
   "Idle": "空闲",
+  "{count} need you": "{count} 个需要你",
+  "Move to {group}": "移到 {group}",
+  "Remove from {group}": "从 {group} 移出",
 };

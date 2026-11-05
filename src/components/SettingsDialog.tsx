@@ -56,6 +56,7 @@ import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
 import { AgentsSettings } from "./AgentsSettings.tsx";
+import { AgentGroupNames } from "./AgentGroupNames.tsx";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { FILE_PANEL_DOCK_QUERY } from "../lib/filePanelWidth.ts";
@@ -408,6 +409,10 @@ function AppearancePage() {
       <SettingsRow label={t("Lock pinned agents (experimental)")} description={t("A pinned agent's menu in the Agents list offers Lock agent. This app then offers no way to close a locked agent's pane, tab or workspace, in every browser. Closing from herdr itself or a script still works.")}>
         <Toggle label={t("Lock pinned agents (experimental)")} checked={settings.agentLocks} onChange={(agentLocks) => update({ agentLocks })} />
       </SettingsRow>
+      <SettingsRow label={t("Named agent groups")} description={t("Split the Agents list into groups you name, such as Agents, Replies or Tasks. New workspace and New tab offer them, and an agent's menu moves it. Every browser shares them.")}>
+        <Toggle label={t("Named agent groups")} checked={settings.agentNamedGroups} onChange={(agentNamedGroups) => update({ agentNamedGroups })} />
+      </SettingsRow>
+      {settings.agentNamedGroups && <AgentGroupNames />}
       {settings.agentGroups && <SettingsRow label={t("Within a state")} wide>
         <Segmented label={t("Within a state")} value={settings.agentGroupSort} onChange={(agentGroupSort) => update({ agentGroupSort })} options={[{ value: "wait", label: t("Longest wait") }, { value: "recent", label: t("Recent") }, { value: "name", label: t("Name") }]} />
       </SettingsRow>}

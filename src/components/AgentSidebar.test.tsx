@@ -150,6 +150,65 @@ describe("AgentSidebar phone sheet live row", () => {
     }
   });
 
+  // Settings -> Named agent groups, as this device's stored settings carry it
+  const groupSetting = (agentNamedGroups: boolean, agentGroupOf: Record<string, string> = {}, folded: string[] = []) => {
+    (globalThis.window as unknown as { localStorage: Pick<Storage, "getItem" | "setItem" | "removeItem"> }).localStorage = {
+      getItem: (key) => key === "ovis:settings" ? JSON.stringify({ agentNamedGroups, agentGroupNames: ["Agents", "Tasks"], agentGroupOf })
+        : key === "ovis:agent-group-folds" ? JSON.stringify(folded) : null,
+      setItem() {}, removeItem() {},
+    };
+  };
+  const groupHeadings = (mounted: ReactTestRenderer) => mounted.root.findAllByProps({ className: "agent-named-group-name" }).map((node) => node.children.join(""));
+
+  it("draws no named group and offers no move until Named agent groups is turned on (#2431)", async () => {
+    groupSetting(false, { [`local:${paneId}`]: "Tasks" });
+    const { mounted } = await open();
+    expect(groupHeadings(mounted)).toEqual([]);
+    expect((mounted.root.findByType(RowMenu).props.items as RowMenuItem[]).map((item) => item.id)).toEqual(["pin"]);
+  });
+
+  it("draws a row under its named group and moves it from the row's menu (#2431)", async () => {
+    groupSetting(true, { [`local:${paneId}`]: "Tasks" });
+    const { mounted } = await open();
+    const items = () => mounted.root.findByType(RowMenu).props.items as RowMenuItem[];
+    const run = async (id: string) => { await act(async () => { items().find((item) => item.id === id)!.run(); }); };
+    expect(groupHeadings(mounted)).toContain("Tasks");
+    expect(items().map((item) => item.id)).toEqual(["pin", "group:Agents", "ungroup"]);
+    await run("group:Agents");
+    expect(groupHeadings(mounted)).toContain("Agents");
+    expect(groupHeadings(mounted)).not.toContain("Tasks");
+    // the open menu follows the row into its new group
+    expect(items().map((item) => item.id)).toEqual(["pin", "group:Tasks", "ungroup"]);
+    await run("ungroup");
+    expect(groupHeadings(mounted)).toEqual([]);
+  });
+
+  it("folds a named group, keeping its count and its rows out of sight (#2431)", async () => {
+    groupSetting(true, { [`local:${paneId}`]: "Tasks" });
+    const { mounted, row } = await open();
+    const toggle = mounted.root.findByProps({ "data-named-group": "Tasks" }).findByType("button");
+    expect(toggle.props["aria-expanded"]).toBe(true);
+    await act(async () => { toggle.props.onClick(); });
+    expect(mounted.root.findByProps({ "data-named-group": "Tasks" }).findByType("button").props["aria-expanded"]).toBe(false);
+    expect(row().props.hidden).toBe(true);
+  });
+
+  it("offers no group move for a background agent, which stays under Background agents (#2431)", async () => {
+    groupSetting(true);
+    await act(async () => { renderer = create(view(roster({ role: "background" })), { createNodeMock: () => anchor }); });
+    const mounted = renderer!;
+    await act(async () => { mounted.root.findByProps({ "data-machine": "local", "data-pane": paneId }).findByProps({ className: "sidebar-row-action row-menu-toggle" }).props.onClick({ currentTarget: anchor }); });
+    expect((mounted.root.findByType(RowMenu).props.items as RowMenuItem[]).map((item) => item.id)).toEqual(["pin"]);
+  });
+
+  it("opens a folded group a row is moved into, so the row stays in sight (#2431)", async () => {
+    groupSetting(true, { [`local:${paneId}`]: "Tasks" }, ["Agents"]);
+    const { mounted, row } = await open();
+    await act(async () => { (mounted.root.findByType(RowMenu).props.items as RowMenuItem[]).find((item) => item.id === "group:Agents")!.run(); });
+    expect(mounted.root.findByProps({ "data-named-group": "Agents" }).findByType("button").props["aria-expanded"]).toBe(true);
+    expect(row().props.hidden).toBeUndefined();
+  });
+
   it("updates the open sheet when a plugin value changes", async () => {
     // Given an open sheet with the original quota.
     const { mounted, update } = await open();

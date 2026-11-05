@@ -416,6 +416,11 @@ const BASE: Record<string, string> = {
   "The answer did not come from a PC this app can pair with. Show a new code on the PC, or scan its QR code.": "이 앱이 페어링할 수 있는 PC의 응답이 아닙니다. PC에서 새 코드를 띄우거나 QR 코드를 스캔하세요.",
   "The relay could not be reached. Check this device's connection, then try again.": "릴레이에 연결할 수 없습니다. 이 기기의 연결을 확인한 뒤 다시 시도하세요.",
   "Reset": "재설정",
+  "Group name": "그룹 이름",
+  "Remove group {group}": "{group} 그룹 삭제",
+  "New group": "새 그룹",
+  "Add group": "그룹 추가",
+  "No group": "그룹 없음",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

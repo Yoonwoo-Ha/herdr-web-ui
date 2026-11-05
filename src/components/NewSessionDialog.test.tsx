@@ -10,7 +10,7 @@ describe("NewSessionDialog", () => {
   let renderer: ReactTestRenderer | undefined;
   const descriptors = new Map<string, PropertyDescriptor | undefined>();
   beforeEach(() => {
-    for (const key of ["window", "document", "navigator", "localStorage", "getComputedStyle", "matchMedia", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    for (const key of ["window", "document", "navigator", "localStorage", "getComputedStyle", "matchMedia", "HTMLElement", "ResizeObserver", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     const events = new EventTarget();
     const store = new Map<string, string>();
     const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); }, removeItem: (key: string) => { store.delete(key); }, key: () => null, length: 0, clear: () => store.clear() };
@@ -18,6 +18,8 @@ describe("NewSessionDialog", () => {
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
     // the test renderer draws no DOM: nothing is an element, so the focus trap finds nothing to hold
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: class HTMLElement {} });
+    // the recent folders' row measures itself; nothing here is laid out
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: class ResizeObserver { observe() {} disconnect() {} } });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en"], userAgent: "Test browser", maxTouchPoints: 0 } });
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
     Object.defineProperty(globalThis, "matchMedia", { configurable: true, value: matchMedia });
@@ -60,6 +62,52 @@ describe("NewSessionDialog", () => {
       expect(renderer!.toJSON()).not.toBeNull();
       await act(async () => { renderer!.update(view(false)); });
       expect(renderer!.toJSON()).toBeNull();
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("offers the named groups, starts on the folder's last one, and puts the new pane in the group picked (#2431)", async () => {
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (input: string | URL | Request) => new Response(JSON.stringify(String(input).includes("workspace/create") ? { workspace_id: "w9", pane_id: "w9:p1" } : { agents: [] }), { headers: { "content-type": "application/json" } }), { preconnect: globalThis.fetch.preconnect }));
+    localStorage.setItem("ovis:settings", JSON.stringify({ agentNamedGroups: true, agentGroupNames: ["Agents", "Tasks"] }));
+    localStorage.setItem("ovis:agent-group-by-folder", JSON.stringify({ "local\n/home/u": "Tasks" }));
+    const created: string[] = [];
+    const view = (open: boolean) => createElement(SettingsProvider, { children: createElement(NewSessionDialog, { open, defaultCwd: "/home/u", onClose: () => undefined, onCreated: (paneId) => { created.push(paneId); } }) });
+    try {
+      await act(async () => { renderer = create(view(true)); });
+      const field = () => renderer!.root.findByProps({ id: "new-session-group" });
+      expect(field().props.value).toBe("Tasks");
+      expect(field().findAllByType("option").map((option) => option.props.value)).toEqual(["", "Agents", "Tasks"]);
+      await act(async () => { field().props.onChange({ target: { value: "Agents" } }); });
+      await act(async () => { renderer!.root.findByType("form").props.onSubmit({ preventDefault() {} }); });
+      expect(created).toEqual(["w9:p1"]);
+      expect(JSON.parse(localStorage.getItem("ovis:settings")!).agentGroupOf).toEqual({ "local:w9:p1": "Agents" });
+      expect(JSON.parse(localStorage.getItem("ovis:agent-group-by-folder")!)).toEqual({ "local\n/home/u": "Agents" });
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("clears a gone pane's group from a reused id on No group, and prunes the groups of gone panes (#2431)", async () => {
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (input: string | URL | Request) => new Response(JSON.stringify(String(input).includes("workspace/create") ? { workspace_id: "w9", pane_id: "w9:p1" } : { agents: [] }), { headers: { "content-type": "application/json" } }), { preconnect: globalThis.fetch.preconnect }));
+    localStorage.setItem("ovis:settings", JSON.stringify({ agentNamedGroups: true, agentGroupNames: ["Tasks"], agentGroupOf: { "local:w9:p1": "Tasks", "local:gone": "Tasks", "local:live": "Tasks" } }));
+    const groupKept = () => new Set(["local:live"]);
+    try {
+      await act(async () => { renderer = create(createElement(SettingsProvider, { children: createElement(NewSessionDialog, { open: true, defaultCwd: "/home/u", onClose: () => undefined, onCreated: () => undefined, groupKept }) })); });
+      expect(renderer!.root.findByProps({ id: "new-session-group" }).props.value).toBe("");
+      await act(async () => { renderer!.root.findByType("form").props.onSubmit({ preventDefault() {} }); });
+      expect(JSON.parse(localStorage.getItem("ovis:settings")!).agentGroupOf).toEqual({ "local:live": "Tasks" });
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
+  it("offers no group while Named agent groups is off (#2431)", async () => {
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => new Response(JSON.stringify({ agents: [] }), { headers: { "content-type": "application/json" } }), { preconnect: globalThis.fetch.preconnect }));
+    localStorage.setItem("ovis:settings", JSON.stringify({ agentNamedGroups: false, agentGroupNames: ["Agents"] }));
+    try {
+      await act(async () => { renderer = create(createElement(SettingsProvider, { children: createElement(NewSessionDialog, { open: true, defaultCwd: "/home/u", onClose: () => undefined, onCreated: () => undefined }) })); });
+      expect(renderer!.root.findAllByProps({ id: "new-session-group" })).toHaveLength(0);
     } finally {
       fetch.mockRestore();
     }

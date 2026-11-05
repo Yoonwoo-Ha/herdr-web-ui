@@ -36,4 +36,6 @@ export const SETTINGS_ACCESS_KO: Record<string, string> = {
   "Reachable": "접속 가능",
   "This request came through Tailscale Funnel, which is open to the public internet.": "이 요청은 공개 인터넷에 열린 Tailscale Funnel을 거쳐\u00a0왔습니다.",
   "The server cannot see whether a proxy, tunnel or router makes it reachable from the internet.": "프록시, 터널 또는 라우터 때문에 인터넷에서 접속할\u00a0수\u00a0있는지 서버는 알\u00a0수\u00a0없습니다.",
+  "Named agent groups": "이름 붙인 에이전트 그룹",
+  "Split the Agents list into groups you name, such as Agents, Replies or Tasks. New workspace and New tab offer them, and an agent's menu moves it. Every browser shares them.": "에이전트 목록을 Agents, Replies, Tasks처럼 직접 이름 붙인 그룹으로 나눕니다. 새 워크스페이스와 새 탭에서 그룹을 고를 수 있고, 에이전트 메뉴에서 옮길 수 있습니다. 모든 브라우저가 함께 씁니다.",
 };

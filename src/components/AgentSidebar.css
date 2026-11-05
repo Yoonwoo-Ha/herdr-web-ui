@@ -121,6 +121,55 @@
 .agent-background-toggle .agent-section-caret { opacity: 1; }
 .agent-background-toggle .agent-section-count { font-size: inherit; }
 
+/* Settings → Named agent groups: each group the user named under a heading that folds it, as the
+   background agents' does, with a dot for each state that asks for a look and its count */
+.agent-named-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: var(--side-row);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  line-height: var(--lh-tight);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.agent-named-group-label:first-child .agent-named-group-toggle { margin-top: 0; }
+.agent-named-group-toggle:disabled { cursor: default; }
+.agent-named-group-toggle .agent-section-caret { opacity: 1; }
+.agent-named-group-toggle .agent-section-count { font-size: inherit; }
+
+.agent-named-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-named-group-dot {
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: 50%;
+}
+
+.agent-named-group-dot[data-state="blocked"] { background: var(--status-blocked); }
+.agent-named-group-dot[data-state="working"] { background: var(--status-working); }
+
+@media (hover: hover) {
+  .agent-named-group-toggle:hover:not(:disabled) { color: var(--text); }
+}
+
 /* the folded part's rows stay in the list (a row that changes part moves), only out of sight */
 .agent-list .agent-item[hidden] { display: none; }
 

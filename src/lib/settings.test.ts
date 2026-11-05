@@ -1378,5 +1378,12 @@ describe("shared settings", () => {
     expect(sanitizeSettings({ lockedAgents: ["local:p1", 3, "", "local:p1", "pc:w1:p2"] }).lockedAgents).toEqual(["local:p1", "pc:w1:p2"]);
     expect(sanitizeSettings({ lockedAgents: "local:p1" }).lockedAgents).toEqual([]);
   });
+
+  it("draws no named agent group until one is turned on, shared by every browser (#2431)", () => {
+    expect(DEFAULT_SETTINGS.agentNamedGroups).toBe(false);
+    for (const key of ["agentNamedGroups", "agentGroupNames", "agentGroupOf"] as const) expect(SETTING_SCOPE[key]).toBe("shared");
+    const kept = sanitizeSettings({ agentNamedGroups: true, agentGroupNames: ["Tasks", "", "Tasks"], agentGroupOf: { "local:p1": "Tasks", "local:p2": 1 } });
+    expect([kept.agentNamedGroups, kept.agentGroupNames, kept.agentGroupOf]).toEqual([true, ["Tasks"], { "local:p1": "Tasks" }]);
+  });
 });
 

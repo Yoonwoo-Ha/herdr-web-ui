@@ -64,4 +64,7 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Shell": "셸",
   "Working": "작업 중",
   "Idle": "대기",
+  "{count} need you": "{count}개가 기다림",
+  "Move to {group}": "{group}(으)로 옮기기",
+  "Remove from {group}": "{group}에서 빼기",
 };

@@ -418,6 +418,11 @@ const BASE: Record<string, string> = {
   "The answer did not come from a PC this app can pair with. Show a new code on the PC, or scan its QR code.": "このアプリがペアリングできる PC からの応答ではありません。PC で新しいコードを表示するか、QR コードを読み取ってください。",
   "The relay could not be reached. Check this device's connection, then try again.": "リレーに接続できませんでした。このデバイスの接続を確認してから、もう一度お試しください。",
   "Reset": "リセット",
+  "Group name": "グループ名",
+  "Remove group {group}": "グループ {group} を削除",
+  "New group": "新しいグループ",
+  "Add group": "グループを追加",
+  "No group": "グループなし",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

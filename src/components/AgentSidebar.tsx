@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Bell, BellOff, ChevronDown, ChevronRight, Ellipsis, Lock, LockOpen, Pin, PinOff, Terminal } from "lucide-react";
+import { Bell, BellOff, ChevronDown, ChevronRight, Ellipsis, FolderInput, FolderOutput, Lock, LockOpen, Pin, PinOff, Terminal } from "lucide-react";
 
 import type { Machine } from "../../shared/machines.ts";
 import { paneStorageId } from "../../shared/machines.ts";
@@ -8,7 +8,8 @@ import type { AgentStatus, HerdrPane, PlanSummary } from "../../shared/protocol.
 import { currentAgentRowTokens, subscribeAgentRowTokens } from "../lib/agentRowTokens.ts";
 import { useT } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
-import { agentRoster, groupAgentRows, splitBackgroundRows, type AgentGroup, type AgentRow } from "../lib/agentRoster.ts";
+import { agentGroup, agentRoster, groupAgentRows, splitBackgroundRows, type AgentGroup, type AgentRow } from "../lib/agentRoster.ts";
+import { assignAgentGroup, liveGroupKeys, loadFoldedAgentGroups, rowAgentGroup, saveFoldedAgentGroups, splitNamedGroups } from "../lib/namedAgentGroups.ts";
 import { currentPaneMutes, paneMuteKey, prunePaneMutes, setPaneMutes, subscribePaneMutes, togglePaneMute } from "../lib/paneMutes.ts";
 import { lockedPinKeys, toggleAgentLock } from "../lib/paneLocks.ts";
 import { agentContext, agentTabName, paneMark } from "../lib/sidebarAgents.ts";
@@ -220,13 +221,23 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const rows = useMemo(() => [...split.pinned, ...split.rest], [split]);
   // background agents (a pane tagged role=background, and its helpers) stand apart, after the rest (lib/agentRoster.ts)
   const parts = useMemo(() => splitBackgroundRows(split.rest, ({ machine, entry }) => machine.state === "connected" ? activity.status(machine.id, entry.pane) : undefined, allRows), [split, activity, allRows]);
+  const rowStatus = useCallback(({ machine, entry }: AgentRow) => machine.state === "connected" ? activity.status(machine.id, entry.pane) : undefined, [activity]);
   // Settings → Group agents by state (this device): the unpinned rows in groups, needs-you first (lib/agentRoster.ts)
-  const groups = useMemo(() => !settings.agentGroups ? null : groupAgentRows(parts.people, {
+  const byState = useCallback((list: readonly AgentRow[]) => groupAgentRows(list, {
     sort: settings.agentGroupSort,
-    status: ({ machine, entry }) => machine.state === "connected" ? activity.status(machine.id, entry.pane) : undefined,
+    status: rowStatus,
     name: ({ entry }) => rowTitle(entry),
     seqs: activity.seqs,
-  }), [settings.agentGroups, settings.agentGroupSort, parts, activity]);
+  }), [settings.agentGroupSort, rowStatus, activity]);
+  // Settings → Named agent groups (shared): the unpinned rows in the groups the user named, the ungrouped last
+  // (lib/namedAgentGroups.ts); grouped by state as well, each named group lists its rows needs-you first, without headings
+  const groupNames = settings.agentNamedGroups ? settings.agentGroupNames : [];
+  const named = useMemo(() => groupNames.length === 0 ? null : splitNamedGroups(parts.people, settings.agentGroupOf, groupNames, allRows)
+    .map(({ name, rows: groupRows }) => ({ name, rows: settings.agentGroups ? byState(groupRows).flatMap((group) => group.rows) : groupRows })),
+  [groupNames, settings.agentGroupOf, settings.agentGroups, parts, allRows, byState]);
+  const groups = useMemo(() => !settings.agentGroups || named !== null ? null : byState(parts.people), [settings.agentGroups, named, parts, byState]);
+  // the named groups this device folds; the ungrouped rows fold under ""
+  const [groupFolds, setGroupFolds] = useState(loadFoldedAgentGroups);
   // a folded list (a phone's starts so) opens while the filter keeps rows in it, so a match or the selection is
   // seen, not only kept; its caret then folds and opens it for the filter's time, the list's own fold untouched
   const [filterFold, setFilterFold] = useState<boolean | null>(null);
@@ -343,13 +354,13 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const { restDepths, restLines } = useMemo(() => {
     const restDepths = new Map<AgentRow, number>();
     const restLines = new Map<AgentRow, { more: boolean; through: boolean }>();
-    for (const list of [...groups ? groups.map((group) => group.rows) : [parts.people], parts.background]) {
+    for (const list of [...named ? named.map((group) => group.rows) : groups ? groups.map((group) => group.rows) : [parts.people], parts.background]) {
       const listDepths = depths(list);
       for (const [row, depth] of listDepths) restDepths.set(row, depth);
       for (const [row, line] of treeLines(list, listDepths)) restLines.set(row, line);
     }
     return { restDepths, restLines };
-  }, [parts, groups]);
+  }, [parts, groups, named]);
 
   const agentItem = (row: AgentRow, hidden = false) => {
     const { machine, entry } = row;
@@ -407,6 +418,54 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // a phone has no tooltip: its sheet says a blocked agent's whole reason, as the row's tooltip does
   const menuBlocked = menuRow !== undefined && menuShown?.online && activity.status(menuRow.machine.id, menuRow.entry.pane) === "blocked" ? blockedNote(menuRow.entry.pane, t) : null;
   const menuMuted = menuRow !== undefined && muted !== null && muted.includes(paneMuteKey(menuRow.machine.id, menuRow.entry.pane.pane_id));
+  // the group the open row is drawn in, and the one it was put in itself (a helper may only follow its agent's)
+  const menuGroup = menuRow === undefined || groupNames.length === 0 ? null : rowAgentGroup(menuRow, settings.agentGroupOf, groupNames, allRows);
+  // a background agent stays in its own part (whatever its state), so it is offered no group
+  const menuBackground = menuRow !== undefined && groupNames.length > 0 && splitBackgroundRows([menuRow], () => undefined, allRows).background.length > 0;
+  const menuOwnGroup = menu === null ? undefined : settings.agentGroupOf[menu.key];
+  const setGroup = (key: string, name: string | null): void => {
+    // as the pins: the groups of panes gone from a loaded PC leave with this change, and no other PC's
+    const kept = liveGroupKeys(settings.agentGroupOf, machines, hidden);
+    const next = assignAgentGroup(settings.agentGroupOf, key, name, (held) => kept.has(held));
+    if (next === null) return;
+    updateSettings({ agentGroupOf: next });
+    // a row moved into a folded group opens it, so the row and the focus the menu hands back stay in sight
+    if (name !== null && groupFolds.includes(name)) toggleGroupFold(name);
+  };
+  const toggleGroupFold = (name: string): void => {
+    const next = groupFolds.includes(name) ? groupFolds.filter((held) => held !== name) : [...groupFolds, name];
+    setGroupFolds(next);
+    saveFoldedAgentGroups(next);
+  };
+  // a named group's heading: its fold (none under the filter, which shows what it kept), the states that ask for a look, its count
+  const namedGroupLabel = (name: string | null, groupRows: readonly AgentRow[]) => {
+    const foldKey = name ?? "";
+    const groupFolded = !filter.active && groupFolds.includes(foldKey);
+    const states = groupRows.map((row) => agentGroup(rowStatus(row)));
+    const blockedCount = states.filter((state) => state === "blocked").length;
+    const workingCount = states.filter((state) => state === "working").length;
+    return <li className="agent-named-group-label" key={`named:${foldKey}`} data-named-group={foldKey}>
+      <button type="button" className="agent-named-group-toggle" aria-expanded={!groupFolded} disabled={filter.active} onClick={() => toggleGroupFold(foldKey)}>
+        {groupFolded ? <ChevronRight className="agent-section-caret" aria-hidden="true" /> : <ChevronDown className="agent-section-caret" aria-hidden="true" />}
+        <span className="agent-named-group-name">{name ?? t("No group")}</span>
+        {blockedCount > 0 && <span className="agent-named-group-dot" data-state="blocked" title={t("{count} need you", { count: blockedCount })}><span className="visually-hidden">{t("{count} need you", { count: blockedCount })}</span></span>}
+        {workingCount > 0 && <span className="agent-named-group-dot" data-state="working" title={t("{count} working", { count: workingCount })}><span className="visually-hidden">{t("{count} working", { count: workingCount })}</span></span>}
+        <span className="agent-section-count">{groupRows.length}</span>
+      </button>
+    </li>;
+  };
+  // the rows of the list's people part: in named groups, in state groups, or as they come
+  const peopleItems = named !== null
+    // with every row in no group, the list draws no heading at all, as today
+    ? named.length === 1 && named[0]!.name === null ? named[0]!.rows.map((row) => agentItem(row))
+      : named.flatMap(({ name, rows: groupRows }) => {
+        const groupFolded = !filter.active && groupFolds.includes(name ?? "");
+        return [namedGroupLabel(name, groupRows), ...groupRows.map((row) => agentItem(row, groupFolded))];
+      })
+    : groups ? groups.flatMap(({ group, rows: groupRows }) => [
+      <li className="agent-group-label" key={`group:${group}`} data-group={group} aria-hidden="true"><span>{groupLabel(group, t)}</span><span className="agent-group-count">{groupRows.length}</span></li>,
+      ...groupRows.map((row) => agentItem(row)),
+    ]) : parts.people.map((row) => agentItem(row));
   const runPin = (state: PinMenu): void => {
     // where the menu hands the focus back (lib RowMenu): the ⋯ itself unless the right-click said otherwise
     const back = state.previousFocus === undefined ? state.anchor : state.previousFocus;
@@ -436,12 +495,9 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
           <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map((row) => agentItem(row))}</ul>
         </>}
         {/* one list, so a row that changes groups or parts is moved, not drawn anew: its focus and open menu stay with it */}
-        {(parts.people.length > 0 || parts.background.length > 0) && <ul className={`agent-list${groups ? " agent-list-grouped" : ""}`}>
+        {(parts.people.length > 0 || parts.background.length > 0) && <ul className={`agent-list${groups || named ? " agent-list-grouped" : ""}`}>
           {/* one array of children: React moves a keyed row only among the siblings of its own array */}
-          {[...groups ? groups.flatMap(({ group, rows: groupRows }) => [
-            <li className="agent-group-label" key={`group:${group}`} data-group={group} aria-hidden="true"><span>{groupLabel(group, t)}</span><span className="agent-group-count">{groupRows.length}</span></li>,
-            ...groupRows.map((row) => agentItem(row)),
-          ]) : parts.people.map((row) => agentItem(row)),
+          {[...peopleItems,
           ...parts.background.length === 0 ? [] : [
             <li className="agent-background-label" key="background">
               <button type="button" className="agent-background-toggle" aria-expanded={!backgroundFolded} onClick={() => {
@@ -469,6 +525,15 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
         // a watching device sends no settings: it sees the lock and cannot change it, as with Mute alerts
         id: menuLocked ? "unlock" : "lock", label: menuLocked ? t("Unlock agent") : t("Lock agent"), icon: menuLocked ? LockOpen : Lock, disabled: watching,
         run: () => updateSettings({ lockedAgents: toggleAgentLock(settings.lockedAgents, pinned, menu.key) }),
+      }]),
+      // Settings -> Named agent groups: into each other group, and out of the one it was put in; a watching device sends no settings
+      ...(menuRow === undefined || menuBackground ? [] : groupNames.filter((name) => name !== menuGroup).map((name) => ({
+        id: `group:${name}`, label: t("Move to {group}", { group: name }), icon: FolderInput, disabled: watching,
+        run: () => setGroup(menu.key, name),
+      }))),
+      ...(menuOwnGroup === undefined || menuBackground || !groupNames.includes(menuOwnGroup) ? [] : [{
+        id: "ungroup", label: t("Remove from {group}", { group: menuOwnGroup }), icon: FolderOutput, disabled: watching,
+        run: () => setGroup(menu.key, null),
       }]),
       // one switch for every alert channel and every browser (lib/paneMutes.ts); a watching device sees its state and cannot flip it
       ...(muted === null || menuRow === undefined ? [] : [{

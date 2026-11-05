@@ -64,4 +64,7 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Shell": "シェル",
   "Working": "作業中",
   "Idle": "待機",
+  "{count} need you": "{count} 件が対応待ち",
+  "Move to {group}": "{group} に移動",
+  "Remove from {group}": "{group} から外す",
 };
