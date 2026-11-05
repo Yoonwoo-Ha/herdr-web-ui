@@ -1090,6 +1090,42 @@ describe("conversation invalidation refresh", () => {
     refresh.stop();
     expect(clock.pending()).toBe(0);
   });
+
+  it("answers a refresh asked for once a newest read begun after it has ended, not the read in flight", async () => {
+    refreshClock();
+    const refresh = pushedRefresh();
+    const reads: ReturnType<typeof Promise.withResolvers<void>>[] = [];
+    // a read ends when its screen goes, as fetch does when its signal aborts
+    refresh.setRead((signal) => {
+      const read = Promise.withResolvers<void>();
+      signal.addEventListener("abort", () => read.resolve(), { once: true });
+      reads.push(read);
+      return read.promise;
+    });
+    refresh.refresh();
+    let answered = false;
+    const asked = refresh.refreshed().then(() => { answered = true; });
+    reads[0]!.resolve();
+    await settleRefresh();
+    expect(reads).toHaveLength(2);
+    expect(answered).toBe(false);
+    reads[1]!.resolve();
+    await asked;
+    // a read a reconnect gives up answers through the read that replaces it
+    answered = false;
+    const replaced = refresh.refreshed().then(() => { answered = true; });
+    await settleRefresh();
+    refresh.restart();
+    await settleRefresh();
+    expect(reads).toHaveLength(4);
+    expect(answered).toBe(false);
+    reads[3]!.resolve();
+    await replaced;
+    // a screen that goes answers what it was asked for: nothing waits on a read that never comes
+    const stopped = refresh.refreshed();
+    refresh.stop();
+    await stopped;
+  });
 });
 
 it.each([200, 409])("a timed-out read cannot replace or clear the last conversation ETag after a late %s response", async (status) => {

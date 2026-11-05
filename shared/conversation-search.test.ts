@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ConversationTurn } from "./protocol.ts";
 import { createCodexTranscriptParser } from "../server/codex.ts";
 import { parseHermesRows, type HermesMessageRow } from "../server/hermes.ts";
-import { conversationTurnAnchor, matchSnippet, pickedTurn, pickSettled, searchableText, searchedTurnChanged, searchPattern, searchTurns } from "./conversation-search.ts";
+import { conversationTurnAnchor, matchSnippet, pickAhead, pickedTurn, pickSettled, searchableText, searchedTurnChanged, searchPattern, searchTurns } from "./conversation-search.ts";
 
 const user = (text: string, ts: string | null = "2026-10-01T00:00:00Z"): ConversationTurn => ({ role: "user", ts, parts: [{ kind: "text", text }] });
 
@@ -286,12 +286,25 @@ describe("pickedTurn", () => {
     expect(pickSettled(shown, match)).toBe(true);
     expect(pickedTurn(shown, match)).toBe(0);
     expect(pickedTurn(parseHermesRows(rows), match)).toBe(1);
-    // the search read a row the chat has not yet (the answer went on): by name, as before
+    // the search read a row the chat has not yet (the answer went on): no page before holds it, and
+    // no turn read is it, though one says the same (the chat reads its newest page again first)
     const growing = [row(100, "user", "deploy it"), row(101, "assistant", "The deploy script is ready."), row(102, "assistant", "Running the deploy script now.")];
     const ahead = searchTurns(parseHermesRows(growing.slice(2)), searchPattern("deploy script")!)[0]!;
     const behind = parseHermesRows([growing[0]!, { ...growing[2]!, id: 101 }]);
+    expect(pickAhead(behind, ahead)).toBe(true);
     expect(pickSettled(behind, ahead)).toBe(true);
-    expect(pickedTurn(behind, ahead)).toBe(1);
+    expect(pickedTurn(behind, ahead)).toBe("none");
+    expect(pickAhead(parseHermesRows(growing), ahead)).toBe(false);
+    expect(pickedTurn(parseHermesRows(growing), ahead)).toBe(1);
+    // nor an older prompt of its time and words: the chat read rows 1 to 4, the search found row 5
+    const again = (id: number, role: "user" | "assistant", content: string): HermesMessageRow => ({ ...row(id, role, content), timestamp: 1_700_000_003 });
+    const retried = [row(1, "user", "earlier"), row(2, "assistant", "ok"), again(3, "user", "retry"), again(4, "assistant", "ok"), again(5, "user", "retry")];
+    const unread = searchTurns(parseHermesRows(retried), searchPattern("retry")!)[0]!;
+    expect(unread.row).toBe(5);
+    expect(pickAhead(parseHermesRows(retried.slice(0, 4)), unread)).toBe(true);
+    expect(pickSettled(parseHermesRows(retried.slice(0, 4)), unread)).toBe(true);
+    expect(pickedTurn(parseHermesRows(retried.slice(0, 4)), unread)).toBe("none");
+    expect(pickedTurn(parseHermesRows(retried), unread)).toBe(4);
     // a page that does not hold the row reads on, and opens none
     expect(pickSettled(shown.slice(1), match)).toBe(false);
     expect(pickedTurn(shown.slice(1), match)).toBe("none");

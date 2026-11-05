@@ -103,7 +103,7 @@ import { polledPrompt, screenWordsToShow } from "../lib/promptText.ts";
 import { paneLifetimes } from "../lib/paneLifetime.ts";
 import { composerDraftKey, composerDrafts } from "../lib/composerDraft.ts";
 import type { ConversationSearchMatch } from "../../shared/conversation-search.ts";
-import { pickedTurn, pickSettled } from "../../shared/conversation-search.ts";
+import { pickAhead, pickedTurn, pickSettled } from "../../shared/conversation-search.ts";
 import type { AgentStatus, CommandOutcome, ConversationMetadata, ConversationPart, ConversationResponse, ConversationTurn, InteractivePrompt, OmoTaskResult, PendingMessage, SlashCommand } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
 import { TurnTime } from "./TurnTime.tsx";
@@ -1502,6 +1502,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   /** the turn a search's pick opens the chat at (revealTurn), until its row is in; bumped for each pick */
   const revealing = useRef<{ match: ConversationSearchMatch; done: (result: RevealResult) => void } | null>(null);
   const [revealTick, setRevealTick] = useState(0);
+  /** the last newest-page read failed: a pick waiting on it learned nothing (revealTurn) */
+  const newestFailed = useRef(false);
   const stopRestore = useRef<(() => void) | null>(null);
   const [pollKey, setPollKey] = useState(0);
   /**
@@ -1682,6 +1684,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       const previousAnswer = lastAnswer.current ?? undefined;
       const page = { ...(heldFrom.current === null ? {} : { from: heldFrom.current }), history_id: previousAnswer?.history_id, prompts: pagePrompts, fresh: readKey !== validatedPresentation.current, signal };
        let generation = olderGeneration.current;
+      newestFailed.current = false;
       try {
         let conversation;
         try {
@@ -1790,6 +1793,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         // a read given up for a reconnect is no failure: the read after it answers
         if (cancelled || generation !== olderGeneration.current || (cause instanceof DOMException && cause.name === "AbortError")) return;
         // a failed read proves nothing to wait on: the failure shows and the backstop retries it
+        newestFailed.current = true;
         setStale(false);
         setLoaded(true);
         setError(userFailure(cause));
@@ -2544,7 +2548,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
    * Opens the chat at a search's pick: the pages before the oldest shown are read, the largest page
    * at a time, until its turn is in and no page not read yet can hold the turn it was (pickSettled). A
    * turn that changed since the search has another name, which a later turn of its time may have
-   * taken: the one turn that is the match is opened (pickedTurn), never one of two. `missing`: no
+   * taken: the one turn that is the match is opened (pickedTurn), never one of two. A match in a store
+   * row the chat has not read (pickAhead) is decided once the newest page is read again. `missing`: no
    * such turn, or its transcript was replaced meanwhile.
    */
   const revealTurn = async (match: ConversationSearchMatch): Promise<RevealResult> => {
@@ -2554,8 +2559,13 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       setRevealTick((tick) => tick + 1);
     });
     let read: readonly ConversationTurn[] = shownTurns;
-    if (pickSettled(read, match)) return reveal();
     const generation = olderGeneration.current;
+    if (pickAhead(read, match)) {
+      await conversationRefresh.refreshed();
+      if (olderGeneration.current !== generation) return "missing";
+      return newestFailed.current ? "failed" : reveal();
+    }
+    if (pickSettled(read, match)) return reveal();
     for (let before = olderCursor; typeof before === "string";) {
       const page = await loadOlder({ before, prompts: LARGEST_PAGE });
       if (olderGeneration.current !== generation) return "missing";

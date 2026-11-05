@@ -26,7 +26,15 @@ const turnAt = (index: number): ConversationTurn => {
     { kind: "text", text: prompt === 180 ? "The zebra test moved to crossing.test.ts, beside the other crossing tests." : `Answer ${prompt}. ${"Variable height paragraph. ".repeat(prompt % 5 + 1)}` },
   ] };
 };
-const TURNS = Array.from({ length: PROMPTS * 2 }, (_, index) => turnAt(index));
+// each text part read from a store row of its own (as Hermes's are), so a match names the row its words are in
+const TURNS = Array.from({ length: PROMPTS * 2 }, (_, index): ConversationTurn => ({ ...turnAt(index), text_rows: [index + 1] }));
+// an answer the store holds after the last one shown, of its time and first words: the search finds
+// it before the chat has read it, and once (`retried`) the newest page has it
+const [call, said] = TURNS.at(-1)!.parts as [ConversationTurn["parts"][number], { kind: "text"; text: string }];
+const RETRIED: ConversationTurn = { ...TURNS.at(-1)!, parts: [call, { kind: "text", text: `${said.text} Retried.` }], text_rows: [TURNS.length + 1] };
+let retried = false;
+/** the newest page answers 503, as a bridge that lost its store for a moment */
+let newestFails = false;
 const reads: { before: string | null; prompts: string | null }[] = [];
 
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -41,6 +49,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     if (pattern === null) return Response.json({ error: { code: "invalid_query", message: "q" } }, { status: 400 });
     assert.equal(url.searchParams.get("history_id"), "h1");
     // a match whose turn the conversation no longer holds, as a search over another history would answer
+    if (url.searchParams.get("q") === "retried") return Response.json({ history_id: "h1", cursor: null, matches: searchTurns([RETRIED], pattern) } satisfies ConversationSearchResponse);
     if (url.searchParams.get("q") === "ghost") return Response.json({ history_id: "h1", cursor: null, matches: [{ turn: "user|2020-01-01T00:00:00.000Z|text|ghost", role: "user", ts: "2020-01-01T00:00:00.000Z", before: "a ", match: "ghost", after: " message" }] } satisfies ConversationSearchResponse);
     // two answers, as the server stops at its budget and goes on from its cursor
     const before = url.searchParams.get("before");
@@ -53,7 +62,9 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     const size = 2 * Number(url.searchParams.get("prompts") ?? 50);
     const end = before === null ? TURNS.length : Number(before.slice(2));
     const start = Math.max(0, end - size);
-    return Response.json({ source: "claude-transcript", history_id: "h1", cursor: start === 0 ? null : `t:${start}`, turns: TURNS.slice(start, end), metadata: { model: null, reasoning_effort: null } });
+    if (before === null && newestFails) return Response.json({ error: { code: "unavailable", message: "store" } }, { status: 503 });
+    const newest = before === null && retried ? [RETRIED] : [];
+    return Response.json({ source: "claude-transcript", history_id: "h1", cursor: start === 0 ? null : `t:${start}`, turns: [...TURNS.slice(start, end), ...newest], metadata: { model: null, reasoning_effort: null } });
   }
   if (url.pathname === "/") return new Response('<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conversation search QA</title><link rel="stylesheet" href="/conversation-search-fixture.css"></head><body><div id="root"></div><script type="module" src="/conversation-search-fixture.js"></script></body></html>', { headers: { "content-type": "text/html" } });
   const file = Bun.file(join(root, url.pathname.slice(1)));
@@ -80,6 +91,7 @@ try {
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   for (const [width, height] of [[1280, 800], [390, 844]] as const) {
     reads.length = 0;
+    retried = false;
     const context = await browser.newContext({ viewport: { width, height }, locale: "en-US", hasTouch: width < 640, isMobile: width < 640 });
     await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: "dark" })));
     const page = await context.newPage();
@@ -135,6 +147,34 @@ try {
     await page.keyboard.press("Escape");
     await dialog(page).waitFor({ state: "detached" });
     console.log(`PASS ${width}: no match, a match no longer there, and Escape`);
+
+    // a match in a row the chat has not read: its newest page is read again before deciding, and an
+    // older answer of the same time and first words is never opened in its place
+    const firstRead = reads.length;
+    await page.evaluate(() => window.searchQa.open());
+    await search(page, "retried");
+    await dialog(page).getByRole("option").click();
+    await dialog(page).getByText("This message is no longer in the conversation.").waitFor();
+    assert.ok(reads.slice(firstRead).some((read) => read.before === null), JSON.stringify(reads.slice(firstRead)));
+    // a newest read that fails tells nothing: the pick says so, rather than that the message is gone
+    newestFails = true;
+    await dialog(page).getByRole("option").click();
+    await dialog(page).getByText("Couldn't load the earlier messages.").waitFor();
+    newestFails = false;
+    await page.keyboard.press("Escape");
+    await dialog(page).waitFor({ state: "detached" });
+    retried = true;
+    await page.evaluate(() => window.searchQa.open());
+    await search(page, "retried");
+    await dialog(page).getByRole("option").click();
+    await dialog(page).waitFor({ state: "detached" });
+    // the last answer: the chat ends below it, so it is in view rather than at the top
+    await page.waitForFunction(() => {
+      const view = document.querySelector(".chat-view")?.getBoundingClientRect();
+      const row = [...document.querySelectorAll<HTMLElement>("[data-chat-row]")].find((node) => node.textContent?.includes("Retried."))?.getBoundingClientRect();
+      return view !== undefined && row !== undefined && row.top >= view.top - 1 && row.top < view.bottom;
+    });
+    console.log(`PASS ${width}: a match the chat has not read opens once read, and none in its place`);
     assert.deepEqual(errors, []);
     await context.close();
   }
