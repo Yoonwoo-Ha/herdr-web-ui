@@ -3,7 +3,6 @@
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const RELAY_JA: Record<string, string> = {
-  "this PC": "このPC",
   "Your PCs": "あなたのPC",
   "Unnamed PC": "名前のないPC",
   "To add another PC, scan the QR code it shows under Phone & devices.": "別のPCを追加するには、そのPCの「スマホとデバイス」に表示されるQRコードをスキャンしてください。",
@@ -78,17 +77,6 @@ export const RELAY_JA: Record<string, string> = {
   "On the PC, open Settings → Phone & devices and choose Show a code to type. Type that code here.": "PC で「設定 → スマートフォンとデバイス」を開き、「入力用のコードを表示」を選んでください。そのコードをここに入力します。",
   "Code from the PC": "PC に表示されたコード",
   "Looking for the PC…": "PC を探しています…",
-  "Does {name}'s screen show this ID?": "{name} の画面にこの ID が表示されていますか？",
-  "The PC shows its ID under the code, in Settings → Phone & devices. Pair only if every group matches.": "PC は「設定 → スマートフォンとデバイス」のコードの下に自分の ID を表示します。すべてのまとまりが一致する場合だけペアリングしてください。",
-  "ID of the PC this code found": "このコードで見つかった PC の ID",
-  "It matches": "一致しています",
-  "A code has ten letters and digits, like 7K3QD-M2XHA.": "コードは 7K3QD-M2XHA のような英数字 10 文字です。",
-  "No PC shows this code. Check it, or show a new one on the PC.": "このコードを表示している PC はありません。確認するか、PC で新しいコードを表示してください。",
-  "That code did not work. Check it and try again; after three wrong tries the PC needs a new code.": "そのコードでは接続できませんでした。確認してもう一度お試しください。3 回間違えると PC で新しいコードが必要です。",
-  "That code ran out. Show a new one on the PC.": "コードの期限が切れました。PC で新しいコードを表示してください。",
-  "Another device is trying this code, or it was tried too often. Wait a moment, or show a new code on the PC.": "別のデバイスがこのコードを試しているか、試行が多すぎます。少し待つか、PC で新しいコードを表示してください。",
-  "The answer did not come from a PC this app can pair with. Show a new code on the PC, or scan its QR code.": "このアプリがペアリングできる PC からの応答ではありません。PC で新しいコードを表示するか、QR コードを読み取ってください。",
-  "The relay could not be reached. Check this device's connection, then try again.": "リレーに接続できませんでした。このデバイスの接続を確認してから、もう一度お試しください。",
   "Every PC of the account removes this device. You can pair it again later.": "アカウントのすべての PC からこのデバイスが外れます。あとでまたペアリングできます。",
   "Remove this device": "このデバイスを外す",
   "Remove this device from your account": "アカウントからこのデバイスを外す",

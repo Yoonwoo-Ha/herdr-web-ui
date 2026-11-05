@@ -396,6 +396,18 @@ const BASE: Record<string, string> = {
   "{name} wants to pair through the relay. Approve it only if its screen shows": "{name} 想通过中继配对。只有它的屏幕显示以下数字时才批准:",
   "Decline": "拒绝",
   "differs": "不同",
+  "this PC": "这台电脑",
+  "It matches": "一致",
+  "Does {name}'s screen show this ID?": "{name} 的屏幕上显示的是这个 ID 吗？",
+  "The PC shows its ID under the code, in Settings → Phone & devices. Pair only if every group matches.": "电脑会在“设置 → 手机和设备”中代码下方显示它的 ID。只有每一组都一致时才配对。",
+  "ID of the PC this code found": "此代码找到的电脑的 ID",
+  "A code has ten letters and digits, like 7K3QD-M2XHA.": "代码由十个字母和数字组成，例如 7K3QD-M2XHA。",
+  "No PC shows this code. Check it, or show a new one on the PC.": "没有电脑显示这个代码。请检查，或在电脑上显示新代码。",
+  "That code did not work. Check it and try again; after three wrong tries the PC needs a new code.": "该代码无效。请检查后重试；输错三次后需要在电脑上生成新代码。",
+  "That code ran out. Show a new one on the PC.": "该代码已过期。请在电脑上显示新代码。",
+  "Another device is trying this code, or it was tried too often. Wait a moment, or show a new code on the PC.": "另一台设备正在尝试此代码，或尝试次数过多。请稍候，或在电脑上显示新代码。",
+  "The answer did not come from a PC this app can pair with. Show a new code on the PC, or scan its QR code.": "该响应并非来自本应用可配对的电脑。请在电脑上显示新代码，或扫描其二维码。",
+  "The relay could not be reached. Check this device's connection, then try again.": "无法连接中继。请检查此设备的网络连接，然后重试。",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

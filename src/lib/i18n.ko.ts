@@ -392,6 +392,18 @@ const BASE: Record<string, string> = {
   "{name} wants to pair through the relay. Approve it only if its screen shows": "{name}이(가) 릴레이로 연결하려고 합니다. 그 화면에 다음 숫자가 보일 때만 승인하세요:",
   "Decline": "거절",
   "differs": "다름",
+  "this PC": "이 PC",
+  "It matches": "같습니다",
+  "Does {name}'s screen show this ID?": "{name} 화면에 이 ID가 보이나요?",
+  "The PC shows its ID under the code, in Settings → Phone & devices. Pair only if every group matches.": "PC는 설정 → 폰 및 기기의 코드 아래에 자기 ID를 보여 줍니다. 모든 묶음이 같을 때만 페어링하세요.",
+  "ID of the PC this code found": "이 코드로 찾은 PC의 ID",
+  "A code has ten letters and digits, like 7K3QD-M2XHA.": "코드는 7K3QD-M2XHA처럼 영문과 숫자 열 자입니다.",
+  "No PC shows this code. Check it, or show a new one on the PC.": "이 코드를 보여 주는 PC가 없습니다. 코드를 확인하거나 PC에서 새 코드를 띄우세요.",
+  "That code did not work. Check it and try again; after three wrong tries the PC needs a new code.": "그 코드가 맞지 않습니다. 확인하고 다시 시도하세요. 세 번 틀리면 PC에서 새 코드가 필요합니다.",
+  "That code ran out. Show a new one on the PC.": "코드가 만료됐습니다. PC에서 새 코드를 띄우세요.",
+  "Another device is trying this code, or it was tried too often. Wait a moment, or show a new code on the PC.": "다른 기기가 이 코드를 시도 중이거나 너무 많이 시도됐습니다. 잠시 기다리거나 PC에서 새 코드를 띄우세요.",
+  "The answer did not come from a PC this app can pair with. Show a new code on the PC, or scan its QR code.": "이 앱이 페어링할 수 있는 PC의 응답이 아닙니다. PC에서 새 코드를 띄우거나 QR 코드를 스캔하세요.",
+  "The relay could not be reached. Check this device's connection, then try again.": "릴레이에 연결할 수 없습니다. 이 기기의 연결을 확인한 뒤 다시 시도하세요.",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

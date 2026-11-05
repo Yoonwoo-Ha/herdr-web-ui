@@ -30,9 +30,11 @@ import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalle
 import type { UpdatesModel } from "../lib/updates.ts";
 import type { UserError } from "../lib/userError.ts";
 import { LOCAL_MACHINE, pcAlertKey, type HerdrCoreFacts, type HerdrRuntimeFacts, type Machine, type MachineSettings } from "../../shared/machines.ts";
+import { codeFailureText, typedCodeFailure } from "./codeFailureText.ts";
+import { KeyId } from "./KeyId.tsx";
 import { canHideMachine, isMachineShown, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
 import { updateAlertFilters, useAlertFilters } from "../lib/alertFilters.ts";
-import { addRelayPc, fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
+import { addFoundRelayPc, addRelayPc, ApiError, findRelayPc, fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
 import type { PushActionResult } from "../lib/pushHealth.ts";
 import type { HealthAuth, PluginActions, RemoteAccess } from "../../shared/protocol.ts";
@@ -1060,32 +1062,62 @@ function SidebarPcsGroup({ machines }: { machines: readonly Machine[] }) {
 }
 
 /**
- * Another PC through the Ovis relay, no SSH: its pairing link (Settings → Phone & devices → Copy link there) pairs this
- * PC's server with it as a phone would. The link holds a one-time code, so it stays in the input, never in state.
+ * Another PC through the Ovis relay, no SSH: its pairing link (Settings → Phone & devices → Copy link there), or the code
+ * it shows (Show a code to type), pairs this PC's server with it as a phone would. Both hold a one-time code, so they
+ * stay in the input, never in state. A typed code first finds the PC, and the person matches its ID with the one that
+ * PC shows before it is added, as the hosted app's code screen asks (RelayShell.tsx).
  */
-function AddRelayPc() {
+export function AddRelayPc() {
   const t = useT();
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [found, setFound] = useState<{ ticket: string; server_id: string; name: string | null } | null>(null);
   const [result, setResult] = useState<{ error: boolean; text: string } | null>(null);
-  const add = async () => {
-    const link = input.current?.value.trim() ?? "";
-    if (!link) return;
+  const added = (machine: Machine) => setResult({ error: false, text: t("{name} was added. Its workspaces join the sidebar.", { name: machine.name }) });
+  const failed = (error: unknown) => {
+    const failure = error instanceof ApiError ? typedCodeFailure(error.code) : null;
+    setResult({ error: true, text: failure !== null ? codeFailureText(t, failure) : error instanceof Error ? error.message : String(error) });
+  };
+  const run = async (work: () => Promise<void>) => {
     setBusy(true);
     setResult(null);
-    try {
-      const { machine } = await addRelayPc(link);
-      if (input.current) input.current.value = "";
-      setResult({ error: false, text: t("{name} was added. Its workspaces join the sidebar.", { name: machine.name }) });
-    } catch (error) {
-      setResult({ error: true, text: error instanceof Error ? error.message : String(error) });
-    } finally { setBusy(false); }
+    try { await work(); } catch (error) { failed(error); } finally { setBusy(false); }
   };
+  const submit = () => {
+    const field = input.current;
+    const value = field?.value.trim() ?? "";
+    if (!field || !value) return;
+    // a link carries its offer; anything else is taken as a typed code
+    const link = /^https?:\/\//i.test(value);
+    void run(async () => {
+      if (link) { added((await addRelayPc(value)).machine); field.value = ""; return; }
+      // one try per tap, as on the phone: the code is not kept for another
+      field.value = "";
+      setFound(await findRelayPc(value));
+    });
+  };
+  const match = (ticket: string) => void run(async () => {
+    try { added((await addFoundRelayPc(ticket)).machine); } finally { setFound(null); }
+  });
+  if (found !== null) {
+    const pc = found.name ?? t("this PC");
+    return (
+      <SettingsRow label={t("Does {name}'s screen show this ID?", { name: pc })} description={t("The PC shows its ID under the code, in Settings → Phone & devices. Pair only if every group matches.")} wide>
+        <div className="relay-pc-found">
+          <KeyId id={found.server_id} label={t("ID of the PC this code found")} />
+          <div className="relay-pc-actions">
+            <button type="button" className="btn btn-primary" disabled={busy} aria-busy={busy || undefined} onClick={() => match(found.ticket)}>{t("It matches")}</button>
+            <button type="button" className="btn" disabled={busy} onClick={() => setFound(null)}>{t("Cancel")}</button>
+          </div>
+        </div>
+      </SettingsRow>
+    );
+  }
   return (
     <>
-      <SettingsRow label={t("Add a PC through the relay")} description={t("No SSH or open port. On the other PC, turn the relay on in Settings → Phone & devices, choose Copy link, and paste it here.")} wide>
-        <form className="relay-pc-form" onSubmit={(event) => { event.preventDefault(); void add(); }}>
-          <input ref={input} className="input relay-pc-input" type="url" placeholder="https://app.ovis.sh/s/…" aria-label={t("Pairing link")}
+      <SettingsRow label={t("Add a PC through the relay")} description={t("No SSH or open port. On the other PC, turn the relay on in Settings → Phone & devices. Paste its link here (Copy link), or type the code it shows (Show a code to type).")} wide>
+        <form className="relay-pc-form" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+          <input ref={input} className="input relay-pc-input" type="text" placeholder={t("Link or code")} aria-label={t("Pairing link or code")}
             autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={busy} />
           <button type="submit" className="btn" disabled={busy} aria-busy={busy || undefined} aria-label={t("Add a PC through the relay")}>{t("Add PC")}</button>
         </form>

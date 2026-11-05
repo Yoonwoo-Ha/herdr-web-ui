@@ -1,5 +1,5 @@
 import { authenticatedWebSocket } from "./remote-websocket.ts";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as tcpServer } from "node:net";
 import { hostname } from "node:os";
@@ -25,8 +25,13 @@ import { discard, readCappedJson, REMOTE_LIMITS } from "./remote-json.ts";
 import { SshConnection, sshClient } from "./ssh.ts";
 import { WAITING_FOR_WINDOWS_LOGIN } from "./windows-herdr-start.ts";
 import { decodeOffer, SERVER_ID_PATTERN, isWssOrigin, type RelayOffer } from "../shared/relay-offer.ts";
+import { offerFromCode, TypedCodeError } from "../shared/relay-code-offer.ts";
+
 import type { RelaySocket } from "../shared/relay-channel.ts";
 import { openRelayPcTunnel, RelayPcKey, RelayPcRefused, relayPcLabel, removeRelayPcKey, type RelayPcTunnel } from "./relay-pc.ts";
+
+/** a PC keeps the six-digit code in its offer for 10 minutes at most (server/devices.ts) */
+const RELAY_FOUND_MS = 10 * 60_000;
 
 type StoredMachine = { id: string; name: string; enabled: boolean; snapshot?: SessionSnapshot | null }
   & ({ kind?: "ssh"; target: SshTarget; server_id?: string } | { kind: "relay"; relay: NonNullable<Machine["relay"]> });
@@ -303,6 +308,11 @@ export class MachineManager {
   private ownUpdateCheckMs: number;
   /** how a relay PC's connection reaches the relay; tests point it at a local one */
   private relaySocket?: (url: string) => RelaySocket;
+  /**
+   * PCs typed codes found (relayFoundByCode), waiting for the person to match their IDs, by a random ticket only the
+   * asking window gets: each offer holds that PC's one-time code, so another client naming the PC's public ID takes none.
+   */
+  private foundByCode = new Map<string, { offer: RelayOffer; at: number }>();
   /** this server's own relay ID, where it has one: the local PC's `server_id` */
   private serverId?: () => string | undefined;
 
@@ -1614,14 +1624,40 @@ export class MachineManager {
   }
   private relayKeyPath(id: string): string { return join(this.stateDir, "relay-pcs", `${id}.json`); }
   /**
+   * Settings → Remote PCs, with the code another PC shows (its Settings → Phone & devices → Show a code to type):
+   * finds that PC as a phone does (shared/relay-code-offer.ts) and holds its offer here, the one-time code in it
+   * included, while the person compares the ID with the one that PC shows; addRelay with `found` then pairs with
+   * it. One exchange per call; throws TypedCodeError.
+   */
+  async relayFoundByCode(code: unknown, signal?: AbortSignal): Promise<{ ticket: string; server_id: string; name: string | null }> {
+    if (this.stopped) throw new Error("Server stopping");
+    if (typeof code !== "string" || code.length > 64) throw new TypedCodeError("not-a-code");
+    const offer = await offerFromCode(code, { ...(this.relaySocket ? { connect: this.relaySocket } : {}), ...(signal ? { signal } : {}) });
+    if (this.stopped) throw new Error("Server stopping");
+    const now = this.now();
+    for (const [ticket, held] of this.foundByCode) if (now - held.at > RELAY_FOUND_MS) this.foundByCode.delete(ticket);
+    // a few windows at once at most; the oldest gives way
+    if (this.foundByCode.size >= 8) this.foundByCode.delete(this.foundByCode.keys().next().value!);
+    const ticket = randomBytes(32).toString("base64url");
+    this.foundByCode.set(ticket, { offer, at: now });
+    return { ticket, server_id: offer.server_id, name: offer.name ?? null };
+  }
+
+  /**
    * Settings → Remote PCs → Add a PC through the relay: pairs with the PC whose pairing link (its Settings → Phone &
    * devices → Copy link) this is, as a phone would, and adds it once that PC admitted this one. The link's code is
    * spent here; later connections sign in with the key this pairing made.
+   * `found` instead of `link`: the ticket relayFoundByCode gave for the PC it found, once the person matched its ID.
    */
-  async addRelay(link: unknown, name?: unknown): Promise<Machine> {
+  async addRelay(link: unknown, name?: unknown, found?: unknown): Promise<Machine> {
     if (this.stopped) throw new Error("Server stopping");
     let offer: RelayOffer | null = null;
-    if (typeof link === "string" && link.length <= 4096) try { offer = decodeOffer(link.trim()); } catch { offer = null; }
+    if (found !== undefined) {
+      const held = typeof found === "string" ? this.foundByCode.get(found) : undefined;
+      if (held === undefined || this.now() - held.at > RELAY_FOUND_MS) throw new Error("That PC is no longer waiting. Show a new code on it and type that.");
+      this.foundByCode.delete(found as string);
+      offer = held.offer;
+    } else if (typeof link === "string" && link.length <= 4096) try { offer = decodeOffer(link.trim()); } catch { offer = null; }
     if (!offer?.code) throw new Error("That is not a pairing link. On the other PC, turn the relay on in Settings → Phone & devices and copy its link.");
     if (name !== undefined && (typeof name !== "string" || !name.trim() || name.length > 100)) throw new Error("Enter a PC name (1–100 characters)");
     const serverId = offer.server_id;

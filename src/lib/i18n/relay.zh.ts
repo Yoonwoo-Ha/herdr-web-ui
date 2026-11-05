@@ -3,7 +3,6 @@
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const RELAY_ZH: Record<string, string> = {
-  "this PC": "这台电脑",
   "Your PCs": "我的电脑",
   "Unnamed PC": "未命名的电脑",
   "To add another PC, scan the QR code it shows under Phone & devices.": "要添加另一台电脑，请扫描它在“手机与设备”中显示的二维码。",
@@ -78,17 +77,6 @@ export const RELAY_ZH: Record<string, string> = {
   "On the PC, open Settings → Phone & devices and choose Show a code to type. Type that code here.": "在电脑上打开“设置 → 手机和设备”，选择“显示要输入的代码”，然后在这里输入该代码。",
   "Code from the PC": "电脑上显示的代码",
   "Looking for the PC…": "正在查找电脑…",
-  "Does {name}'s screen show this ID?": "{name} 的屏幕上显示的是这个 ID 吗？",
-  "The PC shows its ID under the code, in Settings → Phone & devices. Pair only if every group matches.": "电脑会在“设置 → 手机和设备”中代码下方显示它的 ID。只有每一组都一致时才配对。",
-  "ID of the PC this code found": "此代码找到的电脑的 ID",
-  "It matches": "一致",
-  "A code has ten letters and digits, like 7K3QD-M2XHA.": "代码由十个字母和数字组成，例如 7K3QD-M2XHA。",
-  "No PC shows this code. Check it, or show a new one on the PC.": "没有电脑显示这个代码。请检查，或在电脑上显示新代码。",
-  "That code did not work. Check it and try again; after three wrong tries the PC needs a new code.": "该代码无效。请检查后重试；输错三次后需要在电脑上生成新代码。",
-  "That code ran out. Show a new one on the PC.": "该代码已过期。请在电脑上显示新代码。",
-  "Another device is trying this code, or it was tried too often. Wait a moment, or show a new code on the PC.": "另一台设备正在尝试此代码，或尝试次数过多。请稍候，或在电脑上显示新代码。",
-  "The answer did not come from a PC this app can pair with. Show a new code on the PC, or scan its QR code.": "该响应并非来自本应用可配对的电脑。请在电脑上显示新代码，或扫描其二维码。",
-  "The relay could not be reached. Check this device's connection, then try again.": "无法连接中继。请检查此设备的网络连接，然后重试。",
   "Every PC of the account removes this device. You can pair it again later.": "账户中的所有 PC 都会移除此设备。之后可以再次配对。",
   "Remove this device": "移除此设备",
   "Remove this device from your account": "从账户中移除此设备",

@@ -5,6 +5,7 @@ import type { SharedPreferences } from "../shared/preferences.ts";
 import type { PanePromptResponse, SessionSnapshot } from "../shared/protocol.ts";
 import type { SeenFinish } from "../shared/seen.ts";
 import { MachineManager } from "./machines.ts";
+import { TypedCodeError, type TypedCodeFailure } from "../shared/relay-code-offer.ts";
 import { canSendSecret, sameOrigin } from "./machine-security.ts";
 import { isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
 import { crossSiteFileRead } from "./file-view.ts";
@@ -12,6 +13,17 @@ import { snapshotWithoutHiddenTokens, withoutHiddenTokens } from "./herdr-sideba
 import { parseJson, readCapped, REMOTE_LIMITS, RemoteResponseInvalid, RemoteResponseTooLarge } from "./remote-json.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
+
+/** POST /api/machines/relay/code: why a typed code found no PC, as `typed_code_<failure>` (the app words each one). */
+const CODE_FAILURES: Record<TypedCodeFailure, [string, number]> = {
+  "not-a-code": ["A code has ten letters and digits", 400],
+  "no-pc": ["No PC shows this code", 404],
+  wrong: ["That code did not work", 400],
+  expired: ["That code ran out", 410],
+  busy: ["Another device is trying this code", 409],
+  unreachable: ["The relay could not be reached", 502],
+  forged: ["The answer did not come from a PC this app can pair with", 502],
+};
 
 /**
  * How far one browser's machine events may fall behind before its stream is ended (it reconnects and
@@ -255,7 +267,20 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       if (!canSendSecret(request)) return fail("https_required", "A pairing link requires HTTPS or localhost", 403);
       const body: unknown = await request.json().catch(() => null);
       if (!isJsonObject(body)) return fail("invalid_body", "Expected a pairing link", 400);
-      return jsonResponse({ machine: await manager.addRelay(body.link, body.name) }, 201);
+      return jsonResponse({ machine: await manager.addRelay(body.link, body.name, body.found) }, 201);
+    }
+    if (parts[0] === "relay" && parts[1] === "code" && parts.length === 2 && request.method === "POST") {
+      setRequestRoute("/api/machines/relay/code");
+      // the code is a secret, and what it finds holds the other PC's one-time pairing code, which stays on this server
+      if (!canSendSecret(request)) return fail("https_required", "A pairing code requires HTTPS or localhost", 403);
+      const body: unknown = await request.json().catch(() => null);
+      if (!isJsonObject(body)) return fail("invalid_body", "Expected a pairing code", 400);
+      try { return jsonResponse(await manager.relayFoundByCode(body.code, request.signal)); }
+      catch (error) {
+        if (!(error instanceof TypedCodeError)) throw error;
+        const [message, status] = CODE_FAILURES[error.failure];
+        return fail(`typed_code_${error.failure}`, message, status);
+      }
     }
     if (parts[0] === "setup") {
       if (parts.length === 1 && request.method === "POST") { setRequestRoute("/api/machines/setup"); return jsonResponse(manager.setup(await request.json() as SetupRequest), 202); }

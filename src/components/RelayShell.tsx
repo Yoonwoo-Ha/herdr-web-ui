@@ -12,7 +12,7 @@ import { AccountFinePrint, AccountPcs, AccountSignIn } from "./AccountPcs.tsx";
 import { KeyId } from "./KeyId.tsx";
 import { describeUpdate } from "../lib/updateProgress.ts";
 import type { RelayShellState } from "../lib/relay/shellState.ts";
-import type { TypedCodeFailure } from "../lib/relay/pairCode.ts";
+import { codeFailureText, type TypedCodeFailure } from "./codeFailureText.ts";
 import { serverScopePath } from "../lib/shellMode.ts";
 
 export interface RelayShellProps {
@@ -44,19 +44,6 @@ export interface RelayShellProps {
   onCodeSubmit: (code: string) => void;
   /** the ID a typed code found is the one the PC's screen shows */
   onCodeMatch: () => void;
-}
-
-/** What the code screen says when the last code gave no PC. */
-function codeFailureText(t: ReturnType<typeof useT>, failure: TypedCodeFailure): string {
-  switch (failure) {
-    case "not-a-code": return t("A code has ten letters and digits, like 7K3QD-M2XHA.");
-    case "no-pc": return t("No PC shows this code. Check it, or show a new one on the PC.");
-    case "wrong": return t("That code did not work. Check it and try again; after three wrong tries the PC needs a new code.");
-    case "expired": return t("That code ran out. Show a new one on the PC.");
-    case "busy": return t("Another device is trying this code, or it was tried too often. Wait a moment, or show a new code on the PC.");
-    case "forged": return t("The answer did not come from a PC this app can pair with. Show a new code on the PC, or scan its QR code.");
-    default: return t("The relay could not be reached. Check this device's connection, then try again.");
-  }
 }
 
 /**

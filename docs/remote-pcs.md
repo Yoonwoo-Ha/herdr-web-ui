@@ -69,8 +69,11 @@ An initial connection can be cancelled while waiting; already-started work stays
 
 **Settings → Remote PCs → Add a PC through the relay** adds another PC with no SSH and no open
 port: both PCs only connect out to the [Ovis relay](relay.md). On the other PC, turn the relay on
-under **Settings → Phone & devices**, choose **Copy link**, and paste that link here. This PC's
-server then pairs with that one exactly as a phone does: the same one-time code, the same
+under **Settings → Phone & devices**, choose **Copy link**, and paste that link here. Or choose
+**Show a code to type** there and type its ten-character code here instead: this PC's server finds
+that PC through the relay as a phone does ([Pairing with a typed code](relay.md)), keeps what it
+found, and shows that PC's ID. Choose **It matches** only if every group matches the ID under the
+code on that PC's screen. This PC's server then pairs with that one exactly as a phone does: the same one-time code, the same
 end-to-end encryption and the same device key, kept on this server in
 `<stateDir>/relay-pcs/<pc id>.json` (mode `0600`). The other PC lists it under Devices as
 `Ovis on <this PC's name>`, with the access any paired device has. The PC itself is saved in
@@ -84,10 +87,15 @@ the same backoff as an SSH PC's and signs in with the saved key; nothing typed i
 
 **Revoke** under Phone & devices on the other PC ends this PC's access: the PC turns to an error
 that says so and is not tried again. **Remove PC** here forgets the PC and its key; revoke it on
-the other PC as well to remove it there. To add it again, paste a new link.
+the other PC as well to remove it there. To add it again, paste a new link or type a new code.
 
 `POST /api/machines/relay` with `{ "link": "<pairing link>", "name"?: "<PC name>" }` adds one
-(201 `{ machine }`, with `kind: "relay"`), under the same guards as every PC change.
+(201 `{ machine }`, with `kind: "relay"`), under the same guards as every PC change. With a typed
+code, `POST /api/machines/relay/code` with `{ "code": "<code>" }` runs one exchange and answers
+`{ ticket, server_id, name }` (the one-time pairing code it found stays on this server for up to
+10 minutes, under that random ticket), or `typed_code_<failure>` (`not-a-code`, `no-pc`, `wrong`, `expired`, `busy`,
+`unreachable`, `forged`); then `POST /api/machines/relay` with `{ "found": "<ticket>" }` adds
+that PC, once.
 
 ## Runtime and endpoints
 
