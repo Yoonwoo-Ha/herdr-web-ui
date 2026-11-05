@@ -105,6 +105,39 @@
   text-align: center;
 }
 
+/* Agents a launcher tagged role=background (workers, subagents) stand after the rest, under a
+   heading like a group's that folds them and says how many there are; its caret takes the leading cell */
+.agent-background-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--side-row);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  line-height: var(--lh-tight);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.agent-background-label:first-child .agent-background-toggle { margin-top: 0; }
+.agent-background-toggle .agent-section-caret { opacity: 1; }
+.agent-background-toggle .agent-section-count { font-size: inherit; }
+
+/* the folded part's rows stay in the list (a row that changes part moves), only out of sight */
+.agent-list .agent-item[hidden] { display: none; }
+
+@media (hover: hover) {
+  .agent-background-toggle:hover { color: var(--text); }
+}
+
 /* Pinned agents stand first in a card (Sidebar.css); the Agents head stays the list's only head. */
 
 /* The agent row selects its pane; its ⋯ (or a right-click) opens its pin menu. */

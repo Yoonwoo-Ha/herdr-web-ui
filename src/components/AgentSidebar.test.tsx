@@ -346,6 +346,32 @@ describe("AgentSidebar fold memory", () => {
     expect(mounted.root.findAllByProps({ className: "agent-list" })).toHaveLength(0);
   });
 
+  it("keeps a background row's element when it becomes blocked and moves up, so its focus and open menu stay", async () => {
+    // Given an opened background part holding the agent, which works, and another background agent.
+    stored.set("ovis:agents-background-collapsed", "0");
+    const tagged = (blocked: boolean) => roster().map((machine) => ({
+      ...machine,
+      snapshot: machine.snapshot === null ? null : { ...machine.snapshot, panes: machine.snapshot.panes.map((pane) =>
+        pane.pane_id === paneId ? { ...pane, tokens: { role: "background" }, agent_status: blocked ? "blocked" as const : "working" as const }
+        : pane.pane_id === "w1E:p1" ? { ...pane, tokens: { role: "background" } } : pane) },
+    }));
+    const view = (machines: Machine[]) => <SettingsProvider>
+      <SidebarFilterProvider value={{ filter: inactive, reportBranches: () => {} }}>
+        <AgentSidebar machines={machines} selectedMachineId="local" selectedPaneId={null} stateWord={(machine) => machine.state} onSelect={() => {}} />
+      </SidebarFilterProvider>
+    </SettingsProvider>;
+    await act(async () => { renderer = create(view(tagged(false))); });
+    const mounted = renderer!;
+    const row = () => mounted.root.find((node) => node.type === "li" && node.props["data-pane"] === paneId);
+    const order = () => mounted.root.findAll((node) => node.type === "li" && (node.props["data-pane"] !== undefined || node.props.className === "agent-background-label")).map((node) => node.props["data-pane"] ?? "BG");
+    expect(order().indexOf(paneId)).toBeGreaterThan(order().indexOf("BG"));
+    const before = row();
+    // When it becomes blocked, it stands above the background heading as the same element.
+    await act(async () => { mounted.update(view(tagged(true))); });
+    expect(order().indexOf(paneId)).toBeLessThan(order().indexOf("BG"));
+    expect(row()).toBe(before);
+  });
+
   it("orders the groups the same whichever Agents order is chosen: ties keep herdr's order, not Activity's", async () => {
     // Given grouping on, ordered by name, and two idle agents with the same name (w1F changed after w1E).
     stored.set("ovis:agent-groups", "true");

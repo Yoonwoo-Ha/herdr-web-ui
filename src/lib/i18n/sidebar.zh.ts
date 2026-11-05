@@ -12,6 +12,7 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Pin workspace": "固定工作区",
   "Unpin workspace": "取消固定工作区",
   "Pinned": "已固定",
+  "Background agents": "后台代理",
   "Background tasks running: {count}": "正在运行的后台任务：{count}",
   "Agent waiting on background work": "Agent 正在等待后台工作",
   "Has a question": "有问题",

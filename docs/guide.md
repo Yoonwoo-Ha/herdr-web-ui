@@ -113,6 +113,13 @@ tab, and you type in whichever half is active; the other half shows that tab at 
 To rearrange a split tab instead, drop a pane's title on another pane's title in the same tab: the
 two panes trade places.
 
+A tool that starts background workers or subagents can keep them out of the way: tag each such
+pane with `herdr pane report-metadata <pane_id> --source <id> --token role=background`. The
+**Agents** list then shows those panes, and the helpers they start, after the others under
+**Background agents**, folded at first with their count. A background agent that asks a question
+moves up with the others until it is answered, and a pinned one stays in the pinned card. Panes
+without the tag stay where they are.
+
 
 **3. Take it with you.** Scan the installer's QR code with a phone signed in to the same Tailscale account, then install the app from the browser. No Tailscale? Turn on the [Ovis relay](#through-the-ovis-relay) and scan its QR code instead. See [On your phone](#on-your-phone).
 

@@ -12,6 +12,7 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Pin workspace": "워크스페이스 고정",
   "Unpin workspace": "워크스페이스 고정 해제",
   "Pinned": "고정됨",
+  "Background agents": "백그라운드 에이전트",
   "Background tasks running: {count}": "실행 중인 백그라운드 작업: {count}",
   "Agent waiting on background work": "에이전트가 백그라운드 작업을 기다리는 중",
   "Has a question": "질문 있음",
