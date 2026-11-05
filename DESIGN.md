@@ -3507,6 +3507,18 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   replaces it under a Back to settings control. The dialog's accessible name stays **Settings**
   on every page; the list is a vertical `tablist` with one Tab stop, and the arrows walk it
   (beside an open page they turn the page too). Escape closes the dialog from any page.
+- A search field (`Search settings`) sits over the list of pages, as Zed's and VS Code's settings
+  searches do: typed words (case and full-width forms folded) keep only the settings whose label
+  and description hold every word, or every setting of a group whose title holds them, from all
+  pages at once. Each page that keeps one shows under its name (a button that opens the page and
+  ends the search) and the settings stay live, changed where they are found. A group found by a
+  setting or its title brings its note and the forms and status lines that go with it; what a page
+  holds outside its groups stays there. A row in the middle of a step (a shortcut recording, the
+  relay's ID check) stays whatever its words become, and one a found row opens (Custom interface
+  font) is found by that row's words. Nothing matching says **No settings match.** A
+  phone's results take the list's place under the field. Edit key bar opens over the Terminal
+  page, so Back steps out to it. The first Escape empties the search wherever the focus is in it and
+  gives the field the focus, the next closes Settings. The command palette's Settings entries still land on pages and groups.
 - Each step into Settings is an entry of the browser's history (`lib/settingsHistory.ts`): the
   dialog, the page a phone opens from its list, the key bar editor. The system Back button (and
   an edge swipe) takes one step out and never leaves the app from inside Settings; the Back
