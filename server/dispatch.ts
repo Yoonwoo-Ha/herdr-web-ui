@@ -502,8 +502,12 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       ? { host: hostname } : undefined;
     // what protects this server, for a client that got in (a watching one too) and nobody else;
     // per request, so never stored. The ingress is this request's, proven or `unknown`.
-    // Portal's proof says how the request came even when the token or a paired device signed it in
-    const ingress = relayPeer !== undefined ? "relay" : portalProven ? "portal" : observedIngress({ ...requestShape, ...identity, peerKnown: ip !== null, forwardingHeaders: forwardingHeaders(request.headers) });
+    // Portal's proof says how the request came even when the token or a paired device signed it in.
+    // A Portal with no sign-in has no proof to send: a request from this PC in the shape it forwards
+    // (X-Forwarded-Proto https) to an address it serves is all there is. Another program here could
+    // send the same and would only mislabel its own answer; nothing here lets anyone in
+    const portalForwarded = portalProven || (loopback && request.headers.get("x-forwarded-proto") === "https" && (options.portal?.serves(requestHost) ?? false));
+    const ingress = relayPeer !== undefined ? "relay" : portalForwarded ? "portal" : observedIngress({ ...requestShape, ...identity, peerKnown: ip !== null, forwardingHeaders: forwardingHeaders(request.headers) });
     const security: SecuritySummary | undefined = access.level === "full" ? {
       token_configured: token !== "",
       pairing_gate: devices.error !== null ? "unavailable" : devices.gated ? "closed" : "open",

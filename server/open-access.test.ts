@@ -221,6 +221,7 @@ describe("a token set: guessing it", () => {
 describe("a Portal that signs its visitors in", () => {
   const TOKEN = "the-token-only-the-owner-holds";
   const HOST = "herdr-test-0123.relay.example";
+  const SHORT = "herdr-test.relay.example";
   const servers: ReturnType<typeof createServer>[] = [];
   afterAll(() => { for (const server of servers) server.stop(); });
 
@@ -238,7 +239,8 @@ describe("a Portal that signs its visitors in", () => {
     "    id=''; previous=''; for arg in \"$@\"; do [ \"$previous\" = --identity-path ] && id=\"$arg\"; previous=\"$arg\"; done",
     "    [ -f \"$id\" ] || echo '{}' > \"$id\"",
     "    trap 'exit 0' TERM",
-    `    echo 'INF service ready at https://${HOST}:443'`,
+    // the short address with its DNS root dot: the same name as without it
+    `    echo 'INF service ready at https://${HOST}:443 (short URL: https://${SHORT}.:443)'`,
     "    while :; do sleep 0.05; done ;;",
     `  auth) echo "Redeem URL: https://$3/_portal/auth/login#credential=a-link" ;;`,
     "  *) exit 2 ;;",
@@ -291,6 +293,8 @@ describe("a Portal that signs its visitors in", () => {
   /** what Portal sends with a visitor it vouches for: the visitor's Host kept, Forwarded-Proto https, the identity and the proof */
   const identity = { host: HOST, "x-forwarded-proto": "https", "x-forwarded-for": "203.0.113.9", "x-portal-user": "alice", "x-portal-auth": "credential" };
   const health = async (base: string, headers: Record<string, string>) => ((await (await fetch(`${base}/api/health?scope=bridge`, { headers })).json()) as { auth: unknown }).auth;
+  const ingress = async (base: string, headers: Record<string, string>) =>
+    ((await (await fetch(`${base}/api/health?scope=bridge`, { headers })).json()) as { security?: { observed_ingress: string } }).security?.observed_ingress;
   const signedIn = { required: false, authenticated: true, via: "portal", role: "watch", portal: { user: "alice", method: "credential" } };
   const refused = { authenticated: false, reason: "token_required" };
 
@@ -398,11 +402,30 @@ describe("a Portal that signs its visitors in", () => {
   it("says a request Portal vouched for came through Portal, the token's and a paired device's too, and no request without the proof", async () => {
     const portal = serving();
     const vouched = { ...identity, "x-portal-proof": await portal.start(credential) };
-    const ingress = async (headers: Record<string, string>) =>
-      ((await (await fetch(`${portal.main}/api/health?scope=bridge`, { headers })).json()) as { security?: { observed_ingress: string } }).security?.observed_ingress;
-    expect(await ingress({ ...vouched, ...portal.owner })).toBe("portal");
-    expect(await ingress(vouched)).toBe("portal");
-    expect(await ingress({ ...identity, "x-portal-proof": "0".repeat(64), ...portal.owner })).toBe("proxy");
+    expect(await ingress(portal.main, { ...vouched, ...portal.owner })).toBe("portal");
+    expect(await ingress(portal.main, vouched)).toBe("portal");
+    expect(await ingress(portal.main, { ...identity, "x-portal-proof": "0".repeat(64), ...portal.owner })).toBe("proxy");
+  });
+
+  it("says a request Portal forwarded with no sign-in came through Portal, by the address it keeps in the Host, and no other request", async () => {
+    const portal = serving();
+    expect(await portal.start({ method: "none" })).toBe("");
+    // what Portal sends without a sign-in: the visitor's Host kept, Forwarded-For and Forwarded-Proto https
+    const forwarded = { ...portal.owner, "x-forwarded-proto": "https", "x-forwarded-for": "203.0.113.9" };
+    expect(await ingress(portal.main, { ...forwarded, host: HOST })).toBe("portal");
+    expect(await ingress(portal.main, { ...forwarded, host: `${SHORT.toUpperCase()}.` })).toBe("portal");
+    expect(await ingress(portal.main, { ...forwarded, host: SHORT })).toBe("portal");
+    expect(await ingress(portal.main, { ...forwarded, host: `${HOST}:443` })).toBe("portal");
+    // another address, Portal's name on another port, or Portal's without the shape Portal forwards, is some other proxy
+    expect(await ingress(portal.main, { ...forwarded, host: "ovis.example.com" })).toBe("proxy");
+    expect(await ingress(portal.main, { ...forwarded, host: `${HOST}:8443` })).toBe("proxy");
+    expect(await ingress(portal.main, { ...forwarded, host: `${SHORT}:8443` })).toBe("proxy");
+    expect(await ingress(portal.main, { ...portal.owner, host: HOST })).toBe("proxy");
+    expect(await ingress(portal.main, { ...portal.owner, host: HOST, "x-forwarded-for": "203.0.113.9" })).toBe("proxy");
+    expect(await ingress(portal.main, { ...forwarded, host: HOST, "x-forwarded-proto": "http" })).toBe("proxy");
+    // once it stops, its address is no evidence
+    await portal.stop();
+    expect(await ingress(portal.main, { ...forwarded, host: HOST })).toBe("proxy");
   });
 
   it("believes nothing of those headers without the proof, from loopback or through another proxy, whatever Host or forwarding headers come with them", async () => {
