@@ -383,6 +383,16 @@ describe("a Portal that signs its visitors in", () => {
     expect(await health(portal.main, {})).toMatchObject(refused);
   });
 
+  it("says a request Portal vouched for came through Portal, the token's and a paired device's too, and no request without the proof", async () => {
+    const portal = serving();
+    const vouched = { ...identity, "x-portal-proof": await portal.start(credential) };
+    const ingress = async (headers: Record<string, string>) =>
+      ((await (await fetch(`${portal.main}/api/health?scope=bridge`, { headers })).json()) as { security?: { observed_ingress: string } }).security?.observed_ingress;
+    expect(await ingress({ ...vouched, ...portal.owner })).toBe("portal");
+    expect(await ingress(vouched)).toBe("portal");
+    expect(await ingress({ ...identity, "x-portal-proof": "0".repeat(64), ...portal.owner })).toBe("proxy");
+  });
+
   it("believes nothing of those headers without the proof, from loopback or through another proxy, whatever Host or forwarding headers come with them", async () => {
     const portal = serving();
     const proof = await portal.start(credential);

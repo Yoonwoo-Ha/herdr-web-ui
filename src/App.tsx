@@ -86,6 +86,7 @@ import { usePaneCoverage } from "./lib/usePaneCoverage.ts";
 import { useT } from "./lib/i18n.ts";
 import { useConnectionChip, useServerMessageHandler } from "./lib/useConnectionChip.ts";
 import { useHeaderConnection } from "./lib/headerConnection.ts";
+import { ConnectionRouteMark } from "./components/ConnectionRouteMark.tsx";
 import { selectionStill } from "./lib/selectionMark.ts";
 import { carryMovedPane, movedView } from "./lib/paneMove.ts";
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
@@ -731,6 +732,7 @@ export function App() {
         )}
         <div className="header-meta">
           {/* the chip speaks for the pane's terminal: the setup guide stands in the pane's place and has none */}
+          <ConnectionRouteMark portal={auth?.via === "portal"} ingress={security.state === "known" ? security.summary.observed_ingress : null} />
           {!guideShown && <ConnectionChip
             connected={connected}
             word={connWord}

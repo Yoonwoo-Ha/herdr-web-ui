@@ -340,6 +340,7 @@ export const SETTINGS_JA: Record<string, string> = {
   "Forget this PC?": "このPCを削除しますか？",
   "This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.": "このスマホ側のキーを削除します。PC側ではそこで取り消すまでこのスマホが一覧に残ります。再度ペアリングするにはPCの新しいQRコードが必要です。",
   "Forget": "削除",
+  "Through Portal": "Portal経由",
   "Through the Ovis relay": "Ovis リレー経由",
   "This browser's request came from a phone paired through the Ovis relay, end-to-end encrypted: the relay could not read it.": "このブラウザーのリクエストは、Ovis リレー経由でペアリングしたスマートフォンから端末間暗号化で届きました。リレーは内容を読めません。",
   "Ready through the Ovis relay.": "Ovis リレー経由で接続できます。",

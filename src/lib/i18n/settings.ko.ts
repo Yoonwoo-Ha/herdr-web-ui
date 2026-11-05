@@ -340,6 +340,7 @@ export const SETTINGS_KO: Record<string, string> = {
   "Forget this PC?": "이 PC를 잊을까요?",
   "This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.": "이 폰에서 해당 키를 삭제합니다. PC에서는 폐기하기 전까지 이 폰이 목록에 남습니다. 다시 페어링하려면 PC의 새 QR 코드가 필요합니다.",
   "Forget": "잊기",
+  "Through Portal": "Portal 경유",
   "Through the Ovis relay": "Ovis 릴레이 경유",
   "This browser's request came from a phone paired through the Ovis relay, end-to-end encrypted: the relay could not read it.": "이 브라우저의 요청은 Ovis 릴레이로 페어링된 폰에서 종단 간 암호화되어 왔습니다. 릴레이는 내용을 읽을 수 없습니다.",
   "Ready through the Ovis relay.": "Ovis 릴레이로 연결할 수 있습니다.",

@@ -340,6 +340,7 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Forget this PC?": "忘记这台电脑？",
   "This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.": "此手机上的对应密钥将被删除；在电脑上撤销之前，它仍会列出这部手机。重新配对需要电脑上新的二维码。",
   "Forget": "忘记",
+  "Through Portal": "经由 Portal",
   "Through the Ovis relay": "经由 Ovis 中继",
   "This browser's request came from a phone paired through the Ovis relay, end-to-end encrypted: the relay could not read it.": "此浏览器的请求来自通过 Ovis 中继配对的手机，端到端加密：中继无法读取内容。",
   "Ready through the Ovis relay.": "可通过 Ovis 中继连接。",

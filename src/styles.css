@@ -2042,6 +2042,38 @@ button {
   font-size: var(--fs-xs);
 }
 
+/* how this device reaches Ovis (components/ConnectionRouteMark.tsx): a quiet glyph and a short word,
+   always there, never a button and never wrapped */
+.conn-route {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--chip-h);
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.conn-route svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+/* a phone gives the pane title the room: the glyph alone says the route there, except the relay,
+   whose word is the one most asked for; below 360px the relay's word goes too. The sentence stays
+   as the mark's title and accessible text. */
+@media (max-width: 480px) {
+  .conn-route:not([data-route="relay"], [data-route="portal"]) .conn-route-word {
+    display: none;
+  }
+}
+
+@media (max-width: 359px) {
+  .conn-route .conn-route-word {
+    display: none;
+  }
+}
+
 /* one chip for the connection, drawn only while the bridge is not live; the herdr version lives
    in its tooltip and in Settings */
 .conn {

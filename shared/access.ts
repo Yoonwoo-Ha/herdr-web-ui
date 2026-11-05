@@ -43,8 +43,8 @@ export interface LanExposure {
 
 /** The configured bind address, read from its literal (`bindScope` in server/access.ts): never a DNS lookup or the request's Host. */
 export type BindScope = "loopback" | "tailnet" | "other";
-/** How this one request arrived, as far as it proves (`observedIngress` in server/access.ts); not how every device reaches the server. `direct`: no proxy said it forwarded the request, which a proxy that adds nothing (an SSH tunnel, nginx's bare `proxy_pass`) also looks like. */
-export type ObservedIngress = "direct" | "proxy" | "tailscale" | "funnel" | "unknown" | "relay";
+/** How this one request arrived, as far as it proves (`observedIngress` in server/access.ts); not how every device reaches the server. `direct`: no proxy said it forwarded the request, which a proxy that adds nothing (an SSH tunnel, nginx's bare `proxy_pass`) also looks like. `portal`: Portal vouched for the request with its proof, whatever signed it in (the token or a paired device too). */
+export type ObservedIngress = "direct" | "proxy" | "tailscale" | "funnel" | "unknown" | "relay" | "portal";
 
 /**
  * GET /api/health (both scopes), authenticated requests only, a watching device's included:
