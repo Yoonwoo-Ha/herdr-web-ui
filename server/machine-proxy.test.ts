@@ -33,8 +33,9 @@ const remote = Bun.serve({
       if (new URL(request.url).searchParams.get("pane_id") === "busy") return Response.json({ error: { code: "file_busy", message: "the skill folders did not answer in time" } }, { status: 503, headers: { "retry-after": "1" } });
       return Response.json({ commands: [{ name: "deploy", description: "SECRET", source: "custom", id: "/work/.commandcode/commands/deploy.md" }] });
     }
-    if (path === "/api/pane/files" || path === "/api/plugin/action") {
+    if (path === "/api/pane/files" || path === "/api/plugin/action" || path === "/api/pane/docs") {
       filesAsked.push(path);
+      if (path === "/api/pane/docs") return Response.json({ root: "/work", documents: [{ path: "SECRET.md", size: 1, modified: "2026-11-01T00:00:00.000Z" }], truncated: false });
       return Response.json(path === "/api/pane/files" ? { files: [".env.SECRET"] } : { log_id: "plugin-log-1", status: "failed", exit_code: 1, output: "SECRET", opened_pane_id: null });
     }
     if (path === "/api/worktree/list") {
@@ -151,7 +152,7 @@ it("passes on a PC's 503 with its Retry-After, so the menu knows to ask again (#
 
 it("never asks a PC for the paths under a pane's folder or a plugin run's output for a watching device (#2244)", async () => {
   const base = "http://127.0.0.1/api/machines/pc1";
-  const routes = ["pane/files?pane_id=w1:p1&q=env", "plugin/action?plugin_id=deploy&log_id=plugin-log-1"];
+  const routes = ["pane/files?pane_id=w1:p1&q=env", "plugin/action?plugin_id=deploy&log_id=plugin-log-1", "pane/docs?pane_id=w1:p1"];
   for (const path of routes) {
     const watched = await handleMachineRequest(new Request(`${base}/${path}`), manager, undefined, undefined, true);
     expect([path, watched.status, ((await watched.json()) as { error: { code: string } }).error.code]).toEqual([path, 403, "read_only"]);
@@ -162,7 +163,7 @@ it("never asks a PC for the paths under a pane's folder or a plugin run's output
     const driven = await handleMachineRequest(new Request(`${base}/${path}`), manager);
     expect([path, driven.status, JSON.stringify(await driven.json()).includes("SECRET")]).toEqual([path, 200, true]);
   }
-  expect(filesAsked).toEqual(["/api/pane/files", "/api/plugin/action"]);
+  expect(filesAsked).toEqual(["/api/pane/files", "/api/plugin/action", "/api/pane/docs"]);
 });
 
 it("never asks a PC for a repository's checkouts for a watching device (#2250)", async () => {

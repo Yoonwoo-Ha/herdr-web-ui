@@ -1681,6 +1681,13 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const q = (query.get("q") ?? "").toLowerCase();
     return json({ files: DEMO_FILES.filter((file) => file.toLowerCase().includes(q)).slice(0, Number(query.get("limit") ?? 20)) });
   }
+  // Files' Documents tab (off by default): the demo folder's Markdown files, changed an hour apart
+  if (path === "/api/pane/docs") {
+    const pane = paneOf(paneId);
+    if (!pane) return error("pane_not_found", "no such pane", 404);
+    const documents = DEMO_FILES.filter((file) => file.endsWith(".md")).map((file, index) => ({ path: file, size: 512, modified: new Date(Date.now() - (index + 1) * 3_600_000).toISOString() }));
+    return json({ root: pane.foreground_cwd ?? pane.cwd ?? "", documents, truncated: false });
+  }
   if (path === "/api/pane/input" || path === "/api/pane/keys") return json({ ok: true });
   if (path === "/api/plugins/actions") return json({ plugins: PLUGINS } satisfies PluginActionsResponse);
   if (path === "/api/plugin/action") {

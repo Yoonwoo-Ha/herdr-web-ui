@@ -969,7 +969,7 @@ it("the paths under a pane's folder and a plugin run's output are refused to a w
   const server = createServer({ port: 0, stateDir: root, token: "test-pane-files", tailscaleOwner: null });
   const base = `http://127.0.0.1:${server.port}`;
   // the @-mention picker's paths, and where a plugin action's run stands (what its command printed when it failed)
-  const routes = ["pane/files?pane_id=ovis-test-absent:p1&q=commands", "plugin/action?plugin_id=ovis-test-absent&log_id=plugin-log-1"];
+  const routes = ["pane/files?pane_id=ovis-test-absent:p1&q=commands", "plugin/action?plugin_id=ovis-test-absent&log_id=plugin-log-1", "pane/docs?pane_id=ovis-test-absent:p1"];
   try {
     for (const route of routes) {
       for (const prefix of ["api", "api/machines/local", "api/machines/pc1"]) {
@@ -981,7 +981,7 @@ it("the paths under a pane's folder and a plugin run's output are refused to a w
     // a driving device reaches the routes: this PC asks herdr, its alias too, and no such PC is connected
     const driving = { cookie: `ovis_device=${drive.token}` };
     for (const prefix of ["api", "api/machines/local"]) {
-      for (const [route, code] of [[routes[0], "pane_not_found"], [routes[1], "plugin_log_not_found"]] as const) {
+      for (const [route, code] of [[routes[0], "pane_not_found"], [routes[1], "plugin_log_not_found"], [routes[2], "pane_not_found"]] as const) {
         const response = await fetch(`${base}/${prefix}/${route}`, { headers: driving });
         expect([prefix, route, response.status, ((await response.json()) as { error: { code: string } }).error.code]).toEqual([prefix, route, 404, code]);
       }

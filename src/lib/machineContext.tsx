@@ -50,6 +50,7 @@ export function useMachineApi() {
     fetchPaneCommands: (pane: string) => api.fetchPaneCommands(pane, id),
     fetchAgentCommands: (agent: string, cwd: string | null) => api.fetchAgentCommands(agent, cwd, id),
     fetchPaneFiles: (pane: string, query: string, limit = 20) => api.fetchPaneFiles(pane, query, limit, id),
+    fetchPaneDocuments: (pane: string, signal?: AbortSignal) => api.fetchPaneDocuments(pane, id, signal),
     findPane: (request: Parameters<typeof api.findPane>[0]) => api.findPane(request, id),
     fetchPaneScroll: (pane: string) => api.fetchPaneScroll(pane, id),
     scrollPane: (pane: string, offset: number) => api.scrollPane(pane, offset, id),

@@ -129,7 +129,7 @@ export interface ServerContext {
 }
 
 /** The routes that read or write files and folders on this disk (or run git and gh in them) for a pane, a workspace or a picker. */
-const OTHER_MACHINE_FILES = /^\/api\/(?:fs\/|pane\/(?:files|image)$|workspace\/(?:diff\/|directories$|pr(?:$|\/)))/;
+const OTHER_MACHINE_FILES = /^\/api\/(?:fs\/|pane\/(?:files|docs|image)$|workspace\/(?:diff\/|directories$|pr(?:$|\/)))/;
 
 export async function handleRequest(request: Request, ctx: ServerContext): Promise<Response | undefined> {
   const { options, hostname, token, bridgeToken, bootId, devices, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartupResult, portalStartup } = ctx.services;
@@ -248,8 +248,8 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // composer's menu that lists them is a drive feature (#2132)
   const commandRows = /^\/api\/(?:machines\/[^/]+\/)?(?:agent|pane)\/commands$/.test(pathname);
   // the paths under a pane's folder that match a query are a directory listing too; they feed the
-  // composer's @-mention picker, a drive feature (#2244)
-  const paneFiles = /^\/api\/(?:machines\/[^/]+\/)?pane\/files$/.test(pathname);
+  // composer's @-mention picker, a drive feature (#2244); so are its Markdown files, which Files' Documents lists
+  const paneFiles = /^\/api\/(?:machines\/[^/]+\/)?pane\/(?:files|docs)$/.test(pathname);
   // where a plugin action's run stands carries what its command printed when it failed, asked for by a
   // log id: only the device that started the run (a POST, which a watching device cannot send) asks it
   const pluginRun = /^\/api\/(?:machines\/[^/]+\/)?plugin\/action$/.test(pathname);

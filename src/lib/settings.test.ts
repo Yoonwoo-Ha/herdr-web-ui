@@ -285,7 +285,7 @@ describe("saved theme migration", () => {
   });
 
   it("keeps Expand thinking, Collapse work and Files beside the pane in keys of their own, out of an old tab's whole-record save", () => {
-    for (const [key, stored] of [["expandThinking", "ovis:expand-thinking"], ["foldWork", "ovis:fold-work"], ["filesPanel", "ovis:files-panel"]] as const) {
+    for (const [key, stored] of [["expandThinking", "ovis:expand-thinking"], ["foldWork", "ovis:fold-work"], ["filesPanel", "ovis:files-panel"], ["filesDocuments", "ovis:files-documents"]] as const) {
       expect(loadSettings()[key]).toBe(false);
       saveSettings(sanitizeSettings({ [key]: true }));
       expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty(key);
@@ -1396,6 +1396,10 @@ it("keeps where web links open to a tab or the panel, a tab by default", () => {
   expect(DEFAULT_SETTINGS.filesPanel).toBe(false);
   expect(sanitizeSettings({ filesPanel: true }).filesPanel).toBe(true);
   for (const bad of ["true", 1, null]) expect(sanitizeSettings({ filesPanel: bad }).filesPanel).toBe(false);
+  // so is Files' Documents tab
+  expect(DEFAULT_SETTINGS.filesDocuments).toBe(false);
+  expect(sanitizeSettings({ filesDocuments: true }).filesDocuments).toBe(true);
+  for (const bad of ["true", 1, null]) expect(sanitizeSettings({ filesDocuments: bad }).filesDocuments).toBe(false);
   expect(sanitizeSettings({ fileOpen: "panel" }).fileOpen).toBe("panel");
   for (const bad of ["tab", "", null, true]) expect(sanitizeSettings({ fileOpen: bad }).fileOpen).toBe("popup");
   expect(sanitizeSettings({ webLinks: "panel" }).webLinks).toBe("panel");

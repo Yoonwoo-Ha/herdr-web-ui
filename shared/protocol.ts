@@ -349,6 +349,8 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *         keeps: its task list or checklist, read from the transcript; null when it keeps none)
  *  GET    /api/pane/files?pane_id=&q=&limit=  -> { files: string[] } (paths relative to the pane
  *         cwd matching q, for @-mentions; git ls-files when the cwd is a repo, bounded walk otherwise)
+ *  GET    /api/pane/docs?pane_id=       -> PaneDocuments (the Markdown files under the pane's folder,
+ *         newest first, from the same listing; read only: Files' Documents tab, shared/files.ts)
  *  GET    /api/workspace/diff/files?pane_id=&directory=&scope=&base=&head= -> RepoDiffFileList
  *         (what changed in the git repository the pane's folder, or `directory`, is inside: read
  *         only, on the PC that owns the pane. `directory` is absolute, `~/…`, or relative to the
@@ -747,7 +749,7 @@ export type { PluginActionContext, PluginAction, PluginActions, PluginActionsRes
 
 export type { DirectoryListing, CreateDirectoryRequest, DirectoryCreated } from "./directories.ts";
 
-export type { FileKind, FileInfo, ProjectFavicon } from "./files.ts";
+export type { FileKind, FileInfo, MarkdownDocument, PaneDocuments, ProjectFavicon } from "./files.ts";
 
 export type { RepoDiffScope, RepoBranchComparison, RepoDiffRefs, RepoDiffStatus, RepoDiffRepository, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch } from "./repo-diff.ts";
 
