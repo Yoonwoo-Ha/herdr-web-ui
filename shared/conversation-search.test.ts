@@ -200,6 +200,13 @@ describe("pickedTurn", () => {
     for (const match of searchTurns(turns, searchPattern("continue")!)) expect(pickedTurn(turns, match)).toBe(0);
   });
 
+  it("tells apart prompts of the same words by their pictures, but for Codex's, whose ref changes when paired", () => {
+    const pictured = (ref: string): ConversationTurn => ({ role: "user", ts: null, parts: [{ kind: "image", media_type: "image/png", ref }, { kind: "text", text: "what color is this" }] });
+    const turns = [pictured("claude:u1:0"), answer("red"), pictured("claude:u2:0"), answer("blue")];
+    expect(searchTurns(turns, searchPattern("color")!).map((match) => pickedTurn(turns, match))).toEqual([2, 0]);
+    expect(conversationTurnAnchor(pictured("codex-inline"))).toBe(conversationTurnAnchor(pictured("codex-file")));
+  });
+
   it("takes no answer of the same opening whose words after the match went another way", () => {
     const tooled = (output: string, text: string): ConversationTurn => ({ role: "assistant", ts: "2026-10-01T00:00:01Z", parts: [
       { kind: "tool", name: "exec", summary: "exec", input: "", output }, { kind: "text", text }] });

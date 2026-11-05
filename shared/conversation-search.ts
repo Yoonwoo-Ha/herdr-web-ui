@@ -45,9 +45,12 @@ const WORD_CUT = 16;
  * A turn's identity that survives a remount and another page size: row keys are browser slots
  * that a new mount allocates again, so the turn is named by what it is: its role, its time and
  * how its first part begins. Only the beginning counts: a turn still streaming keeps the name it had.
+ * A Codex picture names a turn only when nothing else is in it: Codex pairs a prompt's inline copy
+ * of a picture with its file a moment later, and the picture's ref (`codex-<hash>`) changes then
+ * (server/codex.ts). Any other agent's picture keeps its ref, so it still tells two prompts apart.
  */
 export function conversationTurnAnchor(turn: ConversationTurn): string {
-  const first = turn.parts[0];
+  const first = turn.parts.find((part) => part.kind !== "image" || !part.ref.startsWith("codex-")) ?? turn.parts[0];
   const head = first === undefined ? "" : "text" in first ? first.text.slice(0, 80) : JSON.stringify(first).slice(0, 80);
   return `${turn.role}|${turn.ts ?? ""}|${first?.kind ?? ""}|${head}`;
 }
