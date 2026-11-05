@@ -55,7 +55,8 @@ export function paneNotificationTag(paneId: string, machineId = "local"): string
  * `permission`: an agent that said it waits for a permission (herdr-core's `agent_kind`); absent,
  * it follows `input`, as it did before there was a choice. A blocked agent that does not say what it
  * waits for is `input`. `error`: a turn that stopped on an error (OmO and GJC say so); absent is off.
- * `pcs_off`: the names of the PCs whose panes this device hears nothing of; absent is none.
+ * `pcs_off`: the PCs whose panes this device hears nothing of, each by its relay ID where it has one
+ * (one both its own server and every roster know it by), else by its name; absent is none.
  */
 export type DoneAlerts = "off" | "long" | "always";
 export interface AlertPrefs {
@@ -109,9 +110,13 @@ export function alertKindAllowed(prefs: AlertPrefs, kind: AlertKind): boolean {
   }
 }
 
-/** Whether a device with these preferences hears of the panes of the PC named `pcName`. */
-export function alertPcAllowed(prefs: AlertPrefs, pcName: string): boolean {
-  return !(prefs.pcs_off ?? []).includes(pcName);
+/**
+ * Whether a device with these preferences hears of the panes of a PC known by `keys`: its name and,
+ * where known, its relay ID (shared/machines.ts pcAlertKey). One of them listed in `pcs_off` silences it.
+ */
+export function alertPcAllowed(prefs: AlertPrefs, ...keys: readonly (string | undefined)[]): boolean {
+  const off = prefs.pcs_off ?? [];
+  return !keys.some((key) => key !== undefined && off.includes(key));
 }
 
 /**

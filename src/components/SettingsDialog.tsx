@@ -29,7 +29,7 @@ import { UI_FONT_MAX, UI_FONT_MIN, UI_FONT_PRESET_FAMILY, uiFontPreset, type UiF
 import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "../lib/installedFonts.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
 import type { UserError } from "../lib/userError.ts";
-import { LOCAL_MACHINE, type HerdrCoreFacts, type HerdrRuntimeFacts, type Machine, type MachineSettings } from "../../shared/machines.ts";
+import { LOCAL_MACHINE, pcAlertKey, type HerdrCoreFacts, type HerdrRuntimeFacts, type Machine, type MachineSettings } from "../../shared/machines.ts";
 import { canHideMachine, isMachineShown, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
 import { updateAlertFilters, useAlertFilters } from "../lib/alertFilters.ts";
 import { addRelayPc, fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
@@ -626,7 +626,8 @@ function AlertsPage({ onEnableNotifications, machines }: { onEnableNotifications
 
 /**
  * Which PCs alert this device, the Host first: one turned off here sends it nothing, on any channel.
- * Shown with two PCs or more; kept by the PC's name (lib/alertFilters.ts).
+ * Shown with two PCs or more; kept by the PC's relay ID where it has one, else its name (shared/machines.ts
+ * pcAlertKey), and a PC an earlier version turned off by name stays off until turned on again.
  */
 function AlertPcsGroup({ machines }: { machines: readonly Machine[] }) {
   const t = useT();
@@ -635,12 +636,15 @@ function AlertPcsGroup({ machines }: { machines: readonly Machine[] }) {
   const listed = [...machines].sort((a, b) => Number(b.kind === "local") - Number(a.kind === "local"));
   return (
     <SettingsGroup title={t("Alerts from")} section="alert-pcs">
-      {listed.map((machine) => (
-        <SettingsRow key={machine.id} label={machine.name}>
-          <Toggle label={t("Alerts from {name}", { name: machine.name })} checked={!pcsOff.includes(machine.name)}
-            onChange={(on) => updateAlertFilters({ pcsOff: on ? pcsOff.filter((name) => name !== machine.name) : [...pcsOff, machine.name] })} />
-        </SettingsRow>
-      ))}
+      {listed.map((machine) => {
+        const key = pcAlertKey(machine);
+        return (
+          <SettingsRow key={machine.id} label={machine.name}>
+            <Toggle label={t("Alerts from {name}", { name: machine.name })} checked={!pcsOff.includes(key) && !pcsOff.includes(machine.name)}
+              onChange={(on) => updateAlertFilters({ pcsOff: on ? pcsOff.filter((item) => item !== key && item !== machine.name) : [...pcsOff, key] })} />
+          </SettingsRow>
+        );
+      })}
     </SettingsGroup>
   );
 }

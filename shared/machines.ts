@@ -23,6 +23,11 @@ export interface Machine {
   target?: SshTarget;
   /** a PC added through the Ovis relay (no SSH): its relay ID and the relay it is reached through */
   relay?: { server_id: string; relay: string };
+  /**
+   * The PC's relay ID (server/relay/identity.ts) as its own server has it: the local PC's own, an SSH PC's
+   * from its /api/health. Absent where that server has none, or is older. What a device turns its alerts off by.
+   */
+  server_id?: string;
   enabled: boolean;
   state: MachineState;
   error: string | null;
@@ -70,6 +75,14 @@ export interface RemoteOvis {
  * Any other error beside that offer says why its last update failed, and the card shows it.
  */
 export const OWN_UPDATE_OFFER = "This PC runs its own Ovis";
+/**
+ * What a device's `pcs_off` (shared/notify-policy.ts) lists this PC by: its relay ID, which its own
+ * server and every roster that lists it know alike, else its name.
+ */
+export function pcAlertKey(machine: Pick<Machine, "name" | "relay" | "server_id">): string {
+  return machine.relay?.server_id ?? machine.server_id ?? machine.name;
+}
+
 /** GET /api/machines: with ?verify_source_boot=<id>, also that PC's freshly proved boot id */
 export interface MachineRoster { machines: Machine[]; verified_source_boot?: { machine_id: string; boot_id: string } }
 /**

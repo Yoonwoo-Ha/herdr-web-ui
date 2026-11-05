@@ -29,7 +29,7 @@ import type { RelaySocket } from "../shared/relay-channel.ts";
 import { openRelayPcTunnel, RelayPcKey, RelayPcRefused, relayPcLabel, removeRelayPcKey, type RelayPcTunnel } from "./relay-pc.ts";
 
 type StoredMachine = { id: string; name: string; enabled: boolean; snapshot?: SessionSnapshot | null }
-  & ({ kind?: "ssh"; target: SshTarget } | { kind: "relay"; relay: NonNullable<Machine["relay"]> });
+  & ({ kind?: "ssh"; target: SshTarget; server_id?: string } | { kind: "relay"; relay: NonNullable<Machine["relay"]> });
 interface Runtime {
   machine: Machine;
   ssh?: SshConnection;
@@ -303,10 +303,13 @@ export class MachineManager {
   private ownUpdateCheckMs: number;
   /** how a relay PC's connection reaches the relay; tests point it at a local one */
   private relaySocket?: (url: string) => RelaySocket;
+  /** this server's own relay ID, where it has one: the local PC's `server_id` */
+  private serverId?: () => string | undefined;
 
   constructor(readonly stateDir: string, private push: PushService, private completions: CompletionTracker, private readLocal: () => Promise<SessionSnapshot> = () => this.completions.readSnapshot(sessionSnapshot, labelOmoPanes),
-    options: { bootId?: string; localFinishEpoch?: () => string; now?: () => number; ownUpdate?: { pollMs?: number; startMs?: number; checkMs?: number }; relaySocket?: (url: string) => RelaySocket } = {}) {
+    options: { bootId?: string; localFinishEpoch?: () => string; now?: () => number; ownUpdate?: { pollMs?: number; startMs?: number; checkMs?: number }; relaySocket?: (url: string) => RelaySocket; serverId?: () => string | undefined } = {}) {
     this.bootId = options.bootId;
+    this.serverId = options.serverId;
     this.relaySocket = options.relaySocket;
     this.localFinishEpoch = options.localFinishEpoch;
     this.ownUpdatePollMs = options.ownUpdate?.pollMs ?? OWN_UPDATE_POLL_MS;
@@ -352,7 +355,8 @@ export class MachineManager {
             if (typeof item.relay?.server_id !== "string" || !SERVER_ID_PATTERN.test(item.relay.server_id) || typeof item.relay.relay !== "string" || !isWssOrigin(item.relay.relay)) throw new Error("Invalid machine registration");
             machine = { ...common, kind: "relay", relay: { server_id: item.relay.server_id, relay: item.relay.relay } };
           } else if (item.kind === "relay") throw new Error("Invalid machine registration");
-          else machine = { ...common, kind: "ssh", target: validateTarget(item.target) };
+          // its relay ID as its health last said it, so its alerts are known by it before it answers again
+          else machine = { ...common, kind: "ssh", target: validateTarget(item.target), ...(typeof item.server_id === "string" && SERVER_ID_PATTERN.test(item.server_id) ? { server_id: item.server_id } : {}) };
           const runtime = this.runtime(machine);
           this.machines.set(item.id, runtime);
           if (item.enabled) queueMicrotask(() => void this.reconnect(runtime));
@@ -466,7 +470,10 @@ export class MachineManager {
     }
   }
   private runtime(machine: Machine): Runtime { return { machine, attempts: 0, generation: 0, refreshing: false, refreshQueued: false, snapshotRevision: 0, terminals: new Set(), finishes: new FinishEpochLedger(machine.snapshot) }; }
-  list(): Machine[] { return [this.local, ...[...this.machines.values()].map((r) => r.machine)]; }
+  list(): Machine[] {
+    const own = this.serverId?.();
+    return [own ? { ...this.local, server_id: own } : this.local, ...[...this.machines.values()].map((r) => r.machine)];
+  }
   /**
    * Whether this server knows a PC's herdr run (finish epoch) has ended (server/seen.ts). This server's own PC is in
    * the run its Finishes names now; every other one, an earlier process's included, is over. A remote PC's ledger
@@ -573,7 +580,7 @@ export class MachineManager {
    */
   private persist(): void {
     const owned = [...this.machines.values()].filter(({ machine }) => !machine.herdr_profile_id).map(({ machine }) => machine);
-    const data: StoredMachine[] = owned.filter((m) => m.kind !== "relay").map((m) => ({ id: m.id, name: m.name, target: m.target!, enabled: m.enabled, snapshot: m.snapshot }));
+    const data: StoredMachine[] = owned.filter((m) => m.kind !== "relay").map((m) => ({ id: m.id, name: m.name, target: m.target!, ...(m.server_id ? { server_id: m.server_id } : {}), enabled: m.enabled, snapshot: m.snapshot }));
     const relayPcs: StoredMachine[] = owned.filter((m) => m.kind === "relay").map((m) => ({ id: m.id, name: m.name, kind: "relay", relay: m.relay!, enabled: m.enabled, snapshot: m.snapshot }));
     const relayText = JSON.stringify(relayPcs);
     if (relayText !== this.relayWritten || !holdsDocument(this.relayStatePath, relayText)) {
@@ -1339,7 +1346,7 @@ export class MachineManager {
       // session-changed queues one follow-up, but lets the active roster publish.
       if (["snapshot", "pane-status", "pane-exited"].includes(message.type)) runtime.snapshotRevision++;
       // a frame may have been overtaken by an HTTP read: it holds its epoch, it proves no other ended
-      if (message.type === "snapshot" && this.admitRemote(runtime, message.snapshot)) { runtime.machine.snapshot = message.snapshot; runtime.finishes.hold(message.snapshot.finish_epoch, message.snapshot.order_epoch); this.push.seed(forAlerts(message.snapshot.panes), runtime.machine.id, runtime.machine.name); this.emit(); }
+      if (message.type === "snapshot" && this.admitRemote(runtime, message.snapshot)) { runtime.machine.snapshot = message.snapshot; runtime.finishes.hold(message.snapshot.finish_epoch, message.snapshot.order_epoch); this.push.seed(forAlerts(message.snapshot.panes), runtime.machine.id, runtime.machine.name, pcServerId(runtime.machine)); this.emit(); }
       // a status names no server: it is the proven one's, or not known while health is asked (the cached roster's
       // order epoch may be another server's)
       if (message.type === "pane-status") {
@@ -1506,8 +1513,11 @@ export class MachineManager {
       try {
         const response = await fetch(`${endpoint.url}/api/health`, { headers: { authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.any([abort.signal, AbortSignal.timeout(15_000)]) });
         if (!current() || !response.ok) { await discard(response); return null; }
-        const boot = (await readCappedJson<{ web_ui?: { boot_id?: unknown } } | null>(response, REMOTE_LIMITS.health))?.web_ui?.boot_id;
+        const webUi = (await readCappedJson<{ web_ui?: { boot_id?: unknown; server_id?: unknown } } | null>(response, REMOTE_LIMITS.health))?.web_ui;
+        const boot = webUi?.boot_id;
         if (!current() || typeof boot !== "string" || boot === "") return null;
+        // its relay ID, which a device turns its alerts off by (shared/machines.ts pcAlertKey)
+        if (typeof webUi?.server_id === "string" && SERVER_ID_PATTERN.test(webUi.server_id) && runtime.machine.server_id !== webUi.server_id) { runtime.machine.server_id = webUi.server_id; this.saveSoon(); }
         this.proved(runtime, boot);
         return boot;
       } catch { return null; }
@@ -1526,7 +1536,7 @@ export class MachineManager {
     runtime.machine.snapshot = snapshot;
     if (settled) runtime.finishes.settle(snapshot); else runtime.finishes.hold(snapshot.finish_epoch, server);
     this.saveSoon();
-    this.push.seed(forAlerts(snapshot.panes), runtime.machine.id, runtime.machine.name);
+    this.push.seed(forAlerts(snapshot.panes), runtime.machine.id, runtime.machine.name, pcServerId(runtime.machine));
   }
   /** the PC's server proved itself: its epoch is the accepted one, and a held snapshot of it is published */
   private proved(runtime: Runtime, boot: string): void {
@@ -1674,6 +1684,11 @@ function snapshotAfterStatus(snapshot: SessionSnapshot, message: Extract<ServerM
     const { finish_id: _finish, ...rest } = pane;
     return rest;
   }) };
+}
+
+/** the relay ID a PC's alerts are turned off by (shared/machines.ts pcAlertKey), where it has one */
+function pcServerId(machine: Machine): string | undefined {
+  return machine.relay?.server_id ?? machine.server_id;
 }
 
 /** A remote PC's panes as its alerts take them: one waiting on its turn's background work is working. */

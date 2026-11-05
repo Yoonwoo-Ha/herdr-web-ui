@@ -493,6 +493,8 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     } : undefined;
     const securityHeaders: Record<string, string> = security ? { "cache-control": "no-store" } : {};
     const relay = access.level === "full" ? { relay: ctx.services.relay.status() } : {};
+    // this PC's relay ID, for a PC that lists it over SSH: a device turns its alerts off by it (shared/machines.ts pcAlertKey)
+    const serverId = access.level === "full" && access.via !== "open" ? ctx.services.relay.serverId() : undefined;
     // what this PC has of the Herdr app's runtime, for Settings: never waited for, no path in it.
     // Only a driving owner is told: a session name can name a project, which a watching device or a
     // stranger on an open install has no need to read
@@ -507,7 +509,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       // a forced answer (tests) and a runtime without the PTY sidecar are told the way a Windows herdr's own would be
       const herdr = attachableIdentity(info, sidecar);
       return jsonResponse({ ok: true, herdr, auth, ...relay, ...(lan_exposure ? { lan_exposure } : {}), ...(security ? { security } : {}), ...(herdr_core ? { herdr_core } : {}), ...(herdr_runtime ? { herdr_runtime } : {}),
-        web_ui: { boot_id: bootId, revision: process.env["OVIS_REVISION"] ?? null } }, 200, securityHeaders);
+        web_ui: { boot_id: bootId, revision: process.env["OVIS_REVISION"] ?? null, ...(serverId ? { server_id: serverId } : {}) } }, 200, securityHeaders);
     } catch (error) {
       return errorResponse(error);
     }

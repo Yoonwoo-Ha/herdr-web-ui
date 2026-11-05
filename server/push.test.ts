@@ -683,6 +683,21 @@ describe("alert timing and each device's choice", () => {
     expect(fake.received.map((r) => r.payload.machine_id ?? "local")).toEqual(["pc-b"]);
   });
 
+  it("tells nothing of a PC the device turned off by its relay ID, whatever the roster it was turned off in calls it (#2876)", async () => {
+    const own = "ab".repeat(16), other = "cd".repeat(16);
+    // created as server/core/status.ts creates it: this PC knows itself by its hostname and its relay ID
+    const push = createPushService({ loopbackHttp: true, stateDir, serverId: () => own, timing: { short: 0, long: 0, longTurn: 0 } });
+    push.subscribe(fake.subscription, { input: true, done: "always", pcs_off: [own, other] });
+    push.seed([pane("w1:p1", "working", "alpha")]);
+    push.seed([pane("w1:p1", "working", "beta")], "pc-b", "Home PC", other);
+    push.seed([pane("w1:p1", "working", "gamma")], "pc-c", "Laptop");
+    await push.onStatus("w1:p1", "blocked");
+    await push.onStatus("w1:p1", "blocked", "pc-b");
+    await push.onStatus("w1:p1", "blocked", "pc-c");
+    await push.settled();
+    expect(fake.received.map((r) => r.payload.machine_id ?? "local")).toEqual(["pc-c"]);
+  });
+
   it("keeps a device's choice through a re-registration without one, and a restart", async () => {
     const push = createPushService({ loopbackHttp: true, stateDir });
     push.subscribe(fake.subscription, { input: false, done: "off" });
