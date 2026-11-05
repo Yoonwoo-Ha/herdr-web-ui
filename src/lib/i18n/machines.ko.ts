@@ -5,6 +5,7 @@
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const MACHINES_KO: Record<string, string> = {
+  "PCs": "PC",
   "Keep this dialog open until the PC connects.": "PC가 연결될 때까지 이 대화 상자를 열어 두세요.",
   "Waiting for Windows sign-in": "Windows 로그인 대기 중",
   "Windows desktop startup failed": "Windows 데스크톱에서 시작하지 못했습니다",

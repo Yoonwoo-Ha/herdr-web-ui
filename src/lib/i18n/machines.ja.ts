@@ -5,6 +5,7 @@
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const MACHINES_JA: Record<string, string> = {
+  "PCs": "PC",
   "Keep this dialog open until the PC connects.": "PC が接続されるまで、このダイアログを開いたままにしてください。",
   "Waiting for Windows sign-in": "Windows へのサインインを待機中",
   "Windows desktop startup failed": "Windows デスクトップでの起動に失敗しました",

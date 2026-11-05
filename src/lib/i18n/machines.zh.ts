@@ -5,6 +5,7 @@
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const MACHINES_ZH: Record<string, string> = {
+  "PCs": "PC",
   "Keep this dialog open until the PC connects.": "请保持此对话框打开，直到 PC 连接成功。",
   "Waiting for Windows sign-in": "正在等待 Windows 登录",
   "Windows desktop startup failed": "Windows 桌面启动失败",

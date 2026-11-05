@@ -9,6 +9,9 @@
   --side-action: var(--space-6);
   --side-hover: color-mix(in srgb, var(--bg-hover) 50%, var(--bg-panel));
   --side-selected: var(--bg-hover);
+  /* Until resized, Agents keeps today's half-shell allocation when both lists are long. The PCs
+     take the rest, but never reserve height beyond their rows: Agents can use what they leave free.
+     The PCs grow first (below), so a long roster does not change today's default split. */
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -743,10 +746,25 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   padding: var(--space-2) var(--side-gutter) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
 }
 
-/* Keep the footer at the bottom when both lists are short after the upper section folds. */
-.sidebar-shell:not(:has(.machine-list .machine-workspaces)) .sidebar-footer {
-  margin-top: auto;
+/* The PCs get free space first, up to their rows; Agents starts with half the whole shell,
+   as before, and gets the space a short PCs list leaves. Neither grows past its own content. */
+.sidebar-shell > .pcs-sidebar {
+  flex: var(--pcs-flex, 1000 1 0);
+  min-height: var(--split-pcs-min, 0px);
+  max-height: var(--section-max, max-content);
 }
+.sidebar-shell > .agents-sidebar {
+  flex: var(--agents-flex, 1 1 50%);
+  min-height: var(--split-agents-min, 0px);
+  max-height: var(--section-max, max-content);
+}
+.sidebar-shell > .pcs-sidebar.is-collapsed,
+.sidebar-shell > .agents-sidebar:is(.is-collapsed, .is-empty) { flex: 0 1 auto; min-height: 0; }
+
+/* When neither list fills its allocation, keep Agents docked to the footer as before. Grouped
+   Agents stays on top, and the footer still stays at the foot of the sidebar. */
+.sidebar-shell:not(.is-agents-first) > .sidebar-split { margin-top: auto; }
+.sidebar-shell.is-agents-first > .sidebar-footer { margin-top: auto; }
 
 .sidebar-footer-action {
   justify-content: flex-start;

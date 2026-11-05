@@ -125,6 +125,10 @@ export interface AgentSidebarProps {
   stateWord(machine: Machine): string;
   /** this device only watches: it sees the shared mutes and cannot change them */
   watching?: boolean;
+  /** a fold the line above the list asks for (SidebarSplit.tsx), each new `seq` once: the caret's own fold */
+  foldRequest?: { folded: boolean; seq: number } | null;
+  /** the list's id, for the line that sizes it (SidebarSplit.tsx `controls`); one of its own without it */
+  listId?: string;
   onSelect(machineId: string, paneId: string): void;
 }
 
@@ -182,9 +186,10 @@ interface PinMenu { key: string; anchor: HTMLElement; point?: { x: number; y: nu
  * right-click (or the context-menu key) opens the menu. A row's ⋯, or a right-click on it, opens its
  * menu, which pins or unpins it, and mutes or unmutes its alerts for every browser and device.
  */
-export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, watching = false, onSelect }: AgentSidebarProps) {
+export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stateWord, watching = false, foldRequest = null, listId: givenListId, onSelect }: AgentSidebarProps) {
   const t = useT();
-  const listId = useId();
+  const ownListId = useId();
+  const listId = givenListId ?? ownListId;
   const [collapsed, setCollapsed] = useState(initialFold);
   const [backgroundCollapsed, setBackgroundCollapsed] = useState(initialBackgroundFold);
   const { settings, update: updateSettings } = useSettings();
@@ -234,6 +239,14 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   }, [filter.active]);
   const folded = filter.active ? filterFold ?? (collapsed && rows.length === 0) : collapsed;
   const backgroundFolded = filter.active ? backgroundFilterFold ?? false : backgroundCollapsed;
+  // a drag or a key on the line above folds or opens the list as its caret does: for the filter's time
+  // under a filter, else kept on this device
+  useEffect(() => {
+    if (foldRequest === null || foldRequest.folded === folded) return;
+    if (filter.active) { setFilterFold(foldRequest.folded); return; }
+    setCollapsed(foldRequest.folded);
+    try { window.localStorage.setItem(FOLD_KEY, foldRequest.folded ? "1" : "0"); } catch { /* private mode: this page keeps it */ }
+  }, [foldRequest?.seq]);
   // the PCs this device hides are not in `machines`: their pins are kept, not taken for gone panes
   const hidden = useHiddenMachines();
   const togglePin = (key: string): void => {

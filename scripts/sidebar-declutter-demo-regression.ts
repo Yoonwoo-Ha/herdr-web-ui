@@ -265,6 +265,9 @@ async function filterHidden(browser: Browser, scene: Scene): Promise<void> {
       await page.keyboard.press("Tab");
       assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Close filter");
       await page.keyboard.press("Tab");
+      assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("sidebar-section-toggle")), true, "Tab reaches the PCs fold target");
+      assert.equal(await filterRow(page).count(), 1, "the PCs heading taking focus keeps the field");
+      await page.keyboard.press("Tab");
       assert.equal(await page.evaluate(() => document.activeElement?.closest(".machine-list") !== null), true, "Tab goes on into the list");
       assert.equal(await filterRow(page).count(), 1, "a row taking the focus keeps the field");
       await page.locator(".machine-list .workspace-select").nth(1).click();

@@ -182,6 +182,8 @@ run_script scripts/sidebar-activity-demo-regression.ts
 run_script scripts/sidebar-filter-demo-regression.ts
 run_script scripts/sidebar-declutter-demo-regression.ts
 run_script scripts/sidebar-spacing-demo-regression.ts
+run_script scripts/sidebar-split-demo-regression.ts
+run_script scripts/sidebar-split-access-demo-regression.ts
 run_script scripts/sidebar-machine-layout-demo-regression.ts
 run_script scripts/sidebar-machine-removal-demo-regression.ts
 run_script scripts/sidebar-selection-contrast-demo-regression.ts

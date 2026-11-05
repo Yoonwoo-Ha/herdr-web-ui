@@ -1,0 +1,34 @@
+/* The sidebar's two sections, PCs and Agents (MachineSidebar.tsx, AgentSidebar.tsx): each a head that
+   stays put and a list that scrolls under it. */
+
+.pcs-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding-top: var(--space-2);
+}
+
+/* the PCs head is the Agents head's twin: the caret in the leading cell, and its words */
+.sidebar-section-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-width: 0;
+  padding: 0 var(--side-gutter);
+}
+
+.sidebar-section-toggle {
+  flex: 1 1 auto;
+  width: 100%;
+  cursor: pointer;
+}
+
+.sidebar-section-caret {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin-inline: calc((var(--side-box) - var(--space-4)) / 2);
+}
+
+/* The rows keep their own scroll viewport under the fixed fold target. */
+.pcs-sidebar > .machine-list { flex: 1 1 auto; }

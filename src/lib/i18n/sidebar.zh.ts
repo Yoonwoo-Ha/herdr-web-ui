@@ -1,6 +1,7 @@
 /**
  * Simplified Chinese for the keys only the sidebar files use:
- * components/Sidebar.tsx, components/AgentSidebar.tsx, components/SidebarResizer.tsx.
+ * components/Sidebar.tsx, components/AgentSidebar.tsx, components/SidebarResizer.tsx,
+ * components/SidebarSplit.tsx.
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const SIDEBAR_ZH: Record<string, string> = {
@@ -35,6 +36,7 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Reorder workspace {name}": "调整工作区 {name} 的顺序",
   "Drag to reorder · Alt+↑/↓": "拖动以调整顺序 · Alt+↑/↓",
   "Resize sidebar": "调整侧边栏宽度",
+  "Resize PCs and Agents": "调整 PC 与代理的高度",
   "More for {title}": "{title} 的更多操作",
   "Rename workspace": "重命名工作区",
   "Close workspace": "关闭工作区",

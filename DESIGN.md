@@ -1180,18 +1180,47 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   bar of at least 3:1: a workspace row's is a border pulled into the gutter so its content does
   not move; an agent row's is drawn inside the row, since the Agents list scrolls and would clip
   it. No rule
-  separates sections: `--space-4` and a dim `--fs-sm` head do.
-- The PC/workspace list and the lower Agents list scroll independently above the fixed footer.
-  Agents takes the height of its rows, at most half the sidebar, docked above the footer; the
-  workspace list has the rest. The Agents heading stays outside its scroll area and shows its
-  count only while folded. A list that is cut fades out at its lower edge. An empty or folded
-  Agents list gives its space back; PC and workspace folds do not hide agent rows. In the drawer
-  (`max-width: 768px`) the list starts folded. The reader's fold is kept on this device
-  (`ovis:agents-collapsed`, like a PC's fold) and wins over that default on the next launch; a
-  filter's fold is not kept. Until the PCs are in and every connected PC's
-  panes have come, an empty list says **Loading agents…**, never "No agents running".
-- A PC's header is the head of its workspaces, and the caret beside its `+` is the one fold over
-  them. The roster has no label or fold of its own.
+  separates sections but the resize line between the PCs and Agents: `--space-4` and a dim `--fs-sm`
+  head do.
+- The PCs and Agents scroll independently above the fixed footer. Until resized, Agents keeps
+  today's default: at most half the whole sidebar when both lists need scrolling, and the PCs
+  get the rest. If the PCs fit in less, Agents can use the height they leave free, up to the
+  footer, rather than clipping rows above an empty band. If both fit, Agents stays docked to the
+  footer with the unused space above it. The flex column gives PCs free height first, up to
+  their content, and Agents a half-shell basis; neither grows beyond its rows. Empty or folded
+  Agents gives its space back. PC and workspace folds never hide agent rows. The heading stays
+  outside its scroll area and still counts only when folded. The lower-edge fades are unchanged.
+  In the drawer (`max-width: 768px`) Agents starts folded. Its fold stays on this device
+  (`ovis:agents-collapsed`) and wins over that default on the next launch; a filter's fold does
+  not persist. Until the PCs are in and each connected PC's panes have come, an empty list says
+  **Loading agents…**, never "No agents running".
+- The resize line needs a fixed target to fold PCs to, so their roster gets a minimal **PCs**
+  heading with a caret, also for a lone Host. It folds only this section, not its Agents, and
+  keeps the fold on this device (`ovis:pcs-collapsed`); under a filter the fold is temporary.
+  Its rows stay mounted while hidden so their branch labels remain searchable. This heading
+  comes out of the PCs' allocation; it does not shrink Agents' default allocation. The per-PC
+  headers and actions, counts and filter field are unchanged.
+- Between the lists is a resize line (`SidebarSplit.tsx`, `role="separator"`): a `--border`
+  hairline in its own hit area, `--border-strong` on hover, `--accent` while held or focused.
+  A grip shows on hover and always under a finger. Dragging gives the upper section its chosen
+  height and the lower section the rest, kept in px on this device as `ovis:sidebar-split`.
+  The default layout and saved-split clamp share measured minimums: both sections keep a heading
+  and a row when they fit. In a very short window they share the available room instead, with
+  overflow clipped inside each section so neither its controls nor its rows cover the divider
+  or footer. A drag-to-fold preview can still shrink either section to its heading.
+  Double-click or Enter resets to today's default split. ↑/↓ moves the line a row; Home folds
+  the upper section and End the lower. Dragging a section below about one row snaps it to its
+  heading and dims it; release folds it with the same fold as its caret. Reopening restores its
+  saved height. A drag opens a folded section first. The reset follows [Zed's Agent panel](https://zed.dev/docs/reference/all-settings#flexible-sizing),
+  whose resize handle restores the default proportion on double-click. The fold follows VS Code's
+  resizable sidebar views and macOS split views (Mail, Finder); Ovis's width divider is the local
+  precedent. On phones, the line occupies a `--touch-target` row so its hit area never covers
+  adjacent PC actions. Only it takes `touch-action: none`, leaving both lists swipe-scrollable.
+  With **Group agents by state**, Agents is above PCs, and the line's directions, folds and
+  `aria-controls` follow that order. Each order keeps its own height: `ovis:sidebar-split` for
+  PCs above, `ovis:sidebar-split-agents-first` for Agents above.
+- Each PC's header stays the head of its workspaces, and its own caret beside the `+` folds
+  those workspaces. The section's new caret folds the whole roster instead.
 - When the sidebar shows one PC and it is the Host (the only PC, or the others hidden on this device), its group
   has no header: there is no other PC to tell it from, and the workspaces start the list, as the Claude app lists its
   sessions with no heading for the computer they run on. Nothing the header held is lost. The state words, the notice

@@ -9,12 +9,15 @@ import { keepDismissed, noticeKey, readDismissed, waitingMachines, writeDismisse
 import type { AppActions } from "../lib/actions.ts";
 import { Sidebar } from "./Sidebar.tsx";
 import { AgentSidebar } from "./AgentSidebar.tsx";
+import { SidebarSplit } from "./SidebarSplit.tsx";
+import { storedSidebarSplit, storeSidebarSplit, type SplitFold, type SplitOrder } from "../lib/sidebarSplit.ts";
 import { SidebarActivityProvider, type SidebarActivity } from "../lib/sidebarActivity.tsx";
 import { filterSuggestions, machineFilter, sidebarFilter, type SidebarBranchLabels } from "../lib/sidebarFilter.ts";
 import { SidebarFilterProvider, useSidebarFilter } from "../lib/sidebarFilterContext.ts";
 import { UsageMeters } from "./UsageMeters.tsx";
 import { rowMenuAnchor } from "./RowMenu.tsx";
 import "./Machines.css";
+import "./SidebarSections.css";
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
 import { requestSettingsPage } from "../lib/paletteSettings.ts";
@@ -116,7 +119,8 @@ export function MachineSidebar(props: Props) {
       const active = document.activeElement;
       if (active !== null && active !== document.body) return;
       const rows = sidebar?.querySelectorAll<HTMLElement>('.machine-list :is(button:not([disabled]), [role="button"][tabindex="0"])') ?? [];
-      for (const back of [opener, ...rows]) {
+      const pcsToggle = sidebar?.querySelector<HTMLElement>(".sidebar-section-toggle") ?? null;
+      for (const back of [opener, ...rows, pcsToggle]) {
         if (back === null || !back.isConnected || back.closest(".sidebar-filter, [inert]") !== null || back.getClientRects().length === 0) continue;
         back.focus({ preventScroll: true });
         if (document.activeElement === back) return;
@@ -175,6 +179,35 @@ export function MachineSidebar(props: Props) {
   };
   const drawerOpen = props.drawerOpen === true;
   const hiddenCount = props.hiddenCount ?? 0;
+  // the PCs section folds to its head as Agents does (AgentSidebar.tsx), kept on this device; while the
+  // filter keeps rows in it, it stands open and its caret folds it for the filter's time only
+  const listId = useId();
+  const [pcsCollapsed, setPcsCollapsed] = useState(() => { try { return localStorage.getItem(PCS_FOLD_KEY) === "1"; } catch { return false; } });
+  const [pcsFilterFold, setPcsFilterFold] = useState<boolean | null>(null);
+  useEffect(() => { if (!filter.active) setPcsFilterFold(null); }, [filter.active]);
+  const pcsKept = [...filter.machines.values()].some((machine) => machine.matched || machine.workspaces.size > 0 || machine.panes.size > 0);
+  const pcsFolded = filter.active ? pcsFilterFold ?? (pcsCollapsed && !pcsKept) : pcsCollapsed;
+  // A drag can open both and then restore folds before React renders. Each request must queue;
+  // a render-time equality check would drop the restore.
+  const setPcsFold = (fold: boolean) => {
+    if (filter.active) { setPcsFilterFold(fold); return; }
+    setPcsCollapsed(fold);
+    try { localStorage.setItem(PCS_FOLD_KEY, fold ? "1" : "0"); } catch { /* private mode: this page keeps it */ }
+  };
+  const togglePcs = () => setPcsFold(!pcsFolded);
+  // the line between the lists (SidebarSplit.tsx): the PCs' height when dragged, kept on this device, and
+  // the folds a drag or a key asks of either section, the same folds as their carets
+  // the list on top: Agents while Settings → Group agents by state is on, the PCs otherwise; each order keeps
+  // its own height for the list on top, so a height chosen for one list never sizes the other
+  const order: SplitOrder = settings.agentGroups ? "agents" : "pcs";
+  const [splits, setSplits] = useState(() => ({ pcs: storedSidebarSplit("pcs"), agents: storedSidebarSplit("agents") }));
+  const [agentsFold, setAgentsFold] = useState<{ folded: boolean; seq: number } | null>(null);
+  const agentsListId = useId();
+  const changeSplit = useCallback((height: number | null) => { setSplits((last) => ({ ...last, [order]: height })); storeSidebarSplit(order, height); }, [order]);
+  const foldSections = (sections: readonly SplitFold[]) => {
+    setPcsFold(sections.includes("pcs"));
+    setAgentsFold((last) => ({ folded: sections.includes("agents"), seq: (last?.seq ?? 0) + 1 }));
+  };
   useEffect(() => { if (!drawerOpen) { setQuery(""); setFilterAsked(false); } }, [drawerOpen]);
   // the roster's wait is a live region that is in the list from its first render, clipped while empty (never
   // display: none), and its words land a frame after it (lib/useAnnouncedText.ts)
@@ -185,8 +218,8 @@ export function MachineSidebar(props: Props) {
   // no top bar: a workspace starts from its PC's header (the lone Host's New workspace row), and Add PC lives in
   // Settings → Remote PCs. The filter above the lists is a row of the same grid, one field and its clear, never
   // taller than a row.
-  const agentList = <AgentSidebar machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect} />;
-  return <SidebarActivityProvider value={activity}><SidebarFilterProvider value={filterView}><div ref={shell} className="sidebar-shell" onBlur={onSidebarBlur}>
+  const agentList = <AgentSidebar key="agents" foldRequest={agentsFold} listId={agentsListId} machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect} />;
+  return <SidebarActivityProvider value={activity}><SidebarFilterProvider value={filterView}><div ref={shell} className={`sidebar-shell${order === "agents" ? " is-agents-first" : ""}`} onBlur={onSidebarBlur}>
     {filterShown && <div className="sidebar-filter" role="search" aria-label={t("Filter workspaces and agents")}>
       <label className="sidebar-filter-label" htmlFor={filterId}>{t("Filter")}</label>
       <input ref={filterInput} id={filterId} className="input sidebar-filter-input" type="search" value={query} aria-label={t("Filter workspaces and agents")} placeholder={t("Workspaces and agents")} list={suggestionsId} autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} enterKeyHint="search" onChange={(event) => setQuery(event.target.value)} onKeyDown={onFilterKeyDown} />
@@ -194,15 +227,27 @@ export function MachineSidebar(props: Props) {
       {query !== "" ? <button type="button" className="sidebar-filter-clear" aria-label={t("Clear filter")} title={t("Clear filter")} onClick={clearFilter}><X aria-hidden="true" /></button>
         : closable && <button type="button" className="sidebar-filter-clear" aria-label={t("Close filter")} title={t("Close filter")} onClick={closeFilter}><X aria-hidden="true" /></button>}
     </div>}
-    {/* Settings → Group agents by state: the agents come first on this device, the workspaces under them */}
+    {/* Settings → Group agents by state: the agents come first on this device, the PCs under them */}
     {settings.agentGroups && agentList}
-    <div className="machine-list" aria-label={t("PCs and workspaces")}>
-      <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
-      {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={machine.id === loneHost} />)}
-      <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
-      {/* a PC kept out on this device is said, with the way to show it again */}
-      {hiddenCount > 0 && <button type="button" className="machine-hidden-note" title={t("Choose the PCs this device shows")} onClick={() => { requestSettingsPage({ page: "remote", section: "sidebar-pcs" }); props.actions.openSettings(); }}>{hiddenCount === 1 ? t("1 PC hidden on this device") : t("{n} PCs hidden on this device", { n: hiddenCount })}</button>}
-    </div>
+    {settings.agentGroups && <SidebarSplit shell={shell} order={order} split={splits[order]} controls={agentsListId} onSplit={changeSplit} onFold={foldSections} />}
+    <section className={`pcs-sidebar${pcsFolded ? " is-collapsed" : ""}`} aria-label={t("PCs")}>
+      {/* a fold target for the resize line, including when the only PC is the Host */}
+      <div className="sidebar-section-head">
+        <button type="button" className="sidebar-section-toggle sidebar-section-label" aria-expanded={!pcsFolded} aria-controls={listId} onClick={togglePcs}>
+          {pcsFolded ? <ChevronRight className="sidebar-section-caret" aria-hidden="true" /> : <ChevronDown className="sidebar-section-caret" aria-hidden="true" />}
+          <span>{t("PCs")}</span>
+        </button>
+      </div>
+      {/* folded, the list stays mounted, hidden, so the branches its rosters read stay findable to the filter */}
+      <div className="machine-list" id={listId} hidden={pcsFolded} aria-label={t("PCs and workspaces")}>
+        <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
+        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={machine.id === loneHost} />)}
+        <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
+        {/* a PC kept out on this device is said, with the way to show it again */}
+        {hiddenCount > 0 && <button type="button" className="machine-hidden-note" title={t("Choose the PCs this device shows")} onClick={() => { requestSettingsPage({ page: "remote", section: "sidebar-pcs" }); props.actions.openSettings(); }}>{hiddenCount === 1 ? t("1 PC hidden on this device") : t("{n} PCs hidden on this device", { n: hiddenCount })}</button>}
+      </div>
+    </section>
+    {!settings.agentGroups && <SidebarSplit shell={shell} order={order} split={splits[order]} controls={listId} onSplit={changeSplit} onFold={foldSections} />}
     {!settings.agentGroups && agentList}
     <footer className="sidebar-footer">
       {/* one PC of the phone's several: which one, and back to the list in one tap, as a team switcher at a
@@ -224,6 +269,9 @@ export function MachineSidebar(props: Props) {
     </footer>
   </div></SidebarFilterProvider></SidebarActivityProvider>;
 }
+
+/** the reader's fold of the PCs section, kept on this device as Agents' is (`ovis:agents-collapsed`) */
+const PCS_FOLD_KEY = "ovis:pcs-collapsed";
 
 /** `headerless`: the sidebar's lone Host, drawn without its header. What the header held is elsewhere: the state
  *  and its notice are lines of their own, the + is the New workspace row under the workspaces, and nothing is

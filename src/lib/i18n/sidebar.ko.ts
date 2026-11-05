@@ -1,6 +1,7 @@
 /**
  * Korean for the keys only the sidebar files use:
- * components/Sidebar.tsx, components/AgentSidebar.tsx, components/SidebarResizer.tsx.
+ * components/Sidebar.tsx, components/AgentSidebar.tsx, components/SidebarResizer.tsx,
+ * components/SidebarSplit.tsx.
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const SIDEBAR_KO: Record<string, string> = {
@@ -35,6 +36,7 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Reorder workspace {name}": "워크스페이스 {name} 순서 바꾸기",
   "Drag to reorder · Alt+↑/↓": "끌어서 순서 바꾸기 · Alt+↑/↓",
   "Resize sidebar": "사이드바 너비 조절",
+  "Resize PCs and Agents": "PC와 에이전트 높이 조절",
   "More for {title}": "{title} 더보기",
   "Rename workspace": "워크스페이스 이름 바꾸기",
   "Close workspace": "워크스페이스 닫기",

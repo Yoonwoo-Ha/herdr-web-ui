@@ -1,6 +1,7 @@
 /**
  * Japanese for the keys only the sidebar files use:
- * components/Sidebar.tsx, components/AgentSidebar.tsx, components/SidebarResizer.tsx.
+ * components/Sidebar.tsx, components/AgentSidebar.tsx, components/SidebarResizer.tsx,
+ * components/SidebarSplit.tsx.
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const SIDEBAR_JA: Record<string, string> = {
@@ -35,6 +36,7 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Reorder workspace {name}": "ワークスペース {name} を並べ替え",
   "Drag to reorder · Alt+↑/↓": "ドラッグで並べ替え · Alt+↑/↓",
   "Resize sidebar": "サイドバーの幅を変更",
+  "Resize PCs and Agents": "PC とエージェントの高さを調整",
   "More for {title}": "{title} のその他",
   "Rename workspace": "ワークスペース名を変更",
   "Close workspace": "ワークスペースを閉じる",
