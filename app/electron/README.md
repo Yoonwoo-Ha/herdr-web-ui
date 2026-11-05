@@ -47,6 +47,20 @@ Until the server answers, or when it stops, the window shows the connection scre
 `<user data>` is Electron's: `~/.config/Ovis` on Linux, `~/Library/Application Support/Ovis` on macOS,
 `%APPDATA%\Ovis` on Windows.
 
+On Windows the installer replaces Ovis for Windows (`app/windows`, the one-file setup app), which has
+no uninstaller of its own (`windows/installer.nsh` runs `windows/replace-old-setup.ps1`):
+- This app's Start menu **Ovis** takes the place of that app's shortcut, and any other shortcut to it
+  in the Start menu or on the desktop goes.
+- Any open window of it, also one opened from a download, is closed. Only a file whose version
+  information says it is Ovis for Windows counts; anything else is left alone. A shortcut the user
+  deleted is not made again.
+- Its sign-in start (the HKCU `Run` value `Ovis` that runs its copy in `%LOCALAPPDATA%\Programs\Ovis`
+  with `--start`) is what starts herdr's server at sign-in for the Ovis plugin. So when herdr says the
+  Ovis plugin is installed (`herdr plugin list`), the sign-in start and the copy stay, and herdr's server
+  still starts at sign-in, with no window. Without the plugin both go. The installer log says which.
+- Its own Remove is never run, because that also takes the Ovis server off the PC.
+- herdr, the Ovis server it installed and their state stay as they are.
+
 On Windows the core and the server start directly (Windows hands a child only the handles marked
 inheritable), without a console window. Windows has no SIGTERM: stopping the server ends its
 process at once, and a server left behind after a crash is found by its command line and start

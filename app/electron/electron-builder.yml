@@ -73,3 +73,5 @@ nsis:
   # per user, no administrator prompt: the core and the server run as the user anyway
   oneClick: true
   perMachine: false
+  # replaces the one-file Windows setup app (README.md)
+  include: windows/installer.nsh
