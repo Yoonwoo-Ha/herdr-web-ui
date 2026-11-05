@@ -79,6 +79,20 @@ async function run(browser: Browser, origin: string, port: number, width: number
     await page.goBack();
     await page.locator(".web-panel-popup").waitFor({ state: "detached" });
     assert.equal(page.url(), before, `${tag}: Back goes through the pages and closes the popup in the app`);
+
+    // Close page over two stacked pages leaves both of their entries: the first does not come back (#3054)
+    for (const path of ["/#/graph", "/second"]) {
+      await page.keyboard.press("ControlOrMeta+Shift+K");
+      await search.fill(`localhost:${port}${path}`);
+      await search.press("Enter");
+      await page.getByRole("dialog", { name: "Command palette" }).waitFor({ state: "detached" });
+      await page.waitForFunction((end) => window.history.state?.["ovis:web-panel"]?.url?.endsWith(end) === true && window.history.state?.["ovis:sheet"] === undefined, path);
+    }
+    await page.getByRole("button", { name: "Close page", exact: true }).click();
+    await page.locator(".web-panel-popup").waitFor({ state: "detached" });
+    await page.waitForFunction(() => window.history.state?.["ovis:web-panel"] === undefined);
+    assert.equal(await page.locator(".web-panel-popup").count(), 0, `${tag}: Close page closes the popup over two pages`);
+    assert.equal(page.url(), before, `${tag}: Close page goes back to the pane`);
   } else {
     await page.getByRole("button", { name: "Close page", exact: true }).click();
     await page.locator(".web-panel").waitFor({ state: "detached" });
