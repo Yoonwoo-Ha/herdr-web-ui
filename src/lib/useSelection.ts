@@ -6,6 +6,8 @@ import { machineGone, notificationLanding, notificationTargetFromSearch, sameLin
 import { pageSearch } from "./pageQuery.ts";
 import type { TerminalPeek } from "./terminalPeek.ts";
 import { markSelection, type SelectionMark } from "./selectionMark.ts";
+import { paneAfterClose } from "./paneAfterClose.ts";
+import { lastViewedPane } from "./lastViewedPane.ts";
 import type { PaneView } from "./actions.ts";
 import type { Translate } from "./i18n.ts";
 import { storedSelection, storeSelection } from "./useSplitView.ts";
@@ -172,13 +174,23 @@ export function useSelectTarget({ selectedMachineId, setConnected, setConnectedB
     selectionSince.current = rosterSeq.current;
   }, []);
   const selectTargetRef = useRef(selectTarget); selectTargetRef.current = selectTarget;
+  // the selected pane, the roster it was last seen in and the pane selected before it (lib/paneAfterClose.ts)
+  const lastSeen = useRef<{ machine: string; pane: string; roster: NonNullable<typeof snapshot>; previous: string | null } | null>(null);
   useEffect(() => {
     // An offline PC's cached roster cannot invalidate a selection. Once connected,
     // a closed pane (including one remembered across reloads) must release its selection.
     if (!snapshot || selectedMachine?.state !== "connected") return;
     // a link lands once its PC's roster is in: its pane, the pane its workspace's row opens, or,
     // when nothing it named is open, the usual fallback below with a word in the header
-    const fallback = (current: typeof snapshot) => current.panes.find((pane) => pane.pane_id === current.focused_pane_id)?.pane_id ?? current.panes[0]?.pane_id ?? null;
+    const seen = lastSeen.current?.machine === selectedMachineId && lastSeen.current.pane === selectedPaneId ? lastSeen.current : null;
+    // a closed selection moves as herdr's TUI focus does; herdr's own focus is the last resort
+    const fallback = (current: typeof snapshot) => (seen && paneAfterClose(seen.roster, current, seen.pane, seen.previous, (scope, id) => lastViewedPane(scope, selectedMachineId, id)))
+      ?? current.panes.find((pane) => pane.pane_id === current.focused_pane_id)?.pane_id ?? current.panes[0]?.pane_id ?? null;
+    if (selectedPaneId !== null && snapshot.panes.some((pane) => pane.pane_id === selectedPaneId)) {
+      const last = lastSeen.current?.machine === selectedMachineId ? lastSeen.current : null;
+      const previous = last && last.pane !== selectedPaneId ? last.pane : (last?.previous ?? null);
+      lastSeen.current = { machine: selectedMachineId, pane: selectedPaneId, roster: snapshot, previous };
+    }
     const linked = pendingLink.current;
     if (linked && linked.machine === selectedMachineId) {
       const land = (landed: ReturnType<typeof resolveLink>): boolean => {
