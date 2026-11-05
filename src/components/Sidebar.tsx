@@ -36,7 +36,7 @@ import { watchTouchReorder } from "../lib/touchReorder.ts";
 import { isBackgroundWorkspace, placeBlock, splitBackgroundGroups, workspaceMoves, worktreeGroups as groupWorktrees } from "../lib/workspaceOrder.ts";
 import { worktreeLabel } from "../lib/worktreeName.ts";
 import { lastViewedPane, rememberViewedPane } from "../lib/lastViewedPane.ts";
-import { paneMark, sidebarAgents, workspaceAgentLabels } from "../lib/sidebarAgents.ts";
+import { agentTabName, paneMark, sidebarAgents, workspaceAgentLabels, type SidebarAgent } from "../lib/sidebarAgents.ts";
 import { PANE_DRAG_TYPE, paneDragData } from "../lib/split.ts";
 import { publishWorkspaceRows, workspaceRows } from "../lib/adjacentTarget.ts";
 import { currentSidebarPins, pinnedGroupIds, pinnedWorkspaceIds, pruneWorkspacePins, reorderWorkspacePins, setSidebarPins, splitPinnedGroups, subscribeSidebarPins, toggleSidebarPin, workspacePinKey, type WorkspaceGroup } from "../lib/sidebarPins.ts";
@@ -255,6 +255,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
   const t = useT();
   const { settings } = useSettings();
   const twoLine = settings.sidebarRows === "two";
+  // Settings > Appearance > Agents under workspaces: each workspace's agents hang under its row (#773)
+  const agentTree = settings.sidebarAgentTree;
   const machineId = useMachineId();
   const pressPane = useContext(PanePressContext);
   // what the PC's herdr answers for its workspaces (lib/machineContext.tsx): herdr-core has no worktrees, and
@@ -769,10 +771,59 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     moveVisible(workspaceId, event.key === "ArrowUp" ? -1 : 1);
   };
 
+  /**
+   * One agent under its workspace's row, in the tree Settings turns on: its mark, its title as the Agents
+   * list names it, its tab where the workspace has several, and its state in the same trailing cell. It
+   * opens its pane as the Agents row does; its pin, mute and group stay in the Agents list's menu.
+   */
+  const renderAgentRow = (entry: SidebarAgent) => {
+    const { pane, agent } = entry;
+    const selected = pane.pane_id === selectedPaneId;
+    const title = pane.label?.trim() || agent?.title?.trim() || pane.title?.trim() || displayPaneTitle(pane);
+    const tabName = agentTabName(entry.tab, snapshot?.tabs.filter((tab) => tab.workspace_id === pane.workspace_id) ?? [], t);
+    // the live name other tools address the agent by, as the Agents row says it: two agents of one title tell apart by it
+    const name = agent?.name?.trim() || null;
+    const place = [...new Set([name, tabName])].filter((part): part is string => part !== null && part !== title).join(" · ") || null;
+    const kind = entry.agentLabel ?? entry.canonicalAgent;
+    const mark = paneMark(entry);
+    // under the filter a row it did not match is there for the selection, drawn as context as in the Agents list
+    const context = filtered !== null && !filtered.matchedPanes.has(pane.pane_id);
+    return <li key={pane.pane_id} className={`workspace-agent${selected ? " is-selected" : ""}${context ? " is-filter-context" : ""}`} data-agent-pane={pane.pane_id}>
+      <button type="button" className="workspace-agent-select" disabled={!online} aria-current={selected ? "true" : undefined}
+        title={[...new Set([title, kind, name, tabName, pane.cwd].filter(Boolean))].join(" — ")}
+        draggable={online && !coarsePointer}
+        // dropped on the pane area, the row opens its pane in half of it (lib/split.ts)
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId, paneId: pane.pane_id }));
+        }}
+        onPointerDown={(event) => { if (event.button === 0 && !event.ctrlKey && !selected && pane.agent != null) pressPane?.(machineId, pane.pane_id); }}
+        onClick={() => actions.selectPane(pane.pane_id)}
+      >
+        <span className="sidebar-mark" aria-hidden="true">{mark !== null ? <AgentMark agent={mark} size={18} /> : <Terminal />}</span>
+        {kind && kind !== title && <span className="visually-hidden">{kind}: </span>}
+        <span className="workspace-agent-title">{title}</span>
+        {place && <span className="workspace-agent-place">{place}</span>}
+        {context && selected && <span className="sidebar-filter-note">{t("Selected")}</span>}
+        {/* the counts give way before the title in a narrow sidebar: cut at the row's trailing cell, never over it */}
+        <span className="workspace-agent-badges">
+          <BackgroundBadge count={online ? pane.background_tasks : 0} />
+          <PlanBadge plan={online ? pane.plan : undefined} />
+          <ContextBadge context={online && settings.sidebarContext ? pane.context : undefined} />
+        </span>
+        <span className="sidebar-pane-meta">{online && pane.restore_error ? <RestoreErrorBadge reason={pane.restore_error} /> : <StatusBadge compact status={online ? activity.status(machineId, pane) : undefined} />}</span>
+      </button>
+    </li>;
+  };
+
   const renderWorkspaceRow = (workspace: WorkspaceInfo, children: WorkspaceInfo[] = [], nested = false, drop?: "before" | "after") => {
     const panes = roster.filter((pane) => pane.workspace_id === workspace.workspace_id);
     if (panes.length === 0) return null;
     const pane = currentPane(workspace, panes);
+    // the tree's agents of this workspace, the Agents list's rows in its order; under the filter the ones it keeps, as that list does
+    const workers = agentTree ? agentRows.filter((entry) => entry.pane.workspace_id === workspace.workspace_id && (filtered === null || filtered.panes.has(entry.pane.pane_id))) : [];
+    // the selected agent's own row carries the selection's fill, its workspace's row the place
+    const workerSelected = workers.some((entry) => entry.pane.pane_id === selectedPaneId);
     const selected = panes.some((candidate) => candidate.pane_id === selectedPaneId);
     const repoKey = workspace.worktree?.repo_key;
     const linked = workspace.worktree?.is_linked_worktree === true;
@@ -812,7 +863,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     const face = <WorkspaceFavicon root={workspace.worktree?.checkout_path ?? pane.cwd ?? null} fallback={<span className="sidebar-mark workspace-folder" aria-hidden="true">{unfolded ? <FolderOpen /> : <Folder />}</span>} />;
     const toggleMenu = (anchor: HTMLElement, point?: { x: number; y: number }, previousFocus?: HTMLElement | null): void => setMenu(menuOpen ? null : { anchor, point, previousFocus, workspace, title: rowTitle, place: [branchNote, ...paths].filter(Boolean).join(" · ") || workspace.label });
     return <li
-      className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${collapsed ? " is-collapsed" : ""}${context ? " is-filter-context" : ""}${dragWorkspaceId === workspace.workspace_id ? " is-dragging" : ""}${touchDrag?.source === workspace.workspace_id ? " is-lifted" : ""}`}
+      className={`workspace workspace-group pane-item${selected ? " is-selected" : ""}${workerSelected ? " has-selected-agent" : ""}${collapsed ? " is-collapsed" : ""}${context ? " is-filter-context" : ""}${dragWorkspaceId === workspace.workspace_id ? " is-dragging" : ""}${touchDrag?.source === workspace.workspace_id ? " is-lifted" : ""}`}
       key={workspace.workspace_id}
       data-workspace={workspace.workspace_id}
       data-branch={branchTitle ?? undefined}
@@ -904,6 +955,8 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
         </div>
       </div>
       {inlineError?.workspaceId === workspace.workspace_id && <p className="sidebar-inline-error" role="alert">{inlineError.message}{inlineError.detail !== null && <><br /><code>{inlineError.detail}</code></>}</p>}
+      {/* the worktrees drawn under it go on from the same branch: the last agent is a tee, not an elbow */}
+      {workers.length > 0 && <ul className="workspace-agents" aria-label={t("Agents in {name}", { name: rowTitle })} data-more={children.some((child) => !collapsed || roster.some((candidate) => candidate.workspace_id === child.workspace_id && candidate.pane_id === selectedPaneId)) ? "" : undefined}>{workers.map(renderAgentRow)}</ul>}
     </li>;
   };
 

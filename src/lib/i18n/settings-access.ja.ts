@@ -38,4 +38,6 @@ export const SETTINGS_ACCESS_JA: Record<string, string> = {
   "The server cannot see whether a proxy, tunnel or router makes it reachable from the internet.": "プロキシ、トンネル、ルーターによってインターネットから接続できるかどうかは、サーバーからは分かりません。",
   "Named agent groups": "名前付きエージェントグループ",
   "Split the Agents list into groups you name, such as Agents, Replies or Tasks. New workspace and New tab offer them, and an agent's menu moves it. Every browser shares them.": "エージェント一覧を Agents、Replies、Tasks など自分で名前を付けたグループに分けます。新しいワークスペースと新しいタブでグループを選べ、エージェントのメニューから移動できます。すべてのブラウザで共有されます。",
+  "Agents under workspaces": "ワークスペースの下にエージェント",
+  "On this device, list each workspace's agents under it in the PCs list, so every PC shows its workspaces and the agents running in them. The Agents list stays as it is.": "このデバイスで、PC 一覧の各ワークスペースの下にそのエージェントを表示します。PC ごとにワークスペースと、その中で動いているエージェントがわかります。エージェント一覧はそのまま残ります。",
 };

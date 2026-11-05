@@ -27,6 +27,7 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Has a question": "質問があります",
   "Needs sign-in": "サインインが必要",
   "Progress {percent}%": "進捗 {percent}%",
+  "Agents in {name}": "{name} のエージェント",
   "Started by {name}": "{name} が開始",
   "Agent {status}": "エージェント {status}",
   "Loading agents…": "エージェントを読み込み中…",

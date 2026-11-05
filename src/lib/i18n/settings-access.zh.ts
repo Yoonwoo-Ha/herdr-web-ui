@@ -38,4 +38,6 @@ export const SETTINGS_ACCESS_ZH: Record<string, string> = {
   "The server cannot see whether a proxy, tunnel or router makes it reachable from the internet.": "服务器无法判断代理、隧道或路由器是否使其可从互联网访问。",
   "Named agent groups": "自命名代理分组",
   "Split the Agents list into groups you name, such as Agents, Replies or Tasks. New workspace and New tab offer them, and an agent's menu moves it. Every browser shares them.": "将代理列表分成你命名的分组，例如 Agents、Replies 或 Tasks。新建工作区和新建标签页时可选择分组，代理的菜单可移动它。所有浏览器共享。",
+  "Agents under workspaces": "在工作区下显示代理",
+  "On this device, list each workspace's agents under it in the PCs list, so every PC shows its workspaces and the agents running in them. The Agents list stays as it is.": "在此设备上，于电脑列表中每个工作区下方列出其代理，让每台电脑显示其工作区以及在其中运行的代理。代理列表保持不变。",
 };

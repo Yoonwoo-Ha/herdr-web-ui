@@ -27,6 +27,7 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Has a question": "有问题",
   "Needs sign-in": "需要登录",
   "Progress {percent}%": "进度 {percent}%",
+  "Agents in {name}": "{name} 中的代理",
   "Started by {name}": "由 {name} 启动",
   "Agent {status}": "Agent 状态：{status}",
   "Loading agents…": "正在加载代理…",

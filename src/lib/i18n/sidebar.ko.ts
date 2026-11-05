@@ -27,6 +27,7 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Has a question": "질문 있음",
   "Needs sign-in": "로그인 필요",
   "Progress {percent}%": "진행률 {percent}%",
+  "Agents in {name}": "{name}의 에이전트",
   "Started by {name}": "{name}이(가) 시작함",
   "Agent {status}": "에이전트 {status}",
   "Loading agents…": "에이전트 불러오는 중…",

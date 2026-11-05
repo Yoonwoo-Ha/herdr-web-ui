@@ -2738,6 +2738,20 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   shows it for Claude Code and Codex panes, whose transcripts the server already reads for the
   plan. The Codex app, Paseo and T3 Code keep the ring by the composer only, and so does Ovis by
   default; the row ring is opt-in for people who watch several agents' context at once.
+- Settings > Appearance > **Agents under workspaces** (the device setting `sidebarAgentTree`, off by
+  default, #773) turns the PCs list into a PC > workspace > agent tree: each workspace row lists its
+  agents under it (`.workspace-agents`, a list named "Agents in <workspace>"), in the roster's
+  order, one level in on the dim branch a worktree hangs from, and a worktree's agents a level
+  further in. An agent row is a one-line workspace row's height: its mark, the title the Agents list
+  gives it, its live name and its tab's name where the workspace has several, its background and plan
+  counts, the context ring while Context left on agent rows is on, and its state in the rows' trailing
+  cell (NOT RESTORED for a pane herdr could not bring back, as on a workspace row). It opens its pane as the Agents row does; its pin, mute and group
+  stay in the Agents list's menu, which stays as it is. The selected agent's row takes the selection's
+  fill (and the forced-colors bar) from its workspace's row, so one row is filled. Under the filter
+  only the agents it keeps are listed, the selection's as context; a folded worktree group, a folded
+  PC and an offline PC treat them as they treat the rows they hang from. Conductor and the Codex app
+  list a project's sessions under it the same way; Ovis keeps herdr's workspace as the parent and the
+  flat Agents list beside it.
 - The chip opens one list above the card: a **Plan** heading with `N of M done`, the steps in wave
   order (a status glyph, the name, what a running step does now, then a dim state · time · teammate
   line; a waiting step's name is dim), then a **Background tasks** heading over the tasks list when
