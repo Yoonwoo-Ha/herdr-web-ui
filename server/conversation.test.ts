@@ -2529,6 +2529,13 @@ describe("a cut tool output and the whole of it", () => {
       const codex = join(dir, "codex.jsonl");
       writeFileSync(codex, JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "call_x", output: long } }));
       expect(transcriptToolOutput("codex-transcript", codex, "call_x")).toBe(long);
+      const kimi = join(dir, "kimi.jsonl");
+      writeFileSync(kimi, [
+        { type: "context.append_loop_event", event: { type: "tool.call", toolCallId: "tool_long", name: "Bash", args: { command: "big" } } },
+        { type: "context.append_loop_event", event: { type: "tool.result", toolCallId: "tool_long", result: { output: long } } },
+      ].map((entry) => JSON.stringify(entry)).join("\n"));
+      expect(transcriptToolOutput("kimi-transcript", kimi, "tool_long")).toBe(long);
+      expect(transcriptToolOutput("kimi-transcript", kimi, "tool_none")).toBeNull();
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 

@@ -66,6 +66,7 @@ import { museSession, museToolOutput, MuseUnavailable, parseMuseTranscript } fro
 import { resolveMuseSession } from "./muse-store.ts";
 import { LettaUnavailable, lettaToolOutput, parseLettaTranscript } from "./letta.ts";
 import { lettaLocalSettings, resolveLettaTranscript } from "./letta-store.ts";
+import { kimiToolOutput, kimiTranscriptPathForPane, parseKimiTranscript } from "./kimi.ts";
 import { withinRetentionBudget } from "./retention-budget.ts";
 import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchRecords, piBranchSegments } from "./pi-tree.ts";
 import { COPILOT_IMAGE_REF, copilotImage, copilotOffsetOutput, copilotOutput, copilotRootRecord, parseCopilotTranscript } from "./copilot.ts";
@@ -398,7 +399,8 @@ function hideOffBranch(stream: TranscriptStream, bytes: Buffer, from: number, to
  * changes between the head and newest page are otherwise never read. */
 const SETTING_TYPES = ['"model_change"', '"thinking_level_change"'];
 const COPILOT_SETTING_TYPES = ['"session.model_change"', '"session.resume"'];
-type SettingType = "model_change" | "thinking_level_change" | "copilot_model" | "copilot_effort";
+const KIMI_SETTING_TYPES = ['"llm.request"'];
+type SettingType = "model_change" | "thinking_level_change" | "copilot_model" | "copilot_effort" | "kimi_request";
 /**
  * Claude names its model and effort on every answer, and a /rewind can leave any of them off the
  * branch, so each field keeps every record that set it since the last clear (where it lies, as
@@ -645,7 +647,7 @@ function* applyHistoryBoundarySteps(path: string, stream: TranscriptStream, sour
         // what lies before the /clear is never judged
         if (scan.pictures) scan.pictures = noPictures(base + offset, stream);
       }
-      else if (!skipping && source !== "claude-transcript" && (source === "copilot-transcript" ? COPILOT_SETTING_TYPES : SETTING_TYPES).some((type) => line.includes(type))) {
+      else if (!skipping && source !== "claude-transcript" && (source === "copilot-transcript" ? COPILOT_SETTING_TYPES : source === "kimi-transcript" ? KIMI_SETTING_TYPES : SETTING_TYPES).some((type) => line.includes(type))) {
         try {
           const entry: unknown = JSON.parse(line.toString("utf8"));
           const type = entry !== null && typeof entry === "object" && "type" in entry ? entry.type : null;
@@ -660,6 +662,9 @@ function* applyHistoryBoundarySteps(path: string, stream: TranscriptStream, sour
                 if ("reasoningEffort" in data) scan.settings.copilot_effort = setting;
               }
             }
+          } else if (source === "kimi-transcript") {
+            // Kimi names the model and effort on each request; a compaction's own request is not the chat's
+            if (type === "llm.request" && (entry as { kind?: unknown }).kind !== "compaction") scan.settings.kimi_request = { offset: base + offset, end: base + newline, line: line.toString("utf8") };
           } else if (type === "model_change" || type === "thinking_level_change") {
             scan.settings[type] = { offset: base + offset, end: base + newline, line: line.toString("utf8") };
           }
@@ -963,6 +968,7 @@ function parseTurns(source: RecognizedConversation["source"], path: string, text
     }
   }
   if (source === "agy-transcript") return parseAgyTranscript(text, path);
+  if (source === "kimi-transcript") return parseKimiTranscript(text);
   if (source === "muse-transcript") {
     try { return parseMuseTranscript(text, museSession(path)); } catch (error) {
       if (error instanceof MuseUnavailable) throw new ConversationUnavailable("transcript_missing");
@@ -1847,6 +1853,12 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
       const resolved = await hermesTranscriptForPane(pane, cwd, hermesHome);
       return { source: "hermes-transcript", path: resolved.dbPath, sessionId: resolved.sessionId };
     }
+    // Kimi's label, not a report an earlier agent left behind: the binding needs a process the pane owns
+    if ((agent === "kimi" || agent === "kimi-code") && pane.agent === "kimi") {
+      const path = await kimiTranscriptPathForPane(pane);
+      if (path === null) throw new ConversationUnavailable("no_session_path");
+      return { source: "kimi-transcript", path };
+    }
     throw new ConversationUnavailable("no_recognized_transcript");
   } catch (error) {
     if (error instanceof AgyUnavailable) throw new ConversationUnavailable("transcript_missing");
@@ -2050,7 +2062,7 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
       throw error;
     }
   }
-  const identity = resolved.source === "agy-transcript" || resolved.source === "copilot-transcript" || resolved.source === "letta-transcript" ? resolved.path
+  const identity = resolved.source === "agy-transcript" || resolved.source === "copilot-transcript" || resolved.source === "letta-transcript" || resolved.source === "kimi-transcript" ? resolved.path
     : resolved.source === "claude-transcript" ? nodePath.basename(resolved.path, ".jsonl")
     : resolved.source === "pi-transcript" || resolved.source === "cmd-transcript" || resolved.source === "omp-transcript" ? realpathSync(resolved.path) : null;
   rememberPaneRead(paneId, resolved.path);
@@ -3159,6 +3171,7 @@ export function transcriptToolOutput(source: Exclude<StreamSource, "agy-transcri
     return output !== null && output.length > TOOL_OUTPUT_MAX ? `${output.slice(0, TOOL_OUTPUT_MAX)}\n… trimmed` : output;
   }
   if (source === "pi-transcript" || source === "cmd-transcript") return piToolOutput(path, ref);
+  if (source === "kimi-transcript") return kimiToolOutput(path, ref, TOOL_OUTPUT_MAX);
   if (source === "omo-transcript") {
     try {
       const stream = transcriptStream(source, path, statSync(path), codexHome ?? defaultCodexHome());

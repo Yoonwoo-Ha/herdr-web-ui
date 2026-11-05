@@ -82,7 +82,7 @@ export function agentStatusOf(status: HcStatus | null | undefined): AgentStatus 
 }
 
 /** herdr-core's names for agents herdr names otherwise: the rest of the server knows herdr's (`claude`, `agy`). */
-const HERDR_AGENT_NAMES: Record<string, string> = { "claude-code": "claude", antigravity: "agy" };
+const HERDR_AGENT_NAMES: Record<string, string> = { "claude-code": "claude", antigravity: "agy", "kimi-code": "kimi" };
 
 /** The agent a status names, by herdr's name; a program that never reported one runs none herdr would see. */
 /** The turn a terminal's `herdr.seen` names; null when it has none, or none a client wrote as a turn. */
