@@ -2732,6 +2732,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   dialog; the Claude app shows them as the turn's text, which the chat shows once the transcript
   has the turn (then the card leaves its copy out). Words whose start is above the screen are not
   shown: they cannot be told from the user's own wrapped prompt.
+- An option's preview (#1212): Claude Code draws AskUserQuestion's `preview` in a box beside its
+  menu for the option under its cursor only, and its session file has no copy until the answer, so
+  the card shows that box's text (`option_preview`, read off the screen) under that option, in line
+  with its label, in a mono box (`--bg`, `--fs-xs`) kept as drawn: Claude's own wrapping stays, and
+  the box scrolls both ways (eight lines at most) so a mockup's columns never re-wrap. A preview
+  Claude cut says how many lines it left out (its terminal shows only that count too). It follows the cursor as the terminal
+  moves it; the card never moves the cursor to show another option's. A box under 20 columns (a
+  pane of about 40) shows the preview in unreadable pieces, so the card shows none. It follows
+  Claude Code's terminal, which shows the preview beside the option it belongs to.
 - Height: at most the larger of 60% of the app's height (`--app-height`, so a phone's keyboard
   counts) and six touch rows (`240px`), at every width. Only the reference text gives way: six
   lines at rest, two at the least (one for a one-line command), scrolling in itself with a fade

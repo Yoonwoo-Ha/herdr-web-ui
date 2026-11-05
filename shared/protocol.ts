@@ -919,6 +919,13 @@ export interface InteractivePrompt {
    */
   screen_words?: string;
   /**
+   * The preview Claude draws for the option under its cursor (AskUserQuestion's `preview`), read off
+   * the screen as drawn: rows a long line wrapped into at the box's width stay apart, and a long
+   * preview is cut to its first rows, `hidden_lines` more in the terminal. Claude draws only that
+   * option's, so it follows the cursor; not part of the card's id. Absent without a preview box.
+   */
+  option_preview?: { option_index: number; text: string; hidden_lines?: number };
+  /**
    * The card's own words, which the bridge wrote rather than read off the agent's screen (an Esc
    * offered as Close, a fallback card's title): for each such field above, its English as a key with
    * its values (shared/card-text.ts), so the client shows it in the user's language. A field not
