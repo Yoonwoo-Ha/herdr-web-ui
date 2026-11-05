@@ -8,6 +8,7 @@ import { paintedScreen, type SeenObserver, startHerdrCoreAdapter } from "./adapt
 import { SeenMarker } from "./seen-label.ts";
 import { encodeFrame, FRAME_CLOSE, FRAME_DATA, HcConnection, HcError, type HcTransport, makeFrameReader } from "./connection.ts";
 import { MachineScopedConnection } from "./machine-scope.ts";
+import { adapterAddress } from "./pipe.ts";
 import type { HerdrPane } from "../../shared/protocol.ts";
 import type { HcTerminal } from "./snapshot.ts";
 
@@ -612,6 +613,26 @@ it("asks for a fresh snapshot when a report's kind, message or progress changes,
     const snapshot = await sessionSnapshot(socket);
     expect(snapshot.panes.map((pane) => pane.pane_id)).toEqual(["t1"]);
     expect(cores.length).toBe(2);
+  });
+
+  it("answers connect_failed while hc cannot be started, and starts it for the next request", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ovis-hc-"));
+    const socket = adapterAddress(dir);
+    let started = false;
+    const hc = new HcConnection(() => {
+      // as spawnHcConnect says of a program it cannot run
+      if (!started) throw new HcError("closed", "hc could not be started");
+      return new FakeCore({ "terminal.list": () => ({ terminals: [terminal("t1")], hidden_finished: 0 }), "doc.get": () => ({ value: LAYOUT, version: 1 }) });
+    });
+    const adapter = await startHerdrCoreAdapter(hc, socket);
+    cleanups.push(() => { adapter.stop(); hc.close(); rmSync(dir, { recursive: true, force: true }); });
+    // a snapshot asks three calls and hc's hello at once, a ping hello and two calls: all of them
+    // fail, and a rejection nobody hears fails this test, as it ends a running server
+    const refused = { code: "connect_failed", message: "hc could not be started" };
+    await expect(sessionSnapshot(socket)).rejects.toMatchObject(refused);
+    await expect(ping(socket)).rejects.toMatchObject(refused);
+    started = true;
+    expect((await sessionSnapshot(socket)).panes.map((pane) => pane.pane_id)).toEqual(["t1"]);
   });
 
   for (const newline of ["", "\n"]) {
