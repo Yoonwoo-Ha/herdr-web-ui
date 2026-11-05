@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Bell, BellOff, ChevronDown, ChevronRight, Ellipsis, Pin, PinOff, Terminal } from "lucide-react";
+import { Bell, BellOff, ChevronDown, ChevronRight, Ellipsis, Lock, LockOpen, Pin, PinOff, Terminal } from "lucide-react";
 
 import type { Machine } from "../../shared/machines.ts";
 import { paneStorageId } from "../../shared/machines.ts";
@@ -10,6 +10,7 @@ import { useT } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { agentRoster, groupAgentRows, splitBackgroundRows, type AgentGroup, type AgentRow } from "../lib/agentRoster.ts";
 import { currentPaneMutes, paneMuteKey, prunePaneMutes, setPaneMutes, subscribePaneMutes, togglePaneMute } from "../lib/paneMutes.ts";
+import { lockedPinKeys, toggleAgentLock } from "../lib/paneLocks.ts";
 import { agentContext, agentTabName, paneMark } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
@@ -42,6 +43,8 @@ interface AgentRowBodyProps {
   note?: string | null;
   /** its alerts are off for everyone (lib/paneMutes.ts): said beside the state, as a word for a screen reader */
   muted: boolean;
+  /** a pinned row this app does not close (lib/paneLocks.ts), said the same way */
+  locked?: boolean;
   /** why a blocked agent waits, in the agent's own report (herdr-core's OSC 7501 kind and message) */
   blockedNote?: string | null;
   /** the same reason in a few words, for the row's line (blockedLabel) */
@@ -75,7 +78,7 @@ export function blockedLabel(pane: Pick<HerdrPane, "agent_kind" | "agent_message
  * One agent in a list: the coding agent's mark, what it is working on, who and where it is, what
  * its plugins report, and how it is doing.
  */
-function AgentRowBody({ mark, markKind, title, name, context, tokens, backgroundTasks, plan, status, note = null, muted, blockedNote: blocked = null, blockedLabel: blockedShort = null, progress, helper = false }: AgentRowBodyProps) {
+function AgentRowBody({ mark, markKind, title, name, context, tokens, backgroundTasks, plan, status, note = null, muted, locked = false, blockedNote: blocked = null, blockedLabel: blockedShort = null, progress, helper = false }: AgentRowBodyProps) {
   const t = useT();
   const showProgress = progress !== undefined && (status === "working" || status === "blocked");
   return <>
@@ -106,6 +109,7 @@ function AgentRowBody({ mark, markKind, title, name, context, tokens, background
     </span>
     <span className="agent-row-status">
       {note !== null && <span className="sidebar-filter-note">{note}</span>}<BackgroundBadge count={backgroundTasks} /><PlanBadge plan={plan} />
+      {locked && <span className="agent-muted" title={t("Locked")} data-testid="agent-locked"><Lock aria-hidden="true" /><span className="visually-hidden">{t("Locked")}</span></span>}
       {muted && <span className="agent-muted" title={t("Alerts muted")} data-testid="alerts-muted"><BellOff aria-hidden="true" /><span className="visually-hidden">{t("Alerts muted")}</span></span>}
     </span>
     {/* drawn at the row's right edge, after its ⋯, as a workspace row's state is (AgentSidebar.css) */}
@@ -183,12 +187,14 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const listId = useId();
   const [collapsed, setCollapsed] = useState(initialFold);
   const [backgroundCollapsed, setBackgroundCollapsed] = useState(initialBackgroundFold);
-  const { settings } = useSettings();
+  const { settings, update: updateSettings } = useSettings();
   const pressPane = useContext(PanePressContext);
   // shared with the other browsers of this server (lib/preferencesSync.ts)
   const pinned = useSyncExternalStore(subscribeSidebarPins, currentSidebarPins, currentSidebarPins);
   // the panes whose alerts are off, shared the same way; null on a server that keeps no such list, which then offers no mute
   const muted = useSyncExternalStore(subscribePaneMutes, currentPaneMutes, currentPaneMutes);
+  // the pinned rows this app does not close, shared as a setting (lib/paneLocks.ts)
+  const locked = useMemo(() => lockedPinKeys(settings.lockedAgents, pinned, settings.agentLocks), [settings.lockedAgents, pinned, settings.agentLocks]);
   // which `$name` tokens herdr's own sidebar draws, from this server's herdr config (server/herdr-sidebar.ts)
   const rowTokens = useSyncExternalStore(subscribeAgentRowTokens, currentAgentRowTokens, currentAgentRowTokens);
   const activity = useSidebarActivity();
@@ -234,7 +240,11 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     // pins of panes gone from this server leave with a change of the user's, never by themselves: the
     // list is shared, and a pane this page has not seen yet (a PC still loading) is not gone
     const live = new Set(allRows.map(({ machine, entry }) => sidebarPinKey(machine.id, entry.pane.pane_id)));
-    setSidebarPins(toggleSidebarPin(pruneSidebarPins(pinned, live, machines, hidden), key));
+    const next = toggleSidebarPin(pruneSidebarPins(pinned, live, machines, hidden), key);
+    setSidebarPins(next);
+    // a lock leaves with its pin, so a pane that later takes the same id is not locked by it
+    const locks = settings.lockedAgents.filter((held) => next.includes(held));
+    if (locks.length !== settings.lockedAgents.length) updateSettings({ lockedAgents: locks });
   };
   const toggleMute = (machineId: string, paneId: string): void => {
     // as the pins: the mutes of panes a connected PC no longer has leave with this change, and no other PC's
@@ -362,7 +372,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
           event.dataTransfer.setData(PANE_DRAG_TYPE, paneDragData({ machineId: machine.id, paneId: pane.pane_id }));
         }}>
         {/* a saved roster's state is not news: a PC that is away says nothing about its agents */}
-        <AgentRowBody mark={mark} markKind={markKind} title={title} name={name} context={context} tokens={tokens} backgroundTasks={online ? pane.background_tasks : 0} plan={online ? pane.plan : undefined} status={status} note={filterContext && selected ? t("Selected") : null} muted={muted?.includes(paneMuteKey(machine.id, pane.pane_id)) === true} blockedNote={blocked} blockedLabel={blockedShort} progress={online ? pane.agent_progress : undefined} helper={depth > 0} />
+        <AgentRowBody mark={mark} markKind={markKind} title={title} name={name} context={context} tokens={tokens} backgroundTasks={online ? pane.background_tasks : 0} plan={online ? pane.plan : undefined} status={status} note={filterContext && selected ? t("Selected") : null} muted={muted?.includes(paneMuteKey(machine.id, pane.pane_id)) === true} locked={locked.has(pinKey)} blockedNote={blocked} blockedLabel={blockedShort} progress={online ? pane.agent_progress : undefined} helper={depth > 0} />
       </button>
       <div className="agent-actions">
         <button type="button" className="sidebar-row-action row-menu-toggle" aria-label={t("More for {title}", { title })} aria-haspopup="menu" aria-expanded={menuOpen} onClick={(event) => toggleMenu(event.currentTarget)}>
@@ -379,6 +389,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // under the filter an empty list is the filter's doing, which the list above says once (MachineSidebar.tsx)
   const shownEmpty = useAnnouncedText(rows.length === 0 && !filter.active ? (loading ? t("Loading agents…") : t("No agents running")) : null);
   const menuPinned = menu !== null && pinned.includes(menu.key);
+  const menuLocked = menu !== null && locked.has(menu.key);
   const menuShown = menuRow === undefined ? null : describe(menuRow);
   // a phone has no tooltip: its sheet says a blocked agent's whole reason, as the row's tooltip does
   const menuBlocked = menuRow !== undefined && menuShown?.online && activity.status(menuRow.machine.id, menuRow.entry.pane) === "blocked" ? blockedNote(menuRow.entry.pane, t) : null;
@@ -435,9 +446,17 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
       </>}
     </div>
     {menu && menuShown && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menuShown.title} subtitle={menuShown.context} detail={[menuBlocked, ...menuShown.tokens].filter(Boolean).join(" · ") || undefined} onClose={closeMenu} items={[
-      menuPinned
+      // a locked row keeps its pin until it is unlocked
+      ...(menuLocked ? [] : [menuPinned
         ? { id: "unpin", label: t("Unpin agent"), icon: PinOff, run: () => runPin(menu) }
-        : { id: "pin", label: t("Pin agent"), icon: Pin, run: () => runPin(menu) },
+        : { id: "pin", label: t("Pin agent"), icon: Pin, run: () => runPin(menu) }]),
+      // only a pinned row locks: this app then offers no close for its pane or its tab (lib/paneLocks.ts)
+      // Settings -> Lock pinned agents (experimental), off until chosen
+      ...(!menuPinned || !settings.agentLocks ? [] : [{
+        // a watching device sends no settings: it sees the lock and cannot change it, as with Mute alerts
+        id: menuLocked ? "unlock" : "lock", label: menuLocked ? t("Unlock agent") : t("Lock agent"), icon: menuLocked ? LockOpen : Lock, disabled: watching,
+        run: () => updateSettings({ lockedAgents: toggleAgentLock(settings.lockedAgents, pinned, menu.key) }),
+      }]),
       // one switch for every alert channel and every browser (lib/paneMutes.ts); a watching device sees its state and cannot flip it
       ...(muted === null || menuRow === undefined ? [] : [{
         id: "mute", label: menuMuted ? t("Unmute alerts") : t("Mute alerts"), icon: menuMuted ? Bell : BellOff, checked: menuMuted, disabled: watching,

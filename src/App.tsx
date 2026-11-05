@@ -48,9 +48,9 @@ import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { rosterPanes } from "./lib/dagPane.ts";
 import { adjacentTabPane, adjacentWorkspacePane, drawnWorkspaceRows, sidebarWorkspaceSteps, type ViewedPane } from "./lib/adjacentTarget.ts";
 import { lastViewedPane } from "./lib/lastViewedPane.ts";
-import { currentSidebarPins, pinnedWorkspaceIds } from "./lib/sidebarPins.ts";
+import { currentSidebarPins, movedSidebarPins, pinnedWorkspaceIds } from "./lib/sidebarPins.ts";
 import { ReorderContext } from "./lib/machineContext.tsx";
-import { useSettings } from "./lib/settings.ts";
+import { loadSettings, useSettings } from "./lib/settings.ts";
 import { useShownMachines } from "./lib/hiddenMachines.ts";
 import { formatKeys, shortcutDisplayKeys, useShortcuts } from "./lib/shortcuts.ts";
 import { useMediaQuery } from "./lib/useMediaQuery.ts";
@@ -345,6 +345,10 @@ export function App() {
   // shown, in either half, the view goes with it (#1503). Nothing is sent: held text waits for its Send or Discard
   const followPaneMove = (machineId: string, from: string, to: string): void => {
     carryMovedPane(machineId, from, to);
+    // its lock goes with its pin (lib/paneLocks.ts); the locks as last saved, as this call may come from an older render's event
+    const locks = loadSettings().lockedAgents;
+    const movedLocks = movedSidebarPins(locks, machineId, from, to);
+    if (movedLocks !== locks) updateSettings({ lockedAgents: [...movedLocks] });
     const view = movedView(selectionRef.current, splitRef.current, machineId, from, to);
     if (view.split !== null) setSplit(view.split);
     if (view.selection !== null) selectTargetRef.current(machineId, view.selection);
@@ -963,8 +967,9 @@ export function App() {
                       const target = snapshot?.panes.find((item) => item.pane_id === paneId);
                       if (!target || !paneActionsRef.current) return [];
                       // the strip renders before the canvas, so its items come from the canvas's previous render:
-                      // an action runs against the canvas's latest one, where a snapshot change has landed
-                      return paneActionsRef.current(target).map((item) => ({ ...item, run: () => (paneActionsRef.current?.(target).find((fresh) => fresh.id === item.id) ?? item).run() }));
+                      // an action runs against the canvas's latest one, where a snapshot change has landed; one it no
+                      // longer offers (a close a lock took away, lib/paneLocks.ts) does nothing
+                      return paneActionsRef.current(target).map((item) => ({ ...item, run: () => paneActionsRef.current?.(target).find((fresh) => fresh.id === item.id)?.run() }));
                     } : undefined} />
                 )}
                 {/* the tab strip's panel: its id is what each tab's aria-controls points at, one per half.

@@ -58,7 +58,7 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
     define("navigator", { languages: ["en-US"], platform: "Linux" });
     define("window", { localStorage: storage, matchMedia: () => media, innerWidth: 1280, innerHeight: 800, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout, clearTimeout });
     // the portal RowMenu draws into needs an element (nodeType 1) the test renderer can append to, with the node mock its refs read
-    define("document", { visibilityState: "visible", activeElement: null, body: { nodeType: 1, children: [], createNodeMock: node }, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } }, querySelector: () => null, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events) });
+    define("document", { visibilityState: "visible", activeElement: null, querySelectorAll: () => [], body: { nodeType: 1, children: [], createNodeMock: node }, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } }, querySelector: () => null, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events) });
     define("getComputedStyle", () => ({ getPropertyValue: () => "" }));
     pinsBefore = currentSidebarPins();
     setSidebarPins([]);
@@ -93,6 +93,53 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
     await draw(roster([workspace("root", worktree(false)), workspace("child", worktree(true))]), TUI);
     expect(await menuOf("root")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close", "new-worktree", "open-worktree", "fold"]);
     expect(await menuOf("child")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close", "delete-worktree"]);
+  });
+
+  it("offers no close or delete for a workspace, or its repository's group, holding a locked pinned agent (#2432)", async () => {
+    stored.set("ovis:settings", JSON.stringify({ agentLocks: true, lockedAgents: ["local:child:p"] }));
+    setSidebarPins(["local:child:p"]);
+    await draw(roster([workspace("root", worktree(false)), workspace("child", worktree(true)), workspace("other")]), TUI);
+    expect(await menuOf("root")).toEqual(["pin-workspace", "rename-workspace", "session-history", "new-worktree", "open-worktree", "fold"]);
+    expect(await menuOf("child")).toEqual(["pin-workspace", "rename-workspace", "session-history"]);
+    expect(await menuOf("other")).toContain("close");
+  });
+
+  it("sends Close group only for the group the confirmation was opened over (#2432)", async () => {
+    const view = (shown: SessionSnapshot) => createElement(SettingsProvider, null, createElement(SidebarFilterProvider, { value: { filter: inactiveSidebarFilter(), reportBranches: () => {} } },
+      createElement(AppLayoutContext.Provider, { value: TUI }, createElement(ReorderContext.Provider, { value: new ReorderCoordinator() },
+        createElement(Sidebar, { snapshot: shown, online: false, selectedPaneId: "root:p", actions })))));
+    const group = [workspace("root", worktree(false)), workspace("child", worktree(true))];
+    const closes: unknown[] = [];
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith("/workspace/close")) closes.push(JSON.parse(String(init?.body)));
+      return Response.json({ ok: true });
+    }, { preconnect: globalThis.fetch.preconnect }));
+    const confirmAfter = async (shown: SessionSnapshot): Promise<void> => {
+      await draw(roster(group), TUI);
+      await menuOf("root");
+      await act(async () => (renderer!.root.findByType(RowMenu).props.items as { id: string; run: () => void }[]).find((item) => item.id === "close")!.run());
+      await act(async () => renderer!.update(view(shown)));
+      const dialog = renderer!.root.findAll((node) => node.props.confirmLabel !== undefined && typeof node.props.onConfirm === "function")[0];
+      if (dialog) await act(async () => { await dialog.props.onConfirm(); });
+      await act(async () => renderer?.unmount());
+    };
+    try {
+      // the group as it was: Close group goes
+      await confirmAfter(roster(group));
+      expect(closes).toEqual([{ workspace_id: "root", close_group: true }]);
+      // a worktree opened and locked from another browser while the confirmation was open: nothing is closed
+      closes.length = 0;
+      stored.set("ovis:settings", JSON.stringify({ agentLocks: true, lockedAgents: ["local:late:p"] }));
+      setSidebarPins(["local:late:p"]);
+      await confirmAfter(roster([...group, workspace("late", worktree(true))]));
+      // a new worktree that is not locked still was not in the group the user agreed to close
+      stored.set("ovis:settings", JSON.stringify({}));
+      setSidebarPins([]);
+      await confirmAfter(roster([...group, workspace("late", worktree(true))]));
+      expect(closes).toEqual([]);
+    } finally {
+      fetch.mockRestore();
+    }
   });
 
   it("leaves rename, the worktree actions and the checkout's delete out on a core PC, and keeps pin, earlier sessions, close and the fold", async () => {

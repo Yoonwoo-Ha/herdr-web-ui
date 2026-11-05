@@ -5,6 +5,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import type { HerdrPane, SessionSnapshot } from "../../shared/protocol.ts";
 import { AppLayoutContext, appLayoutOf, type LayoutOffer } from "../lib/machineContext.tsx";
 import { SettingsProvider } from "../lib/settings.ts";
+import { setSidebarPins } from "../lib/sidebarPins.ts";
 import type { RowMenuItem } from "./RowMenu.tsx";
 import { PaneCanvas } from "./PaneCanvas.tsx";
 
@@ -186,6 +187,21 @@ describe("the pane canvas on a PC the Herdr app lays out", () => {
     await act(async () => renderer?.unmount());
     await draw(APP_CORE);
     expect(zoomButtons()).toHaveLength(0);
+  });
+
+  it("offers no Close for a locked pinned agent, nor Close tab for the tab it is in (#2432)", async () => {
+    phone = true;
+    stored.set("ovis:settings", JSON.stringify({ agentLocks: true, lockedAgents: ["local:p1"] }));
+    setSidebarPins(["local:p1"]);
+    try {
+      const itemsOf = await draw(TUI);
+      expect(itemsOf(snapshot.panes[0] as HerdrPane)).toEqual(["pane:p1", "pane:p2", "rename", "clear-name", "new-terminal", "new-agent-tab", "rename-tab"]);
+      // the other pane of the tab still closes on its own; the tab, with the locked agent in it, does not
+      expect(itemsOf(snapshot.panes[1] as HerdrPane)).toContain("close");
+      expect(itemsOf(snapshot.panes[1] as HerdrPane)).not.toContain("close-tab");
+    } finally {
+      setSidebarPins([]);
+    }
   });
 
   it("leaves a core PC's panes to the Herdr app: Close pane stays, no divider is drawn", async () => {

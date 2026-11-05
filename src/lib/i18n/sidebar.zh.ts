@@ -6,6 +6,9 @@
 export const SIDEBAR_ZH: Record<string, string> = {
   "Pin agent": "固定 Agent",
   "Unpin agent": "取消固定 Agent",
+  "Lock agent": "锁定 Agent",
+  "Unlock agent": "解锁 Agent",
+  "Locked": "已锁定",
   "Mute alerts": "静音提醒",
   "Unmute alerts": "取消静音提醒",
   "Alerts muted": "提醒已静音",

@@ -6,6 +6,9 @@
 export const SIDEBAR_KO: Record<string, string> = {
   "Pin agent": "에이전트 고정",
   "Unpin agent": "에이전트 고정 해제",
+  "Lock agent": "에이전트 잠금",
+  "Unlock agent": "에이전트 잠금 해제",
+  "Locked": "잠김",
   "Mute alerts": "알림 끄기",
   "Unmute alerts": "알림 켜기",
   "Alerts muted": "알림 꺼짐",

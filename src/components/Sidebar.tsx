@@ -9,6 +9,7 @@ import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { renamesWorkspace } from "../lib/layoutTargets.ts";
 import { useAppLayout, useMachineApi, useMachineId, useReorderCoordinator } from "../lib/machineContext.tsx";
 import { PanePressContext } from "../lib/paneSubmitContext.ts";
+import { usePaneLocked } from "../lib/paneLocks.ts";
 import type { AppActions } from "../lib/actions.ts";
 import { indicatorGlyph, knownStatus, rollupStatus, STATUS_WORD } from "../lib/status.ts";
 import { AgentMark } from "./AgentMark.tsx";
@@ -184,7 +185,25 @@ export function onRowContextMenu(event: MouseEvent<HTMLElement>, toggle: (anchor
 
 /** The row whose ⋯ menu is open: a workspace, seen through the pane its row shows. */
 interface MenuState { anchor: HTMLElement; point?: { x: number; y: number }; previousFocus?: HTMLElement | null; workspace: WorkspaceInfo; title: string; place: string }
-interface ConfirmState { title: string; body: string; action?: string; run: () => Promise<void>; escalation?: { label: string; code: string; run: () => Promise<void> } }
+/**
+ * What a close takes, read from a roster: the workspace, with a group close the repository's other
+ * workspaces as herdr finds them when it closes, and every pane in them by id.
+ */
+interface CloseScope { workspaceId: string; group: boolean; workspaces: string[]; panes: string[] }
+
+function closeScope(shown: SessionSnapshot | null, workspaceId: string, group: boolean): CloseScope | null {
+  const head = shown?.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
+  if (!shown || !head) return null;
+  const repoKey = head.worktree?.repo_key;
+  const others = group && repoKey !== undefined ? shown.workspaces.filter((candidate) => candidate.workspace_id !== workspaceId && candidate.worktree?.repo_key === repoKey) : [];
+  const workspaces = [workspaceId, ...others.map((candidate) => candidate.workspace_id)].sort();
+  const panes = shown.panes.filter((pane) => workspaces.includes(pane.workspace_id)).map((pane) => pane.pane_id).sort();
+  return { workspaceId, group, workspaces, panes };
+}
+
+interface ConfirmState { title: string; body: string; action?: string; run: () => Promise<void>;
+  /** what the action closes as the user agreed to it (closeScope): it goes once the roster or a lock says otherwise */
+  closes?: CloseScope; escalation?: { label: string; code: string; run: () => Promise<void> } }
 
 export interface SidebarProps {
   snapshot: SessionSnapshot | null;
@@ -263,6 +282,17 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
   useEffect(() => { if (!filtering) setFilterFolds((current) => current.size === 0 ? current : new Map()); }, [filtering]);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  // a workspace holding a locked pinned agent (lib/paneLocks.ts) is closed or deleted from no menu here
+  const paneLocked = usePaneLocked(machineId);
+  const holdsLock = (workspaceIds: readonly string[]): boolean => snapshot?.panes.some((pane) => workspaceIds.includes(pane.workspace_id) && paneLocked(pane.pane_id)) === true;
+  // a close goes only over what the user agreed to: read again at each render, the one a confirm's click lands
+  // in too, and any workspace or pane come or gone, or a lock landed (from another browser), takes the
+  // confirmation away unsent
+  const stillAgreed = (agreed: CloseScope): boolean => {
+    const now = closeScope(snapshot, agreed.workspaceId, agreed.group);
+    return now !== null && JSON.stringify([now.workspaces, now.panes]) === JSON.stringify([agreed.workspaces, agreed.panes]) && !holdsLock(now.workspaces);
+  };
+  if (confirm?.closes && !stillAgreed(confirm.closes)) setConfirm(null);
   const [worktreeDialog, setWorktreeDialog] = useState<{ mode: WorktreeDialogMode; workspace: WorkspaceInfo } | null>(null);
   // worktrees are not offered to a watching device: one open when this device turns into one closes
   useEffect(() => { if (watching) setWorktreeDialog(null); }, [watching]);
@@ -450,9 +480,12 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
       { id: "new-worktree", label: t("New worktree"), icon: GitBranch, run: () => setWorktreeDialog({ mode: "create", workspace }) },
       { id: "open-worktree", label: t("Open worktree…"), icon: FolderOpen, run: () => setWorktreeDialog({ mode: "open", workspace }) },
     ] : [];
-    const deleteItems: RowMenuItem[] = linked && worktreesOffered ? [{
+    const closes = [workspace.workspace_id, ...sameRepo.map((candidate) => candidate.workspace_id)];
+    const scope = (group: boolean): CloseScope | undefined => closeScope(snapshot, workspace.workspace_id, group) ?? undefined;
+    const deleteItems: RowMenuItem[] = linked && worktreesOffered && !holdsLock([workspace.workspace_id]) ? [{
       id: "delete-worktree", label: t("Delete worktree checkout…"), icon: Trash2, danger: true,
       run: () => setConfirm({
+        closes: scope(false),
         title: t("Delete the checkout of {name}?", { name: workspace.label }),
         body: t("The folder at {path} is deleted and the workspace closes. The branch stays.", { path: workspace.worktree?.checkout_path ?? "" }),
         action: t("Delete"),
@@ -463,6 +496,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     }] : [];
     // a repository's other open workspaces go with it
     const closeItem: RowMenuItem = { id: "close", label: t("Close workspace"), icon: X, danger: true, divider: true, run: () => setConfirm({
+      closes: scope(sameRepo.length > 0),
       title: t("Close workspace {name}?", { name: workspace.label }),
       body: (worktrees.length > 0
         ? t(paneCount === 1
@@ -482,7 +516,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
       ...(!renameOffered || !renamesWorkspace(workspace.workspace_id) ? [] : [{ id: "rename-workspace", label: t("Rename workspace"), icon: Pencil, run: () => beginWorkspaceRename(workspace) }]),
       // the folder's earlier sessions, listed for the agent of the pane the row opens
       ...(historyOffered && !watching ? [{ id: "session-history", label: t("Earlier sessions…"), icon: History, run: () => actions.openSessionHistory({ machineId, workspaceId: workspace.workspace_id, agent: (panes.length > 0 ? currentPane(workspace, panes) : null)?.agent ?? null }) }] : []),
-      { ...closeItem, label: t(sameRepo.length > 0 ? "Close group" : "Close workspace"), divider: false },
+      ...(holdsLock(closes) ? [] : [{ ...closeItem, label: t(sameRepo.length > 0 ? "Close group" : "Close workspace"), divider: false }]),
       ...worktreeItems, ...deleteItems,
       ...(worktrees.length > 0 && repoKey ? [{ id: "fold", label: t(folded ? "Expand" : "Collapse"), icon: folded ? ChevronRight : ChevronDown, run: () => toggleWorktrees(repoKey, folded) }] : []),
     ];

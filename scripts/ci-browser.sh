@@ -185,6 +185,7 @@ run_script scripts/sidebar-selection-contrast-demo-regression.ts
 run_script scripts/hide-pc-demo-regression.ts
 run_script scripts/sidebar-branch-line-demo-regression.ts
 run_script scripts/sidebar-tokens-demo-regression.ts
+run_script scripts/agent-lock-demo-regression.ts
 run_script scripts/pane-mute-demo-regression.ts
 run_script scripts/workspace-touch-reorder-demo-regression.ts
 run_script scripts/prompt-dock-demo-regression.ts

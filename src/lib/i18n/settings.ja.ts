@@ -373,6 +373,8 @@ export const SETTINGS_JA: Record<string, string> = {
   "Link or code": "リンクまたはコード",
   "{name} was added. Its workspaces join the sidebar.": "{name} を追加しました。ワークスペースはサイドバーに並びます。",
   "Group agents by state": "エージェントを状態ごとにまとめる",
+  "Lock pinned agents (experimental)": "固定したエージェントをロック（実験的）",
+  "A pinned agent's menu in the Agents list offers Lock agent. This app then offers no way to close a locked agent's pane, tab or workspace, in every browser. Closing from herdr itself or a script still works.": "エージェント一覧で固定したエージェントのメニューに「エージェントをロック」が加わります。ロックしたエージェントのペイン、タブ、ワークスペースは、どのブラウザでもこのアプリから閉じられません。herdr 本体やスクリプトからは閉じられます。",
   "On this device, list the agents above the workspaces: the ones that need you first, then working, done and idle. Pinned agents stay on top.": "このデバイスでは、エージェントをワークスペースの上に表示します。応答が必要なものが先で、次に作業中、完了、待機の順です。ピン留めしたエージェントは一番上のままです。",
   "Within a state": "同じ状態の中で",
   "Longest wait": "待ち時間順",

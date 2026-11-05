@@ -373,6 +373,8 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Link or code": "链接或代码",
   "{name} was added. Its workspaces join the sidebar.": "已添加 {name}。它的工作区会显示在侧栏中。",
   "Group agents by state": "按状态分组代理",
+  "Lock pinned agents (experimental)": "锁定固定的 Agent（实验性）",
+  "A pinned agent's menu in the Agents list offers Lock agent. This app then offers no way to close a locked agent's pane, tab or workspace, in every browser. Closing from herdr itself or a script still works.": "在 Agent 列表中，已固定 Agent 的菜单会提供“锁定 Agent”。之后在所有浏览器中，本应用都无法关闭已锁定 Agent 的面板、标签页或工作区。通过 herdr 本身或脚本关闭不受影响。",
   "On this device, list the agents above the workspaces: the ones that need you first, then working, done and idle. Pinned agents stay on top.": "在此设备上，把代理列在工作区上方：先是需要你回应的，然后是工作中、已完成和空闲。已固定的代理仍在最上面。",
   "Within a state": "同一状态内",
   "Longest wait": "按等待时长",

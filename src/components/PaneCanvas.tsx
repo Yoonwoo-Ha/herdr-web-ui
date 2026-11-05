@@ -24,6 +24,7 @@ import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import type { RenameRequest } from "../lib/useRenameRequest.ts";
 import { paneLifetimes } from "../lib/paneLifetime.ts";
+import { usePaneLocked } from "../lib/paneLocks.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
@@ -109,6 +110,12 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const [closingTab, setClosingTab] = useState<HerdrTab | null>(null);
   const [closing, setClosing] = useState<HerdrPane | null>(null);
   const [error, setError] = useState<UserError | null>(null);
+  // a locked pinned agent (lib/paneLocks.ts) is closed from no menu here, nor is the tab it is in
+  const paneLocked = usePaneLocked(machineId);
+  const tabLocked = (tabId: string): boolean => snapshot?.panes.some((item) => item.tab_id === tabId && paneLocked(item.pane_id)) === true;
+  // a lock that lands while a confirmation is open (from another browser) takes the confirmation with it
+  if (closing && paneLocked(closing.pane_id)) setClosing(null);
+  if (closingTab && tabLocked(closingTab.tab_id)) setClosingTab(null);
   // A new pane can be selected before its snapshot arrives, and a selected pane can close
   // before App confirms its replacement. Keep the prior tab's surviving mounts (and their
   // connection-owned pending sends) through either gap, with selection/input still pending.
@@ -250,7 +257,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         // the row's inline name field is gone with it: the tab is named in a dialog, as a pane is
         ...(!appLayout.rename || !tab ? [] : [{ id: "rename-tab", label: t("Rename tab"), icon: Pencil, run: () => setRenamingTab(tab) }]),
         // the tab's last pane closes it too, but a split tab has no other way to close as one (the row's confirmation: it is the workspace's last tab)
-        ...(tab ? [{ id: "close-tab", label: t("Close tab"), icon: X, danger: true, run: () => setClosingTab(tab) }] : []),
+        ...(tab && !tabLocked(tab.tab_id) ? [{ id: "close-tab", label: t("Close tab"), icon: X, danger: true, run: () => setClosingTab(tab) }] : []),
       ],
     };
   };
@@ -271,7 +278,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
       icon: mirrorWraps ? MoveHorizontal : TextWrap,
       run: () => updateSettings({ terminalMirrorWrap: !mirrorWraps }) }] : []),
     ...(onRecoverUnsent && paneLifetimes.unsent().length > 0 ? [{ id: "recover-unsent", label: t("Recover unsent text"), icon: ArchiveRestore, run: () => onRecoverUnsent(target) }] : []),
-    { id: "close", label: t("Close pane"), icon: X, danger: true, run: () => requestClose(target) },
+    ...(paneLocked(target.pane_id) ? [] : [{ id: "close", label: t("Close pane"), icon: X, danger: true, run: () => requestClose(target) }]),
   ];
   const items = target ? itemsFor(target) : [];
   const published = useRef<{ ref: MutableRefObject<((target: HerdrPane) => RowMenuItem[]) | null>; items: typeof itemsFor } | null>(null);
