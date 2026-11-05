@@ -20,6 +20,9 @@ import { compressResponse } from "./compress.ts";
 import { handleTasksRequest } from "./tasks-routes.ts";
 import { handlePlanRequest } from "./plan-routes.ts";
 import { handleArtifactsRequest } from "./claude-artifacts.ts";
+import { handleBtwRequest } from "./omp-btw.ts";
+import { paneTranscript } from "./conversation.ts";
+import { ConversationUnavailable } from "./conversation-shared.ts";
 import type { ShellAgentLocator } from "./shell-agent.ts";
 import { handleAgentsRequest } from "./agents-routes.ts";
 import type { AgentDetector } from "./agent-catalog-detect.ts";
@@ -622,6 +625,15 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
 
   const artifactsResponse = await handleArtifactsRequest(request, url, pathname, { claudeAgents });
   if (artifactsResponse) return artifactsResponse;
+
+  // the pane's transcript as its conversation finds it: a pane that runs no OMP session, or one not written yet, has none
+  const btwResponse = await handleBtwRequest(request, url, pathname, {
+    transcript: (paneId) => paneTranscript(paneId, options.codexHome, undefined, options.devinDbPath, options.opencodeDb, options.hermesHome, options.grokHome, options.museData).then(
+      (found) => found.source === "omp-transcript" ? found.path : null,
+      (error: unknown) => { if (error instanceof ConversationUnavailable) return null; throw error; },
+    ),
+  });
+  if (btwResponse) return btwResponse;
 
   if (pathname === SESSION_HISTORY_PATH) {
     setRequestRoute(SESSION_HISTORY_PATH);

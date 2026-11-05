@@ -1,5 +1,6 @@
 import { SETTINGS_ZH } from "./i18n/settings.zh.ts";
 import { SETTINGS_ACCESS_ZH } from "./i18n/settings-access.zh.ts";
+import { SETTINGS_COMPOSER_ZH } from "./i18n/settings-composer.zh.ts";
 import { TERMINAL_ZH } from "./i18n/terminal.zh.ts";
 import { COMPOSER_ZH } from "./i18n/composer.zh.ts";
 import { CHAT_ZH } from "./i18n/chat.zh.ts";
@@ -430,7 +431,7 @@ const BASE: Record<string, string> = {
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
 export const ZH_PARTS: Record<string, Record<string, string>> = {
   base: BASE,
-  settings: { ...SETTINGS_ZH, ...SETTINGS_ACCESS_ZH },
+  settings: { ...SETTINGS_ZH, ...SETTINGS_ACCESS_ZH, ...SETTINGS_COMPOSER_ZH },
   terminal: TERMINAL_ZH,
   composer: COMPOSER_ZH,
   chat: CHAT_ZH,

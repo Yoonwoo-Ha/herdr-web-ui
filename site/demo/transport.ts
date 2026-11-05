@@ -1642,6 +1642,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   }
   // the demo's sessions publish no pages: the artifacts chip stays away
   if (path === "/api/pane/artifacts") return json({ artifacts: [] });
+  // nor do they keep OMP side conversations: the side conversations chip stays away
+  if (path === "/api/pane/btw") return json({ topics: [], more: false });
   if (path === "/api/pane/omo-tasks") return json({ tasks: keyOfPane.get(paneId) === "flaky" ? BACKGROUND_TASKS : [], runs: [], server_time: new Date().toISOString() } satisfies OmoActivity);
   if (path === "/api/pane/background-agent") {
     if (method !== "GET") return error("method_not_allowed", "use GET", 400);

@@ -33,6 +33,7 @@ import type {
   TabMovedToWorkspace,
   OmoActivity,
   ClaudeArtifact,
+  OmpBtwHistory,
   PaneBackgroundAgentDetail,
   OpenWorktreeRequest,
   PairedDevice,
@@ -1379,6 +1380,12 @@ export async function fetchPaneBackgroundAgent(paneId: string, agentId: string, 
 /** GET /api/pane/artifacts: the pages the pane's Claude Code session published, newest first. */
 export async function fetchPaneArtifacts(paneId: string, machineId = "local"): Promise<ClaudeArtifact[]> {
   return (await getJson<{ artifacts: ClaudeArtifact[] }>(machinePath(machineId, `pane/artifacts?pane_id=${encodeURIComponent(paneId)}`))).artifacts;
+}
+
+/** GET /api/pane/btw: the side conversations the pane's OMP session saved with `/btw`, newest first; `more` when the PC left some out. */
+export async function fetchPaneBtw(paneId: string, machineId = "local", signal?: AbortSignal): Promise<OmpBtwHistory> {
+  const answer = await getJson<Partial<OmpBtwHistory>>(machinePath(machineId, `pane/btw?pane_id=${encodeURIComponent(paneId)}`), { signal });
+  return { topics: answer.topics ?? [], more: answer.more === true };
 }
 
 /** GET /api/pane/plan: the plan the pane's Claude Code or Codex session keeps, and that PC's clock. */

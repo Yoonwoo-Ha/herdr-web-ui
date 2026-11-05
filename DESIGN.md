@@ -2597,6 +2597,27 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   subagent's transcript; agent-of-empires's background-agents panel (MIT) suggested the
   interaction of opening prompt, tool and result from the row, and nothing of it is copied.
 
+### OMP side conversations (`.btw-menu`, `.btw-thread`)
+- OMP's `/btw` asks a side question that stays out of the main conversation and its context; OMP
+  saves each topic beside the session (`btw-history/`), not in its transcript. Chat therefore does
+  not draw them as turns: an OMP pane's composer offers a **Side conversations** chip beside the
+  background tasks chip, in its look (`.bg-tasks-toggle`, the messages glyph, the count; a narrow
+  card keeps the glyph and the number). It is off by default (Settings → Chat → Composer → Side
+  conversations chip (experimental), the device setting `composerBtw`), and shows only once the session saved a
+  topic.
+- It opens one list above the card, newest topic first: each row is a disclosure (a chevron, OMP's
+  title or else the first question, then a dim `when · N follow-ups · state` line, the state only
+  when it is not complete). An open topic reads as a short thread under its row, indented past the
+  glyph behind a hairline: each question in `--text-strong` semibold, its answer as Markdown, a
+  state that is not complete in dim words (answering, cancelled, interrupted, failed with OMP's
+  reason). Read-only: asking, following up and cancelling stay in OMP's terminal.
+- The list is read every 10 seconds while the chip is up and every 3 while it is open: a saved
+  answer does not touch the transcript, so the conversation's updates never announce one. Only the
+  main session's topics are read, never a focused subagent's (`btw-history/sessions/`). The
+  presentation follows OMP's own `/btw` history overlay (topics newest first, each opening on its
+  thread) and Claude Code's `/btw`, whose side answers also stay out of the transcript; the chip
+  itself is the Artifacts chip's pattern.
+
 ### Background tasks ended (`.chat-task-results`)
 - Where OmO reports background tasks that ended, or a Claude Code subagent ends (its
   `<task-notification>`, drawn once however many records carry it), the transcript shows one `--bg-elevated` card
@@ -3311,7 +3332,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   (panes open in, show thinking, chat width, chat font size and family; then
   **Composer**: Enter sends, send queued messages automatically, in a mouse-driven window wider than
   640px the New tab button (off by default), the Artifacts chip (off by default, the device setting
-  `composerArtifacts`), the Paste and send button (off by default, the device setting
+  `composerArtifacts`), the Side conversations chip (experimental, off by default, the device setting
+  `composerBtw`), the Paste and send button (off by default, the device setting
   `composerPasteSend`), and on a touch screen the suggestion chip (off by default); then
   **Quick replies**; then **File viewer**: wrap long lines, Markdown width, Diff layout), **Terminal** (font size, font family, wheel
   speed, input mode, Key bar, Keyboard only from the key bar (off by default, the device setting

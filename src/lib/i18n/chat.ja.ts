@@ -2,7 +2,7 @@
  * Japanese for the keys only the chat files use:
  * components/ChatView.tsx, components/Markdown.tsx, components/MermaidLightbox.tsx,
  * components/ChatMinimap.tsx, components/ImageLightbox.tsx, components/BackgroundTasks.tsx,
- * components/BackgroundAgentDetail.tsx, components/Artifacts.tsx, components/MarkdownLinkMenu.tsx,
+ * components/BackgroundAgentDetail.tsx, components/Artifacts.tsx, components/OmpBtw.tsx, components/MarkdownLinkMenu.tsx,
  * lib/workBlocks.ts (with CATEGORY_LABEL), lib/toolVerbs.ts (with VERB_LABEL), lib/outcomeChip.ts,
  * lib/chatTimestamp.ts, lib/chatReadDeadline.ts, components/ConversationSearch.tsx.
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
@@ -148,6 +148,14 @@ export const CHAT_JA: Record<string, string> = {
   "Artifacts": "アーティファクト",
   "{n} artifact": "アーティファクト {n} 件",
   "{n} artifacts": "アーティファクト {n} 件",
+  "Side conversations": "サイド会話",
+  "{n} side conversation": "サイド会話 {n} 件",
+  "{n} side conversations": "サイド会話 {n} 件",
+  "{n} follow-up": "追加の質問 {n} 件",
+  "{n} follow-ups": "追加の質問 {n} 件",
+  "answering": "回答中",
+  "interrupted": "中断",
+  "Some side conversations are left out. The terminal shows them all.": "一部のサイド会話は表示されていません。ターミナルではすべて表示されます。",
   "Couldn't load the background tasks": "バックグラウンドタスクを読み込めませんでした",
   "No background tasks to show yet": "表示できるバックグラウンドタスクはまだありません",
   "Running": "実行中",

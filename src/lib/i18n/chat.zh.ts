@@ -2,7 +2,7 @@
  * Simplified Chinese for the keys only the chat files use:
  * components/ChatView.tsx, components/Markdown.tsx, components/MermaidLightbox.tsx,
  * components/ChatMinimap.tsx, components/ImageLightbox.tsx, components/BackgroundTasks.tsx,
- * components/BackgroundAgentDetail.tsx, components/Artifacts.tsx, components/MarkdownLinkMenu.tsx,
+ * components/BackgroundAgentDetail.tsx, components/Artifacts.tsx, components/OmpBtw.tsx, components/MarkdownLinkMenu.tsx,
  * lib/workBlocks.ts (with CATEGORY_LABEL), lib/toolVerbs.ts (with VERB_LABEL), lib/outcomeChip.ts,
  * lib/chatTimestamp.ts, lib/chatReadDeadline.ts, components/ConversationSearch.tsx.
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
@@ -148,6 +148,14 @@ export const CHAT_ZH: Record<string, string> = {
   "Artifacts": "Artifact",
   "{n} artifact": "{n} 个 Artifact",
   "{n} artifacts": "{n} 个 Artifact",
+  "Side conversations": "旁支对话",
+  "{n} side conversation": "{n} 个旁支对话",
+  "{n} side conversations": "{n} 个旁支对话",
+  "{n} follow-up": "{n} 个追问",
+  "{n} follow-ups": "{n} 个追问",
+  "answering": "回答中",
+  "interrupted": "已中断",
+  "Some side conversations are left out. The terminal shows them all.": "部分旁支对话未显示。终端中可查看全部。",
   "Couldn't load the background tasks": "无法加载后台任务",
   "No background tasks to show yet": "暂时没有可显示的后台任务",
   "Running": "运行中",

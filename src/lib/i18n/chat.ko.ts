@@ -2,7 +2,7 @@
  * Korean for the keys only the chat files use:
  * components/ChatView.tsx, components/Markdown.tsx, components/MermaidLightbox.tsx,
  * components/ChatMinimap.tsx, components/ImageLightbox.tsx, components/BackgroundTasks.tsx,
- * components/BackgroundAgentDetail.tsx, components/Artifacts.tsx, components/MarkdownLinkMenu.tsx,
+ * components/BackgroundAgentDetail.tsx, components/Artifacts.tsx, components/OmpBtw.tsx, components/MarkdownLinkMenu.tsx,
  * lib/workBlocks.ts (with CATEGORY_LABEL), lib/toolVerbs.ts (with VERB_LABEL), lib/outcomeChip.ts,
  * lib/chatTimestamp.ts, lib/chatReadDeadline.ts, components/ConversationSearch.tsx.
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
@@ -148,6 +148,14 @@ export const CHAT_KO: Record<string, string> = {
   "Artifacts": "아티팩트",
   "{n} artifact": "아티팩트 {n}개",
   "{n} artifacts": "아티팩트 {n}개",
+  "Side conversations": "곁가지 대화",
+  "{n} side conversation": "곁가지 대화 {n}개",
+  "{n} side conversations": "곁가지 대화 {n}개",
+  "{n} follow-up": "후속 질문 {n}개",
+  "{n} follow-ups": "후속 질문 {n}개",
+  "answering": "답하는 중",
+  "interrupted": "중단됨",
+  "Some side conversations are left out. The terminal shows them all.": "일부 곁가지 대화는 빠져 있습니다. 터미널에서 모두 볼 수 있습니다.",
   "Couldn't load the background tasks": "백그라운드 작업을 불러오지 못했습니다",
   "No background tasks to show yet": "아직 보여줄 백그라운드 작업이 없습니다",
   "Running": "실행 중",
