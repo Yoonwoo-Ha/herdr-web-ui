@@ -25,7 +25,11 @@ const focused = (page: Page): Promise<string> => page.evaluate(() => {
   const element = document.activeElement;
   return element === null ? "none" : `${element.tagName}.${element.className}`;
 });
-const away = async (page: Page): Promise<void> => { await page.mouse.move(900, 500, { steps: 4 }); };
+// along the header first, then down over the pane: the trip never crosses the sidebar's place
+const away = async (page: Page): Promise<void> => {
+  await page.mouse.move(900, 20, { steps: 4 });
+  await page.mouse.move(900, 500, { steps: 4 });
+};
 const onToggle = async (page: Page): Promise<void> => {
   const box = (await toggle(page).boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 4 });
@@ -101,6 +105,26 @@ try {
             assert.ok(box.width >= 240 && box.width <= 640, `at its open width (${box.width}px)`);
             if (evidence) await page.screenshot({ path: join(evidence, `sidebar-peek-1280-${theme}.png`) });
 
+            // its filter focused by keyboard on a fresh page, before the pointer ever entered it: the focus holds it (#3070)
+            await page.goto(url("&sidebar=hidden"));
+            await page.locator(".app.sidebar-collapsed").waitFor();
+            await away(page);
+            await onToggle(page);
+            await page.clock.runFor(PEEK_OPEN_MS);
+            await peeking(page).waitFor();
+            const filter = page.locator("#workspace-drawer .sidebar-filter-input");
+            await filter.focus();
+            await away(page);
+            await page.clock.runFor(PEEK_CLOSE_MS * 3);
+            assert.equal(await peeking(page).count(), 1, "a field focused before the pointer came in holds it too");
+            // Escape in the empty field puts the peek away, as nothing else takes it
+            await page.keyboard.press("Escape");
+            await peeking(page).waitFor({ state: "detached" });
+            assert.equal(await toggle(page).evaluate((element) => element === document.activeElement), true, "the focus goes back to the toggle, not to the page");
+            await onToggle(page);
+            await page.clock.runFor(PEEK_OPEN_MS);
+            await peeking(page).waitFor();
+
             // into it, it stays, and its rows still open their pane
             await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 6 });
             await page.clock.runFor(PEEK_CLOSE_MS * 3);
@@ -139,6 +163,20 @@ try {
             await peeking(page).waitFor();
             await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 6 });
 
+            // a workspace dragged in it: the sidebar stays under the drag, and after the drop with the pointer still on it (#3070)
+            const rows = page.locator(".machine-list [draggable=true]");
+            const from = (await rows.nth(0).boundingBox())!;
+            const over = (await rows.nth(1).boundingBox())!;
+            await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2, { steps: 4 });
+            await page.mouse.down();
+            await page.mouse.move(over.x + over.width / 2, over.y + over.height / 2, { steps: 8 });
+            await page.clock.runFor(PEEK_CLOSE_MS * 3);
+            assert.equal(await peeking(page).count(), 1, "kept under a drag");
+            await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2, { steps: 8 });
+            await page.mouse.up();
+            await page.clock.runFor(PEEK_CLOSE_MS * 3);
+            assert.equal(await peeking(page).count(), 1, "and after the drop, with the pointer still on it");
+
             // leaving both puts it away after the grace
             await away(page);
             await page.clock.runFor(PEEK_CLOSE_MS);
@@ -168,7 +206,7 @@ try {
             assert.equal(await sidebar(page).isVisible(), true, "and it stays open when the pointer leaves");
             assert.ok(await paneWidth(page) < widthBefore, "the pinned sidebar takes its column back");
             assert.deepEqual(errors, []);
-            console.log(`PASS desktop ${theme}: off by default; on, the toggle's hover shows the sidebar over the pane without moving it or the focus, the trip in keeps it, a row opens its pane, leaving or Escape hides it and a click keeps it open`);
+            console.log(`PASS desktop ${theme}: off by default; on, the toggle's hover shows the sidebar over the pane without moving it or the focus, the trip in keeps it, a row opens its pane, a keyboard-focused field or a drag in it holds it, leaving or Escape hides it and a click keeps it open`);
           } finally { await context.close(); }
         }
 
