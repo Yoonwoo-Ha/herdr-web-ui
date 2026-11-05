@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ChildProcess } from "node:child_process";
 import { choosePort, coreEnv, endLeftover, installCore, isFile, layout, openLog, processCommand, processStartSync, readSaved, serverEnv, startCore, startServer, stopServer, writeSaved, type RunningServer } from "./children.ts";
-import { updateChannel, updatePlan } from "./updates.ts";
+import { debInstallCommand, updateChannel, updatePlan } from "./updates.ts";
 
 type StepState = "pending" | "ok" | "failed";
 export interface Status {
@@ -287,22 +287,50 @@ function allowPermissions(): void {
 }
 
 async function startUpdates(): Promise<void> {
+  let linuxPackage: string | null = null;
+  try { linuxPackage = readFileSync(join(process.resourcesPath, "package-type"), "utf8").trim(); } catch { /* not a Linux package */ }
   const plan = updatePlan({ packaged: app.isPackaged, env: process.env, platform: process.platform, builtWithFeed: existsSync(join(process.resourcesPath, "app-update.yml")),
-    channel: updateChannel(process.env, stateDir) });
+    channel: updateChannel(process.env, stateDir), linuxPackage, execPath: process.execPath });
   if (!plan.enabled) {
     console.log(`Updates are off: ${plan.reason}.`);
     return;
   }
-  const { autoUpdater } = await import("electron-updater");
+  const updater = await import("electron-updater");
+  // one privileged apt-get and nothing else. DebUpdater's own dpkg path follows any failure with
+  // `apt-get install -f` (a cancelled prompt asked again, and a no-op repair restarted Ovis on its
+  // old version); its apt path allows unauthenticated, downgraded and held packages.
+  class OvisDebUpdater extends updater.DebUpdater {
+    protected override doInstall(options: { isForceRunAfter: boolean }): boolean {
+      const file = this.installerPath;
+      if (file == null) {
+        this.dispatchError(new Error("No downloaded update to install"));
+        return false;
+      }
+      try {
+        this.runCommandWithSudoIfNeeded(debInstallCommand(file, !this.isRunningAsRoot()));
+      } catch (error) {
+        this.dispatchError(error instanceof Error ? error : new Error(String(error)));
+        return false;
+      }
+      if (options.isForceRunAfter) app.relaunch();
+      return true;
+    }
+  }
+  const autoUpdater = plan.installer === "deb" ? new OvisDebUpdater() : plan.installer === "appimage" ? new updater.AppImageUpdater() : updater.autoUpdater;
   if (plan.feed) autoUpdater.setFeedURL({ provider: "generic", url: plan.feed });
   // beta-mac.yml and beta-linux.yml on beta, latest-*.yml otherwise; setting a channel allows downgrades, which stay off
   autoUpdater.channel = plan.channel === "beta" ? "beta" : "latest";
   autoUpdater.allowPrerelease = plan.channel === "beta";
   autoUpdater.allowDowngrade = false;
   console.log(`Updates: ${plan.channel} channel.`);
-  autoUpdater.on("error", (error) => console.error(`Update check failed: ${message(error)}`));
+  // a .deb installs behind a password prompt: only when asked from the tray, never on a plain quit
+  if (plan.installer === "deb") autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.on("error", (error) => console.error(`Update failed: ${message(error)}`));
   autoUpdater.on("update-downloaded", () => {
-    updateReady = () => void stopForQuit().then(() => autoUpdater.quitAndInstall());
+    // the .deb installs first and the app quits (stopping the server) only once it did, then starts again;
+    // a cancelled prompt leaves the app and its server running. The AppImage starts its new copy at
+    // once, so the server stops before.
+    updateReady = plan.installer === "deb" ? () => autoUpdater.quitAndInstall() : () => void stopForQuit().then(() => autoUpdater.quitAndInstall());
     rebuildTrayMenu();
   });
   const check = () => void autoUpdater.checkForUpdates().catch((error: unknown) => console.error(`Update check failed: ${message(error)}`));

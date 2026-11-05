@@ -56,9 +56,11 @@ when it has a feed:
 | `OVIS_UPDATE_URL=https://…` | run | checks that feed instead |
 | `OVIS_UPDATES=0` | run | no checks |
 
-A development run never checks, and on Linux only the AppImage updates itself. The app checks after
-it starts and every 6 hours, downloads in the background, and offers **Restart to Update** in the
-tray. On macOS an update needs a signed app.
+A development run never checks. The app checks after it starts and every 6 hours, downloads in the
+background, and offers **Restart to Update** in the tray. On Linux the AppImage replaces itself; a
+.deb install installs the new .deb with `apt-get install --no-remove` behind the system's password
+prompt (pkexec, or sudo), only from **Restart to Update**, never on a plain quit, and cancelling the
+prompt keeps Ovis running as it was. On macOS an update needs a signed app.
 
 ## Build
 
