@@ -74,3 +74,10 @@ it("never tries Ovis's relay for a PC on a relay of its own", async () => {
   await expect(openRelayPcTunnel(pc, key, { socket: unreachable(dialed), onLost: () => {} })).rejects.toBeInstanceOf(RelayUnreachableError);
   expect(dialed).toEqual(["wss://relay.example"]);
 });
+
+it("keeps across a restart the relay the PC named on admission", async () => {
+  const path = keyPath();
+  const key = await RelayPcKey.create(path, { ...offer(), relay: GLOBAL_RELAY }, () => true);
+  await key.update(key.offer.server_id, (current) => ({ ...(current ?? { ...key.offer, device_id: null, label: "x", public_spki: "", private_key: undefined as never }), device_id: "cd".repeat(8), relay: REGIONAL_RELAYS[0]! }));
+  expect((await RelayPcKey.load(path, () => true)).offer.relay).toBe(REGIONAL_RELAYS[0]!);
+});

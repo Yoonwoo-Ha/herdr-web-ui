@@ -6,7 +6,8 @@
 import { channelBinding, openClientSecureChannel } from "./relay-e2ee.ts";
 import { fromBase64Url, PAIR_APPROVAL_MS, pairCommitment, pairDigits, randomPairNonce, toBase64Url } from "./relay-pair-sas.ts";
 import type { SecureChannel, Transport } from "./relay-e2ee.ts";
-import { decodeFrame, FrameType, LIMITS_V1, MuxProtocolError, PAIR_SAS_FEATURE, RELAY_PROTOCOL } from "./relay-mux.ts";
+import { decodeFrame, FrameType, LIMITS_V1, MuxProtocolError, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL } from "./relay-mux.ts";
+import { hintedRelay } from "./relay-regions.ts";
 import { MuxEngine } from "./relay-mux-engine.ts";
 import type { MuxOptions, SessionFrame } from "./relay-mux-engine.ts";
 import { isWssOrigin, SERVER_ID_PATTERN } from "./relay-offer.ts";
@@ -265,7 +266,9 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
         if (!kept || kept.server_public_key !== device.server_public_key || kept.public_spki !== device.public_spki) {
           throw new MuxProtocolError("auth_changed", "Stored relay identity changed during authentication");
         }
-        return { ...kept, device_id: frame.payload.device_id };
+        // the PC's answer to the relay-hints this phone offered in HELLO, inside the Noise channel the
+        // PC authenticated: the relay cannot have written these
+        return { ...kept, device_id: frame.payload.device_id, relay: hintedRelay(kept.relay, frame.payload.relays) };
       });
       if (options.signal?.aborted || !secure?.isOpen() || !mux || !welcome) return;
       // Defer setup accounting until admission: receive() automatically emits RECEIVED.
@@ -347,7 +350,7 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
           onClose: (error) => stop(error),
         });
         await send({ type: FrameType.HELLO, flags: 0, stream_id: 0,
-          payload: { protocol: "ovis-mux", versions: [1], features: comparing ? [PAIR_SAS_FEATURE] : [], required_features: [] } });
+          payload: { protocol: "ovis-mux", versions: [1], features: [RELAY_HINTS, ...(comparing ? [PAIR_SAS_FEATURE] : [])], required_features: [] } });
       }).catch(failed);
     };
   });

@@ -33,6 +33,8 @@ export interface RelayLinkOptions {
   /** The version WELCOME tells the shell (src/lib/relay/skew.ts); package.json's by default. */
   readonly serverVersion?: string;
   readonly onState: (phase: "connecting" | "online" | "error", error: string | null) => void;
+  /** The relays a phone is told to reach this PC through (RelaySession relayHints). */
+  readonly relayHints?: () => readonly string[];
 }
 
 interface DataConnection {
@@ -331,6 +333,7 @@ export class RelayLink {
         serverVersion: this.options.serverVersion ?? version, minSupportedClient: "0.4.20",
         routingOverhead: 0, maxWireMessageBytes: 64 * 1024,
         onAuthenticated: (deviceId) => this.authenticated(id, entry, deviceId),
+        ...(this.options.relayHints ? { relayHints: this.options.relayHints } : {}),
         websocket: {
           ...handlers,
           open: (peer) => { entry.sockets.add(peer); return handlers.open(peer); },

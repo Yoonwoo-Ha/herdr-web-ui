@@ -343,3 +343,27 @@ describe("WS fragment arithmetic", () => {
     rejects(() => decodeFrame(wire(FrameType.WS_DATA, payload, 1)));
   });
 });
+
+describe("relay hints", () => {
+  const authOk = (relays?: unknown) => ({ type: FrameType.AUTH_OK, flags: 0, stream_id: 0,
+    payload: { session_id: "a".repeat(32), device_id: "b".repeat(16), role: "drive", ...(relays === undefined ? {} : { relays }) } }) as MuxFrame;
+
+  it("carries a PC's relays in AUTH_OK, and none when it names none", () => {
+    const relays = ["wss://relay-ap.ovis.sh", "wss://relay.ovis.sh"];
+    expect(decodeFrame(encodeFrame(authOk(relays))).payload).toEqual(authOk(relays).payload);
+    expect(decodeFrame(encodeFrame(authOk())).payload).not.toHaveProperty("relays");
+  });
+
+  it("fits two of the longest relay origins in one AUTH_OK", () => {
+    const longest = (letter: string) => `wss://${letter.repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(49)}.example`;
+    expect(longest("a").length).toBeLessThanOrEqual(256);
+    expect(() => encodeFrame(authOk([longest("a"), longest("e")]))).not.toThrow();
+  });
+
+  it("takes only a few wss origins", () => {
+    for (const relays of [["https://relay.ovis.sh"], ["wss://relay.ovis.sh/path"], ["wss://user@relay.ovis.sh"], "wss://relay.ovis.sh",
+      ["wss://a.example", "wss://b.example", "wss://c.example"]]) {
+      expect(() => encodeFrame(authOk(relays))).toThrow(MuxProtocolError);
+    }
+  });
+});

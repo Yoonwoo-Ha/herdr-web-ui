@@ -92,8 +92,11 @@ export class RelayPcKey implements RelayDeviceStore {
     const next = change(this.device.device_id === null ? undefined : this.device);
     if (next.device_id === null) throw new Error("Relay PC was not admitted");
     if (!this.wanted()) throw new Error("Relay PC was removed");
+    const { server_id, server_public_key, relay, name } = next;
+    // the offer from `next`: a relay the PC named in AUTH_OK (relay-hints) is kept across a restart too
+    const offer: RelayOffer = { v: 1, server_id, server_public_key, relay, ...(name === undefined ? {} : { name }) };
     writePrivateState(this.path, {
-      v: 1, offer: this.offer, device_id: next.device_id, label: next.label, public_spki: next.public_spki, private_pkcs8: this.pkcs8,
+      v: 1, offer, device_id: next.device_id, label: next.label, public_spki: next.public_spki, private_pkcs8: this.pkcs8,
     } satisfies SavedKey);
     this.device = next;
     return next;

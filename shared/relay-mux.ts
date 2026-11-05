@@ -3,6 +3,11 @@ import { createScanner, ScanError, SyntaxKind } from "jsonc-parser";
 /** The relay wire generation: the envelope's first byte and WELCOME's `relay_protocol`. A PC on another one is refused outright. */
 export const RELAY_PROTOCOL = 1;
 /**
+ * The optional mux feature by which a PC names the relays a phone should reach it through, in
+ * AUTH_OK: the preferred one first. A phone offers it in HELLO, the PC selects it in WELCOME.
+ */
+export const RELAY_HINTS = "relay-hints";
+/**
  * The oldest Ovis server the hosted shell connects to: 0.4.21 (package.json read 0.4.20 when the
  * relay landed; v0.4.21 itself holds no server/relay/, so the first release that does is newer).
  * Raise it only in a PR that makes the shell need a newer server API, with a changelog line. A
@@ -103,7 +108,7 @@ type Payloads = {
   readonly 0x01: { readonly protocol: "ovis-mux"; readonly versions: readonly number[]; readonly features: readonly string[]; readonly required_features: readonly string[] };
   readonly 0x02: { readonly protocol: "ovis-mux"; readonly version: 1; readonly features: readonly string[]; readonly limits: LimitsV1; readonly nonce: string; readonly server_version: string; readonly relay_protocol: number; readonly min_supported_client: string; readonly provisional?: true };
   readonly 0x03: { readonly scheme: "device-key"; readonly device_id: string; readonly signature: string };
-  readonly 0x04: { readonly session_id: string; readonly device_id: string; readonly role: "drive" | "watch" };
+  readonly 0x04: { readonly session_id: string; readonly device_id: string; readonly role: "drive" | "watch"; readonly relays?: readonly string[] };
   readonly 0x05: { readonly code: SessionError; readonly message: string };
   readonly 0x06: { readonly code: "shutdown" | "id_exhausted"; readonly last_open_id: number; readonly drain_ms: number };
   readonly 0x07: bigint;
@@ -251,6 +256,14 @@ function feature(value: unknown): string {
   requireProtocol(/^[a-z0-9-]{1,32}$/.test(result), "Invalid feature");
   return result;
 }
+function relayOrigin(value: unknown): string {
+  const result = text(value, 256);
+  let origin: string | null = null;
+  // relay-offer.ts isWssOrigin, not imported: relay-offer reaches this module through relay-e2ee
+  try { const url = new URL(result); origin = url.protocol === "wss:" ? url.origin : null; } catch { /* not a URL */ }
+  requireProtocol(origin === result, "Invalid relay origin");
+  return result;
+}
 function protocol(value: unknown): string {
   const result = text(value, 128);
   requireProtocol(HTTP_TOKEN.test(result), "Invalid WS subprotocol");
@@ -330,7 +343,8 @@ function metadata(type: FrameType, flags: number, stream_id: number, input: unkn
       requireProtocol(v.confirmed === true && Object.keys(v).length === 1, "Invalid pairing confirmation");
       return { ...common, type, payload: { confirmed: true } };
     case FrameType.AUTH_OK:
-      return { ...common, type, payload: { session_id: hex(v.session_id, 32), device_id: hex(v.device_id, 16), role: choice(v.role, ["drive", "watch"]) } };
+      return { ...common, type, payload: { session_id: hex(v.session_id, 32), device_id: hex(v.device_id, 16), role: choice(v.role, ["drive", "watch"]),
+        ...(v.relays === undefined ? {} : { relays: list(v.relays, 2, relayOrigin) }) } };
     case FrameType.SESSION_ERROR:
       return { ...common, type, payload: { code: choice(v.code, SESSION_ERRORS), message: text(v.message, 256) } };
     case FrameType.GOAWAY:

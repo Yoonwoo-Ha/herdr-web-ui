@@ -344,7 +344,7 @@ oversized frame ends the session before anything in it is parsed.
 
 | Type | Name | From | Carries |
 | --- | --- | --- | --- |
-| `0x01` | `HELLO` | phone | `protocol: "ovis-mux"`, the versions and features it offers |
+| `0x01` | `HELLO` | phone | `protocol: "ovis-mux"`, the versions and features it offers (`relay-hints`, from 0.5.0, which the PC answers in `AUTH_OK`) |
 | `0x02` | `WELCOME` | PC | version 1, the limits, `nonce` (32 random bytes), `server_version`, `relay_protocol`, `min_supported_client`; `provisional` on the one sent before `HELLO` |
 | `0x03` | `AUTH` | phone | `scheme: "device-key"`, `device_id`, `signature` (64 bytes, P-256 `r` and `s`, base64url) |
 | `0x0A` | `PAIR` | phone | the six-digit `code`, a `label` of up to 64 characters, `public_key` (P-256 SPKI, base64url) |
@@ -352,7 +352,7 @@ oversized frame ends the session before anything in it is parsed.
 | `0x0C` | `PAIR_CHALLENGE` | PC | `nonce`: the PC's 32 random bytes |
 | `0x0D` | `PAIR_REVEAL` | phone | `nonce`: the 32 bytes the commitment was made with |
 | `0x0E` | `PAIR_CONFIRM` | phone | `confirmed: true`: the person said both screens show the same digits |
-| `0x04` | `AUTH_OK` | PC | `session_id`, `device_id`, `role` (`drive` or `watch`) |
+| `0x04` | `AUTH_OK` | PC | `session_id`, `device_id`, `role` (`drive` or `watch`), and with `relay-hints` `relays`: up to two `wss:` origins, the one new connections should use first |
 | `0x05` | `SESSION_ERROR` | either | a `code` from [Errors](#errors-and-close-codes) and a short `message` |
 | `0x06` | `GOAWAY` | either | `shutdown` or `id_exhausted`, the last stream ID taken, how long to drain (up to 5 seconds) |
 | `0x07`, `0x08` | `PING`, `PONG` | either | a 64-bit number, echoed |
@@ -625,9 +625,15 @@ them; the list is `REGIONAL_RELAYS` in [`shared/relay-regions.ts`](../shared/rel
   relays: that one is used with no measuring, and beside `relay.ovis.sh`, as below.
 - **It stays on both.** The PC keeps its link to `relay.ovis.sh` and opens a second one, with the
   same key and proof, to the regional relay. New pairing QR codes name the regional relay while its
-  link is online (the global one otherwise), and the relay status is the global link's; a phone
-  paired before keeps the relay it saved, so it still connects through `relay.ovis.sh`. Each link
+  link is online (the global one otherwise), and the relay status is the global link's. Each link
   has its own session limits.
+- **It tells phones paired before.** A phone that offers `relay-hints` is told in `AUTH_OK` the
+  relay new offers name, then `relay.ovis.sh`, and saves the first for that PC; the app uses it from
+  the next time it opens that PC. This comes inside the encrypted channel from the PC the phone authenticated,
+  so the relay cannot change it, and a phone only ever moves between Ovis's own relays: one saved
+  with any other relay, and a named relay that is not Ovis's, are left as they are (`hintedRelay`
+  in [`shared/relay-regions.ts`](../shared/relay-regions.ts)). An older phone or PC offers or takes
+  no hints, and nothing changes for it.
 - **The phone falls back.** A phone (or a PC that added this PC through the relay) whose saved relay
   is one of the regional ones and that cannot get through it (the relay does not answer, or the PC
   does not answer there) tries `relay.ovis.sh` at once, and keeps using the one that worked. A phone never falls back from any other relay, so a

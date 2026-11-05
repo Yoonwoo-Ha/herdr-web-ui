@@ -37,6 +37,35 @@ it("serves health through real protected channels and records the route template
   expect(log).not.toContain("not-logged");
 });
 
+it("names its relays in AUTH_OK to a phone that offered relay hints", async () => {
+  const f = fixture();
+  const device = await relayDevice(f);
+  const relays = ["wss://relay-ap.ovis.sh", "wss://relay.ovis.sh"];
+  const link = await relayConnection(f, { relayHints: () => relays });
+  expect((await link.auth(device, ["relay-hints"])).relays).toEqual(relays);
+  // answered in AUTH_OK only: a provisional WELCOME goes out before HELLO is read
+  expect((await link.welcome).payload.features).toEqual([]);
+});
+
+it("admits a phone that requires relay hints from a PC that has them, and refuses it otherwise", async () => {
+  const f = fixture();
+  const device = await relayDevice(f);
+  const hinting = await relayConnection(f, { relayHints: () => ["wss://relay.ovis.sh"] });
+  expect((await hinting.auth(device, ["relay-hints"], ["relay-hints"])).relays).toEqual(["wss://relay.ovis.sh"]);
+  const plain = await relayConnection(f);
+  plain.mux.sendSession({ type: FrameType.HELLO, flags: 0, stream_id: 0,
+    payload: { protocol: "ovis-mux", versions: [1], features: ["relay-hints"], required_features: ["relay-hints"] } });
+  expect(await plain.serverError).toBe("unsupported_extension");
+});
+
+it("names no relays to a phone that did not offer relay hints", async () => {
+  const f = fixture();
+  const device = await relayDevice(f);
+  const link = await relayConnection(f, { relayHints: () => ["wss://relay-ap.ovis.sh", "wss://relay.ovis.sh"] });
+  const auth = await link.auth(device);
+  expect(auth).not.toHaveProperty("relays");
+});
+
 it("keeps a renamed relay device admitted and still revokes its session", async () => {
   const f = fixture();
   const device = await relayDevice(f);

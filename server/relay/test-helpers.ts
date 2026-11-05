@@ -164,17 +164,17 @@ export async function relayConnection(fixture: ReturnType<typeof relayFixture>,
     closed.promise.then(() => { throw new Error("Relay closed before admission"); }),
   ]);
   return {
-    session, mux, channel, daemon, frames, serverError: serverError.promise, closed: closed.promise,
+    session, mux, channel, daemon, frames, serverError: serverError.promise, closed: closed.promise, welcome: welcome.promise,
     get peakBuffered() { observe(); return peakBuffered; },
     set onFrame(listener: ((frame: MuxFrame) => void) | undefined) { onFrame = listener; },
     set transformClientFrame(change: ((bytes: Uint8Array) => Uint8Array) | undefined) { transform = change; },
-    async hello() {
+    async hello(features: readonly string[] = [], required: readonly string[] = []) {
       mux.sendSession({ type: FrameType.HELLO, flags: 0, stream_id: 0,
-        payload: { protocol: "ovis-mux", versions: [1], features: [], required_features: [] } });
+        payload: { protocol: "ovis-mux", versions: [1], features, required_features: required } });
       return (await bounded(beforeClose(welcome.promise))).payload;
     },
-    async auth(device: Awaited<ReturnType<typeof relayDevice>>) {
-      const greeting = await this.hello();
+    async auth(device: Awaited<ReturnType<typeof relayDevice>>, features: readonly string[] = [], required: readonly string[] = []) {
+      const greeting = await this.hello(features, required);
       const signature = Buffer.from(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, device.keys.privateKey,
         Buffer.concat([Buffer.from("ovis-relay-auth/1"), Buffer.from(greeting.nonce, "base64url"),
           Buffer.from(options.serverId ?? "0123456789abcdef0123456789abcdef")]))).toString("base64url");

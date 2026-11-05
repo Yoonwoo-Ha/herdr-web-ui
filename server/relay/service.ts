@@ -104,6 +104,11 @@ export class RelayService {
     return this.regionalRelay !== null && this.regionalPhase === "online" ? this.regionalRelay : this.relay;
   }
 
+  /** What a phone is told to save for this PC: the relay new offers name, then the global one it falls back to. */
+  private relayHints(): readonly string[] {
+    return [...new Set([this.advertised, this.relay])];
+  }
+
   /** Phase and error are the global link's: every phone can reach the PC there. */
   status(): RelayStatus {
     return { phase: this.phase, relay: this.advertised, app: this.app,
@@ -144,6 +149,7 @@ export class RelayService {
       const regional = new RelayLink({
         relay, identity, services, port: this.port,
         connect: this.options.connect, clock: this.options.clock, random: this.options.random, serverVersion: this.options.serverVersion,
+        relayHints: () => this.relayHints(),
         onState: (phase) => { if (this.regionalLink === regional) this.regionalPhase = phase; },
       });
       this.regionalLink = regional;
@@ -195,6 +201,7 @@ export class RelayService {
       const link = new RelayLink({
         relay: this.relay, identity: this.identity, services, port: this.port,
         connect: this.options.connect, clock: this.options.clock, random: this.options.random, serverVersion: this.options.serverVersion,
+        relayHints: () => this.relayHints(),
         onState: (phase, error) => { if (this.link === link) { this.phase = phase; this.error = error; } },
       });
       this.link = link;
