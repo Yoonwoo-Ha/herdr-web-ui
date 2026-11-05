@@ -7,6 +7,7 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { readFileSync } from "node:fs";
 import { writePrivateState } from "../private-state.ts";
+import { DEFAULT_ACCOUNT_SERVICE } from "../static.ts";
 import { ACCOUNT_RECORDS_MAX, isAccountKey } from "../../shared/account-records.ts";
 import { importPublicKey, importSecretKey } from "../../shared/relay-e2ee.ts";
 import { answerServerChallenge } from "../../shared/relay-server-proof.ts";
@@ -26,7 +27,8 @@ function scope(account: string, serverId: string, key: string): string {
 /** Pages one pull reads at most; the rest waits for the next pull. */
 const MAX_PAGES = 20;
 
-export function accountServiceUrl(value = process.env["OVIS_ACCOUNT_SERVICE_URL"] ?? "https://account.ovis.sh"): string {
+export function accountServiceUrl(value = process.env["OVIS_ACCOUNT_SERVICE_URL"] ?? DEFAULT_ACCOUNT_SERVICE): string {
+  if (value.trim().toLowerCase() === "off") throw new Error("The account service is turned off (OVIS_ACCOUNT_SERVICE_URL=off)");
   const url = new URL(value);
   const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw new Error("The account service must be https");

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { accountServiceUrl } from "./account/mailbox.ts";
 import { accountServiceOrigin, appName, CONTENT_SECURITY_POLICY, contentSecurityPolicy, manifestBody, relateManifest, renameManifest, renameShell, requestOrigin, shellContentSecurityPolicy } from "./static.ts";
 
 // The sources Vite builds from: public/ is copied into dist/ as it is, and the meta survives the build.
@@ -66,13 +67,13 @@ describe("OVIS_APP_NAME", () => {
     expect(contentSecurityPolicy("http://100.123.228.51:7317")).toContain("frame-src 'self' http://100.123.228.51:* https://100.123.228.51:*;");
     expect(contentSecurityPolicy("https://pc.tailnet.ts.net")).toContain("frame-src 'self' http://pc.tailnet.ts.net:* https://pc.tailnet.ts.net:*;");
     expect(contentSecurityPolicy("http://[::1]:7317")).toContain("frame-src 'self' http://[::1]:* https://[::1]:*;");
-    expect(contentSecurityPolicy("http://100.123.228.51:7317").replace(/ http:\/\/\S+ https:\/\/\S+;/, ";")).toBe(CONTENT_SECURITY_POLICY);
+    expect(contentSecurityPolicy("http://100.123.228.51:7317").replace(/ http:\/\/\S+ https:\/\/\S+;/, ";")).toBe(contentSecurityPolicy());
   });
 
   it("keeps frame-src to itself without an origin or with a host that is no host name", () => {
-    expect(contentSecurityPolicy()).toBe(CONTENT_SECURITY_POLICY);
-    expect(contentSecurityPolicy("not a url")).toBe(CONTENT_SECURITY_POLICY);
-    expect(contentSecurityPolicy("http://a_b;script-src *")).toBe(CONTENT_SECURITY_POLICY);
+    expect(contentSecurityPolicy()).toContain("frame-src 'self';");
+    expect(contentSecurityPolicy("not a url")).toBe(contentSecurityPolicy());
+    expect(contentSecurityPolicy("http://a_b;script-src *")).toBe(contentSecurityPolicy());
     expect(CONTENT_SECURITY_POLICY).toContain("frame-src 'self';");
   });
 
@@ -113,15 +114,28 @@ describe("the PC's own pages and the account service", () => {
   const saved = process.env["OVIS_ACCOUNT_SERVICE_URL"];
   const restore = () => { if (saved === undefined) delete process.env["OVIS_ACCOUNT_SERVICE_URL"]; else process.env["OVIS_ACCOUNT_SERVICE_URL"] = saved; };
 
-  it("may reach exactly the https origin OVIS_ACCOUNT_SERVICE_URL names, and nothing when it is unset or not https", () => {
+  it("may reach account.ovis.sh by default, exactly the https origin OVIS_ACCOUNT_SERVICE_URL names, and nothing when it is off or not https", () => {
     try {
+      delete process.env["OVIS_ACCOUNT_SERVICE_URL"];
+      expect(connect()).toBe("connect-src 'self' https://account.ovis.sh");
       process.env["OVIS_ACCOUNT_SERVICE_URL"] = "https://account.example.com/some/path";
       expect(connect()).toBe("connect-src 'self' https://account.example.com");
-      delete process.env["OVIS_ACCOUNT_SERVICE_URL"];
+      process.env["OVIS_ACCOUNT_SERVICE_URL"] = "off";
       expect(connect()).toBe("connect-src 'self'");
       process.env["OVIS_ACCOUNT_SERVICE_URL"] = "http://127.0.0.1:8787";
       expect(connect()).toBe("connect-src 'self'");
       expect(accountServiceOrigin("https://bad host")).toBeNull();
+    } finally { restore(); }
+  });
+
+  it("collects the mailbox from account.ovis.sh by default, and from none when the service is off", () => {
+    try {
+      delete process.env["OVIS_ACCOUNT_SERVICE_URL"];
+      expect(accountServiceUrl()).toBe("https://account.ovis.sh");
+      expect(accountServiceUrl("http://127.0.0.1:8787/v1")).toBe("http://127.0.0.1:8787");
+      process.env["OVIS_ACCOUNT_SERVICE_URL"] = "off";
+      expect(() => accountServiceUrl()).toThrow("turned off");
+      expect(() => accountServiceUrl(" OFF ")).toThrow("turned off");
     } finally { restore(); }
   });
 });

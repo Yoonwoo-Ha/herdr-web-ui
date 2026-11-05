@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ChildProcess } from "node:child_process";
 import { choosePort, coreEnv, endLeftover, installCore, isFile, layout, openLog, processCommand, processStartSync, readSaved, serverEnv, startCore, startServer, stopServer, writeSaved, type RunningServer } from "./children.ts";
-import { startLoopbackSignIn, type LoopbackSignIn } from "./accountSignIn.ts";
+import { accountServiceOf, startLoopbackSignIn, type LoopbackSignIn } from "./accountSignIn.ts";
 import { awakeLabel, DESKTOP_ACTIVITY_FILE, holdAwake, readAwakeSettings, readWorking, writeAwakeSettings, type AwakeSettings } from "./awake.ts";
 import { debInstallCommand, updateChannel, updatePlan } from "./updates.ts";
 
@@ -53,13 +53,7 @@ let awake = readAwakeSettings(awakePath);
 let awakeBlocker: number | null = null;
 let awakeWorking = 0;
 
-/** The account service this app signs in with: OVIS_ACCOUNT_SERVICE_URL's https origin; none, and the app offers no sign-in. */
-const accountService = (() => {
-  try {
-    const url = new URL(process.env["OVIS_ACCOUNT_SERVICE_URL"] ?? "");
-    return url.protocol === "https:" ? url.origin : null;
-  } catch { return null; }
-})();
+const accountService = accountServiceOf(process.env);
 
 /** The sign-ins that service offers: OVIS_ACCOUNT_PROVIDERS (GitHub alone without it), so Apple shows only once it is set up. */
 const accountProviders = (process.env["OVIS_ACCOUNT_PROVIDERS"] ?? "").split(",").map((name) => name.trim()).filter((name) => name === "github" || name === "apple");

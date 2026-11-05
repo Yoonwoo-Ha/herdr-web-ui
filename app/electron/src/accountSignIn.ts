@@ -9,6 +9,17 @@
  */
 import { createServer } from "node:http";
 
+/**
+ * The account service this app signs in with: account.ovis.sh, or the https origin
+ * OVIS_ACCOUNT_SERVICE_URL names; none when it is `off` or not https, and the app offers no sign-in.
+ */
+export function accountServiceOf(env: Record<string, string | undefined>): string | null {
+  try {
+    const url = new URL(env["OVIS_ACCOUNT_SERVICE_URL"] ?? "https://account.ovis.sh");
+    return url.protocol === "https:" ? url.origin : null;
+  } catch { return null; } // `off`, or no address at all
+}
+
 /** A sign-in left at the provider's pages longer than this is given up. */
 export const SIGN_IN_MS = 10 * 60_000;
 

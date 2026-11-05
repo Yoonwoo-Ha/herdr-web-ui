@@ -296,7 +296,7 @@ is what authenticates the PC.
   signer's own `add`) is kept in `account-pending.json` and tried again on every pull, a restart
   included, until it applies; at most 1000 wait, the oldest dropped first.
 - The PC collects its mailbox from `OVIS_ACCOUNT_SERVICE_URL` (https, or http on loopback only;
-  `https://account.ovis.sh` when unset), only while it has members and a relay identity (one on disk counts, the relay on or off; none is ever made for it). An address
+  `https://account.ovis.sh` when unset, none when `off`), only while it has members and a relay identity (one on disk counts, the relay on or off; none is ever made for it). An address
   it cannot use shows as the mailbox's error in `/api/account/status`.
 - `/api/account/*` is refused to Portal visitors and open LAN windows (`owner_only`), and a `link`
   must start from the key its own session signed in with.
@@ -365,7 +365,13 @@ not the one it sent.
 `redirect_uri` is compared exactly against three forms: `https://app.ovis.sh/`,
 `ovis://account/callback`, and `http://127.0.0.1:<port>/callback` on any port (a loopback redirect
 for the desktop app, RFC 8252). Anything else answers 400 `invalid_redirect_uri` before any
-sign-in. The hosted shell's Content-Security-Policy lets it reach `https://account.ovis.sh` (`connect-src`), and no other account service yet. The PC's own pages may reach exactly the origin `OVIS_ACCOUNT_SERVICE_URL` names when it is https, and no account service when it is unset or not https. Token errors are 400 `invalid_grant` (a wrong, spent or expired code, verifier, refresh
+sign-in. The hosted shell's Content-Security-Policy lets it reach `https://account.ovis.sh` (`connect-src`), and no other account service yet. The PC's own pages may reach `https://account.ovis.sh` when `OVIS_ACCOUNT_SERVICE_URL` is unset, exactly the origin it names when it is https with a host name or IPv4 address, and no account service when it is `off` or not https.
+
+The desktop app offers sign-in in **Settings → Phone & devices** with `https://account.ovis.sh`
+unless `OVIS_ACCOUNT_SERVICE_URL` names another https service. `OVIS_ACCOUNT_SERVICE_URL=off`
+turns the account off for the app and its server alike: no sign-in, no account origin in the
+pages' policy, no mailbox. A browser on the PC's own address offers no sign-in either way: the
+service sends a sign-in back only to the three redirects above, none of which is that address. Token errors are 400 `invalid_grant` (a wrong, spent or expired code, verifier, refresh
 token or identity token) and 400 `unsupported_grant_type`; an access token that expired or was
 signed out answers 401 `unauthorized` on every other request.
 

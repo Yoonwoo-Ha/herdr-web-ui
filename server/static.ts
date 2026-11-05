@@ -117,7 +117,8 @@ const CSP_DIRECTIVES = [
 ];
 
 /**
- * The policy both headers carry. A browser script that serves a build of its own sends it as it is:
+ * The policy both headers carry, before contentSecurityPolicy() adds the request's host to `frame-src`
+ * and the account service to `connect-src`. A browser script that serves a build of its own sends it as it is:
  * serveStatic reads only this checkout's dist/, and sends no policy before that is built.
  */
 export const CONTENT_SECURITY_POLICY = CSP_DIRECTIVES.join("; ");
@@ -155,8 +156,14 @@ export function shellContentSecurityPolicy(connect: readonly string[] = []): str
 const FRAMEABLE_HOST = /^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/i;
 
 /** The policy for a request from `origin` (requestOrigin): its host's other ports may be framed. */
-/** The account service the PC's own pages sign in to: OVIS_ACCOUNT_SERVICE_URL's origin when it is https, else none. */
-export function accountServiceOrigin(value = process.env["OVIS_ACCOUNT_SERVICE_URL"]): string | null {
+/** The account service when OVIS_ACCOUNT_SERVICE_URL is unset; `OVIS_ACCOUNT_SERVICE_URL=off` names none. */
+export const DEFAULT_ACCOUNT_SERVICE = "https://account.ovis.sh";
+
+/**
+ * The account service the PC's own pages sign in to: OVIS_ACCOUNT_SERVICE_URL's origin when it is
+ * https, account.ovis.sh when it is unset, and none when it is `off` or not https.
+ */
+export function accountServiceOrigin(value = process.env["OVIS_ACCOUNT_SERVICE_URL"] ?? DEFAULT_ACCOUNT_SERVICE): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);

@@ -1,5 +1,12 @@
 import { expect, it } from "bun:test";
-import { startLoopbackSignIn } from "./accountSignIn.ts";
+import { accountServiceOf, startLoopbackSignIn } from "./accountSignIn.ts";
+
+it("signs in with account.ovis.sh unless OVIS_ACCOUNT_SERVICE_URL names another https service or is off", () => {
+  expect(accountServiceOf({})).toBe("https://account.ovis.sh");
+  expect(accountServiceOf({ OVIS_ACCOUNT_SERVICE_URL: "https://account.example/v1/" })).toBe("https://account.example");
+  expect(accountServiceOf({ OVIS_ACCOUNT_SERVICE_URL: "off" })).toBeNull();
+  expect(accountServiceOf({ OVIS_ACCOUNT_SERVICE_URL: "http://account.example" })).toBeNull();
+});
 
 it("hands back the callback's query once the browser returns with the expected state, and stops listening", async () => {
   const signIn = await startLoopbackSignIn();
