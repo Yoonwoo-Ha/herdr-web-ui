@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from "react";
-import { ArchiveRestore, Bot, Columns2, Ellipsis, Eraser, Folder, FolderInput, Maximize2, Minimize2, MoveHorizontal, Pencil, Plus, Rows2, ArrowLeftRight, Terminal, TextWrap, X } from "lucide-react";
+import { ArchiveRestore, Bot, Columns2, Ellipsis, Eraser, Folder, FolderInput, Maximize2, Minimize2, MoveHorizontal, Pencil, Plus, Rows2, ArrowLeftRight, Terminal, TextSearch, TextWrap, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { HerdrPane, HerdrTab, PaneLayoutSnapshot, SessionSnapshot } from "../../shared/protocol.ts";
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
@@ -48,6 +48,8 @@ interface Props {
   mirrored?: boolean;
   /** opens Recover unsent text for the pane, offered while earlier herdrs' panes left some (UnsentText) */
   onRecoverUnsent?: (target: HerdrPane) => void;
+  /** Search conversation over the pane's chat (ChatView), or null where it shows no chat to search */
+  onSearchConversation?: (target: HerdrPane) => (() => void) | null;
   /** the tab row's New tab with agent… and its + (a shell tab): where a lone tab's row is left out (TabStrip's cramped), the pane's menu offers them */
   onNewTab?: () => void;
   onNewTerminal?: () => Promise<void>;
@@ -77,7 +79,7 @@ interface Drag {
 }
 
 /** The active tab, drawn from herdr's rectangles. No browser-owned layout or PTY state. */
-export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged, renderPane, actionsRef, onOpenInHalf, mirrored = false, onRecoverUnsent, onNewTab, onNewTerminal, onMoveToWorkspace, renameRequest = null }: Props) {
+export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged, renderPane, actionsRef, onOpenInHalf, mirrored = false, onRecoverUnsent, onSearchConversation, onNewTab, onNewTerminal, onMoveToWorkspace, renameRequest = null }: Props) {
   const t = useT();
   const { settings, update: updateSettings } = useSettings();
   const narrowScreen = useMediaQuery(MIRROR_WRAP_QUERY);
@@ -269,17 +271,22 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     return [row.panes, own, row.tab].filter((group) => group.length > 0)
       .flatMap((group, at) => at === 0 ? group : group.map((item, index) => index === 0 ? { ...item, divider: true } : item));
   };
-  const paneItemsFor = (target: HerdrPane): RowMenuItem[] => [
-    ...layoutItems(target),
-    // a mirror, or a pane watched at another device's grid, wider than the screen is folded to it
-    // (lib/terminalFold.ts); a full-screen program reads better at its own width, panned sideways.
-    // This device's choice, for every such pane
-    ...(mirrored || wideGrid.has(wideGridKey(machineId, target.pane_id)) ? [{ id: "mirror-width", label: t(mirrorWraps ? "Original width" : "Wrap to screen"),
-      icon: mirrorWraps ? MoveHorizontal : TextWrap,
-      run: () => updateSettings({ terminalMirrorWrap: !mirrorWraps }) }] : []),
-    ...(onRecoverUnsent && paneLifetimes.unsent().length > 0 ? [{ id: "recover-unsent", label: t("Recover unsent text"), icon: ArchiveRestore, run: () => onRecoverUnsent(target) }] : []),
-    ...(paneLocked(target.pane_id) ? [] : [{ id: "close", label: t("Close pane"), icon: X, danger: true, run: () => requestClose(target) }]),
-  ];
+  const paneItemsFor = (target: HerdrPane): RowMenuItem[] => {
+    const search = onSearchConversation?.(target) ?? null;
+    return [
+      // the chat's own search: a menu item, so a phone's screen gains no button for it (#2018)
+      ...(search ? [{ id: "search-conversation", label: t("Search conversation"), icon: TextSearch, run: search }] : []),
+      ...layoutItems(target),
+      // a mirror, or a pane watched at another device's grid, wider than the screen is folded to it
+      // (lib/terminalFold.ts); a full-screen program reads better at its own width, panned sideways.
+      // This device's choice, for every such pane
+      ...(mirrored || wideGrid.has(wideGridKey(machineId, target.pane_id)) ? [{ id: "mirror-width", label: t(mirrorWraps ? "Original width" : "Wrap to screen"),
+        icon: mirrorWraps ? MoveHorizontal : TextWrap,
+        run: () => updateSettings({ terminalMirrorWrap: !mirrorWraps }) }] : []),
+      ...(onRecoverUnsent && paneLifetimes.unsent().length > 0 ? [{ id: "recover-unsent", label: t("Recover unsent text"), icon: ArchiveRestore, run: () => onRecoverUnsent(target) }] : []),
+      ...(paneLocked(target.pane_id) ? [] : [{ id: "close", label: t("Close pane"), icon: X, danger: true, run: () => requestClose(target) }]),
+    ];
+  };
   const items = target ? itemsFor(target) : [];
   const published = useRef<{ ref: MutableRefObject<((target: HerdrPane) => RowMenuItem[]) | null>; items: typeof itemsFor } | null>(null);
   if (actionsRef) { actionsRef.current = itemsFor; published.current = { ref: actionsRef, items: itemsFor }; }

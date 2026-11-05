@@ -1,0 +1,105 @@
+import type { ConversationTurn } from "./protocol.ts";
+
+/**
+ * GET /api/pane/conversation/search?pane_id=&q=[&before=&history_id=]: the pane's conversation
+ * searched for `q`, newest first, over what the chat shows as messages: what the user wrote and
+ * the agent's answers, never a tool's input or output, its thinking or its progress notes. One
+ * answer searches a few pages at most; `cursor` goes on from where it stopped.
+ */
+export interface ConversationSearchResponse {
+  /** the history the pages were read from: pass it back with `cursor`, a changed one answers 409 history_changed */
+  history_id?: string;
+  /** newest first, one per turn */
+  matches: ConversationSearchMatch[];
+  /** pass as `before` to search the pages before these; null once the conversation's first page was searched */
+  cursor: string | null;
+}
+
+/** One turn that holds the query, with the words around its first match. */
+export interface ConversationSearchMatch {
+  /** the turn's identity, as the chat names its rows (conversationTurnAnchor) */
+  turn: string;
+  role: "user" | "assistant";
+  ts: string | null;
+  /** the text before the match, the match and the text after it, each with whitespace runs as one space */
+  before: string;
+  match: string;
+  after: string;
+}
+
+/** a query longer than this is refused: no message is found by a paragraph of it */
+export const MAX_SEARCH_QUERY = 200;
+/** the words a snippet keeps before the match and after it */
+const SNIPPET_BEFORE = 32;
+const SNIPPET_AFTER = 160;
+/** how far from a cut a space may be for the cut word to go with it */
+const WORD_CUT = 16;
+
+/**
+ * A turn's identity that survives a remount and another page size: row keys are browser slots
+ * that a new mount allocates again, so the turn is named by what it is: its role, its time and
+ * how its first part begins. Only the beginning counts: a turn still streaming keeps the name it had.
+ */
+export function conversationTurnAnchor(turn: ConversationTurn): string {
+  const first = turn.parts[0];
+  const head = first === undefined ? "" : "text" in first ? first.text.slice(0, 80) : JSON.stringify(first).slice(0, 80);
+  return `${turn.role}|${turn.ts ?? ""}|${first?.kind ?? ""}|${head}`;
+}
+
+/**
+ * Text near enough to how the chat draws it: a fence's line, a heading's, a quote's or a list item's
+ * mark, a link's address, bold's asterisks and code's backticks are not words anyone looks for.
+ */
+const plainText = (markdown: string): string => markdown
+  .replace(/^ {0,3}(?:```|~~~).*$/gm, "")
+  .replace(/^ {0,3}(?:#{1,6}|>|[-*+]|\d{1,9}[.)])[ \t]+/gm, "")
+  .replace(/!?\[([^\]\n]*)\]\([^)\n]*\)/g, "$1")
+  .replace(/\*\*|`/g, "");
+
+/**
+ * What a search reads of a turn: the user's own words, or the agent's answers as the chat shows
+ * them outside a work block (text not marked commentary, lib/workBlocks.ts splitTurn).
+ */
+export function searchableText(turn: ConversationTurn): string {
+  return turn.parts.flatMap((part) => part.kind === "text" && (turn.role === "user" || part.phase !== "commentary") ? [plainText(part.text)] : []).join("\n\n");
+}
+
+/**
+ * The query as a pattern: its words in order, any whitespace between them, case ignored. Null
+ * for a blank one.
+ */
+export function searchPattern(query: string): RegExp | null {
+  const words = query.trim().split(/\s+/).filter((word) => word.length > 0);
+  if (words.length === 0) return null;
+  return new RegExp(words.map((word) => word.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&")).join("\\s+"), "iu");
+}
+
+const squash = (text: string): string => text.replace(/\s+/g, " ");
+
+/** The words around the first match in `text`, or null without one. */
+export function matchSnippet(text: string, pattern: RegExp): Pick<ConversationSearchMatch, "before" | "match" | "after"> | null {
+  const found = pattern.exec(text);
+  if (found === null) return null;
+  const start = found.index, end = start + found[0].length;
+  // whitespace runs shrink once squashed, so a margin wider than what is kept is read; one cut
+  // inside a character of two code units leaves no half of it
+  const lead = Array.from(squash(text.slice(Math.max(0, start - SNIPPET_BEFORE * 4), start).replace(/^[\uDC00-\uDFFF]/, "")).trimStart());
+  const trail = Array.from(squash(text.slice(end, end + SNIPPET_AFTER * 4).replace(/[\uD800-\uDBFF]$/, "")).trimEnd());
+  // a cut word goes too, when a space is near the cut (text written without spaces keeps its cut)
+  const kept = lead.slice(-SNIPPET_BEFORE).join(""), space = kept.indexOf(" ");
+  const before = lead.length > SNIPPET_BEFORE || start > SNIPPET_BEFORE * 4 ? `…${space >= 0 && space < WORD_CUT ? kept.slice(space + 1) : kept}` : lead.join("");
+  const shown = trail.slice(0, SNIPPET_AFTER).join(""), last = shown.lastIndexOf(" ");
+  const after = trail.length > SNIPPET_AFTER || end + SNIPPET_AFTER * 4 < text.length ? `${last > shown.length - WORD_CUT ? shown.slice(0, last) : shown}…` : trail.join("");
+  return { before, match: squash(found[0]), after };
+}
+
+/** The turns that hold the pattern, newest first, each with its first match. */
+export function searchTurns(turns: readonly ConversationTurn[], pattern: RegExp): ConversationSearchMatch[] {
+  const matches: ConversationSearchMatch[] = [];
+  for (let index = turns.length - 1; index >= 0; index--) {
+    const turn = turns[index]!;
+    const snippet = matchSnippet(searchableText(turn), pattern);
+    if (snippet !== null) matches.push({ turn: conversationTurnAnchor(turn), role: turn.role, ts: turn.ts, ...snippet });
+  }
+  return matches;
+}

@@ -199,6 +199,7 @@ const BASE: Record<string, string> = {
   // ---- command palette ----
   "Refresh": "刷新",
   "Search panes and actions": "搜索窗格和操作",
+  "Search conversation": "搜索对话",
 
   // ---- new workspace ----
   "Browse": "浏览",

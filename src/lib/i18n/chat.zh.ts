@@ -4,7 +4,7 @@
  * components/ChatMinimap.tsx, components/ImageLightbox.tsx, components/BackgroundTasks.tsx,
  * components/BackgroundAgentDetail.tsx, components/Artifacts.tsx, components/MarkdownLinkMenu.tsx,
  * lib/workBlocks.ts (with CATEGORY_LABEL), lib/toolVerbs.ts (with VERB_LABEL), lib/outcomeChip.ts,
- * lib/chatTimestamp.ts, lib/chatReadDeadline.ts.
+ * lib/chatTimestamp.ts, lib/chatReadDeadline.ts, components/ConversationSearch.tsx.
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const CHAT_ZH: Record<string, string> = {
@@ -207,4 +207,17 @@ export const CHAT_ZH: Record<string, string> = {
   "Show full message": "显示完整消息",
   "Open link": "打开链接",
   "Sent · waiting for the agent's next turn": "已发送 · 等待 agent 的下一轮",
+  "Search messages and answers…": "搜索消息和回答…",
+  "Matching messages": "匹配的消息",
+  "You": "你",
+  "Type a word from a message or an answer.": "输入消息或回答中的一个词。",
+  "This PC's bridge cannot search conversations yet. Update it to search here.": "这台 PC 的桥接尚不能搜索对话。更新桥接后即可在此搜索。",
+  "The conversation was replaced while it was searched.": "搜索期间对话已被替换。",
+  "Couldn't search the conversation.": "无法搜索对话。",
+  "Searching earlier messages…": "正在搜索更早的消息…",
+  "Showing the newest {n} matches.": "显示最新的 {n} 条匹配。",
+  "No message or answer holds this.": "没有包含此内容的消息或回答。",
+  "Searched the whole conversation.": "已搜索整个对话。",
+  "This message is no longer in the conversation.": "此消息已不在对话中。",
+  "Couldn't load the earlier messages.": "无法加载更早的消息。",
 };

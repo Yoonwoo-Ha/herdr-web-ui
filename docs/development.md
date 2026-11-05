@@ -264,6 +264,8 @@ bun scripts/push-health-demo-regression.ts # the alerts health notice with a sta
 bun scripts/install-hint-demo-regression.ts # the add-to-home-screen line on a phone's browser tab: iPhone steps with the share glyph, Android's menu item then one-tap Install, dismissal and install remembered, none in the home-screen app or on desktop, light and dark, Korean
 bun scripts/device-security-demo-regression.ts # Phone & devices on demo fixtures: revoking every device (the caller's warning, the confirmation, a refused write, a watching device) and the line every window gets when a device pairs
 bun scripts/chat-browser-qa.ts  # chat lens end to end
+bun scripts/conversation-search-browser-qa.ts # Search conversation at 1280 and 390: matches newest first, a pick four pages back read and put at the top, no match, a match no longer there
+bun scripts/conversation-search-demo-regression.ts # Search conversation in the app on demo fixtures at 1280 and 390: the pane's menu and the palette open it, a pick opens the chat there, and a bridge without `conversation-search` offers none
 bun scripts/omo-plan-browser-regression.ts # OmO todo progress and plan panel on isolated native fixtures
 bun scripts/pane-input-focus-demo-regression.ts # the input focus shortcut against fictional panes
 bun scripts/mirror-scroll-demo-regression.ts # fixed mirror wheel/touch, native history, no guessed program input, observe guards

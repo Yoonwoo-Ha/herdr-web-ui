@@ -27,6 +27,7 @@ import { skillSyntax } from "../../shared/skill-syntax.ts";
 import { firstMessageFault } from "../../shared/launch-rules.ts";
 import { insertTextProblem } from "../../shared/terminal-insert.ts";
 import { encodeOffer } from "../../shared/relay-offer.ts";
+import { searchPattern, searchTurns, MAX_SEARCH_QUERY, type ConversationSearchResponse } from "../../shared/conversation-search.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
 import { closeLayoutPane, moveLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
 import { deviceLabel } from "../../src/lib/phone.ts";
@@ -1552,6 +1553,15 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     return json({ workspace_id: made.workspace_id, pane_id: made.pane_id, already_open: false, path: checkout.path, branch: checkout.branch, ...(agent ? { agent_started: made.agent_started } : {}) } satisfies WorktreeOpened);
   }
 
+  // the demo's chats are one page each: the whole chat is searched at once
+  if (path === "/api/pane/conversation/search") {
+    const q = query.get("q") ?? "";
+    const pattern = q.length > MAX_SEARCH_QUERY ? null : searchPattern(q);
+    if (pattern === null) return error("invalid_query", `q must hold a word and at most ${MAX_SEARCH_QUERY} characters`, 400);
+    const key = keyOfPane.get(paneId);
+    const chat = key ? chats.get(key) : undefined;
+    return json({ matches: chat ? searchTurns(chat.turns, pattern) : [], cursor: null } satisfies ConversationSearchResponse);
+  }
   if (path === "/api/pane/conversation") {
     const key = keyOfPane.get(paneId);
     const chat = key ? chats.get(key) : undefined;
@@ -2347,7 +2357,7 @@ class DemoSocket extends EventTarget {
       const open = new Event("open");
       this.onopen?.(open);
       this.dispatchEvent(open);
-      this.push({ type: "snapshot", snapshot: readSnapshot(local)!, features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "ping", "terminal-insert", "agent-only"], connection: this.connection });
+      this.push({ type: "snapshot", snapshot: readSnapshot(local)!, features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "ping", "terminal-insert", "agent-only", "conversation-search"], connection: this.connection });
     }, 20);
     this.timers.add(opening);
   }

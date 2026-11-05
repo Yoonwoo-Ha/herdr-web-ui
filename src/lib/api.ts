@@ -3,6 +3,7 @@ import type { PreferencesChange, SharedPreferences } from "../../shared/preferen
 import type { AlertWebhookSave, AlertWebhookView } from "../../shared/alert-webhook.ts";
 import type { SeenFinish, SeenPresentation } from "../../shared/seen.ts";
 import type { AgentCatalogResponse, AgentTabStarted } from "../../shared/agent-catalog.ts";
+import type { ConversationSearchResponse } from "../../shared/conversation-search.ts";
 import { resumeConnectionTraces } from "./connectionTrace.ts";
 import type { PullRequestCheckLog, PullRequestMergeRequest, PullRequestView } from "../../shared/pull-request.ts";
 import { machinePath, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
@@ -705,6 +706,17 @@ export function prefetchPaneConversation(paneId: string, machineId: string, prom
   pressed.read.then((answer) => { pressed.answer = answer; }, () => { if (pressReads.get(url) === pressed) pressReads.delete(url); });
   pressReads.set(url, pressed);
   setTimeout(() => { if (pressReads.get(url) === pressed) pressReads.delete(url); }, PRESS_READ_MS);
+}
+
+/**
+ * GET /api/pane/conversation/search: the messages and answers that hold `query`, newest first, a
+ * few pages per answer; `before` and `historyId` go on from an answer's cursor and history.
+ */
+export async function searchPaneConversation(paneId: string, query: string, machineId = "local", page: { before?: string; historyId?: string; signal?: AbortSignal } = {}): Promise<ConversationSearchResponse> {
+  const params = new URLSearchParams({ pane_id: paneId, q: query });
+  if (page.before !== undefined) params.set("before", page.before);
+  if (page.historyId !== undefined) params.set("history_id", page.historyId);
+  return getJson<ConversationSearchResponse>(machinePath(machineId, `pane/conversation/search?${params.toString()}`), page.signal ? { signal: page.signal } : undefined);
 }
 
 /** GET /api/pane/conversation: structured turns, or scrollback fallback; `page` as ConversationResponse.cursor describes. */

@@ -84,6 +84,7 @@ import { useMachineDialog } from "./lib/useMachineDialog.ts";
 import { useNewSessionMachine, useNewSessionState, useSessionHistoryList } from "./lib/useNewSessionDialog.ts";
 import { useCommandPalette } from "./lib/useCommandPalette.ts";
 import { useRenameRequest } from "./lib/useRenameRequest.ts";
+import { useSearchRequest } from "./lib/useSearchRequest.ts";
 import { useFilePanels } from "./lib/useFilePanels.ts";
 import { usePaneCoverage } from "./lib/usePaneCoverage.ts";
 import { useT } from "./lib/i18n.ts";
@@ -209,6 +210,11 @@ export function App() {
   const { paletteOpen, paletteQuery, openPalette, setPaletteOpen } = useCommandPalette();
   const paneControls = useRef<PaneControls | null>(null);
   const [findRequest, setFindRequest] = useState<{ paneId: string | null; serial: number }>({ paneId: null, serial: 0 });
+  // Search conversation over a pane's chat (ChatView): from the palette for the selected pane, from a pane's own menu for that one
+  const { searchRequest, requestSearch } = useSearchRequest(setDrawerOpen);
+  /** a pane's chat can be searched: it shows the chat, and its PC's bridge searches (an older one does not) */
+  const searchable = (machineId: string, pane: HerdrPane, lens: PaneView): boolean =>
+    showsChat(pane, lens) && machineSessions.peek(machineId)?.socket.canSearchConversation() === true;
   // the Rename tab shortcut and palette action: the tab strip of the selected pane opens its name field
   const { renameRequest, requestRename, clearRenameRequest } = useRenameRequest(selectedMachineId, selectedPaneId);
   // the header's More menu: its button
@@ -383,6 +389,8 @@ export function App() {
   const attachOn = (machineId: string): boolean => { const herdr = herdrOn(machineId); return herdr?.terminal_attach !== false || herdr?.terminal_mirror === true; };
 
   const { lenses, view, pressPane } = usePaneLens({ settings, selectedPaneId, selectedMachineId, selectedPane, selectedAgent, terminalAttach, attachOn, notificationViewTarget, setNotificationViewTarget, lens, setLens, viewPicks, terminalPeek, setTerminalPeek });
+  // a peek shows the terminal over the chat: nothing there to search
+  const selectedSearchable = selectedPane !== null && terminalPeek === null && searchable(selectedMachineId, selectedPane, view);
 
   const contentKey = paneContentKey(selectedMachine, selectedPane, view);
   const { dialogCover, webDialogCover, contentReady } = usePaneCoverage({ contentKey });
@@ -585,10 +593,11 @@ export function App() {
       enableNotifications: bellVisible && bell.run === enableNotifications ? () => void enableNotifications() : null,
       refresh: () => void load(),
       openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); setFilesOpen(true); } : null,
+      searchConversation: selectedSearchable && selectedPaneId !== null ? () => requestSearch(split ? split.active : soloSlot, selectedMachineId, selectedPaneId) : null,
       // herdr's layout calls on the selected pane (lib/layoutActions.ts): only those the PC's herdr answers
       ...layoutActions({ selectedPaneId, offer: appLayout, paneSplits: !selectedPane?.own_tab, selection: selectionRef, roster: snapshotRef, load, selectPane, layoutRefused }),
     }),
-    [selectPane, selectedPaneId, selectedPane?.own_tab, selectedMachineId, appLayout, reorderCoordinator, tabStripMounted, setView, view, terminalPeek, endPeek, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.run, enableNotifications, load, layoutRefused, moveRefused, lenses, openSidebarFilter],
+    [selectPane, selectedPaneId, selectedPane?.own_tab, selectedMachineId, appLayout, reorderCoordinator, tabStripMounted, setView, view, terminalPeek, endPeek, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.run, enableNotifications, load, layoutRefused, moveRefused, lenses, openSidebarFilter, selectedSearchable, requestSearch, split, soloSlot],
   );
 
   useShortcuts(actions, locked === false);
@@ -980,6 +989,7 @@ export function App() {
                     mirrored={herdr?.terminal_attach === false || herdr?.terminal_mirror === true}
                     onOpenInHalf={wideScreen ? (id, side) => dockSide({ machineId, paneId: id }, side) : undefined}
                     onRecoverUnsent={(target) => openUnsent({ machineId, pane: target })}
+                    onSearchConversation={(target) => searchable(machineId, target, lensOf(target)) && !(slotPeek !== null && target.pane_id === pane?.pane_id) ? () => requestSearch(slot, machineId, target.pane_id) : null}
                     onNewTab={workspace ? () => actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }) : undefined}
                     onNewTerminal={workspace ? () => actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }) : undefined}
                     onMoveToWorkspace={(tabId, workspaceId) => actions.moveTabToWorkspace({ machineId, tabId, workspaceId })}
@@ -1023,6 +1033,7 @@ export function App() {
                         // the paging shortcuts reach the selected pane of the active half only
                         controls={active && itemActive ? paneControls : undefined}
                         findRequest={active && findRequest.paneId === item?.pane_id ? findRequest.serial : 0}
+                        searchRequest={searchRequest.slot === slot && searchRequest.machineId === machineId && searchRequest.paneId === item?.pane_id ? searchRequest.serial : 0}
                         autoSelected={active ? autoSelected : true}
                         terminalFontSize={settings.terminalFontSize}
                         split={herdrSplit || splitOn}

@@ -197,6 +197,7 @@ const BASE: Record<string, string> = {
   // ---- command palette ----
   "Refresh": "更新",
   "Search panes and actions": "ペインと操作を検索",
+  "Search conversation": "会話を検索",
 
   // ---- new workspace ----
   "Browse": "参照",

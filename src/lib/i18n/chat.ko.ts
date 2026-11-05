@@ -4,7 +4,7 @@
  * components/ChatMinimap.tsx, components/ImageLightbox.tsx, components/BackgroundTasks.tsx,
  * components/BackgroundAgentDetail.tsx, components/Artifacts.tsx, components/MarkdownLinkMenu.tsx,
  * lib/workBlocks.ts (with CATEGORY_LABEL), lib/toolVerbs.ts (with VERB_LABEL), lib/outcomeChip.ts,
- * lib/chatTimestamp.ts, lib/chatReadDeadline.ts.
+ * lib/chatTimestamp.ts, lib/chatReadDeadline.ts, components/ConversationSearch.tsx.
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const CHAT_KO: Record<string, string> = {
@@ -207,4 +207,17 @@ export const CHAT_KO: Record<string, string> = {
   "Show full message": "전체 메시지 보기",
   "Open link": "링크 열기",
   "Sent · waiting for the agent's next turn": "전송됨 · 에이전트의 다음 턴을 기다리는 중",
+  "Search messages and answers…": "메시지와 답변 검색…",
+  "Matching messages": "일치하는 메시지",
+  "You": "나",
+  "Type a word from a message or an answer.": "메시지나 답변에 있는 단어를 입력하세요.",
+  "This PC's bridge cannot search conversations yet. Update it to search here.": "이 PC의 브리지는 아직 대화를 검색할 수 없습니다. 여기서 검색하려면 브리지를 업데이트하세요.",
+  "The conversation was replaced while it was searched.": "검색하는 동안 대화가 바뀌었습니다.",
+  "Couldn't search the conversation.": "대화를 검색하지 못했습니다.",
+  "Searching earlier messages…": "이전 메시지 검색 중…",
+  "Showing the newest {n} matches.": "가장 최근에 일치한 {n}개를 표시합니다.",
+  "No message or answer holds this.": "이 내용이 있는 메시지나 답변이 없습니다.",
+  "Searched the whole conversation.": "대화 전체를 검색했습니다.",
+  "This message is no longer in the conversation.": "이 메시지는 더 이상 대화에 없습니다.",
+  "Couldn't load the earlier messages.": "이전 메시지를 불러오지 못했습니다.",
 };

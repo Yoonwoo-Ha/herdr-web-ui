@@ -42,6 +42,7 @@ export function useMachineApi() {
     fetchPaneTranscript: (pane: string, lines: number, signal?: AbortSignal) => api.fetchPaneTranscript(pane, lines, id, signal),
     fetchPaneConversation: (pane: string, page?: api.ConversationPageQuery) => api.fetchPaneConversation(pane, id, page),
     peekPaneConversation: (pane: string, prompts?: number) => api.peekPaneConversation(pane, id, prompts),
+    searchPaneConversation: (pane: string, query: string, page?: Parameters<typeof api.searchPaneConversation>[3]) => api.searchPaneConversation(pane, query, id, page),
     fetchPanePrompt: (pane: string) => api.fetchPanePrompt(pane, id),
     fetchPanePromptState: (pane: string) => api.fetchPanePromptState(pane, id),
     answerPanePrompt: (answer: Parameters<typeof api.answerPanePrompt>[0]) => api.answerPanePrompt(answer, id),

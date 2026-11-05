@@ -195,6 +195,7 @@ const BASE: Record<string, string> = {
   // ---- command palette ----
   "Refresh": "새로 고침",
   "Search panes and actions": "패널과 동작 검색",
+  "Search conversation": "대화 검색",
 
   // ---- new workspace ----
   "Browse": "찾아보기",

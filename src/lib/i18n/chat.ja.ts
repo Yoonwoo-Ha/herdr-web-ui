@@ -4,7 +4,7 @@
  * components/ChatMinimap.tsx, components/ImageLightbox.tsx, components/BackgroundTasks.tsx,
  * components/BackgroundAgentDetail.tsx, components/Artifacts.tsx, components/MarkdownLinkMenu.tsx,
  * lib/workBlocks.ts (with CATEGORY_LABEL), lib/toolVerbs.ts (with VERB_LABEL), lib/outcomeChip.ts,
- * lib/chatTimestamp.ts, lib/chatReadDeadline.ts.
+ * lib/chatTimestamp.ts, lib/chatReadDeadline.ts, components/ConversationSearch.tsx.
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const CHAT_JA: Record<string, string> = {
@@ -207,4 +207,17 @@ export const CHAT_JA: Record<string, string> = {
   "Show full message": "メッセージ全体を表示",
   "Open link": "リンクを開く",
   "Sent · waiting for the agent's next turn": "送信済み · エージェントの次のターンを待っています",
+  "Search messages and answers…": "メッセージと回答を検索…",
+  "Matching messages": "一致するメッセージ",
+  "You": "あなた",
+  "Type a word from a message or an answer.": "メッセージか回答にある語を入力してください。",
+  "This PC's bridge cannot search conversations yet. Update it to search here.": "この PC のブリッジはまだ会話を検索できません。ここで検索するにはブリッジを更新してください。",
+  "The conversation was replaced while it was searched.": "検索中に会話が置き換えられました。",
+  "Couldn't search the conversation.": "会話を検索できませんでした。",
+  "Searching earlier messages…": "以前のメッセージを検索しています…",
+  "Showing the newest {n} matches.": "最新の一致 {n} 件を表示しています。",
+  "No message or answer holds this.": "これを含むメッセージや回答はありません。",
+  "Searched the whole conversation.": "会話全体を検索しました。",
+  "This message is no longer in the conversation.": "このメッセージはもう会話にありません。",
+  "Couldn't load the earlier messages.": "以前のメッセージを読み込めませんでした。",
 };

@@ -3218,6 +3218,23 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   row, and a picked row that leaves hands its place, and the focus, to the row now there (the search
   when none is left). Below 640px the sheet is one fixed height, the chips and footer staying put.
 
+### Conversation search (`.conversation-search`)
+- **Search conversation** (#2018) is the palette's sheet (`.command-palette`: top-offset
+  `--palette-w` on a desktop, one fixed-height sheet below 640px) holding a search field and a
+  list of snippets, opened from the pane's menu and the palette only: nothing is added to the
+  chat or the composer, so a phone's screen keeps its room.
+- It follows the Codex app's Find in chat in what it reads (the user's messages and the agent's
+  final answers, older pages included, searched on the PC) and differs in what it shows: a list of
+  matches, newest first, instead of a match count with next/previous and highlights in the chat.
+  The chat marks nothing; a snippet's matched words take `--text-strong` at `--fw-semibold`.
+- A row is a `.menu-item`: the speaker (the user's icon, or the agent's mark), a two-line snippet
+  with the match near its start, and the turn's time as `.palette-row-subtitle`.
+  The footer says how far the search got (Searching earlier messages…, the whole conversation,
+  the newest 200), or what a pick is doing.
+- A pick keeps the sheet open, its row spinning, while the chat reads the pages back to the turn
+  (the largest page size, so a turn 500 prompts back takes ten reads); the sheet closes once the
+  turn sits at the top of the view, or says the conversation no longer holds it.
+
 ### Settings dialog
 - A Settings shortcut opened over a file preview places Settings above it (`--z-modal + 2`, one
   above the preview). Settings owns Escape until it closes; the preview keeps its history entry

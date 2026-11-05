@@ -9,8 +9,10 @@ import { mergeCatalogSources } from "./catalog-sources.ts";
 import { rememberPaneCommands, scanPaneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
 import { badRequest, conflictResponse, errorResponse, isCount, isJsonObject, jsonResponse, readJsonObject, requestIdContext, setRequestRoute } from "./http.ts";
-import { conversationImage, ConversationReadPending, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneProcessRoots, paneTranscript, toolOutput } from "./conversation.ts";
+import { conversationImage, ConversationReadPending, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneProcessRoots, paneTranscript, toolOutput, type ConversationPage } from "./conversation.ts";
 import { copilotRecoverable } from "./conversation-shared.ts";
+import { MAX_SEARCH_QUERY, searchPattern, type ConversationSearchResponse } from "../shared/conversation-search.ts";
+import { searchConversationPages } from "./conversation-search.ts";
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { openCodeFlagVersion, openCodeInstalledVersion } from "./opencode-service.ts";
 import { DevinHistoryChanged } from "./devin.ts";
@@ -228,6 +230,28 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
       const text = await paneSelectionRead(paneId, { row: anchorRow!, col: anchorCol! }, { row: cursorRow!, col: cursorCol! });
       return jsonResponse({ text });
     } catch (error) {
+      return errorResponse(error);
+    }
+  }
+
+  if (pathname === "/api/pane/conversation/search") {
+    setRequestRoute(pathname);
+    if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+    const paneId = url.searchParams.get("pane_id");
+    if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
+    const query = url.searchParams.get("q") ?? "";
+    const pattern = query.length > MAX_SEARCH_QUERY ? null : searchPattern(query);
+    if (pattern === null) return badRequest("invalid_query", `q must hold a word and at most ${MAX_SEARCH_QUERY} characters`);
+    const before = url.searchParams.get("before") ?? undefined;
+    const historyId = url.searchParams.get("history_id") ?? undefined;
+    try {
+      const read = (page: ConversationPage) => paneConversation(paneId, options.codexHome, page, options.devinDbPath, options.opencodeDb, options.hermesHome, options.grokHome, options.museData);
+      return jsonResponse(await searchConversationPages(read, pattern, { before, historyId }), 200, { "cache-control": "no-store" });
+    } catch (error) {
+      if (error instanceof HistoryChanged || error instanceof DevinHistoryChanged) return jsonResponse({ error: { code: "history_changed", message: error.message } }, 409);
+      if (error instanceof ConversationReadPending) return jsonResponse({ error: { code: "conversation_read_pending", message: error.message } }, 503, { "cache-control": "no-store" });
+      // the chat shows the terminal's scrollback there: no message of its own to search
+      if (error instanceof ConversationUnavailable) return jsonResponse({ matches: [], cursor: null } satisfies ConversationSearchResponse, 200, { "cache-control": "no-store" });
       return errorResponse(error);
     }
   }

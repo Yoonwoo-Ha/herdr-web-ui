@@ -39,7 +39,7 @@ import { phaseRows, planRows, taskRows, todoRows, type ChecklistRow } from "../l
 import { isTodoTool, parseTodoAnswer, todoCallSummary, type TodoItem, type TodoStatus } from "../lib/todos.ts";
 import { formatGoalTime, turnGoal, type GoalState, type GoalStatus } from "../lib/goals.ts";
 import { publishSessionStats, sessionStats } from "../lib/sessionStats.ts";
-import { useSettings } from "../lib/settings.ts";
+import { HISTORY_PROMPTS, useSettings } from "../lib/settings.ts";
 import { learnFromConversation } from "../lib/tabLabels.ts";
 import { PAGE_OVERLAP_ROWS, pageScrollDistance } from "../lib/pageScroll.ts";
 import { dropPendingListScroll, listEndPadded } from "../lib/followScroll.ts";
@@ -84,6 +84,8 @@ const READER_ALLOWANCE_PX = 1;
 // no input this page sees (a screen reader's, a Firefox scrollbar's) leaves the end only past it, and
 // only over a transcript that did not shrink under it (onScroll, #2042).
 const LAYOUT_ALLOWANCE_PX = 48;
+/** a search's pick reads back to its turn a page of the largest size there is (the server's own cap) */
+const LARGEST_PAGE = Math.max(...HISTORY_PROMPTS);
 /** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
 const ChatPaneContext = createContext<string | null>(null);
 const ChatHistoryContext = createContext("");
@@ -107,6 +109,7 @@ import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts"
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { replyCommentsKey } from "../lib/replyComments.ts";
 import { ReplyCommentAction } from "./ReplyComments.tsx";
+import { ConversationSearch, type RevealResult } from "./ConversationSearch.tsx";
 import { useResourceUrl } from "../lib/useResourceUrl.ts";
 
 /** Slow reads in a row the chat waits through quietly before it alarms: about 50 s at the local 15 s deadline. */
@@ -254,6 +257,8 @@ export interface ChatViewProps {
   quotable?: boolean;
   /** the pane's folder: a tool card's file reads from it (`app/src/a.ts`), while its title and what it opens stay the path as written */
   cwd?: string | null;
+  /** bumped to open Search conversation over this chat (the palette, the pane's menu): a pick opens the chat at its message */
+  searchRequest?: number;
 }
 
 
@@ -1293,7 +1298,7 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, presentationKey, finishEpoch, finishId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, unsentKey = 0, pendingRows = NO_ROWS, localSend, navigation, connected, ended, agent, agentStatus, agentSession = null, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, onOpenTerminal, covered = false, peek = null, onCommandScreenClosed, onOutcomes, interactive = false, quotable = false, cwd = null }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, presentationKey, finishEpoch, finishId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, unsentKey = 0, pendingRows = NO_ROWS, localSend, navigation, connected, ended, agent, agentStatus, agentSession = null, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null, onOpenTerminal, covered = false, peek = null, onCommandScreenClosed, onOutcomes, interactive = false, quotable = false, cwd = null, searchRequest = 0 }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
@@ -1347,6 +1352,17 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const openViewer = useCallback((images: GalleryImage[], index: number) => setViewer({ images, index }), []);
   const openMarkdownImage = useCallback((image: GalleryImage) => openViewer([image], 0), [openViewer]);
   const closeViewer = useCallback(() => setViewer(null), []);
+  // Search conversation, opened by a request from outside the chat: a mount takes the request it finds
+  // as seen, and 0 is another pane's turn. A chat kept mounted off its tab, or under a peek, closes it
+  const [searching, setSearching] = useState(false);
+  const seenSearchRequest = useRef(searchRequest);
+  useEffect(() => {
+    if (seenSearchRequest.current === searchRequest) return;
+    seenSearchRequest.current = searchRequest;
+    if (searchRequest > 0) setSearching(true);
+  }, [searchRequest]);
+  useEffect(() => { if (!paneVisible || covered) setSearching(false); }, [paneVisible, covered]);
+  const closeSearch = useCallback(() => setSearching(false), []);
   /** an answer for this pane arrived (or failed): until then, and while a replaced history is read again, an empty chat is only loading */
   const [loaded, setLoaded] = useState(false);
   const presentationRef = useRef(presentationKey); presentationRef.current = presentationKey;
@@ -1478,6 +1494,9 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const prependAnchor = useRef<{ key: string; offset: number } | null>(null);
   /** where the reader left this pane before (lib/chatScrollMemory.ts), until the first answer puts it back */
   const restoring = useRef<ChatPosition | null>(null);
+  /** the turn a search's pick opens the chat at (revealTurn), until its row is in; bumped for each pick */
+  const revealing = useRef<string | null>(null);
+  const [revealTick, setRevealTick] = useState(0);
   const stopRestore = useRef<(() => void) | null>(null);
   const [pollKey, setPollKey] = useState(0);
   /**
@@ -1831,18 +1850,24 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     conversationRefresh.restart();
   }, [connected, visible, conversationRefresh]);
 
-  const loadOlder = useCallback(async (): Promise<void> => {
+  /**
+   * The page before the oldest shown, laid out above it: Earlier messages' page, or (`from`) the page
+   * before `before` at a size of its own, as a search's pick reads back to its turn. Answers the page
+   * laid out, null when none was (a read under way, another history, a failed read).
+   */
+  const loadOlder = useCallback(async (from?: { before: string; prompts: number }): Promise<ConversationResponse | null> => {
     const node = scroller.current;
+    const before = from?.before ?? olderCursor;
     // a paused view's pages are read once its conversation is proved again
-    if (node === null || loadingOlder.current || stale || typeof olderCursor !== "string") return;
-    const before = olderCursor;
+    if (node === null || loadingOlder.current || stale || typeof before !== "string") return null;
     const generation = olderGeneration.current;
+    let laid: ConversationResponse | null = null;
     loadingOlder.current = true;
     setOlderState("loading");
     await conversationRefresh.page(async (signal) => {
       try {
         if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
-        const page = await fetchPaneConversation(paneId, { before, prompts: pagePrompts, signal });
+        const page = await fetchPaneConversation(paneId, { before, prompts: from?.prompts ?? pagePrompts, signal });
         if (shownPane.current !== paneId || olderGeneration.current !== generation) return;
         if (autoTabNames.current) learnFromConversation(machineId, paneId, page);
         if (page.history_id !== history.current) {
@@ -1863,6 +1888,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         setOlder((turns) => [...page.turns, ...turns]);
         setOlderCursor(page.cursor);
         setOlderState("idle");
+        laid = page;
         // the newest page may have slid since it was read: poll it from the held start now
         if (first) setPollKey((key) => key + 1);
       } catch (cause) {
@@ -1881,6 +1907,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       if (!(cause instanceof DOMException && cause.name === "AbortError")) throw cause;
       if (olderGeneration.current === generation) { loadingOlder.current = false; setOlderState("idle"); }
     });
+    return laid;
   }, [fetchPaneConversation, olderCursor, paneId, pagePrompts, conversationRefresh, stale]);
 
   // Reconcile the estimated prepend with the actual reader row, through the list's
@@ -2448,21 +2475,18 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       return { ...row, beforeUser: row.turn?.role === "assistant" && next !== undefined && (next.turn === null || next.turn.role === "user") };
     });
   }, [withOutcomes, shownTurns, rowSlots]);
-  // Back in a pane the reader left away from the end: the first answer read puts the turn they
-  // were on back where it sat, before paint. The list's index scroll starts from estimated heights,
-  // so the row is brought to its offset once measured, for a few frames at most; any scroll of the
-  // reader's own, or an earlier page loaded above (the prepend anchor), takes over at once.
-  useLayoutEffect(() => {
-    const saved = restoring.current;
-    if (saved === null || !loaded || error !== null || state.source !== "conversation") return;
-    restoring.current = null;
-    const index = chatRestoreIndex(saved, history.current ?? null, timelineRows.map((row) => row.turn === null ? `outcome|${row.outcome.id}` : chatTurnAnchor(row.turn)));
-    const list = timeline.current, node = scroller.current;
-    if (index === null || list === null || node === null) return;
+  /**
+   * Puts the row at `index` `offset` px below the view's top, the reader reading there. The list's
+   * index scroll starts from estimated heights, so the row is brought to its offset once measured,
+   * for a few frames at most; any scroll of the reader's own, or an earlier page loaded above (the
+   * prepend anchor), takes over at once.
+   */
+  const placeRow = (list: LegendListRef, node: HTMLDivElement, index: number, offset: number): void => {
+    stopRestore.current?.();
     const key = timelineRows[index]!.key;
     pagingAway.current = true; stickToBottom.current = false; setAway(true);
     navigated();
-    void list.scrollToIndex({ index, viewPosition: 0, viewOffset: saved.offset, animated: false });
+    void list.scrollToIndex({ index, viewPosition: 0, viewOffset: offset, animated: false });
     const olderAt = olderCount.current;
     let frame = 0, frames = 0, stable = 0;
     const stop = (): void => {
@@ -2475,7 +2499,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       if (++frames > 30 || timeline.current !== list || olderCount.current !== olderAt || prependAnchor.current !== null) { stop(); return; }
       const row = node.querySelector<HTMLElement>(`[data-chat-row="${CSS.escape(key)}"]`);
       if (row !== null) {
-        const delta = row.getBoundingClientRect().top - node.getBoundingClientRect().top - saved.offset;
+        const delta = row.getBoundingClientRect().top - node.getBoundingClientRect().top - offset;
         if (Math.abs(delta) > 1) { stable = 0; void list.scrollToOffset({ offset: node.scrollTop + delta, animated: false }); }
         else if (++stable >= 2) { stop(); return; }
       }
@@ -2485,7 +2509,47 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     document.addEventListener("keydown", stop, true);
     stopRestore.current = stop;
     frame = requestAnimationFrame(settle);
+  };
+  // Back in a pane the reader left away from the end: the first answer read puts the turn they
+  // were on back where it sat, before paint.
+  useLayoutEffect(() => {
+    const saved = restoring.current;
+    if (saved === null || !loaded || error !== null || state.source !== "conversation") return;
+    restoring.current = null;
+    const index = chatRestoreIndex(saved, history.current ?? null, timelineRows.map((row) => row.turn === null ? `outcome|${row.outcome.id}` : chatTurnAnchor(row.turn)));
+    const list = timeline.current, node = scroller.current;
+    if (index === null || list === null || node === null) return;
+    placeRow(list, node, index, saved.offset);
   }, [loaded, error, state.source, timelineRows]);
+  // a search's pick (revealTurn): its turn at the top of the view, once its page is in
+  useLayoutEffect(() => {
+    const anchor = revealing.current;
+    const list = timeline.current, node = scroller.current;
+    if (anchor === null || list === null || node === null) return;
+    const index = timelineRows.findIndex((row) => row.turn !== null && chatTurnAnchor(row.turn) === anchor);
+    if (index < 0) return;
+    revealing.current = null;
+    placeRow(list, node, index, 0);
+  }, [timelineRows, revealTick]);
+  /**
+   * Opens the chat at a search's pick: the pages before the oldest shown are read, the largest page
+   * at a time, until its turn is in. `missing`: the conversation's beginning came first, or its
+   * transcript was replaced meanwhile.
+   */
+  const revealTurn = async (anchor: string): Promise<RevealResult> => {
+    const holds = (turns: readonly ConversationTurn[]): boolean => turns.some((turn) => chatTurnAnchor(turn) === anchor);
+    const reveal = (): RevealResult => { revealing.current = anchor; setRevealTick((tick) => tick + 1); return "shown"; };
+    if (holds(shownTurns)) return reveal();
+    const generation = olderGeneration.current;
+    for (let before = olderCursor; typeof before === "string";) {
+      const page = await loadOlder({ before, prompts: LARGEST_PAGE });
+      if (olderGeneration.current !== generation) return "missing";
+      if (page === null) return "failed";
+      if (holds(page.turns)) return reveal();
+      before = page.cursor;
+    }
+    return "missing";
+  };
   // Covers first layout, restored short chats and a fresh read that changes no scroll offset.
   useLayoutEffect(() => { measureEnd(); });
   useEffect(() => () => stopRestore.current?.(), []);
@@ -2674,5 +2738,6 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       onPendingAnswerDone?.(paneId, prompt.id);
     }} />, promptDock)}
   {viewer !== null && <ImageLightbox images={viewer.images} index={viewer.index} onClose={closeViewer} />}
+  {searching && <ConversationSearch paneId={paneId} agent={agent} historyId={historyId} onClose={closeSearch} onPick={(match) => revealTurn(match.turn)} />}
   </ToolPathRootContext.Provider></ImageViewerContext.Provider></ChatHistoryContext.Provider></ChatPaneContext.Provider></ChatMarkdownImages>;
 });

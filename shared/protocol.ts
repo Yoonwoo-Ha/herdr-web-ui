@@ -278,6 +278,11 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *         Grok requires exact live process/session evidence, Agy live process/session evidence;
  *         rewinds invalidate cursors.
  *         Grok/Agy optional activity describes the latest native turn, independently of pane status.)
+ *  GET    /api/pane/conversation/search?pane_id=&q=[&before=&history_id=] -> ConversationSearchResponse
+ *         (the user's messages and the agent's answers that hold q, newest first, read through the
+ *         same pages; a few pages per answer, `cursor` goes on as `before` with the answer's
+ *         history_id. 409 history_changed, 503 conversation_read_pending as above; a pane with no
+ *         readable store answers no matches, one that loses it after a page was read 409 history_changed.)
  *  POST   /api/pane/close { pane_id }         -> { ok: true } (pane.close RPC; the collector's
  *         session-changed broadcast removes it from every client's sidebar)
  *  POST   /api/pane/rename { pane_id, label } -> { ok: true } (pane.rename; empty label clears it)
@@ -627,6 +632,8 @@ export interface ConversationMetadata {
 export type { OmoTask, OmoRunNode, OmoRun, OmoActivity, PaneBackgroundAgentDetail } from "./tasks.ts";
 
 export type { PlanStep, PanePlan } from "./plans.ts";
+
+export type { ConversationSearchMatch, ConversationSearchResponse } from "./conversation-search.ts";
 
 /** One page a Claude Code session published with its Artifact tool: its claude.ai URL, the title of its latest publish (else the published file's name) and when that was. */
 export interface ClaudeArtifact {
@@ -1127,8 +1134,9 @@ export interface ClientConnectionTrace {
  * `terminal-history` (herdr-core, which has no viewport to scroll): each attach clears the client's scrollback and replays
  * the pane's last TERMINAL_HISTORY_LINES lines, so the client keeps the scrollback and scrolls it itself. Without it herdr
  * owns the scrollback and the client keeps none.
+ * `conversation-search`: GET /api/pane/conversation/search answers; without it the browser offers no conversation search.
  */
-export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events" | "terminal-history" | "input-receipt";
+export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events" | "terminal-history" | "input-receipt" | "conversation-search";
 
 export type ServerMessage =
   | { type: "machine-event"; event: MachineEvent }

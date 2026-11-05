@@ -950,6 +950,11 @@ export class HerdrSocket {
     this.send({ type: "resize", pane_id: paneId, cols, rows });
   }
 
+  /** Whether the PC searches a pane's conversation (`conversation-search`); false until the features come, and from an older bridge. */
+  canSearchConversation(): boolean {
+    return this.features.has("conversation-search");
+  }
+
   /** Whether this connection may take a held pane from another web bridge: a server that knows how, and not observing. */
   canTakeOver(): boolean {
     return this.connected && this.mode === "interact" && this.features.has("take-over");
