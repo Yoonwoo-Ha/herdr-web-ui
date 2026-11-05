@@ -119,6 +119,12 @@ export interface ServerContext {
   readonly peer: { kind: "socket" } | { kind: "relay"; device: DeviceMatch; sessionId: string; serverId: string; key: string };
   readonly services: RequestServices;
   readonly relayBodyBudget?: EventStreamBudget;
+  /**
+   * The request came to the opt-in LAN HTTPS listener (server/lan-https.ts), from a private IPv4 peer:
+   * it gets in only with the token or a paired device, never as an open install, by the bridge token,
+   * and its wrong tokens share one budget with every other peer there.
+   */
+  readonly lanHttps?: boolean;
 }
 
 /** The routes that read or write files and folders on this disk (or run git and gh in them) for a pane, a workspace or a picker. */
@@ -138,7 +144,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   const url = new URL(request.url);
   let { pathname } = url;
   const relayPeer = ctx.peer.kind === "relay" ? ctx.peer.device : undefined;
-  const bridgeAuthorized = relayPeer === undefined && isAuthenticated(request, bridgeToken);
+  const bridgeAuthorized = relayPeer === undefined && ctx.lanHttps !== true && isAuthenticated(request, bridgeToken);
   // the connection server that reaches this one as its PC reads its update status and asks for the
   // update on offer: an Ovis run on this PC by itself is updated through its own updater, never
   // replaced (server/machines.ts ownOffer). An install still names the offered revision and the
@@ -154,7 +160,8 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   const forwardedFor = relayPeer === undefined ? request.headers.get("x-forwarded-for") : null;
   const requestHost = request.headers.get("host");
   // the guessing budget of the address that asks (auth.ts): a token presented while it waits is not compared
-  const client = relayPeer === undefined ? authClient(ip?.address ?? null, request.headers) : `relay:${relayPeer.id}`;
+  // on the LAN listener `via lan-https` puts every peer in one shared budget too (auth.ts sharedKey)
+  const client = relayPeer !== undefined ? `relay:${relayPeer.id}` : ctx.lanHttps === true && ip !== null ? `${ip.address} via lan-https` : authClient(ip?.address ?? null, request.headers);
   const presented = relayPeer === undefined ? presentedToken(request, token, client) : null;
   // counted at once, before any await below lets a concurrent guess pass the same check. Every
   // wrong token counts, a paired watch device's too (a right one would upgrade it to drive);
@@ -176,7 +183,8 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       // only the shape decideAccess could let in by login: from loopback, one tailnet address, not Funnel
       token === "" && pairedDevice === null && loopback && tailscaleLogin !== null && !funnel && inTailnet(forwardedFor) && apiPath)
     : { owner: null, tagged: false, soleLogin: null, dnsName: null, tailnetIp: null };
-  const portalProven = relayPeer === undefined && (options.portal?.vouches(request.headers.get("x-portal-proof") ?? null) ?? false);
+  // Portal reaches this server over loopback, never the LAN listener: its proof is not a way in there
+  const portalProven = relayPeer === undefined && ctx.lanHttps !== true && (options.portal?.vouches(request.headers.get("x-portal-proof") ?? null) ?? false);
   const access = decideAccess({
     relayPeer,
     ...requestShape,
@@ -185,7 +193,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     device: pairedDevice,
     ...identity,
     tokenConfigured: token !== "",
-    gated: devices.gated,
+    gated: devices.gated || ctx.lanHttps === true,
     portal: {
       proven: portalProven,
       user: portalProven ? request.headers.get("x-portal-user") : null,
@@ -437,7 +445,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
           // and every page media address its renders were given
           forgetPageMedia({ device: id });
         }
-      });
+      }, ctx.lanHttps === true);
     } catch (error) { return errorResponse(error); }
   }
 

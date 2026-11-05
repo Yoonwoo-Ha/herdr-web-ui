@@ -72,6 +72,8 @@ export interface StoredDevice {
  * second kind cannot pause the first.
  */
 export type PairingPath = "code" | "account";
+/** The relay's paths, and codes typed on the LAN HTTPS listener (server/lan-https.ts), counted apart so LAN guessing cannot pause relay pairing. */
+export type PairingFailurePath = PairingPath | "lan";
 
 interface UnconfirmedFirstPair {
   device: StoredDevice;
@@ -252,10 +254,10 @@ export class DeviceStore {
    * `remote`: started through the relay, so it never lets a removed key back in; `startedBy`: the account
    * member that started it there, whose addition the new device then is
    */
-  private pending: { code: string; expires: number; attempts: number; remote: boolean; startedBy: string | null; memberRequired: boolean } | null = null;
+  private pending: { code: string; expires: number; attempts: number; lanAttempts?: number; remote: boolean; startedBy: string | null; memberRequired: boolean } | null = null;
   private codeIssues: number[] = [];
-  private readonly relayFailures: Record<PairingPath, { at: number[]; blockedUntil: number }> = {
-    code: { at: [], blockedUntil: 0 }, account: { at: [], blockedUntil: 0 },
+  private readonly relayFailures: Record<PairingFailurePath, { at: number[]; blockedUntil: number }> = {
+    code: { at: [], blockedUntil: 0 }, account: { at: [], blockedUntil: 0 }, lan: { at: [], blockedUntil: 0 },
   };
   /** First-pair cookies are not devices, and do not close the gate, until one returns. */
   private unconfirmedFirstPairs: UnconfirmedFirstPair[] = [];
@@ -452,10 +454,13 @@ export class DeviceStore {
   }
 
   /** `{ token }` when the code is right; null when it is wrong, spent or expired. */
-  pair(code: string, label: string, role: DeviceRole, now = Date.now(), origin: readonly string[] = []): { token: string; device: DeviceMatch } | null {
+  pair(code: string, label: string, role: DeviceRole, now = Date.now(), origin: readonly string[] = [], localCodeOnly = false): { token: string; device: DeviceMatch } | null {
     this.assertWritable();
     this.pruneUnconfirmedFirstPairs(now);
-    if (!this.checkPairingCode(code, now)) return null;
+    // a code started through the relay is never redeemed on the LAN listener, nor are its guesses spent there:
+    // it would make a credential no relay key or account removal reaches
+    if (localCodeOnly && this.pending?.remote === true) return null;
+    if (!this.checkPairingCode(code, now, localCodeOnly)) return null;
     // a member's code goes with the member here too (pairRelay)
     const startedBy = this.pending?.startedBy ?? null;
     if (this.pending?.memberRequired && (startedBy === null || !this.isAccountApprover(startedBy))) return null;
@@ -471,10 +476,19 @@ export class DeviceStore {
     return { token, device: { id: device.id, label: device.label, role: device.role } };
   }
 
-  /** Both transports spend the same pending code's five guesses. */
-  private checkPairingCode(code: string, now: number): boolean {
+  /**
+   * Both transports spend the same pending code's five guesses. The LAN HTTPS listener has five of its
+   * own instead (`lan`), so a stranger there cannot spend a code a phone is about to type in elsewhere.
+   */
+  private checkPairingCode(code: string, now: number, lan = false): boolean {
     const pending = this.pending;
     if (pending === null || now > pending.expires) { this.pending = null; return false; }
+    if (lan) {
+      if ((pending.lanAttempts ?? 0) >= CODE_ATTEMPTS) return false;
+      if (same(code.replace(/\D/g, ""), pending.code)) return true;
+      pending.lanAttempts = (pending.lanAttempts ?? 0) + 1;
+      return false;
+    }
     if (!same(code.replace(/\D/g, ""), pending.code)) {
       pending.attempts += 1;
       if (pending.attempts >= CODE_ATTEMPTS) this.pending = null;
@@ -525,14 +539,14 @@ export class DeviceStore {
   }
 
   /** Throws while relay pairing on `path` is paused after too many failures there. */
-  assertRelayPairing(path: PairingPath = "code", now = Date.now()): void {
+  assertRelayPairing(path: PairingFailurePath = "code", now = Date.now()): void {
     this.assertWritable();
     const { blockedUntil } = this.relayFailures[path];
     if (now < blockedUntil) throw new PairingRateLimitedError(Math.ceil((blockedUntil - now) / 1000));
   }
 
   /** A relay pairing that did not end in a device: a wrong code, or a comparison declined, abandoned, mispicked or timed out. */
-  noteRelayFailure(path: PairingPath = "code", now = Date.now()): void {
+  noteRelayFailure(path: PairingFailurePath = "code", now = Date.now()): void {
     const count = this.relayFailures[path];
     count.at = count.at.filter((at) => now - at < PAIRING_WINDOW_MS);
     count.at.push(now);
@@ -896,7 +910,7 @@ export class DeviceStore {
  * cleanup that follows (push subscriptions, page media) works from those ids, never from the path.
  */
 /** `relayKey`: the key a relayed session proved (empty when it never signed in with one), null off the relay. */
-export async function handleDeviceRequest(request: Request, pathname: string, store: DeviceStore, access: Access, relayKey: string | null, onRevoked?: (ids: string[]) => void): Promise<Response> {
+export async function handleDeviceRequest(request: Request, pathname: string, store: DeviceStore, access: Access, relayKey: string | null, onRevoked?: (ids: string[]) => void, lanHttps = false): Promise<Response> {
   if (store.error !== null) return jsonResponse({ error: { code: "device_store_unavailable", message: access.level === "full" ? store.error : "Device pairing is unavailable; ask the owner to check Settings → Devices on the host." } }, 503);
   const json = async (): Promise<Record<string, unknown> | Response> => {
     try {
@@ -911,9 +925,19 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     const body = await json();
     if (body instanceof Response) return body;
     if (typeof body["code"] !== "string") return badRequest("missing_code", "code is required");
+    // the LAN HTTPS listener counts its wrong codes like the relay does, apart from it
+    if (lanHttps) {
+      try { store.assertRelayPairing("lan"); } catch (error) {
+        if (error instanceof PairingRateLimitedError) return jsonResponse({ error: { code: error.code, message: error.message } }, 429, { "retry-after": String(error.retryAfter), "cache-control": "no-store" });
+        throw error;
+      }
+    }
     const firstPair = !store.gated;
-    const paired = store.pair(body["code"], normalizeLabel(body["label"], "Device"), "drive", Date.now(), streamKeys(request));
-    if (paired === null) return jsonResponse({ error: { code: "invalid_code", message: "the code is wrong, spent or expired; start a new pairing on the PC" } }, 401);
+    const paired = store.pair(body["code"], normalizeLabel(body["label"], "Device"), "drive", Date.now(), streamKeys(request), lanHttps);
+    if (paired === null) {
+      if (lanHttps) store.noteRelayFailure("lan");
+      return jsonResponse({ error: { code: "invalid_code", message: "the code is wrong, spent or expired; start a new pairing on the PC" } }, 401);
+    }
     const cookies = [deviceCookie(paired.token, isSecureRequest(request)), CLEAR_LEGACY_DEVICE_COOKIE];
     if (!acceptsJson(request)) return noContent(...cookies);
     // a script asked for the token itself, to send as `Authorization: Device <token>` (#2744); a

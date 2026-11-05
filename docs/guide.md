@@ -653,6 +653,7 @@ Anyone who can reach the server can type into your terminals, so what matters is
 | `tailscale serve`, your own devices | Nothing needed: your login. With `OVIS_TAILSCALE_SERVE_ONLY=1` on a one-login tailnet, the owner's phone needs nothing either. With a token set, the token, once per device |
 | `tailscale serve` on a tailnet you share with others | Your devices: your login (with a token set, the token once). Theirs: refused unless you pair them |
 | Your LAN (`HOST=0.0.0.0` or a LAN address) | Pair each device, or set a token |
+| Your LAN over HTTPS (`OVIS_LAN_HTTPS_PORT`, see [On your LAN over HTTPS](#on-your-lan-over-https)) | Pair each device, or the token. Never open, even before the first pairing |
 | A public domain, reverse proxy or Portal | Set a token, with HTTPS, and set the proxy up as in [Behind a reverse proxy](#behind-a-reverse-proxy). Never `tailscale funnel` it. Portal can also ask [its own sign-in](#who-may-open-the-address) first |
 | The Ovis relay | Paired devices only: pair each phone once by scanning the relay's QR code. No token needed, see below |
 
@@ -663,6 +664,26 @@ Until the first device is paired, and with no token set, a LAN or proxied addres
 A token is a credential on the wire as much as a cookie is: on plain `http://`, anyone on the network path reads it, and then every keystroke after it. Reach this PC over Tailscale, put it behind a TLS-terminating proxy, or keep it on loopback and tunnel in; the server says so on startup when it is bound to another address over http.
 
 The pairing code is a one-time secret: five wrong tries spend it.
+
+### On your LAN over HTTPS
+
+A phone on the same network as the PC can reach Ovis directly over HTTPS, beside the address it uses today (a tunnel, `tailscale serve`, loopback). It is off unless you set `OVIS_LAN_HTTPS_PORT` (for example `7318`) where Ovis starts, as with `HOST` and `PORT` ([Configuration](#configuration)).
+
+- **Where it listens.** On that port of each private IPv4 address the PC has (`10.x`, `172.16-31.x`, `192.168.x`, `169.254.x`), never on every address. `OVIS_LAN_HTTPS_HOST=<address>` binds one address instead (`0.0.0.0` only when you write it). The main listener stays as it is. The addresses are read when Ovis starts: restart it after the PC joins another network.
+- **Who gets in.** Only clients on a private IPv4 network, and only with the token or a paired device: never "this computer", a Tailscale login, the bridge token or an open install, even before the first device is paired. Pair a device with a code shown on the PC (Settings → Phone & devices): a code started through the relay is not taken here. A code has five tries of its own here, so wrong tries here never spend it for a phone pairing another way. Twenty wrong codes within ten minutes pause pairing here for ten minutes, and wrong tokens from every address here share one budget.
+- **Its certificate.** Unless you give one, Ovis makes a self-signed certificate on first start and keeps it in the state folder (`lan-https/`, the key readable only by you). It names the PC's addresses, and a new one is made when they change or it runs out (after 825 days). Startup prints each address with the certificate's SHA-256 fingerprint.
+- **Your own certificate.** Set `OVIS_LAN_HTTPS_CERT` and `OVIS_LAN_HTTPS_KEY` to PEM files, for example from a local CA made with [mkcert](https://github.com/FiloSottile/mkcert) (`mkcert -install`, then `mkcert 192.168.1.20` with the PC's address).
+
+A bad value, a busy port or a certificate that does not load turns only this listener off, with a message at startup.
+
+**Trust the certificate before you sign in through it.** A browser warns about a certificate it does not know, and clicking through that warning without checking it is how someone else on the network would collect your token or pairing code. Either:
+
+- **Compare the fingerprint** the browser shows (the padlock or the warning's details) with the one Ovis printed, and continue only when they match. That is enough for a browser tab, but browsers turn off service workers on such a page, so the installed app, alerts and the microphone need the next way.
+- **Trust a local CA on the phone.** Use the mkcert way above and copy mkcert's `rootCA.pem` (`mkcert -CAROOT` says where it is) to the phone. The self-signed certificate Ovis makes is not a CA, so phones do not offer to trust it this way: for it, compare the fingerprint.
+  - iPhone and iPad: open the file (AirDrop or Files), install the profile in Settings → General → VPN & Device Management, then turn it on under Settings → General → About → Certificate Trust Settings.
+  - Android: Settings → Security → Encryption & credentials → Install a certificate → CA certificate (the menu names differ between makers).
+
+Keep the main listener off the same LAN address over plain http (`HOST` set to that address) while you use this: the browser keeps one cookie per address, so signing in over HTTPS signs that http tab out.
 
 ### Behind a reverse proxy
 
@@ -950,6 +971,9 @@ Each `OVIS_*` variable was called `HERDR_WEB_*` before Ovis took its name (`OVIS
 | `PORT` | `7317` | HTTP and WebSocket port. Left unset, the plugin takes the next of 17317, 27317, 37317 and 47317 when 7317 cannot be opened (another program has it, or Windows reserves it for Hyper-V, WSL2 or Docker), keeps that port for later starts, and the installer and the **Ovis status** action print the address. A port set here is never changed |
 | `HERDR_SOCKET` | `~/.config/herdr/herdr.sock` | herdr socket for API calls and terminal attach. For a named session, use `~/.config/herdr/sessions/<name>/herdr.sock`. A plugin install follows the socket of the herdr session that starts it; set `HERDR_SOCKET` in the plugin's config to pin another one, and that setting wins. |
 | `OVIS_TOKEN` | unset | Shared token for scripts and proxies. Once set, every client that is not a paired device needs it, this computer and your own Tailscale login included |
+| `OVIS_LAN_HTTPS_PORT` | unset (off) | Opens an HTTPS listener on this port for devices on the same network, beside the main one; only the token or a paired device gets in there (see [On your LAN over HTTPS](#on-your-lan-over-https)) |
+| `OVIS_LAN_HTTPS_HOST` | unset (every private IPv4 address) | The one IPv4 address that listener binds instead; `0.0.0.0` only when written |
+| `OVIS_LAN_HTTPS_CERT`, `OVIS_LAN_HTTPS_KEY` | unset (self-signed, kept in the state dir) | PEM files of your own certificate and key for that listener, for example from a local CA; set both or neither |
 | `OVIS_CSP` | unset (enforced) | `report-only` sends the policy as `Content-Security-Policy-Report-Only`: the browser reports what it would block and the app keeps working. Used to measure the policy after a change |
 | `OVIS_TAILSCALE_OWNER` | this PC's Tailscale login | The Tailscale login that gets in through `tailscale serve` without pairing. Set it on a PC whose Tailscale node is tagged, which has no login of its own |
 | `OVIS_TAILSCALE_SERVE_ONLY` | unset (off) | `1` declares `tailscale serve` the only way anything reaches this port. Then the owner's own device gets in through serve without a code, on a tailnet one login owns with no tagged node. Enable it only when no public reverse proxy, tunnel or other forwarding server exposes this port: a visitor through one would otherwise get the owner's access. It also keeps the [Ovis relay](#through-the-ovis-relay) off |
