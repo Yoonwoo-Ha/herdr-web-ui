@@ -5,7 +5,7 @@ import { AGENT_LABELS } from "../agents-routes.ts";
 import { LINE_BYTES, makeLineReader } from "../herdr/client.ts";
 import { SHELL_AGENTS, shellCommandLine } from "../shell-agent.ts";
 import { type HcConnection, HcError } from "./connection.ts";
-import { agentInfoOf, agentOfStatus, agentStatusOf, buildSnapshot, type FirstTurn, reportedFacts, type HcStatus, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, OTHER_WORKSPACE_ID, processInfoOf, SEEN_LABEL, shownStatusOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
+import { agentInfoOf, agentOfStatus, agentStatusOf, buildSnapshot, type FirstTurn, reportedFacts, type HcStatus, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, onOtherMachine, OTHER_WORKSPACE_ID, processInfoOf, SEEN_LABEL, shownStatusOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
 import type { AgentStatus, SessionSnapshot } from "../../shared/herdr-api.generated.ts";
 
 /**
@@ -270,9 +270,11 @@ function withoutPlainTrailingSpaces(line: string): string {
   return pieces.join("");
 }
 
-function paneIdOf(params: Record<string, unknown>, field = "pane_id"): string {
+function paneIdOf(params: Record<string, unknown>, field = "pane_id", missing = "pane_not_found"): string {
   const value = params[field];
   if (typeof value !== "string" || value === "") throw new AdapterError("invalid_params", `${field} is required`);
+  // another machine's terminal is no pane here (snapshot.ts `onOtherMachine`): nothing reads or types into it
+  if ((field === "pane_id" || field === "target") && onOtherMachine(value)) throw new AdapterError(missing, `pane ${value} not found`);
   return value;
 }
 
@@ -417,7 +419,7 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       return { pane: await paneOf(paneIdOf(params)) };
     },
     async "agent.get"(params) {
-      const pane = await paneOf(paneIdOf(params, "target"), "agent_not_found");
+      const pane = await paneOf(paneIdOf(params, "target", "agent_not_found"), "agent_not_found");
       if (!pane.agent) throw new AdapterError("agent_not_found", `no agent in pane ${pane.pane_id}`);
       return { type: "agent_info", agent: agentInfoOf(pane) };
     },
@@ -596,7 +598,8 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
 }
 
 /** One hc event notification (herdr-core schema/README.md, Events). */
-interface HcEvent { type: string; terminal?: string; data?: Record<string, unknown> }
+/** `machine`: the other machine an event is about (a `doc` there names no terminal); none for this core's own */
+interface HcEvent { type: string; terminal?: string; machine?: string; data?: Record<string, unknown> }
 
 /** A status report as hc sends it in a record or a `status` event; null when it is none. */
 function statusOf(reported: unknown): HcStatus | null {
@@ -680,6 +683,8 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
   /** what each terminal's last report said beyond its state (kind, message, progress), which only a snapshot carries */
   const reported = new Map<string, string>();
   const onEvent = (event: HcEvent) => {
+    // another machine's terminal is none of this PC's panes (snapshot.ts `onOtherMachine`)
+    if (event.machine !== undefined || (event.terminal !== undefined && onOtherMachine(event.terminal))) return;
     if (early) { early.push(event); return; }
     const paneId = event.terminal;
     switch (event.type) {
@@ -761,7 +766,7 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
     if (message["method"] === "missed") { end(); return; }
     const params = message["params"];
     if (message["method"] !== "event" || !isRecord(params) || typeof params["type"] !== "string") return;
-    onEvent({ type: params["type"], ...(typeof params["terminal"] === "string" ? { terminal: params["terminal"] } : {}), ...(isRecord(params["data"]) ? { data: params["data"] } : {}) });
+    onEvent({ type: params["type"], ...(typeof params["terminal"] === "string" ? { terminal: params["terminal"] } : {}), ...(typeof params["machine"] === "string" ? { machine: params["machine"] } : {}), ...(isRecord(params["data"]) ? { data: params["data"] } : {}) });
   }, () => {
     socket.data.unsubscribe?.();
     send(socket, `${JSON.stringify({ id: request.id, error: { code: "bad_frame", message: `hc event line exceeds ${EVENT_LINE_BYTES} bytes` } })}\n`, true);
@@ -769,11 +774,12 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
   try {
     const { result, channel } = await hc.open("events.subscribe", {}, { onData: read, onClose: end });
     // what each terminal reported as the stream starts: a first event that drops a message or progress is a change
-    for (const terminal of Array.isArray(result.terminals) ? result.terminals : []) {
+    const here = (Array.isArray(result.terminals) ? result.terminals : []).filter((terminal) => !isRecord(terminal) || typeof terminal["address"] !== "string" || !onOtherMachine(terminal["address"]));
+    for (const terminal of here) {
       if (!isRecord(terminal) || typeof terminal["address"] !== "string" || reported.has(terminal["address"])) continue;
       reported.set(terminal["address"], shownFacts(terminal["status"]));
     }
-    for (const record of result.terminals ?? []) remember(record);
+    for (const record of here) remember(record);
     const waiting = early ?? [];
     early = null;
     for (const event of waiting) onEvent(event);

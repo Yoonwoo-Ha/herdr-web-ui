@@ -3,7 +3,7 @@ import { LINE_BYTES, makeLineReader } from "../herdr/client.ts";
 import { MAX_PINS, type PreferencesChange, type SharedPreferences } from "../../shared/preferences.ts";
 import { readStateDocument, writeStateDocument } from "../state-document.ts";
 import type { HcConnection } from "./connection.ts";
-import { isRecord } from "./snapshot.ts";
+import { isRecord, onOtherMachine } from "./snapshot.ts";
 
 /**
  * Pinned agents, shared by every Herdr client (herdr-app docs/labels.md): present and non-empty,
@@ -283,6 +283,8 @@ export function bridgePins(hc: Hc, store: PinStore, machineId: string, stateDir:
       if (message["method"] === "missed") { end(); return; }
       const params = message["params"];
       if (message["method"] !== "event" || !isRecord(params) || typeof params["terminal"] !== "string") return;
+      // another machine's terminal is no row of this PC's list (snapshot.ts `onOtherMachine`): its pin is left alone
+      if (onOtherMachine(params["terminal"])) return;
       const data = isRecord(params["data"]) ? params["data"] : {};
       switch (params["type"]) {
         case "created": record(data); return;
@@ -310,17 +312,18 @@ export function bridgePins(hc: Hc, store: PinStore, machineId: string, stateDir:
       agents.clear();
       refused.clear();
       leftOut.clear();
-      const shown = new Set(result.terminals.filter((terminal) => terminal.state === "live").map((terminal) => agreedKey(terminal.address)));
+      const terminals = result.terminals.filter((terminal) => !onOtherMachine(terminal.address));
+      const shown = new Set(terminals.filter((terminal) => terminal.state === "live").map((terminal) => agreedKey(terminal.address)));
       let pruned = false;
       for (const key of agreed.keys()) if (key.startsWith(`${core}/`) && !shown.has(key)) { agreed.delete(key); shells.delete(key); pending.delete(key); pruned = true; }
       if (pruned) saveAgreed();
       // every terminal known before any is settled, so a list started for one holds the others' pins
-      for (const terminal of result.terminals) {
+      for (const terminal of terminals) {
         if (terminal.state !== "live") continue;
         live.set(terminal.address, pinnedIn(terminal.labels));
         if (isAgent(terminal.status)) agents.add(terminal.address);
       }
-      for (const terminal of result.terminals) record(terminal);
+      for (const terminal of terminals) record(terminal);
       const waiting = early;
       early = null;
       for (const message of waiting) apply(message);

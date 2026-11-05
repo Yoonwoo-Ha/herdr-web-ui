@@ -265,6 +265,19 @@ describe("buildSnapshot, what herdr-core reports beyond placement", () => {
     expect(snapshot.panes.map((p) => [p.pane_id, p.tab_id, (p as HerdrPane).parent_pane_id])).toEqual([["t1", "s1t1", undefined], ["t2", "s1t2", "t1"]]);
   });
 
+  it("shows no terminal of another hc machine, labeled, placed or neither, as this PC's (#2768)", () => {
+    const layout = { spaces: [{ id: "s1", name: "here", tabs: [{ id: "s1t1", name: "", root: { type: "row", id: "r", children: [block("t1"), block("vps/t2")] } }] }] };
+    const snapshot = buildSnapshot([
+      terminal("t1"),
+      terminal("vps/t2"),
+      terminal("vps/t14", { labels: { "herdr.space": "spcRemote", "herdr.tab": "tbRemote", where: "ubuntu / 1" } }),
+      terminal("vps/t15"),
+      terminal("t3", { parent: "vps/t14" }),
+    ], layout, "0.1.17");
+    expect(snapshot.workspaces.map((w) => [w.workspace_id, w.label])).toEqual([["s1", "here"], [OTHER_WORKSPACE_ID, "Other terminals"]]);
+    expect(snapshot.panes.map((p) => [p.pane_id, p.tab_id, (p as HerdrPane).parent_pane_id])).toEqual([["t1", "s1t1", undefined], ["t3", `${OTHER_WORKSPACE_ID}:t3`, undefined]]);
+  });
+
   it("carries a blocked agent's kind, its message as written and its progress, and only what it reported", () => {
     const snapshot = buildSnapshot([
       terminal("t1", { status: { app: "codex", state: "blocked", kind: "permission", msg: "Allow bash?", progress: 40 } }),

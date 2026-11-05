@@ -212,6 +212,20 @@ describe("bridgePins", () => {
     expect(preferences.get().pins).toEqual(["local:t2", "local:t1"]);
   });
 
+  it("leaves another hc machine's terminals alone: this PC shows none of them, so its list never unpins them (#2768)", async () => {
+    const dir = stateDir();
+    const preferences = store(dir, []);
+    const core = fakeCore([{ address: "t1", state: "live", labels: {} }, { address: "vps/t2", state: "live", labels: { "herdr.pinned": "1" } }]);
+    const pins = bridge(core, preferences, dir);
+    await core.opened();
+    core.tell({ type: "created", terminal: "vps/t3", data: { address: "vps/t3", state: "live", status: AGENT, labels: { "herdr.pinned": "1" } } });
+    await pins.idle();
+    expect(preferences.get().pins).toEqual([]);
+    preferences.set({ settings: {}, pins: ["local:t1"] });
+    await pins.idle();
+    expect(core.written).toEqual([{ terminal: "t1", labels: { "herdr.pinned": "1" } }]);
+  });
+
   it("stops syncing a terminal told again without an agent, as a remote PC coming back tells it", async () => {
     const dir = stateDir();
     const preferences = store(dir, []);
