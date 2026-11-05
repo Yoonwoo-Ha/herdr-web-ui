@@ -126,6 +126,8 @@ export class RelayTransport implements Transport {
   private cancelRetry: (() => void) | undefined;
   private readonly abort = new AbortController();
   private readonly waitingHttp = new Set<{ run: () => boolean; fail: (error: unknown) => void }>();
+  /** renews waiting for a carrier: each settles on the first one whose attempt started after it was asked */
+  private readonly renewing = new Set<{ after: number; up: () => void }>();
   private readonly stopResources: () => void;
   private readonly wake = (): void => {
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
@@ -183,6 +185,11 @@ export class RelayTransport implements Transport {
     this.cancelRetry?.();
     this.cancelRetry = undefined;
     this.delay = 1000;
+    for (const waiting of this.renewing) {
+      if (generation > waiting.after) { this.renewing.delete(waiting); waiting.up(); }
+    }
+    // a renew asked while this attempt was on its way: it may have signed with the old key, so the next one signs again
+    if (this.renewing.size > 0) channel.close();
   }
 
   /** What the PC said of itself on the latest admission: a reconnect after its update names the new version. */
@@ -191,10 +198,13 @@ export class RelayTransport implements Transport {
   /**
    * Ends this carrier and connects again, signing in with the key the saved pairing holds now: after
    * a link swapped it for the account key, the PC takes this device's account actions only from a
-   * session that proved that key.
+   * session that proved that key. Settles once the carrier that signed in again is up (an attempt
+   * already on its way may still sign with the old key), and never if the transport closes first.
    */
-  renew(): void {
+  renew(): Promise<void> {
+    const up = new Promise<void>((resolve) => this.renewing.add({ after: this.generation, up: resolve }));
     this.channel?.close();
+    return up;
   }
 
   /** A reconnect that failed: tried again later, unless no later attempt could succeed. */
@@ -364,6 +374,7 @@ export class RelayTransport implements Transport {
     if (this.stopped) return;
     this.stopped = true;
     this.failWaitingHttp(new TypeError("Relay transport is closed"));
+    this.renewing.clear();
     this.stopResources();
     ++this.generation;
     this.cancelRetry?.();

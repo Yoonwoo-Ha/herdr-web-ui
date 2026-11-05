@@ -5,7 +5,7 @@ import "./DevicesPanel.css";
 
 import { ApiError, fetchDevices, renameDevice, revokeAllDevices, revokeDevice } from "../lib/api.ts";
 import { methodName } from "../lib/portalAuth.ts";
-import { PAIRING_CODE_EVENT } from "../lib/useRelay.ts";
+import { DEVICES_CHANGED_EVENT, PAIRING_CODE_EVENT } from "../lib/useRelay.ts";
 import type { HealthAuth, PairedDevice, PairingCode } from "../../shared/protocol.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { SettingsRow } from "./SettingsControls.tsx";
@@ -78,14 +78,20 @@ export function DevicesPanel({ onPair, onDevicePaired, auth, onPaired, onRevoked
   /** bumped when every device goes: a read started before that answers for a list that no longer exists */
   const generation = useRef(0);
   const pairingSelfLock = useRef(false);
+  /** reads in the order they started: one answering after a newer one has landed answers for an older list */
+  const reads = useRef({ started: 0, landed: 0 });
 
-  const load = useCallback(async () => {
+  /** `quiet`: a read the page did not ask for, which leaves the warning on screen and, should it fail, the list as it was */
+  const load = useCallback(async ({ quiet = false } = {}) => {
     const started = generation.current;
+    const read = ++reads.current.started;
+    const stale = () => started !== generation.current || read < reads.current.landed;
     try {
       const list = await fetchDevices();
-      if (started !== generation.current) return;
+      if (stale()) return;
+      reads.current.landed = read;
       setDevices(list);
-      setError(null);
+      if (!quiet) setError(null);
       // a device that appeared while a code was out just paired with it
       const fresh = list.filter((d) => !known.current.has(d.id));
       if (loaded.current && fresh.length > 0) {
@@ -95,13 +101,21 @@ export function DevicesPanel({ onPair, onDevicePaired, auth, onPaired, onRevoked
       known.current = new Set(list.map((d) => d.id));
       loaded.current = true;
     } catch (e) {
-      if (started !== generation.current) return;
+      if (quiet || stale()) return;
+      reads.current.landed = read;
       setDevices([]);
       if (e instanceof ApiError && e.status === 404) setUnavailable(true);
       setError(e instanceof ApiError && e.status === 404 ? t("Devices are managed on a real server.") : e instanceof Error ? e.message : String(e));
     }
   }, [t, onDevicePaired]);
   useEffect(() => { void load(); }, [load]);
+
+  // this client's pairing joined the account behind the app (relay/shell.tsx): the list read before that lists it as no member yet
+  useEffect(() => {
+    const onChanged = () => void load({ quiet: true });
+    window.addEventListener(DEVICES_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(DEVICES_CHANGED_EVENT, onChanged);
+  }, [load]);
 
   // a code started anywhere on this page (the dialog's pairing code, the relay's New code): the server keeps one pending code
   useEffect(() => {
