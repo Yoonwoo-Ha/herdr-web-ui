@@ -1308,6 +1308,8 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
   const shown = useRef<{ page: SettingsPage | null; keyBar: boolean } | null>(null);
   // the group a landing named, followed into view until the reader moves the page
   const following = useRef<{ group: HTMLElement; page: SettingsPage | null } | null>(null);
+  // the group a landing named that was not drawn yet, waited for until the reader moves the page
+  const awaited = useRef<{ named: string; page: SettingsPage | null } | null>(null);
   const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "alerts" ? "Alerts" : id === "voice" ? "Voice input"
     : id === "agents" ? "Agents" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Phone & devices" : id === "remote" ? "Remote PCs" : "About");
   const openPage = (id: SettingsPage): void => { setKeyBarOpen(false); setChosen(id); };
@@ -1336,7 +1338,11 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
         pointed.focus({ preventScroll: true });
         pointed.scrollIntoView();
         following.current = { group: pointed, page };
-      } else tab(page)?.focus();
+      } else {
+        tab(page)?.focus();
+        // a group drawn only once the server answers (Anonymous usage counts) is landed on when it comes
+        if (named) awaited.current = { named, page };
+      }
     } else if (before.page !== page && narrow) {
       // a phone shows one of the two: the focus follows into the page, and back onto its row
       if (page !== null) backRef.current?.focus();
@@ -1346,9 +1352,29 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
     // past the fold: it is brought back into view until the reader moves the page or leaves it.
     // The subscription is made again whenever this runs, so development's replay of the effect
     // keeps following; the reader's move or another page ends it for good
+    const body = settingsBodyRef.current;
+    const wait = awaited.current;
+    if (wait !== null && (wait.page !== page || keyBarOpen)) awaited.current = null;
+    else if (wait !== null && body) {
+      const moves = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+      const unsubscribe = (): void => {
+        observer.disconnect();
+        for (const move of moves) body.removeEventListener(move, stop);
+      };
+      const stop = (): void => { awaited.current = null; unsubscribe(); };
+      const observer = new MutationObserver(() => {
+        const group = body.querySelector<HTMLElement>(`[data-section="${CSS.escape(wait.named)}"]`);
+        if (!group) return;
+        stop();
+        group.focus({ preventScroll: true });
+        group.scrollIntoView();
+      });
+      observer.observe(body, { childList: true, subtree: true });
+      for (const move of moves) body.addEventListener(move, stop, { passive: true });
+      return unsubscribe;
+    }
     const follow = following.current;
     if (follow === null || follow.page !== page || keyBarOpen) { following.current = null; return; }
-    const body = settingsBodyRef.current;
     const observer = new ResizeObserver(() => follow.group.scrollIntoView());
     const moves = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
     const unsubscribe = (): void => {
