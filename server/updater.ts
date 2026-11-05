@@ -39,6 +39,7 @@ export function readNotesFile(path: string): string {
   } finally { closeSync(fd); }
 }
 const SHA = /^[0-9a-f]{40,64}$/;
+const NOT_MAIN_REASON = "Switch the source checkout to main to update.";
 
 /** Shown when the launcher runs from an installed release instead of the checkout it was built from (#1373). */
 export const RELEASE_FOLDER_REASON = "This server runs from an installed update's folder, not from its source checkout. Restart Ovis from its source checkout (the herdr plugin's Stop, then Start, or bun run start there) to update.";
@@ -259,7 +260,11 @@ export class Updater {
       if (!SHA.test(this.sourceRevision)) throw new Error("Invalid source revision");
       this.release = { directory: this.options.root, revision: this.sourceRevision, source_revision: this.sourceRevision };
       const reason = await this.sourceBlock();
-      if (!reason) {
+      // A detached, clean checkout started without herdr's HERDR_PLUGIN_ROOT (a herdr plugin's
+      // checkout started from a shell) may not update, but the release this updater already built
+      // from this same commit still runs: the source_revision check below holds HEAD unmoved.
+      // Local changes or another branch keep the source checkout, as before.
+      if (!reason || (reason === NOT_MAIN_REASON && await this.detachedAndClean())) {
         try {
           const saved = JSON.parse(readFileSync(join(this.options.stateDir, "current.json"), "utf8")) as Release;
           // Only directories created by this updater may be resumed, under this state dir's name for them.
@@ -323,10 +328,22 @@ export class Updater {
   private async sourceBlock(): Promise<string | null> {
     if (isReleaseFolder(this.options.root)) return RELEASE_FOLDER_REASON;
     const branch = await this.git("branch", "--show-current");
-    if (branch !== "main" && !(branch === "" && this.options.pluginCheckout)) return "Switch the source checkout to main to update.";
+    if (branch !== "main" && !(branch === "" && this.options.pluginCheckout)) return NOT_MAIN_REASON;
     if (await this.git("status", "--porcelain", "--untracked-files=all")) return "The source checkout has local changes. Commit or move them before updating.";
     if (await this.git("rev-parse", "HEAD") !== this.sourceRevision) return CHECKOUT_CHANGED_REASON;
     return null;
+  }
+
+  /** Still detached, clean and at the revision read at the start; a failed or timed-out check is
+   * not eligible: the source checkout runs, still managed and blocked. */
+  private async detachedAndClean(): Promise<boolean> {
+    try {
+      return await this.git("branch", "--show-current") === ""
+        && !await this.git("status", "--porcelain", "--untracked-files=all")
+        && await this.git("rev-parse", "HEAD") === this.sourceRevision;
+    } catch {
+      return false;
+    }
   }
 
   start() {
