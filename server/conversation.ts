@@ -48,7 +48,7 @@ import { resolveAgent } from "./pane-context.ts";
 import { codexFreshSession, codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHomePlaced, parseCodexTranscript, readRange } from "./codex.ts";
 import { awaited, CODEX_IMAGE_REF, CODEX_TOOL_IMAGE_REF, codexOutputPicture, codexTranscriptImage, DataUrlPictureScan, finish, finishAsync, forgetOmpBlobTypes, InlinePictureScan, MAX_IMAGE_BYTES, ompBlobAnchor, ompBlobDigest, ompBlobPictureSteps, type Steps } from "./codex-images.ts";
 import { type Held, heldOpenPlatform, openHeldDirectory } from "./held-open.ts";
-import { AmbiguousClaudeStore, claudeAttachSession, claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir } from "./claude-store.ts";
+import { AmbiguousClaudeStore, claudeAttachSession, claudeProcessSession, claudeTranscriptFile, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, processClaudeConfigDir, windowsShellClaude } from "./claude-store.ts";
 import { forgetGjcPane, forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
 import { isOmoProcess, omoProcessIdentity, omoSessionForPane, processEnviron } from "./omo.ts";
 import { processAlive, processStartedAtAsync } from "./process-start.ts";
@@ -1430,19 +1430,25 @@ export async function labelOmoPanes(snapshot: SessionSnapshot): Promise<SessionS
   };
 }
 
-/** The Claude processes in a pane's foreground (`known`: herdr's answer already read); none when herdr cannot say. */
+/**
+ * The Claude processes in a pane's foreground (`known`: herdr's answer already read); none when herdr cannot say.
+ * On Windows herdr and herdr-core name only the shell in front, even while Claude runs in it, and
+ * herdr-core reports no session for it: the Claude below the shell is taken from the process table (#2896).
+ */
 async function claudeProcesses(paneId: string, known?: KnownProcesses): Promise<{ pid: number; name?: string; argv0?: string; argv?: string[] }[]> {
-  if (known !== undefined) {
-    return (known?.foreground_processes ?? []).map(({ pid, name, argv0, argv }) => ({
-      pid, name, ...(typeof argv0 === "string" ? { argv0 } : {}), ...(Array.isArray(argv) ? { argv } : {}),
-    })).filter(isClaudeProcess);
+  let info: KnownProcesses;
+  if (known !== undefined) info = known;
+  else {
+    try {
+      info = (await herdrRpc<{ process_info?: ProcessInfo }>("pane.process_info", { pane_id: paneId })).process_info ?? null;
+    } catch { return []; /* herdr busy: the default store */ }
   }
-  try {
-    const processInfo = await herdrRpc<{ process_info?: { foreground_processes?: { pid: number; name?: string; argv0?: string; argv?: string[] }[] } }>(
-      "pane.process_info", { pane_id: paneId },
-    );
-    return processInfo.process_info?.foreground_processes?.filter(isClaudeProcess) ?? [];
-  } catch { return []; /* herdr busy: the default store */ }
+  const front = (info?.foreground_processes ?? []).map(({ pid, name, argv0, argv }) => ({
+    pid, name, ...(typeof argv0 === "string" ? { argv0 } : {}), ...(Array.isArray(argv) ? { argv } : {}),
+  })).filter(isClaudeProcess);
+  const shell = info?.shell_pid;
+  if (front.length > 0 || process.platform !== "win32" || typeof shell !== "number") return front;
+  return (await windowsShellClaude(shell).catch(() => null)) ?? [];
 }
 
 /** The pid of the one Claude process in a pane's foreground, or null. */

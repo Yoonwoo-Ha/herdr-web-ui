@@ -21,6 +21,7 @@ import { forgetHistoryChains } from "./codex.ts";
 import { DevinHistoryChanged } from "./devin.ts";
 import * as devinSession from "./devin-session.ts";
 import * as omo from "./omo.ts";
+import * as gjcRuntime from "./gjc-runtime.ts";
 import { claudeProjectDir } from "./claude-store.ts";
 import { launchedAgents } from "./launched-agents.ts";
 import { agyTranscriptPage, claudePaneSession, ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneTranscript, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput, TRANSCRIPT_WINDOW_BYTES } from "./conversation.ts";
@@ -3305,6 +3306,44 @@ describe("a model drawn only in the history above the live screen", () => {
     expect(answer).toBeInstanceOf(ConversationUnavailable);
     expect((answer as ConversationUnavailable).screen).toBeUndefined();
   });
+});
+
+// herdr-core names only the shell in front on Windows, with no session hook: Claude below it is found in the process table (#2896)
+it("finds the Claude below a Windows pane's shell and its session by the PID record", async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const home = mkdtempSync(join(tmpdir(), "claude-win32-shell-"));
+  const previousHome = process.env["HOME"];
+  const previousProfile = process.env["USERPROFILE"];
+  const session = "5c7e1f40-2d1b-4f9e-8a3c-6b5d4e3f2a10";
+  const cwd = join(home, "work");
+  const started = 1_793_000_000_000;
+  mkdirSync(join(home, ".claude", "projects", claudeProjectDir(cwd)), { recursive: true });
+  writeFileSync(join(home, ".claude", "projects", claudeProjectDir(cwd), `${session}.jsonl`), "");
+  mkdirSync(join(home, ".claude", "sessions"), { recursive: true });
+  const procStart = String((BigInt(started) + 11_644_473_600_000n) * 10_000n);
+  writeFileSync(join(home, ".claude", "sessions", "10108.json"), JSON.stringify({ pid: 10108, kind: "interactive", sessionId: session, procStart }));
+  const rpc = spyOn(herdr, "herdrRpc").mockImplementation((async (method: string) => method === "agent.get"
+    ? { agent: {} }
+    : { process_info: { shell_pid: 3244, foreground_processes: [{ pid: 3244, name: "pwsh.exe", argv: ["C:\\Program Files\\PowerShell\\7\\pwsh.exe"] }] } }) as unknown as typeof herdr.herdrRpc);
+  const table = spyOn(gjcRuntime, "recentProcessTable").mockResolvedValue([
+    { pid: 3244, parent: 900, path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe", commandLine: "pwsh.exe", started: started - 60_000 },
+    { pid: 10108, parent: 3244, path: "C:\\Users\\demo\\.local\\bin\\claude.exe", commandLine: "claude", started },
+  ]);
+  // Windows reads the home from USERPROFILE first (user-home.ts)
+  process.env["HOME"] = home;
+  process.env["USERPROFILE"] = home;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    const found = await claudePaneSession({ pane_id: "claude-win32", cwd, foreground_cwd: cwd } as HerdrPane);
+    expect(found?.path).toBe(join(home, ".claude", "projects", claudeProjectDir(cwd), `${session}.jsonl`));
+    expect(found?.pid).toBe(10108);
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    if (previousHome === undefined) delete process.env["HOME"]; else process.env["HOME"] = previousHome;
+    if (previousProfile === undefined) delete process.env["USERPROFILE"]; else process.env["USERPROFILE"] = previousProfile;
+    table.mockRestore(); rpc.mockRestore();
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 // any client snapshot starts the Claude subagent refresh that reads this, also the one a pending message is checked against (#1545)
