@@ -108,7 +108,8 @@ To take `app.ovis.sh` out of the picture, [host the app yourself](guide.md#runni
 
 **Pairing.** While the relay is online, **Settings → Phone & devices** on the PC shows a QR code
 holding a link of the form `https://app.ovis.sh/s/<server_id>/#offer=<data>`. The data names the PC
-(`server_id`), its public key, the relay's address and a pairing code
+(`server_id`), its public key, the relay's address, a pairing code and the PC's host name (at most 64
+characters), which the phone lists the PC under
 ([`shared/relay-offer.ts`](../shared/relay-offer.ts)). It sits in the link's fragment, which
 browsers never send to a server, and the app takes it off the address bar before anything else runs
 ([`src/lib/relay/boot.ts`](../src/lib/relay/boot.ts)). Since a PC's `server_id` is worked out from
@@ -121,8 +122,8 @@ next 10: a pairing tried then ends with `auth_failed`, and the phone shows **Tha
 longer works**.
 
 **Pairing by comparing digits.** A phone can also pair without a code, from a link that holds the
-PC's `server_id`, public key and relay only (**Copy a link without a code** under the QR code; it
-holds nothing secret). Copying it opens a 10-minute window, as a Bluetooth device's pairing mode
+PC's `server_id`, public key, relay and host name only (**Copy a link without a code** under the QR
+code; it holds nothing secret, though whoever carries the link can read the host name). Copying it opens a 10-minute window, as a Bluetooth device's pairing mode
 does: outside it the PC refuses a comparison with `auth_failed` before any prompt, and does not count
 it as a failed pairing, so nobody the owner did not invite can raise a prompt. Such a link may have come through a channel nobody vouches
 for, so its key is not trusted on its own: a relay, or whoever handed the link over, could have put

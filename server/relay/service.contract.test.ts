@@ -296,6 +296,16 @@ it("names the PC in the relay offer as Ovis lists it", async () => {
   expect(offer.name).toBe(hostname().slice(0, 64));
 });
 
+it("names the PC in the pairing link without a code as Ovis lists it", async () => {
+  const f = await fixture();
+  await f.start();
+  const response = await f.request("/link", "POST");
+  expect(response.status).toBe(200);
+  const offer = decodeOffer((await response.json() as { url: string }).url);
+  expect(offer?.code).toBeUndefined();
+  expect(offer?.name).toBe(hostname().slice(0, 64));
+});
+
 it("creates a new active code when the relay offer has none to reuse", async () => {
   const f = await fixture();
   await f.start();

@@ -60,6 +60,12 @@ async function probeRelay(relay: string, signal: AbortSignal): Promise<number | 
   return best;
 }
 
+/** The phone lists the PC under the name Ovis shows for it (server/machines.ts), not its scope URL. */
+function offerName(): { name?: string } {
+  const name = hostname().slice(0, 64);
+  return name ? { name } : {};
+}
+
 /** Only secure origins, without credentials, paths, query, fragments or host lists. */
 export function relayEndpoint(input: string, protocol: "wss:" | "https:"): string {
   const url = new URL(input);
@@ -304,11 +310,9 @@ export class RelayService {
   offer(): { url: string; expires_at: string } {
     if (!this.enabled || !this.identity || !this.services || this.blocked) throw new Error("Start the relay before pairing.");
     const pairing = this.services.devices.activePairing() ?? this.services.devices.startPairing();
-    // the phone lists the PC under the name Ovis shows for it (server/machines.ts), not its scope URL
-    const name = hostname().slice(0, 64);
     return {
       url: encodeOffer({ v: 1, server_id: this.identity.server_id, server_public_key: this.identity.public_key,
-        relay: this.advertised, code: pairing.code, ...(name ? { name } : {}) }, this.app),
+        relay: this.advertised, code: pairing.code, ...offerName() }, this.app),
       expires_at: pairing.expires_at,
     };
   }
@@ -321,7 +325,7 @@ export class RelayService {
   pairingLink(): { url: string } {
     if (!this.enabled || !this.identity || !this.services || this.blocked) throw new Error("Start the relay before pairing.");
     this.approvals.openWindow();
-    return { url: encodeOffer({ v: 1, server_id: this.identity.server_id, server_public_key: this.identity.public_key, relay: this.advertised }, this.app) };
+    return { url: encodeOffer({ v: 1, server_id: this.identity.server_id, server_public_key: this.identity.public_key, relay: this.advertised, ...offerName() }, this.app) };
   }
 
   async resetIdentity(): Promise<RelayStatus> {
