@@ -294,14 +294,14 @@ index 10e604114ae9fffc25c931497413800b0b6bd7bb..f99f000ed8b1b28d8ee35e22f1ebd609
    compositionstart(): void;
    compositionupdate(ev: CompositionEvent): void;
 diff --git a/src/browser/input/CompositionHelper.ts b/src/browser/input/CompositionHelper.ts
-index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..ecfe12d0346d6e623130e3fab8ddef8b74bdbcac 100644
+index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..1a5efccb856ce93e1aa98f990c6f8dd510a77e6d 100644
 --- a/src/browser/input/CompositionHelper.ts
 +++ b/src/browser/input/CompositionHelper.ts
 @@ -6,6 +6,19 @@
  import { IRenderService } from 'browser/services/Services';
  import { IBufferService, ICoreService, IOptionsService } from 'common/services/Services';
  import { C0 } from 'common/data/EscapeSequences';
-+import { isIpad, isIphone, isMac, isSafari } from 'common/Platform';
++import { isFirefox, isIpad, isIphone, isMac, isSafari } from 'common/Platform';
 +
 +/** Hangul jamo and syllables: a key or an edit that a Korean input method composes. */
 +const HANGUL_KEY = /^[ᄀ-ᇿ㄰-㆏가-힯]$/;
@@ -712,7 +712,7 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..ecfe12d0346d6e623130e3fab8ddef8b
    }
  
    /**
-@@ -218,25 +417,44 @@ export class CompositionHelper {
+@@ -218,27 +417,57 @@ export class CompositionHelper {
      }
  
      if (this._bufferService.buffer.isCursorInViewport) {
@@ -765,7 +765,20 @@ index b87ebbea07f5a9cdfc9f2f905a2b481e7da6b753..ecfe12d0346d6e623130e3fab8ddef8b
 +      this._textarea.style.width = compositionWidth + 'px';
        this._textarea.style.height = Math.max(compositionViewBounds.height, 1) + 'px';
        this._textarea.style.lineHeight = compositionViewBounds.height + 'px';
++      // Firefox places the IME's candidate window as if the text in this narrow nowrap textarea were
++      // never scrolled: the text typed before the preedit pushed it out of the box, and the window
++      // opened that far left of the cursor (#2936). The box grows left by that overflow instead, so
++      // nothing scrolls and the preedit stays where it is drawn.
++      if (isFirefox) {
++        const overflow = this._textarea.scrollWidth - this._textarea.clientWidth;
++        if (overflow > 0) {
++          this._textarea.style.left = (compositionLeft - overflow) + 'px';
++          this._textarea.style.width = (compositionWidth + overflow) + 'px';
++        }
++      }
      }
+ 
+     if (!dontRecurse) {
 diff --git a/src/browser/public/Terminal.ts b/src/browser/public/Terminal.ts
 index f6ec55d24fcd2db0776919eaef596074fe6d618a..378d7df4181d969f5dc8e2cb5fa1503540e07096 100644
 --- a/src/browser/public/Terminal.ts

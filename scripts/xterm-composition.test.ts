@@ -154,3 +154,43 @@ describe("xterm mobile composition input", () => {
     expect(e.sent).toEqual(["word word"]);
   });
 });
+
+describe("xterm composition placement in Firefox", async () => {
+  // Platform reads the browser from navigator, and takes a runtime with process for Node: shadow both
+  const firefox = await Bun.build({
+    entrypoints: [join(source, "browser/input/CompositionHelper.js")],
+    plugins: [xtermSourcePlugin(source)], target: "bun",
+    banner: "const process = undefined; const navigator = { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:159.0) Gecko/20100101 Firefox/159.0', platform: 'Win32', language: 'zh-CN' };",
+  });
+  if (!firefox.success) throw new AggregateError(firefox.logs, "Could not build the composition helper for Firefox");
+  const { CompositionHelper: FirefoxHelper } = await import(`data:text/javascript;base64,${Buffer.from(await firefox.outputs[0]!.text()).toString("base64")}`);
+
+  it("keeps the text typed before a preedit from scrolling the helper textarea", () => {
+    // a 9 px terminal cell; the textarea's own font draws 8 px a character on one unwrapped line
+    const style: Record<string, string> = {};
+    const textarea = Object.defineProperties(Object.assign(new EventTarget(), { value: "", selectionStart: 0, selectionEnd: 0, style }), {
+      clientWidth: { get: () => Math.round(parseFloat(style.width ?? "0")) },
+      scrollWidth: { get: () => Math.max(textarea.clientWidth, textarea.value.length * 8) },
+    });
+    const view = {
+      textContent: "", style: {} as Record<string, string>, classList: { add() {}, remove() {} },
+      getBoundingClientRect: () => ({ width: view.textContent.length * 9, height: 17 }),
+    };
+    const helper = new FirefoxHelper(textarea, view,
+      { buffer: { isCursorInViewport: true, x: 12, y: 3 }, cols: 80 },
+      { rawOptions: { screenReaderMode: false, fontFamily: "monospace", fontSize: 15 } },
+      { triggerDataEvent() {} },
+      { dimensions: { css: { cell: { width: 9, height: 17 } } } });
+    textarea.value = "ni hao shi ";
+    helper.compositionstart();
+    // the browser puts the preedit in the textarea after compositionupdate; the deferred update measures it
+    helper.compositionupdate({ data: "jie" });
+    textarea.value += "jie";
+    jest.runOnlyPendingTimers();
+    // Firefox anchors the candidate window to the unscrolled text, so nothing may overflow the box,
+    // while its right edge, where the preedit ends, stays at the end of the drawn preedit
+    expect(textarea.scrollWidth).toBe(textarea.clientWidth);
+    expect(parseFloat(style.left) + parseFloat(style.width)).toBe(12 * 9 + 3 * 9);
+    expect(style.top).toBe(3 * 17 + "px");
+  });
+});
