@@ -87,4 +87,9 @@ export interface AppActions {
    * lib/layoutMap.ts): its tab shows it alone, or every pane again; null without a pane
    */
   zoomPane: ((mode: ZoomMode) => void) | null;
+  /**
+   * The Zoom pane shortcut: zooms the selected pane, or unzooms it where its tab shows it alone;
+   * nothing for a pane alone in its tab. null where zoomPane is
+   */
+  toggleZoom: (() => void) | null;
 }

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { act, createElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 
@@ -135,6 +135,57 @@ describe("the pane canvas on a PC the Herdr app lays out", () => {
     const itemsOf = await draw(TUI);
     expect(itemsOf(snapshot.panes[0] as HerdrPane)).not.toContain("new-terminal");
     expect(renderer!.root.findAll((node) => node.props.className === "pane-frame-head")).toHaveLength(2);
+  });
+
+  const zoomButtons = () => renderer!.root.findAll((node) => node.type === "button" && node.props.className === "icon-button pane-frame-zoom");
+  const frameOf = (id: string) => renderer!.root.find((node) => node.type === "section" && node.props["data-layout-pane"] === id);
+  const zoomed: SessionSnapshot = { ...snapshot, layouts: [{ ...snapshot.layouts[0]!, zoomed: true }] };
+
+  it("draws a Zoom pane button on each split pane's title, which zooms that pane (#2037)", async () => {
+    await draw(TUI);
+    expect(zoomButtons().map((button) => button.props["aria-label"])).toEqual(["Zoom pane", "Zoom pane"]);
+    const bodies: unknown[] = [];
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (typeof init?.body === "string") bodies.push(JSON.parse(init.body));
+      return Response.json({ zoomed: true });
+    }, { preconnect: globalThis.fetch.preconnect }));
+    try {
+      await act(async () => { zoomButtons()[1]!.props.onClick({ detail: 0, currentTarget: { closest: () => null } }); });
+    } finally {
+      fetch.mockRestore();
+    }
+    expect(bodies).toEqual([{ pane_id: "p2", mode: "on" }]);
+  });
+
+  it("moves the typing into the pane whose zoom a mouse clicked, never leaving it in another pane (#2037)", async () => {
+    await draw(TUI);
+    const focused: string[] = [];
+    const frame = { querySelector: (selector: string) => selector === ".xterm-helper-textarea" ? { focus: () => focused.push("p2 terminal") } : null };
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => Response.json({ zoomed: true }), { preconnect: globalThis.fetch.preconnect }));
+    try {
+      await act(async () => { zoomButtons()[1]!.props.onClick({ detail: 1, currentTarget: { closest: () => frame } }); });
+      // a key that pressed the button leaves the focus on it
+      await act(async () => { zoomButtons()[1]!.props.onClick({ detail: 0, currentTarget: { closest: () => frame } }); });
+    } finally {
+      fetch.mockRestore();
+    }
+    expect(focused).toEqual(["p2 terminal"]);
+  });
+
+  it("keeps a zoomed pane's title row, with Unzoom pane, so the hidden panes are one click away (#2037)", async () => {
+    await draw(TUI, zoomed);
+    expect(frameOf("p1").props.className).not.toContain("is-single");
+    expect(zoomButtons().filter((button) => button.props["aria-label"] === "Unzoom pane")).toHaveLength(1);
+  });
+
+  it("draws no zoom button where panes are shown one at a time, or the Herdr app lays them out", async () => {
+    phone = true;
+    await draw(TUI);
+    expect(zoomButtons()).toHaveLength(0);
+    phone = false;
+    await act(async () => renderer?.unmount());
+    await draw(APP_CORE);
+    expect(zoomButtons()).toHaveLength(0);
   });
 
   it("leaves a core PC's panes to the Herdr app: Close pane stays, no divider is drawn", async () => {

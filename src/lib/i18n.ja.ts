@@ -349,6 +349,7 @@ const BASE: Record<string, string> = {
   "There is no pane on that side.": "その方向にペインはありません。",
   "Split pane right": "ペインを右に分割",
   "Split pane down": "ペインを下に分割",
+  "Zoom or unzoom pane": "ペインのズームまたは解除",
   "Plan: {done} of {total} done": "計画: {total} 件中 {done} 件完了",
   "Plan": "計画",
   "Something went wrong": "問題が発生しました",

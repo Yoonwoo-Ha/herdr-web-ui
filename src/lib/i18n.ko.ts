@@ -347,6 +347,7 @@ const BASE: Record<string, string> = {
   "There is no pane on that side.": "해당 방향에 패널이 없습니다.",
   "Split pane right": "패널을 오른쪽으로 분할",
   "Split pane down": "패널을 아래로 분할",
+  "Zoom or unzoom pane": "패널 확대 또는 해제",
   "Plan: {done} of {total} done": "계획: {total}개 중 {done}개 완료",
   "Plan": "계획",
   "Something went wrong": "문제가 발생했습니다",
