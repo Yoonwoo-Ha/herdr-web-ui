@@ -6,7 +6,7 @@
  * opens this one.
  */
 import { exportAccountKey } from "../../../shared/account-records.ts";
-import type { AddRecord } from "../../../shared/account-records.ts";
+import type { AddRecord, RemoveRecord } from "../../../shared/account-records.ts";
 
 export interface AccountKey {
   readonly private_key: CryptoKey;
@@ -45,6 +45,20 @@ interface Records {
   pending: Readonly<Record<string, PendingSignIn>>;
   /** by record id: an `add` this device signed that some PCs' mailboxes have not taken yet (account/join.ts) */
   adds: Readonly<Record<string, QueuedAdd>>;
+  /**
+   * By key: the latest record this device signed for a device of the account, an `add` for one it
+   * approved itself (docs/account.md, rule 6) or a `remove` for one it removed: what it hands a PC it
+   * brings into the account (account/join.ts, enrollPc)
+   */
+  devices: Readonly<Record<string, AddRecord | RemoveRecord>>;
+  /** by server_id: a PC this device brought into the account, and the records whose outcome it read there */
+  enrolls: Readonly<Record<string, PlannedEnroll>>;
+}
+
+export interface PlannedEnroll {
+  readonly account: string;
+  /** ids of the records the PC answered with a final outcome */
+  readonly done: readonly string[];
 }
 
 export interface QueuedAdd {
@@ -54,6 +68,7 @@ export interface QueuedAdd {
   readonly to: readonly string[];
 }
 type Name = keyof Records;
+type Many<N extends Exclude<Name, "key">> = { [K in N]?: Records[K] };
 
 /** Each read and write is one transaction; `key` is made at most once, between tabs too. */
 export interface AccountStore {
@@ -62,6 +77,8 @@ export interface AccountStore {
   set<N extends Exclude<Name, "key">>(name: N, value: Records[N] | undefined): Promise<void>;
   /** Reads and writes `name` in one transaction; `change` runs synchronously inside it. */
   update<N extends Exclude<Name, "key">>(name: N, change: (current: Records[N] | undefined) => Records[N] | undefined): Promise<void>;
+  /** Reads and writes several `names` in one transaction; a name `change` leaves out, or sets undefined, is deleted. */
+  updateMany<N extends Exclude<Name, "key">>(names: readonly N[], change: (current: Many<N>) => Many<N>): Promise<void>;
   /** Forgets the key and the sign-in: a new key is made on next use, which no PC knows. */
   clear(): Promise<void>;
 }
@@ -86,6 +103,12 @@ export function memoryAccountStore(): AccountStore {
     async update(name, change) {
       const next = change(records.get(name) as never);
       if (next === undefined) records.delete(name); else records.set(name, next);
+    },
+    async updateMany(names, change) {
+      const next = change(Object.fromEntries(names.map((name) => [name, records.get(name)])) as never) as Record<string, Records[Name] | undefined>;
+      for (const name of names) {
+        if (next[name] === undefined) records.delete(name); else records.set(name, next[name]);
+      }
     },
     async clear() { records.clear(); },
   };
@@ -164,6 +187,25 @@ export const indexedAccountStore: AccountStore = {
         if (next === undefined) store.delete(name);
         else store.put(next, name);
       };
+      return () => undefined;
+    });
+  },
+  updateMany(names, change) {
+    return transact("readwrite", (store) => {
+      const current: Record<string, unknown> = {};
+      let left = names.length;
+      for (const name of names) {
+        const request = store.get(name);
+        request.onsuccess = () => {
+          current[name] = request.result;
+          if (--left > 0) return;
+          const next = change(current as never) as Record<string, unknown>;
+          for (const each of names) {
+            if (next[each] === undefined) store.delete(each);
+            else store.put(next[each], each);
+          }
+        };
+      }
       return () => undefined;
     });
   },

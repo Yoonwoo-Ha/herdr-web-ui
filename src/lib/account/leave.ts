@@ -10,7 +10,7 @@ import type { RemoveRecord } from "../../../shared/account-records.ts";
 import type { RelayDeviceStore } from "../relay/device.ts";
 import type { AccountService } from "./service.ts";
 import type { AccountStore } from "./store.ts";
-import { post, type PcFetch } from "./join.ts";
+import { post, rememberDevice, type PcFetch } from "./join.ts";
 
 export interface LeaveResult {
   readonly remove: RemoveRecord;
@@ -68,6 +68,8 @@ export async function removeFromAccount(options: {
     v: 1, kind: "remove", account: session.account, key: options.key,
     issued_at: new Date((options.now ?? Date.now)()).toISOString(), id: newRecordId(), signer: own.public_spki,
   }, own.private_key);
+  // kept before it is sent: a PC this device brings into the account later tombstones the key, and never gets an add for it
+  await rememberDevice(options.accountStore, remove);
   // a PC applies the remove only where this device is a member: pairings that PC confirmed for this account
   const linked = new Set((await options.relayStore.list()).filter((device) => device.public_spki === own.public_spki && device.account === session.account).map((device) => device.server_id));
   // the PC in view first: it answers at once, whatever the account service does next

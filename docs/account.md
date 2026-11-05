@@ -222,6 +222,16 @@ removed and absent, or signed before this PC paired the key again) and `refused`
 PC it just paired. The request's own device must already be a member of `account` (it links itself
 first). Same answer as `records`.
 
+What a client enrolls (`enrollPc` in [`src/lib/account/join.ts`](../src/lib/account/join.ts)): when
+its link brings a PC that had no account into it, it sends that PC, over a session signed in with
+the account key, the `remove`s it signed itself, as signed (through `records`), so the PC tombstones
+those keys. It signs nothing for the enrollment and takes nothing from another PC's device list or
+status. It reads every record's outcome and sends again, on its next connection to that PC, each one
+the PC did not answer or answered `account_unavailable`, and any removal it signed while the
+enrollment ran. It enrolls no `add` yet: one it signed may be for a device another member removed
+since, and that member's `remove` does not reach a PC new to the account. Adds come with relaying
+the account's signed removals (#2956); until then a new PC admits the account's devices by approval.
+
 ### Introductions
 
 A device just admitted on PC X learns the account's other PCs from the member that approved it,
