@@ -876,7 +876,8 @@ export async function paneSwapWith(paneId: string, targetPaneId: string, socketP
  * ID kept. herdr 0.9.5 moves a pane into a tab only from another one (`same_tab` otherwise), and only
  * right of or below its target: the pane first goes to a tab of its own in its workspace, which herdr
  * closes again once the pane is back beside the target, and a swap then puts it left of or above
- * it. A herdr that moves within a tab, and herdr-core, take the first call. A pane herdr will not
+ * it. A herdr that moves within a tab, and herdr-core, take the first call. A pane herdr will not move
+ * out of its tab (a zoomed tab, say) moves nothing, `changed: false`. A pane herdr will not
  * bring back beside its target goes back beside another pane of its tab, and the error says so, or
  * says where it waits. A swap herdr refuses, or that fails, leaves it moved, right of or below the
  * target: `reason` says why. Queued with the other focus writers: herdr's focus, which a focused
@@ -908,21 +909,33 @@ export async function paneMoveBeside(paneId: string, targetPaneId: string, side:
     };
     // where herdr's focus went when the focused pane left its tab: the move's doing, not the user's
     let left: string | null = null;
+    /** Whether herdr's snapshot lists `out` in its tab again; false without one. */
+    const inTab = (now: { panes: PaneInfo[] } | null, out: string) => now?.panes.some((candidate) => candidate.pane_id === out && candidate.tab_id === target.tab_id) === true;
     /** A pane out of its tab and not beside its target goes back beside the target, else beside any pane still there; the error says where it is. */
     const strayed = async (out: string, why: HerdrError): Promise<never> => {
-      let back = false;
-      const panes = await sessionSnapshot(socket).then((now) => now.panes.filter((candidate) => candidate.tab_id === target.tab_id && candidate.pane_id !== out), () => []);
+      const now = await sessionSnapshot(socket).catch(() => null);
+      // a move herdr made without its answer arriving may have brought it back already
+      let back = inTab(now, out);
+      const panes = back ? [] : (now?.panes ?? []).filter((candidate) => candidate.tab_id === target.tab_id && candidate.pane_id !== out);
       for (const beside of [...panes.filter((candidate) => candidate.pane_id === targetPaneId), ...panes.filter((candidate) => candidate.pane_id !== targetPaneId)]) {
         back = await move(out, { type: "tab", tab_id: target.tab_id, target_pane_id: beside.pane_id, split: "right" }).then((home) => home.changed !== false, () => false);
         if (back) break;
       }
-      if (!back) throw new HerdrError(why.code, `pane ${out} waits in a tab of its own: ${why.message}`);
+      // or one of these moves did, so herdr answered the next same_tab
+      let read = now;
+      if (!back && panes.length > 0) {
+        read = await sessionSnapshot(socket).catch(() => null);
+        back = inTab(read, out);
+      }
+      if (!back) throw new HerdrError(why.code, `pane ${out} ${read === null ? "may wait" : "waits"} in a tab of its own: ${why.message}`);
       if (left !== null) await restore(out, (at) => at === left);
       throw new HerdrError(why.code, `pane ${out} went back into its tab: ${why.message}`);
     };
     const failed = (error: unknown) => error instanceof HerdrError ? error : new HerdrError("pane_not_moved", error instanceof Error ? error.message : String(error));
     let moved = await move(paneId, into);
     if (moved.changed === false && moved.reason === "same_tab") {
+      // herdr moves no pane out of a zoomed tab (its PaneMoveReason zoomed_tab)
+      if (before.layouts.find((layout) => layout.tab_id === target.tab_id)?.zoomed) return { changed: false, reason: "zoomed_tab" };
       let passing: Moved;
       try {
         passing = await move(paneId, { type: "new_tab", workspace_id: pane.workspace_id });
@@ -935,6 +948,7 @@ export async function paneMoveBeside(paneId: string, targetPaneId: string, side:
         if (before.focused_pane_id === paneId && at?.tab_id === target.tab_id) left = at.pane_id;
         return strayed(out.pane_id, failed(error));
       }
+      if (passing.changed === false) return { changed: false, reason: passing.reason ?? null };
       const out = passing.pane.pane_id;
       if (before.focused_pane_id === paneId) left = passing.source_layout?.focused_pane_id ?? null;
       try {
@@ -947,11 +961,25 @@ export async function paneMoveBeside(paneId: string, targetPaneId: string, side:
     if (moved.changed === false) return { changed: false, reason: moved.reason ?? null };
     const id = moved.pane.pane_id;
     if (side === "left" || side === "up") {
-      // the focus just before the swap is the one kept, the move's own taken back to the moved pane
-      const kept = await sessionSnapshot(socket).then((now) => (left !== null && now.focused_pane_id === left ? id : now.focused_pane_id ?? null), () => null);
-      // the move is committed whatever the swap does: a swap that fails leaves the pane right of or below its target
+      // the focus just before the swap is the one kept, the move's own taken back to the moved pane;
+      // without it the swap would take herdr's focus with nothing to give back, so the pane stays put,
+      // its focus given back as after a move right or down
+      const focused = await sessionSnapshot(socket).then((now) => now.focused_pane_id ?? null, (error: unknown) => failed(error));
+      if (focused instanceof HerdrError) {
+        if (left !== null) await restore(id, (at) => at === left);
+        return { changed: true, reason: focused.code };
+      }
+      const kept = left !== null && focused === left ? id : focused;
+      // the move is committed whatever the swap does: a swap that fails leaves the pane right of or
+      // below its target, and one whose answer is lost is read from the layout
       const swap = await herdrRpc<{ swap: { changed: boolean; reason?: string | null } }>("pane.swap", { source_pane_id: id, target_pane_id: targetPaneId }, socket)
-        .then((answer) => answer.swap, (error: unknown) => ({ changed: false, reason: failed(error).code }));
+        .then((answer) => answer.swap, async (error: unknown) => {
+          const layout = await sessionSnapshot(socket).then((now) => now.layouts.find((candidate) => candidate.tab_id === target.tab_id), () => undefined);
+          const rect = (pane: string) => layout?.panes.find((candidate) => candidate.pane_id === pane)?.rect;
+          const [mine, theirs] = [rect(id), rect(targetPaneId)];
+          const first = mine !== undefined && theirs !== undefined && (side === "left" ? mine.x < theirs.x : mine.y < theirs.y);
+          return first ? { changed: true, reason: null } : { changed: false, reason: failed(error).code };
+        });
       await restore(kept, (at) => at === id || (left !== null && at === left));
       if (!swap.changed) return { changed: true, reason: swap.reason ?? "unchanged" };
     } else if (left !== null) await restore(id, (at) => at === left);

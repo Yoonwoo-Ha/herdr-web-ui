@@ -239,21 +239,31 @@ it("releases the swap queue after a native swap fails without restoring focus", 
  * herdr's pane.move as measured on 0.9.5: into the pane's own tab it answers same_tab (`withinTab`
  * models a herdr that moves there); a pane moved out to a new tab keeps its ID and leaves herdr's
  * focus on a pane of the tab it left, which its answer names; an explicit swap focuses its source.
- * `failInto` and `refuseInto` count the moves into a tab that fail or answer changed:false;
- * `dropPassing` makes the move to a tab of its own without an answer, and `failSwap` fails a swap.
+ * `failInto` and `refuseInto` count the moves into a tab that fail or answer changed:false, and
+ * `dropInto` the ones herdr makes without an answer; `dropPassing` makes the move to a tab of its own
+ * without an answer and `refusePassing` refuses it; `failSwap` fails a swap and `dropSwap` makes one
+ * without an answer; `failSnapshot` fails the read it is asked for. `order` is the tab's panes from
+ * left to right, each a column of the snapshot's layout.
  */
 async function movePeer({ withinTab = false } = {}) {
   const state = {
     tabs: new Map([["source", "tab"], ["target", "tab"], ["sibling", "tab"], ["other", "tab-2"]]),
-    focus: "elsewhere", failInto: 0, refuseInto: 0, refuseSwap: false, dropPassing: false, failSwap: false,
+    order: ["target", "source", "sibling"], zoomed: false,
+    focus: "elsewhere", failInto: 0, refuseInto: 0, dropInto: 0, refuseSwap: false, dropPassing: false, refusePassing: false, failSwap: false, dropSwap: false,
+    failSnapshot: (_read: number) => false, reads: 0,
     onInto: () => {},
   };
   const fixture = await peer((request, { socket }) => {
     const answer = (result: unknown) => socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
-    const params = request.params as { pane_id: string; source_pane_id: string; target_pane_id: string; destination: { type: string; tab_id: string } };
+    const params = request.params as { pane_id: string; source_pane_id: string; target_pane_id: string; destination: { type: string; tab_id: string; target_pane_id?: string } };
     const info = (pane_id: string) => ({ pane_id, tab_id: state.tabs.get(pane_id), workspace_id: "ws" });
     if (request.method === "session.snapshot") {
-      answer({ snapshot: { focused_pane_id: state.focus, panes: [...state.tabs.keys()].map(info) } });
+      if (state.failSnapshot(++state.reads)) {
+        socket.end(`${JSON.stringify({ id: request.id, error: { code: "internal_error", message: "snapshot failed" } })}\n`);
+        return;
+      }
+      const panes = state.order.map((pane_id, index) => ({ pane_id, focused: pane_id === state.focus, rect: { x: index * 10, y: 0, width: 10, height: 10 } }));
+      answer({ snapshot: { focused_pane_id: state.focus, panes: [...state.tabs.keys()].map(info), layouts: [{ tab_id: "tab", zoomed: state.zoomed, panes }] } });
     } else if (request.method === "pane.move") {
       const { pane_id: pane, destination } = params;
       if (destination.type === "tab" && state.tabs.get(pane) === destination.tab_id && !withinTab) {
@@ -273,10 +283,21 @@ async function movePeer({ withinTab = false } = {}) {
           return;
         }
       }
+      if (destination.type === "new_tab" && state.refusePassing) {
+        answer({ move_result: { changed: false, reason: "zoomed_tab", pane: info(pane) } });
+        return;
+      }
       if (destination.type === "new_tab" && state.focus === pane) state.focus = "sibling";
       state.tabs.set(pane, destination.type === "new_tab" ? "passing" : destination.tab_id);
+      state.order = state.order.filter((id) => id !== pane);
+      if (destination.type === "tab") state.order.splice(state.order.indexOf(destination.target_pane_id!) + 1, 0, pane);
       if (destination.type === "new_tab" && state.dropPassing) {
         state.dropPassing = false;
+        socket.end();
+        return;
+      }
+      if (destination.type === "tab" && state.dropInto > 0) {
+        state.dropInto--;
         socket.end();
         return;
       }
@@ -291,6 +312,13 @@ async function movePeer({ withinTab = false } = {}) {
         return;
       }
       state.focus = params.source_pane_id;
+      const [from, to] = [state.order.indexOf(params.source_pane_id), state.order.indexOf(params.target_pane_id)];
+      [state.order[from], state.order[to]] = [params.target_pane_id, params.source_pane_id];
+      if (state.dropSwap) {
+        state.dropSwap = false;
+        socket.end();
+        return;
+      }
       answer({ swap: { changed: true, reason: null, focused_pane_id: state.focus, target_pane_id: params.target_pane_id } });
     } else if (request.method === "pane.focus") {
       state.focus = params.pane_id;
@@ -401,6 +429,61 @@ it("says a pane moved right of its target stays there when herdr refuses the swa
   expect(await paneMoveBeside("source", "target", "up", path)).toEqual({ changed: true, reason: "internal_error" });
   expect(state.tabs.get("source")).toBe("tab");
   expect(state.focus).toBe("elsewhere");
+});
+
+it("says nothing moved when herdr refuses to move the pane out of its tab, or the tab is zoomed", async () => {
+  const { path, state, requests } = await movePeer();
+  state.refusePassing = true;
+  expect(await paneMoveBeside("source", "target", "right", path)).toEqual({ changed: false, reason: "zoomed_tab" });
+  expect(changes(requests).filter(([method]) => method === "pane.move")).toHaveLength(2);
+  requests.length = 0;
+  state.zoomed = true;
+  expect(await paneMoveBeside("source", "target", "left", path)).toEqual({ changed: false, reason: "zoomed_tab" });
+  // only the move into its own tab, which herdr answers same_tab
+  expect(changes(requests)).toHaveLength(1);
+  expect(state.tabs.get("source")).toBe("tab");
+});
+
+it("takes a pane herdr brought back without answering as back in its tab, herdr's focus with it", async () => {
+  const { path, state } = await movePeer();
+  state.focus = "source";
+  state.dropInto = 1;
+  const lost = await rejection(paneMoveBeside("source", "target", "right", path));
+  expect(lost.message).toContain("went back into its tab");
+  expect(state.tabs.get("source")).toBe("tab");
+  expect(state.focus).toBe("source");
+  // the move back beside the target goes through unanswered, so herdr answers the next same_tab
+  state.failInto = 1;
+  state.dropInto = 1;
+  expect((await rejection(paneMoveBeside("source", "target", "right", path))).message).toContain("went back into its tab");
+  expect(state.tabs.get("source")).toBe("tab");
+  // without a read after it, where the pane is stays unknown
+  state.failInto = 1;
+  state.dropInto = 1;
+  state.reads = 0;
+  state.failSnapshot = (read) => read === 3;
+  expect((await rejection(paneMoveBeside("source", "target", "right", path))).message).toContain("may wait in a tab of its own");
+});
+
+it("reads the layout when a swap's answer is lost, and leaves herdr's focus alone when the read before it fails", async () => {
+  const { path, state, requests } = await movePeer();
+  state.dropSwap = true;
+  expect(await paneMoveBeside("source", "target", "left", path)).toEqual({ changed: true, reason: null });
+  expect(state.order.indexOf("source")).toBeLessThan(state.order.indexOf("target"));
+  expect(state.focus).toBe("elsewhere");
+  // the read just before the swap (the second of the move) fails: no swap, the pane stays right of its target
+  state.reads = 0;
+  state.failSnapshot = (read) => read === 2;
+  requests.length = 0;
+  expect(await paneMoveBeside("source", "target", "left", path)).toEqual({ changed: true, reason: "internal_error" });
+  expect(changes(requests).some(([method]) => method === "pane.swap")).toBe(false);
+  expect(state.order.indexOf("source")).toBeGreaterThan(state.order.indexOf("target"));
+  expect(state.focus).toBe("elsewhere");
+  // a focused pane gets herdr's focus back from the sibling it went to on the way
+  state.focus = "source";
+  state.reads = 0;
+  expect(await paneMoveBeside("source", "target", "left", path)).toEqual({ changed: true, reason: "internal_error" });
+  expect(state.focus).toBe("source");
 });
 
 /** `promise`, or a rejection naming `what` once `ms` pass: an awaited event, never a fixed wait. */
