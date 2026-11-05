@@ -5,29 +5,40 @@ import { buildXtermSource, xtermSourcePlugin } from "./build-xterm.ts";
 // Exercise the patched source Vite ships, without a browser, server or herdr session.
 const source = buildXtermSource(join(import.meta.dir, ".."));
 const bundle = await Bun.build({
-  entrypoints: [join(source, "browser/input/CompositionHelper.js")],
+  entrypoints: [join(source, "browser/input/CompositionHelper.js"), join(source, "browser/CoreBrowserTerminal.js")],
   plugins: [xtermSourcePlugin(source)], target: "bun",
 });
 if (!bundle.success) throw new AggregateError(bundle.logs, "Could not build the composition helper");
-const { CompositionHelper } = await import(`data:text/javascript;base64,${Buffer.from(await bundle.outputs[0]!.text()).toString("base64")}`);
+const load = async (name: string) => {
+  const output = bundle.outputs.find(({ path }) => path.endsWith(`/${name}.js`))!;
+  return import(`data:text/javascript;base64,${Buffer.from(await output.text()).toString("base64")}`);
+};
+const { CompositionHelper } = await load("CompositionHelper");
+const { CoreBrowserTerminal } = await load("CoreBrowserTerminal");
 
 beforeEach(() => { jest.useFakeTimers(); });
 afterEach(() => { jest.useRealTimers(); });
 
-function editor() {
+/** With a terminal (never opened), keys and input go through its own handling, as on the page. */
+function editor(term?: any) {
   const sent: string[] = [];
   const textarea = Object.assign(new EventTarget(), { value: "", selectionStart: 0, selectionEnd: 0 });
   const view = { textContent: "", classList: { add() {}, remove() {} } };
   const helper = new CompositionHelper(textarea, view,
     { buffer: { isCursorInViewport: false } },
     { rawOptions: { screenReaderMode: false } },
-    { triggerDataEvent: (text: string) => sent.push(text) }, {});
+    term?.coreService ?? { triggerDataEvent: (text: string) => sent.push(text) }, {});
+  if (term) {
+    // what open() attaches: the textarea, its helper, and the element a key restyles
+    Object.assign(term, { textarea, _compositionHelper: helper, element: { classList: { add() {}, remove() {} } } });
+    term.onData((text: string) => sent.push(text));
+  }
   textarea.addEventListener("compositionstart", () => helper.compositionstart());
   textarea.addEventListener("compositionupdate", (event) => helper.compositionupdate(event));
   textarea.addEventListener("compositionend", () => helper.compositionend());
-  textarea.addEventListener("keydown", (event) => helper.keydown(event));
+  textarea.addEventListener("keydown", (event) => term ? term._keyDown(event) : helper.keydown(event));
   textarea.addEventListener("beforeinput", (event) => helper.beforeinput(event, true));
-  textarea.addEventListener("input", (event) => helper.input(event, true));
+  textarea.addEventListener("input", (event) => term ? term._inputEvent(event) : helper.input(event, true));
   const event = (type: string, fields: Record<string, unknown> = {}) =>
     textarea.dispatchEvent(Object.assign(new Event(type, { bubbles: true, composed: true }), fields));
   const value = (text: string) => {
@@ -152,6 +163,50 @@ describe("xterm mobile composition input", () => {
     e.helper.reset();
     jest.runAllTimers();
     expect(e.sent).toEqual(["word word"]);
+  });
+
+  // Gboard rewrites the word it sees before the caret, and the fallback sends that as DELs at the
+  // shell cursor. A key that moved the cursor must leave none of the text before it there (#2836).
+  const rewriteWord = (e: ReturnType<typeof editor>, word: string) =>
+    e.edit(e.textarea.value.replace(/\S*$/, word), "insertReplacementText", word);
+  for (const [name, key, sends] of [
+    ["ArrowLeft", { key: "ArrowLeft", keyCode: 37 }, "\x1b[D"],
+    ["Home", { key: "Home", keyCode: 36 }, "\x1b[H"],
+    ["Tab", { key: "Tab", keyCode: 9 }, "\t"],
+    ["Escape", { key: "Escape", keyCode: 27 }, "\x1b"],
+    ["Ctrl+A", { key: "a", keyCode: 65, ctrlKey: true }, "\x01"],
+    ["Alt+B", { key: "b", keyCode: 66, altKey: true }, "\x1bb"],
+  ] as const) {
+    it(`deletes nothing the user did not edit after ${name} moves the shell cursor`, () => {
+      const e = editor(new CoreBrowserTerminal());
+      e.compose("abcdef");
+      e.event("keydown", key);
+      rewriteWord(e, "X");
+      expect(e.sent).toEqual(["abcdef", sends, "X"]);
+    });
+  }
+
+  it("deletes nothing the user did not edit after the embedder's input moves the shell cursor", () => {
+    const term = new CoreBrowserTerminal();
+    const e = editor(term);
+    e.compose("abcdef");
+    term.input("\x1b[D");
+    rewriteWord(e, "X");
+    expect(e.sent).toEqual(["abcdef", "\x1b[D", "X"]);
+  });
+
+  it("leaves a just finished composition to its own send after the embedder's input", () => {
+    const term = new CoreBrowserTerminal();
+    const e = editor(term);
+    e.event("compositionstart");
+    e.value("abc");
+    e.event("compositionupdate", { data: "abc" });
+    e.event("compositionend", { data: "abc" });
+    term.input("\x1b[D");
+    // the embedder's input is the first data its label meets (the key bar's, the Stop's)
+    expect(e.sent).toEqual(["\x1b[D"]);
+    jest.runAllTimers();
+    expect(e.sent).toEqual(["\x1b[D", "abc"]);
   });
 });
 
