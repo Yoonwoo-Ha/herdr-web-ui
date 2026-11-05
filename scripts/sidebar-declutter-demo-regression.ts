@@ -190,7 +190,7 @@ async function twoPcs(browser: Browser, scene: Scene): Promise<void> {
     try {
       await newRow(page).waitFor();
       assert.equal(await headers(page).count(), 0, "the Host shown alone of two has no header");
-      assert.equal((await page.locator(".machine-hidden-note").innerText()).trim(), "1 PC hidden on this device", "the note says the other PC is hidden");
+      assert.equal(await page.locator(".sidebar-hidden-pcs").getAttribute("aria-label"), "1 PC hidden on this device", "the PCs head says the other PC is hidden");
       await capture(page, scene, "host-shown-of-two");
       assert.deepEqual(errors, []);
     } finally { await context.close(); }

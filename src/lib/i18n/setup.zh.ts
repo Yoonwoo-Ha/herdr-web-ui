@@ -71,7 +71,6 @@ export const SETUP_ZH: Record<string, string> = {
   "Turn on plan limits to see accounts.": "开启套餐限额以查看账号。",
   "Shows plan usage beside Settings. Sign-ins are sent to each provider's usage API; never refreshed here.": "在设置旁显示套餐用量。登录信息会发送至各服务的用量 API，此处不会刷新。",
   "Accounts": "账户",
-  "Show {name}": "显示 {name}",
   "Session is the 5-hour limit. Without it, the closest limit is shown.": "会话是 5 小时限额，没有时显示最接近的限额。",
   "Used": "已用",
   "Remaining": "剩余",

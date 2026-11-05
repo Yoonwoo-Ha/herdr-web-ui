@@ -322,13 +322,13 @@ async function withScenario(browser: Awaited<ReturnType<typeof chromium.launch>>
       assert.equal(await getHook(page, "calls.deleteCount"), 1, "only the successful DELETE counts");
       await observedPc(page, observer, null);
 
-      // Hide on this device is Settings' Show in sidebar turned off: the PC leaves, the line under the PCs says so and takes the focus
+      // Hide on this device is Settings' Show in sidebar turned off: the PC leaves, the PCs head counts it and takes the focus
       await openMenu(page, managed, scenario);
       await item(page, "Hide on this device").click();
       await managed.waitFor({ state: "detached" });
-      const note = page.locator(".machine-hidden-note");
-      assert.equal((await note.innerText()).trim(), "1 PC hidden on this device", "the line says one PC is hidden");
-      assert.equal(await note.evaluate((button) => document.activeElement === button), true, "the focus goes to the hidden-PCs line");
+      const hiddenCount = page.locator(".pcs-sidebar > .sidebar-section-head .sidebar-hidden-pcs");
+      assert.equal(await hiddenCount.getAttribute("aria-label"), "1 PC hidden on this device", "the PCs head says one PC is hidden");
+      assert.equal(await hiddenCount.evaluate((button) => document.activeElement === button), true, "the focus goes to the PCs head's hidden-PC count");
       assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("ovis:hidden-pcs") ?? "[]")), ["sidebar-managed-fixture"], "the PC is hidden on this device only");
       console.log("PASS Manage PC menu: Disconnect/Connect, Rename… Enter and blur, Remove PC… confirm with busy suppression, failure recovery and one removal, Hide on this device");
     }

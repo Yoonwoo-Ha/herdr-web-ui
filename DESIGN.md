@@ -1251,8 +1251,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   its own `ovis:hidden-pcs` key, like the fold): it leaves the PC groups, the Agents list and the
   command palette, stays connected, and a link or an alert to its pane still opens that pane. The
   list shows when there are two PCs or more, the Host first; the last PC shown cannot be hidden, and
-  hiding the PC the selection is on moves it to the Host, else the first PC shown. Under the PCs a
-  quiet `--fs-xs` `--text-dim` line says how many are hidden here and opens that group. The banner of
+  hiding the PC the selection is on moves it to the Host, else the first PC shown. The PCs head says
+  how many are hidden here, after its words: a quiet `--text-dim` pill (`.sidebar-hidden-pcs`), an eye
+  crossed out and the count, named in words (**1 PC hidden on this device**), a touch target on a phone.
+  It opens a menu, a sheet on a phone, headed **Hidden on this device** with a note that a hidden PC
+  stays connected, that shows each PC again in place (**Show Work PC**), in the roster's order, or goes
+  to that Settings group (**Choose PCs in Settings…**). Showing one follows the switch's rules and moves
+  no selection; showing the last takes the pill away, and the focus it held goes to the PCs head's fold,
+  not the page; so does the focus of an open menu whose last PC the roster or another tab takes away.
+  VS Code's view heads list the views hidden there to show again the same way. The banner of
   a PC that needs setup or a bridge update still shows for a hidden PC: it asks for an action. herdr's
   TUI shows one session at a time and Orca hides other clients' workspaces; Ovis shows every PC of
   the roster, so the choice is per PC and per device, not a sidebar switch.

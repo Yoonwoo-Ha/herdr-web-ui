@@ -23,31 +23,6 @@
 
 .machine-list > .tree-state { padding-left: calc(var(--side-gutter) + var(--side-box)); }
 
-/* PCs kept out on this device (Settings → Remote PCs): one quiet line under the PCs shown, which
-   opens the page that shows them again */
-.machine-hidden-note {
-  display: block;
-  margin: var(--space-2) 0 0;
-  padding: var(--space-2) var(--space-2) var(--space-2) calc(var(--side-gutter) + var(--side-box));
-  background: transparent;
-  border: 0;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: var(--fs-xs);
-  text-align: left;
-  cursor: pointer;
-}
-
-.machine-hidden-note:hover,
-.machine-hidden-note:focus-visible {
-  color: var(--text);
-  text-decoration: underline;
-}
-
-@media (pointer: coarse) {
-  .machine-hidden-note { min-height: var(--touch-target); }
-}
-
 .machine-group {
   --machine-indent: calc(var(--side-gutter) + var(--side-box));
 }
@@ -91,8 +66,8 @@
   font-weight: var(--fw-semibold);
 }
 
-/* Manage PC's head, in the popover and in a phone's sheet: the name, its state and how it is reached, and for a
-   PC herdr manages where the rest is done */
+/* a sidebar menu's head, in the popover and in a phone's sheet: Manage PC's names the PC, its state and how it is
+   reached, and for a PC herdr manages where the rest is done; the PCs head's hidden menu says what it lists */
 .machine-menu-head {
   display: flex;
   flex-direction: column;
