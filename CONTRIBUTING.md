@@ -119,7 +119,8 @@ the context does not make it clear. The dialog that makes a workspace is
 - **UI text:** every new `t("…")` string needs a Korean, Japanese and Simplified Chinese entry with
   the same placeholders. A string that only one feature's files use goes in that feature's files in
   `src/lib/i18n/` when it has them (`settings.ko.ts`, `settings.ja.ts` and `settings.zh.ts` for the
-  Settings dialog; each file's header lists its feature's files). Any other string goes in
+  Settings dialog, with its Access rows in `settings-access.*.ts`; each file's header lists its
+  feature's files). Any other string goes in
   `src/lib/i18n.ko.ts`, `i18n.ja.ts` and `i18n.zh.ts`, and so does a feature's string once another
   feature uses it too. `bun run test:unit` fails on a missing, unused or untranslated entry, and on one
   kept in the wrong file or in different files across the three languages.
