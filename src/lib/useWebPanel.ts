@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { LOCAL_MACHINE } from "../../shared/machines.ts";
-import { WEB_PANEL_KEY as HISTORY_KEY, WEB_PANEL_DOCKED_KEY as DOCKED_KEY, withoutWebPanel } from "./historyKeys.ts";
+import { WEB_PANEL_KEY as HISTORY_KEY, WEB_PANEL_DOCKED_KEY as DOCKED_KEY, SHEET_HISTORY_KEY, withoutWebPanel } from "./historyKeys.ts";
 import { backUnderCurrentEntry } from "./historyNavigation.ts";
 import { outsideSettings, settingsEntry } from "./settingsHistory.ts";
 import { panelUrl, wantsPanel } from "./webPanel.ts";
@@ -83,7 +83,11 @@ export function useWebPanel({ settings, filePanelAvailable }: { settings: Settin
     if (url === null) return false;
     takeOver?.();
     const state = window.history.state;
-    const owned = takeOver !== undefined || (ownsEntry.current && (webPanelFromState(state) !== null || isDocked(state)));
+    // a phone sheet's entry (the palette's) copies the page's mark: it stays the sheet's, and the push
+    // below takes it over as any navigation from a sheet does (lib/sheetHistory.ts), so the sheet's
+    // closing does not step back onto the page shown before
+    const sheet = state !== null && typeof state === "object" && typeof (state as Record<string, unknown>)[SHEET_HISTORY_KEY] === "string";
+    const owned = takeOver !== undefined || (!sheet && ownsEntry.current && (webPanelFromState(state) !== null || isDocked(state)));
     if (owned) window.history.replaceState(panelState(state, filePanelAvailable ? null : url), "");
     else if (!filePanelAvailable) window.history.pushState(panelState(state, url), "");
     // a docked page swapped under a popup file keeps the entry below it

@@ -288,6 +288,7 @@ export const SETTINGS_JA: Record<string, string> = {
   "logout log out lock": "ログアウト ロック",
   "folder explorer open file": "フォルダ エクスプローラー ファイルを開く",
   "reload update sync": "再読み込み 更新 同期",
+  "web browser localhost port site address": "ウェブ ブラウザー localhost ポート サイト アドレス",
   "Search shortcuts": "ショートカットを検索",
   "No shortcuts match.": "一致するショートカットはありません。",
   "Record": "記録",

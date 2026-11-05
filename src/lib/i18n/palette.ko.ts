@@ -27,4 +27,7 @@ export const PALETTE_KO: Record<string, string> = {
   "Folders": "폴더",
   "Open in Files": "파일에서 열기",
   "Pinned folders": "고정한 폴더",
+  "Open a page on this PC…": "이 PC의 페이지 열기…",
+  "Page on this PC": "이 PC의 페이지",
+  "Open {address}": "{address} 열기",
 };

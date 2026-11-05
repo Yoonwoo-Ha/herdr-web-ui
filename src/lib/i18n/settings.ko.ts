@@ -288,6 +288,7 @@ export const SETTINGS_KO: Record<string, string> = {
   "logout log out lock": "로그아웃 잠금",
   "folder explorer open file": "폴더 탐색기 파일 열기",
   "reload update sync": "새로고침 업데이트 동기화",
+  "web browser localhost port site address": "웹 브라우저 localhost 포트 사이트 주소",
   "Search shortcuts": "단축키 검색",
   "No shortcuts match.": "일치하는 단축키가 없습니다.",
   "Record": "기록",

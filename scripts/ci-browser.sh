@@ -146,6 +146,7 @@ run_script scripts/grok-image-browser-qa.ts
 run_script scripts/copilot-image-browser-qa.ts
 run_script scripts/file-viewer-regression.ts
 run_script scripts/web-panel-mobile-regression.ts
+run_script scripts/palette-local-page-demo-regression.ts
 run_script scripts/pwa-update-browser-qa.ts
 run_script scripts/install-state-demo-regression.ts
 run_script scripts/revision-bound-update-demo-regression.ts

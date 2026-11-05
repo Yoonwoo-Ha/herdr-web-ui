@@ -33,7 +33,7 @@ const snapshot: SessionSnapshot = {
 };
 const machines: Machine[] = [{ id: "local", name: "Host", kind: "local", enabled: true, state: "connected", error: null, snapshot }];
 // App's actions on each PC: split and zoom as the PC offers them (lib/layoutActions.ts, tested there)
-const actionsOf = (offer: LayoutOffer) => new Proxy({ splitPane: offer.split ? () => {} : null, zoomPane: offer.arrange ? () => {} : null, enableNotifications: null, openFiles: null, lock: null }, { get: (own, key) => key in own ? own[key as keyof typeof own] : () => {} }) as unknown as AppActions;
+const actionsOf = (offer: LayoutOffer, own: Partial<AppActions> = {}) => new Proxy({ splitPane: offer.split ? () => {} : null, zoomPane: offer.arrange ? () => {} : null, enableNotifications: null, openFiles: null, lock: null, openLocalPage: null, ...own }, { get: (own, key) => key in own ? own[key as keyof typeof own] : () => {} }) as unknown as AppActions;
 const LAYOUT_ROWS = ["Rename tab", "Split pane right", "Split pane down", "Split pane right and open it", "Split pane down and open it", "Zoom pane"];
 
 describe("the command palette on a PC the Herdr app lays out", () => {
@@ -56,7 +56,7 @@ describe("the command palette on a PC the Herdr app lays out", () => {
     define("HTMLElement", class HTMLElement {});
     define("localStorage", storage);
     define("navigator", { languages: ["en-US"], platform: "Linux" });
-    define("window", { localStorage: storage, matchMedia: media, innerWidth: 1280, innerHeight: 800, history: { state: null, pushState() {}, replaceState() {}, back() {} }, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout, clearTimeout });
+    define("window", { localStorage: storage, matchMedia: media, location: { protocol: "http:", hostname: "localhost", origin: "http://localhost:7317" }, innerWidth: 1280, innerHeight: 800, history: { state: null, pushState() {}, replaceState() {}, back() {} }, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout, clearTimeout });
     define("document", { visibilityState: "visible", activeElement: null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } }, querySelector: () => null, querySelectorAll: () => [], addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events) });
     define("getComputedStyle", () => ({ getPropertyValue: () => "" }));
   });
@@ -70,11 +70,11 @@ describe("the command palette on a PC the Herdr app lays out", () => {
     }
   });
 
-  async function rows(offer: LayoutOffer, selectedPaneId: string, initialQuery: string): Promise<string[]> {
+  async function rows(offer: LayoutOffer, selectedPaneId: string, initialQuery: string, actions = actionsOf(offer)): Promise<string[]> {
     await act(async () => { renderer?.unmount(); });
     await act(async () => {
       renderer = create(createElement(SettingsProvider, null, createElement(AppLayoutContext.Provider, { value: offer },
-        createElement(CommandPalette, { open: true, initialQuery, onClose: () => {}, machines, onSelect: () => {}, snapshot, online: false, selectedPaneId, view: "chat", actions: actionsOf(offer) }))));
+        createElement(CommandPalette, { open: true, initialQuery, onClose: () => {}, machines, onSelect: () => {}, snapshot, online: false, selectedPaneId, view: "chat", actions }))));
     });
     return renderer!.root.findAll((node) => node.props.className === "menu-item-main" && typeof node.props.children === "string").map((node) => node.props.children as string);
   }
@@ -102,6 +102,21 @@ describe("the command palette on a PC the Herdr app lays out", () => {
     const listed = await rows(OVIS_CORE, "p1", ">");
     for (const row of LAYOUT_ROWS) expect(listed).toContain(row);
     expect(await rows(OVIS_CORE, "p3", ">move tab")).toEqual(["Move tab to w1"]);
+  });
+
+  it("opens a page this PC serves from a typed address, only where pages open in the app", async () => {
+    const opened: string[] = [];
+    const pages = actionsOf(TUI, { openLocalPage: (url: string) => { opened.push(url); } });
+    expect(await rows(TUI, "p1", ">", pages)).toContain("Open a page on this PC…");
+    const listed = await rows(TUI, "p1", "localhost:8448/#/repository", pages);
+    expect(listed[0]).toBe("Open localhost:8448/#/repository");
+    await act(async () => renderer!.root.find((node) => node.props.id === "palette-item-0").props.onClick());
+    expect(opened).toEqual(["http://localhost:8448/#/repository"]);
+    // the app's own port is the app, not a page beside it
+    expect(await rows(TUI, "p1", "localhost:7317", pages)).not.toContain("Open localhost:7317");
+    // off by default: Web links open in a new tab, and the palette offers no page
+    expect(await rows(TUI, "p1", "localhost:8448")).not.toContain("Open localhost:8448");
+    expect(await rows(TUI, "p1", ">")).not.toContain("Open a page on this PC…");
   });
 
   it("lists rename and move but no split or zoom on a core that keeps no documents", async () => {

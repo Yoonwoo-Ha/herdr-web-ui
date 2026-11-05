@@ -288,6 +288,7 @@ export const SETTINGS_ZH: Record<string, string> = {
   "logout log out lock": "退出 登出 锁定",
   "folder explorer open file": "文件夹 资源管理器 打开文件",
   "reload update sync": "重新加载 更新 同步",
+  "web browser localhost port site address": "网页 浏览器 localhost 端口 网站 地址",
   "Search shortcuts": "搜索快捷键",
   "No shortcuts match.": "没有匹配的快捷键。",
   "Record": "录制",

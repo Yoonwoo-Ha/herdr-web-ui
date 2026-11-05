@@ -4343,3 +4343,14 @@ Other hosts keep opening in a new tab, and unsafe schemes stay blocked; the app'
 limited to its own host. This follows T3 Code's in-thread visual replies and full-screen page view,
 while keeping external page links in the browser as its [HTML renders guide](https://github.com/pingdotgg/t3code/blob/main/docs/user/html-renders.md)
 does. No code or visual assets are copied.
+
+With **In the app** chosen, the command palette also opens such a page by its address: **Open a
+page on this PC…** starts the query as `localhost:`, and a query that is a loopback name with a
+port (`localhost:8448`, `:8448`, `127.0.0.1:3000/docs`) leads the list with **Open** that
+address, so a local tool with a web UI (a Git client, a docs site) sits beside the pane without a
+link printed in a terminal. Without a scheme the address takes the app's own, since an https app
+frames only https pages (a port `tailscale serve` fronts). The page is the PC's that serves the
+app whichever PC is selected, and it goes through the same `panelUrl` checks: the app's own port
+and pages the panel refuses get no row. Nothing is proxied: the browser reaches the page under the
+app's hostname, as for a clicked link. This follows VS Code's Simple Browser, which a palette
+command opens on a typed address; no code is copied.

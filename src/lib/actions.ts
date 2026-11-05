@@ -76,6 +76,8 @@ export interface AppActions {
   refresh: () => void;
   /** null without a pane: the files of its folder, each opened in the file viewer */
   openFiles: (() => void) | null;
+  /** a page this PC serves (lib/webPanel.ts localPageAddress) in the web panel; null unless Web links open in the app */
+  openLocalPage: ((url: string) => void) | null;
   /** Search conversation over the selected pane's chat; null where it shows no chat, or its PC's bridge does not search */
   searchConversation: (() => void) | null;
   /**

@@ -68,6 +68,7 @@ export function actionAliases(t: Translate): Readonly<Record<string, string>> {
     lock: t("logout log out lock"),
     files: t("folder explorer open file"),
     refresh: t("reload update sync"),
+    "local-page": t("web browser localhost port site address"),
   };
 }
 
