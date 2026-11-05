@@ -1,7 +1,7 @@
 /**
  * Japanese for the keys only the files files use:
  * components/FileViewer.tsx, components/FilesDialog.tsx, components/FileReader.tsx,
- * components/TextFileView.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
+ * components/TextFileView.tsx, components/TextFileEditor.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
  * components/HighlightedCode.tsx, components/RepoDiffViewer.tsx, components/RepoChanges.tsx,
  * components/RepoDiff.tsx, lib/repoDiff.ts, lib/diffLineNotes.ts, components/WebPanel.tsx,
  * components/PullRequestPanel.tsx, lib/pullRequest.ts.
@@ -187,4 +187,20 @@ export const FILES_JA: Record<string, string> = {
   "Increase file text size": "ファイルの文字を大きく",
   "Files beside the pane": "ペインの横にファイル一覧",
   "On a wide window, Browse files opens as a panel on the right of the pane instead of a popup. With Open files set to Beside the pane, a file opened from it shows in its place, and closing the file brings the list back.": "広いウィンドウでは、ファイルの参照がポップアップではなくペインの右側のパネルで開きます。「ファイルを開く」が「ペインの横」のときは、一覧から開いたファイルがその場所に表示され、閉じると一覧に戻ります。",
+  "Edit file": "ファイルを編集",
+  "Unsaved changes": "未保存の変更",
+  "Save changes to {name}?": "{name} に変更を保存しますか？",
+  "Keep editing": "編集を続ける",
+  "Saving…": "保存中…",
+  "This file changed since you opened it, so your changes were not saved. Copy them before you reload it.": "開いた後にファイルが変更されたため、変更は保存されませんでした。再読み込みする前に変更をコピーしてください。",
+  "Reload file": "ファイルを再読み込み",
+  "Only a file inside the pane's folder can be edited.": "編集できるのはペインのフォルダ内のファイルだけです。",
+  "This file is too large to edit here.": "このファイルは大きすぎてここでは編集できません。",
+  "Only a UTF-8 text file can be edited here.": "ここで編集できるのは UTF-8 のテキストファイルだけです。",
+  "This file mixes line endings. Edit it in the terminal.": "このファイルは改行コードが混在しています。ターミナルで編集してください。",
+  "Saving files from the app isn't available on this PC yet.": "この PC ではまだアプリからファイルを保存できません。",
+  "This file can't be written here.": "ここではこのファイルに書き込めません。",
+  "Only a device that drives this PC can edit its files.": "この PC を操作できるデバイスだけがファイルを編集できます。",
+  "The file could not be saved.": "ファイルを保存できませんでした。",
+  "Text of {name}": "{name} の内容",
 };

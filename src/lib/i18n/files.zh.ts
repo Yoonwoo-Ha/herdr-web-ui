@@ -1,7 +1,7 @@
 /**
  * Simplified Chinese for the keys only the files files use:
  * components/FileViewer.tsx, components/FilesDialog.tsx, components/FileReader.tsx,
- * components/TextFileView.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
+ * components/TextFileView.tsx, components/TextFileEditor.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
  * components/HighlightedCode.tsx, components/RepoDiffViewer.tsx, components/RepoChanges.tsx,
  * components/RepoDiff.tsx, lib/repoDiff.ts, lib/diffLineNotes.ts, components/WebPanel.tsx,
  * components/PullRequestPanel.tsx, lib/pullRequest.ts.
@@ -187,4 +187,20 @@ export const FILES_ZH: Record<string, string> = {
   "Increase file text size": "增大文件字号",
   "Files beside the pane": "在窗格旁显示文件",
   "On a wide window, Browse files opens as a panel on the right of the pane instead of a popup. With Open files set to Beside the pane, a file opened from it shows in its place, and closing the file brings the list back.": "在宽窗口中，浏览文件会在窗格右侧的面板中打开，而不是弹出窗口。当“打开文件”设为“在窗格旁”时，从列表打开的文件会显示在该位置，关闭文件后会回到列表。",
+  "Edit file": "编辑文件",
+  "Unsaved changes": "未保存的更改",
+  "Save changes to {name}?": "将更改保存到 {name}？",
+  "Keep editing": "继续编辑",
+  "Saving…": "正在保存…",
+  "This file changed since you opened it, so your changes were not saved. Copy them before you reload it.": "文件在打开后已被更改，因此你的更改未保存。重新加载前请先复制你的更改。",
+  "Reload file": "重新加载文件",
+  "Only a file inside the pane's folder can be edited.": "只能编辑窗格文件夹内的文件。",
+  "This file is too large to edit here.": "此文件太大，无法在这里编辑。",
+  "Only a UTF-8 text file can be edited here.": "这里只能编辑 UTF-8 文本文件。",
+  "This file mixes line endings. Edit it in the terminal.": "此文件混用了多种换行符。请在终端中编辑。",
+  "Saving files from the app isn't available on this PC yet.": "这台电脑暂不支持从应用保存文件。",
+  "This file can't be written here.": "无法在这里写入此文件。",
+  "Only a device that drives this PC can edit its files.": "只有能操作这台电脑的设备才能编辑其文件。",
+  "The file could not be saved.": "无法保存文件。",
+  "Text of {name}": "{name} 的内容",
 };

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Braces, Check, Code, Copy, Download, Ellipsis, ExternalLink, Link2, Maximize2, PanelRight, TriangleAlert, X } from "lucide-react";
+import { Braces, Check, Code, Copy, Download, Ellipsis, ExternalLink, Link2, Maximize2, PanelRight, Pencil, TriangleAlert, X } from "lucide-react";
 
 import "./FileViewer.css";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
@@ -7,10 +7,12 @@ import { FileGlyph } from "./FileGlyph.tsx";
 import { useHighlightedLines } from "./HighlightedCode.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { RelayRenderedPage } from "./RelayRenderedPage.tsx";
+import { hasDraft, TextFileEditor } from "./TextFileEditor.tsx";
 import { TextFileView } from "./TextFileView.tsx";
 import { MarkdownImageContext } from "./Markdown.tsx";
 
 import type { FileInfo } from "../../shared/protocol.ts";
+import { MAX_EDITABLE_TEXT_BYTES } from "../../shared/files.ts";
 import { ApiError } from "../lib/api.ts";
 import { formatBytes } from "../lib/bridgeProgress.ts";
 import { LOCAL_MACHINE, paneStorageId } from "../../shared/machines.ts";
@@ -29,6 +31,7 @@ import type { MarkdownBlock } from "../../shared/markdown.ts";
 import { knownPreview, parsePreviewOffThread } from "../lib/markdownPreview.ts";
 import { hasPreview, type TextViewMode } from "../lib/textPreview.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
+import { useSettings } from "../lib/settings.ts";
 import { readFilePreviewText, SOURCE_PREVIEW_LINES, type FilePreviewText } from "../lib/filePreviewText.ts";
 import { readerHref } from "../lib/fileReader.ts";
 import type { FilePresentation } from "../lib/filePresentation.ts";
@@ -84,6 +87,8 @@ export interface FileViewerProps {
   panelStart?: ReactNode;
   onKind?: (presentation: FilePresentation) => void;
   onTogglePresentation?: () => void;
+  /** this browser drives the PC (not a watching device, a Portal visitor or an open LAN window): with Settings → Edit text files on, a text file can be edited */
+  editable?: boolean;
 }
 
 /**
@@ -148,8 +153,14 @@ function selectSource(element: HTMLElement): void {
  * A file an agent wrote, opened in the browser: images, video and audio (streamed, so they
  * play and seek at once), PDFs, HTML pages, and the start of a text file (markdown drawn, its images read through the file endpoint). Anything can be downloaded.
  */
-export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActive = true, page = false, docked = false, panelStart, onKind, onTogglePresentation }: FileViewerProps) {
+export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActive = true, page = false, docked = false, panelStart, onKind, onTogglePresentation, editable = false }: FileViewerProps) {
   const t = useT();
+  const { settings } = useSettings();
+  // the file's text in an editor (TextFileEditor), and whether it holds changes not saved, which nothing closes over but Cancel and Close
+  const [editing, setEditing] = useState(false);
+  const [editChanged, setEditChanged] = useState(false);
+  // a save reads the file again, for the viewer to show what is now on disk
+  const [saves, setSaves] = useState(0);
   const locale = useLocale();
   const { fetchFileInfo, fileUrl, fetchDirectories } = useMachineApi();
   // a remote PC's bridge reads a relative folder from the pane's folder only from its next bundle
@@ -204,8 +215,9 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
     if (sourceRef.current) selectSource(sourceRef.current);
   }, [mode, loaded, source, selectable]);
 
-  useSheetSwipe(surface, page || docked ? null : onClose);
+  useSheetSwipe(surface, page || docked || editChanged ? null : onClose);
   useEffect(() => setPath(asked), [asked]);
+  useEffect(() => { setEditing(false); setEditChanged(false); }, [path]);
   useEffect(() => setSource(target.line !== null), [path, target.line]);
 
   useEffect(() => {
@@ -247,7 +259,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       setError(reason instanceof ApiError && reason.status === 404 ? "missing" : "unreadable");
     });
     return () => { cancelled = true; clearTimeout(deadline); abort.abort(); };
-  }, [target.path, paneId, fetchFileInfo, fileUrl, fetchDirectories, remote]);
+  }, [target.path, paneId, fetchFileInfo, fileUrl, fetchDirectories, remote, saves]);
 
   useEffect(() => {
     if ((info === null && directory === null) || reportedKind.current === path) return;
@@ -278,13 +290,13 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
     // docked, the pane beside it is live: Escape there is the terminal's, so only one inside the panel closes it
     /** Escape closes the viewer from anywhere in it. */
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || nativeModalOver(surface.current)) return;
+      if (event.key !== "Escape" || nativeModalOver(surface.current) || editChanged) return;
       if (docked && !surface.current?.contains(document.activeElement)) return;
       onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, keyboardActive, page, docked]);
+  }, [onClose, keyboardActive, page, docked, editChanged]);
 
   // the More menu: it takes the focus on its first item; a press outside it, Escape (before the
   // viewer's own) or a wider screen (where More is gone) closes it alone; Escape and a chosen item
@@ -398,6 +410,11 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   ].filter((note): note is string => typeof note === "string");
   const noticed = notes.length > 0;
   const copyable = textFile && loaded !== null && !loaded.truncated;
+  // shown as text (an HTML page as its source), in a pane's folder the server checks it lies in, and small enough
+  const canEdit = editable && settings.editTextFiles && !page && paneId !== null && textFile && (!htmlPage || source) && info.size <= MAX_EDITABLE_TEXT_BYTES;
+  // text typed and not saved (closed, or the viewer moved): the file opens in its editor again, with it
+  const draftWaits = canEdit && hasDraft(machineId, info.path);
+  useEffect(() => { if (draftWaits) setEditing(true); }, [draftWaits]);
   const markdown = info?.kind === "text" && /\.(?:md|markdown)$/i.test(info.name);
   // a page of just the document, not the app over it (FileReader)
   const previewUrl = readerHref(machineId, shownPath + (target.line === null ? "" : `#L${target.line}`));
@@ -436,6 +453,8 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       case "pdf":
         return <iframe className="file-viewer-pdf" src={urlSrc ?? undefined} title={info.name} />;
       case "text":
+        if (editing && paneId !== null) return <TextFileEditor path={info.path} paneId={paneId} name={info.name} onChanged={setEditChanged}
+          onDone={(saved) => { setEditing(false); setEditChanged(false); if (saved) setSaves((count) => count + 1); }} />;
         if (htmlPage && !source) return <>
           {!docked && modes}
           {relay ? <RelayRenderedPage path={pageUrl} title={info.name} />
@@ -492,7 +511,8 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
     {(page || markdown) && !appWindow && <a className="icon-button file-viewer-action file-viewer-wide" href={rawSrc ?? undefined} target="_blank" rel="noopener" aria-label={t("Open raw file")} title={t("Open raw file")}><Code aria-hidden="true" /></a>}
     {!page && appWindow && <CopyLinkButton href={newTabHref} />}
     <a className="icon-button file-viewer-action file-viewer-wide" href={downloadHref ?? undefined} download={info?.name ?? true} aria-label={t("Download")} title={t("Download")}><Download aria-hidden="true" /></a>
-    {copyable && <CopyFileButton text={loaded.text} sourceRef={sourceRef} onShowSource={showSourceToSelect} />}
+    {canEdit && !editing && <button type="button" className="icon-button file-viewer-action" aria-label={t("Edit file")} title={t("Edit file")} onClick={() => setEditing(true)}><Pencil aria-hidden="true" /></button>}
+    {copyable && !editing && <CopyFileButton text={loaded.text} sourceRef={sourceRef} onShowSource={showSourceToSelect} />}
     {!docked && <div className="file-viewer-more" ref={moreRef}>
       <button type="button" className="icon-button file-viewer-action" aria-label={t("More")} title={t("More")} aria-haspopup="menu" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}><Ellipsis aria-hidden="true" /></button>
       {moreOpen && <div className="file-viewer-more-menu" role="menu" aria-label={t("More")} onKeyDown={moveInMore}>
@@ -524,7 +544,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       <div className="file-viewer-actions">
         {/* how the text shows: Preview or source is one choice of two, so one toggle; wrapping is a
             setting (Settings → File viewer), not an action here */}
-        {textFile && previewable && <div className="file-viewer-group">
+        {textFile && previewable && !editing && <div className="file-viewer-group">
           <button type="button" className="icon-button file-viewer-action" aria-pressed={mode === "code"} aria-label={t("Show source")} title={t("Show source")} onClick={() => setChosen({ path, mode: mode === "code" ? "preview" : "code" })}><Braces aria-hidden="true" /></button>
         </div>}
         <div className="file-viewer-group">{fileActions}</div>
@@ -535,7 +555,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   // file's Preview | Source stands in for the dialog's Show source toggle)
   const toolbar = docked && directory === null && <div className="file-viewer-toolbar">
     {meta}
-    {textFile && previewable && <div className="segmented file-viewer-modes" role="group" aria-label={t("Show the Markdown file as")}>
+    {textFile && previewable && !editing && <div className="segmented file-viewer-modes" role="group" aria-label={t("Show the Markdown file as")}>
       <button type="button" aria-pressed={mode === "preview"} onClick={() => setChosen({ path, mode: "preview" })}>{t("Preview")}</button>
       <button type="button" aria-pressed={mode === "code"} onClick={() => setChosen({ path, mode: "code" })}>{t("Source")}</button>
     </div>}
@@ -564,7 +584,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   );
 
   return (
-    <div className="modal-scrim file-viewer-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="modal-scrim file-viewer-scrim" onMouseDown={(event) => event.target === event.currentTarget && !editChanged && onClose()}>
       <section className={virtual !== null && view === "code" ? "modal file-viewer file-viewer-virtual" : "modal file-viewer"} role="dialog" aria-modal="true" aria-label={info?.name ?? path} ref={surface} tabIndex={-1}>
         {header}
         {/* the focus starts here (a scroll box takes Space and the arrows), and moves on to a player */}

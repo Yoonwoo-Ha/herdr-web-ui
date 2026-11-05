@@ -286,6 +286,67 @@
   resize: none;
 }
 
+/* a text file being edited (TextFileEditor): its bar, then a text box filling the rest of the body */
+.file-editor {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  min-height: min(60vh, 28rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.file-editor-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.file-editor-status {
+  flex: 1 1 12rem;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.file-editor-alert .file-editor-status {
+  color: var(--notice);
+  font-weight: var(--fw-medium);
+}
+
+/* a phone gives a warning a line of its own, the buttons under it */
+@media (max-width: 600px) {
+  .file-editor-alert .file-editor-status { flex-basis: 100%; }
+}
+
+.file-editor-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  margin: 0;
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(var(--fs-xs) * var(--file-source-scale, 1));
+  line-height: var(--lh-base);
+  white-space: pre;
+  resize: none;
+}
+
+/* a phone keeps the size iOS does not zoom the page in for, whatever the file text size */
+@media (pointer: coarse) {
+  .file-editor-text { font-size: max(var(--fs-input), calc(var(--fs-xs) * var(--file-source-scale, 1))); }
+}
+
+.file-viewer-docked .file-editor { padding-inline: var(--space-3); }
+
 /*
  * A rendered document reads on the viewer's own background, like a page: no panel around it. Its
  * size and font are the chat's (ChatView.css). The Markdown width setting keeps it to the chat's

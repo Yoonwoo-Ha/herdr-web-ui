@@ -391,4 +391,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Test sent. Check the destination.": "已发送测试，请查看发送目标。",
   "This PC also posts its alerts to a chat app or any URL. A message names the PC, the pane and what happened, with a link to the pane. The pane goes by its terminal title, which an agent may take from your task.": "这台电脑也会把提醒发送到聊天应用或任意 URL。消息包含电脑、窗格、发生了什么以及打开窗格的链接。窗格名称是终端标题，代理可能会根据你的任务来设置它。",
   "Webhook URL": "Webhook 地址",
+  "Edit text files": "编辑文本文件",
+  "Adds Edit to the file viewer for a text file in the pane's folder. Saving asks first, and stops if the file changed since you opened it.": "在文件查看器中为窗格文件夹里的文本文件添加编辑功能。保存前会先确认；如果文件在打开后被更改，则不会保存。",
 };

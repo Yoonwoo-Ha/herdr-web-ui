@@ -391,4 +391,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Test sent. Check the destination.": "테스트를 보냈습니다. 받는 곳을 확인하세요.",
   "This PC also posts its alerts to a chat app or any URL. A message names the PC, the pane and what happened, with a link to the pane. The pane goes by its terminal title, which an agent may take from your task.": "이 PC가 알림을 채팅 앱이나 원하는 URL에도 보냅니다. 메시지에는 PC, 창, 무슨 일이 있었는지와 창을 여는 링크가 담깁니다. 창 이름은 터미널 제목이며, 에이전트가 작업 내용으로 정할 수도 있습니다.",
   "Webhook URL": "웹훅 URL",
+  "Edit text files": "텍스트 파일 수정",
+  "Adds Edit to the file viewer for a text file in the pane's folder. Saving asks first, and stops if the file changed since you opened it.": "창의 폴더에 있는 텍스트 파일을 파일 보기에서 수정할 수 있게 합니다. 저장하기 전에 한 번 더 묻고, 연 뒤에 파일이 바뀌었으면 저장하지 않습니다.",
 };

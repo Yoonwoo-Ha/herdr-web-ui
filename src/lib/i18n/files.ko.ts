@@ -1,7 +1,7 @@
 /**
  * Korean for the keys only the files files use:
  * components/FileViewer.tsx, components/FilesDialog.tsx, components/FileReader.tsx,
- * components/TextFileView.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
+ * components/TextFileView.tsx, components/TextFileEditor.tsx, components/FilePathLink.tsx, components/FilePanelResizer.tsx,
  * components/HighlightedCode.tsx, components/RepoDiffViewer.tsx, components/RepoChanges.tsx,
  * components/RepoDiff.tsx, lib/repoDiff.ts, lib/diffLineNotes.ts, components/WebPanel.tsx,
  * components/PullRequestPanel.tsx, lib/pullRequest.ts.
@@ -187,4 +187,20 @@ export const FILES_KO: Record<string, string> = {
   "Increase file text size": "파일 글자 크게",
   "Files beside the pane": "창 옆에 파일 목록",
   "On a wide window, Browse files opens as a panel on the right of the pane instead of a popup. With Open files set to Beside the pane, a file opened from it shows in its place, and closing the file brings the list back.": "넓은 창에서는 파일 보기가 팝업 대신 창 오른쪽 패널로 열립니다. 파일 열기가 '창 옆에'로 되어 있으면 목록에서 연 파일이 그 자리에 보이고, 파일을 닫으면 목록이 다시 나옵니다.",
+  "Edit file": "파일 수정",
+  "Unsaved changes": "저장하지 않은 변경 사항",
+  "Save changes to {name}?": "{name}에 변경 사항을 저장할까요?",
+  "Keep editing": "계속 수정",
+  "Saving…": "저장하는 중…",
+  "This file changed since you opened it, so your changes were not saved. Copy them before you reload it.": "연 뒤에 파일이 바뀌어서 변경 사항을 저장하지 않았습니다. 다시 불러오기 전에 변경 사항을 복사하세요.",
+  "Reload file": "파일 다시 불러오기",
+  "Only a file inside the pane's folder can be edited.": "창의 폴더 안에 있는 파일만 수정할 수 있습니다.",
+  "This file is too large to edit here.": "여기서 수정하기에는 파일이 너무 큽니다.",
+  "Only a UTF-8 text file can be edited here.": "여기서는 UTF-8 텍스트 파일만 수정할 수 있습니다.",
+  "This file mixes line endings. Edit it in the terminal.": "이 파일은 줄바꿈 방식이 섞여 있습니다. 터미널에서 수정하세요.",
+  "Saving files from the app isn't available on this PC yet.": "이 PC에서는 아직 앱에서 파일을 저장할 수 없습니다.",
+  "This file can't be written here.": "여기서는 이 파일에 쓸 수 없습니다.",
+  "Only a device that drives this PC can edit its files.": "이 PC를 조작할 수 있는 기기만 파일을 수정할 수 있습니다.",
+  "The file could not be saved.": "파일을 저장하지 못했습니다.",
+  "Text of {name}": "{name}의 내용",
 };

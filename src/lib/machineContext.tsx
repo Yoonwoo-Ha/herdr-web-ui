@@ -82,6 +82,8 @@ export function useMachineApi() {
     createDirectory: (path: string, name: string) => api.createDirectory(path, name, id),
     fetchFileInfo: (path: string, pane: string | null) => api.fetchFileInfo(path, pane, id),
     fileUrl: (path: string, pane: string | null, download = false) => api.fileUrl(path, pane, id, download),
+    fetchEditableText: (path: string, pane: string) => api.fetchEditableText(path, pane, id),
+    saveEditableText: (request: Parameters<typeof api.saveEditableText>[0]) => api.saveEditableText(request, id),
     fetchRepoDiffFiles: (query: api.RepoDiffQuery) => api.fetchRepoDiffFiles(query, id),
     fetchRepoDiffFile: (query: api.RepoDiffQuery, path: string, oldPath: string | null) => api.fetchRepoDiffFile(query, path, oldPath, id),
     fetchRepoDiffRefs: (query: Pick<api.RepoDiffQuery, "paneId" | "directory">) => api.fetchRepoDiffRefs(query, id),

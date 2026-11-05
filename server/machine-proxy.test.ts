@@ -13,6 +13,7 @@ const commandsAsked: string[] = [];
 const filesAsked: string[] = [];
 const worktreesAsked: string[] = [];
 const faviconAsked: { search: string; authorization: string | null; cookie: string | null }[] = [];
+const textAsked: { method: string; body: string; authorization: string | null; contentType: string | null }[] = [];
 const diffAsked: { path: string; search: string; authorization: string | null; cookie: string | null; forwarded: string | null }[] = [];
 const remote = Bun.serve({
   port: 0,
@@ -39,6 +40,12 @@ const remote = Bun.serve({
     if (path === "/api/worktree/list") {
       worktreesAsked.push(path);
       return Response.json({ source: { repo_key: "repo" }, worktrees: [{ path: "/work-wt/SECRET", branch: "SECRET", open_workspace_id: null }] });
+    }
+    if (path === "/api/fs/text") {
+      return request.text().then((body) => {
+        textAsked.push({ method: request.method, body, authorization: request.headers.get("authorization"), contentType: request.headers.get("content-type") });
+        return Response.json({ error: { code: "stale_revision", message: "changed", revision: "b".repeat(64) } }, { status: 409 });
+      });
     }
     if (path === "/api/fs/favicon") {
       faviconAsked.push({ search: new URL(request.url).search, authorization: request.headers.get("authorization"), cookie: request.headers.get("cookie") });
@@ -119,6 +126,20 @@ it("never asks a PC for a pane's or a folder's command rows for a watching devic
   expect(driven.status).toBe(200);
   expect(JSON.stringify(await driven.json())).toContain("SECRET");
   expect(commandsAsked).toEqual(["/api/pane/commands"]);
+});
+
+it("carries a save to a PC's file with its body and the PC's credential, and its conflict back, but never for a watching device (#771)", async () => {
+  const body = JSON.stringify({ pane_id: "w1:p1", path: "/work/notes.md", revision: "a".repeat(64), text: "new\n" });
+  const put = (readOnly: boolean) => handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/fs/text", {
+    method: "PUT", body, headers: { origin: "http://127.0.0.1", "x-herdr-machine": "1", "content-type": "application/json" },
+  }), manager, undefined, undefined, readOnly);
+  const watched = await put(true);
+  expect([watched.status, ((await watched.json()) as { error: { code: string } }).error.code]).toEqual([403, "read_only"]);
+  expect(textAsked).toEqual([]);
+  const driven = await put(false);
+  expect(driven.status).toBe(409);
+  expect(await driven.json()).toMatchObject({ error: { code: "stale_revision", revision: "b".repeat(64) } });
+  expect(textAsked).toEqual([{ method: "PUT", body, authorization: "Bearer remote-token", contentType: "application/json" }]);
 });
 
 it("passes on a PC's 503 with its Retry-After, so the menu knows to ask again (#2254)", async () => {
