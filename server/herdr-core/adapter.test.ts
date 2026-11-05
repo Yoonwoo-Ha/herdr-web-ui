@@ -7,6 +7,7 @@ import { claudeInputDraft, viewportShowsLive } from "../claude-input.ts";
 import { paintedScreen, type SeenObserver, startHerdrCoreAdapter } from "./adapter.ts";
 import { SeenMarker } from "./seen-label.ts";
 import { encodeFrame, FRAME_CLOSE, FRAME_DATA, HcConnection, HcError, type HcTransport, makeFrameReader } from "./connection.ts";
+import type { HerdrPane } from "../../shared/protocol.ts";
 import type { HcTerminal } from "./snapshot.ts";
 
 type Handler = (params: Record<string, unknown>) => unknown;
@@ -907,6 +908,16 @@ describe("herdr-core adapter, Ovis's layout document", () => {
   }
   const labeled = (address: string, space = "S", tab = "T") => terminal(address, { labels: { "herdr.space": space, "herdr.tab": tab } });
   const rects = async (socket: string) => Object.fromEntries((await sessionSnapshot(socket)).layouts[0]!.panes.map((pane) => [pane.pane_id, pane.rect]));
+
+  it("marks as its own tab exactly the panes it refuses to split: a helper's and Other terminals' (#2806)", async () => {
+    const { socket } = await core([labeled("t1"), terminal("t5", { parent: "t1" }), terminal("t6")]);
+    const panes = (await sessionSnapshot(socket)).panes as HerdrPane[];
+    expect(panes.map((pane) => [pane.pane_id, pane.own_tab])).toEqual([["t1", undefined], ["t5", true], ["t6", true]]);
+    for (const pane of panes.filter((candidate) => candidate.own_tab)) {
+      await expect(herdrRpc("pane.split", { target_pane_id: pane.pane_id, direction: "right" }, socket)).rejects.toMatchObject({ code: "unsupported" });
+    }
+    await herdrRpc("pane.split", { target_pane_id: "t1", direction: "right" }, socket);
+  });
 
   it("splits right then down as one tree, laid out top down whatever size the viewers make the terminals (#2812)", async () => {
     const { socket, terminals, store } = await core([labeled("t1")]);

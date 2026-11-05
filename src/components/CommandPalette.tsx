@@ -1,3 +1,4 @@
+import { moveDestinations } from "../lib/layoutTargets.ts";
 import { useAppLayout, MachineContext, useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Bell, Columns2, CornerLeftUp, Folder, FolderInput, FolderOpen, FolderSearch, History, ListFilter, LoaderCircle, Maximize2, MessageSquarePlus, Minimize2, Monitor, PanelLeft, Pencil, Pin, Plus, Puzzle, RefreshCw, Rows2, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
@@ -355,12 +356,11 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
   const aliasesByAction = useMemo(() => actionAliases(t), [t]);
   // the selected one-pane tab to another workspace of its PC, one row each, found by a query only as Settings pages are
   const selectedWorkspace = selectedPane?.workspace_id ?? null;
-  const moveActions = useMemo<PaletteAction[]>(() => selectedTab === null || tabPanes !== 1 || !moveOffered ? [] : (snapshot?.workspaces ?? [])
-    .filter((entry) => entry.workspace_id !== selectedWorkspace)
+  const moveActions = useMemo<PaletteAction[]>(() => selectedTab === null || selectedWorkspace === null || tabPanes !== 1 || !moveOffered ? [] : moveDestinations(snapshot?.workspaces ?? [], selectedPane, selectedWorkspace)
     .map((entry) => ({ id: `move-tab-${entry.workspace_id}`, label: t("Move tab to {workspace}", { workspace: entry.label }), icon: FolderInput,
       // a refusal is said over the pane (App): the palette has closed by then
       run: () => { void actions.moveTabToWorkspace({ machineId, tabId: selectedTab, workspaceId: entry.workspace_id, notice: true }).catch(() => undefined); } })),
-  [actions, moveOffered, machineId, selectedTab, selectedWorkspace, snapshot?.workspaces, t, tabPanes]);
+  [actions, moveOffered, machineId, selectedTab, selectedWorkspace, selectedPane, snapshot?.workspaces, t, tabPanes]);
 
   const allPanes = useMemo(() => machines.flatMap((machine) => machine.state === "connected" ? machine.snapshot?.panes ?? [] : []), [machines]);
   const multiMachine = machines.length > 1;

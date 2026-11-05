@@ -1,4 +1,5 @@
 import type { AgentInfo, AgentStatus, PaneInfo, PaneLayoutSnapshot, PaneProcessInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
+import { HC_OTHER_WORKSPACE_ID } from "../../shared/machines.ts";
 import type { HerdrPane } from "../../shared/protocol.ts";
 import type { Foreground, Status, Terminal } from "./hc-api.generated.ts";
 import { clampRatio, type Grouping, type LayoutNode, LAYOUT_AREA, parseOvisLayout, place, reconcile, sideBySide } from "./layout-doc.ts";
@@ -20,7 +21,7 @@ import { clampRatio, type Grouping, type LayoutNode, LAYOUT_AREA, parseOvisLayou
 
 /** The protocol these answers keep to: herdr's, as `shared/herdr-api.generated.ts` was made from. */
 export const HERDR_PROTOCOL = 22;
-export const OTHER_WORKSPACE_ID = "hc-other";
+export const OTHER_WORKSPACE_ID = HC_OTHER_WORKSPACE_ID;
 export const LAYOUT_DOC = "herdr-app";
 /** The labels the Herdr app groups its terminals by (herdr-app src/window.rs): a terminal it has not placed is adopted there. */
 export const SPACE_LABEL = "herdr.space";
@@ -345,6 +346,8 @@ function paneOf(terminal: HcTerminal, workspaceId: string, tabId: string, shown:
   const cwd = terminal.foreground?.cwd ?? terminal.cwd;
   return {
     ...(terminal.parent && terminal.parent !== terminal.address && shown.has(terminal.parent) ? { parent_pane_id: terminal.parent } : {}),
+    // only a tab its labels make takes a split (adapter.ts `pane.split`)
+    ...(terminal.labels?.[SPACE_LABEL] === workspaceId && terminal.labels?.[TAB_LABEL] === tabId ? {} : { own_tab: true as const }),
     ...reportedFacts(terminal.status),
     pane_id: terminal.address,
     terminal_id: terminal.address,

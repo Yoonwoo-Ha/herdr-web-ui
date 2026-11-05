@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from "bun:te
 import { act, createElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 
+import { HC_OTHER_WORKSPACE_ID } from "../../shared/machines.ts";
 import type { SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import type { AppActions } from "../lib/actions.ts";
 import { AppLayoutContext, appLayoutOf, type LayoutOffer, ReorderContext } from "../lib/machineContext.tsx";
@@ -104,6 +105,12 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
     await draw(roster([workspace("root", worktree(false)), workspace("child", worktree(true))]), OVIS_CORE);
     expect(await menuOf("root")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close", "fold"]);
     expect(await menuOf("child")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close"]);
+  });
+
+  it("offers no rename for a core's Other terminals, which has no name to change (#2806)", async () => {
+    await draw(roster([workspace("root"), { ...workspace(HC_OTHER_WORKSPACE_ID), label: "Other terminals" }]), OVIS_CORE);
+    expect(await menuOf("root")).toEqual(["pin-workspace", "rename-workspace", "session-history", "close"]);
+    expect(await menuOf("Other terminals")).toEqual(["pin-workspace", "session-history", "close"]);
   });
 
   it("lets a TUI PC's rows be dragged and moved with Alt+arrows", async () => {

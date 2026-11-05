@@ -11,9 +11,11 @@ import { selectionStill, type SelectionMark } from "./selectionMark.ts";
  * answer it (lib/machineContext.tsx AppLayoutContext: herdr-core never zooms, and splits only where
  * Ovis keeps its layout), so the palette does not list it and the shortcut does nothing there.
  */
-export function layoutActions({ selectedPaneId, offer, selection, load, selectPane, layoutRefused }: {
+export function layoutActions({ selectedPaneId, offer, paneSplits, selection, load, selectPane, layoutRefused }: {
   selectedPaneId: string | null;
   offer: Pick<LayoutOffer, "split" | "arrange">;
+  /** false for a pane in a tab of its own terminal, which herdr-core does not split (HerdrPane `own_tab`) */
+  paneSplits: boolean;
   /** App's selection as it is when herdr answers, not as it was when the call was made */
   selection: { readonly current: SelectionMark };
   load: () => unknown;
@@ -22,7 +24,7 @@ export function layoutActions({ selectedPaneId, offer, selection, load, selectPa
 }): Pick<AppActions, "splitPane" | "zoomPane"> {
   if (selectedPaneId === null) return { splitPane: null, zoomPane: null };
   return {
-    splitPane: !offer.split ? null : (direction, focus = false) => {
+    splitPane: !offer.split || !paneSplits ? null : (direction, focus = false) => {
       const asked = selection.current;
       if (asked.paneId === null) return;
       void splitPane(asked.paneId, direction, focus, asked.machineId)

@@ -5,6 +5,7 @@ import type { HerdrPane, HerdrTab, PaneLayoutSnapshot, SessionSnapshot } from ".
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { customTabLabel, tabLabel } from "../lib/tabName.ts";
 import { focusWorkspaceListToggle } from "../lib/focus.ts";
+import { moveDestinations } from "../lib/layoutTargets.ts";
 import { useAppLayout, useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { PANE_DRAG_TYPE, paneDragData, type SplitSide } from "../lib/split.ts";
 import { PaneSubmitRetention } from "../lib/paneSubmitRetention.ts";
@@ -200,7 +201,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     ...(appLayout.arrange && target.label ? [{ id: "clear-name", label: t("Clear pane name"), icon: Eraser, run: () => run(() => api.renamePane(target.pane_id, "")) }] : []),
     ...(appLayout.arrange && pane && target.pane_id !== pane.pane_id ? [{ id: "swap-focused", label: t("Swap with focused pane"), icon: ArrowLeftRight,
       run: () => run(() => api.swapPaneWith(pane.pane_id, target.pane_id)) }] : []),
-    ...(!appLayout.split ? [] : [
+    ...(!appLayout.split || target.own_tab ? [] : [
       { id: "split-right", label: t("Split right"), icon: Columns2, run: () => run(() => split(target, "right")) },
       { id: "split-down", label: t("Split down"), icon: Rows2, run: () => run(() => split(target, "down")) },
     ]),
@@ -238,7 +239,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         // counted too; the workspaces are picked in a second menu at the header's More, which this
         // menu opened from, as the row's menu lists them in place (TabStrip)
         ...(onMoveToWorkspace && appLayout.move && tab && (snapshot?.panes.filter((item) => item.tab_id === target.tab_id).length ?? 0) === 1
-          && snapshot?.workspaces.some((entry) => entry.workspace_id !== target.workspace_id)
+          && moveDestinations(snapshot?.workspaces ?? [], target, target.workspace_id).length > 0
           ? [{ id: "move-workspace", label: t("Move to workspace…"), icon: FolderInput, run: () => {
             const anchor = document.querySelector<HTMLElement>(".header-more-button") ?? canvas.current;
             if (anchor) setMovingTab({ tab, anchor });
@@ -446,7 +447,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     {renamingTab && <RenameDialog title={t("Rename tab")} field={t("Tab name")} initial={customTabLabel(renamingTab, 1) ?? ""} maxLength={MAX_LABEL_CHARS} required={t("A tab needs a name.")}
       onClose={() => setRenamingTab(null)} onSave={async (label) => { await api.renameTab(renamingTab.tab_id, label); onChanged(); }} />}
     {movingTab && <RowMenu anchor={movingTab.anchor} title={t("Move {tab} to", { tab: tabLabel(movingTab.tab, t, 1) })} align="start" onClose={() => setMovingTab(null)}
-      items={(snapshot?.workspaces ?? []).filter((entry) => entry.workspace_id !== movingTab.tab.workspace_id).map((entry): RowMenuItem => ({
+      items={moveDestinations(snapshot?.workspaces ?? [], snapshot?.panes.find((item) => item.tab_id === movingTab.tab.tab_id), movingTab.tab.workspace_id).map((entry): RowMenuItem => ({
         id: `workspace:${entry.workspace_id}`, label: entry.label, icon: Folder, run: () => {
           const tabId = latest.current.tabId;
           setError(null);

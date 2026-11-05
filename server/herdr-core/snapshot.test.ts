@@ -302,6 +302,14 @@ describe("buildSnapshot, what herdr-core reports beyond placement", () => {
     expect((snapshot.panes.find((p) => p.pane_id === "t3") as HerdrPane).parent_pane_id).toBe("t1");
   });
 
+  it("marks the panes in a tab of their own terminal, in Other terminals or a helper's, which take no split (#2806)", () => {
+    const kept = { "herdr.space": "s1", "herdr.tab": "tb1" };
+    const snapshot = buildSnapshot([terminal("t1", { labels: kept }), terminal("t2", { labels: kept }), terminal("t3", { parent: "t1" }), terminal("t4")], null, "0.1.17");
+    expect(snapshot.panes.map((p) => [p.pane_id, p.tab_id, (p as HerdrPane).own_tab])).toEqual([
+      ["t1", "tb1", undefined], ["t2", "tb1", undefined], ["t3", "s1:t3", true], ["t4", `${OTHER_WORKSPACE_ID}:t4`, true],
+    ]);
+  });
+
   it("leaves a terminal the app placed where the app put it, and names its parent", () => {
     const layout = { spaces: [{ id: "s1", name: "web", tabs: [{ id: "s1t1", name: "", root: block("t1") }, { id: "s1t2", name: "", root: block("t2") }] }] };
     const snapshot = buildSnapshot([terminal("t1"), terminal("t2", { parent: "t1" })], layout, "0.1.17");

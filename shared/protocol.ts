@@ -50,6 +50,8 @@ export type HerdrTab = TabInfo;
  * What herdr-core (server/herdr-core/snapshot.ts) reports about the terminal, each absent where it
  * reported nothing (and always on herdr's TUI runtime):
  * `parent_pane_id`: the pane of the terminal that started this one (hc's `parent`), when that pane is shown.
+ * `own_tab`: the pane is in a tab of its own terminal (in Other terminals, or a helper's under its
+ * parent's tab), which herdr-core does not split.
  * `agent_kind`, `agent_message`, `agent_progress`: the program's own OSC 7501 report: what a blocked
  * agent waits for (`permission`, `question`, `auth`), its message in its own words (never
  * translated), and how far it is, 0 to 100.
@@ -57,6 +59,7 @@ export type HerdrTab = TabInfo;
 export type HerdrPane = PaneInfo & {
   background_tasks?: number; background_wait?: true; plan?: PlanSummary;
   parent_pane_id?: string;
+  own_tab?: true;
   agent_kind?: string;
   agent_message?: string;
   agent_progress?: number;

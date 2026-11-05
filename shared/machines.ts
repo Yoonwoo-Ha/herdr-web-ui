@@ -109,6 +109,11 @@ export interface HerdrCoreLayout {
   move: boolean;
   arrange: boolean;
 }
+/**
+ * The workspace a herdr-core PC shows its terminals no workspace holds in ("Other terminals"): it has
+ * no name to change, and a helper whose parent is shown cannot go there (server/herdr-core/adapter.ts).
+ */
+export const HC_OTHER_WORKSPACE_ID = "hc-other";
 /** where this server's runtime came from: OVIS_RUNTIME, the choice saved from Settings, or what the PC has */
 export type RuntimeSource = "env" | "saved" | "detected";
 /** why Settings cannot switch the runtime: OVIS_RUNTIME decides, the server was not started by Ovis's launcher, or herdr-core is not served on this OS */

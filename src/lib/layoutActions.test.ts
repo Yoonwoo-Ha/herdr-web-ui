@@ -12,8 +12,8 @@ import { SETTINGS_STORAGE_KEY } from "./themeBoot.ts";
 const selection = { current: { machineId: "local", paneId: "p1", generation: 0 } satisfies SelectionMark };
 /** herdr's TUI server, and a herdr-core PC, which splits and zooms no pane (lib/machineContext.tsx) */
 const OFFERS = { tui: { split: true, arrange: true }, core: { split: false, arrange: false } };
-const layout = (pc: keyof typeof OFFERS, selectedPaneId: string | null = "p1") =>
-  layoutActions({ selectedPaneId, offer: OFFERS[pc], selection, load: () => undefined, selectPane: () => {}, layoutRefused: () => {} });
+const layout = (pc: keyof typeof OFFERS, selectedPaneId: string | null = "p1", paneSplits = true) =>
+  layoutActions({ selectedPaneId, offer: OFFERS[pc], paneSplits, selection, load: () => undefined, selectPane: () => {}, layoutRefused: () => {} });
 const chord = (key: string) => Object.assign(new Event("keydown", { cancelable: true }), { key, code: `Key${key.toUpperCase()}`, ctrlKey: true, shiftKey: true, altKey: false, metaKey: false, repeat: false });
 
 describe("layoutActions", () => {
@@ -26,6 +26,12 @@ describe("layoutActions", () => {
   it("gives neither without a pane, nor on a PC the Herdr app lays out", () => {
     expect(layout("tui", null)).toEqual({ splitPane: null, zoomPane: null });
     expect(layout("core")).toEqual({ splitPane: null, zoomPane: null });
+  });
+
+  it("gives no split for a pane in a tab of its own terminal, which herdr-core refuses to split (#2806)", () => {
+    const offered = layout("tui", "p1", false);
+    expect(offered.splitPane).toBeNull();
+    expect(typeof offered.zoomPane).toBe("function");
   });
 });
 

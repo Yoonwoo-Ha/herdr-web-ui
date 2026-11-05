@@ -78,6 +78,13 @@ describe("the pane canvas on a PC the Herdr app lays out", () => {
     expect(dividers()).toBe(1);
   });
 
+  it("offers no split on a core whose layout Ovis keeps for a pane in a tab of its own terminal (#2806)", async () => {
+    const own: SessionSnapshot = { ...snapshot, panes: [{ ...pane("p1", "named"), own_tab: true }, pane("p2")] };
+    const itemsOf = await draw(OVIS_CORE, own);
+    expect(itemsOf(own.panes[0] as HerdrPane)).toEqual(["rename", "clear-name", "zoom", "close"]);
+    expect(itemsOf(own.panes[1] as HerdrPane)).toEqual(["rename", "swap-focused", "split-right", "split-down", "zoom", "close"]);
+  });
+
   it("gives a lone tab with no row (a cramped phone) the row's menu, for the header's More menu, and no pane ellipsis", async () => {
     phone = true;
     const itemsOf = await draw(TUI);
