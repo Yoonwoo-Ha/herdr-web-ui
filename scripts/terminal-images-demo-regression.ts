@@ -14,6 +14,7 @@ import { chromium, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
+import { shownRows } from "./shown-rows.ts";
 
 interface ImagesFixture { print(data: string): void }
 declare global { interface Window { imagesFixture: ImagesFixture } }
@@ -85,7 +86,7 @@ const pixel = (page: Page, x: number, y: number) => page.evaluate(({ x, y }) => 
 const settled = (page: Page) => page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 const print = async (page: Page, data: string, marker: string) => {
   await page.evaluate((data) => window.imagesFixture.print(data), `${data}${marker}\r\n`);
-  await page.locator(".pane-frame.is-current .xterm-rows", { hasText: marker }).waitFor();
+  await page.locator(shownRows(".pane-frame.is-current"), { hasText: marker }).waitFor();
   await settled(page);
 };
 const setPictures = async (page: Page, on: boolean) => {
