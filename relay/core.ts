@@ -109,6 +109,11 @@ export interface SocketInfo {
   server_id?: string;
   /** a proven control socket or a client: its usage not reported yet (a client's only once the PC answered it) */
   usage?: Usage;
+  /**
+   * the room closed it: a peer that vanished never answers that close, and the runtime keeps
+   * listing the socket until it gives up, so an instance after an eviction must not end it again
+   */
+  ended?: true;
 }
 
 /** usage since `since` (ms): bytes from the device to the PC (`up`) and back (`down`) */
@@ -248,7 +253,7 @@ export class Room<S extends object> {
     for (const socket of this.host.sockets()) {
       if (this.ended.has(socket)) continue;
       const info = this.host.info(socket);
-      if (info && (proving || !info.proof)) out.push({ socket, info });
+      if (info && !info.ended && (proving || !info.proof)) out.push({ socket, info });
     }
     return out;
   }
@@ -290,10 +295,16 @@ export class Room<S extends object> {
     this.host.setInfo(socket, { ...info, usage: this.report(info, usage, now, false) });
   }
 
-  private end(socket: S, code: number, reason: string): void {
+  /** Closes a socket and ends it in the room, its partner with it. Safe to call more than once. */
+  end(socket: S, code: number, reason: string): void {
     if (this.ended.has(socket)) return;
+    const info = this.host.info(socket);
+    // an instance before an eviction ended it already
+    if (info?.ended) { this.ended.add(socket); return; }
+    // marked before the close, while the socket can still keep it
+    if (info) this.host.setInfo(socket, { ...info, ended: true });
     this.host.close(socket, code, reason);
-    this.closed(socket);
+    this.finish(socket, info);
   }
 
   /** A socket was upgraded: place it, or close it when the room refuses it. */
@@ -372,7 +383,8 @@ export class Room<S extends object> {
   message(socket: S, frame: Frame): void {
     if (this.ended.has(socket)) return;
     const info = this.host.info(socket);
-    if (!info) return;
+    // a frame the peer sent before an earlier instance closed it
+    if (!info || info.ended) return;
     if (info.proof) {
       // the first frame of a PC socket is its answer, compared in constant time; anything else, or late, is refused
       if (this.host.now() >= info.proof.expires || !verifyServerProof(frame, info.proof.expected)) return this.end(socket, CLOSE.SERVER_PROOF, "invalid or expired server proof");
@@ -416,8 +428,14 @@ export class Room<S extends object> {
   /** A socket closed (or failed): close its partner. Safe to call more than once. */
   closed(socket: S): void {
     if (this.ended.has(socket)) return;
-    this.ended.add(socket);
     const info = this.host.info(socket);
+    // an instance before an eviction ended it already; this is the runtime giving up on its close
+    if (info?.ended) { this.ended.add(socket); return; }
+    this.finish(socket, info);
+  }
+
+  private finish(socket: S, info: SocketInfo | null): void {
+    this.ended.add(socket);
     if (!info || info.proof) return;
     if (info.usage) this.report(info, info.usage, this.host.now(), true);
     if (info.role === "control") return this.pauseWaiting();

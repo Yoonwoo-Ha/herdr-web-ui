@@ -78,7 +78,8 @@ function isInfo(value: unknown): value is SocketInfo {
     && (info["arrived"] === undefined || typeof info["arrived"] === "number")
     && (proof === undefined || (typeof proof === "object" && proof !== null && typeof proof["expected"] === "string" && typeof proof["expires"] === "number"))
     && (info["server_id"] === undefined || typeof info["server_id"] === "string")
-    && (info["usage"] === undefined || isUsage(info["usage"]));
+    && (info["usage"] === undefined || isUsage(info["usage"]))
+    && (info["ended"] === undefined || info["ended"] === true);
 }
 
 export class RelayRoom {
@@ -103,16 +104,14 @@ export class RelayRoom {
       },
       setInfo: (socket, info) => {
         infos.set(socket, info);
-        socket.serializeAttachment(info);
+        // a socket whose send just failed may refuse its attachment too; it is being ended either way
+        try { socket.serializeAttachment(info); } catch { /* see above */ }
       },
       send: (socket, frame) => {
         try { socket.send(frame); } catch {
           // Finish the current room operation before propagating failure: a send may happen
           // while a pair is attaching. Do not rely on a later runtime close event to end it.
-          queueMicrotask(() => {
-            try { socket.close(CLOSE.RESTART, "relay send failed"); } catch { /* already closed */ }
-            this.room.closed(socket);
-          });
+          queueMicrotask(() => this.room.end(socket, CLOSE.RESTART, "relay send failed"));
         }
       },
       close: (socket, code, reason) => {
