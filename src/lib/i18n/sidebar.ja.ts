@@ -14,7 +14,6 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Pinned": "固定済み",
   "Background tasks running: {count}": "実行中のバックグラウンドタスク: {count}",
   "Agent waiting on background work": "エージェントがバックグラウンドの作業を待っています",
-  "Needs permission": "許可が必要",
   "Has a question": "質問があります",
   "Needs sign-in": "サインインが必要",
   "Progress {percent}%": "進捗 {percent}%",

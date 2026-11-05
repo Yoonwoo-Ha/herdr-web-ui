@@ -14,7 +14,6 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Pinned": "已固定",
   "Background tasks running: {count}": "正在运行的后台任务：{count}",
   "Agent waiting on background work": "Agent 正在等待后台工作",
-  "Needs permission": "需要权限",
   "Has a question": "有问题",
   "Needs sign-in": "需要登录",
   "Progress {percent}%": "进度 {percent}%",

@@ -285,6 +285,7 @@ const BASE: Record<string, string> = {
   "This device would not make a push subscription. Check that push messaging is allowed in its settings, then try again.": "このデバイスでプッシュ通知の登録を作成できませんでした。設定でプッシュメッセージが許可されているか確認してから、もう一度お試しください。",
   "This device can only watch.": "この端末は閲覧のみできます。",
   "Needs input": "入力が必要",
+  "Needs permission": "許可が必要",
   "Finished": "完了",
   "Open pane": "ペインを開く",
   "Quick replies": "クイック返信",

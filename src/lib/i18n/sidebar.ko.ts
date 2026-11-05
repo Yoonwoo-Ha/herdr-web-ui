@@ -14,7 +14,6 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Pinned": "고정됨",
   "Background tasks running: {count}": "실행 중인 백그라운드 작업: {count}",
   "Agent waiting on background work": "에이전트가 백그라운드 작업을 기다리는 중",
-  "Needs permission": "권한 필요",
   "Has a question": "질문 있음",
   "Needs sign-in": "로그인 필요",
   "Progress {percent}%": "진행률 {percent}%",

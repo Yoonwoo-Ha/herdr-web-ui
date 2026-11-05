@@ -283,6 +283,7 @@ const BASE: Record<string, string> = {
   "This device would not make a push subscription. Check that push messaging is allowed in its settings, then try again.": "이 기기에서 푸시 구독을 만들지 못했습니다. 설정에서 푸시 메시지가 허용되어 있는지 확인한 뒤 다시 시도하세요.",
   "This device can only watch.": "이 기기는 보기만 할 수 있습니다.",
   "Needs input": "입력 필요",
+  "Needs permission": "권한 필요",
   "Finished": "작업 완료",
   "Open pane": "패널 열기",
   "Quick replies": "빠른 답장",

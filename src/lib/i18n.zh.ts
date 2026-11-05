@@ -287,6 +287,7 @@ const BASE: Record<string, string> = {
   "This device would not make a push subscription. Check that push messaging is allowed in its settings, then try again.": "此设备未能创建推送订阅。请确认其设置中允许推送消息，然后重试。",
   "This device can only watch.": "此设备只能查看。",
   "Needs input": "需要输入",
+  "Needs permission": "需要权限",
   "Finished": "已完成",
   "Open pane": "打开窗格",
   "Quick replies": "快捷回复",

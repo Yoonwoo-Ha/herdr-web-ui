@@ -1,3 +1,5 @@
+import type { AlertKind } from "./notify-policy.ts";
+
 /** GET /api/push: base64url VAPID public key, the `applicationServerKey` a browser subscribes with. */
 export interface PushKey {
   readonly public_key: string;
@@ -17,6 +19,12 @@ export interface PushPayload {
   title: string;
   body: string;
   tag: string;
+  /**
+   * What the alert is about (shared/notify-policy.ts AlertKind). Absent from the test push, a
+   * pairing notice and an older server. The server already left out every device that does not
+   * want this kind or this PC: a device shows what it gets.
+   */
+  kind?: AlertKind;
 }
 
 /**

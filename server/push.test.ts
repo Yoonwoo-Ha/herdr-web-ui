@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import webpush from "web-push";
 
@@ -211,6 +211,7 @@ describe("push delivery", () => {
       title: "claude: fix the build",
       body: "waiting for your input",
       tag: "herdr-pane-w1:p1",
+      kind: "input",
     });
     expect(received!.urgency).toBe("high");
     expect(received!.ttl).toBe(12 * 60 * 60);
@@ -257,9 +258,9 @@ describe("push delivery", () => {
   it("names the pane by its current title, falling back to the seeded one", async () => {
     let fresh: string | Error = "claude: new task";
     const push = subscribed({
-      lookupTitle: async () => {
+      lookupPane: async () => {
         if (fresh instanceof Error) throw fresh;
-        return fresh;
+        return { title: fresh };
       },
     });
     push.seed([pane("w1:p1", "working", "claude: old task")]);
@@ -280,6 +281,7 @@ describe("push delivery", () => {
       title: "vim notes.md",
       body: "terminal ended",
       tag: "herdr-pane-w1:p1",
+      kind: "ended",
     });
   });
 
@@ -599,6 +601,88 @@ describe("alert timing and each device's choice", () => {
     expect(fake.received).toHaveLength(0);
   });
 
+  it("tells a permission apart from a question, and one never chosen follows questions", async () => {
+    let agentKind: string | undefined = "permission";
+    const push = createPushService({ loopbackHttp: true, stateDir, timing: { short: 0, long: 0, longTurn: 0 },
+      lookupPane: async () => ({ title: "claude", ...(agentKind ? { agent_kind: agentKind } : {}) }) });
+    push.seed([pane("w1:p1", "working", "claude")]);
+    const ask = async (alerts: AlertPrefs) => {
+      push.subscribe(fake.subscription, alerts);
+      await push.onStatus("w1:p1", "working");
+      await push.onStatus("w1:p1", "blocked");
+      await push.settled();
+      const kinds = fake.received.map((r) => r.payload.kind);
+      fake.received.length = 0;
+      return kinds;
+    };
+    expect(await ask({ input: false, done: "off", permission: true })).toEqual(["permission"]);
+    expect(await ask({ input: false, done: "off" })).toEqual([]);
+    expect(await ask({ input: true, done: "off" })).toEqual(["permission"]);
+    expect(await ask({ input: true, done: "off", permission: false })).toEqual([]);
+    // an agent that does not say what it waits for asks a question
+    agentKind = undefined;
+    expect(await ask({ input: true, done: "off", permission: false })).toEqual(["input"]);
+    expect(await ask({ input: false, done: "off", permission: true })).toEqual([]);
+  });
+
+  it("tells a turn that stopped on an error only to a device that asked, unless the pane moves on first", async () => {
+    const off = timed({ input: true, done: "always" });
+    await off.push.onStatus("w1:p1", "working");
+    await off.push.onStatus("w1:p1", "idle");
+    await off.push.onFailed("w1:p1");
+    await off.push.settled();
+    expect(fake.received).toHaveLength(0);
+
+    const on = timed({ input: true, done: "off", error: true });
+    await on.push.onStatus("w1:p1", "working");
+    await on.push.onStatus("w1:p1", "idle");
+    await on.push.onFailed("w1:p1");
+    await on.push.settled();
+    expect(fake.received.map((r) => [r.payload.kind, r.payload.body])).toEqual([["error", "stopped on an error"]]);
+    fake.received.length = 0;
+    // retried at the desk before the alert went out: no longer news
+    await on.push.onStatus("w1:p1", "working");
+    await on.push.onStatus("w1:p1", "idle");
+    await on.push.onFailed("w1:p1");
+    await on.push.onStatus("w1:p1", "working");
+    await on.push.settled();
+    expect(fake.received).toHaveLength(0);
+    // taken for working (its background work still runs): it did not stop, and no later change would call the alert off
+    await on.push.onFailed("w1:p1");
+    await on.push.settled();
+    expect(fake.received).toHaveLength(0);
+  });
+
+  it("asks a waiting alert's device again for the PC as the alert goes out", async () => {
+    const { push } = timed({ input: true, done: "off" });
+    await push.onStatus("w1:p1", "working");
+    await push.onStatus("w1:p1", "blocked");
+    // the device turned this PC off while the question waited
+    push.subscribe(fake.subscription, { input: true, done: "off", pcs_off: [hostname()] });
+    await push.settled();
+    expect(fake.received).toHaveLength(0);
+  });
+
+  it("tells nothing of a PC the device turned off, by the name the roster gives it", async () => {
+    const push = createPushService({ loopbackHttp: true, stateDir, localName: "Desk", timing: { short: 0, long: 0, longTurn: 0 } });
+    push.subscribe(fake.subscription, { input: true, done: "always", pcs_off: ["Home PC"] });
+    push.seed([pane("w1:p1", "working", "alpha")]);
+    push.seed([pane("w1:p1", "working", "beta")], "pc-b", "Home PC");
+    await push.onStatus("w1:p1", "blocked", "pc-b");
+    await push.onEnded("w1:p1", "pc-b");
+    await push.onStatus("w1:p1", "blocked");
+    await push.settled();
+    expect(fake.received.map((r) => r.payload.machine_id ?? "local")).toEqual(["local"]);
+    fake.received.length = 0;
+    push.subscribe(fake.subscription, { input: true, done: "always", pcs_off: ["Desk"] });
+    await push.onStatus("w1:p1", "done");
+    await push.onEnded("w1:p1");
+    await push.onStatus("w1:p1", "working", "pc-b");
+    await push.onStatus("w1:p1", "done", "pc-b");
+    await push.settled();
+    expect(fake.received.map((r) => r.payload.machine_id ?? "local")).toEqual(["pc-b"]);
+  });
+
   it("keeps a device's choice through a re-registration without one, and a restart", async () => {
     const push = createPushService({ loopbackHttp: true, stateDir });
     push.subscribe(fake.subscription, { input: false, done: "off" });
@@ -635,7 +719,7 @@ it("settles only after a delivery already under way, when a later group is calle
   const push = createPushService({
     loopbackHttp: true,
     stateDir, timing: { short: 0, long: 10_000, longTurn: 0 },
-    lookupTitle: () => { asked(); return new Promise((resolve) => { release = () => resolve("claude"); }); },
+    lookupPane: () => { asked(); return new Promise((resolve) => { release = () => resolve({ title: "claude" }); }); },
   });
   const slower = await startFakePushService();
   try {
@@ -1212,7 +1296,7 @@ describe("a window of the app in use (#751)", () => {
 
   it("holds an alert when a window comes into use while its title is looked up", async () => {
     let inUse = false;
-    const push = subscribed({ inUse: () => inUse, lookupTitle: async () => { inUse = true; return "claude"; } });
+    const push = subscribed({ inUse: () => inUse, lookupPane: async () => { inUse = true; return { title: "claude" }; } });
     push.seed([pane("w1:p1", "working", "claude")]);
     await push.onStatus("w1:p1", "blocked");
     expect(fake.received).toHaveLength(0);
@@ -1313,7 +1397,7 @@ describe("the shared pane mute (shared/preferences.ts muted_panes)", () => {
     const push = createPushService({
       loopbackHttp: true, stateDir, timing: { short: 0, long: 0, longTurn: 0 },
       muted: (machineId, paneId) => paneAlertsMuted(store.get().muted_panes, machineId, paneId),
-      lookupTitle: () => { asked(); return new Promise((resolve) => { release = () => resolve("claude"); }); },
+      lookupPane: () => { asked(); return new Promise((resolve) => { release = () => resolve({ title: "claude" }); }); },
     });
     const stop = store.subscribe(() => push.mutesChanged());
     const put = (keys: string[]) => handlePreferencesRequest(new Request("http://test/api/preferences", { method: "PUT", body: JSON.stringify({ settings: {}, muted_panes: keys }) }), store);

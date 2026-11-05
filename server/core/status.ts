@@ -91,8 +91,10 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     inUse: () => present.size > 0,
     // the persisted list, read as each alert is scheduled and again as it goes out
     muted: (machineId, paneId) => paneAlertsMuted(preferences.get().muted_panes, machineId, paneId),
-    lookupTitle: async (paneId) => {
-      return paneTitle(await paneGet(paneId));
+    // on herdr-core the pane carries what a blocked agent waits for (server/herdr-core/snapshot.ts reportedFacts)
+    lookupPane: async (paneId) => {
+      const pane: Pick<HerdrPane, "agent_kind"> & Parameters<typeof paneTitle>[0] = await paneGet(paneId);
+      return { title: paneTitle(pane), ...(pane.agent_kind ? { agent_kind: pane.agent_kind } : {}) };
     },
     // each pane alert that reached a device, for the daily active message's usage
     onAlertDelivered: () => options.telemetry?.tally("alerts_delivered"),
@@ -366,6 +368,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     if (turn) waits.status(paneId, status);
     broadcastAll(paneStatus(paneId, status, { background_tasks: background }));
     if (turn || waits.waiting(paneId) !== held) push.onStatus(paneId, alertStatus(status, waits.waiting(paneId))).catch(logPushError);
+    // after the status: its change calls off what was waiting, and this error is what the rest says
+    if (turn && rest === "failed" && status === "idle") push.onFailed(paneId).catch(logPushError);
   }
 
   /**
@@ -379,6 +383,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     if (turn) { pending.status(paneId, status); drainPending(paneId); }
     broadcastAll(paneStatus(paneId, status));
     if (turn) push.onStatus(paneId, status).catch(logPushError);
+    if (turn && rest === "failed" && status === "idle") push.onFailed(paneId).catch(logPushError);
   }
 
   /**

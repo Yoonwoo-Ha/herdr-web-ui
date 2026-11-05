@@ -46,19 +46,33 @@
  * on any device: none is scheduled for it, one already waiting is called off when the list
  * changes (`mutesChanged`), and the list is asked again right before a waiting one goes out.
  * Its status is tracked all the same, so an unmute tells only what changes after it.
+ *
+ * Each device also says which kinds of alert it wants (shared/notify-policy.ts AlertPrefs: a
+ * question, a permission, a finish, an error) and which PCs it hears nothing of (`pcs_off`, by the
+ * PC's name, which every server that device subscribes to knows its own PC by). The choice is made
+ * here, not on the device: a web push the device received has to be shown (iOS takes the
+ * subscription away from a page that shows none), and the phone app's relay forwards what it gets.
+ * Every alert names its `kind`.
  */
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import webpush from "web-push";
 
 import { paneStorageId } from "../shared/machines.ts";
 import type { AgentStatus, DevicePairedEvent, HerdrPane, PushDeliveryFailure, PushPayload, PushSubscriptionStatus } from "../shared/protocol.ts";
 import {
+  type AlertKind,
   type AlertPrefs,
+  alertKindAllowed,
+  alertPcAllowed,
+  blockedAlertKind,
   DEFAULT_ALERTS,
   ENDED_NOTIFICATION_BODY,
+  ERROR_NOTIFICATION_BODY,
+  PERMISSION_NOTIFICATION_BODY,
   paneNotificationTag,
   paneTitle,
   parseAlerts,
@@ -182,6 +196,12 @@ export interface PushService {
   /** Schedules the alert this change is worth, and calls off the one it overtakes. */
   onStatus(paneId: string, status: AgentStatus, machineId?: string): Promise<void>;
   onEnded(paneId: string, machineId?: string): Promise<void>;
+  /**
+   * The pane's turn stopped on an error (an OmO or GJC pane at rest after one, server/completion.ts
+   * OmoRest `failed`): told to the devices that want errors. Call it after the status change that
+   * brought the pane to rest; the pane's next change calls it off.
+   */
+  onFailed(paneId: string, machineId?: string): Promise<void>;
   /** The shared mute list changed: an alert waiting for a pane now muted is called off. */
   mutesChanged(): void;
   /** Resolves once every alert scheduled so far went out or was called off (tests wait). */
@@ -191,8 +211,13 @@ export interface PushService {
 export interface PushServiceOptions {
   stateDir: string;
   subject?: string;
-  /** Current title of a pane, looked up when an alert fires; falls back to the last seeded one. */
-  lookupTitle?: (paneId: string) => Promise<string | undefined>;
+  /**
+   * The pane as herdr has it now, looked up when an alert fires: its title, and what a blocked agent
+   * waits for. Falls back to what was last seeded.
+   */
+  lookupPane?: (paneId: string) => Promise<{ title: string; agent_kind?: string } | undefined>;
+  /** This PC's name, as the roster gives it to devices (server/machines.ts): what `pcs_off` names it by */
+  localName?: string;
   timing?: Partial<AlertTiming>;
   now?: () => number;
   canDeliver?: (deviceId: string | null | undefined) => boolean;
@@ -276,12 +301,16 @@ export function parseSubscription(value: unknown, options: { loopbackHttp?: bool
   return { endpoint, keys: { p256dh: keys!.p256dh as string, auth: keys!.auth as string } };
 }
 
-export function statusMessage(paneId: string, title: string, status: AgentStatus): PushPayload {
-  return { pane_id: paneId, title, body: statusNotificationBody(status), tag: paneNotificationTag(paneId) };
+export function statusMessage(paneId: string, title: string, status: AgentStatus, kind: AlertKind = status === "blocked" ? "input" : "done"): PushPayload {
+  return { pane_id: paneId, title, body: kind === "permission" ? PERMISSION_NOTIFICATION_BODY : statusNotificationBody(status), tag: paneNotificationTag(paneId), kind };
 }
 
 export function endedMessage(paneId: string, title: string): PushPayload {
-  return { pane_id: paneId, title, body: ENDED_NOTIFICATION_BODY, tag: paneNotificationTag(paneId) };
+  return { pane_id: paneId, title, body: ENDED_NOTIFICATION_BODY, tag: paneNotificationTag(paneId), kind: "ended" };
+}
+
+export function failedMessage(paneId: string, title: string): PushPayload {
+  return { pane_id: paneId, title, body: ERROR_NOTIFICATION_BODY, tag: paneNotificationTag(paneId), kind: "error" };
 }
 
 /** An alert scheduled for a pane, from its scheduling until it went out or was called off. */
@@ -309,6 +338,11 @@ export function createPushService(options: PushServiceOptions): PushService {
   // the workspace a pane was last seen in: an alert names it, so the tap of an ended pane can open
   // its workspace (src/lib/deepLink.ts resolveLink) once herdr has dropped the pane
   const workspaces = new Map<string, string>();
+  // what a blocked pane last said it waits for (herdr-core's agent_kind), for a PC whose pane is not looked up
+  const kinds = new Map<string, string>();
+  // each PC's name, which a device's `pcs_off` lists
+  const pcNames = new Map<string, string>();
+  const pcName = (machineId: string): string => machineId === "local" ? options.localName ?? hostname() : pcNames.get(machineId) ?? machineId;
   const retiredPath = join(options.stateDir, "push-retired.json");
   /**
    * sha256 of each endpoint a push service retired -> when, and the owner it was registered for (absent for a
@@ -638,14 +672,17 @@ export function createPushService(options: PushServiceOptions): PushService {
     return { ...(machineId === "local" ? {} : { machine_id: machineId }), ...(workspace ? { workspace_id: workspace } : {}) };
   }
 
-  async function titleOf(paneId: string): Promise<string> {
-    try {
-      const fresh = await options.lookupTitle?.(paneId);
-      if (fresh) return fresh;
-    } catch {
-      /* herdr busy: the seeded title is at most one reconcile old */
+  /** The pane's title and what it waits for, as herdr has them now; the seeded ones when herdr does not answer. */
+  async function lookUp(key: string, machineId: string, paneId: string): Promise<{ title: string; agentKind: string | undefined }> {
+    if (machineId === "local") {
+      try {
+        const fresh = await options.lookupPane?.(paneId);
+        if (fresh?.title) return { title: fresh.title, agentKind: fresh.agent_kind };
+      } catch {
+        /* herdr busy: the seeded title is at most one reconcile old */
+      }
     }
-    return titles.get(paneId) ?? paneId;
+    return { title: titles.get(key) ?? paneId, agentKind: kinds.get(key) };
   }
 
   const timing = { ...DEFAULT_ALERT_TIMING, ...options.timing };
@@ -668,10 +705,16 @@ export function createPushService(options: PushServiceOptions): PushService {
   }
 
   const muted = (machineId: string, paneId: string): boolean => options.muted?.(machineId, paneId) === true;
+  /** whether the subscription, as it is now, wants this kind of alert from this PC: asked again as an alert goes out */
+  const wants = (subscription: PushSubscriptionRecord, kind: AlertKind, machineId: string): boolean => {
+    const prefs = subscription.alerts ?? DEFAULT_ALERTS;
+    return alertKindAllowed(prefs, kind) && alertPcAllowed(prefs, pcName(machineId));
+  };
 
   /** How long a device waits before this alert reaches it, or null: it does not want it. */
   function delayFor(prefs: AlertPrefs, status: AgentStatus, worked: number | null): number | null {
-    if (status === "blocked") return prefs.input ? timing.short : null;
+    // what it waits for is looked up as the alert goes out: a device that wants either kind waits for it
+    if (status === "blocked") return alertKindAllowed(prefs, "input") || alertKindAllowed(prefs, "permission") ? timing.short : null;
     if (status !== "done" || prefs.done === "off") return null;
     if (prefs.done === "always") return timing.short;
     // a turn that began before this server knew the pane is of unknown length: tell it
@@ -790,11 +833,13 @@ export function createPushService(options: PushServiceOptions): PushService {
     },
 
     seed(panes, machineId = "local", machineName) {
+      if (machineName) pcNames.set(machineId, machineName);
       for (const pane of panes) {
         // only fill gaps: an event already seen is newer than any snapshot
         const key = paneStorageId(machineId, pane.pane_id);
         titles.set(key, `${machineName ? machineName + " · " : ""}${paneTitle(pane)}`);
         workspaces.set(key, pane.workspace_id);
+        if (pane.agent_kind) kinds.set(key, pane.agent_kind); else kinds.delete(key);
         if (!lastStatus.has(key)) lastStatus.set(key, pane.agent_status);
       }
     },
@@ -850,21 +895,49 @@ export function createPushService(options: PushServiceOptions): PushService {
       if (muted(machineId, paneId)) return;
       const groups = new Map<number, PushSubscriptionRecord[]>();
       for (const subscription of store().values()) {
-        const delay = delayFor(subscription.alerts ?? DEFAULT_ALERTS, status, worked);
+        const prefs = subscription.alerts ?? DEFAULT_ALERTS;
+        if (!alertPcAllowed(prefs, pcName(machineId))) continue;
+        const delay = delayFor(prefs, status, worked);
         if (delay !== null) groups.set(delay, [...(groups.get(delay) ?? []), subscription]);
       }
       if (groups.size === 0) return;
       schedule(key, machineId, paneId, groups, async (to, silenced) => {
         if (options.inUse?.() || muted(machineId, paneId)) return;
-        const title = machineId === "local" ? await titleOf(paneId) : titles.get(key) ?? paneId;
+        const { title, agentKind } = await lookUp(key, machineId, paneId);
         // the title can wait for herdr: a window that came into use, or a mute made (even one undone since), meanwhile still holds the alert
         if (options.inUse?.() || silenced() || muted(machineId, paneId)) return;
-        // a device that dropped out meanwhile is not written to
+        const kind: AlertKind = status === "blocked" ? blockedAlertKind(agentKind) : "done";
+        // a device that dropped out meanwhile is not written to, nor one that does not want this kind
         const live = to.flatMap((subscription) => {
           const current = store().get(subscription.endpoint);
-          return current && current.device_id === subscription.device_id ? [current] : [];
+          return current && current.device_id === subscription.device_id && wants(current, kind, machineId) ? [current] : [];
         });
-        await broadcast({ ...statusMessage(paneId, title, status), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, status === "blocked" ? "high" : "normal", live, true);
+        if (live.length === 0) return;
+        await broadcast({ ...statusMessage(paneId, title, status, kind), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, status === "blocked" ? "high" : "normal", live, true);
+      });
+    },
+
+    async onFailed(paneId, machineId = "local") {
+      const key = paneStorageId(machineId, paneId);
+      // only a pane at rest stopped: one the alerts take for working (its background work still runs) did not
+      const at = lastStatus.get(key);
+      if (at === "working" || at === "blocked" || muted(machineId, paneId)) return;
+      const to = [...store().values()].filter((subscription) => {
+        const prefs = subscription.alerts ?? DEFAULT_ALERTS;
+        return alertKindAllowed(prefs, "error") && alertPcAllowed(prefs, pcName(machineId));
+      });
+      if (to.length === 0) return;
+      // it waits like a question does: a retry at the desk meanwhile is the pane's next change, which calls it off
+      schedule(key, machineId, paneId, new Map([[timing.short, to]]), async (group, silenced) => {
+        if (options.inUse?.() || muted(machineId, paneId)) return;
+        const { title } = await lookUp(key, machineId, paneId);
+        if (options.inUse?.() || silenced() || muted(machineId, paneId)) return;
+        const live = group.flatMap((subscription) => {
+          const current = store().get(subscription.endpoint);
+          return current && current.device_id === subscription.device_id && wants(current, "error", machineId) ? [current] : [];
+        });
+        if (live.length === 0) return;
+        await broadcast({ ...failedMessage(paneId, title), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, "normal", live, true);
       });
     },
 
@@ -874,7 +947,10 @@ export function createPushService(options: PushServiceOptions): PushService {
       turnStart.delete(key);
       if (muted(machineId, paneId)) return;
       // an ended terminal is a finish of its own: a device that wants none hears none
-      const to = [...store().values()].filter((subscription) => (subscription.alerts ?? DEFAULT_ALERTS).done !== "off");
+      const to = [...store().values()].filter((subscription) => {
+        const prefs = subscription.alerts ?? DEFAULT_ALERTS;
+        return alertKindAllowed(prefs, "ended") && alertPcAllowed(prefs, pcName(machineId));
+      });
       if (to.length === 0 || options.inUse?.()) return;
       // the pane may already be gone from herdr: the seeded title is what is left
       await broadcast({ ...endedMessage(paneId, titles.get(key) ?? paneId), ...where(key, machineId), tag: paneNotificationTag(paneId, machineId) }, "normal", to);

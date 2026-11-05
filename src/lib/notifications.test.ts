@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { AgentStatus } from "../../shared/protocol.ts";
 import { paneStorageId } from "../../shared/machines.ts";
-import { alertStatus, alertsAllow, paneAlertsMuted, shouldNotifyStatus, showPaneEndedNotification, showPaneStatusNotification } from "./notifications.ts";
+import { alertKindAllowed, parseAlerts } from "../../shared/notify-policy.ts";
+import { alertPcAllowed, alertStatus, alertsAllow, paneAlertsMuted, shouldNotifyStatus, showPaneEndedNotification, showPaneStatusNotification } from "./notifications.ts";
 
 describe("alertStatus", () => {
   it("takes a pane at rest that waits on its turn's background work for working, and leaves the rest as they are", () => {
@@ -49,6 +50,33 @@ describe("alertsAllow", () => {
     expect(alertsAllow({ input: false, done: "long" }, "done")).toBe(true);
     expect(alertsAllow({ input: true, done: "off" }, "done")).toBe(false);
     expect(alertsAllow({ input: true, done: "always" }, "working")).toBe(false);
+  });
+
+  it("tells a permission by its own choice, which follows questions until the device makes it", () => {
+    expect(alertsAllow({ input: true, done: "off" }, "blocked", "permission")).toBe(true);
+    expect(alertsAllow({ input: false, done: "off" }, "blocked", "permission")).toBe(false);
+    expect(alertsAllow({ input: false, done: "off", permission: true }, "blocked", "permission")).toBe(true);
+    expect(alertsAllow({ input: true, done: "off", permission: false }, "blocked", "permission")).toBe(false);
+    // a question, or an agent that does not say: Needs input
+    expect(alertsAllow({ input: true, done: "off", permission: false }, "blocked", "question")).toBe(true);
+    expect(alertsAllow({ input: false, done: "off", permission: true }, "blocked")).toBe(false);
+  });
+});
+
+describe("alert kinds and PCs", () => {
+  it("wants an error only when asked, and nothing of a PC turned off", () => {
+    expect(alertKindAllowed({ input: true, done: "always" }, "error")).toBe(false);
+    expect(alertKindAllowed({ input: false, done: "off", error: true }, "error")).toBe(true);
+    expect(alertKindAllowed({ input: true, done: "off" }, "ended")).toBe(false);
+    expect(alertPcAllowed({ input: true, done: "long", pcs_off: ["Home PC"] }, "Home PC")).toBe(false);
+    expect(alertPcAllowed({ input: true, done: "long", pcs_off: ["Home PC"] }, "Desk")).toBe(true);
+  });
+
+  it("keeps only known choices from a subscription, so an older device keeps today's alerts", () => {
+    expect(parseAlerts({ input: false, done: "always" })).toEqual({ input: false, done: "always" });
+    expect(parseAlerts({ input: true, done: "long", permission: false, error: true, pcs_off: ["Desk", "Desk", 7, ""] }))
+      .toEqual({ input: true, done: "long", permission: false, error: true, pcs_off: ["Desk"] });
+    expect(parseAlerts({ permission: "no", error: 1, pcs_off: "Desk" })).toEqual({ input: true, done: "long" });
   });
 });
 

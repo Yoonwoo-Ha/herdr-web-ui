@@ -31,6 +31,7 @@ import type { UpdatesModel } from "../lib/updates.ts";
 import type { UserError } from "../lib/userError.ts";
 import { LOCAL_MACHINE, type HerdrCoreFacts, type HerdrRuntimeFacts, type Machine, type MachineSettings } from "../../shared/machines.ts";
 import { canHideMachine, isMachineShown, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
+import { updateAlertFilters, useAlertFilters } from "../lib/alertFilters.ts";
 import { addRelayPc, fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
 import type { PushActionResult } from "../lib/pushHealth.ts";
@@ -573,19 +574,27 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
   );
 }
 
-function AlertsPage({ onEnableNotifications }: { onEnableNotifications: () => Promise<PushActionResult> }) {
+function AlertsPage({ onEnableNotifications, machines }: { onEnableNotifications: () => Promise<PushActionResult>; machines: readonly Machine[] }) {
   const { settings, update } = useSettings();
   const t = useT();
+  const filters = useAlertFilters();
   // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
   const alertSoundWanted = useRef(settings.alertSound);
   return (
+    <>
     <SettingsGroup note={t("For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.")}>
       <PushTestControls onEnable={onEnableNotifications} />
-      <SettingsRow label={t("Needs input")} description={t("An agent waits for an answer or a permission")}>
+      <SettingsRow label={t("Needs input")} description={t("An agent asks you something")}>
         <Toggle label={t("Needs input")} checked={settings.alertInput} onChange={(alertInput) => update({ alertInput })} />
+      </SettingsRow>
+      <SettingsRow label={t("Needs permission")} description={t("An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input.")}>
+        <Toggle label={t("Needs permission")} checked={filters.permission ?? settings.alertInput} onChange={(permission) => updateAlertFilters({ permission })} />
       </SettingsRow>
       <SettingsRow label={t("Finished")} description={t("Long turns: only work that took a minute or more")} wide>
         <Segmented label={t("Finished")} value={settings.alertDone} onChange={(alertDone) => update({ alertDone })} options={[{ value: "off", label: t("Off") }, { value: "long", label: t("Long turns") }, { value: "always", label: t("Every turn") }]} />
+      </SettingsRow>
+      <SettingsRow label={t("Stopped on an error")} description={t("A turn that ended on an error, as OmO and GJC report it")}>
+        <Toggle label={t("Stopped on an error")} checked={filters.error === true} onChange={(error) => updateAlertFilters({ error })} />
       </SettingsRow>
       <SettingsRow label={t("In the app")} description={t("While the app is open, these drop in from the top of the screen at once. Tap one to open its pane.")}>
         <Toggle label={t("In the app")} checked={settings.alertInApp} onChange={(alertInApp) => update({ alertInApp })} />
@@ -599,6 +608,29 @@ function AlertsPage({ onEnableNotifications }: { onEnableNotifications: () => Pr
           if (alertSound) void unlockAlertSound().then((ready) => { if (ready && alertSoundWanted.current) previewAlertSound(); });
         }} />
       </SettingsRow>
+    </SettingsGroup>
+    <AlertPcsGroup machines={machines} />
+    </>
+  );
+}
+
+/**
+ * Which PCs alert this device, the Host first: one turned off here sends it nothing, on any channel.
+ * Shown with two PCs or more; kept by the PC's name (lib/alertFilters.ts).
+ */
+function AlertPcsGroup({ machines }: { machines: readonly Machine[] }) {
+  const t = useT();
+  const { pcsOff } = useAlertFilters();
+  if (machines.length < 2) return null;
+  const listed = [...machines].sort((a, b) => Number(b.kind === "local") - Number(a.kind === "local"));
+  return (
+    <SettingsGroup title={t("Alerts from")} section="alert-pcs">
+      {listed.map((machine) => (
+        <SettingsRow key={machine.id} label={machine.name}>
+          <Toggle label={t("Alerts from {name}", { name: machine.name })} checked={!pcsOff.includes(machine.name)}
+            onChange={(on) => updateAlertFilters({ pcsOff: on ? pcsOff.filter((name) => name !== machine.name) : [...pcsOff, machine.name] })} />
+        </SettingsRow>
+      ))}
     </SettingsGroup>
   );
 }
@@ -1429,7 +1461,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "appearance": return <AppearancePage />;
       case "chat": return <ChatPage />;
       case "terminal": return <TerminalPage keyBarButtonRef={keyBarButtonRef} onEditKeyBar={openKeyBar} />;
-      case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} />;
+      case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} machines={machines} />;
       case "voice": return <VoicePage />;
       case "agents": return <AgentsSettings watching={auth?.role === "watch"} onLocalLogin={onUsageLogin} onOpenPane={onOpenPane} onOpenGuide={onClose} />;
       case "shortcuts": return <ShortcutsPage />;

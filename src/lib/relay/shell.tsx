@@ -16,6 +16,7 @@ import { deviceLabel } from "../phone.ts";
 import { registerPendingPush } from "../push.ts";
 import type { PendingPushStore } from "../push.ts";
 import { alertPrefs, loadSettings, SettingsProvider } from "../settings.ts";
+import { readAlertFilters, withAlertFilters } from "../alertFilters.ts";
 import { onLazyChunkFailure } from "../lazyChunk.ts";
 import { requestFreshShell } from "../shellMode.ts";
 import { setTransport } from "../transport.ts";
@@ -123,7 +124,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const pendingPush = mount.pendingPush ?? indexedPendingPush;
   const registerPending = (serverId: string): void => {
     // with this device's alert choices, as the app's own registration sends them, which then skips it
-    registerPendingPush(serverId, pendingPush, alertPrefs(loadSettings())).catch((error: unknown) => {
+    registerPendingPush(serverId, pendingPush, withAlertFilters(alertPrefs(loadSettings()), readAlertFilters())).catch((error: unknown) => {
       console.warn("Ovis: the PC did not take this device's new push subscription", error);
     });
   };

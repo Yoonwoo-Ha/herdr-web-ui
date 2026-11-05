@@ -5,7 +5,7 @@ import { paneStorageId, type Machine } from "../../shared/machines.ts";
 import { alertPaneTitle } from "../components/Sidebar.tsx";
 import type { Settings } from "./settings.ts";
 import type { SelectionMark } from "./selectionMark.ts";
-import { shouldNotifyStatus, alertStatus, alertsAllow, paneAlertsMuted, showPaneEndedNotification, showPaneStatusNotification } from "./notifications.ts";
+import { alertPcAllowed, shouldNotifyStatus, alertStatus, alertsAllow, paneAlertsMuted, showPaneEndedNotification, showPaneStatusNotification } from "./notifications.ts";
 import { currentPaneMutes, subscribePaneMutes } from "./paneMutes.ts";
 import type { NotificationTarget } from "./notificationTarget.ts";
 import { dropletAllows, endedTurn, seedStatuses, showDroplet, trackTurn, type DropletKind } from "./droplet.ts";
@@ -104,18 +104,19 @@ export function useAlertSignals({ settings, selectionRef, drawerOpenRef, splitRe
     const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
     const worked = trackTurn(turnStartRef.current, key, previous, status, Date.now());
     if (worked !== null) lastTurnRef.current.set(key, worked);
-    // a muted pane (lib/paneMutes.ts) is tracked as every other, and told on no channel
-    const muted = paneAlertsMuted(currentPaneMutes(), machine.id, message.pane_id);
-    if (pane && !muted && shouldNotifyStatus(previous, status) && dropletAllows(alertsRef.current, status, worked)) {
+    // a muted pane (lib/paneMutes.ts), or one on a PC this device turned off, is tracked as every other, and told on no channel
+    const muted = paneAlertsMuted(currentPaneMutes(), machine.id, message.pane_id) || !alertPcAllowed(alertsRef.current, machine.name);
+    if (pane && !muted && shouldNotifyStatus(previous, status) && dropletAllows(alertsRef.current, status, worked, pane.agent_kind)) {
       const kind = status === "blocked" ? "blocked" : "done";
       dropIn(machine, pane, kind);
       chime(machine, pane, kind);
     }
-    if (pane && !muted && shouldNotifyStatus(previous, status) && alertsOnRef.current && !pushOnRef.current && alertsAllow(alertsRef.current, status)) showPaneStatusNotification(message.pane_id, `${machine.name} · ${alertPaneTitle(pane)}`, status, () => takeNotificationTargetRef.current({ machine_id: machine.id, pane_id: message.pane_id, view: "chat", workspace_id: pane.workspace_id }), machine.id, pane.workspace_id);
+    if (pane && !muted && shouldNotifyStatus(previous, status) && alertsOnRef.current && !pushOnRef.current && alertsAllow(alertsRef.current, status, pane.agent_kind)) showPaneStatusNotification(message.pane_id, `${machine.name} · ${alertPaneTitle(pane)}`, status, () => takeNotificationTargetRef.current({ machine_id: machine.id, pane_id: message.pane_id, view: "chat", workspace_id: pane.workspace_id }), machine.id, pane.workspace_id);
   }, []);
   const onPaneExited = useCallback((machine: Machine, message: PaneExitedMessage, takeNotificationTargetRef: TakeNotificationTargetRef) => {
     const pane = machine.snapshot?.panes.find((p) => p.pane_id === message.pane_id);
     const worked = endedTurn(turnStartRef.current, lastTurnRef.current, paneStorageId(machine.id, message.pane_id), Date.now());
+    if (!alertPcAllowed(alertsRef.current, machine.name)) return;
     if (pane && !paneAlertsMuted(currentPaneMutes(), machine.id, message.pane_id) && dropletAllows(alertsRef.current, "done", worked)) {
       dropIn(machine, pane, "ended");
       chime(machine, pane, "done");
