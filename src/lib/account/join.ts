@@ -12,7 +12,7 @@ import type { RemotePairingRequest } from "../../../shared/protocol.ts";
 import type { RelayDevice, RelayDeviceStore } from "../relay/device.ts";
 import { keyIdOf } from "../relay/shellState.ts";
 import type { AccountService } from "./service.ts";
-import type { AccountKey } from "./store.ts";
+import type { AccountKey, AccountStore } from "./store.ts";
 
 export type PcFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -177,6 +177,8 @@ export async function admitToAccount(options: {
   fetch: PcFetch; service: AccountService; key: AccountKey; account: string;
   joining: { key: string; label: string }; through: string; paired: readonly RelayDevice[]; directory: readonly string[]; now?: () => number;
   wait?: (ms: number) => Promise<void>;
+  /** where the add waits for the PCs the account service did not take it for; none, and a refusal throws */
+  store?: AccountStore;
 }): Promise<AddRecord> {
   const now = options.now ?? Date.now;
   // fixed wait: the pause between tries of a poll bounded by ADMITTED_MS
@@ -199,7 +201,44 @@ export async function admitToAccount(options: {
     issued_at: new Date(now()).toISOString(), id: newRecordId(), signer: options.key.public_spki,
   }, options.key.private_key);
   const others = options.directory.filter((serverId) => serverId !== options.through);
-  for (let start = 0; start < others.length; start += 32) await options.service.postRecord(others.slice(start, start + 32), add);
+  if (!options.store) {
+    for (let start = 0; start < others.length; start += 32) await options.service.postRecord(others.slice(start, start + 32), add);
+    return add;
+  }
+  // X already let the device in: kept before it is sent, so a refusal or a lost answer is sent again
+  await options.store.update("adds", (current) => ({ ...current, [add.id]: { account: options.account, record: add, to: others } }));
+  await sendQueuedAdds({ service: options.service, store: options.store, account: options.account });
   return add;
+}
+
+/** How long a kept add is sent again: the account service's mailbox keeps a record no longer. */
+export const QUEUED_ADD_MS = 30 * 24 * 60 * 60_000;
+
+/**
+ * Sends the adds this device signed that some PCs' mailboxes have not taken (admitToAccount), and
+ * forgets each PC the account service took it for. A refusal or a failure keeps the rest for the
+ * next try; one of another account waits for its sign-in, and one older than the mailbox keeps a record is dropped.
+ */
+export async function sendQueuedAdds(options: { service: AccountService; store: AccountStore; account: string; now?: () => number }): Promise<void> {
+  const now = (options.now ?? Date.now)();
+  const queued = Object.values((await options.store.get("adds")) ?? {});
+  for (const entry of queued) {
+    const sent: string[] = [];
+    if (entry.account === options.account && now - Date.parse(entry.record.issued_at) <= QUEUED_ADD_MS) {
+      for (let start = 0; start < entry.to.length; start += 32) {
+        const batch = entry.to.slice(start, start + 32);
+        try { await options.service.postRecord(batch, entry.record); sent.push(...batch); }
+        catch (error) { console.warn("Ovis: an approved device's add is kept for the next try", error instanceof Error ? error.name : error); }
+      }
+    }
+    const keep = now - Date.parse(entry.record.issued_at) <= QUEUED_ADD_MS;
+    await options.store.update("adds", (current) => {
+      const rest = { ...current };
+      const left = (rest[entry.record.id]?.to ?? []).filter((serverId) => !sent.includes(serverId));
+      if (!keep || left.length === 0) delete rest[entry.record.id];
+      else rest[entry.record.id] = { ...entry, to: left };
+      return Object.keys(rest).length === 0 ? undefined : rest;
+    });
+  }
 }
 

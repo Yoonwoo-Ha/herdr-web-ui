@@ -6,6 +6,7 @@
  * opens this one.
  */
 import { exportAccountKey } from "../../../shared/account-records.ts";
+import type { AddRecord } from "../../../shared/account-records.ts";
 
 export interface AccountKey {
   readonly private_key: CryptoKey;
@@ -42,6 +43,15 @@ interface Records {
   session: AccountSession;
   /** by `state`, so a return consumes only its own sign-in and two tabs can each have one */
   pending: Readonly<Record<string, PendingSignIn>>;
+  /** by record id: an `add` this device signed that some PCs' mailboxes have not taken yet (account/join.ts) */
+  adds: Readonly<Record<string, QueuedAdd>>;
+}
+
+export interface QueuedAdd {
+  readonly account: string;
+  readonly record: AddRecord;
+  /** the PCs whose mailbox it has not reached */
+  readonly to: readonly string[];
 }
 type Name = keyof Records;
 

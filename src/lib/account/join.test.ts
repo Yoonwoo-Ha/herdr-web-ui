@@ -9,7 +9,7 @@ import { generateKeyPair, importPublicKey } from "../../../shared/relay-e2ee.ts"
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import type { RelayDevice } from "../relay/device.ts";
 import { MemoryDeviceStore } from "../relay/device.test.ts";
-import { admitToAccount, approveJoin, linkThisDevice, needsLink, pcAccountStatus, takeIntroduction, UnverifiedJoinError } from "./join.ts";
+import { admitToAccount, approveJoin, linkThisDevice, needsLink, pcAccountStatus, takeIntroduction, UnverifiedJoinError, sendQueuedAdds } from "./join.ts";
 import { leaveAccount, removeFromAccount } from "./leave.ts";
 import { myPcs } from "./myPcs.ts";
 import { AccountService } from "./service.ts";
@@ -117,6 +117,38 @@ it("brings an approved device into every PC of the account: the add waits in an 
   const onY = await macStore.get(y.identity.server_id);
   if (!onY) throw new Error("no introduction for Y");
   await connect(y, onY);
+});
+
+it("keeps an add the account service refused and sends it on the next try, so a PC that missed it still lets the device in", async () => {
+  const [x, y] = [pc(), pc()];
+  const approverKey = await accountKey();
+  const phone = new MemoryDeviceStore();
+  const onX = await linkThisDevice({ fetch: pcFetch(await connect(x, await qrPairing(x, phone, "p620"))), device: (await phone.get(x.identity.server_id))!, key: approverKey, account: ACCOUNT, store: phone });
+  await linkThisDevice({ fetch: pcFetch(await connect(y, await qrPairing(y, phone, "nuc"))), device: (await phone.get(y.identity.server_id))!, key: approverKey, account: ACCOUNT, store: phone });
+  const service = new FakeAccountService();
+  const accountStore = memoryAccountStore();
+  await accountStore.set("session", { service: SERVICE, account: ACCOUNT, provider: "github", access_token: service.issueToken(ACCOUNT), refresh_token: "r", expires_at: Date.now() + 3600_000 });
+  let refuse = true;
+  const fetchOnce = (async (input: RequestInfo | URL, init?: RequestInit) => refuse && new URL(input instanceof Request ? input.url : String(input)).pathname === "/v1/records"
+    ? Response.json({ error: "mailbox_full" }, { status: 429 }) : service.fetch(input, init)) as typeof fetch;
+  const account = new AccountService({ store: accountStore, fetch: fetchOnce });
+  for (const [at, label] of [[x, "p620"], [y, "nuc"]] as const) await account.putPc(at.identity.server_id, { label, public_key: Array.from(importPublicKey(at.identity.public_key), (byte) => byte.toString(16).padStart(2, "0")).join(""), relay: "wss://relay.example" });
+  const mac = await accountKey();
+  x.f.app.context.services.devices.addAccountDevice({ id: accountDeviceId(x.identity.server_id, mac.public_spki), key: mac.public_spki, label: "Mac app", role: "drive", account: ACCOUNT, addedBy: onX.device_id! });
+  // X let the Mac in; the service refuses the add for Y, so nothing reaches Y yet
+  await admitToAccount({
+    fetch: pcFetch(await connect(x, onX)), service: account, key: approverKey, account: ACCOUNT, joining: { key: mac.public_spki, label: "Mac app" },
+    through: x.identity.server_id, paired: await phone.list(), directory: (await account.listPcs()).map((entry) => entry.server_id), store: accountStore,
+  });
+  await new AccountMailbox({ devices: y.f.app.context.services.devices, identity: () => y.identity, service: SERVICE, fetch: service.fetch }).pull();
+  expect(y.f.app.context.services.devices.hasKey(mac.public_spki)).toBe(false);
+  // the next time this device reads the account, the kept add goes out, once
+  refuse = false;
+  await sendQueuedAdds({ service: account, store: accountStore, account: ACCOUNT });
+  await sendQueuedAdds({ service: account, store: accountStore, account: ACCOUNT });
+  expect(await accountStore.get("adds")).toBeUndefined();
+  await new AccountMailbox({ devices: y.f.app.context.services.devices, identity: () => y.identity, service: SERVICE, fetch: service.fetch }).pull();
+  expect(y.f.app.context.services.devices.hasKey(mac.public_spki)).toBe(true);
 });
 
 describe("approving a device that asks to join the account", () => {
