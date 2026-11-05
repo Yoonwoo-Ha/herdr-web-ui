@@ -24,6 +24,7 @@ export const SETUP_ZH: Record<string, string> = {
   "No other agents to install here.": "这里没有其他可安装的代理。",
   "Install runs the maker's own installer in a terminal tab on this PC, where you can watch it.": "安装会在这台电脑的终端标签页中运行开发方的官方安装程序，你可以在那里看到过程。",
   "None on this PC yet.": "这台电脑上还没有。",
+  "Ovis cannot tell which agents this PC has. Install them from a terminal on it.": "Ovis 无法得知这台电脑上有哪些智能体。请在这台电脑的终端里安装。",
   "Ovis needs {version} or later.": "Ovis 需要 {version} 或更高版本。",
   "This PC's Ovis cannot install agents yet. Update it, then try again.": "这台电脑上的 Ovis 还不能安装代理。请先更新，然后重试。",
   "It is on this PC, but it does not start. Install it again.": "它在这台电脑上，但无法启动。请重新安装。",

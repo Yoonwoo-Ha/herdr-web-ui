@@ -24,6 +24,7 @@ export const SETUP_KO: Record<string, string> = {
   "No other agents to install here.": "여기 더 설치할 에이전트가 없어요.",
   "Install runs the maker's own installer in a terminal tab on this PC, where you can watch it.": "설치는 만든 곳의 공식 설치 프로그램을 이 PC의 터미널 탭에서 실행해요. 그 탭에서 진행을 지켜볼 수 있어요.",
   "None on this PC yet.": "이 PC에는 아직 없어요.",
+  "Ovis cannot tell which agents this PC has. Install them from a terminal on it.": "Ovis는 이 PC에 어떤 에이전트가 있는지 알 수 없어요. 이 PC의 터미널에서 설치하세요.",
   "Ovis needs {version} or later.": "Ovis에는 {version} 이상이 필요해요.",
   "This PC's Ovis cannot install agents yet. Update it, then try again.": "이 PC의 Ovis는 아직 에이전트를 설치할 수 없어요. 업데이트한 뒤 다시 시도하세요.",
   "It is on this PC, but it does not start. Install it again.": "이 PC에 있지만 실행되지 않아요. 다시 설치해 주세요.",

@@ -79,6 +79,21 @@ describe("GET /api/agents", () => {
     }
   });
 
+  it("offers on another machine of the core only its manifests' kinds, whether installed unknown: this PC's PATH is not that machine's", async () => {
+    process.env["PATH"] = bin;
+    const serving = spyOn(runtime, "servingCore").mockReturnValue(true);
+    const machine = spyOn(runtime, "hcMachine").mockReturnValue({ name: "lab", id: "lab-id" });
+    manifests.mockImplementationOnce(async () => ({ manifests: [{ agent: "codex" }] }) as unknown as Awaited<ReturnType<typeof herdr.agentManifests>>);
+    try {
+      expect(await (await fetch(url("/api/agents"))).json()).toEqual({ agents: [{ kind: "codex", label: "Codex" }] });
+      // no shell-started agent is looked for here: it would start from this PC's path in that machine's shell
+      expect(located).toEqual([]);
+    } finally {
+      serving.mockRestore();
+      machine.mockRestore();
+    }
+  });
+
   it("offers DeepSeek Harness as dsh-tui, by its label, once dsh, which it needs, is found too", async () => {
     const found = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", machines: false, sidecar: false, shellAgents,
       agentDetector: new AgentDetector({ home: emptyHome, locate: async (binary) => binary === "dsh" ? "/home/someone/.local/bin/dsh" : null }) });

@@ -45,6 +45,14 @@ describe("agentsPage", () => {
     expect(page.installable.map((agent) => agent.id)).toEqual(["copilot"]);
   });
 
+  it("says the PC cannot tell what it has when no agent's install state is known, and offers no Install", () => {
+    const unknown: AgentInstallState = { ...missing, installed: null };
+    expect(agentsPage({ agents: [row("claude", unknown), row("codex", unknown)], providers: [], integrations: [], accountsHere: false })).toMatchObject({ rows: [], installable: [], installsUnknown: true });
+    // one it can tell about is enough to list what the PC has
+    expect(agentsPage({ agents: [row("claude", unknown), row("codex")], providers: [], integrations: [], accountsHere: true }).installsUnknown).toBe(false);
+    expect(agentsPage({ agents: [], providers: [], integrations: [], accountsHere: true }).installsUnknown).toBe(false);
+  });
+
   it("matches herdr's integration to the agent by its target or its executable, and keeps every other one the PC has a trace of, found ones first", () => {
     const integrations = [integration("claude", "claude"), integration("antigravity_cli", "agy", "outdated"), integration("droid", "droid", "not_installed"), integration("kimi", "kimi", "not_installed", false), integration("codex", "codex", "not_installed"), integration("copilot", "copilot", "not_installed", false), integration("pi", "pi", "current", false)];
     const page = agentsPage({ agents, providers: [], integrations, accountsHere: true });

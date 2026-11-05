@@ -24,6 +24,7 @@ export const SETUP_JA: Record<string, string> = {
   "No other agents to install here.": "ここにインストールできるほかのエージェントはありません。",
   "Install runs the maker's own installer in a terminal tab on this PC, where you can watch it.": "インストールでは、提供元の公式インストーラーをこのPCのターミナルタブで実行します。そのタブで進み具合を見られます。",
   "None on this PC yet.": "このPCにはまだありません。",
+  "Ovis cannot tell which agents this PC has. Install them from a terminal on it.": "OvisはこのPCにどのエージェントがあるか分かりません。このPCのターミナルからインストールしてください。",
   "Ovis needs {version} or later.": "Ovisには{version}以降が必要です。",
   "This PC's Ovis cannot install agents yet. Update it, then try again.": "このPCのOvisはまだエージェントをインストールできません。更新してから、もう一度お試しください。",
   "It is on this PC, but it does not start. Install it again.": "この PC にありますが、起動しません。もう一度インストールしてください。",

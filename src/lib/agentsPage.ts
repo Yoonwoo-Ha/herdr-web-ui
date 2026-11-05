@@ -28,6 +28,8 @@ export interface AgentsPage {
   otherIntegrations: AgentIntegration[];
   /** what the PC surely lacks and can install: one it cannot tell about offers no Install */
   installable: AgentCatalogRow[];
+  /** the PC told no agent's install state (another machine of herdr-core's): nothing is said to be there or missing */
+  installsUnknown: boolean;
 }
 
 function integrationFor(agent: AgentCatalogRow, integrations: readonly AgentIntegration[]): AgentIntegration | null {
@@ -66,6 +68,7 @@ export function agentsPage({ agents, providers, missing = [], integrations, acco
       && (integration.available || integration.state !== "not_installed"))
       .sort((a, b) => Number(b.available) - Number(a.available)),
     installable: available.filter((agent) => agent.state.installed === false && agent.install !== null),
+    installsUnknown: agents.length > 0 && agents.every((agent) => agent.state.installed === null),
   };
 }
 
