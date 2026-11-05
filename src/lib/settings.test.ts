@@ -11,7 +11,7 @@ import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
 import { SHARED_SETTING_KEYS } from "../../shared/preferences.ts";
 import { NOTICE_VERSION, TELEMETRY_SETTINGS_KEYS, TELEMETRY_THEME_SIDE_KEYS, telemetrySettings } from "../../shared/telemetry.ts";
-import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
+import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, VOICE_ENGINES, wantsVoiceInput } from "./settings.ts";
 import { applyToDocument, loadSettings, saveSettings } from "./settings.ts";
 import { sanitizeSettings as oldSanitizeSettings, saveSettings as oldSaveSettings } from "./settings.legacy-fixture.ts";
 import { themeFor } from "./themeFor.ts";
@@ -124,6 +124,17 @@ describe("saved theme migration", () => {
     expect(sanitizeSettings({ sidebarFilter: "off" }).sidebarFilter).toBe(true);
     records.set("ovis:sidebar-filter", "not json");
     expect(loadSettings().sidebarFilter).toBe(true);
+  });
+
+  it("keeps the speech recognition in its own key, out of an old tab's whole-record save", () => {
+    expect(loadSettings().voiceEngine).toBe("auto");
+    saveSettings(sanitizeSettings({ voiceEngine: "browser" }));
+    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("voiceEngine");
+    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
+    expect(loadSettings().voiceEngine).toBe("browser");
+    expect(loadSettings().terminalFontSize).toBe(18);
+    records.set("ovis:voice-engine", "not json");
+    expect(loadSettings().voiceEngine).toBe("auto");
   });
 
   it("keeps the history page size in its own key, out of an old tab's whole-record save", () => {
@@ -790,6 +801,13 @@ describe("microphone button", () => {
     expect(sanitizeSettings({}).voiceLanguage).toBe("auto");
     for (const voiceLanguage of DICTATION_LANGUAGES) expect(sanitizeSettings({ voiceLanguage }).voiceLanguage).toBe(voiceLanguage);
     for (const voiceLanguage of [null, 1, "", "hu", "hu-hu", "xx-XX", "auto "]) expect(sanitizeSettings({ voiceLanguage }).voiceLanguage).toBe("auto");
+  });
+
+  it("keeps the chosen speech recognition per device, auto until one is chosen", () => {
+    expect(DEFAULT_SETTINGS.voiceEngine).toBe("auto");
+    expect(SETTING_SCOPE.voiceEngine).toBe("device");
+    for (const voiceEngine of VOICE_ENGINES) expect(sanitizeSettings({ voiceEngine }).voiceEngine).toBe(voiceEngine);
+    for (const voiceEngine of [null, 1, "", "openai", "Browser"]) expect(sanitizeSettings({ voiceEngine }).voiceEngine).toBe("auto");
   });
 
   it("is asked for in the chat off a phone on auto, everywhere when on and nowhere when off", () => {

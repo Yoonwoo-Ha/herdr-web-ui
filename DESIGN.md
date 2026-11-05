@@ -3003,6 +3003,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   a phone (the composer's `(max-width: 640px), (pointer: coarse)`), and leaves it out where dictation
   cannot work (no HTTPS, or no key and no browser recognition). On shows it in both inputs and on a
   phone, disabled with its reason where it cannot work.
+- Under the mic setting, per device: **Dictation language** (Auto, or one from the list) and
+  **Speech recognition** (`voiceEngine`: `auto`, `browser` or `server`, a Segmented of Auto, Browser,
+  API key; default `auto`). Auto uses the server's API key when one is saved, else the browser's
+  recognition; Browser and API key never fall back to the other, so a mic that cannot record says
+  why (API key without a saved key: "Save an API key to use the mic"). Browser hides Tidy dictated
+  text, which only the key's path does. The choice has its own storage key (`ovis:voice-engine`),
+  so an older tab's save keeps it, and open tabs follow it at once. Two rows, no new composer
+  control: macOS's Dictation settings likewise keep the language and the source beside the switch,
+  not on the input.
 - A mouse holds the mic to talk (release finishes) or taps it to toggle. A touch on the browser's
   speech recognition (no key) taps to start and taps to finish, from the click: iOS starts it only
   from a user activation, which a touch's pointerdown is not (#2343). With a key, a touch holds too.
