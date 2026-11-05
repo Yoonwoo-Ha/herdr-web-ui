@@ -160,6 +160,21 @@ describe("saved theme migration", () => {
     expect(loadSettings().historyPrompts).toBe(10);
   });
 
+  it("keeps the file text size in its own key, out of an old tab's whole-record save", () => {
+    expect(loadSettings().fileFontSize).toBeNull();
+    saveSettings(sanitizeSettings({ fileFontSize: 20 }));
+    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("fileFontSize");
+    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
+    expect(loadSettings().fileFontSize).toBe(20);
+    expect(loadSettings().terminalFontSize).toBe(18);
+    saveSettings({ ...loadSettings(), fileFontSize: null });
+    expect(loadSettings().fileFontSize).toBeNull();
+    records.set("ovis:file-font-size", "\"20\"");
+    expect(loadSettings().fileFontSize).toBeNull();
+    records.set("ovis:file-font-size", "not json");
+    expect(loadSettings().fileFontSize).toBeNull();
+  });
+
   it("keeps Pictures in the terminal in its own key, out of an old tab's whole-record save", () => {
     expect(loadSettings().terminalImages).toBe(false);
     saveSettings(sanitizeSettings({ terminalImages: true }));
@@ -307,6 +322,34 @@ describe("saved theme migration", () => {
     expect(root.style.colorScheme).toBe("dark");
     expect(meta).toBe(entry.bgPanel);
     expect(terminalTheme(entry.mode, entry.id)).toEqual(entry.terminal);
+  });
+
+  it("scales a file's text by the chat's size until it has its own, its source only once chosen", () => {
+    const props = new Map<string, string>();
+    const root = { lang: "", dataset: {}, style: { colorScheme: "", setProperty: (name: string, value: string) => { props.set(name, value); }, removeProperty: (name: string) => { props.delete(name); } } };
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { documentElement: root, querySelector: () => null } });
+    const apply = (raw: Record<string, unknown>): void => {
+      const settings = sanitizeSettings(raw);
+      withComputedBg("#000", () => applyToDocument(settings, themeFor(settings, "dark"), "en"));
+    };
+    apply({ chatFontSize: 21 });
+    expect(props.get("--file-scale")).toBe(props.get("--chat-scale"));
+    expect(props.get("--file-scale")).toBe("1.5");
+    expect(props.has("--file-source-scale")).toBe(false);
+    apply({ chatFontSize: 21, fileFontSize: 28 });
+    expect(props.get("--chat-scale")).toBe("1.5");
+    expect(props.get("--file-scale")).toBe(String(24 / 14));
+    // the source moves by the file size over the chat's, the size the stepper starts from: choosing that size changes
+    // nothing, and a step moves the source the way it moves the preview
+    expect(props.get("--file-source-scale")).toBe(String(24 / 21));
+    apply({ chatFontSize: 21, fileFontSize: 21 });
+    expect(props.get("--file-source-scale")).toBe("1");
+    apply({ chatFontSize: 21, fileFontSize: 20 });
+    expect(Number(props.get("--file-source-scale"))).toBeLessThan(1);
+    apply({ chatFontSize: 11, fileFontSize: 12 });
+    expect(Number(props.get("--file-source-scale"))).toBeGreaterThan(1);
+    apply({ chatFontSize: 21 });
+    expect(props.has("--file-source-scale")).toBe(false);
   });
 
   it("keeps the row's surface on the root until a stylesheet owns it, following later themes", () => {

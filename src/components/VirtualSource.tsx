@@ -5,6 +5,7 @@ import { File, useVirtualizer, Virtualizer, type FileOptions } from "@pierre/dif
 import { DiffWorkerPool } from "./DiffWorkerPool.tsx";
 import { VIRTUAL_HIGHLIGHT_LINES } from "../lib/sourcePreview.ts";
 import { contentKey, keepEmptyRows, SCROLL_CONFIG, SHADOW_CSS, SOURCE_THEME } from "../lib/sourceTheme.ts";
+import { useSettings } from "../lib/settings.ts";
 import "./VirtualSource.css";
 
 export interface VirtualSourceProps {
@@ -55,15 +56,23 @@ export default function VirtualSource({ name, text, colored, wrap, theme, marked
   const anchor = useRef<{ width: number | null; top: number | null; markedInView: boolean }>({ width: null, top: null, markedInView: false });
   const markedRef = useRef(markedLine);
   markedRef.current = markedLine;
-  // the row estimate is the host's line-height, measured once: the metrics are read when the file mounts
+  // the row estimate is the host's line-height, measured when the file mounts and again when Settings → File text size
+  // changes it: the metrics are read when the file mounts, so a new height mounts the file again (keyed on it below)
+  // the source's size follows the chosen size over the chat's, and the interface's through --fs-xs
+  const { fileFontSize, chatFontSize, uiFontSize, density } = useSettings().settings;
   const [lineHeight, setLineHeight] = useState<number | null>(null);
+  const lineHeightRef = useRef<number | null>(null);
+  const measureLine = useCallback((): number | null => {
+    const host = hostRef.current;
+    if (host === null) return null;
+    const measured = Number.parseFloat(getComputedStyle(host).lineHeight);
+    return Number.isFinite(measured) && measured > 0 ? measured : DEFAULT_VIRTUAL_FILE_METRICS.lineHeight;
+  }, []);
 
   useLayoutEffect(() => {
-    const host = hostRef.current;
-    if (host === null) return;
-    const measured = Number.parseFloat(getComputedStyle(host).lineHeight);
-    setLineHeight(Number.isFinite(measured) && measured > 0 ? measured : DEFAULT_VIRTUAL_FILE_METRICS.lineHeight);
-  }, []);
+    lineHeightRef.current = measureLine();
+    setLineHeight(lineHeightRef.current);
+  }, [measureLine]);
 
   const scrollRoot = useCallback((): HTMLElement | null => {
     const root = virtualizerRef.current?.getRoot();
@@ -189,6 +198,21 @@ export default function VirtualSource({ name, text, colored, wrap, theme, marked
     };
   }, [settle, readAnchor, anchoredReveal]);
 
+  // SettingsProvider writes a new --file-source-scale in a passive effect, after this component's: the height is read
+  // a frame later, and the file mounted again at it reveals the line the view showed, as a wrap toggle does
+  const sizedOnce = useRef(false);
+  useEffect(() => {
+    if (!sizedOnce.current) { sizedOnce.current = true; return; }
+    const frame = requestAnimationFrame(() => {
+      const next = measureLine();
+      if (next === null || next === lineHeightRef.current) return;
+      reveal.current = anchoredReveal();
+      lineHeightRef.current = next;
+      setLineHeight(next);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [fileFontSize, chatFontSize, uiFontSize, density, measureLine, anchoredReveal]);
+
   // the wrap toggle re-measures the rows: the anchor is taken before the new option renders
   const lastWrap = useRef(wrap);
   if (lastWrap.current !== wrap) {
@@ -228,7 +252,7 @@ export default function VirtualSource({ name, text, colored, wrap, theme, marked
     <DiffWorkerPool>
       <Virtualizer className="virtual-source-scroll" contentClassName="virtual-source-column" config={SCROLL_CONFIG}>
         <VirtualizerProbe onInstance={onVirtualizer} />
-        {metrics !== null && <File className="virtual-source-file" file={file} options={options} metrics={metrics} selectedLines={selected} />}
+        {metrics !== null && <File key={metrics.lineHeight} className="virtual-source-file" file={file} options={options} metrics={metrics} selectedLines={selected} />}
       </Virtualizer>
     </DiffWorkerPool>
   </div>;

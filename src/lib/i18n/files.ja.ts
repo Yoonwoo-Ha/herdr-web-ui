@@ -181,4 +181,8 @@ export const FILES_JA: Record<string, string> = {
   "{failing} failing, {pending} pending, {passed} passed": "失敗 {failing}、待機 {pending}、成功 {passed}",
   "The pull request changed since it was shown. Refresh it, then merge.": "表示後にプルリクエストが変わりました。更新してからマージしてください。",
   "This base branch merges through a merge queue; merge it on GitHub.": "このベースブランチはマージキューでマージされます。GitHub でマージしてください。",
+  "File text size": "ファイルの文字サイズ",
+  "An open file's text, in its preview and its source. Follows the chat font size until you choose one.": "開いたファイルの文字(プレビューとソース)。選ぶまではチャットのフォントサイズに従います。",
+  "Decrease file text size": "ファイルの文字を小さく",
+  "Increase file text size": "ファイルの文字を大きく",
 };

@@ -98,6 +98,7 @@ run_script scripts/settings-pages-demo-regression.ts
 run_script scripts/agent-entry-points-demo-regression.ts
 run_script scripts/agents-sign-in-demo-regression.ts
 run_script scripts/interface-font-demo-regression.ts
+run_script scripts/file-text-size-demo-regression.ts
 run_script scripts/theme-first-paint-demo-regression.ts
 run_script scripts/boot-loading-demo-regression.ts
 run_script scripts/old-safari-demo-regression.ts

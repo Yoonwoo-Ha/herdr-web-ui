@@ -181,4 +181,8 @@ export const FILES_KO: Record<string, string> = {
   "{failing} failing, {pending} pending, {passed} passed": "실패 {failing}, 대기 {pending}, 통과 {passed}",
   "The pull request changed since it was shown. Refresh it, then merge.": "풀 리퀘스트가 표시된 뒤 바뀌었습니다. 새로고침한 뒤 머지하세요.",
   "This base branch merges through a merge queue; merge it on GitHub.": "이 기준 브랜치는 머지 큐로 머지됩니다. GitHub에서 머지하세요.",
+  "File text size": "파일 글자 크기",
+  "An open file's text, in its preview and its source. Follows the chat font size until you choose one.": "열어 본 파일의 글자(미리보기와 소스). 직접 고르기 전까지 채팅 글자 크기를 따릅니다.",
+  "Decrease file text size": "파일 글자 작게",
+  "Increase file text size": "파일 글자 크게",
 };

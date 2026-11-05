@@ -11,7 +11,10 @@
    tokens by --chat-scale (lib/settings.ts) and the transcript uses the scaled ones under
    the same names, so every message and code block grows together. The prompt card is outside
    this view, over the message box, and grows with them: its dock does the same (Composer.css).
-   A file viewer's Markdown preview is the same rendering, so it takes the chat's size and font too */
+   A file viewer's Markdown preview is the same rendering, so it takes the chat's font too, and its size
+   until Settings → File text size gives files one of their own (--file-scale, lib/settings.ts) */
+.file-viewer-content { --chat-scale: var(--file-scale, 1); }
+
 .chat-view,
 .file-viewer-content {
   --chat-fs-2xs: calc(var(--fs-2xs) * var(--chat-scale, 1));

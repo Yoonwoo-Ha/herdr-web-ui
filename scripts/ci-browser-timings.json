@@ -31,6 +31,7 @@
   "scripts/theme-first-paint-demo-regression.ts": 58,
   "scripts/diff-find-demo-regression.ts": 53,
   "scripts/plan-chip-demo-regression.ts": 46,
+  "scripts/file-text-size-demo-regression.ts": 42,
   "scripts/replay-clipboard-demo-regression.ts": 39,
   "scripts/chat-local-send-follow-demo-regression.ts": 37,
   "scripts/file-viewer-mobile-regression.ts": 35,

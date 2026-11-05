@@ -412,6 +412,7 @@ const BASE: Record<string, string> = {
   "Another device is trying this code, or it was tried too often. Wait a moment, or show a new code on the PC.": "另一台设备正在尝试此代码，或尝试次数过多。请稍候，或在电脑上显示新代码。",
   "The answer did not come from a PC this app can pair with. Show a new code on the PC, or scan its QR code.": "该响应并非来自本应用可配对的电脑。请在电脑上显示新代码，或扫描其二维码。",
   "The relay could not be reached. Check this device's connection, then try again.": "无法连接中继。请检查此设备的网络连接，然后重试。",
+  "Reset": "重置",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

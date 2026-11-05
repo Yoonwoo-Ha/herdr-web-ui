@@ -22,6 +22,7 @@ import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { awaitRestart, restartState, subscribeRestart } from "../lib/runtimeSwitch.ts";
 import { paneLifetimes } from "../lib/paneLifetime.ts";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
+import { FileTextSizeRow } from "./FileTextSizeRow.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { Segmented, SettingsGroup, SettingsRow, SettingsSelect, Stepper, Toggle } from "./SettingsControls.tsx";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "../lib/fontFamily.ts";
@@ -423,6 +424,7 @@ function AppearancePage() {
         <Stepper label={t("Interface font size")} value={uiFontSize(settings)} text={`${uiFontSize(settings)}px`} min={UI_FONT_MIN} max={UI_FONT_MAX} decreaseLabel={t("Decrease interface font size")} increaseLabel={t("Increase interface font size")} onChange={(size) => update({ uiFontSize: size })} />
       </SettingsRow>
       <InterfaceFontRows />
+      <FileTextSizeRow />
     </SettingsGroup>
     </>
   );

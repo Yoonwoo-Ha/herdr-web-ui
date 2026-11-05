@@ -153,7 +153,6 @@ export const DEVICES_ZH: Record<string, string> = {
   "Ovis relay": "Ovis 中继",
   "Only the PC's owner can control the relay, using a direct connection. Open Ovis on the PC or at its direct address.": "只有 PC 所有者通过直接连接才能控制中继。请在 PC 上打开 Ovis，或访问 PC 的直接地址。",
   "Reset relay identity": "重置中继身份",
-  "Reset": "重置",
   "Reset the relay identity?": "要重置中继身份吗？",
   "Phones paired through the relay will need to scan a new code.": "通过中继配对的手机需要重新扫描新代码。",
   "Blocked: OVIS_TAILSCALE_SERVE_ONLY says tailscale serve is the only way in. Unset it on this PC and restart the app.": "已阻止：OVIS_TAILSCALE_SERVE_ONLY 规定 tailscale serve 是唯一的访问途径。请在此 PC 上取消它并重启应用。",

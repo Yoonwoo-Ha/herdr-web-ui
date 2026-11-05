@@ -237,7 +237,8 @@
   overflow: auto;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  /* Settings → File text size scales a file's source with its preview; until then it keeps the interface's size */
+  font-size: calc(var(--fs-xs) * var(--file-source-scale, 1));
   line-height: var(--lh-base);
 }
 
@@ -279,7 +280,7 @@
   background: var(--bg-input);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: var(--fs-xs);
+  font-size: calc(var(--fs-xs) * var(--file-source-scale, 1));
   line-height: var(--lh-base);
   white-space: pre;
   resize: none;

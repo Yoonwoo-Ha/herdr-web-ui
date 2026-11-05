@@ -181,4 +181,8 @@ export const FILES_ZH: Record<string, string> = {
   "{failing} failing, {pending} pending, {passed} passed": "失败 {failing}，等待 {pending}，通过 {passed}",
   "The pull request changed since it was shown. Refresh it, then merge.": "拉取请求在显示后已更改。请刷新后再合并。",
   "This base branch merges through a merge queue; merge it on GitHub.": "此基础分支通过合并队列合并，请在 GitHub 上合并。",
+  "File text size": "文件字号",
+  "An open file's text, in its preview and its source. Follows the chat font size until you choose one.": "打开的文件的文字(预览和源码)。在你选择之前跟随聊天字号。",
+  "Decrease file text size": "减小文件字号",
+  "Increase file text size": "增大文件字号",
 };

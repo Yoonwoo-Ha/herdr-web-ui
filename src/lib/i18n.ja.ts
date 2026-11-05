@@ -410,6 +410,7 @@ const BASE: Record<string, string> = {
   "Another device is trying this code, or it was tried too often. Wait a moment, or show a new code on the PC.": "別のデバイスがこのコードを試しているか、試行が多すぎます。少し待つか、PC で新しいコードを表示してください。",
   "The answer did not come from a PC this app can pair with. Show a new code on the PC, or scan its QR code.": "このアプリがペアリングできる PC からの応答ではありません。PC で新しいコードを表示するか、QR コードを読み取ってください。",
   "The relay could not be reached. Check this device's connection, then try again.": "リレーに接続できませんでした。このデバイスの接続を確認してから、もう一度お試しください。",
+  "Reset": "リセット",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

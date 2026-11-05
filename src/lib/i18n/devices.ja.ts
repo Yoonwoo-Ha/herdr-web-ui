@@ -153,7 +153,6 @@ export const DEVICES_JA: Record<string, string> = {
   "Ovis relay": "Ovis リレー",
   "Only the PC's owner can control the relay, using a direct connection. Open Ovis on the PC or at its direct address.": "リレーを操作できるのは、PC に直接接続した所有者だけです。PC 上で Ovis を開くか、PC の直接のアドレスにアクセスしてください。",
   "Reset relay identity": "リレー ID をリセット",
-  "Reset": "リセット",
   "Reset the relay identity?": "リレー ID をリセットしますか？",
   "Phones paired through the relay will need to scan a new code.": "リレー経由でペアリングしたスマートフォンは、新しいコードを読み取り直す必要があります。",
   "Blocked: OVIS_TAILSCALE_SERVE_ONLY says tailscale serve is the only way in. Unset it on this PC and restart the app.": "ブロック中: OVIS_TAILSCALE_SERVE_ONLY により tailscale serve が唯一の入口になっています。この PC で解除し、アプリを再起動してください。",

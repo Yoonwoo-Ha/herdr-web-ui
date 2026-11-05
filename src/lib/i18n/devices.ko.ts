@@ -153,7 +153,6 @@ export const DEVICES_KO: Record<string, string> = {
   "Ovis relay": "Ovis 릴레이",
   "Only the PC's owner can control the relay, using a direct connection. Open Ovis on the PC or at its direct address.": "릴레이는 PC 소유자만 직접 연결해서 제어할 수 있습니다. PC에서 Ovis를 열거나 PC의 직접 주소로 접속하세요.",
   "Reset relay identity": "릴레이 신원 재설정",
-  "Reset": "재설정",
   "Reset the relay identity?": "릴레이 신원을 재설정할까요?",
   "Phones paired through the relay will need to scan a new code.": "릴레이로 페어링된 폰은 새 코드를 다시 스캔해야 합니다.",
   "Blocked: OVIS_TAILSCALE_SERVE_ONLY says tailscale serve is the only way in. Unset it on this PC and restart the app.": "차단됨: OVIS_TAILSCALE_SERVE_ONLY가 tailscale serve를 유일한 접속 경로로 정하고 있습니다. 이 PC에서 해제하고 앱을 다시 시작하세요.",
