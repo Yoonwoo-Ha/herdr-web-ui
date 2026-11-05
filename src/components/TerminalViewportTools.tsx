@@ -34,6 +34,8 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
   const api = useMachineApi();
   const layer = useRef<HTMLDivElement>(null);
   const [scroll, setScroll] = useState<PaneScrollInfo | null>(null);
+  // read up in the history xterm keeps itself (a herdr-core server's `terminal-history`): herdr's metrics never see it
+  const [localBack, setLocalBack] = useState(false);
   const scrollRef = useRef(scroll); scrollRef.current = scroll;
   const [box, setBox] = useState<Box | null>(null);
   const [hits, setHits] = useState<FindCellRect[]>([]);
@@ -47,7 +49,7 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
   const query = interactive && search && Array.isArray(search.result.matches) && search.result.scroll !== undefined ? search.query : "";
 
   useEffect(() => {
-    if (!terminal || !enabled) { setScroll(null); setHits([]); previewRef.current = null; if (pageScroll) pageScroll.current = null; if (lineScroll) lineScroll.current = null; return; }
+    if (!terminal || !enabled) { setScroll(null); setLocalBack(false); setHits([]); previewRef.current = null; if (pageScroll) pageScroll.current = null; if (lineScroll) lineScroll.current = null; return; }
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let timerDue = 0;
@@ -277,7 +279,13 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       outputAt = now;
       schedule(scrollPollDelay(true, 0, scrollRef.current, following()));
     });
-    const rendered = terminal.onRender(paintHits);
+    // xterm's own scrollback is 0 on a herdr server, so its view sits below history only on a herdr-core one
+    const readLocal = () => {
+      const buffer = terminal.buffer.active;
+      setLocalBack(buffer.viewportY < buffer.baseY);
+    };
+    const scrolled = terminal.onScroll(readLocal);
+    const rendered = terminal.onRender(() => { readLocal(); paintHits(); });
     // a wheel or swipe that xterm sends to herdr as mouse reports comes back only as output, from a view
     // that left the bottom: read at the busy cadence, not the follow pace
     const gesture = () => { gestureUntil = Date.now() + SCROLL_POLL_SETTLE_MS; wake(); };
@@ -294,7 +302,7 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
     if (screen) observer.observe(screen);
     mount?.addEventListener("scroll", paint, { passive: true });
     document.addEventListener("visibilitychange", visibility);
-    paint(); void read();
+    paint(); readLocal(); void read();
     return () => {
       alive = false; desired = null; version++; heldPage = null;
       if (pageScroll?.current === scrollPage) pageScroll.current = null;
@@ -302,7 +310,7 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
       previewRef.current = null;
       unregisterCancellation();
       if (timer !== null) clearTimeout(timer);
-      parsed.dispose(); rendered.dispose(); resized.dispose(); observer.disconnect();
+      parsed.dispose(); scrolled.dispose(); rendered.dispose(); resized.dispose(); observer.disconnect();
       mount?.removeEventListener("scroll", paint);
       terminal.element?.removeEventListener("wheel", gesture, { capture: true });
       terminal.element?.removeEventListener("touchmove", gesture, { capture: true });
@@ -315,8 +323,12 @@ export function TerminalViewportTools({ viewportIntent, terminal, paneId, pageSc
   return <div ref={layer} className="terminal-viewport-tools" aria-hidden={!enabled || undefined}>
     {enabled && search && box && hits.map((hit, index) => <span key={index} className={`terminal-find-hit${hit.current ? " is-current" : ""}`} aria-hidden="true"
       style={{ left: box.left + hit.col * box.width / box.cols, top: box.top + hit.row * box.height / box.rows, width: hit.width * box.width / box.cols, height: box.height / box.rows }} />)}
-    {enabled && interactive && box && validScroll(scroll) && scroll.offset_from_bottom > 0 && <button type="button" className="btn terminal-jump-bottom"
+    {enabled && interactive && box && (localBack || (validScroll(scroll) && scroll.offset_from_bottom > 0)) && <button type="button" className="btn terminal-jump-bottom"
       aria-label={t("Jump to bottom")} title={t("Jump to bottom")} style={{ left: box.anchorX, top: box.anchorY }}
-      onPointerDown={(event) => event.preventDefault()} onClick={() => writeRef.current(0)}><ArrowDown aria-hidden="true" /></button>}
+      onPointerDown={(event) => event.preventDefault()} onClick={() => {
+        // the browser's own history scrolls here; herdr's viewport (shared with its other clients) only when it is scrolled
+        if (localBack) terminal?.scrollToBottom();
+        if (validScroll(scroll) && scroll.offset_from_bottom > 0) writeRef.current(0);
+      }}><ArrowDown aria-hidden="true" /></button>}
   </div>;
 }
