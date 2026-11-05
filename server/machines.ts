@@ -652,19 +652,15 @@ export class MachineManager {
    * The registrations cannot be recomputed, so they are written durably (writePrivateState): a
    * crash after a plain rename can leave the file its old length in NULs. Every refresh of a remote
    * PC saves soon, mostly with the same snapshot, so only a document that differs from the one on
-   * disk pays for the write and its fsync.
+   * disk pays for the write and its fsync. `relayLast` is for the save that adds a relay PC
+   * (addRelay): relay-pcs.json, its registration, goes last instead, so a save that fails before it
+   * leaves the PC off disk, as it leaves no key (#2833).
    */
-  private persist(): void {
+  private persist(relayLast = false): void {
+    if (!relayLast) this.persistRelayPcs();
     // herdr's saved machines and herdr-core's are their catalogs': read again, never saved here
     const owned = [...this.machines.values()].filter(({ machine }) => !machine.herdr_profile_id && machine.kind !== "hc").map(({ machine }) => machine);
     const data: StoredMachine[] = owned.filter((m) => m.kind !== "relay").map((m) => ({ id: m.id, name: m.name, target: m.target!, ...(m.server_id ? { server_id: m.server_id } : {}), enabled: m.enabled, snapshot: m.snapshot }));
-    const relayPcs: StoredMachine[] = owned.filter((m) => m.kind === "relay").map((m) => ({ id: m.id, name: m.name, kind: "relay", relay: m.relay!, enabled: m.enabled, snapshot: m.snapshot }));
-    const relayText = JSON.stringify(relayPcs);
-    if (relayText !== this.relayWritten || !holdsDocument(this.relayStatePath, relayText)) {
-      // never an empty file where none was: an install without relay PCs keeps none
-      if (relayPcs.length > 0 || this.relayWritten !== undefined || existsSync(this.relayStatePath)) writePrivateState(this.relayStatePath, relayPcs);
-      this.relayWritten = relayText;
-    }
     const text = JSON.stringify(data);
     // the PCs' registrations are written last: a save that fails before them leaves them as they were on disk, so a
     // PC moved to another address (setup) is saved there only when nothing else of its save can still fail (#2075)
@@ -672,6 +668,17 @@ export class MachineManager {
     this.profileState.flush();
     // the file on disk may have been deleted or replaced since this manager wrote it
     if (text !== this.written || !holdsDocument(this.statePath, text)) { writePrivateState(this.statePath, data); this.written = text; }
+    if (relayLast) this.persistRelayPcs();
+  }
+  private persistRelayPcs(): void {
+    const relayPcs: StoredMachine[] = [...this.machines.values()].map(({ machine }) => machine).filter((m) => !m.herdr_profile_id && m.kind === "relay")
+      .map((m) => ({ id: m.id, name: m.name, kind: "relay", relay: m.relay!, enabled: m.enabled, snapshot: m.snapshot }));
+    const relayText = JSON.stringify(relayPcs);
+    if (relayText !== this.relayWritten || !holdsDocument(this.relayStatePath, relayText)) {
+      // never an empty file where none was: an install without relay PCs keeps none
+      if (relayPcs.length > 0 || this.relayWritten !== undefined || existsSync(this.relayStatePath)) writePrivateState(this.relayStatePath, relayPcs);
+      this.relayWritten = relayText;
+    }
   }
   job(id: string): SetupJob | undefined { return this.jobs.get(id)?.public; }
   settings(): MachineSettings { return { ...this.preferences, ...(this.setAside.length > 0 ? { set_aside: [...this.setAside] } : {}) }; }
@@ -1769,7 +1776,7 @@ export class MachineManager {
     runtime.tunnel = tunnel; runtime.endpoint = tunnel.endpoint;
     this.machines.set(id, runtime);
     // the PC is added only once its registration is on disk: a save that fails leaves no PC, connection or key behind
-    try { this.persist(); } catch (error) {
+    try { this.persist(true); } catch (error) {
       this.machines.delete(id);
       runtime.machine.enabled = false; this.disconnect(runtime);
       removeRelayPcKey(keyPath);

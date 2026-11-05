@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBunRelay } from "../relay/bun.ts";
@@ -209,6 +209,28 @@ it("refuses a link without a pairing code and a PC already added", async () => {
   const again = await addRelayPc(a.base, link);
   expect(again.status).toBe(400);
   expect((await again.json() as { error: { message: string } }).error.message).toContain("already added");
+}, 60_000);
+
+it("leaves no relay PC behind when its registration cannot be saved", async () => {
+  const { link, aState, startA } = await twoPcs();
+  let a = startA();
+  // the add's save fails at machines.json, which other saves write after relay-pcs.json
+  const registrations = join(aState, "machines.json");
+  mkdirSync(registrations);
+  const failed = await addRelayPc(a.base, link, "Lab");
+  expect(failed.status).toBe(400);
+  expect((await failed.json() as { error: { message: string } }).error.message).toContain("could not be saved");
+  const keys = join(aState, "relay-pcs");
+  expect(existsSync(keys) ? readdirSync(keys) : []).toEqual([]);
+  // the PC's registration was never written, not written and then taken back: no relay-pcs.json where none was
+  expect(existsSync(join(aState, "relay-pcs.json"))).toBe(false);
+
+  // a restart brings back no PC without its key
+  a.stop();
+  rmSync(registrations, { recursive: true });
+  a = startA();
+  const { machines } = await (await fetch(`${a.base}/api/machines`, { headers: { origin: a.base } })).json() as { machines: Machine[] };
+  expect(machines.filter((machine) => machine.kind === "relay")).toEqual([]);
 }, 60_000);
 
 it("waits for a PC that answers slower than an idle connection's default limit", async () => {
