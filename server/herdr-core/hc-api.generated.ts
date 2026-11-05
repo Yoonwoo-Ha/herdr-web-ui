@@ -33,6 +33,17 @@ export interface DocGetResult {
   version: number;
 }
 
+export interface DocSetParams {
+  name: string;
+  on?: string | null;
+  value: unknown;
+  version: number;
+}
+
+export interface DocSetResult {
+  version: number;
+}
+
 export interface EventsSubscribeParams {
   children_of?: string | null;
   labels?: Record<string, string>;
@@ -316,6 +327,7 @@ export interface WaitResult {
 /** Every hc method Ovis calls, with its params and its result. */
 export interface HcMethods {
   "doc.get": { params: DocGetParams; result: DocGetResult };
+  "doc.set": { params: DocSetParams; result: DocSetResult };
   "events.subscribe": { params: EventsSubscribeParams; result: SubscribeResult };
   "hello": { params: HelloParams; result: HelloResult };
   "server.status": { params: ServerStatusParams; result: StatusResult };

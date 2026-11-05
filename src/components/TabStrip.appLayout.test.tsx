@@ -11,7 +11,7 @@ import { TabStrip } from "./TabStrip.tsx";
 /** herdr's TUI server, a herdr-core PC the Herdr app lays out, and one whose layout Ovis keeps (lib/machineContext.tsx) */
 const TUI = appLayoutOf({ version: "0.9.5", protocol: 22 });
 const APP_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core" });
-const OVIS_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core", layout: { rename: true, split: false, move: true } });
+const OVIS_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core", layout: { rename: true, split: true, move: true, arrange: true } });
 
 const workspace = (id: string, tabs: number): WorkspaceInfo =>
   ({ workspace_id: id, label: id, active_tab_id: `${id}:t1`, number: 1, tab_count: tabs, pane_count: tabs, focused: false, agent_status: "idle", worktree: null });
@@ -123,16 +123,12 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
     });
   });
 
-  it("renames a core PC's tab and moves it to another workspace where Ovis keeps its layout, but keeps its order", async () => {
+  it("renames, reorders and moves a core PC's tab to another workspace where Ovis keeps its layout", async () => {
     await withFetch(async () => {
       await draw(OVIS_CORE);
-      expect(await menuOf()).toEqual(["move-workspace", "new-agent-tab", "rename-tab", "close-tab"]);
-      expect(tab().props["aria-keyshortcuts"]).toBe("Shift+F10");
-      expect(typeof tab().props.onDoubleClick).toBe("function");
+      expect(await menuOf()).toEqual(["move-right", "move-workspace", "new-agent-tab", "rename-tab", "close-tab"]);
       await keyDown("F2");
       expect(renameFields()).toBe(1);
-      await keyDown("ArrowRight", { altKey: true, shiftKey: true });
-      expect(requested).toEqual([]);
     });
   });
 });

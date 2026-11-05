@@ -60,6 +60,12 @@ export type HerdrPane = PaneInfo & {
   agent_kind?: string;
   agent_message?: string;
   agent_progress?: number;
+  /**
+   * herdr-core only: the terminal's own grid. Its layout rects are shares of a fixed area there
+   * (server/herdr-core/layout-doc.ts), not cells, so an attach that must not resize the terminal
+   * (an observer, a chat lens) starts at this size instead.
+   */
+  grid?: { cols: number; rows: number };
   /** This bridge's counter of transitions into displayed DONE, scoped by finish_epoch. */
   finish_id?: number;
 };

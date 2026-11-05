@@ -5,7 +5,8 @@ import { AGENT_LABELS } from "../agents-routes.ts";
 import { LINE_BYTES, makeLineReader } from "../herdr/client.ts";
 import { SHELL_AGENTS, shellCommandLine } from "../shell-agent.ts";
 import { type HcConnection, HcError } from "./connection.ts";
-import { agentInfoOf, agentOfStatus, agentStatusOf, buildSnapshot, type FirstTurn, reportedFacts, type HcStatus, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, onOtherMachine, OTHER_WORKSPACE_ID, processInfoOf, SEEN_LABEL, shownStatusOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
+import { foreignLayout, leaves, neighbour, OVIS_LAYOUT_DOC, type OvisLayout, type PaneDirection, resizeLeaf, setRatio, splitLeaf, swapLeaves, type TabLayout } from "./layout-doc.ts";
+import { agentInfoOf, agentOfStatus, agentStatusOf, buildSnapshot, type FirstTurn, keptLayout, reportedFacts, type HcStatus, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, onOtherMachine, OTHER_WORKSPACE_ID, PANE_NAME_LABEL, processInfoOf, SEEN_LABEL, shownStatusOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
 import type { AgentStatus, SessionSnapshot } from "../../shared/herdr-api.generated.ts";
 
 /**
@@ -26,9 +27,10 @@ import type { AgentStatus, SessionSnapshot } from "../../shared/herdr-api.genera
  *   changes as herdr's lifecycle events.
  *
  * On a core no Herdr app arranges (its document was never written: the desktop app's own core),
- * Ovis keeps workspace and tab names and a pane's move to another workspace in terminal labels
- * (`ping` says so in `layout`); where the app arranges them, they are the app's. Everything else
- * (splits, reordering, zoom, swap, resize, focus, worktrees, plugins) is refused as `unsupported`.
+ * Ovis keeps names and a pane's workspace and tab in terminal labels, and the order of workspaces
+ * and tabs, each tab's splits and its zoom in a document of its own, `ovis-layout`
+ * (layout-doc.ts; `ping` says which in `layout`). Where the app arranges them, they are the app's.
+ * Everything else (focus, worktrees, plugins) is refused as `unsupported`.
  * The live terminal itself is `hc attach`, which the server
  * runs in place of `herdr terminal attach` (server/core/terminal-process.ts).
  *
@@ -308,13 +310,14 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
 
   /** herdr's snapshot of the core, and whether Ovis keeps its layout (ownsLayout), from one read of the app's document */
   const read = async (): Promise<{ shown: SessionSnapshot; own: boolean }> => {
-    const [list, doc, hello] = await Promise.all([
+    const [list, doc, ovis, hello] = await Promise.all([
       hc.call("terminal.list", {}),
       hc.call("doc.get", { name: LAYOUT_DOC }),
+      hc.call("doc.get", { name: OVIS_LAYOUT_DOC }),
       hc.hello(),
     ]);
     forgetTurns(new Set(list.terminals.map((terminal) => terminal.address)));
-    return { shown: buildSnapshot(list.terminals, doc.value, hello.version, firstTurn), own: ownsLayout(doc.value) };
+    return { shown: buildSnapshot(list.terminals, doc.value, hello.version, firstTurn, ovis.value), own: ownsLayout(doc.value) };
   };
   const snapshot = async (): Promise<SessionSnapshot> => (await read()).shown;
   /** The snapshot, for a call that changes the layout Ovis keeps in labels: refused where the Herdr app arranges this core. */
@@ -331,6 +334,68 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     const name = params["label"];
     if (typeof name !== "string" || name === "") throw new AdapterError("invalid_params", "label is required");
     return name;
+  };
+
+  /**
+   * One change to Ovis's layout document: read, edit what the snapshot shows (layout-doc.ts
+   * `reconcile`), write back at the version read, read again and redo the edit once if another
+   * writer came first. `edit` answers null for no change, and nothing is written. Refused where the
+   * Herdr app arranges the core, where hc cannot write a document (its hello names no `doc.set`),
+   * and where a newer Ovis wrote it in a schema this one does not know.
+   */
+  const editLayout = async (edit: (layout: OvisLayout) => OvisLayout | null): Promise<boolean> => {
+    if (!layoutCalls(await hc.hello())) throw new AdapterError("unsupported", "this herdr-core keeps no documents Ovis can write");
+    for (let attempt = 0; ; attempt++) {
+      // the document before the terminals: a list read after it holds every terminal a writer of that version had
+      const doc = await hc.call("doc.get", { name: OVIS_LAYOUT_DOC });
+      const [list, app] = await Promise.all([hc.call("terminal.list", {}), hc.call("doc.get", { name: LAYOUT_DOC })]);
+      if (!ownsLayout(app.value)) throw new AdapterError("unsupported", "the Herdr app arranges this core's workspaces, tabs and panes");
+      if (foreignLayout(doc.value)) throw new AdapterError("unsupported", "a newer Ovis keeps this core's layout");
+      const next = edit(keptLayout(list.terminals, doc.value));
+      if (!next) return false;
+      try {
+        await hc.call("doc.set", { name: OVIS_LAYOUT_DOC, value: next, version: doc.version });
+        return true;
+      } catch (error) {
+        if (error instanceof HcError && error.kind === "conflict" && attempt === 0) continue;
+        throw error;
+      }
+    }
+  };
+  /** The kept tab holding the pane, in a layout being edited; refused for a pane in a tab Ovis does not lay out (Other terminals, a helper's). */
+  const tabHolding = (layout: OvisLayout, paneId: string): TabLayout => {
+    for (const workspace of layout.workspaces) for (const tab of workspace.tabs) if (leaves(tab.root).includes(paneId)) return tab;
+    throw new AdapterError("unsupported", `pane ${paneId} is in a tab of its own terminal: it has no splits`);
+  };
+  /** A layout with one tab's tree or zoom changed. */
+  const withTab = (layout: OvisLayout, tabId: string, change: Partial<TabLayout>): OvisLayout => ({
+    ...layout,
+    workspaces: layout.workspaces.map((workspace) => ({ ...workspace, tabs: workspace.tabs.map((tab) => (tab.id === tabId ? { ...tab, ...change } : tab)) })),
+  });
+  /** How herdr answers a layout call: the tab's layout after it, and its focused pane. */
+  const outcome = async (paneId: string, changed: boolean, reason: string | null) => {
+    const shown = await snapshot();
+    const tabId = shown.panes.find((pane) => pane.pane_id === paneId)?.tab_id;
+    const layout = shown.layouts.find((candidate) => candidate.tab_id === tabId);
+    if (!layout) throw new AdapterError("pane_not_found", `pane ${paneId} not found`);
+    return { changed, reason: changed ? null : reason, focused_pane_id: layout.focused_pane_id, layout };
+  };
+  /**
+   * herdr's insertion boundary in the list as shown (an index before the item is taken out) as the
+   * entry of the document it goes before: the first one at or after the boundary the document orders
+   * (not a helper's tab, not Other terminals), null for the end.
+   */
+  const anchorOf = (shown: readonly string[], id: string, boundary: unknown, ordered: ReadonlySet<string>): string | null => {
+    if (typeof boundary !== "number" || !Number.isInteger(boundary) || boundary < 0 || boundary > shown.length) throw new AdapterError("invalid_params", "insert_index is out of range");
+    return shown.slice(boundary).find((candidate) => candidate !== id && ordered.has(candidate)) ?? null;
+  };
+  /** The entry moved before `anchor` (to the end for null), in the order as it is now: another writer's move stays. */
+  const moveBefore = <T extends { id: string }>(items: readonly T[], id: string, anchor: string | null): T[] => {
+    const item = items.find((candidate) => candidate.id === id)!;
+    const rest = items.filter((candidate) => candidate.id !== id);
+    const at = anchor === null ? -1 : rest.findIndex((candidate) => candidate.id === anchor);
+    rest.splice(at === -1 ? rest.length : at, 0, item);
+    return rest;
   };
 
   const paneOf = async (paneId: string, missing = "pane_not_found") => {
@@ -429,11 +494,11 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
 
   const methods: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
     async ping() {
-      const [hello, doc] = await Promise.all([hc.hello(), hc.call("doc.get", { name: LAYOUT_DOC })]);
+      const [hello, doc, ovis] = await Promise.all([hc.hello(), hc.call("doc.get", { name: LAYOUT_DOC }), hc.call("doc.get", { name: OVIS_LAYOUT_DOC })]);
       const own = ownsLayout(doc.value);
-      // no split: a pane's rect is its terminal's own grid, which the attach then sizes to the pane's
-      // cell, so panes Ovis split off would shrink each other until a layout of its own places them
-      return { version: hello.version, protocol: HERDR_PROTOCOL, capabilities: { direct_terminal_attach: true, runtime: "herdr-core", layout: { rename: own, split: false, move: own } } };
+      // splits, their ratios, zoom, swap and order live in Ovis's document: only where hc writes one this Ovis may write
+      const arrange = own && layoutCalls(hello) && !foreignLayout(ovis.value);
+      return { version: hello.version, protocol: HERDR_PROTOCOL, capabilities: { direct_terminal_attach: true, runtime: "herdr-core", layout: { rename: own, split: arrange, move: own, arrange } } };
     },
     async "session.snapshot"() {
       return { snapshot: await snapshot() };
@@ -623,6 +688,135 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       await label(panes.map((pane) => pane.pane_id), { [TAB_NAME_LABEL]: name });
       return { type: "ok" };
     },
+    async "pane.rename"(params) {
+      const paneId = paneIdOf(params);
+      const name = params["label"];
+      if (name !== null && typeof name !== "string") throw new AdapterError("invalid_params", "label must be a string or null");
+      if (!(await ownLayout()).panes.some((pane) => pane.pane_id === paneId)) throw new AdapterError("pane_not_found", `pane ${paneId} not found`);
+      // `key: ""` takes a label off (hc terminal.label): the terminal's own name shows again
+      await label([paneId], { [PANE_NAME_LABEL]: name ?? "" });
+      return { type: "ok" };
+    },
+    // A split is one more shell labeled with the pane's workspace and tab, then the pane's leaf in
+    // Ovis's document turned into a split holding both. hc has no focus to move: `focus` changes nothing.
+    async "pane.split"(params) {
+      const paneId = paneIdOf(params, "target_pane_id");
+      const direction = params["direction"];
+      if (direction !== "right" && direction !== "down") throw new AdapterError("invalid_params", "direction must be right or down");
+      const shown = await ownLayout();
+      const pane = shown.panes.find((candidate) => candidate.pane_id === paneId);
+      if (!pane) throw new AdapterError("pane_not_found", `pane ${paneId} not found`);
+      const labels = (await terminal(paneId)).labels ?? {};
+      // only a tab its labels make takes another pane: one in Other terminals, or a helper's under its parent's tab, is one terminal's own
+      if (labels[SPACE_LABEL] !== pane.workspace_id || labels[TAB_LABEL] !== pane.tab_id) throw new AdapterError("unsupported", `pane ${paneId} is in a tab of its own terminal: it does not split`);
+      if (!layoutCalls(await hc.hello())) throw new AdapterError("unsupported", "this herdr-core keeps no documents Ovis can write");
+      // no shell for a split the document cannot hold
+      if (foreignLayout((await hc.call("doc.get", { name: OVIS_LAYOUT_DOC })).value)) throw new AdapterError("unsupported", "a newer Ovis keeps this core's layout");
+      // the workspace's name as shown, and the tab's own where it has one, stay when the split pane closes
+      const workspaceName = shown.workspaces.find((candidate) => candidate.workspace_id === pane.workspace_id)?.label;
+      const names = { ...(workspaceName ? { [WORKSPACE_NAME_LABEL]: workspaceName } : {}), ...(labels[TAB_NAME_LABEL] ? { [TAB_NAME_LABEL]: labels[TAB_NAME_LABEL] } : {}) };
+      const { root_pane } = await startShell({ ...(pane.cwd ? { cwd: pane.cwd } : {}) }, { [SPACE_LABEL]: pane.workspace_id, [TAB_LABEL]: pane.tab_id, ...names });
+      try {
+        await editLayout((layout) => {
+          const tab = tabHolding(layout, paneId);
+          const root = splitLeaf(tab.root, paneId, root_pane.pane_id, direction);
+          // a zoomed tab shows every pane again, so the new one is in view
+          return root && withTab(layout, tab.id, { root, zoomed: null });
+        });
+      } catch (error) {
+        // the shell runs and shows to the right of the tab (layout-doc.ts `reconcile`): said, so nobody splits again for it
+        const reason = error instanceof AdapterError || error instanceof HcError ? error.message : String(error);
+        throw new AdapterError("layout_not_saved", `pane ${root_pane.pane_id} started, but could not be placed ${direction === "right" ? "right of" : "below"} ${paneId} (${reason}); it shows at the right of the tab`);
+      }
+      return { pane: (await snapshot()).panes.find((candidate) => candidate.pane_id === root_pane.pane_id) ?? root_pane };
+    },
+    async "layout.set_split_ratio"(params) {
+      const tabId = paneIdOf(params, "tab_id");
+      const path = params["path"];
+      const ratio = params["ratio"];
+      if (!Array.isArray(path) || !path.every((step) => typeof step === "boolean")) throw new AdapterError("invalid_params", "path must be a list of booleans");
+      if (typeof ratio !== "number" || !Number.isFinite(ratio)) throw new AdapterError("invalid_params", "ratio must be a number");
+      let found = false;
+      await editLayout((layout) => {
+        const tab = layout.workspaces.flatMap((workspace) => workspace.tabs).find((candidate) => candidate.id === tabId);
+        const root = tab && setRatio(tab.root, path, ratio);
+        found = Boolean(root);
+        return root ? withTab(layout, tabId, { root }) : null;
+      });
+      if (!found) throw new AdapterError("split_not_found", `tab ${tabId} has no split at that path`);
+      return { type: "ok" };
+    },
+    async "pane.resize"(params) {
+      const paneId = paneIdOf(params);
+      const direction = paneDirection(params["direction"]);
+      const amount = typeof params["amount"] === "number" && Number.isFinite(params["amount"]) ? params["amount"] : 0.05;
+      const changed = await editLayout((layout) => {
+        const tab = tabHolding(layout, paneId);
+        const root = resizeLeaf(tab.root, paneId, direction, amount);
+        return root && withTab(layout, tab.id, { root });
+      });
+      return { resize: await outcome(paneId, changed, "unchanged") };
+    },
+    async "pane.swap"(params) {
+      const source = typeof params["source_pane_id"] === "string" ? params["source_pane_id"] : paneIdOf(params);
+      const explicit = typeof params["target_pane_id"] === "string" ? params["target_pane_id"] : null;
+      const direction = explicit === null ? paneDirection(params["direction"]) : null;
+      let target: string | null = explicit;
+      let reason: string | null = null;
+      const changed = await editLayout((layout) => {
+        const tab = tabHolding(layout, source);
+        if (direction) target = neighbour(tab.root, source, direction);
+        if (target === null) { reason = "no_neighbor"; return null; }
+        if (target === source) { reason = "same_pane"; return null; }
+        if (!leaves(tab.root).includes(target)) { reason = "cross_tab"; return null; }
+        return withTab(layout, tab.id, { root: swapLeaves(tab.root, source, target) });
+      });
+      return { swap: { ...(await outcome(source, changed, reason)), target_pane_id: target } };
+    },
+    async "pane.zoom"(params) {
+      const paneId = paneIdOf(params);
+      const mode = params["mode"] ?? "toggle";
+      if (mode !== "toggle" && mode !== "on" && mode !== "off") throw new AdapterError("invalid_params", "mode must be toggle, on or off");
+      let reason: string | null = null;
+      const changed = await editLayout((layout) => {
+        const tab = tabHolding(layout, paneId);
+        if (leaves(tab.root).length < 2) { reason = "single_pane"; return null; }
+        const on = mode === "toggle" ? tab.zoomed === null : mode === "on";
+        if (on && tab.zoomed === paneId) { reason = "already_zoomed"; return null; }
+        if (!on && tab.zoomed === null) { reason = "already_unzoomed"; return null; }
+        return withTab(layout, tab.id, { zoomed: on ? paneId : null });
+      });
+      const after = await outcome(paneId, changed, reason);
+      return { zoom: { ...after, zoomed: after.layout.zoomed } };
+    },
+    // Order lives in Ovis's document; Other terminals and a helper's tab follow what they follow
+    async "tab.move"(params) {
+      const tabId = paneIdOf(params, "tab_id");
+      const shown = await ownLayout();
+      const tab = shown.tabs.find((candidate) => candidate.tab_id === tabId);
+      if (!tab) throw new AdapterError("tab_not_found", `tab ${tabId} not found`);
+      const siblings = shown.tabs.filter((candidate) => candidate.workspace_id === tab.workspace_id).map((candidate) => candidate.tab_id);
+      await editLayout((layout) => {
+        const workspace = layout.workspaces.find((candidate) => candidate.id === tab.workspace_id);
+        if (!workspace?.tabs.some((candidate) => candidate.id === tabId)) throw new AdapterError("unsupported", `tab ${tabId} follows the terminal that started it: it has no place of its own`);
+        const anchor = anchorOf(siblings, tabId, params["insert_index"], new Set(workspace.tabs.map((candidate) => candidate.id)));
+        return { ...layout, workspaces: layout.workspaces.map((candidate) => (candidate === workspace ? { ...candidate, tabs: moveBefore(candidate.tabs, tabId, anchor) } : candidate)) };
+      });
+      return { type: "tab_list", tabs: (await snapshot()).tabs.filter((candidate) => candidate.workspace_id === tab.workspace_id) };
+    },
+    async "workspace.move"(params) {
+      const workspaceId = paneIdOf(params, "workspace_id");
+      if (workspaceId === OTHER_WORKSPACE_ID) throw new AdapterError("unsupported", "Other terminals stays last");
+      const shown = await ownLayout();
+      if (!shown.workspaces.some((candidate) => candidate.workspace_id === workspaceId)) throw new AdapterError("workspace_not_found", `workspace ${workspaceId} not found`);
+      const listed = shown.workspaces.map((candidate) => candidate.workspace_id);
+      await editLayout((layout) => {
+        if (!layout.workspaces.some((candidate) => candidate.id === workspaceId)) throw new AdapterError("unsupported", `workspace ${workspaceId} holds no tab Ovis places`);
+        const anchor = anchorOf(listed, workspaceId, params["insert_index"], new Set(layout.workspaces.map((candidate) => candidate.id)));
+        return { ...layout, workspaces: moveBefore(layout.workspaces, workspaceId, anchor) };
+      });
+      return { type: "ok" };
+    },
     // A pane goes to a new tab of another workspace by its labels alone: its terminal, its program and
     // its id stay. It takes that workspace's name with it, so it never renames the workspace by
     // becoming its first terminal. Only `new_tab` is a destination Ovis asks for.
@@ -677,6 +871,16 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
  */
 function ownsLayout(doc: unknown): boolean {
   return doc === null || doc === undefined;
+}
+
+/** Whether this core writes documents, by what its hello names (never its version): Ovis's layout needs `doc.set`. */
+function layoutCalls(hello: { methods: readonly string[] }): boolean {
+  return hello.methods.includes("doc.set");
+}
+
+function paneDirection(value: unknown): PaneDirection {
+  if (value !== "left" && value !== "right" && value !== "up" && value !== "down") throw new AdapterError("invalid_params", "direction must be left, right, up or down");
+  return value;
 }
 
 /** One hc event notification (herdr-core schema/README.md, Events). */
@@ -833,7 +1037,7 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
         return;
       }
       case "doc":
-        if (event.data?.["name"] === LAYOUT_DOC) lifecycle("layout.updated", "layout_updated");
+        if (event.data?.["name"] === LAYOUT_DOC || event.data?.["name"] === OVIS_LAYOUT_DOC) lifecycle("layout.updated", "layout_updated");
         return;
       default:
         // title, size and foreground change many times a second and show in the next snapshot

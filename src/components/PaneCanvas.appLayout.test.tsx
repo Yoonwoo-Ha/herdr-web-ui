@@ -11,7 +11,7 @@ import { PaneCanvas } from "./PaneCanvas.tsx";
 /** herdr's TUI server, a herdr-core PC the Herdr app lays out, and one whose layout Ovis keeps (lib/machineContext.tsx) */
 const TUI = appLayoutOf({ version: "0.9.5", protocol: 22 });
 const APP_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core" });
-const OVIS_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core", layout: { rename: true, split: false, move: true } });
+const OVIS_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core", layout: { rename: true, split: true, move: true, arrange: true } });
 
 const pane = (id: string, label?: string): HerdrPane =>
   ({ pane_id: id, workspace_id: "w1", tab_id: "t1", terminal_id: `${id}:term`, revision: 1, focused: id === "p1", agent_status: "idle", label }) as HerdrPane;
@@ -107,10 +107,10 @@ describe("the pane canvas on a PC the Herdr app lays out", () => {
     expect(itemsOf(movable.panes[0] as HerdrPane)).toEqual(["close", "new-terminal", "new-agent-tab", "close-tab"]);
   });
 
-  it("gives a lone tab with no row on a core whose layout Ovis keeps its move and rename, but no pane name", async () => {
+  it("gives a lone tab with no row on a core whose layout Ovis keeps the same menu as herdr's TUI", async () => {
     phone = true;
     const itemsOf = await draw(OVIS_CORE, movable);
-    expect(itemsOf(movable.panes[0] as HerdrPane)).toEqual(["close", "new-terminal", "move-workspace", "new-agent-tab", "rename-tab", "close-tab"]);
+    expect(itemsOf(movable.panes[0] as HerdrPane)).toEqual(["rename", "close", "new-terminal", "move-workspace", "new-agent-tab", "rename-tab", "close-tab"]);
   });
 
   it("leaves no actions behind for the header's menu once the canvas is gone", async () => {

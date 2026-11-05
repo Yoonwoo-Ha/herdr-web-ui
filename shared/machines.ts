@@ -87,8 +87,8 @@ export interface HerdrIdentity {
   terminal_mirror?: boolean;
   /**
    * `herdr-core`: the PC's terminals are herdr-core's (OVIS_RUNTIME=herdr-core), which has no
-   * workspaces, tabs or splits of its own: reordering, zoom, swap, resize and worktrees are never
-   * offered there, and the rest only as `layout` says. Absent: herdr's TUI server.
+   * workspaces, tabs or splits of its own: worktrees are never offered there, and the layout calls
+   * only as `layout` says. Absent: herdr's TUI server.
    */
   runtime?: "herdr-core";
   /** herdr-core only: which layout calls it answers (HerdrCoreLayout); absent, none */
@@ -98,14 +98,16 @@ export interface HerdrIdentity {
 /**
  * What a herdr-core PC lets Ovis do with its workspaces, tabs and splits. On a core no Herdr app
  * arranges (its `herdr-app` document was never written, as on the desktop app's own core) Ovis keeps
- * them in terminal labels: it renames workspaces and tabs and moves a one-pane tab to another
- * workspace. It splits no pane yet (`split` stays false). Where the Herdr app arranges them, they are
- * the app's, and none is offered.
+ * names and places in terminal labels (`rename`, `move` a one-pane tab to another workspace) and
+ * splits, ratios, zoom, swap and order in its own `ovis-layout` document (`split`, `arrange`: only
+ * where the core writes documents). Where the Herdr app arranges them, they are the app's, and none
+ * is offered.
  */
 export interface HerdrCoreLayout {
   rename: boolean;
   split: boolean;
   move: boolean;
+  arrange: boolean;
 }
 /** where this server's runtime came from: OVIS_RUNTIME, the choice saved from Settings, or what the PC has */
 export type RuntimeSource = "env" | "saved" | "detected";

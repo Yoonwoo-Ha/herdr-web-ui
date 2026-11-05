@@ -204,9 +204,9 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
   const twoLine = settings.sidebarRows === "two";
   const machineId = useMachineId();
   const pressPane = useContext(PanePressContext);
-  // what the PC's herdr answers for its workspaces (lib/machineContext.tsx): herdr-core never reorders them nor has
-  // worktrees, and renames them only where Ovis keeps its layout
-  const { rename: renameOffered, arrange } = useAppLayout();
+  // what the PC's herdr answers for its workspaces (lib/machineContext.tsx): herdr-core has no worktrees, and
+  // renames and reorders them only where Ovis keeps its layout
+  const { rename: renameOffered, arrange, worktrees: worktreesOffered } = useAppLayout();
   const activity = useSidebarActivity();
   const { closeWorkspace, listWorktrees, moveWorkspace, removeWorktree, renameWorkspace } = useMachineApi();
   // the row menu's Earlier sessions needs the PC's bridge to list them (lib/useSessionHistoryOffered.ts)
@@ -224,7 +224,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
   useEffect(() => {
     const known = repositoryAnswers.current;
     // a watching device is refused the listing (#2250), and a PC the Herdr app lays out offers no worktree: nothing to ask
-    if (!online || unmarked === "" || watching || !arrange) { known.clear(); setRepositoryWorkspaces(new Set()); return; }
+    if (!online || unmarked === "" || watching || !worktreesOffered) { known.clear(); setRepositoryWorkspaces(new Set()); return; }
     const ids = unmarked.split("\n");
     for (const id of [...known.keys()]) if (!ids.includes(id)) known.delete(id);
     let live = true;
@@ -235,7 +235,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
       (error: unknown) => { if (live && error instanceof ApiError && error.status < 500) known.set(id, false); },
     ))).then(publish);
     return () => { live = false; };
-  }, [listWorktrees, unmarked, online, watching, arrange]);
+  }, [listWorktrees, unmarked, online, watching, worktreesOffered]);
   // a repository's folder that stops being a checkout is refused on a later poll: that refusal is an answer too (#2726)
   const notCheckout = useCallback((id: string) => {
     repositoryAnswers.current.set(id, false);
@@ -445,11 +445,11 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
     const worktrees = sameRepo.filter((candidate) => candidate.worktree?.is_linked_worktree);
     const otherHeads = sameRepo.length > worktrees.length;
     // making or opening a worktree is a drive feature, and the dialog's checkout list is refused to a watching device
-    const worktreeItems: RowMenuItem[] = (workspace.worktree || repositoryWorkspaces.has(workspace.workspace_id)) && !linked && !watching && arrange ? [
+    const worktreeItems: RowMenuItem[] = (workspace.worktree || repositoryWorkspaces.has(workspace.workspace_id)) && !linked && !watching && worktreesOffered ? [
       { id: "new-worktree", label: t("New worktree"), icon: GitBranch, run: () => setWorktreeDialog({ mode: "create", workspace }) },
       { id: "open-worktree", label: t("Open worktree…"), icon: FolderOpen, run: () => setWorktreeDialog({ mode: "open", workspace }) },
     ] : [];
-    const deleteItems: RowMenuItem[] = linked && arrange ? [{
+    const deleteItems: RowMenuItem[] = linked && worktreesOffered ? [{
       id: "delete-worktree", label: t("Delete worktree checkout…"), icon: Trash2, danger: true,
       run: () => setConfirm({
         title: t("Delete the checkout of {name}?", { name: workspace.label }),

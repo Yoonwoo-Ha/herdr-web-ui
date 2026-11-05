@@ -861,10 +861,16 @@ macOS). See [INSTALL.md](../INSTALL.md#2-choose-the-install-method).
 - **Chat:** while a line the terminal wrapped is on screen, its colors cannot be matched to the
   screen's text, so a grey suggestion Claude Code or Hermes leaves in an empty input box then reads
   as typed text, and a send waits for you to confirm it.
-- **Not on herdr-core:** renaming, moving or reordering workspaces, tabs and panes, and
-  splitting, swapping, zooming or resizing panes, which belong to the app's window; Ovis hides
-  those actions on such a PC. Search in a pane, scrolling or selecting the history through the
-  scroll buttons beside it, plugins and worktrees are not available either. Remote PCs keep running herdr's TUI server.
+- **Layout:** on a herdr-core no Herdr app arranges (the desktop app's own core, or one where the
+  app never ran), Ovis keeps the layout itself: renaming, reordering and moving workspaces and
+  tabs, and splitting, resizing, swapping, zooming and naming panes work as on herdr. Names and
+  places are terminal labels and the order and splits one document of Ovis's own
+  ([its format](herdr-core-layout.md)). Where the Herdr app arranges the core, the layout is the
+  app's window's: Ovis shows it and hides those actions. A Herdr app started later on a core
+  Ovis arranged takes in its terminals, grouped and named as they were, but not their split
+  ratios or order; from then on the app arranges them.
+- **Not on herdr-core:** search in a pane, scrolling or selecting the history through the
+  scroll buttons beside it, plugins and worktrees. Remote PCs keep running herdr's TUI server.
 
 ## Configuration
 

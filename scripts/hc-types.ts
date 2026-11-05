@@ -21,6 +21,7 @@ type Json = Record<string, any>;
 /** The hc methods Ovis calls: their params, results and every record those name are emitted. */
 export const HC_METHODS = [
   "doc.get",
+  "doc.set",
   "events.subscribe",
   "hello",
   "server.status",
