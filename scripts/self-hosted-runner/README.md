@@ -46,6 +46,16 @@ download fallback. Rebuild with `--build` after changing the tool pins or Playwr
 The image's `BUN_VERSION` must match the default in `.github/actions/setup-ci/action.yml`, and
 `PLAYWRIGHT_VERSION` must match the lockfile.
 
+### Runner version
+
+Runners register with `--disableupdate`, so `RUNNER_VERSION` in the Dockerfile decides the
+actions/runner version. Without it, a runner older than GitHub's latest release starts the update
+only after it is handed a job, and GitHub cancels that job about 3.5 minutes later with no runner
+name and no step (seen with 2.338.0 once 2.338.2 was out: every container downloaded the update).
+GitHub stops sending jobs to a runner more than 30 days behind a release, so raise
+`RUNNER_VERSION` and `RUNNER_SHA256` (the `linux-x64` SHA in the release notes) when actions/runner
+releases, then rebuild with `--build`.
+
 Bun dependencies are installed from `bun.lock`, with the local install-cache directory at
 `.ci-cache/bun` retained inside the checkout. Only hosted jobs restore and save that directory as
 a remote dependency cache: on the measured connection, transferring the archive took 37–43s.
