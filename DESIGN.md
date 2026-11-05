@@ -2155,6 +2155,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   marks the state that needs a look, never "on".
 - The segmented Chat/Terminal view switch lives in the header. There is no floating view-toggle pill.
   Files is an action, not a third lens: it opens the Files dialog and never joins the switch.
+  With Settings → Chat → Files beside the pane on (`filesPanel`, per device, off by default) a
+  window of 980px or more opens Files as a panel in the docked file's place, right of the pane, as
+  the Codex app keeps its files in a right sidebar beside the conversation; the button is then a
+  toggle (`aria-pressed`). A file docking from it takes its place and closing the file shows the
+  list again; the panel keeps the docked viewer's hairline column, resize edge and compact header.
 - At `<=768px` the drawer toggle and More are `--touch-target-header` squares. The lens buttons
   are not: they keep the switch's track and inset, as the segmented control entry describes.
 - Connection is one quiet chip, drawn only while the bridge is not live: a pulsing dot plus the
