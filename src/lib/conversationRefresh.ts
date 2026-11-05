@@ -21,6 +21,7 @@ export class ConversationRefresh {
   private timer: number | undefined;
   private newestAt = -Infinity;
   private pushes = false;
+  private waiting = false;
   private readonly pages: (() => Promise<void>)[] = [];
 
   /** A replaced screen releases its REST read before the new screen enters the serial lane. */
@@ -43,6 +44,15 @@ export class ConversationRefresh {
       this.clearTimer();
       this.timer = window.setTimeout(() => this.refresh(), this.backstop());
     }
+  }
+
+  /** Waiting for the pane's activity: no backstop reads; refresh() and invalidate() still read. */
+  setWaiting(waiting: boolean): void {
+    if (this.waiting === waiting) return;
+    this.waiting = waiting;
+    if (this.read === null || this.running || this.invalidated) return;
+    this.clearTimer();
+    if (!waiting) this.timer = window.setTimeout(() => this.refresh(), this.backstop());
   }
 
   /** A newest-page read is in flight: one requested now would start only after it settles. */
@@ -149,7 +159,7 @@ export class ConversationRefresh {
             this.timer = undefined;
             void this.drain();
           }, Math.max(0, this.newestAt + INVALIDATION_MS - performance.now()))
-          : window.setTimeout(() => this.refresh(), this.backstop());
+          : this.waiting ? undefined : window.setTimeout(() => this.refresh(), this.backstop());
       }
     }
   }

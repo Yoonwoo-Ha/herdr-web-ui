@@ -50,6 +50,36 @@ The close reason, input, credentials, peer names, socket paths and raw exception
 included. A remote machine's opaque UUID may appear, not its name or SSH address. These records are
 separate from the request-completion log and do not add timestamps to older console messages.
 
+Chat failures use `conversation.failed` and `conversation.recovered` on the same standard-error
+stream. The fixed `operation` names the rejected evidence, not the conversation: for example,
+`copilot_marker_missing` means no session-store hold was found; `copilot_report_mismatch` means
+the native report disagrees with that hold; `copilot_log_metadata_changed` means a same-size
+owned log changed timestamps; and `copilot_log_rewritten`, `copilot_log_missing` or
+`copilot_session_unregistered` identify lost continuity or an explicit release.
+The reader retains a continuity-loss reason across ordinary appends, rather than reducing
+later failures to a generic resume error. A new valid registration can establish ownership again.
+Copilot rotates its process log by copying it to `process-<ts>-<pid>.1.log` (older copies shift to
+`.2`, `.3`, …) and truncating the open file. The reader continues through the newest copy that
+starts with every byte it already read, without reading older copies; with no such copy the lines
+in between are unknown, so ownership stays rejected until the log registers a session again.
+`copilot_log_read_raced` and `copilot_log_partial` describe the current read, not a permanent
+revocation. They still require a later successful ownership check; they do not authorize cached
+history by themselves.
+
+Chat records retain the same 30-second per-pane throttle, a global 16-line/30-second budget,
+and opaque episode/request IDs. They never contain pane/session IDs, paths, commands or transcript
+text. Correlate a browser request's `X-Request-Id` with its failure and the request-completion
+log. `time` uses the current wall clock; Chat throttling and elapsed failure duration use a
+separate monotonic clock so a clock correction or host suspend does not fabricate the event time.
+A verified transcript-read failure remains retryable (`conversation_read_pending`, HTTP 503);
+unknown or conflicting ownership still fails closed, without returning the previous session.
+When a refresh names the history this server last proved for the pane, herdr reports no other
+session for it, and the rejection is not a settled one (an observed release, a peer claim or a
+report naming another session), the scrollback answer carries
+`recovery: "waiting"`: the chat keeps its turns, appends nothing, marks them paused and reads again
+on the pane's next activity (a send, a status change, a transcript push, terminal output, a session
+change or the tab showing) instead of on a timer.
+
 Every request reaching the server's fetch boundary gets a new server UUID in `X-Request-Id`.
 Same-origin API calls also send a fresh client UUID unless the caller supplies one. Client IDs
 are accepted only as 1-64 ASCII letters, digits, dots, underscores or hyphens; repeated client

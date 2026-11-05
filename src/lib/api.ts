@@ -758,7 +758,8 @@ async function readPaneConversation(paneId: string, machineId: string, page: Con
     return body;
   }
   const etag = response.headers.get("etag");
-  if (!polled) return body;
+  // a wait for the reader's proof keeps the conversation it would return to
+  if (!polled || body.recovery === "waiting") return body;
   conversationAnswers.delete(url);
   if (etag !== null) {
     const bytes = conversationAnswerBytes(body, response.headers.get("content-length"), response.headers.get("content-encoding"));

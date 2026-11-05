@@ -635,6 +635,12 @@ export interface ConversationResponse {
    */
   screen?: true;
   /**
+   * On a scrollback answer to a refresh that named the history shown (`history_id`): the reader lost
+   * its proof of the conversation without seeing it end. Keep the turns shown, append nothing, and
+   * read again on the pane's next activity rather than on a timer.
+   */
+  recovery?: "waiting";
+  /**
    * Where the first turn sits in the transcript: pass it as `before` for the page
    * of turns before these (with `since`, never reaching back past that cursor), or
    * as `from` to keep polling from it. A `from` answer starts later than `from` when

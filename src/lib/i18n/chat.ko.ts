@@ -11,6 +11,7 @@ export const CHAT_KO: Record<string, string> = {
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravity 채팅을 사용할 수 없습니다. 터미널을 열어 작업 상태와 도구 호출을 확인하세요.",
   "Chat read timed out.": "대화 읽기 시간이 초과되었습니다.",
   "Thinking…": "생각 중…",
+  "Updates paused — waiting for the agent's next activity": "업데이트 일시 중지 — 에이전트의 다음 활동을 기다리는 중",
   "Grok chat is unavailable. Open Terminal to see activity and tool calls.": "Grok 채팅을 사용할 수 없습니다. 터미널을 열어 작업 상태와 도구 호출을 확인하세요.",
   "Message from another session: {name}": "다른 세션에서 온 메시지: {name}",
   "Message from another session": "다른 세션에서 온 메시지",

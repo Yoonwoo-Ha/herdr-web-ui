@@ -10,6 +10,7 @@ import { rememberPaneCommands, scanPaneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
 import { badRequest, conflictResponse, errorResponse, isCount, isJsonObject, jsonResponse, readJsonObject, requestIdContext, setRequestRoute } from "./http.ts";
 import { conversationImage, ConversationReadPending, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneProcessRoots, paneTranscript, toolOutput } from "./conversation.ts";
+import { copilotRecoverable } from "./conversation-shared.ts";
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { openCodeFlagVersion, openCodeInstalledVersion } from "./opencode-service.ts";
 import { DevinHistoryChanged } from "./devin.ts";
@@ -301,7 +302,8 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
       // ever what the agent's own status line states
       if (error instanceof ConversationUnavailable) {
         conversationDiagnostics.unavailable(paneId, error, requestIdContext.getStore()?.id);
-        return jsonResponse({ source: "scrollback", turns: [], ...(error.screen ? { metadata: error.screen, screen: true } : {}) });
+        const recovery = page.history_id !== undefined && copilotRecoverable(error.diagnostic) ? { recovery: "waiting" } : {};
+        return jsonResponse({ source: "scrollback", turns: [], ...recovery, ...(error.screen ? { metadata: error.screen, screen: true } : {}) });
       }
       return errorResponse(error);
     }

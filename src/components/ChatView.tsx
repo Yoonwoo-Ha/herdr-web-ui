@@ -1337,6 +1337,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const [errorStatus, setErrorStatus] = useState<number | null>(null);
   /** reads failed in a row: a slow PC is waited for this many times before the chat alarms */
   const [failures, setFailures] = useState(0);
+  /** the turns shown are kept while the reader waits to prove their conversation again (ConversationResponse.recovery) */
+  const [stale, setStale] = useState(false);
   const [newMessages, setNewMessages] = useState(false);
   /** scrolled up from the end: the way back is offered even when nothing new came */
   const [away, setAway] = useState(false);
@@ -1530,6 +1532,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
 
   /** Lays out the state built from an answer and marks that answer as the one shown. */
   const showAnswer = (conversation: ConversationResponse, next: ChatState, moved: readonly ConversationTurn[] = []): void => {
+    setStale(false);
     if (next.source === "conversation") {
       const count = olderCount.current + next.turns.length;
       if (slotsHistory.current !== (history.current ?? null) || lastAnswer.current?.source === "scrollback") {
@@ -1673,6 +1676,11 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
           }
         }
         if (cancelled || generation !== olderGeneration.current) return;
+        // Not an answer about the turns shown: they stay as they are until a read proves them again
+        if (conversation.recovery === "waiting" && lastAnswer.current?.source === "copilot-transcript") {
+          setStale(true); setLoaded(true); setError(null); setErrorStatus(null); setFailures(0); setReadPresentation(undefined);
+          return;
+        }
         if (conversation !== previousAnswer) validatedPresentation.current = readKey;
         // a tab herdr still names by its number takes its label from the first message (#2019)
         if (autoTabNames.current) learnFromConversation(machineId, paneId, conversation);
@@ -1714,7 +1722,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
           if (!continued) { pagingAway.current = false; stickToBottom.current = true; lastRowOffset.current = null; lastScrollHeight.current = 0; setNewMessages(false); setAway(false); }
         }
         // a 304 hands back the answer already shown: nothing to compare or lay out again
-        if (conversation === lastAnswer.current) { setError(null); setErrorStatus(null); setFailures(0); setReadPresentation(proved ? readKey : undefined); return; }
+        if (conversation === lastAnswer.current) { setStale(false); setError(null); setErrorStatus(null); setFailures(0); setReadPresentation(proved ? readKey : undefined); return; }
         // The newest page moved past the held start: the turns in between join the older
         // pages and the newest page is held from its new start, so no poll reads more than a page.
         const previous = lastAnswer.current;
@@ -1754,6 +1762,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       } catch (cause) {
         // a read given up for a reconnect is no failure: the read after it answers
         if (cancelled || generation !== olderGeneration.current || (cause instanceof DOMException && cause.name === "AbortError")) return;
+        // a failed read proves nothing to wait on: the failure shows and the backstop retries it
+        setStale(false);
         setLoaded(true);
         setError(userFailure(cause));
         setErrorStatus(cause instanceof ApiError ? cause.status : null);
@@ -1767,6 +1777,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       // Older pages queued behind this reader must not start for a hidden/replaced screen.
       olderGeneration.current += 1;
       loadingOlder.current = false; setOlderState("idle");
+      setStale(false);
       onConversationWatch?.(paneId, false);
       conversationRefresh.stop();
     };
@@ -1786,6 +1797,10 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   }, [paneId, invalidationKey, visible, conversationRefresh]);
 
   useEffect(() => {
+    conversationRefresh.setWaiting(stale);
+  }, [stale, conversationRefresh]);
+
+  useEffect(() => {
     conversationRefresh.setPushes(conversationPushes && (agent !== "copilot" || state.source !== "scrollback"));
   }, [conversationPushes, state.source, conversationRefresh, agent]);
 
@@ -1794,10 +1809,10 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   // screen, so terminal output is the invalidation, under the same 1s bound: a model switched in
   // the terminal shows once the agent draws it.
   useEffect(() => {
-    if ((state.source !== "scrollback" && !screenRead) || !visible || onTerminalOutput === undefined) return;
+    if ((state.source !== "scrollback" && !screenRead && !stale) || !visible || onTerminalOutput === undefined) return;
     onTerminalOutput(() => conversationRefresh.invalidate());
     return () => onTerminalOutput(null);
-  }, [state.source, screenRead, visible, onTerminalOutput, conversationRefresh]);
+  }, [state.source, screenRead, stale, visible, onTerminalOutput, conversationRefresh]);
 
   // Catch writes made offline as soon as the existing socket is connected again. The first
   // connection after the pane shows (a fresh attach) is no reconnect: while the mount read is
@@ -1815,7 +1830,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
 
   const loadOlder = useCallback(async (): Promise<void> => {
     const node = scroller.current;
-    if (node === null || loadingOlder.current || typeof olderCursor !== "string") return;
+    // a paused view's pages are read once its conversation is proved again
+    if (node === null || loadingOlder.current || stale || typeof olderCursor !== "string") return;
     const before = olderCursor;
     const generation = olderGeneration.current;
     loadingOlder.current = true;
@@ -1862,7 +1878,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       if (!(cause instanceof DOMException && cause.name === "AbortError")) throw cause;
       if (olderGeneration.current === generation) { loadingOlder.current = false; setOlderState("idle"); }
     });
-  }, [fetchPaneConversation, olderCursor, paneId, pagePrompts, conversationRefresh]);
+  }, [fetchPaneConversation, olderCursor, paneId, pagePrompts, conversationRefresh, stale]);
 
   // Reconcile the estimated prepend with the actual reader row, through the list's
   // own scroll command. No scrollHeight delta or second virtualizer owns the position.
@@ -2534,7 +2550,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       )}
       {/* one button in every state: swapping it for a status line of another height would shift the reader */}
       {state.source === "conversation" && typeof olderCursor === "string" && (
-        <button type="button" className="btn btn-ghost chat-older" disabled={olderState === "loading"} onClick={() => void loadOlder()}>
+        <button type="button" className="btn btn-ghost chat-older" disabled={olderState === "loading" || stale} onClick={() => void loadOlder()}>
           {t(olderState === "loading" ? "Loading earlier messages…" : olderState === "failed" ? "Couldn't load earlier messages — retry" : "Earlier messages")}
         </button>
       )}
@@ -2551,7 +2567,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const sentWaiting = useWaitingSends(machineId, paneId, connected);
   // before paint: a frame never shows a send's turn and its waiting bubble together. Only a
   // conversation read that answered says what the chat holds: a failed read leaves it unknown
-  const turnsRead = loaded && error === null && state.source === "conversation";
+  const turnsRead = loaded && error === null && !stale && state.source === "conversation";
   useLayoutEffect(() => {
     settleWaitingSends(waitKey, state.turns, Date.now(), turnsRead);
   }, [sentWaiting, state.turns, turnsRead, waitKey]);
@@ -2563,6 +2579,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       {error !== null && !waiting && (errorStatus === 401
         ? <p className="chat-inline-state chat-inline-error" role="alert">{t("locked — the token gate is asking again")}</p>
         : <FailureLine action={t("Couldn't load the conversation")} failure={error} onRetry={retryRead} />)}
+      {stale && error === null && <p className="chat-inline-state" role="status">{t("Updates paused — waiting for the agent's next activity")}</p>}
       {loaded && error === null && agent === "grok" && state.source !== "conversation" && <p className="chat-inline-state" role="status">{t("Grok chat is unavailable. Open Terminal to see activity and tool calls.")}</p>}
       {loaded && error === null && agent === "agy" && state.source !== "conversation" && <p className="chat-inline-state" role="status">{t("Antigravity chat is unavailable. Open Terminal to see activity and tool calls.")}</p>}
       {/* The agent's activity, where no open work block says it: before the turn has an assistant or

@@ -11,6 +11,7 @@ export const CHAT_ZH: Record<string, string> = {
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravity 聊天暂不可用。请打开终端查看运行状态和工具调用。",
   "Chat read timed out.": "读取对话超时。",
   "Thinking…": "思考中…",
+  "Updates paused — waiting for the agent's next activity": "更新已暂停 — 正在等待代理的下一次活动",
   "Grok chat is unavailable. Open Terminal to see activity and tool calls.": "Grok 聊天暂不可用。请打开终端查看运行状态和工具调用。",
   "Message from another session: {name}": "来自另一个会话的消息：{name}",
   "Message from another session": "来自另一个会话的消息",
