@@ -2074,6 +2074,125 @@ button {
   }
 }
 
+/* the selected tab's place in its workspace's strip (App.tsx): after the title, quieter than it, and
+   kept whole while the title shortens */
+.context-position {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* the PC's sessions by state (components/HeaderSessions.tsx): a figure per state that has any, in the
+   sidebar's status colours, tabular so a count that changes moves nothing. They stay whole: the pane
+   title is the header's one item that shortens */
+.header-sessions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.header-session-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--chip-h);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-dim);
+}
+
+.header-session-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+}
+
+.header-session-count.is-working .header-session-dot {
+  background: var(--status-working);
+}
+
+.header-session-count.is-done .header-session-dot {
+  background: var(--status-done);
+}
+
+.header-session-mark {
+  font-weight: var(--fw-bold);
+  color: var(--status-blocked);
+}
+
+/* the waiting figure opens the next session that waits: drawn as a figure, with the state's tint
+   behind it so it reads as the one to press */
+button.header-session-count {
+  position: relative;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--status-blocked) 14%, transparent);
+  color: var(--text-strong);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* with no other session waiting it stays a button for the keyboard's sake, but nothing to press */
+button.header-session-count[aria-disabled="true"] {
+  cursor: default;
+}
+
+@media (hover: hover) {
+  button.header-session-count:not([aria-disabled="true"]):hover {
+    background: color-mix(in srgb, var(--status-blocked) 24%, transparent);
+  }
+}
+
+/* a phone reaches the header's thumb target through an invisible expander, as the lens buttons do */
+@media (max-width: 768px) {
+  button.header-session-count::before {
+    content: "";
+    position: absolute;
+    top: calc((var(--chip-h) - var(--touch-target-header)) / 2);
+    bottom: calc((var(--chip-h) - var(--touch-target-header)) / 2);
+    left: 50%;
+    width: max(100%, var(--touch-target-header));
+    transform: translateX(-50%);
+  }
+}
+
+/* a phone's header line is the title's (App.tsx): the sessions' one pill sits at the end of the tab
+   row under it, tinted with its state like the waiting button, and the tab's place, which that row
+   shows, leaves the header below 420px */
+.tab-strip-sessions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1 0 auto;
+  padding: 0 var(--space-3);
+}
+
+.header-sessions.is-compact .header-session-count {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+}
+
+.header-sessions.is-compact .header-session-count.is-working {
+  background: color-mix(in srgb, var(--status-working) 14%, transparent);
+}
+
+.header-sessions.is-compact .header-session-count.is-done {
+  background: color-mix(in srgb, var(--status-done) 14%, transparent);
+}
+
+@media (max-width: 419px) {
+  .context-position {
+    display: none;
+  }
+}
+
 /* one chip for the connection, drawn only while the bridge is not live; the herdr version lives
    in its tooltip and in Settings */
 .conn {
@@ -2158,6 +2277,11 @@ button {
 
 /* alerts are off on this device: the one state of the menu worth a glance. The button's name
    and the Alerts item say it in words. */
+/* a session waiting where no tab row carries the sessions' pill (App.tsx): More's first item opens it */
+.header-more-dot.is-waiting {
+  background: var(--status-blocked);
+}
+
 .header-more-dot {
   position: absolute;
   top: var(--space-1);

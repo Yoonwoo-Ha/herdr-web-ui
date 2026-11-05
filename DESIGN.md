@@ -2038,6 +2038,27 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   relay keeps its word (the one most asked for) and the rest keep the glyph; below `360px` the
   relay's word goes too, so the pane title keeps its room. The phone app's demo shows none. It
   follows Paseo's app, which says beside a host whether it is reached directly or through its relay.
+- Beside the route mark, the PC's sessions by state (`.header-sessions`,
+  `components/HeaderSessions.tsx`, `lib/headerSessions.ts`): one figure per state that has any,
+  in the sidebar's colours and marks, `--status-working` dot for running (a turn waiting on its own
+  background work counts), `--status-blocked` question mark for waiting for an answer,
+  `--status-done` dot for finished and not looked at yet (a finish looked at reads as ready, as in
+  the sidebar). Tabular figures, so a count that changes moves nothing; nothing at all while every
+  session rests, and nothing for a PC that is not connected (its cached roster is greyed out in the
+  sidebar). The waiting figure is the one button: tinted with its state, it opens the next waiting
+  session after the selected one in the roster's order, wrapping, never the selected one and never
+  one a zoomed tab hides (a pick of it lands on the zoomed pane); with none to open it stays a
+  button, `aria-disabled`, so a keyboard's focus is not dropped. It follows Slack's "next unread"
+  rather than a coding-agent app, because the question on a phone is the same: which conversation
+  needs me now. After the title, `--text-dim` and kept whole, the selected tab's place in its
+  workspace's strip (`.context-position`, "1/2", said "Tab 1 of 2"), only with two tabs or more.
+  At `<=480px` the header's line is the title's, as wide as without these: the figures become one
+  pill (waiting, else running, else done, tinted with its state) at the end of the tab row under the
+  header (`.tab-strip-sessions`), a full `--touch-target-header` target. Where that row is not drawn
+  (a lone tab on a cramped phone) More carries the jump: **Open the next session waiting for you** is
+  its first item, and its button wears a `--status-blocked` dot (`.header-more-dot.is-waiting`, in
+  place of the alerts-off dot) and says the count in its name. Below `420px` the tab's place leaves
+  the header: the tab row shows it.
 
 ### Chat turn (`.chat-turn`)
 - Native conversation rows use LegendList 3.3.5, with the chat view as the single

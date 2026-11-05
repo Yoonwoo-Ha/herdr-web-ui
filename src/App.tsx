@@ -1,5 +1,5 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
+import { Bell, CircleHelp, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, X } from "lucide-react";
 
 import type { HerdrPane } from "../shared/protocol.ts";
 import { authenticate, createTab, moveTabToWorkspace, paneSessionKey, shareSeen, swapPaneWith } from "./lib/api.ts";
@@ -88,6 +88,8 @@ import { useT } from "./lib/i18n.ts";
 import { useConnectionChip, useServerMessageHandler } from "./lib/useConnectionChip.ts";
 import { useHeaderConnection } from "./lib/headerConnection.ts";
 import { ConnectionRouteMark } from "./components/ConnectionRouteMark.tsx";
+import { HeaderSessions } from "./components/HeaderSessions.tsx";
+import { nextWaitingPane, sessionCounts, tabPosition } from "./lib/headerSessions.ts";
 import { selectionStill } from "./lib/selectionMark.ts";
 import { carryMovedPane, movedView } from "./lib/paneMove.ts";
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
@@ -397,6 +399,14 @@ export function App() {
   const crumb = selectedPane && selectedTitle !== null
     ? headerCrumb({ machine: selectedMachine?.name ?? selectedMachineId, machineCount: machines.length, workspace: selectedWorkspace?.label ?? selectedPane.workspace_id, title: selectedTitle, cwd: selectedPane.cwd })
     : null;
+  // the selected PC's sessions as its sidebar draws them, and the tab's place in its strip. A PC that
+  // is not connected has only a cached roster, which its sidebar greys out: the header counts none of it
+  const rosterPanesShown = selectedMachine?.state === "connected" ? snapshot?.panes ?? [] : [];
+  const shownStatus = (pane: (typeof rosterPanesShown)[number]) => activity.status(selectedMachineId, pane);
+  const sessionTally = sessionCounts(rosterPanesShown, shownStatus);
+  const nextWaiting = nextWaitingPane(rosterPanesShown, shownStatus, selectedPaneId, snapshot?.layouts);
+  const tabPlace = snapshot ? tabPosition(snapshot, selectedPaneId) : null;
+  const position = tabPlace && { ...tabPlace, words: t("Tab {index} of {count}", { index: tabPlace.index, count: tabPlace.count }) };
 
   const tabTitle = selectedPane ? tabPaneTitle(selectedPane) : null;
   useEffect(() => {
@@ -604,11 +614,22 @@ export function App() {
   const cramped = useMediaQuery(CRAMPED_QUERY);
   const paneMenuInMore = selectedPane !== null
     && loneTabHidden(cramped, snapshot?.tabs.filter((tab) => tab.workspace_id === selectedPane.workspace_id).length ?? 0);
+  // on a phone the header's line is the title's: the sessions' one pill goes to the end of the tab row
+  // under it. Where that row is not drawn (a lone tab on a cramped phone) More carries the jump instead,
+  // its first item, with a waiting-coloured dot on its button
+  const phoneNarrow = useMediaQuery("(max-width: 480px)");
+  const sessionsInStrip = phoneNarrow && !paneMenuInMore && !splitOn;
+  const sessionsInMore = phoneNarrow && paneMenuInMore && !splitOn;
+  const waitingInMore = sessionsInMore && sessionTally.waiting > 0;
+  const sessionsPill = <HeaderSessions counts={sessionTally} onNextWaiting={nextWaiting === null ? null : () => selectPane(nextWaiting)} compact={phoneNarrow} />;
   const paneMoreItems = paneMenuInMore && selectedPane ? (paneActionsRef.current?.(selectedPane) ?? []).map((item, index): RowMenuItem => ({
     ...item, divider: index === 0 || item.divider,
     run: () => paneActionsRef.current?.(selectedPane).find((fresh) => fresh.id === item.id)?.run(),
   })) : [];
+  const moreBase = alertsOffDot ? t("More · alerts are off") : t("More");
+  const moreLabel = waitingInMore ? `${moreBase} · ${t("{count} waiting for you", { count: sessionTally.waiting })}` : moreBase;
   const moreItems: RowMenuItem[] = [
+    ...(waitingInMore && nextWaiting !== null ? [{ id: "next-waiting", label: t("Open the next session waiting for you"), hint: String(sessionTally.waiting), icon: CircleHelp, run: () => selectPane(nextWaiting) }] : []),
     // first at every width: a phone's header has no palette button, and a touch screen no shortcut
     { id: "palette", label: t("Search panes and actions"), icon: Search, ...(paletteKeys ? { hint: paletteKeys } : {}), run: () => openPalette() },
     ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
@@ -690,6 +711,10 @@ export function App() {
             <div className="context-title">
               {selectedAgent && <AgentMark agent={selectedAgent} size={18} />}
               <span className="context-title-text">{selectedTitle}</span>
+              {position && <span className="context-position" title={position.words}>
+                <span aria-hidden="true">{position.index}/{position.count}</span>
+                <span className="visually-hidden">{position.words}</span>
+              </span>}
             </div>
             {/* lost and back, the connection takes the crumb's place in words, in the same box: nothing moves */}
             <div className={`context-sub${headerConnection === null ? "" : ` context-connection is-${headerConnection}`}`}>
@@ -732,6 +757,7 @@ export function App() {
           </>
         )}
         <div className="header-meta">
+          {!sessionsInStrip && !sessionsInMore && sessionsPill}
           {/* the chip speaks for the pane's terminal: the setup guide stands in the pane's place and has none */}
           <ConnectionRouteMark portal={auth?.via === "portal"} ingress={security.state === "known" ? security.summary.observed_ingress : null} />
           {!guideShown && <ConnectionChip
@@ -754,8 +780,8 @@ export function App() {
             <button
               type="button"
               className="icon-button header-more-button"
-              aria-label={alertsOffDot ? t("More · alerts are off") : t("More")}
-              title={alertsOffDot ? t("More · alerts are off") : t("More")}
+              aria-label={moreLabel}
+              title={moreLabel}
               aria-haspopup="menu"
               aria-expanded={more !== null}
               onClick={(event) => {
@@ -765,7 +791,7 @@ export function App() {
             >
               <Ellipsis />
             </button>
-            {alertsOffDot && <span className="header-more-dot" aria-hidden="true" />}
+            {waitingInMore ? <span className="header-more-dot is-waiting" aria-hidden="true" /> : alertsOffDot && <span className="header-more-dot" aria-hidden="true" />}
           </span>
         </div>
         {more && (
@@ -898,7 +924,7 @@ export function App() {
                 <CrashProbe region="pane" />
                 {!(slotSnapshot && pane && workspace) && slotBar}
                 {slotSnapshot && pane && workspace && (
-                  <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} onSelectPane={onSelect} end={slotEnd}
+                  <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} onSelectPane={onSelect} end={slotEnd ?? (sessionsInStrip && active ? <div className="tab-strip-sessions">{sessionsPill}</div> : undefined)}
                     renameRequest={active && renameRequest?.machineId === machineId && renameRequest.paneId === pane.pane_id ? renameRequest : null}
                     onRenameHandled={clearRenameRequest}
                     onNewTab={() => actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
