@@ -21,6 +21,8 @@ import { lazyChunk } from "../lib/lazyChunk.ts";
 import type { SkillMatcher } from "../lib/skillMentions.ts";
 import { previewChunks } from "../lib/textPreview.ts";
 import type { GalleryImage } from "../lib/imageViewer.ts";
+import { useSettings } from "../lib/settings.ts";
+import { isWebLink, openWebLink } from "../lib/terminalFileLinks.ts";
 
 /** The pane's skill names: a name in an answer's plain text, in its trigger form, reads as a chip. */
 const SkillMatcherContext = createContext<SkillMatcher | null>(null);
@@ -303,9 +305,14 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
   const skillMatcher = useContext(SkillMatcherContext);
   const openWebPage = useContext(WebPanelContext);
   const machineId = useContext(MachineContext);
+  const { settings } = useSettings();
   // a plain or Shift click may open the address beside the pane; Ctrl, Cmd and Alt keep the browser's own meaning
   const webClick = (href: string) => (event: MouseEvent<HTMLAnchorElement>): void => {
     if (shouldOpenWebPage(event, href, openWebPage, machineId)) event.preventDefault();
+    else if (settings.reuseExternalLinkTab && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.altKey && isWebLink(href)) {
+      event.preventDefault();
+      openWebLink(href, true);
+    }
   };
   return <>{nodes.map((node, index) => {
     const key = `${node.type}-${index}`;

@@ -171,6 +171,19 @@ describe("saved theme migration", () => {
     }
   });
 
+  it("keeps Reuse tab for external links in its own key, out of an old tab's whole-record save", () => {
+    expect(loadSettings().reuseExternalLinkTab).toBe(false);
+    saveSettings(sanitizeSettings({ reuseExternalLinkTab: true }));
+    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("reuseExternalLinkTab");
+    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
+    expect(loadSettings().reuseExternalLinkTab).toBe(true);
+    expect(loadSettings().terminalFontSize).toBe(18);
+    saveSettings({ ...loadSettings(), reuseExternalLinkTab: false });
+    expect(loadSettings().reuseExternalLinkTab).toBe(false);
+    records.set("ovis:reuse-external-link-tab", "\"true\"");
+    expect(loadSettings().reuseExternalLinkTab).toBe(false);
+  });
+
   it("survives repeated stale saves from an already-open old tab (f1)", () => {
     putOld({ theme: "dark", palette: "charcoal" });
     const stale = readOld();
@@ -1118,11 +1131,14 @@ it("keeps the Markdown preview's width to readable or full, readable by default"
 
 it("keeps where web links open to a tab or the panel, a tab by default", () => {
   expect(DEFAULT_SETTINGS.webLinks).toBe("tab");
+  expect(DEFAULT_SETTINGS.reuseExternalLinkTab).toBe(false);
   expect(DEFAULT_SETTINGS.fileOpen).toBe("popup");
   expect(sanitizeSettings({ fileOpen: "panel" }).fileOpen).toBe("panel");
   for (const bad of ["tab", "", null, true]) expect(sanitizeSettings({ fileOpen: bad }).fileOpen).toBe("popup");
   expect(sanitizeSettings({ webLinks: "panel" }).webLinks).toBe("panel");
   for (const bad of ["popup", "", null, true]) expect(sanitizeSettings({ webLinks: bad }).webLinks).toBe("tab");
+  expect(sanitizeSettings({ reuseExternalLinkTab: true }).reuseExternalLinkTab).toBe(true);
+  for (const bad of ["true", 1, null]) expect(sanitizeSettings({ reuseExternalLinkTab: bad }).reuseExternalLinkTab).toBe(false);
   // an agent's start mode never widens by accident: anything unknown starts it with no flag
   expect(DEFAULT_SETTINGS.claudeLaunchMode).toBe("default");
   expect(DEFAULT_SETTINGS.codexLaunchMode).toBe("default");

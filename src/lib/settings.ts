@@ -197,6 +197,8 @@ export interface Settings {
   fileOpen: FilePresentation;
   /** where a click on a web address opens it: a new tab, or the panel beside the pane (lib/webPanel.ts); Shift opens the other one */
   webLinks: WebLinkTarget;
+  /** when a web address opens outside Ovis, replace one tab instead of opening another tab each time */
+  reuseExternalLinkTab: boolean;
   /** the mode a Claude Code started from the new workspace, tab and worktree dialogs runs in (lib/agentLaunchMode.ts); default adds no flag */
   claudeLaunchMode: ClaudeLaunchMode;
   /** the same for Codex: a sandbox and approval preset */
@@ -210,12 +212,12 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 
 /** Raw custom text, key combinations and account keys are never copied. Requiring every other
  * Settings field in the projection makes a new field require an explicit collection decision.
- * fileOpen, webLinks, the launch modes, followHerdrFocus, autoTabNames, composerNewTabButton, composerArtifacts, terminalMirrorWrap, sidebarFilter, the
+ * fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, autoTabNames, composerNewTabButton, composerArtifacts, terminalMirrorWrap, sidebarFilter, the
  * interface font, the chat's history page size and the folds its blocks start in are not collected: the telemetry schema
  * (shared/telemetry.ts) does not carry them. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily"
-  | "quickReplies" | "usageOrder" | "usageHidden" | "fileOpen" | "webLinks" | "claudeLaunchMode" | "codexLaunchMode"
+  | "quickReplies" | "usageOrder" | "usageHidden" | "fileOpen" | "webLinks" | "reuseExternalLinkTab" | "claudeLaunchMode" | "codexLaunchMode"
   | "followHerdrFocus" | "composerNewTabButton" | "composerArtifacts" | "terminalMirrorWrap" | "sidebarFilter" | "historyPrompts"
   | "expandThinking" | "foldWork" | "autoTabNames">;
 
@@ -311,7 +313,7 @@ export const SETTING_SCOPE = {
   paletteLight: "device", paletteDark: "device", statusIndicators: "device",
   voiceInput: "device", voiceLanguage: "device", voicePolishChat: "device", voicePolishTerminal: "device",
   // Viewer layout follows this screen, as chatWidth does.
-  wrapCode: "device", markdownWidth: "device", diffStyle: "device", fileOpen: "device", webLinks: "device",
+  wrapCode: "device", markdownWidth: "device", diffStyle: "device", fileOpen: "device", webLinks: "device", reuseExternalLinkTab: "device",
   // a new agent starts the same way whichever device opened it
   claudeLaunchMode: "shared", codexLaunchMode: "shared",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
@@ -384,6 +386,7 @@ export const DEFAULT_SETTINGS: Settings = {
   diffStyle: "unified",
   fileOpen: "popup",
   webLinks: "tab",
+  reuseExternalLinkTab: false,
   claudeLaunchMode: "default",
   codexLaunchMode: "default",
 };
@@ -575,6 +578,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     diffStyle: DIFF_STYLES.find((style) => style === record["diffStyle"]) ?? DEFAULT_SETTINGS.diffStyle,
     fileOpen: FILE_OPEN_TARGETS.find((target) => target === record["fileOpen"]) ?? DEFAULT_SETTINGS.fileOpen,
     webLinks: WEB_LINK_TARGETS.find((target) => target === record["webLinks"]) ?? DEFAULT_SETTINGS.webLinks,
+    reuseExternalLinkTab: typeof record["reuseExternalLinkTab"] === "boolean" ? record["reuseExternalLinkTab"] : DEFAULT_SETTINGS.reuseExternalLinkTab,
     claudeLaunchMode: CLAUDE_LAUNCH_MODES.find((mode) => mode === record["claudeLaunchMode"]) ?? DEFAULT_SETTINGS.claudeLaunchMode,
     codexLaunchMode: CODEX_LAUNCH_MODES.find((mode) => mode === record["codexLaunchMode"]) ?? DEFAULT_SETTINGS.codexLaunchMode,
   };
@@ -650,6 +654,8 @@ function readComposerArtifacts(): boolean {
 /** Settings > Chat > Expand thinking and Collapse work, each kept in a key of its own for the same reason: off until chosen. */
 export const EXPAND_THINKING_STORAGE_KEY = "ovis:expand-thinking";
 export const FOLD_WORK_STORAGE_KEY = "ovis:fold-work";
+/** Settings > Chat > Reuse tab for external links, kept in a key of its own for the same reason: off until chosen. */
+export const REUSE_EXTERNAL_LINK_TAB_STORAGE_KEY = "ovis:reuse-external-link-tab";
 
 function readChatFold(key: string, fallback: boolean): boolean {
   try {
@@ -698,7 +704,8 @@ export function loadSettings(): Settings {
   const settings = stored.main === null ? DEFAULT_SETTINGS : sanitizeSettings(stored.main.value);
   const merged = stored.themes === null ? settings : sanitizeSettings({ ...settings, ...stored.themes });
   return { ...merged, enterSends: readEnterSends(merged.enterSends), uiFontFamily: readUiFontFamily(), terminalMirrorWrap: readMirrorWrap(), sidebarFilter: readSidebarFilter(), historyPrompts: readHistoryPrompts(), composerArtifacts: readComposerArtifacts(),
-    expandThinking: readChatFold(EXPAND_THINKING_STORAGE_KEY, DEFAULT_SETTINGS.expandThinking), foldWork: readChatFold(FOLD_WORK_STORAGE_KEY, DEFAULT_SETTINGS.foldWork) };
+    expandThinking: readChatFold(EXPAND_THINKING_STORAGE_KEY, DEFAULT_SETTINGS.expandThinking), foldWork: readChatFold(FOLD_WORK_STORAGE_KEY, DEFAULT_SETTINGS.foldWork),
+    reuseExternalLinkTab: readChatFold(REUSE_EXTERNAL_LINK_TAB_STORAGE_KEY, DEFAULT_SETTINGS.reuseExternalLinkTab) };
 }
 
 /** false where storage refused the write (private mode, a full quota) */
@@ -709,7 +716,7 @@ export function saveSettings(settings: Settings): boolean {
       darkTheme: mirrored.darkTheme, lightTheme: mirrored.lightTheme,
       mirror: { palette: mirrored.palette, paletteDark: mirrored.paletteDark, paletteLight: mirrored.paletteLight },
     }));
-    const { uiFontFamily, terminalMirrorWrap, sidebarFilter, historyPrompts, composerArtifacts, expandThinking, foldWork, ...main } = mirrored;
+    const { uiFontFamily, terminalMirrorWrap, sidebarFilter, historyPrompts, composerArtifacts, expandThinking, foldWork, reuseExternalLinkTab, ...main } = mirrored;
     window.localStorage.setItem(UI_FONT_STORAGE_KEY, JSON.stringify(uiFontFamily));
     window.localStorage.setItem(MIRROR_WRAP_STORAGE_KEY, JSON.stringify(terminalMirrorWrap));
     window.localStorage.setItem(SIDEBAR_FILTER_STORAGE_KEY, JSON.stringify(sidebarFilter));
@@ -717,6 +724,7 @@ export function saveSettings(settings: Settings): boolean {
     window.localStorage.setItem(COMPOSER_ARTIFACTS_STORAGE_KEY, JSON.stringify(composerArtifacts));
     window.localStorage.setItem(EXPAND_THINKING_STORAGE_KEY, JSON.stringify(expandThinking));
     window.localStorage.setItem(FOLD_WORK_STORAGE_KEY, JSON.stringify(foldWork));
+    window.localStorage.setItem(REUSE_EXTERNAL_LINK_TAB_STORAGE_KEY, JSON.stringify(reuseExternalLinkTab));
     window.localStorage.setItem(ENTER_SENDS_STORAGE_KEY, JSON.stringify(mirrored.enterSends));
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ ...main, enterSends: main.enterSends ?? true }));
     return true;
