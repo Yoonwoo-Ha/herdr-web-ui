@@ -4,7 +4,7 @@ import type { SecureChannel } from "../../shared/relay-e2ee.ts";
 import { commitmentHolds, fromBase64Url, PAIR_APPROVAL_MS, pairDigits, randomPairNonce, toBase64Url } from "../../shared/relay-pair-sas.ts";
 import { MuxEngine, MuxStreamError } from "../../shared/relay-mux-engine.ts";
 import type { HttpStream, MuxClock, SessionFrame, WsStream } from "../../shared/relay-mux-engine.ts";
-import { FrameType, LIMITS_V1, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL, REQUEST_HEADERS, RESPONSE_HEADERS, WS_CONTINUATION_CAPACITY } from "../../shared/relay-mux.ts";
+import { FrameType, LARGE_WS_MESSAGES, LIMITS_V1, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL, REQUEST_HEADERS, RESPONSE_HEADERS, WS_CONTINUATION_CAPACITY } from "../../shared/relay-mux.ts";
 import type { HeaderList, SessionError } from "../../shared/relay-mux.ts";
 import { PairingRateLimitedError, type DeviceMatch } from "../devices.ts";
 import { handleRequest } from "../dispatch.ts";
@@ -222,8 +222,11 @@ export class RelaySession {
         if (frame.payload.features.includes(PAIR_SAS_FEATURE)) this.sasBinding = channelBinding(this.options.channel);
         // relay hints are answered in AUTH_OK, not WELCOME: a provisional WELCOME goes out before HELLO is read
         this.hinting = this.options.relayHints !== undefined && frame.payload.features.includes(RELAY_HINTS);
+        // a large session's snapshot goes in one message only to a phone that takes it (#2773)
+        const large = frame.payload.features.includes(LARGE_WS_MESSAGES);
+        if (large) this.mux.sendLargeMessages();
         // a feature the phone requires has to be one this PC takes on this channel
-        const taken = [...(this.sasBinding ? [PAIR_SAS_FEATURE] : []), ...(this.hinting ? [RELAY_HINTS] : [])];
+        const taken = [...(this.sasBinding ? [PAIR_SAS_FEATURE] : []), ...(this.hinting ? [RELAY_HINTS] : []), ...(large ? [LARGE_WS_MESSAGES] : [])];
         if (frame.payload.required_features.some((feature) => !taken.includes(feature))) { this.close("unsupported_extension"); return; }
         this.state = "auth";
         // after a provisional WELCOME (no feature selected), only a phone that offered comparing digits needs another

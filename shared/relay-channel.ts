@@ -6,7 +6,7 @@
 import { channelBinding, openClientSecureChannel } from "./relay-e2ee.ts";
 import { fromBase64Url, PAIR_APPROVAL_MS, pairCommitment, pairDigits, randomPairNonce, toBase64Url } from "./relay-pair-sas.ts";
 import type { SecureChannel, Transport } from "./relay-e2ee.ts";
-import { decodeFrame, FrameType, LIMITS_V1, MuxProtocolError, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL } from "./relay-mux.ts";
+import { decodeFrame, FrameType, LARGE_WS_MESSAGES, LIMITS_V1, MuxProtocolError, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL } from "./relay-mux.ts";
 import { hintedRelay } from "./relay-regions.ts";
 import { MuxEngine } from "./relay-mux-engine.ts";
 import type { MuxOptions, SessionFrame } from "./relay-mux-engine.ts";
@@ -349,8 +349,9 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
           routingOverhead: 0, maxWireMessageBytes: 65536, limits, requestTimeoutMs: options.requestTimeoutMs,
           onClose: (error) => stop(error),
         });
+        mux.receiveLargeMessages();
         await send({ type: FrameType.HELLO, flags: 0, stream_id: 0,
-          payload: { protocol: "ovis-mux", versions: [1], features: [RELAY_HINTS, ...(comparing ? [PAIR_SAS_FEATURE] : [])], required_features: [] } });
+          payload: { protocol: "ovis-mux", versions: [1], features: [RELAY_HINTS, LARGE_WS_MESSAGES, ...(comparing ? [PAIR_SAS_FEATURE] : [])], required_features: [] } });
       }).catch(failed);
     };
   });
