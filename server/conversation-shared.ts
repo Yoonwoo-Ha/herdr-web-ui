@@ -86,6 +86,8 @@ export type RecognizedConversation = {
    * anything, so the chat would otherwise drop those turns with no sign they were ever there.
    */
   abandoned?: { count: number; branches: number; summary: string | null };
+  /** the transcript file's size in bytes (ConversationResponse.transcript_bytes) */
+  transcript_bytes?: number;
   history_id: string;
   /** changes whenever the answer could: the route's ETag, so an unchanged poll costs no body */
   version: string;

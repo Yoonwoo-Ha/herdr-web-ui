@@ -1949,6 +1949,30 @@ button {
   white-space: nowrap;
 }
 
+/* the chat's session totals after the crumb (lib/sessionStats.ts): an item of its own, so it wraps out
+   of sight first, whole or not at all like the crumb. A phone's header line is the title's: there the
+   More menu says them */
+.context-session {
+  gap: var(--space-2);
+}
+
+.context-session-goal {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.context-session-goal svg {
+  width: 1em;
+  height: 1em;
+}
+
+@media (max-width: 768px) {
+  .context-session {
+    display: none;
+  }
+}
+
 /* the PC's name is whole in the crumb, like the rest of it: the crumb fits or is not drawn.
    Its cap (Machines.css) is for the header with no pane, where it sits beside the brand. */
 .context-sub .machine-context-name {
@@ -2312,6 +2336,13 @@ button.header-session-count[aria-disabled="true"] {
   color: var(--text);
   font-family: var(--font-mono);
   white-space: pre-wrap;
+}
+
+/* the selected chat's totals and goal under the path (lib/sessionStats.ts), at every width */
+.header-more-session {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--space-1);
 }
 
 /* From 769px the header is two zones. Over the sidebar, the sidebar's own top row (its toggle

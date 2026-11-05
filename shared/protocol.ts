@@ -665,6 +665,12 @@ export interface ConversationResponse {
    * agent that keeps no entry tree.
    */
   abandoned?: { count: number; branches: number; summary: string | null };
+  /**
+   * The size in bytes of the transcript file the newest page was read from (Codex: its rollout), as
+   * the read saw it; absent from an older page and from stores that are not one file (OpenCode,
+   * Devin, Hermes, dsh), where the chat says the size is unknown.
+   */
+  transcript_bytes?: number;
 }
 
 export type { PluginActionContext, PluginAction, PluginActions, PluginActionsResponse, PluginActionRequest, PluginActionResult } from "./plugins.ts";

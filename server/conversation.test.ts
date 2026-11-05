@@ -51,6 +51,23 @@ it("keeps a cached pre-final Claude page distinct from its appended final answer
   } finally { forgetTranscriptState(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+it("says the transcript file's size on the newest page only, and again once it grows", () => {
+  const dir = mkdtempSync(join(tmpdir(), "transcript-bytes-"));
+  const file = join(dir, "session.jsonl");
+  const record = (type: "user" | "assistant", text: string) => JSON.stringify({
+    type, timestamp: "2026-10-19T01:00:00Z", message: { role: type, content: [{ type: "text", text }] },
+  }) + "\n";
+  try {
+    writeFileSync(file, record("user", "first ask") + record("assistant", "x".repeat(TRANSCRIPT_WINDOW_BYTES)) + record("user", "next ask"));
+    const newest = transcriptPage("claude-transcript", file);
+    expect(newest.transcript_bytes).toBe(fs.statSync(file).size);
+    appendFileSync(file, record("assistant", "next answer"));
+    expect(transcriptPage("claude-transcript", file).transcript_bytes).toBe(fs.statSync(file).size);
+    expect(newest.cursor).not.toBeNull();
+    expect(transcriptPage("claude-transcript", file, { before: newest.cursor! }).transcript_bytes).toBeUndefined();
+  } finally { forgetTranscriptState(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 describe("omo skill roots", () => {
   it("finds the bundled plugin from a Windows canonical launcher path", async () => {
     const canonical = win32.join("C:\\Users\\demo", "node_modules", "omo-ai", "dist", "cli.js");

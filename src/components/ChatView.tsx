@@ -38,6 +38,7 @@ import { endedOnAnswer, isLiveWorkTurn, isWaitingWorkTurn, formatWorkDuration, r
 import { phaseRows, planRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
 import { isTodoTool, parseTodoAnswer, todoCallSummary, type TodoItem, type TodoStatus } from "../lib/todos.ts";
 import { formatGoalTime, turnGoal, type GoalState, type GoalStatus } from "../lib/goals.ts";
+import { publishSessionStats, sessionStats } from "../lib/sessionStats.ts";
 import { useSettings } from "../lib/settings.ts";
 import { learnFromConversation } from "../lib/tabLabels.ts";
 import { PAGE_OVERLAP_ROWS, pageScrollDistance } from "../lib/pageScroll.ts";
@@ -1392,6 +1393,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   // turns the transcript holds on a path /tree walked away from: no page can reach them, so the
   // only way to say they exist is to be told, and to say it where the reader would look for them
   const [abandoned, setAbandoned] = useState<{ count: number; branches: number; summary: string | null } | null>(null);
+  const [transcriptBytes, setTranscriptBytes] = useState<number | null>(null);
   // the suggestion is handed up from each read, with the pane that read it: never kept here,
   // where a pane switch or a send upstream could leave it stale
   const onSuggestionRef = useRef(onSuggestion);
@@ -1528,6 +1530,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     onMetadataRef.current?.(paneId, conversation.metadata ?? null);
     setScreenRead(conversation.screen === true);
     setAbandoned(conversation.abandoned ?? null);
+    setTranscriptBytes(conversation.transcript_bytes ?? null);
   };
 
   /** Lays out the state built from an answer and marks that answer as the one shown. */
@@ -2349,6 +2352,12 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   heldPage.current = state.turns;
   const finishedBeforeSend = sentOver !== null && sentOver.page === state.turns ? sentOver.turn : null;
   const lastShownTurn = state.source === "conversation" ? shownTurns.at(-1) : undefined;
+  // the header's session totals (lib/sessionStats.ts): only a conversation read says them
+  const stats = useMemo(() => loaded && state.source === "conversation" ? sessionStats(shownTurns, olderCursor === null, transcriptBytes) : null,
+    [loaded, state.source, shownTurns, olderCursor, transcriptBytes]);
+  const statsView = useRef(Symbol("chat view")).current;
+  useEffect(() => { publishSessionStats(machineId, paneId, statsView, stats); }, [machineId, paneId, statsView, stats]);
+  useEffect(() => () => publishSessionStats(machineId, paneId, statsView, null), [machineId, paneId, statsView]);
   // Claude Code's activity is herdr's status, which can rest before a read holds the turn's answer:
   // the turn stays at work until one does. Before paint, so no frame shows it ended with no answer.
   const answerEdge = useRef<{ pane: string; status: AgentStatus | undefined }>({ pane: paneId, status: agentStatus });
