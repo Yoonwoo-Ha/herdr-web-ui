@@ -163,7 +163,13 @@ jobs:
           OVIS_REQUIRE_NOTARIZATION: ${{ steps.sign.outputs.on == 'true' && '1' || '' }}
           WIN_CSC_LINK: ${{ steps.winsign.outputs.on == 'true' && secrets.WIN_CSC_LINK || '' }}
           WIN_CSC_KEY_PASSWORD: ${{ steps.winsign.outputs.on == 'true' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
-        run: bun run dist
+        # electron-builder reads an empty CSC_LINK as a path ("app/electron not a file") outside a pull
+        # request, so a build with signing off must not have the signing variables at all
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD WIN_CSC_LINK WIN_CSC_KEY_PASSWORD; do
+            [ -n "${!name}" ] || unset "$name"
+          done
+          bun run dist
       - name: Remove the notary key
         if: always() && steps.sign.outputs.key != ''
         env:
