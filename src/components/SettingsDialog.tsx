@@ -399,6 +399,9 @@ function AppearancePage() {
       <SettingsRow label={t("Sidebar filter")} description={t("Show the Filter field above the sidebar's lists on this device. When off, Filter workspaces and agents in the command palette opens it.")}>
         <Toggle label={t("Sidebar filter")} checked={settings.sidebarFilter} onChange={(sidebarFilter) => update({ sidebarFilter })} />
       </SettingsRow>
+      <SettingsRow label={t("Show the sidebar on hover")} description={t("On this device, while the sidebar is hidden, resting the mouse on its button shows it over the pane until the mouse leaves. Click the button to keep it open.")}>
+        <Toggle label={t("Show the sidebar on hover")} checked={settings.sidebarPeek} onChange={(sidebarPeek) => update({ sidebarPeek })} />
+      </SettingsRow>
       <SettingsRow label={t("Context left on agent rows")} description={t("On this device, show the context ring from the chat's composer on each agent row, for the agents whose context window is known (Claude Code and Codex). It turns red at 20% left or less.")}>
         <Toggle label={t("Context left on agent rows")} checked={settings.sidebarContext} onChange={(sidebarContext) => update({ sidebarContext })} />
       </SettingsRow>

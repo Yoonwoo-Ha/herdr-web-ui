@@ -877,7 +877,14 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   `--sidebar-user-w` on `.app`; the sidebar and its top row in the header both read
   `--sidebar-shown-w`. A phone's drawer keeps `--sidebar-w`.
 - The sidebar keeps its width on desktop until its edge is dragged, and is a `<=768px` drawer. The desktop collapse removes its
-  column; the drawer uses a scrim and keeps safe-area insets. On touch, a mostly horizontal swipe in
+  column; the drawer uses a scrim and keeps safe-area insets. Settings → Appearance → **Show the sidebar on hover** (#2588;
+  off by default, this device's choice) follows the Claude desktop app's collapsed sidebar, on the existing toggle rather
+  than an edge strip: a mouse resting `150ms` on the toggle of a collapsed sidebar shows it as `.sidebar.is-peek`, fixed
+  under the header at its open width with `--shadow-drawer` at `--z-drawer` and no scrim, so the pane keeps its width and
+  no pty resizes. Nothing takes the focus. The trip into it keeps it; `300ms` after the pointer left both it goes, later
+  while a row menu it opened is up or a field in it (the filter, a rename) has the focus. Escape puts it away and still
+  reaches the pane, unless that field or menu, or a modal dialog, takes it first; a click on the toggle
+  keeps the sidebar open as before. A touch never peeks (lib/sidebarPeek.ts). On touch, a mostly horizontal swipe in
   from the left `24px` edge opens the drawer and a swipe to the left closes it. While the finger is
   down the drawer is under it and the scrim darkens with it; let go, it stays open when more than half
   shows or a flick (`0.35` px/ms, not after a `100ms` rest) went that way, and slides the rest from there.

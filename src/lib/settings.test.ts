@@ -440,6 +440,15 @@ it("leaves herdr's focus alone until this device asks to follow it, and keeps th
   expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("followHerdrFocus");
 });
 
+it("keeps the sidebar's hover peek off until this device turns it on, and keeps that choice its own", () => {
+  expect(DEFAULT_SETTINGS.sidebarPeek).toBe(false);
+  expect(sanitizeSettings({}).sidebarPeek).toBe(false);
+  expect(sanitizeSettings({ sidebarPeek: true }).sidebarPeek).toBe(true);
+  expect(sanitizeSettings({ sidebarPeek: "true" }).sidebarPeek).toBe(false);
+  expect(SETTING_SCOPE.sidebarPeek).toBe("device");
+  expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("sidebarPeek");
+});
+
 it("keeps the composer's New tab button off until this device turns it on, and keeps that choice its own", () => {
   expect(sanitizeSettings({}).composerNewTabButton).toBe(false);
   expect(sanitizeSettings({ composerNewTabButton: true }).composerNewTabButton).toBe(true);

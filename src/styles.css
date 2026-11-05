@@ -1721,6 +1721,19 @@ button {
   --sidebar-shown-w: 0px;
 }
 
+/* Settings → Show the sidebar on hover (lib/sidebarPeek.ts): the collapsed sidebar over the pane, under the
+   header, at the width it has when open; the pane keeps its width, so no pty is resized */
+.app.sidebar-collapsed .sidebar.is-peek {
+  display: flex;
+  position: fixed;
+  top: calc(var(--header-h) + env(safe-area-inset-top, 0px));
+  bottom: 0;
+  left: 0;
+  z-index: var(--z-drawer);
+  width: min(var(--sidebar-user-w, var(--sidebar-w)), 50vw);
+  box-shadow: var(--shadow-drawer);
+}
+
 .scrim {
   display: none;
 }

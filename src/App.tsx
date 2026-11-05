@@ -99,6 +99,7 @@ import { selectionStill } from "./lib/selectionMark.ts";
 import { carryMovedPane, movedView } from "./lib/paneMove.ts";
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
 import { useSidebarLayout } from "./lib/useSidebarLayout.ts";
+import { useSidebarPeek } from "./lib/sidebarPeek.ts";
 import { useAlertPrefs, useAlertRefs } from "./lib/useAlerts.ts";
 import { useAlertSignals } from "./lib/useAlertSignals.ts";
 import { useNotificationState, useNotificationSwitch } from "./lib/useNotifications.ts";
@@ -208,6 +209,8 @@ export function App() {
   const { otherRecheck, otherRosterTick, setOtherRosterTick } = useSplitRecheck();
   const { rosterIn, pendingFile, selectionHint, setHeaderNote, note, autoSelected, setAutoSelected } = useLinkLanding({ initialLink, otherRecheck, setOtherRosterTick, pendingLink, rosterSeq, setRosterTick, linkLanded, t });
   const { drawerOpen, setDrawerOpen, drawerOpenRef, wideScreen, sidebarCollapsed, setSidebarCollapsed, sidebarWidth, setSidebarWidth, filePanelAvailable, filePanelWidth, setFilePanelWidth, sidebarFilterRequest, openSidebarFilter } = useSidebarLayout({ initialLink });
+  // Settings → Show the sidebar on hover: the collapsed sidebar over the pane for a moment (lib/sidebarPeek.ts)
+  const { peeking: sidebarPeeking, toggleHandlers: peekToggleHandlers, sidebarHandlers: peekSidebarHandlers } = useSidebarPeek(settings.sidebarPeek && wideScreen && sidebarCollapsed);
   const { selectionRef, movingPanes } = useSelectionMark({ selectedMachineId, selectedPaneId });
   const { lens, setLens, viewPicks, setViewPicks } = usePaneLensState();
   const { split, setSplit, soloSlot, endSplit, splitRef, splitShownRef, lastKeyAtRef, paneDragging, setPaneDragging, dropAt, dropAtRef, showDropTarget, clearDropPreview, paneAreaRef, tabDrag, draggedPaneRef, markSwap, markMove } = useSplitState();
@@ -753,6 +756,7 @@ export function App() {
             aria-pressed={!sidebarCollapsed}
             title={t("Toggle sidebar (⌘⇧B)")}
             onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            {...peekToggleHandlers}
           >
             <PanelLeft />
           </button>
@@ -878,12 +882,12 @@ export function App() {
 
       <PanePressContext.Provider value={pressPane}>
       <div className="app-body">
-        <aside id="workspace-drawer" className={`sidebar${drawerOpen ? " is-open" : ""}`}>
+        <aside id="workspace-drawer" className={`sidebar${drawerOpen ? " is-open" : ""}${sidebarPeeking ? " is-peek" : ""}`} {...peekSidebarHandlers}>
           {error && <div className="error-state" role="alert"><p>{error}</p><button className="btn" onClick={() => void load()}>{t("Retry")}</button></div>}
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <ReorderContext.Provider value={reorderCoordinator}><MachineSidebar machines={sidebarMachines} allMachines={machines} hiddenCount={machines.length - sidebarMachines.length} pcLoad={pcLoadOn(settings, machines)} shown={wideScreen ? !sidebarCollapsed : drawerOpen} watching={auth?.role === "watch"} appLayout={appLayoutOn} drawerOpen={drawerOpen} filterRequest={sidebarFilterRequest} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} activity={activity} actions={actions} onSelect={selectTarget} onUsageLogin={(paneId) => { selectTarget("local", paneId, "terminal"); void load(); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} /></ReorderContext.Provider>
+            <ReorderContext.Provider value={reorderCoordinator}><MachineSidebar machines={sidebarMachines} allMachines={machines} hiddenCount={machines.length - sidebarMachines.length} pcLoad={pcLoadOn(settings, machines)} shown={wideScreen ? !sidebarCollapsed || sidebarPeeking : drawerOpen} watching={auth?.role === "watch"} appLayout={appLayoutOn} drawerOpen={drawerOpen} filterRequest={sidebarFilterRequest} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} activity={activity} actions={actions} onSelect={selectTarget} onUsageLogin={(paneId) => { selectTarget("local", paneId, "terminal"); void load(); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} /></ReorderContext.Provider>
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>

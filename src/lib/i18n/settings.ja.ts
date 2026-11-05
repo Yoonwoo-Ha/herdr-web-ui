@@ -119,6 +119,8 @@ export const SETTINGS_JA: Record<string, string> = {
   "One line": "1 行",
   "Two lines": "2 行",
   "Sidebar filter": "サイドバーの絞り込み",
+  "Show the sidebar on hover": "ホバーでサイドバーを表示",
+  "On this device, while the sidebar is hidden, resting the mouse on its button shows it over the pane until the mouse leaves. Click the button to keep it open.": "このデバイスで、サイドバーを隠しているときにボタンへマウスを置くと、マウスが離れるまでサイドバーをペインの上に表示します。開いたままにするにはボタンをクリックします。",
   "Name tabs from the first message": "最初のメッセージでタブに名前を付ける",
   "A tab still named by its number shows a few words of the first message sent to it, in every browser. A name you gave a tab is kept, and herdr's own tab names do not change. Only those words are kept, on this server, until the tab closes; turning this off deletes them.": "番号だけのタブに、そのタブへ送った最初のメッセージの数語を表示します。すべてのブラウザに反映されます。自分で付けたタブ名はそのまま残り、herdr のタブ名は変わりません。保存するのはその数語だけで、タブを閉じるまでこのサーバーに残り、オフにすると削除されます。",
   "Show the Filter field above the sidebar's lists on this device. When off, Filter workspaces and agents in the command palette opens it.": "このデバイスで、サイドバーの一覧の上に絞り込み欄を表示します。オフのときは、コマンドパレットの「ワークスペースとエージェントを絞り込む」で開きます。",

@@ -119,6 +119,8 @@ export const SETTINGS_ZH: Record<string, string> = {
   "One line": "单行",
   "Two lines": "双行",
   "Sidebar filter": "侧边栏筛选",
+  "Show the sidebar on hover": "悬停时显示侧边栏",
+  "On this device, while the sidebar is hidden, resting the mouse on its button shows it over the pane until the mouse leaves. Click the button to keep it open.": "在此设备上隐藏侧边栏时，将鼠标停在侧边栏按钮上，会在窗格上方显示侧边栏，直到鼠标移开。点击按钮可保持打开。",
   "Name tabs from the first message": "用第一条消息命名标签页",
   "A tab still named by its number shows a few words of the first message sent to it, in every browser. A name you gave a tab is kept, and herdr's own tab names do not change. Only those words are kept, on this server, until the tab closes; turning this off deletes them.": "只有编号的标签页会显示发给它的第一条消息中的几个词，在所有浏览器中生效。你起的标签页名称会保留，herdr 自己的标签页名称不会改变。只保存这几个词，存于此服务器，直到标签页关闭；关闭此设置会将其删除。",
   "Show the Filter field above the sidebar's lists on this device. When off, Filter workspaces and agents in the command palette opens it.": "在此设备的侧边栏列表上方显示筛选框。关闭时，可从命令面板的“筛选工作区和代理”打开。",
