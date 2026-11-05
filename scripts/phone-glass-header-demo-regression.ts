@@ -123,6 +123,32 @@ try {
         assert.equal(await tabName.count(), 1, "a composing Escape does not close the Rename tab dialog");
         await page.keyboard.press("Escape");
         await tabName.waitFor({ state: "detached" });
+        // Move to workspace\u2026 lists the other workspaces in a second menu (the move itself is the last step)
+        await openMore(page);
+        await sheet.getByText("Move to workspace\u2026", { exact: true }).click();
+        await sheet.getByText("Move Duo tab to", { exact: true }).waitFor();
+        assert.ok(await sheet.locator(".row-sheet-item:not(.row-sheet-cancel)").count() > 0, "the second menu lists the other workspaces");
+        await closeMenu(page);
+        // Close tab asks first, as the row's does for a workspace's last tab
+        await openMore(page);
+        await sheet.getByText("Close tab", { exact: true }).click();
+        const closeDialog = page.getByRole("alertdialog", { name: "Close tab Duo tab?" });
+        await closeDialog.waitFor();
+        await page.keyboard.press("Escape");
+        await closeDialog.waitFor({ state: "detached" });
+        // a landscape phone (wider than the sheet's breakpoint) draws the workspaces as a popover at the
+        // header's More, all on screen, and Escape gives the focus back to that button
+        await page.setViewportSize({ width: 667, height: 375 });
+        await page.locator(".tab-strip").waitFor({ state: "detached" });
+        await openMore(page);
+        await sheet.getByText("Move to workspace\u2026", { exact: true }).click();
+        const destinations = page.getByRole("menu", { name: "Move Duo tab to" });
+        await destinations.waitFor();
+        const box = await destinations.boundingBox();
+        assert.ok(box && box.y >= 0 && box.y + box.height <= 375, `the workspaces menu is on screen (${JSON.stringify(box)})`);
+        await page.keyboard.press("Escape");
+        await destinations.waitFor({ state: "detached" });
+        assert.ok(await page.locator(".header-more-button").evaluate((node) => node === document.activeElement), "Escape gives the focus back to the header's More");
 
         await page.setViewportSize({ width: 390, height: 844 });
         await page.locator(".tab-strip").waitFor();
@@ -172,6 +198,14 @@ try {
         for (const banner of banners) {
           assert.ok(banner.y >= header.y + header.height - 0.5, `the banner "${banner.text}" ${JSON.stringify(banner)} starts below the glass header (bottom ${header.y + header.height})`);
         }
+        // the move from the header's menu: the lone tab joins another workspace, and the view goes with its pane
+        const before = new URL(page.url()).searchParams.get("ws");
+        await openMore(page);
+        await sheet.getByText("Move to workspace\u2026", { exact: true }).click();
+        await sheet.getByText("Move Duo tab to", { exact: true }).waitFor();
+        await sheet.locator(".row-sheet-item:not(.row-sheet-cancel)").first().click();
+        await page.waitForFunction((was) => new URL(location.href).searchParams.get("ws") !== was, before);
+        await page.locator(".tab-strip-label", { hasText: "Duo tab" }).waitFor();
         assert.deepEqual(errors, []);
       } finally { await context.close(); }
     } finally { await browser.close(); }
@@ -197,7 +231,7 @@ async function checkMenus(page: Page, label: string): Promise<void> {
   assert.equal(await page.locator(".pane-frame.is-single .pane-frame-menu").count(), 0, `${label}: the lone pane draws no second ellipsis under the header's`);
   await openMore(page);
   const sheet = page.locator(".row-sheet, .row-menu");
-  for (const item of ["Search panes and actions", "Rename pane", "Close pane", "New terminal", "New tab with agent\u2026", "Rename tab"]) {
+  for (const item of ["Search panes and actions", "Rename pane", "Close pane", "New terminal", "New tab with agent\u2026", "Rename tab", "Move to workspace\u2026", "Close tab"]) {
     assert.equal(await sheet.getByText(item, { exact: true }).count(), 1, `${label}: the header's menu offers ${item}`);
   }
   assert.equal(await sheet.getByText("Split right", { exact: true }).count(), 0,

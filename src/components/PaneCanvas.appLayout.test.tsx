@@ -55,12 +55,12 @@ describe("the pane canvas on a PC the Herdr app lays out", () => {
     }
   });
 
-  async function draw(appLayout: boolean): Promise<(target: HerdrPane) => string[]> {
+  async function draw(appLayout: boolean, drawn: SessionSnapshot = snapshot): Promise<(target: HerdrPane) => string[]> {
     const actionsRef: { current: ((target: HerdrPane) => RowMenuItem[]) | null } = { current: null };
     await act(async () => {
       renderer = create(createElement(SettingsProvider, null, createElement(AppLayoutContext.Provider, { value: appLayout },
-        createElement(PaneCanvas, { snapshot, pane: snapshot.panes[0] as HerdrPane, selectedPaneId: "p1", onSelect: () => {}, onChanged: () => {}, renderPane: () => null, actionsRef,
-          onNewTab: () => {}, onNewTerminal: async () => {} }))));
+        createElement(PaneCanvas, { snapshot: drawn, pane: drawn.panes[0] as HerdrPane, selectedPaneId: "p1", onSelect: () => {}, onChanged: () => {}, renderPane: () => null, actionsRef,
+          onNewTab: () => {}, onNewTerminal: async () => {}, onMoveToWorkspace: async () => {} }))));
     });
     return (target) => actionsRef.current!(target).map((item) => item.id);
   }
@@ -76,9 +76,30 @@ describe("the pane canvas on a PC the Herdr app lays out", () => {
   it("gives a lone tab with no row (a cramped phone) the row's menu, for the header's More menu, and no pane ellipsis", async () => {
     phone = true;
     const itemsOf = await draw(false);
-    expect(itemsOf(snapshot.panes[0] as HerdrPane)).toEqual(["pane:p1", "pane:p2", "rename", "clear-name", "close", "new-terminal", "new-agent-tab", "rename-tab"]);
+    expect(itemsOf(snapshot.panes[0] as HerdrPane)).toEqual(["pane:p1", "pane:p2", "rename", "clear-name", "close", "new-terminal", "new-agent-tab", "rename-tab", "close-tab"]);
     const heads = renderer!.root.findAll((node) => node.props.className === "pane-frame-head");
     expect(heads.map((head) => head.parent?.props["data-layout-pane"])).toEqual(["p2"]);
+  });
+
+  // a one-pane lone tab beside another workspace: herdr moves it there, as the row's menu offers
+  const movable: SessionSnapshot = {
+    ...snapshot,
+    workspaces: [{ ...snapshot.workspaces[0]!, pane_count: 1 }, { ...snapshot.workspaces[0]!, workspace_id: "w2", label: "w2", active_tab_id: "t2", number: 2, focused: false }],
+    tabs: [{ ...snapshot.tabs[0]!, pane_count: 1 }, { ...snapshot.tabs[0]!, tab_id: "t2", workspace_id: "w2", focused: false }],
+    panes: [pane("p1"), { ...pane("p3"), workspace_id: "w2", tab_id: "t2" } as HerdrPane],
+    layouts: [],
+  };
+
+  it("gives a lone one-pane tab with no row Move to workspace and Close tab, as the row's menu does", async () => {
+    phone = true;
+    const itemsOf = await draw(false, movable);
+    expect(itemsOf(movable.panes[0] as HerdrPane)).toEqual(["rename", "close", "new-terminal", "move-workspace", "new-agent-tab", "rename-tab", "close-tab"]);
+  });
+
+  it("keeps a lone tab with no row on a PC the Herdr app lays out to Close tab, with no move or rename", async () => {
+    phone = true;
+    const itemsOf = await draw(true, movable);
+    expect(itemsOf(movable.panes[0] as HerdrPane)).toEqual(["close", "new-terminal", "new-agent-tab", "close-tab"]);
   });
 
   it("leaves no actions behind for the header's menu once the canvas is gone", async () => {
