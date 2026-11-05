@@ -3154,7 +3154,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   640px the New tab button (off by default), the Artifacts chip (off by default, the device setting
   `composerArtifacts`), and on a touch screen the suggestion chip (off by default); then
   **Quick replies**; then **File viewer**: wrap long lines, Markdown width, Diff layout), **Terminal** (font size, font family, wheel
-  speed, input mode, Key bar, Clipboard from a pane, Use alongside herdr's own window, Follow
+  speed, input mode, Key bar, Clipboard from a pane, Pictures in the terminal (off by default, the
+  device setting `terminalImages`), Use alongside herdr's own window, Follow
   herdr's focus), **Alerts**, **Voice input**, **Agents**,
   **Shortcuts** (the platform-resolved global bindings), **Phone & devices** (Connect a phone,
   Keep screen on, Install; then Portal, where the server offers it; then paired devices; then Access),

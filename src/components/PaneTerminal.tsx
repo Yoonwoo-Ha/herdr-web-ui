@@ -71,6 +71,7 @@ import { useComposerSends } from "../lib/useComposerSends.ts";
 import { usePeekReturn } from "../lib/usePeekReturn.ts";
 import { useChatCallbacks } from "../lib/useChatCallbacks.ts";
 import { useTypedKeys } from "../lib/useTypedKeys.ts";
+import { useTerminalImages } from "../lib/terminalImages.ts";
 import { mountRole, paneObserving } from "../lib/paneObserving.ts";
 
 /** How long the key bar says where Paste goes while the input line is put away: two lines to read. */
@@ -452,6 +453,7 @@ export function PaneTerminal({
   /** read by the OSC 52 handler, which is attached once for the terminal's life */
   const osc52AllowedRef = useRef(settings.paneClipboard);
   osc52AllowedRef.current = settings.paneClipboard;
+  useTerminalImages(terminal, settings.terminalImages, coarse);
   // a wide mirror folds on a narrow screen until the pane menu's Wrap to screen / Original width says otherwise
   const narrowScreen = useMediaQuery(MIRROR_WRAP_QUERY);
   const mirrorWrap = settings.terminalMirrorWrap ?? narrowScreen;

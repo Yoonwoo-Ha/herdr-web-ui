@@ -265,6 +265,7 @@ bun scripts/chat-browser-qa.ts  # chat lens end to end
 bun scripts/omo-plan-browser-regression.ts # OmO todo progress and plan panel on isolated native fixtures
 bun scripts/pane-input-focus-demo-regression.ts # the input focus shortcut against fictional panes
 bun scripts/mirror-scroll-demo-regression.ts # fixed mirror wheel/touch, native history, no guessed program input, observe guards
+bun scripts/terminal-images-demo-regression.ts # Settings -> Pictures in the terminal: a picture is drawn, goes while off, and on again the next one is drawn only where it was printed
 bun scripts/core-history-scroll-demo-regression.ts # a herdr-core server's history kept in xterm: wheel and swipe scroll it, a replay erases the last one, nothing typed; herdr's own keeps none (#2663)
 bun scripts/mirror-fold-demo-regression.ts # a mirror, or an attached pane a phone watches at a wider grid, folded whole (portrait, landscape), Original width from the pane menu, driving phones and desktops unfolded
 bun scripts/shortcut-exact-modifiers-demo-regression.ts # recording exact-modifier chords: confirm, refusals, dispatch

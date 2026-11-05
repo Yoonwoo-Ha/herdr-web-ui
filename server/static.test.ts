@@ -104,7 +104,7 @@ describe("the hosted shell's policy", () => {
     const hosted = directives(shellContentSecurityPolicy());
     expect(hosted.get("style-src")).toBe("style-src 'self' 'unsafe-inline'");
     expect(hosted.get("font-src")).toBe("font-src 'self' data:");
-    expect(hosted.get("script-src")).toBe("script-src 'self'");
+    expect(hosted.get("script-src")).toBe("script-src 'self' 'wasm-unsafe-eval'");
   });
 });
 

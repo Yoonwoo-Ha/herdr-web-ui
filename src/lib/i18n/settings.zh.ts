@@ -170,6 +170,8 @@ export const SETTINGS_ZH: Record<string, string> = {
   "A button in the message box opens New tab with an agent… on the pane's workspace. The tab menu offers it either way.": "输入框中的按钮可在该面板的工作区打开“带代理的新标签页…”。标签页菜单中始终可用。",
   "Clipboard from a pane": "从窗格写入剪贴板",
   "A program in a pane that copies (vim, tmux, Claude Code) puts its text on this device's clipboard, as a copy you made yourself would. Turn it off if a pane runs output you do not trust: it could replace what you paste next.": "窗格中执行复制的程序（vim、tmux、Claude Code）会像你自己复制一样把文本写入此设备的剪贴板。如果窗格运行你不信任的输出，请关闭它：它可能替换你下次粘贴的内容。",
+  "Pictures in the terminal": "终端中的图片",
+  "Shows the pictures a program draws in a pane (imgcat, img2sixel, chafa) as sixel or iTerm2 images, on this device. Only on a PC that runs herdr-core, as the desktop app does: herdr does not pass pictures on. A picture is gone once the pane is drawn again.": "在此设备上以 sixel 或 iTerm2 图像显示窗格中程序绘制的图片(imgcat、img2sixel、chafa)。仅适用于运行 herdr-core 的电脑(如桌面应用):herdr 不会传递图片。窗格重新绘制后图片会消失。",
   "Use alongside herdr's own window": "与终端里的 herdr 一起使用",
   "Turn this on if herdr is also open in a terminal window, on this PC or another. A second after you switch to another window, or after 10 seconds without typing or clicking in a terminal you type straight into, this tab only watches the pane, so herdr's window keeps the pane at its own size instead of this window's. Type or click in the terminal to type again: what you type goes in once it is back. While it watches, the pane is drawn at herdr's size and may not fill this window.": "如果这台电脑或另一台电脑的终端窗口里也开着 herdr，请打开此项。切换到其他窗口一秒后，或在直接输入的终端里十秒没有输入或点击，此标签页只查看窗格，herdr 窗口会按自己的尺寸而不是此窗口的尺寸保留窗格。在终端里输入或点击即可再次输入，输入的内容会在恢复后送达。查看期间窗格按 herdr 的尺寸绘制，可能不会填满此窗口。",
   "Follow herdr's focus": "跟随 herdr 的焦点",
