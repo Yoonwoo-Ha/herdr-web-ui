@@ -8,7 +8,7 @@ import { ATTACH_HELD_MESSAGE } from "./terminal-process.ts";
 import { paneAgentOf } from "../pane-context.ts";
 import type { TerminalSighting } from "./terminals.ts";
 import type { ClientMessage } from "../../shared/protocol.ts";
-import { isMouseReport, typingGuards } from "../input-guard.ts";
+import { isMouseReport, isTerminalReply, typingGuards } from "../input-guard.ts";
 import { HerdrError, paneRead, paneSendKeys, paneSendText } from "../herdr/client.ts";
 import { secretPrompt, validSecret } from "../../shared/secret-prompt.ts";
 import { insertTextProblem } from "../../shared/terminal-insert.ts";
@@ -150,8 +150,10 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
       if (paneQueues.has(message.pane_id) || stop) {
         const text = message.text;
         // a click or a wheel (a click replayed behind a held arrow) is the attach's own mouse:
-        // herdr encodes it for the program's mouse mode, send_text would type its bytes (#667)
-        const mouse = isMouseReport(text);
+        // herdr encodes it for the program's mouse mode, send_text would type its bytes (#667).
+        // The terminal's answers to its attach's questions go to that attach too, or they are typed (#2816):
+        // only what the browser's terminal made itself, so a paste of the same bytes is still typed
+        const viaAttach = isMouseReport(text) || (message.automatic === true && isTerminalReply(text));
         // typed into the attach it saw: one that ended meanwhile (and was attached again) takes none of it
         const roles = connectionOf(client).roles;
         const allowed = () => mayType(client) && connectionOf(client).roles === roles && typingGuards.queuedTyping(sighting.facts());
@@ -163,8 +165,8 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
           // nothing typed outlives its connection
           if (!clients.has(client)) return;
           authorizeSocket(client);
-          if (mouse) {
-            if (!allowed() || !sighting.write(text)) { inputFailed(); return; }
+          if (viaAttach) {
+            if (!allowed() || !sighting.write(text, message.automatic === true)) { inputFailed(); return; }
             typedIntoPty(text);
             receipt(true);
             return;
