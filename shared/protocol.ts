@@ -552,6 +552,11 @@ export interface ConversationTurn {
   ts: string | null;
   /** Last recorded assistant activity, never the next user's timestamp. */
   end_ts?: string;
+  /**
+   * The store row each text part was read from, in the parts' order (Hermes's message ids): a search
+   * match is found by the row its words are in, wherever a page boundary split the turn.
+   */
+  text_rows?: number[];
   parts: ConversationPart[];
 }
 

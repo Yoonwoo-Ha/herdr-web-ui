@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { ConversationTurn } from "./protocol.ts";
 import { createCodexTranscriptParser } from "../server/codex.ts";
+import { parseHermesRows, type HermesMessageRow } from "../server/hermes.ts";
 import { conversationTurnAnchor, matchSnippet, pickedTurn, pickSettled, searchableText, searchedTurnChanged, searchPattern, searchTurns } from "./conversation-search.ts";
 
 const user = (text: string, ts: string | null = "2026-10-01T00:00:00Z"): ConversationTurn => ({ role: "user", ts, parts: [{ kind: "text", text }] });
@@ -241,6 +242,96 @@ describe("pickedTurn", () => {
     expect(pickedTurn([answer(`${lead} deploy [docs](https://example.com) are up.`), user("again"), answer(`${lead} deploy [docs`)], link)).toBe("several");
     const both = searchTurns([answer(`${lead} fruit`)], searchPattern("fruit")!)[0]!;
     expect(pickedTurn([answer(`${lead} fruit`), user("again"), answer(`${lead} fruit`)], both)).toBe("several");
+  });
+
+  it("opens the one of answers of its time sharing their name and the matched words that says what was searched", () => {
+    // Codex dates both answers by the task's start: one name, and both hold the matched words
+    const lead = "x".repeat(90);
+    const turns = [answer(`${lead} first way`), user("again"), answer(`${lead} second way`)];
+    const [second, first] = searchTurns(turns, searchPattern("way")!);
+    expect(pickedTurn(turns, first!)).toBe(0);
+    expect(pickedTurn(turns, second!)).toBe(2);
+    // the first went on from the second's words since: either could be the searched one
+    expect(pickedTurn([answer(`${lead} second way and more`), user("again"), answer(`${lead} second way`)], second!)).toBe("several");
+    // the searched answer's words became a progress note, after another note with them: either may be it
+    const noted = (last: "commentary" | undefined): ConversationTurn => ({ role: "assistant", ts: "2026-10-01T00:00:01Z", parts: [
+      { kind: "text", text: lead }, { kind: "text", text: "needle progress", phase: "commentary" }, { kind: "text", text: "needle target", ...(last === undefined ? {} : { phase: last }) }] });
+    const target = searchTurns([noted(undefined)], searchPattern("needle")!)[0]!;
+    expect(pickedTurn([noted("commentary"), user("again"), noted(undefined)], target)).toBe("several");
+    // nor when the searched answer's first tool got its output since, so its name changed too
+    const tooled = (text: string, output: string): ConversationTurn => ({ role: "assistant", ts: "2026-10-01T00:00:01Z", parts: [
+      { kind: "tool", name: "exec", summary: "exec", input: "", output }, { kind: "text", text }] });
+    const pending = searchTurns([tooled("needle target", "")], searchPattern("needle")!)[0]!;
+    expect(pickedTurn([tooled("needle target", ""), user("a"), tooled("needle other", ""), user("b"), tooled("needle target", "ok")], pending)).toBe("several");
+    // nor when its tool's output came and its words became a note, so it left both the name and the search
+    const paired: ConversationTurn = { ...tooled("needle target", "ok"), parts: [tooled("", "ok").parts[0]!, { kind: "text", text: "needle target", phase: "commentary" }] };
+    expect(pickedTurn([paired, user("a"), tooled("needle other", ""), user("b"), tooled("needle target", "")], pending)).toBe("several");
+    // nor when the words ran from a part now a note into an answer
+    const spans = (note: boolean): ConversationTurn => ({ role: "assistant", ts: "2026-10-01T00:00:01Z", parts: [
+      { kind: "text", text: lead }, { kind: "text", text: "needle", ...(note ? { phase: "commentary" as const } : {}) }, { kind: "text", text: "target" }] });
+    const spanned = searchTurns([spans(false)], searchPattern("needle target")!)[0]!;
+    expect(pickedTurn([spans(true), user("again"), spans(false)], spanned)).toBe("several");
+    // an older server's match has no digest: none is opened, as before
+    const { text_digest: _, ...old } = second!;
+    expect(pickedTurn(turns, old)).toBe("several");
+  });
+
+  it("opens a Hermes answer by the store row its words are in, wherever a page split it", () => {
+    const row = (id: number, role: "user" | "assistant", content: string): HermesMessageRow =>
+      ({ id, role, content, tool_call_id: null, tool_calls: null, tool_name: null, reasoning: null, timestamp: 1_700_000_000 + id });
+    const rows = [row(100, "user", "deploy it"), row(101, "assistant", "Checking the deploy."), row(102, "assistant", "The deploy script is ready."), row(103, "user", "thanks")];
+    // the chat's newest page began at row 101; a row came since, so the search's began at row 102
+    const shown = parseHermesRows(rows.slice(1));
+    const match = searchTurns(parseHermesRows(rows.slice(2)), searchPattern("deploy script")!)[0]!;
+    expect(pickSettled(shown, match)).toBe(true);
+    expect(pickedTurn(shown, match)).toBe(0);
+    expect(pickedTurn(parseHermesRows(rows), match)).toBe(1);
+    // the search read a row the chat has not yet (the answer went on): by name, as before
+    const growing = [row(100, "user", "deploy it"), row(101, "assistant", "The deploy script is ready."), row(102, "assistant", "Running the deploy script now.")];
+    const ahead = searchTurns(parseHermesRows(growing.slice(2)), searchPattern("deploy script")!)[0]!;
+    const behind = parseHermesRows([growing[0]!, { ...growing[2]!, id: 101 }]);
+    expect(pickSettled(behind, ahead)).toBe(true);
+    expect(pickedTurn(behind, ahead)).toBe(1);
+    // a page that does not hold the row reads on, and opens none
+    expect(pickSettled(shown.slice(1), match)).toBe(false);
+    expect(pickedTurn(shown.slice(1), match)).toBe("none");
+    // the answer split the other way: the part with the words is opened
+    const whole = searchTurns(parseHermesRows(rows), searchPattern("deploy script")!)[0]!;
+    const split = [...parseHermesRows(rows.slice(0, 2)), ...parseHermesRows(rows.slice(2))];
+    expect(pickSettled(split.slice(2), whole)).toBe(true);
+    expect(pickedTurn(split, whole)).toBe(2);
+    // the words a part before the searched rows also has are not the match
+    const said = [row(100, "assistant", "needle earlier"), row(101, "assistant", "filler"), row(102, "assistant", "more filler"), row(103, "assistant", "needle target")];
+    const target = searchTurns(parseHermesRows(said.slice(2)), searchPattern("needle")!)[0]!;
+    expect(pickedTurn([...parseHermesRows(said.slice(0, 3)), ...parseHermesRows(said.slice(3))], target)).toBe(1);
+    // words found across two rows open the part they begin in
+    const across = [row(101, "assistant", "deploy"), row(102, "assistant", "script")];
+    const spanned = searchTurns(parseHermesRows(across), searchPattern("deploy script")!)[0]!;
+    expect(pickedTurn([...parseHermesRows(across.slice(0, 1)), ...parseHermesRows(across.slice(1))], spanned)).toBe(0);
+    // a row gone since joins the turns around it: the row a match was in is in neither
+    const prompt = searchTurns(parseHermesRows(rows), searchPattern("deploy it")!)[0]!;
+    const joined = parseHermesRows([row(99, "assistant", "deploy it, you said"), row(101, "assistant", "Checking.")]);
+    expect(pickSettled(joined, prompt)).toBe(true);
+    expect(pickedTurn(joined, prompt)).toBe("none");
+    // a turn of a tool alone is no older server's: a row gone since opens none, not another call of its name
+    const call = JSON.stringify([{ id: "c1", function: { name: "bash", arguments: "{}" } }]);
+    const called = searchTurns(parseHermesRows([row(9, "user", "go"), { ...row(10, "assistant", "needle"), tool_calls: call }]), searchPattern("needle")!)[0]!;
+    const recalled = parseHermesRows([row(9, "user", "go"), { ...row(11, "assistant", ""), content: null, tool_calls: call, timestamp: 1_700_000_010 }, row(12, "user", "next")]);
+    expect(pickSettled(recalled, called)).toBe(true);
+    expect(pickedTurn(recalled, called)).toBe("none");
+    // turns a page from an older server brought, without rows, go by name
+    const older = parseHermesRows(rows).map(({ text_rows: _, ...turn }) => turn);
+    expect(pickSettled(older, whole)).toBe(true);
+    expect(pickedTurn(older, whole)).toBe(1);
+  });
+
+  it("opens the Hermes answer searched though an earlier answer's tool result came after it", () => {
+    const at = (id: number, fields: Partial<HermesMessageRow>): HermesMessageRow =>
+      ({ id, role: "assistant", content: null, tool_call_id: null, tool_calls: null, tool_name: null, reasoning: null, timestamp: 1_700_000_000 + id, ...fields });
+    const rows = [at(51, { content: "needle old", tool_calls: JSON.stringify([{ id: "c1", function: { name: "bash", arguments: "{}" } }]) }),
+      at(52, { role: "user", content: "again" }), at(53, { content: "needle target" }), at(54, { role: "tool", content: "done", tool_call_id: "c1", tool_name: "bash" })];
+    const match = searchTurns(parseHermesRows(rows.slice(2)), searchPattern("needle")!)[0]!;
+    expect(pickedTurn(parseHermesRows(rows), match)).toBe(2);
   });
 });
 

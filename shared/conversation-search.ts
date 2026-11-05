@@ -27,6 +27,11 @@ export interface ConversationSearchMatch {
    * sends none.
    */
   text_digest?: string;
+  /**
+   * the store row the match begins in (ConversationTurn.text_rows), for an agent whose turns have
+   * them: the pick opens the turn shown with that row, whatever either was named from
+   */
+  row?: number;
   /** the text before the match, the match and the text after it, each with whitespace runs as one space */
   before: string;
   match: string;
@@ -100,6 +105,9 @@ function textDigest(turn: ConversationTurn): string {
 const saysSearched = (turn: ConversationTurn, match: ConversationSearchMatch): boolean =>
   match.text_digest !== undefined && textDigest(turn) === match.text_digest;
 
+/** Every text part's words as the chat draws them, a progress note's too. */
+const allText = (turn: ConversationTurn): string => turn.parts.flatMap((part) => part.kind === "text" ? [plainText(part.text)] : []).join("\n\n");
+
 /** The words around the first match in `text`, or null without one. */
 export function matchSnippet(text: string, pattern: RegExp): Pick<ConversationSearchMatch, "before" | "match" | "after"> | null {
   const found = pattern.exec(text);
@@ -157,12 +165,27 @@ export function searchedTurnChanged(turn: ConversationTurn, match: ConversationS
  * changed ones: none is opened, never the wrong one. Turns of its time that share the name (their
  * first 80 characters agree, or their first tool call) go by which still has the matched words
  * anywhere in its text, a progress note's too: an answer's words never leave it, though they can
- * leave the search (Codex marks them commentary later). None when that is not exactly one. Turns
+ * leave the search (Codex marks them commentary later). When several still have them, the one that
+ * says exactly what was searched, unless another may have said it then and changed since: any turn
+ * went on from the match's words (its name too may have changed), or a turn of its role and time has a
+ * progress note (Codex marks an answer's parts commentary later,
+ * so what it said then is not known). None when that is not exactly one. Turns
  * without a time (Kimi's prompts) go by name and their whole searched text: the first of the name
  * that still says it, else the one of the name that changed since; by name only for a match of an
- * older server, which has no digest.
+ * older server, which has no digest. A match with a store row (Hermes) opens the turn with a text
+ * part read from it, whatever either was named from: a page boundary may split one answer at
+ * another row. Turns of a page read without rows (an older server) go by name, and so does every
+ * turn when the row is newer than any shown (the search read a row the chat has not yet).
  */
 export function pickedTurn(turns: readonly (ConversationTurn | null)[], match: ConversationSearchMatch): number | "none" | "several" {
+  if (match.row !== undefined) {
+    const row = match.row;
+    const index = turns.findIndex((turn) => turn?.text_rows?.includes(row) === true);
+    if (index >= 0) return index;
+    const { row: _, ...named } = match;
+    const ahead = !turns.some((turn) => turn?.text_rows?.some((read) => read >= row) === true);
+    return pickedTurn(ahead ? turns : turns.map((turn) => turn?.text_rows === undefined ? turn : null), named);
+  }
   const names = turns.flatMap((turn, index) => turn != null && conversationTurnAnchor(turn) === match.turn ? [index] : []);
   if (match.ts === null) {
     if (match.text_digest === undefined) return names[0] ?? "none";
@@ -172,9 +195,14 @@ export function pickedTurn(turns: readonly (ConversationTurn | null)[], match: C
     return changed.length > 1 ? "several" : changed[0] ?? "none";
   }
   const pattern = searchPattern(match.match);
-  const holds = (index: number): boolean => pattern !== null
-    && pattern.test(turns[index]!.parts.flatMap((part) => part.kind === "text" ? [plainText(part.text)] : []).join("\n\n"));
-  const holding = names.length > 1 ? names.filter(holds) : names;
+  const holds = (index: number): boolean => pattern !== null && pattern.test(allText(turns[index]!));
+  let holding = names.length > 1 ? names.filter(holds) : names;
+  if (holding.length > 1) {
+    const same = holding.filter((index) => saysSearched(turns[index]!, match));
+    const noted = (turn: ConversationTurn): boolean => turn.parts.some((part) => part.kind === "text" && part.phase === "commentary");
+    if (same.length === 1 && turns.every((turn, index) => index === same[0] || turn == null
+      || (turn.role !== match.role || turn.ts !== match.ts || !noted(turn)) && !searchedTurnChanged(turn, match))) holding = same;
+  }
   if (holding.length > 1 || names.length > 1 && holding.length === 0) return "several";
   const named = holding[0] ?? -1;
   let changed: number | null = null;
@@ -197,9 +225,19 @@ export function pickedTurn(turns: readonly (ConversationTurn | null)[], match: C
  * start. A time that cannot be read tells nothing. That holds only while a turn of the name still
  * says what was searched: a clock that went back (Hermes orders by its own ids) puts a turn of the
  * match's time after an earlier one, so when none does the pick reads to the beginning. Turns
- * without a time go by name and searched text alone (by name for an older server's match).
+ * without a time go by name and searched text alone (by name for an older server's match). A match
+ * with a store row settles once the turns read go back to it (rows come in id order, so the row is
+ * read if it is still there), or by name on turns of a page read without rows; by name on every turn
+ * when the row is newer than any read (the search read a row the chat has not yet).
  */
 export function pickSettled(turns: readonly ConversationTurn[], match: ConversationSearchMatch): boolean {
+  if (match.row !== undefined) {
+    const row = match.row, read = turns.flatMap((turn) => turn.text_rows ?? []);
+    const { row: _, ...named } = match;
+    if (!read.some((each) => each >= row)) return pickSettled(turns, named);
+    if (read.some((each) => each <= row)) return true;
+    return pickSettled(turns.filter((turn) => turn.text_rows === undefined), named);
+  }
   const named = turns.findIndex((turn) => conversationTurnAnchor(turn) === match.turn);
   if (named < 0) return false;
   if (match.text_digest !== undefined && !turns.some((turn) => conversationTurnAnchor(turn) === match.turn && saysSearched(turn, match))) return false;
@@ -208,13 +246,33 @@ export function pickSettled(turns: readonly ConversationTurn[], match: Conversat
   return turns.slice(0, named).some((turn) => turn.ts !== null && Date.parse(turn.ts) < at);
 }
 
+/**
+ * The store row (ConversationTurn.text_rows) of the part searchableText's first match of `pattern`
+ * begins in: its parts are joined by a blank line, which no match begins in.
+ */
+function matchRow(turn: ConversationTurn, pattern: RegExp): number | undefined {
+  const rows = turn.text_rows, found = pattern.exec(searchableText(turn));
+  if (rows === undefined || found === null) return undefined;
+  let end = 0, part = -1;
+  for (const each of turn.parts) {
+    if (each.kind !== "text") continue;
+    part++;
+    if (turn.role !== "user" && each.phase === "commentary") continue;
+    end += plainText(each.text).length + 2;
+    if (found.index < end) return rows[part];
+  }
+  return undefined;
+}
+
 /** The turns that hold the pattern, newest first, each with its first match. */
 export function searchTurns(turns: readonly ConversationTurn[], pattern: RegExp): ConversationSearchMatch[] {
   const matches: ConversationSearchMatch[] = [];
   for (let index = turns.length - 1; index >= 0; index--) {
     const turn = turns[index]!;
     const snippet = matchSnippet(searchableText(turn), pattern);
-    if (snippet !== null) matches.push({ turn: conversationTurnAnchor(turn), role: turn.role, ts: turn.ts, text_digest: textDigest(turn), ...snippet });
+    if (snippet === null) continue;
+    const row = matchRow(turn, pattern);
+    matches.push({ turn: conversationTurnAnchor(turn), role: turn.role, ts: turn.ts, text_digest: textDigest(turn), ...(row === undefined ? {} : { row }), ...snippet });
   }
   return matches;
 }
