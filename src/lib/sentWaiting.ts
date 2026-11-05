@@ -1,3 +1,4 @@
+import type { Machine } from "../../shared/machines.ts";
 import type { ConversationTurn } from "../../shared/protocol.ts";
 import { composerMessage } from "./compose.ts";
 import { paneLifetimes } from "./paneLifetime.ts";
@@ -91,6 +92,7 @@ interface WaitingPane {
 const waiting = new Map<string, WaitingPane>();
 /** the user turns each pane's chat showed last, for the baseline of its next send */
 const shown = new Map<string, WaitingBaseline>();
+const listedPanes = new Map<string, ReadonlySet<string>>();
 const empty: readonly WaitingSend[] = [];
 const listeners = new Set<() => void>();
 const announce = (): void => { for (const listener of listeners) listener(); };
@@ -185,10 +187,44 @@ export function forgetWaitingSends(key: string): void {
   if (waiting.delete(key)) announce();
 }
 
+/** The chat dropped its transcript for another history: the turns it showed are no baseline for its next send. */
+export function forgetWaitingBaseline(key: string): void {
+  shown.delete(key);
+}
+
+/**
+ * A connection loss drops provisional bubbles, but does not invalidate a chat's loaded turns. Only a
+ * PC whose snapshots name their herdr keeps them: an older bridge's replacement would reuse its pane
+ * ids unnoticed, so its baselines go with the connection.
+ */
+export function clearMachineWaitingSends(machineId: string): void {
+  if (typeof paneLifetimes.generation(machineId) !== "string") { forgetMachineWaitingSends(machineId); return; }
+  let changed = false;
+  for (const key of waiting.keys()) {
+    if (key.startsWith(`${machineId}:`)) { waiting.delete(key); changed = true; }
+  }
+  if (changed) announce();
+}
+
 // herdr gives pane ids out again once it is replaced (lib/paneLifetime.ts): the earlier herdr's
 // sends never reach the new panes, so a PC's waiting lines go with its herdr
 export function forgetMachineWaitingSends(machineId: string): void {
+  listedPanes.delete(machineId);
   for (const key of [...waiting.keys(), ...shown.keys()]) if (key.startsWith(`${machineId}:`)) forgetWaitingSends(key);
+}
+
+export function pruneWaitingSends(machines: readonly Machine[]): void {
+  for (const machine of machines) {
+    if (machine.state !== "connected" || machine.snapshot === null) continue;
+    // a roster read from a herdr this page already left (paneLifetimes skipped it) proves no pane closed
+    const lifetime = machine.snapshot.herdr_lifetime;
+    if (lifetime !== undefined && lifetime !== paneLifetimes.generation(machine.id)) continue;
+    const open = new Set(machine.snapshot.panes.map((pane) => waitingKey(machine.id, pane.pane_id)));
+    for (const key of listedPanes.get(machine.id) ?? []) {
+      if (!open.has(key)) forgetWaitingSends(key);
+    }
+    listedPanes.set(machine.id, open);
+  }
 }
 
 paneLifetimes.onRetire(forgetMachineWaitingSends);

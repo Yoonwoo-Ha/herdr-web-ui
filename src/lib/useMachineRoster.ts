@@ -17,6 +17,7 @@ import type { NotificationTarget } from "./notificationTarget.ts";
 import type { SelectionMark } from "./selectionMark.ts";
 import type { SplitState } from "./split.ts";
 import { deviceInUse, followsHerdrFocus, movingHerdrFocusOn } from "./followFocus.ts";
+import { pruneWaitingSends } from "./sentWaiting.ts";
 import { paneLifetimes } from "./paneLifetime.ts";
 import { displayPaneTitle } from "../components/Sidebar.tsx";
 import type { usePreferencesSync } from "./preferencesSync.ts";
@@ -105,6 +106,7 @@ export function useRosterLoader({ rosterIn, setMachines, setMachineRosterLoaded,
       await snapshotRequests.current.read(fetchMachines, (next) => {
         // a PC whose herdr was replaced leaves its panes' drafts and lenses before they are drawn
         paneLifetimes.observe(next, displayPaneTitle);
+        pruneWaitingSends(next);
         // a pane's conversation answers stand for the session it was on: the chats read this roster's
         observePaneSessions(next, readAfter);
         reorderCoordinator.roster(next, { kind: "load", started });
@@ -219,6 +221,7 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, receiveP
       snapshotRequests.current.invalidate();
       if (payload.type === "machines") {
         paneLifetimes.observe(payload.machines, displayPaneTitle);
+        pruneWaitingSends(payload.machines);
         observePaneSessions(payload.machines);
         onRoster(payload.machines);
         reorderCoordinator.roster(payload.machines, { kind: "event" });
