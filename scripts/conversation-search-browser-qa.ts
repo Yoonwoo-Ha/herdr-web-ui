@@ -33,6 +33,12 @@ const TURNS = Array.from({ length: PROMPTS * 2 }, (_, index): ConversationTurn =
 const [call, said] = TURNS.at(-1)!.parts as [ConversationTurn["parts"][number], { kind: "text"; text: string }];
 const RETRIED: ConversationTurn = { ...TURNS.at(-1)!, parts: [call, { kind: "text", text: `${said.text} Retried.` }], text_rows: [TURNS.length + 1] };
 let retried = false;
+// a newest page that holds only an agent's tool calls since (Hermes reads its text rows alone):
+// no row it shows tells whether a match is newer or older than it
+const RUN: ConversationTurn = { role: "assistant", ts: "2026-10-12T06:40:00.000Z", text_rows: [], parts: Array.from({ length: 3 }, (_, step) =>
+  ({ kind: "tool" as const, name: "Bash", summary: `cargo build step ${step}`, input: "{}", output: "ok" })) };
+/** the newest page is RUN: after the turns (`after`), or the whole conversation (`alone`) */
+let toolRun: "after" | "alone" | null = null;
 /** the newest page answers 503, as a bridge that lost its store for a moment */
 let newestFails = false;
 const reads: { before: string | null; prompts: string | null }[] = [];
@@ -64,6 +70,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     const start = Math.max(0, end - size);
     if (before === null && newestFails) return Response.json({ error: { code: "unavailable", message: "store" } }, { status: 503 });
     const newest = before === null && retried ? [RETRIED] : [];
+    if (before === null && toolRun !== null) return Response.json({ source: "claude-transcript", history_id: "h1", cursor: toolRun === "after" ? `t:${TURNS.length}` : null, turns: [RUN, ...newest], metadata: { model: null, reasoning_effort: null } });
     return Response.json({ source: "claude-transcript", history_id: "h1", cursor: start === 0 ? null : `t:${start}`, turns: [...TURNS.slice(start, end), ...newest], metadata: { model: null, reasoning_effort: null } });
   }
   if (url.pathname === "/") return new Response('<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conversation search QA</title><link rel="stylesheet" href="/conversation-search-fixture.css"></head><body><div id="root"></div><script type="module" src="/conversation-search-fixture.js"></script></body></html>', { headers: { "content-type": "text/html" } });
@@ -177,6 +184,35 @@ try {
     console.log(`PASS ${width}: a match the chat has not read opens once read, and none in its place`);
     assert.deepEqual(errors, []);
     await context.close();
+
+    // the newest page shown holds tool calls alone, and the match came after it: once an earlier page's
+    // rows, or the conversation's beginning, say the match is newer than any read, the newest page is
+    // read again and opens it
+    for (const run of ["after", "alone"] as const) {
+      toolRun = run;
+      retried = false;
+      reads.length = 0;
+      const runContext = await browser.newContext({ viewport: { width, height }, locale: "en-US", hasTouch: width < 640, isMobile: width < 640 });
+      await runContext.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme: "dark" })));
+      const runPage = await runContext.newPage();
+      const runErrors: string[] = [];
+      runPage.on("pageerror", (error) => runErrors.push(error.message));
+      runPage.setDefaultTimeout(15_000);
+      await runPage.goto(`http://127.0.0.1:${server.port}/`);
+      await runPage.getByText("3 commands").first().waitFor();
+      retried = true;
+      const shownRead = reads.length;
+      await runPage.evaluate(() => window.searchQa.open());
+      await search(runPage, "retried");
+      await dialog(runPage).getByRole("option").click();
+      await dialog(runPage).waitFor({ state: "detached" });
+      await runPage.getByText("Retried.", { exact: false }).first().waitFor();
+      assert.ok(reads.slice(shownRead).some((read) => read.before === null), JSON.stringify(reads.slice(shownRead)));
+      console.log(`PASS ${width}: a match after a newest page of tool calls alone (${run}) opens once read`);
+      assert.deepEqual(runErrors, []);
+      await runContext.close();
+    }
+    toolRun = null;
   }
 } finally {
   await browser?.close();

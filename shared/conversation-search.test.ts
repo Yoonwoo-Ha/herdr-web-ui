@@ -305,6 +305,12 @@ describe("pickedTurn", () => {
     expect(pickSettled(parseHermesRows(retried.slice(0, 4)), unread)).toBe(true);
     expect(pickedTurn(parseHermesRows(retried.slice(0, 4)), unread)).toBe("none");
     expect(pickedTurn(parseHermesRows(retried), unread)).toBe(4);
+    // a newest page of tool calls alone names no row: it neither settles the pick nor says it is ahead,
+    // until an earlier page's rows do (the chat then reads its newest page again)
+    const run = parseHermesRows([{ ...row(6, "assistant", ""), content: null, tool_calls: JSON.stringify([{ id: "c0", function: { name: "bash", arguments: "{}" } }]) }]);
+    expect(pickAhead(run, { ...unread, row: 7 })).toBe(false);
+    expect(pickSettled(run, { ...unread, row: 7 })).toBe(false);
+    expect(pickAhead([...parseHermesRows(retried), ...run], { ...unread, row: 7 })).toBe(true);
     // a page that does not hold the row reads on, and opens none
     expect(pickSettled(shown.slice(1), match)).toBe(false);
     expect(pickedTurn(shown.slice(1), match)).toBe("none");
