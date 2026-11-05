@@ -115,8 +115,8 @@ it("answers the route from the pane's pages, and refuses a query it cannot searc
   const body = await response.json() as ConversationSearchResponse;
   // the progress note is work, as the chat folds it: only the answer and the message match
   expect(body).toEqual({ history_id: "h1", cursor: null, matches: [
-    { turn: "assistant|2026-10-01T00:00:01Z|text|Renaming the flag now.", role: "assistant", ts: "2026-10-01T00:00:01Z", before: "The ", match: "flag", after: " is renamed." },
-    { turn: "user|2026-10-01T00:00:00Z|text|rename the flag", role: "user", ts: "2026-10-01T00:00:00Z", before: "rename the ", match: "flag", after: "" },
+    { turn: "assistant|2026-10-01T00:00:01Z|text|Renaming the flag now.", role: "assistant", ts: "2026-10-01T00:00:01Z", text_digest: expect.any(String), before: "The ", match: "flag", after: " is renamed." },
+    { turn: "user|2026-10-01T00:00:00Z|text|rename the flag", role: "user", ts: "2026-10-01T00:00:00Z", text_digest: expect.any(String), before: "rename the ", match: "flag", after: "" },
   ] });
   expect(read.mock.calls[0]?.[0]).toBe("w1:p1");
   expect(read.mock.calls[0]?.[2]).toEqual({ prompts: MAX_PAGE_PROMPTS });

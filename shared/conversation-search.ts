@@ -21,6 +21,12 @@ export interface ConversationSearchMatch {
   turn: string;
   role: "user" | "assistant";
   ts: string | null;
+  /**
+   * the turn's whole searched text, Markdown marks and all, when it was searched, as a digest (textDigest):
+   * which of turns that share the name is the one, and whether it changed since. An older server
+   * sends none.
+   */
+  text_digest?: string;
   /** the text before the match, the match and the text after it, each with whitespace runs as one space */
   before: string;
   match: string;
@@ -75,6 +81,21 @@ export function searchPattern(query: string): RegExp | null {
 }
 
 const squash = (text: string): string => text.replace(/\s+/g, " ");
+
+/**
+ * The text parts a search reads (searchableText), as written: marks the search drops still tell two
+ * turns apart. A 32-bit FNV-1a hash and its length (two texts can still collide).
+ */
+function textDigest(turn: ConversationTurn): string {
+  const text = turn.parts.flatMap((part) => part.kind === "text" && (turn.role === "user" || part.phase !== "commentary") ? [part.text] : []).join("\n\n");
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
+  return `${text.length.toString(36)}.${(hash >>> 0).toString(36)}`;
+}
+
+/** Whether `turn` says exactly what the match's turn said when it was searched (false without a digest). */
+const saysSearched = (turn: ConversationTurn, match: ConversationSearchMatch): boolean =>
+  match.text_digest !== undefined && textDigest(turn) === match.text_digest;
 
 /** The words around the first match in `text`, or null without one. */
 export function matchSnippet(text: string, pattern: RegExp): Pick<ConversationSearchMatch, "before" | "match" | "after"> | null {
@@ -134,11 +155,19 @@ export function searchedTurnChanged(turn: ConversationTurn, match: ConversationS
  * first 80 characters agree, or their first tool call) go by which still has the matched words
  * anywhere in its text, a progress note's too: an answer's words never leave it, though they can
  * leave the search (Codex marks them commentary later). None when that is not exactly one. Turns
- * without a time are found by name only: a time that is missing tells no turn apart.
+ * without a time (Kimi's prompts) go by name and their whole searched text: the first of the name
+ * that still says it, else the one of the name that changed since; by name only for a match of an
+ * older server, which has no digest.
  */
 export function pickedTurn(turns: readonly (ConversationTurn | null)[], match: ConversationSearchMatch): number | "none" | "several" {
   const names = turns.flatMap((turn, index) => turn != null && conversationTurnAnchor(turn) === match.turn ? [index] : []);
-  if (match.ts === null) return names[0] ?? "none";
+  if (match.ts === null) {
+    if (match.text_digest === undefined) return names[0] ?? "none";
+    const same = names.find((index) => saysSearched(turns[index]!, match));
+    if (same !== undefined) return same;
+    const changed = names.filter((index) => searchedTurnChanged(turns[index]!, match));
+    return changed.length > 1 ? "several" : changed[0] ?? "none";
+  }
   const pattern = searchPattern(match.match);
   const holds = (index: number): boolean => pattern !== null
     && pattern.test(turns[index]!.parts.flatMap((part) => part.kind === "text" ? [plainText(part.text)] : []).join("\n\n"));
@@ -162,11 +191,15 @@ export function pickedTurn(turns: readonly (ConversationTurn | null)[], match: C
  * turn that changed since loses its name only to a later turn of its time (pickedTurn), so a pick
  * reads on until a turn before the named one is of an earlier time: turns come in time order, but for
  * answers dated by an earlier start (Codex, when the user steers mid-task), which all follow that
- * start. A time that cannot be read tells nothing; turns without a time go by name only.
+ * start. A time that cannot be read tells nothing. That holds only while a turn of the name still
+ * says what was searched: a clock that went back (Hermes orders by its own ids) puts a turn of the
+ * match's time after an earlier one, so when none does the pick reads to the beginning. Turns
+ * without a time go by name and searched text alone (by name for an older server's match).
  */
 export function pickSettled(turns: readonly ConversationTurn[], match: ConversationSearchMatch): boolean {
   const named = turns.findIndex((turn) => conversationTurnAnchor(turn) === match.turn);
   if (named < 0) return false;
+  if (match.text_digest !== undefined && !turns.some((turn) => conversationTurnAnchor(turn) === match.turn && saysSearched(turn, match))) return false;
   if (match.ts === null) return true;
   const at = Date.parse(match.ts);
   return turns.slice(0, named).some((turn) => turn.ts !== null && Date.parse(turn.ts) < at);
@@ -178,7 +211,7 @@ export function searchTurns(turns: readonly ConversationTurn[], pattern: RegExp)
   for (let index = turns.length - 1; index >= 0; index--) {
     const turn = turns[index]!;
     const snippet = matchSnippet(searchableText(turn), pattern);
-    if (snippet !== null) matches.push({ turn: conversationTurnAnchor(turn), role: turn.role, ts: turn.ts, ...snippet });
+    if (snippet !== null) matches.push({ turn: conversationTurnAnchor(turn), role: turn.role, ts: turn.ts, text_digest: textDigest(turn), ...snippet });
   }
   return matches;
 }
