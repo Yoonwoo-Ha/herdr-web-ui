@@ -3,7 +3,7 @@ import { BookOpen, Check, Copy, ImageOff, Maximize2 } from "lucide-react";
 
 import { foldCode, mathNestsTooDeep, parseInline, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../../shared/markdown.ts";
 import { codeIsFilePath, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
-import { FilePathLink } from "./FilePathLink.tsx";
+import { CodeFileName, FilePathLink } from "./FilePathLink.tsx";
 import { fileUriPath } from "../../shared/fileUri.ts";
 import { shouldOpenWebPage, WebPanelContext } from "../lib/webPanel.ts";
 import { MachineContext } from "../lib/machineContext.tsx";
@@ -329,7 +329,9 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
         if (open !== null && file !== null) return <FilePathLink key={key} path={file} code open={open} />;
         // agents often put an address in backticks: it stays code to the eye, and opens
         if (interactive && /^https?:\/\/\S+$/i.test(node.value)) return <a key={key} className="markdown-code-link" href={node.value} target="_blank" rel="noopener noreferrer" onClick={webClick(node.value)}><code>{node.value}</code></a>;
-        return open !== null && codeIsFilePath(node.value) ? <FilePathLink key={key} path={node.value} code open={open} /> : <code key={key}>{node.value}</code>;
+        if (open === null || !codeIsFilePath(node.value)) return <code key={key}>{node.value}</code>;
+        // a bare name may be a unit, a host or a key: it stays a link only while the pane's PC may have it
+        return node.value.includes("/") ? <FilePathLink key={key} path={node.value} code open={open} /> : <CodeFileName key={key} name={node.value} open={open} />;
       }
       case "math": return <MathExpression key={key} value={node.value} dollar={node.dollar} />;
       case "image": {

@@ -4,7 +4,7 @@
  * The dispatcher in index.ts runs the access gate first and hands over who asks: a page's media
  * plays only for the client and device that rendered it (file-view.ts).
  */
-import { sep } from "node:path";
+import { isAbsolute, sep } from "node:path";
 
 import type { ProjectFavicon } from "../shared/files.ts";
 import type { Access } from "./access.ts";
@@ -67,11 +67,14 @@ async function fileRoute(request: Request, url: URL, pathname: string, { bridgeA
   }
   const paneId = url.searchParams.get("pane_id");
   let cwd: string | null = null;
+  let paneUnread = false;
   if (paneId) {
-    try { cwd = (await paneContext(paneId)).cwd; } catch { /* an absolute path still opens */ }
+    try { cwd = (await paneContext(paneId)).cwd; } catch { paneUnread = true; /* an absolute path still opens */ }
   }
   const path = url.searchParams.get("path") ?? "";
   const found = await findFile(path, cwd, () => paneId ? claudeTempFolder(paneId) : Promise.resolve(null), paneId ? mayBeClaudeTemp : undefined);
+  // a relative path whose pane could not be read was not looked for: the chat keeps its link (src/lib/fileNameLookup.ts)
+  if (found === null && paneUnread && !isAbsolute(path)) return jsonResponse({ error: { code: "pane_unknown", message: "the pane a relative path belongs to could not be read" } }, 404);
   if (found === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
   // several files end in that name: the viewer lists them to choose from
   if ("candidates" in found) return jsonResponse({ error: { code: "ambiguous_path", message: "several files have that name", candidates: found.candidates } }, 409);
