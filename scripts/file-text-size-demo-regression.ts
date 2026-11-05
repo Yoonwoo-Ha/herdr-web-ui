@@ -45,13 +45,13 @@ async function open(browser: Browser, width: number, settings: Record<string, un
   const phone = width <= 480;
   const context = await browser.newContext({ viewport: { width, height: phone ? 844 : 900 }, locale: "en-US", hasTouch: phone, isMobile: phone });
   // the file text size is kept in a key of its own (lib/settings.ts), not in ovis:settings
-  const { fileFontSize, fileFontFrom, ...main } = settings;
-  await context.addInitScript(([value, size, from]) => {
+  const { fileFontSize, fileFontBase, ...main } = settings;
+  await context.addInitScript(([value, size, base]) => {
     if (localStorage.getItem("ovis:settings") !== null) return;
     localStorage.setItem("ovis:settings", value!);
     if (size !== "") localStorage.setItem("ovis:file-font-size", size!);
-    if (from !== "") localStorage.setItem("ovis:file-font-from", from!);
-  }, [JSON.stringify({ language: "en", ...main }), fileFontSize === undefined ? "" : JSON.stringify(fileFontSize), fileFontFrom === undefined ? "" : JSON.stringify(fileFontFrom)]);
+    if (base !== "") localStorage.setItem("ovis:file-font-base", base!);
+  }, [JSON.stringify({ language: "en", ...main }), fileFontSize === undefined ? "" : JSON.stringify(fileFontSize), fileFontBase === undefined ? "" : JSON.stringify(fileFontBase)]);
   const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -189,10 +189,10 @@ try {
           } finally { await close(); }
         }
 
-        // with a size chosen the source keeps it through a later chat size; an interface size changed while a long file
-        // is open moves its rows (--fs-xs) and re-measures them, so its end is still reached
+        // with a size chosen the source keeps it through a later chat size, and through a later interface size (#2984):
+        // its rows stay as they were and the long file's height with them
         {
-          const { page, errors, close } = await open(browser, width, { fileFontSize: 24, fileFontFrom: 14 }, "&file=long.log&settings=chat");
+          const { page, errors, close } = await open(browser, width, { fileFontSize: 24, fileFontBase: { size: 24, chat: 14, ui: 14 } }, "&file=long.log&settings=chat");
           try {
             const lineOf = (): Promise<number> => page.evaluate(() => Number.parseFloat(getComputedStyle(document.querySelector(".virtual-source")!).lineHeight));
             await page.waitForFunction(() => (document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0);
@@ -202,14 +202,17 @@ try {
             assert.equal(await lineOf(), before, `${width}px: a chat size change leaves a chosen file size's source as it was`);
             await page.goto(`${origin}/herdr-web-ui/demo/app/?pane=${encodeURIComponent(panes.web)}&file=long.log&settings=appearance&section=typography`);
             await page.waitForFunction(() => (document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0);
+            const uiScale = (): Promise<string> => page.evaluate(() => document.documentElement.style.getPropertyValue("--ui-scale"));
+            const uiBefore = await uiScale();
             for (let step = 0; step < 3; step++) await dialog.getByRole("button", { name: "Increase interface font size", exact: true }).click();
             await page.keyboard.press("Escape");
             await dialog.waitFor({ state: "detached" });
-            await page.waitForFunction((was) => Number.parseFloat(getComputedStyle(document.querySelector(".virtual-source")!).lineHeight) > was, before);
+            await page.waitForFunction((was) => document.documentElement.style.getPropertyValue("--ui-scale") !== was, uiBefore);
             const height = await lineOf();
+            assert.ok(Math.abs(height - before) < 0.01, `${width}px: an interface size change leaves a chosen file size's source as it was (${before} vs ${height})`);
             await page.waitForFunction((row) => Math.abs(document.querySelector<HTMLElement>(".virtual-source-scroll")!.scrollHeight - 3000 * row) < 3000 * row * 0.05, height);
             assert.deepEqual(errors, []);
-            console.log(`PASS ${width}px: a chat size keeps a chosen file size's source (${before}px); an interface size change re-measures it (${height}px)`);
+            console.log(`PASS ${width}px: a chosen file size's source keeps its size through a chat and an interface size (${before}px, ${height}px)`);
           } finally { await close(); }
         }
 
@@ -225,7 +228,9 @@ try {
           assert.equal(await stepper.locator("output").textContent(), "17px");
           assert.ok(Math.abs(Number(await page.evaluate(() => document.documentElement.style.getPropertyValue("--file-source-scale"))) - 17 / 16) < 1e-9, "a step up from the chat's size moves the source up with the preview");
           assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:file-font-size") ?? "null")), 17, "kept on this device");
-          assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:file-font-from") ?? "null")), 16, "with the chat's size it started from");
+          const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("ovis:file-font-base") ?? "null"));
+          assert.deepEqual({ size: stored?.size, chat: stored?.chat }, { size: 17, chat: 16 }, "with the chat's size it started from, for the size chosen");
+          assert.ok(Number.isInteger(stored?.ui), "and the interface's");
           if (evidence) await page.screenshot({ path: join(evidence, `settings-file-text-size-${width}.png`) });
           await dialog.getByRole("button", { name: "Reset", exact: true }).click();
           assert.equal(await stepper.locator("output").textContent(), "16px", "Reset gives the chat's size back");

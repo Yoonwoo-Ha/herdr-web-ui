@@ -173,10 +173,17 @@ describe("saved theme migration", () => {
     expect(loadSettings().fileFontSize).toBeNull();
     records.set("ovis:file-font-size", "not json");
     expect(loadSettings().fileFontSize).toBeNull();
-    saveSettings(sanitizeSettings({ fileFontSize: 20, fileFontFrom: 16 }));
-    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("fileFontFrom");
+    const base = { size: 20, chat: 16, ui: 14 };
+    saveSettings(sanitizeSettings({ fileFontSize: 20, fileFontBase: base }));
+    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("fileFontBase");
     oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
-    expect(loadSettings()).toMatchObject({ fileFontSize: 20, fileFontFrom: 16 });
+    expect(loadSettings()).toMatchObject({ fileFontSize: 20, fileFontBase: base });
+    // a size written without its base (a build from before it) leaves the base recorded for another size unread
+    records.set("ovis:file-font-size", "22");
+    expect(loadSettings()).toMatchObject({ fileFontSize: 22, fileFontBase: null });
+    // a save never keeps a base beside another size (a Reset over another tab's base, #2984)
+    saveSettings({ ...loadSettings(), fileFontSize: null, fileFontBase: base });
+    expect(records.get("ovis:file-font-base")).toBe("null");
   });
 
   it("keeps Pictures in the terminal in its own key, out of an old tab's whole-record save", () => {
@@ -353,12 +360,24 @@ describe("saved theme migration", () => {
     apply({ chatFontSize: 11, fileFontSize: 12 });
     expect(Number(props.get("--file-source-scale"))).toBeGreaterThan(1);
     // the chat's size when the file size was chosen is kept with it: a later chat size leaves the source be
-    apply({ chatFontSize: 21, fileFontSize: 24, fileFontFrom: 21 });
+    const base = { size: 24, chat: 21, ui: 14 };
+    apply({ chatFontSize: 21, fileFontSize: 24, fileFontBase: base });
     const chosen = props.get("--file-source-scale");
-    apply({ chatFontSize: 11, fileFontSize: 24, fileFontFrom: 21 });
+    apply({ chatFontSize: 11, fileFontSize: 24, fileFontBase: base });
     expect(props.get("--file-source-scale")).toBe(chosen);
-    apply({ chatFontSize: 24, fileFontSize: 24, fileFontFrom: 21 });
+    apply({ chatFontSize: 24, fileFontSize: 24, fileFontBase: base });
     expect(props.get("--file-source-scale")).toBe(chosen);
+    // so does a later interface size: the source is --fs-xs, which moves by --ui-scale, times this scale (#2984)
+    const source = (): number => Number(props.get("--ui-scale")) * Number(props.get("--file-source-scale"));
+    apply({ uiFontSize: 14, chatFontSize: 21, fileFontSize: 24, fileFontBase: base });
+    const kept = source();
+    apply({ uiFontSize: 21, chatFontSize: 21, fileFontSize: 24, fileFontBase: base });
+    expect(source()).toBeCloseTo(kept, 12);
+    apply({ uiFontSize: 11, fileFontSize: 24, fileFontBase: base });
+    expect(source()).toBeCloseTo(kept, 12);
+    // a base recorded for another size is not this size's: the size scales from the chat's as if just chosen
+    apply({ chatFontSize: 21, fileFontSize: 20, fileFontBase: base });
+    expect(props.get("--file-source-scale")).toBe(String(20 / 21));
     apply({ chatFontSize: 21 });
     expect(props.has("--file-source-scale")).toBe(false);
   });

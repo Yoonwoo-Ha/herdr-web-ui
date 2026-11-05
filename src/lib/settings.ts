@@ -63,6 +63,9 @@ export const DICTATION_LANGUAGES = [
 export type DictationLanguage = "auto" | (typeof DICTATION_LANGUAGES)[number];
 /** the lens a pane opens in until it is switched there: auto is chat for an agent on a touch screen, else terminal */
 export type DefaultView = "auto" | "chat" | "terminal";
+/** Where a chosen file text size started: the chat's and the interface's sizes when it was chosen, with the size they
+ *  were recorded for, so a size written without them (an older tab) is never paired with them. */
+export interface FileFontBase { size: number; chat: number; ui: number }
 import { sanitizeShortcutOverrides, type ShortcutOverrides } from "./shortcutBindings.ts";
 import type { StatusIndicators } from "./status.ts";
 import { WEB_LINK_TARGETS, type WebLinkTarget } from "./webPanel.ts";
@@ -149,9 +152,10 @@ export interface Settings {
   /** a file's text size in px in the file viewer and reader (a Markdown preview's body text, the source scaled with it);
    *  null follows the chat's size, and leaves the source at the interface's */
   fileFontSize: number | null;
-  /** the chat's size when fileFontSize was chosen: the source scales by fileFontSize over it, so a step moves it with the
-   *  preview and a later chat size leaves it be; null (none chosen, or a record from before it) reads the chat's own */
-  fileFontFrom: number | null;
+  /** the chat's and the interface's sizes when fileFontSize was chosen: the source scales by fileFontSize over the chat's
+   *  and by the interface's then over now, so a step moves it with the preview and a later chat or interface size leaves
+   *  it be; null, or one recorded for another size (none chosen, an older tab's size), reads the sizes of now */
+  fileFontBase: FileFontBase | null;
   /** prompts per history page in the chat; older turns load a page at a time as the reader scrolls up */
   historyPrompts: number;
   /** the interface's body size in px (--fs-md; every other --fs-* scales with it as --ui-scale); null follows the density.
@@ -259,7 +263,7 @@ type TelemetrySourceSettings = Omit<Settings,
   | "quickReplies" | "agentLocks" | "lockedAgents" | "usageOrder" | "usageHidden" | "fileOpen" | "webLinks" | "reuseExternalLinkTab" | "claudeLaunchMode" | "codexLaunchMode"
   | "followHerdrFocus" | "composerNewTabButton" | "composerArtifacts" | "composerPasteSend" | "terminalMirrorWrap" | "sidebarFilter" | "historyPrompts"
   | "expandThinking" | "foldWork" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort" | "terminalImages" | "terminalGhostty" | "terminalAttachButton"
-  | "terminalKeyboardOnRequest" | "fileFontSize" | "fileFontFrom">;
+  | "terminalKeyboardOnRequest" | "fileFontSize" | "fileFontBase">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -348,7 +352,7 @@ export const SETTING_SCOPE = {
   terminalMirrorWrap: "device",
   // a desk that follows herdr's focus must not move a phone open on another pane
   followHerdrFocus: "device",
-  chatFontSize: "device", chatFontFamily: "device", fileFontSize: "device", fileFontFrom: "device", historyPrompts: "device", uiFontSize: "device", uiFontFamily: "device", chatWidth: "device", enterSends: "device",
+  chatFontSize: "device", chatFontFamily: "device", fileFontSize: "device", fileFontBase: "device", historyPrompts: "device", uiFontSize: "device", uiFontFamily: "device", chatWidth: "device", enterSends: "device",
   // the chat's starting folds are this screen's, as its width: a phone may fold the work a desk keeps open
   expandThinking: "device", foldWork: "device",
   // a desk's composer button: a phone never shows it
@@ -410,7 +414,7 @@ export const DEFAULT_SETTINGS: Settings = {
   followHerdrFocus: false,
   chatFontSize: null,
   fileFontSize: null,
-  fileFontFrom: null,
+  fileFontBase: null,
   historyPrompts: 10,
   chatFontFamily: "",
   uiFontSize: null,
@@ -610,9 +614,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     fileFontSize: typeof record["fileFontSize"] === "number" && Number.isFinite(record["fileFontSize"])
       ? Math.min(CHAT_FONT_MAX, Math.max(CHAT_FONT_MIN, Math.round(record["fileFontSize"])))
       : DEFAULT_SETTINGS.fileFontSize,
-    fileFontFrom: typeof record["fileFontFrom"] === "number" && Number.isFinite(record["fileFontFrom"])
-      ? Math.min(CHAT_FONT_MAX, Math.max(CHAT_FONT_MIN, Math.round(record["fileFontFrom"])))
-      : DEFAULT_SETTINGS.fileFontFrom,
+    fileFontBase: sanitizeFileFontBase(record["fileFontBase"]),
     historyPrompts: HISTORY_PROMPTS.includes(record["historyPrompts"] as (typeof HISTORY_PROMPTS)[number])
       ? (record["historyPrompts"] as number)
       : DEFAULT_SETTINGS.historyPrompts,
@@ -750,16 +752,31 @@ export const HISTORY_PROMPTS_STORAGE_KEY = "ovis:history-prompts";
 /** Settings → File text size, kept in a key of its own for the same reason. */
 export const FILE_FONT_SIZE_STORAGE_KEY = "ovis:file-font-size";
 
-/** fileFontFrom, beside it for the same reason. */
-export const FILE_FONT_FROM_STORAGE_KEY = "ovis:file-font-from";
+/** fileFontBase, beside it for the same reason; it names the size it was recorded for, read only beside that size. */
+export const FILE_FONT_BASE_STORAGE_KEY = "ovis:file-font-base";
 
-function readFileFontFrom(): number | null {
+function sanitizeFileFontBase(value: unknown): FileFontBase | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { size, chat, ui } = value as Record<string, unknown>;
+  const chatSize = (px: unknown): number | null => typeof px === "number" && Number.isFinite(px) ? Math.min(CHAT_FONT_MAX, Math.max(CHAT_FONT_MIN, Math.round(px))) : null;
+  const base = { size: chatSize(size), chat: chatSize(chat), ui: sanitizeUiFontSize(ui) };
+  return base.size === null || base.chat === null || base.ui === null ? null : { size: base.size, chat: base.chat, ui: base.ui };
+}
+
+function readFileFontBase(size: number | null): FileFontBase | null {
   try {
-    const raw = window.localStorage.getItem(FILE_FONT_FROM_STORAGE_KEY);
-    return sanitizeSettings({ fileFontFrom: raw === null ? null : JSON.parse(raw) }).fileFontFrom;
+    const raw = window.localStorage.getItem(FILE_FONT_BASE_STORAGE_KEY);
+    const base = sanitizeFileFontBase(raw === null ? null : JSON.parse(raw));
+    return base !== null && base.size === size ? base : null;
   } catch {
-    return DEFAULT_SETTINGS.fileFontFrom;
+    return DEFAULT_SETTINGS.fileFontBase;
   }
+}
+
+/** The file text size and its base, the base only where it was recorded for that size. */
+function readFileFont(): Pick<Settings, "fileFontSize" | "fileFontBase"> {
+  const fileFontSize = readFileFontSize();
+  return { fileFontSize, fileFontBase: readFileFontBase(fileFontSize) };
 }
 
 function readFileFontSize(): number | null {
@@ -855,7 +872,7 @@ export function loadSettings(): Settings {
   const stored = readStoredAppearance(() => window.localStorage);
   const settings = stored.main === null ? DEFAULT_SETTINGS : sanitizeSettings(stored.main.value);
   const merged = stored.themes === null ? settings : sanitizeSettings({ ...settings, ...stored.themes });
-  return { ...merged, enterSends: readEnterSends(merged.enterSends), uiFontFamily: readUiFontFamily(), terminalMirrorWrap: readMirrorWrap(), sidebarFilter: readSidebarFilter(), voiceEngine: readVoiceEngine(), ...readAgentGroups(), historyPrompts: readHistoryPrompts(), fileFontSize: readFileFontSize(), fileFontFrom: readFileFontFrom(), composerArtifacts: readComposerArtifacts(),
+  return { ...merged, enterSends: readEnterSends(merged.enterSends), uiFontFamily: readUiFontFamily(), terminalMirrorWrap: readMirrorWrap(), sidebarFilter: readSidebarFilter(), voiceEngine: readVoiceEngine(), ...readAgentGroups(), historyPrompts: readHistoryPrompts(), ...readFileFont(), composerArtifacts: readComposerArtifacts(),
     expandThinking: readChatFold(EXPAND_THINKING_STORAGE_KEY, DEFAULT_SETTINGS.expandThinking), foldWork: readChatFold(FOLD_WORK_STORAGE_KEY, DEFAULT_SETTINGS.foldWork),
     reuseExternalLinkTab: readChatFold(REUSE_EXTERNAL_LINK_TAB_STORAGE_KEY, DEFAULT_SETTINGS.reuseExternalLinkTab),
     composerPasteSend: readChatFold(COMPOSER_PASTE_SEND_STORAGE_KEY, DEFAULT_SETTINGS.composerPasteSend),
@@ -873,7 +890,7 @@ export function saveSettings(settings: Settings): boolean {
       darkTheme: mirrored.darkTheme, lightTheme: mirrored.lightTheme,
       mirror: { palette: mirrored.palette, paletteDark: mirrored.paletteDark, paletteLight: mirrored.paletteLight },
     }));
-    const { uiFontFamily, terminalMirrorWrap, sidebarFilter, voiceEngine, agentGroups, agentGroupSort, historyPrompts, fileFontSize, fileFontFrom, composerArtifacts, composerPasteSend, expandThinking, foldWork, reuseExternalLinkTab, terminalImages, terminalGhostty, terminalAttachButton, terminalKeyboardOnRequest, ...main } = mirrored;
+    const { uiFontFamily, terminalMirrorWrap, sidebarFilter, voiceEngine, agentGroups, agentGroupSort, historyPrompts, fileFontSize, fileFontBase, composerArtifacts, composerPasteSend, expandThinking, foldWork, reuseExternalLinkTab, terminalImages, terminalGhostty, terminalAttachButton, terminalKeyboardOnRequest, ...main } = mirrored;
     window.localStorage.setItem(VOICE_ENGINE_STORAGE_KEY, JSON.stringify(voiceEngine));
     window.localStorage.setItem(UI_FONT_STORAGE_KEY, JSON.stringify(uiFontFamily));
     window.localStorage.setItem(MIRROR_WRAP_STORAGE_KEY, JSON.stringify(terminalMirrorWrap));
@@ -882,7 +899,8 @@ export function saveSettings(settings: Settings): boolean {
     window.localStorage.setItem(AGENT_GROUP_SORT_STORAGE_KEY, JSON.stringify(agentGroupSort));
     window.localStorage.setItem(HISTORY_PROMPTS_STORAGE_KEY, JSON.stringify(historyPrompts));
     window.localStorage.setItem(FILE_FONT_SIZE_STORAGE_KEY, JSON.stringify(fileFontSize));
-    window.localStorage.setItem(FILE_FONT_FROM_STORAGE_KEY, JSON.stringify(fileFontFrom));
+    // only beside the size it was recorded for: a Reset over another tab's base must not leave that base behind
+    window.localStorage.setItem(FILE_FONT_BASE_STORAGE_KEY, JSON.stringify(fileFontBase?.size === fileFontSize ? fileFontBase : null));
     window.localStorage.setItem(COMPOSER_ARTIFACTS_STORAGE_KEY, JSON.stringify(composerArtifacts));
     window.localStorage.setItem(EXPAND_THINKING_STORAGE_KEY, JSON.stringify(expandThinking));
     window.localStorage.setItem(FOLD_WORK_STORAGE_KEY, JSON.stringify(foldWork));
@@ -933,10 +951,15 @@ export function applyToDocument(settings: Settings, entry: ThemeEntry, language:
   // ChatView.css gives a file viewer's preview this scale in place of the chat's, the same until a file size is chosen;
   // FileViewer.css scales the source by the second one, which only a chosen size writes (the interface's size till then):
   // the chosen size over the chat's when it was chosen (where the stepper started), so choosing that size changes nothing,
-  // a step moves the source the way it moves the preview, and a later chat size leaves it be
+  // a step moves the source the way it moves the preview, and a later chat size leaves it be; times the interface's size
+  // then over now, as the source is --fs-xs, which moves with the interface's
   root.style.setProperty("--file-scale", String(fontScale(fileFontSize(settings), uiPx)));
   if (settings.fileFontSize === null) root.style.removeProperty("--file-source-scale");
-  else root.style.setProperty("--file-source-scale", String(fontScale(settings.fileFontSize, settings.fileFontFrom ?? chatFontSize(settings))));
+  else {
+    const base = settings.fileFontBase?.size === settings.fileFontSize ? settings.fileFontBase : null;
+    const scale = base === null ? fontScale(settings.fileFontSize, chatFontSize(settings)) : fontScale(settings.fileFontSize, base.chat) * fontScale(base.ui, uiPx);
+    root.style.setProperty("--file-source-scale", String(scale));
+  }
   // Settings → Appearance → Interface font, written as the token itself: the chosen list in front of the built-in stack
   const uiFont = uiFontStack(settings.uiFontFamily, language);
   if (uiFont === null) root.style.removeProperty("--font-ui");
