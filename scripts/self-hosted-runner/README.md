@@ -115,7 +115,9 @@ job of that run and the run is trusted: a push to the default branch, or a pull 
 repository that `--build-cache-writer` opened and started. Without the flag only pushes write. The
 launcher unpacks only files and directories and writes the sha256 of each into the entry's
 `.manifest`; a restore refuses an entry with a link, a missing, changed or extra file. Every other
-outbox file is deleted. A restore says it used an entry with an empty `used-<key>` in its own
+outbox file is deleted. One claim per outbox is judged per pass, and a refusal is remembered (the
+run and attempt for a day, the slot for ten minutes), so a job claiming over and over costs no
+GitHub calls on the launcher's token, which also registers the runners. A restore says it used an entry with an empty `used-<key>` in its own
 outbox, which the launcher stamps into `used/` (never written through a directory other jobs share).
 Pull request runs and pushes to main read it; a tag's release validation and manual runs always
 build, and a run whose build the launcher would refuse (another author's pull request, say) builds
