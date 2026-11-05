@@ -740,17 +740,20 @@ The **Desktop app** job (`.github/workflows/desktop.yml`) builds the desktop app
 without the version, so `releases/latest/download/<name>` always gives the newest:
 `Ovis-linux-x64.deb`, `Ovis-linux-arm64.deb` (the download for Ubuntu and Debian),
 `Ovis-linux-x64.AppImage`, `Ovis-linux-arm64.AppImage`, `Ovis-mac-arm64.dmg`, `Ovis-mac-x64.dmg`, and
-`Ovis-mac-arm64.zip`, `Ovis-mac-x64.zip` (what a Mac app updates from), with their `.blockmap` files.
+`Ovis-mac-arm64.zip`, `Ovis-mac-x64.zip` (what a Mac app updates from), and `Ovis-win-x64.exe` (a
+per-user NSIS installer; signed only once the repository variable `DESKTOP_WIN_SIGN` is `true`, with
+the `WIN_CSC_LINK` and `WIN_CSC_KEY_PASSWORD` secrets), with their `.blockmap` files.
 The AppImage carries the static AppImage runtime (electron-builder's `toolsets.appimage`), so it
 needs no libfuse2, only the fuse3 a desktop has; without FUSE at all it runs with
 `APPIMAGE_EXTRACT_AND_RUN=1`. Its version is the tag's: the build
 stops unless `package.json` says the same. It attaches them with the update feed: `latest-linux.yml`,
-`latest-linux-arm64.yml` and one `latest-mac.yml` for both Macs (the two Mac builds' feeds merged by
-`bun app/electron/scripts/build.ts merge-feed`). The app is built to update from
+`latest-linux-arm64.yml`, `latest.yml` for Windows and one `latest-mac.yml` for both Macs (the two Mac
+builds' feeds merged by `bun app/electron/scripts/build.ts merge-feed`). The app is built to update from
 `https://github.com/devswha/ovis/releases/latest/download` (electron-updater's generic provider), so
 an installed app sees a version once it is GitHub's latest, the same moment `ovis.sh/Ovis.dmg` and
-`ovis.sh/Ovis.exe` move. Only the AppImage and the Mac app update themselves; a deb is updated by
-installing the new one.
+`ovis.sh/Ovis.exe` move (that `Ovis.exe` is still the Windows setup app, `windows-app.yml`). The
+AppImage, the Mac app and the Windows app update themselves; a deb is updated by installing the new
+one.
 The Macs' files are unsigned, and a Mac app updates itself only when signed, until the repository
 variable `DESKTOP_MAC_SIGN` is `true`: then the build signs and notarizes with the same
 `MAC_*` secrets as Ovis for Mac ([app/electron](../app/electron/README.md)'s signing, with

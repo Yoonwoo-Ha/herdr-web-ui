@@ -537,8 +537,10 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     // herdr starts an agent by its kind (its command is its kind) from herdr's own manifests; hc has
     // none, so the kinds Ovis knows are offered, and the start types the command into the pane's
     // shell as a person would. Ovis's own shell-started agents are offered and started by the
-    // server itself (shell-agent.ts), through pane.send_text.
+    // server itself (shell-agent.ts), through pane.send_text. On Windows hc's shell is PowerShell or
+    // cmd, which the typed start does not quote for yet (plainShell refuses it): no kind is offered there.
     async "server.agent_manifests"() {
+      if (process.platform === "win32") return { manifests: [] };
       const manifests = Object.keys(AGENT_LABELS).filter((agent) => !Object.hasOwn(SHELL_AGENTS, agent))
         .map((agent) => ({ agent, source: "herdr-core", source_kind: "herdr-core", local_override_shadowing_remote: false }));
       return { manifests };

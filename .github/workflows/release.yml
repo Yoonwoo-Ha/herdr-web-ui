@@ -296,6 +296,8 @@ jobs:
       MAC_NOTARY_KEY_P8: ${{ secrets.MAC_NOTARY_KEY_P8 }}
       MAC_NOTARY_KEY_ID: ${{ secrets.MAC_NOTARY_KEY_ID }}
       MAC_NOTARY_ISSUER: ${{ secrets.MAC_NOTARY_ISSUER }}
+      WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
     permissions:
       contents: write
   mac-dmg:

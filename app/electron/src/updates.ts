@@ -72,6 +72,11 @@ export function updatePlan(options: { packaged: boolean; env: Env; platform: str
     if (url.protocol !== "https:") return { enabled: false, reason: "OVIS_UPDATE_URL must be an https address" };
     return { enabled: true, feed: url.href, channel, installer };
   }
-  if (options.builtWithFeed) return { enabled: true, feed: channel === "beta" ? BETA_FEED : null, channel, installer };
+  // the beta workflow builds no Windows app yet, so its feed has none: Windows stays on the release
+  // feed and its stable channel (latest.yml), since the release publishes no beta.yml
+  if (options.builtWithFeed) {
+    if (channel === "beta" && options.platform === "win32") return { enabled: true, feed: null, channel: "stable", installer };
+    return { enabled: true, feed: channel === "beta" ? BETA_FEED : null, channel, installer };
+  }
   return { enabled: false, reason: "this build has no update feed" };
 }

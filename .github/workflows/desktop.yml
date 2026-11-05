@@ -1,10 +1,12 @@
 name: Desktop app
-# Builds Ovis for the desktop (app/electron) on Linux x64 and arm64 and macOS arm64 and x64: its unit
-# tests, its type check, then an AppImage, or dmg and zip, kept as the run's artifacts. A pull
+# Builds Ovis for the desktop (app/electron) on Linux x64 and arm64, macOS arm64 and x64, and Windows
+# x64: its unit tests, its type check, then an AppImage and deb, a dmg and zip, or an NSIS installer,
+# kept as the run's artifacts. A pull
 # request touching the app runs it, and so can anyone by hand for any branch; nothing is published.
 # With a release tag (Release calls it after publishing, or run it by hand from main for an existing
 # release), it builds that tag to update itself from the feed below and attaches the installers,
-# their blockmaps and the feed files (latest-linux.yml, latest-linux-arm64.yml, latest-mac.yml) to
+# their blockmaps and the feed files (latest-linux.yml, latest-linux-arm64.yml, latest-mac.yml,
+# latest.yml for Windows) to
 # that release. The feed is the latest release's assets, so an installed app sees a version once it
 # is GitHub's latest (docs/development.md#releasing).
 on:
@@ -37,6 +39,10 @@ on:
         required: false
       MAC_NOTARY_ISSUER:
         required: false
+      WIN_CSC_LINK:
+        required: false
+      WIN_CSC_KEY_PASSWORD:
+        required: false
 permissions:
   contents: read
 concurrency:
@@ -55,8 +61,13 @@ jobs:
           - { target: linux-arm64, os: ubuntu-24.04-arm }
           - { target: darwin-arm64, os: macos-15 }
           - { target: darwin-x64, os: macos-15-intel }
+          - { target: win32-x64, os: windows-2025 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # the steps are bash on every runner (Git Bash on Windows)
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Require a release tag from main
         if: inputs.tag != ''
@@ -122,6 +133,21 @@ jobs:
           (umask 077 && printf '%s' "$MAC_NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary-key.p8")
           echo "key=$RUNNER_TEMP/notary-key.p8" >> "$GITHUB_OUTPUT"
           echo "on=true" >> "$GITHUB_OUTPUT"
+      # The hook for a signed Windows installer: off (unsigned, SmartScreen warns) until the repository
+      # variable DESKTOP_WIN_SIGN is 'true', then electron-builder signs the app and the installer with
+      # the code signing certificate in WIN_CSC_LINK (a base64 .pfx) and WIN_CSC_KEY_PASSWORD.
+      - name: Windows signing
+        id: winsign
+        if: inputs.tag != '' && startsWith(matrix.target, 'win32-') && vars.DESKTOP_WIN_SIGN == 'true'
+        env:
+          HAS_WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK != '' }}
+          HAS_WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD != '' }}
+        run: |
+          if [ "$HAS_WIN_CSC_LINK" != true ] || [ "$HAS_WIN_CSC_KEY_PASSWORD" != true ]; then
+            echo "::error::DESKTOP_WIN_SIGN is on, but WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD are not both set." >&2
+            exit 1
+          fi
+          echo "on=true" >> "$GITHUB_OUTPUT"
       - name: Build ${{ matrix.target }}
         working-directory: app/electron
         env:
@@ -135,6 +161,8 @@ jobs:
           APPLE_API_KEY_ID: ${{ steps.sign.outputs.on == 'true' && secrets.MAC_NOTARY_KEY_ID || '' }}
           APPLE_API_ISSUER: ${{ steps.sign.outputs.on == 'true' && secrets.MAC_NOTARY_ISSUER || '' }}
           OVIS_REQUIRE_NOTARIZATION: ${{ steps.sign.outputs.on == 'true' && '1' || '' }}
+          WIN_CSC_LINK: ${{ steps.winsign.outputs.on == 'true' && secrets.WIN_CSC_LINK || '' }}
+          WIN_CSC_KEY_PASSWORD: ${{ steps.winsign.outputs.on == 'true' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
         run: bun run dist
       - name: Remove the notary key
         if: always() && steps.sign.outputs.key != ''
@@ -179,9 +207,10 @@ jobs:
             "$RUNNER_TEMP/builds/ovis-desktop-darwin-arm64/latest-mac.yml" \
             "$RUNNER_TEMP/builds/ovis-desktop-darwin-x64/latest-mac.yml"
           # every name a download page links and every feed, so a release never gets part of the app
-          for name in latest-linux.yml latest-linux-arm64.yml latest-mac.yml \
+          for name in latest-linux.yml latest-linux-arm64.yml latest-mac.yml latest.yml \
             Ovis-linux-x64.deb Ovis-linux-arm64.deb Ovis-linux-x64.AppImage Ovis-linux-arm64.AppImage \
-            Ovis-mac-arm64.dmg Ovis-mac-x64.dmg Ovis-mac-arm64.zip Ovis-mac-x64.zip; do
+            Ovis-mac-arm64.dmg Ovis-mac-x64.dmg Ovis-mac-arm64.zip Ovis-mac-x64.zip \
+            Ovis-win-x64.exe Ovis-win-x64.exe.blockmap; do
             test -s "$out/$name" || { echo "::error::No $name among the builds." >&2; exit 1; }
           done
           ls -l "$out"

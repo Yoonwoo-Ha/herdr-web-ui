@@ -833,6 +833,28 @@ describe("herdr-core adapter, agents", () => {
     expect(kinds).toContain("codex");
     expect(kinds).not.toContain("omo");
   });
+
+  it("offers no agent on Windows, and types no start into its PowerShell, which the start cannot quote for", async () => {
+    const { socket, cores } = await setup([terminal("t1", { argv: ["pwsh.exe", "-NoExit", "-Command", "x"] })]);
+    // one request line straight to the adapter: herdr's client would take the Unix socket for a Windows pipe name
+    const ask = (method: string, params: Record<string, unknown>) => new Promise<Record<string, unknown>>((resolve, reject) => {
+      let text = "";
+      void Bun.connect({ unix: socket, socket: {
+        open: (connection) => { connection.write(`${JSON.stringify({ id: "w", method, params })}\n`); },
+        data: (_connection, chunk) => { text += chunk.toString(); if (text.includes("\n")) resolve(JSON.parse(text) as Record<string, unknown>); },
+        connectError: (_connection, error) => reject(error),
+      } });
+    });
+    const platform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      expect(await ask("server.agent_manifests", {})).toMatchObject({ result: { manifests: [] } });
+      expect(await ask("agent.start", { pane_id: "t1", kind: "claude" })).toMatchObject({ error: { code: "agent_pane_unsupported" } });
+    } finally {
+      Object.defineProperty(process, "platform", { value: platform });
+    }
+    expect(cores.flatMap((core) => core.typed)).toEqual([]);
+  });
 });
 });
 

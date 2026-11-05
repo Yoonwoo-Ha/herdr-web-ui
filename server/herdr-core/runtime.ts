@@ -1,10 +1,10 @@
-import { chmodSync, mkdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { startHerdrCoreAdapter, type HerdrCoreAdapter } from "./adapter.ts";
 import { HcConnection, spawnHcConnect } from "./connection.ts";
 import { SeenMarker } from "./seen-label.ts";
 import { existsSync } from "node:fs";
 import { findHc, type FoundHc } from "./discovery.ts";
+import { adapterAddress } from "./pipe.ts";
 
 /**
  * Which runtime this PC's terminals run on. `OVIS_RUNTIME=herdr-core` serves the terminals of
@@ -100,14 +100,15 @@ export function coreConnection(): HcConnection {
 
 /**
  * On herdr-core, the adapter that answers herdr's API from hc (server/herdr-core/adapter.ts),
- * listening in the state folder, and HERDR_SOCKET pointed at it before anything reads it; on
- * herdr, nothing. Another Ovis still serving the same state folder is an error, and so is a PC
+ * listening in the state folder (on Windows, on a named pipe named after it: pipe.ts), and
+ * HERDR_SOCKET pointed at it before anything reads it; on herdr, nothing. Another Ovis still serving the same state folder is an error, and so is a PC
  * where no hc answers as herdr-core's: nothing is started, and nothing else is run as hc.
  */
 export async function startRuntime(stateDir: string, find: () => Promise<FoundHc | null> = () => findHc()): Promise<HerdrCoreAdapter | null> {
   if (runtime() !== "herdr-core") return null;
-  if (process.platform !== "linux" && process.platform !== "darwin") {
-    throw new Error("OVIS_RUNTIME=herdr-core is Linux/macOS only: no Windows named pipe support yet");
+  const platform = process.platform;
+  if (platform !== "linux" && platform !== "darwin" && platform !== "win32") {
+    throw new Error(`OVIS_RUNTIME=herdr-core is served on Linux, macOS and Windows, not ${platform}`);
   }
   // before the first `hc connect`: the plugin's or a service's PATH may not hold hc, or hold another one
   const core = await find();
@@ -118,11 +119,14 @@ export async function startRuntime(stateDir: string, find: () => Promise<FoundHc
   search = find;
   // the state folder is otherwise created on first write: the socket goes there first
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  if (statSync(stateDir).uid !== process.geteuid?.()) throw new Error("the herdr-core state directory is not owned by this user");
-  chmodSync(stateDir, 0o700);
+  // Windows has no owner uid or mode bits to check: the folder is in the user's own profile
+  const unix = platform !== "win32";
+  if (unix && statSync(stateDir).uid !== process.geteuid?.()) throw new Error("the herdr-core state directory is not owned by this user");
+  if (unix) chmodSync(stateDir, 0o700);
   const hc = coreConnection();
-  const adapter = await startHerdrCoreAdapter(hc, join(stateDir, "herdr-core.sock"), (address, turn, labels) => coreSeenMarker().observe(address, turn, labels));
-  chmodSync(adapter.socketPath, 0o600);
+  // on Windows the pipe is named after the folder itself: a junction or a short (8.3) spelling of it names the same pipe
+  const adapter = await startHerdrCoreAdapter(hc, adapterAddress(unix ? stateDir : realpathSync.native(stateDir), platform), (address, turn, labels) => coreSeenMarker().observe(address, turn, labels));
+  if (unix) chmodSync(adapter.socketPath, 0o600);
   process.env["HERDR_SOCKET"] = adapter.socketPath;
   serving = true;
   return {
