@@ -3295,7 +3295,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   `composerPasteSend`), and on a touch screen the suggestion chip (off by default); then
   **Quick replies**; then **File viewer**: wrap long lines, Markdown width, Diff layout), **Terminal** (font size, font family, wheel
   speed, input mode, Key bar, Keyboard only from the key bar (off by default, the device setting
-  `terminalKeyboardOnRequest`), Clipboard from a pane, Pictures in the terminal (off by default, the
+  `terminalKeyboardOnRequest`), Fold the key bar (touch screens, off by default, the device setting
+  `terminalFoldKeyBar`), Clipboard from a pane, Pictures in the terminal (off by default, the
   device setting `terminalImages`), Draw with libghostty (off by default, the device setting
   `terminalGhostty`), Use alongside herdr's own window, Follow
   herdr's focus), **Alerts**, **Voice input**, **Agents**,
@@ -3885,6 +3886,20 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   draft with a separate no-Enter insert; agent-of-empires' compose sheet has Insert beside Send but
   clears its draft on a synchronous boolean, which this design rejects: the draft is cleared on the
   bridge's acknowledgement, as Send's is, and nothing typed is queued across a disconnect.
+- **Fold the key bar** (Settings > Terminal, touch screens only, off by default, the device setting
+  `terminalFoldKeyBar`, #1531): in Input line mode the key bar's row is folded and the terminal gets
+  it back (about 48 px). The line's actions start with a **Terminal keys** button (`LineKeysButton` in
+  KeyBar.tsx), a round target without words over it, pressed as an armed key while the row is open;
+  the open row is the whole bar, mode key first. The mode key stays in the bar rather than moving into
+  the line as the issue proposed: two more round targets left a 360 px line too narrow to type in.
+  Folding lets go of any modifier the row held, since a folded row cannot show it, and leaving the
+  line folds the row again. Send stays last, at the edge, as in the composer. Folded, a line that
+  reaches the screen's bottom keeps `max(--space-2, safe-area-inset-bottom)` under its controls, and
+  its placeholder is cut on one row rather than wrapped. With Attach files and the microphone also on,
+  a phone too narrow for them wraps the actions above the field rather than crushing it. With
+  Keyboard only from the key bar on, Show keyboard is a tap into the opened row. Direct typing keeps
+  the whole bar. Design reference: the Claude and Codex phone apps, which keep one input row with
+  its actions at its end.
 - **Attach files** in the terminal lens (#1633; Settings > Terminal > **Attach files button**, the
   device setting `terminalAttachButton`, off by default and offered on a touch screen only, so the
   input line and the key bar stay as they were). On, the input line gets **Attach**

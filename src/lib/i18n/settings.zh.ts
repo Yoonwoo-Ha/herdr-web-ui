@@ -175,6 +175,8 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Pictures in the terminal": "终端中的图片",
   "Shows the pictures a program draws in a pane (imgcat, img2sixel, chafa) as sixel or iTerm2 images, on this device. Only on a PC that runs herdr-core, as the desktop app does: herdr does not pass pictures on. A picture is gone once the pane is drawn again.": "在此设备上以 sixel 或 iTerm2 图像显示窗格中程序绘制的图片(imgcat、img2sixel、chafa)。仅适用于运行 herdr-core 的电脑(如桌面应用):herdr 不会传递图片。窗格重新绘制后图片会消失。",
   "Keyboard only from the key bar": "仅从按键栏打开键盘",
+  "Fold the key bar": "折叠按键栏",
+  "On a touch screen in Input line mode, the key bar stays folded and the terminal gets its row back. A Terminal keys button in the input line opens and folds it.": "在触摸屏的输入行模式下，按键栏保持折叠，终端多出这一行。输入行中的终端按键按钮可展开和折叠按键栏。",
   "On a touch screen, a tap on the terminal, the input line or a key no longer brings up the keyboard. The key bar's keyboard key shows and hides it.": "在触摸屏上，点按终端、输入行或按键不再弹出键盘。用按键栏的键盘键显示或隐藏键盘。",
   "Draw with libghostty": "使用 libghostty 绘制",
   "Attach files button": "附加文件按钮",

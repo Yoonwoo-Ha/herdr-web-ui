@@ -175,6 +175,8 @@ export const SETTINGS_KO: Record<string, string> = {
   "Pictures in the terminal": "터미널 속 그림",
   "Shows the pictures a program draws in a pane (imgcat, img2sixel, chafa) as sixel or iTerm2 images, on this device. Only on a PC that runs herdr-core, as the desktop app does: herdr does not pass pictures on. A picture is gone once the pane is drawn again.": "패널의 프로그램이 그리는 그림(imgcat, img2sixel, chafa)을 sixel이나 iTerm2 이미지로 이 기기에서 보여 줍니다. 데스크톱 앱처럼 herdr-core로 도는 PC에서만 됩니다. herdr는 그림을 넘겨주지 않습니다. 패널을 다시 그리면 그림은 사라집니다.",
   "Keyboard only from the key bar": "키보드는 키 바에서만",
+  "Fold the key bar": "키 바 접기",
+  "On a touch screen in Input line mode, the key bar stays folded and the terminal gets its row back. A Terminal keys button in the input line opens and folds it.": "터치 화면의 입력창 모드에서 키 바를 접어 두고, 그 줄만큼 터미널을 더 보여 줍니다. 입력창의 터미널 키 버튼으로 키 바를 펴고 접습니다.",
   "On a touch screen, a tap on the terminal, the input line or a key no longer brings up the keyboard. The key bar's keyboard key shows and hides it.": "터치 화면에서 터미널, 입력 줄, 키를 눌러도 키보드가 올라오지 않습니다. 키 바의 키보드 키로 키보드를 열고 닫습니다.",
   "Draw with libghostty": "libghostty로 그리기",
   "Attach files button": "파일 첨부 버튼",

@@ -132,6 +132,9 @@ export interface Settings {
   /** on a touch screen, the soft keyboard comes up for the terminal only from the key bar's keyboard control:
    *  while it is down, the input line and xterm's field carry inputmode="none" (#1635). Off by default. */
   terminalKeyboardOnRequest: boolean;
+  /** on a touch screen in Input line mode, the key bar's row stays folded under the line until its Terminal keys
+   *  button opens it, and the Input line / Direct typing key sits in the line (#1531). Off by default. */
+  terminalFoldKeyBar: boolean;
   /** a pane whose grid this device does not size and is wider than this screen (a mirrored pane: a Windows
    *  PC, no terminal attach; an attached pane it only watches, or holds under the keyboard, at the grid
    *  another device gave the pty) is drawn folded to the screen's width (lib/terminalFold.ts); false draws
@@ -255,7 +258,7 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 
 /** Raw custom text, key combinations and account keys are never copied. Requiring every other
  * Settings field in the projection makes a new field require an explicit collection decision.
- * keyBarExpanded, agentLocks, lockedAgents, fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, autoTabNames, composerNewTabButton, composerArtifacts, composerPasteSend, terminalMirrorWrap, terminalImages, terminalGhostty, terminalAttachButton, terminalKeyboardOnRequest, sidebarFilter, voiceEngine, the agent groups, the
+ * keyBarExpanded, agentLocks, lockedAgents, fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, autoTabNames, composerNewTabButton, composerArtifacts, composerPasteSend, terminalMirrorWrap, terminalImages, terminalGhostty, terminalAttachButton, terminalKeyboardOnRequest, terminalFoldKeyBar, sidebarFilter, voiceEngine, the agent groups, the
  * interface font, the file text size, the chat's history page size and the folds its blocks start in are not collected: the telemetry schema
  * (shared/telemetry.ts) does not carry them. */
 type TelemetrySourceSettings = Omit<Settings,
@@ -263,7 +266,7 @@ type TelemetrySourceSettings = Omit<Settings,
   | "quickReplies" | "agentLocks" | "lockedAgents" | "usageOrder" | "usageHidden" | "fileOpen" | "webLinks" | "reuseExternalLinkTab" | "claudeLaunchMode" | "codexLaunchMode"
   | "followHerdrFocus" | "composerNewTabButton" | "composerArtifacts" | "composerPasteSend" | "terminalMirrorWrap" | "sidebarFilter" | "historyPrompts"
   | "expandThinking" | "foldWork" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort" | "terminalImages" | "terminalGhostty" | "terminalAttachButton"
-  | "terminalKeyboardOnRequest" | "fileFontSize" | "fileFontBase">;
+  | "terminalKeyboardOnRequest" | "terminalFoldKeyBar" | "fileFontSize" | "fileFontBase">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -348,6 +351,8 @@ export const SETTING_SCOPE = {
   terminalAttachButton: "device",
   // a phone's soft keyboard is no desk's
   terminalKeyboardOnRequest: "device",
+  // a phone's key row, as the keyboard above
+  terminalFoldKeyBar: "device",
   // a phone folds a wide mirror, a desk's window may draw it whole
   terminalMirrorWrap: "device",
   // a desk that follows herdr's focus must not move a phone open on another pane
@@ -409,6 +414,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalGhostty: true,
   terminalAttachButton: false,
   terminalKeyboardOnRequest: false,
+  terminalFoldKeyBar: false,
   terminalMirrorWrap: null,
   releasePaneAway: false,
   followHerdrFocus: false,
@@ -626,6 +632,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     terminalGhostty: record["terminalGhostty"] !== false,
     terminalAttachButton: record["terminalAttachButton"] === true,
     terminalKeyboardOnRequest: record["terminalKeyboardOnRequest"] === true,
+    terminalFoldKeyBar: record["terminalFoldKeyBar"] === true,
     terminalMirrorWrap: typeof record["terminalMirrorWrap"] === "boolean" ? record["terminalMirrorWrap"] : null,
     releasePaneAway: typeof record["releasePaneAway"] === "boolean" ? record["releasePaneAway"] : DEFAULT_SETTINGS.releasePaneAway,
     followHerdrFocus: typeof record["followHerdrFocus"] === "boolean" ? record["followHerdrFocus"] : DEFAULT_SETTINGS.followHerdrFocus,
@@ -821,6 +828,8 @@ export const TERMINAL_GHOSTTY_STORAGE_KEY = "ovis:terminal-ghostty";
 export const TERMINAL_ATTACH_BUTTON_STORAGE_KEY = "ovis:terminal-attach-button";
 /** Settings > Terminal > Keyboard only from the key bar, in a key of its own for the same reason: off until chosen. */
 export const TERMINAL_KEYBOARD_ON_REQUEST_STORAGE_KEY = "ovis:terminal-keyboard-on-request";
+/** Settings > Terminal > Fold the key bar, in a key of its own for the same reason: off until chosen. */
+export const TERMINAL_FOLD_KEY_BAR_STORAGE_KEY = "ovis:terminal-fold-key-bar";
 /** Settings > Chat > Reuse tab for external links, kept in a key of its own for the same reason: off until chosen. */
 export const REUSE_EXTERNAL_LINK_TAB_STORAGE_KEY = "ovis:reuse-external-link-tab";
 /** Settings > Chat > Composer > Paste and send button, kept in a key of its own for the same reason: off until chosen. */
@@ -879,7 +888,8 @@ export function loadSettings(): Settings {
     terminalImages: readChatFold(TERMINAL_IMAGES_STORAGE_KEY, DEFAULT_SETTINGS.terminalImages),
     terminalGhostty: readChatFold(TERMINAL_GHOSTTY_STORAGE_KEY, DEFAULT_SETTINGS.terminalGhostty),
     terminalAttachButton: readChatFold(TERMINAL_ATTACH_BUTTON_STORAGE_KEY, DEFAULT_SETTINGS.terminalAttachButton),
-    terminalKeyboardOnRequest: readChatFold(TERMINAL_KEYBOARD_ON_REQUEST_STORAGE_KEY, DEFAULT_SETTINGS.terminalKeyboardOnRequest) };
+    terminalKeyboardOnRequest: readChatFold(TERMINAL_KEYBOARD_ON_REQUEST_STORAGE_KEY, DEFAULT_SETTINGS.terminalKeyboardOnRequest),
+    terminalFoldKeyBar: readChatFold(TERMINAL_FOLD_KEY_BAR_STORAGE_KEY, DEFAULT_SETTINGS.terminalFoldKeyBar) };
 }
 
 /** false where storage refused the write (private mode, a full quota) */
@@ -890,7 +900,7 @@ export function saveSettings(settings: Settings): boolean {
       darkTheme: mirrored.darkTheme, lightTheme: mirrored.lightTheme,
       mirror: { palette: mirrored.palette, paletteDark: mirrored.paletteDark, paletteLight: mirrored.paletteLight },
     }));
-    const { uiFontFamily, terminalMirrorWrap, sidebarFilter, voiceEngine, agentGroups, agentGroupSort, historyPrompts, fileFontSize, fileFontBase, composerArtifacts, composerPasteSend, expandThinking, foldWork, reuseExternalLinkTab, terminalImages, terminalGhostty, terminalAttachButton, terminalKeyboardOnRequest, ...main } = mirrored;
+    const { uiFontFamily, terminalMirrorWrap, sidebarFilter, voiceEngine, agentGroups, agentGroupSort, historyPrompts, fileFontSize, fileFontBase, composerArtifacts, composerPasteSend, expandThinking, foldWork, reuseExternalLinkTab, terminalImages, terminalGhostty, terminalAttachButton, terminalKeyboardOnRequest, terminalFoldKeyBar, ...main } = mirrored;
     window.localStorage.setItem(VOICE_ENGINE_STORAGE_KEY, JSON.stringify(voiceEngine));
     window.localStorage.setItem(UI_FONT_STORAGE_KEY, JSON.stringify(uiFontFamily));
     window.localStorage.setItem(MIRROR_WRAP_STORAGE_KEY, JSON.stringify(terminalMirrorWrap));
@@ -910,6 +920,7 @@ export function saveSettings(settings: Settings): boolean {
     window.localStorage.setItem(TERMINAL_GHOSTTY_STORAGE_KEY, JSON.stringify(terminalGhostty));
     window.localStorage.setItem(TERMINAL_ATTACH_BUTTON_STORAGE_KEY, JSON.stringify(terminalAttachButton));
     window.localStorage.setItem(TERMINAL_KEYBOARD_ON_REQUEST_STORAGE_KEY, JSON.stringify(terminalKeyboardOnRequest));
+    window.localStorage.setItem(TERMINAL_FOLD_KEY_BAR_STORAGE_KEY, JSON.stringify(terminalFoldKeyBar));
     window.localStorage.setItem(ENTER_SENDS_STORAGE_KEY, JSON.stringify(mirrored.enterSends));
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({ ...main, enterSends: main.enterSends ?? true }));
     return true;

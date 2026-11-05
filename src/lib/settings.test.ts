@@ -224,6 +224,18 @@ describe("saved theme migration", () => {
     expect(loadSettings().terminalAttachButton).toBe(false);
   });
 
+  it("keeps Fold the key bar in its own key, out of an old tab's whole-record save", () => {
+    expect(loadSettings().terminalFoldKeyBar).toBe(false);
+    saveSettings(sanitizeSettings({ terminalFoldKeyBar: true }));
+    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("terminalFoldKeyBar");
+    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
+    expect(loadSettings().terminalFoldKeyBar).toBe(true);
+    saveSettings({ ...loadSettings(), terminalFoldKeyBar: false });
+    expect(loadSettings().terminalFoldKeyBar).toBe(false);
+    records.set("ovis:terminal-fold-key-bar", "\"true\"");
+    expect(loadSettings().terminalFoldKeyBar).toBe(false);
+  });
+
   it("keeps Keyboard only from the key bar in its own key, out of an old tab's whole-record save", () => {
     expect(loadSettings().terminalKeyboardOnRequest).toBe(false);
     saveSettings(sanitizeSettings({ terminalKeyboardOnRequest: true }));
@@ -703,6 +715,13 @@ it("raises the terminal's keyboard on every tap until this device asks for it on
   expect(sanitizeSettings({ terminalKeyboardOnRequest: "true" }).terminalKeyboardOnRequest).toBe(false);
   expect(sanitizeSettings({ terminalKeyboardOnRequest: true }).terminalKeyboardOnRequest).toBe(true);
   expect(SETTING_SCOPE.terminalKeyboardOnRequest).toBe("device");
+});
+
+it("keeps the key bar under the input line until this device folds it", () => {
+  expect(sanitizeSettings({}).terminalFoldKeyBar).toBe(false);
+  expect(sanitizeSettings({ terminalFoldKeyBar: "true" }).terminalFoldKeyBar).toBe(false);
+  expect(sanitizeSettings({ terminalFoldKeyBar: true }).terminalFoldKeyBar).toBe(true);
+  expect(SETTING_SCOPE.terminalFoldKeyBar).toBe("device");
 });
 
 it("draws no Attach files control in the terminal until this device turns it on", () => {

@@ -175,6 +175,8 @@ export const SETTINGS_JA: Record<string, string> = {
   "Pictures in the terminal": "ターミナル内の画像",
   "Shows the pictures a program draws in a pane (imgcat, img2sixel, chafa) as sixel or iTerm2 images, on this device. Only on a PC that runs herdr-core, as the desktop app does: herdr does not pass pictures on. A picture is gone once the pane is drawn again.": "ペインのプログラムが描く画像(imgcat、img2sixel、chafa)を sixel または iTerm2 画像としてこのデバイスで表示します。デスクトップアプリのように herdr-core で動く PC でのみ有効です。herdr は画像を渡しません。ペインが描き直されると画像は消えます。",
   "Keyboard only from the key bar": "キーボードはキーバーからのみ",
+  "Fold the key bar": "キーバーを折りたたむ",
+  "On a touch screen in Input line mode, the key bar stays folded and the terminal gets its row back. A Terminal keys button in the input line opens and folds it.": "タッチ画面の入力欄モードでキーバーを折りたたみ、その行の分だけターミナルを広く表示します。入力欄のターミナルキーボタンでキーバーを開閉します。",
   "On a touch screen, a tap on the terminal, the input line or a key no longer brings up the keyboard. The key bar's keyboard key shows and hides it.": "タッチ画面で、ターミナル、入力行、キーをタップしてもキーボードは表示されません。キーバーのキーボードキーで表示と非表示を切り替えます。",
   "Draw with libghostty": "libghostty で描画",
   "Attach files button": "ファイル添付ボタン",

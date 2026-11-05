@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type Ref } from "react";
+import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, useSyncExternalStore, type ClipboardEvent, type KeyboardEvent, type ReactNode, type Ref } from "react";
 import { CornerDownLeft, Paperclip, SendHorizontal, TextCursorInput } from "lucide-react";
 
 import "./TerminalInput.css";
@@ -36,6 +36,8 @@ export interface TerminalInputProps {
   onFocus?: () => void;
   /** Settings > Terminal > Keyboard only from the key bar, with the keyboard down: focus raises none (#1635) */
   keyboardHeld?: boolean;
+  /** Settings > Terminal > Fold the key bar: the Terminal keys button, first among the actions (KeyBar.tsx LineKeysButton) */
+  keyControls?: ReactNode;
   ref?: Ref<TerminalInputHandle>;
 }
 
@@ -69,7 +71,7 @@ interface SendAttempt {
  * keyboard's own editing and goes to the pane whole, then Enter. Autocorrect and spell-check stay
  * off, as in the composer: they would swap a flag, path or branch name for a dictionary word.
  */
-export function TerminalInput({ owner, active = true, connected, onSend, onEnter, onInsert, pasteTarget, onPasting, uploadFile, attach = false, onComposing, onFocus, keyboardHeld = false, ref }: TerminalInputProps) {
+export function TerminalInput({ owner, active = true, connected, onSend, onEnter, onInsert, pasteTarget, onPasting, uploadFile, attach = false, onComposing, onFocus, keyboardHeld = false, keyControls, ref }: TerminalInputProps) {
   const t = useT();
   const text = useSyncExternalStore(subscribeTerminalDraft, () => readTerminalDraft(owner));
   const setText = useCallback((value: string | ((previous: string) => string)) => {
@@ -484,7 +486,7 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
   const rows = Math.min(MAX_ROWS, Math.max(wrappedRows, text.split("\n").length));
   const fieldId = useId();
   return (
-    <div className={`terminal-input${dictation.shown ? " has-voice" : ""}`}>
+    <div className={`terminal-input${dictation.shown ? " has-voice" : ""}${keyControls ? " has-key-controls" : ""}`}>
       {/* the field's name in view, not only its placeholder: the same words as the key bar's mode key */}
       <label className="terminal-input-label" htmlFor={fieldId}>{t("Input line")}</label>
       <textarea
@@ -528,6 +530,7 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
       />
       {dictation.shown && <MicButton dictation={dictation} className="terminal-input-mic" />}
       <span className="terminal-input-actions">
+        {keyControls}
         {attach && uploadFile !== undefined && <>
           {/* the system picker; the paths go in where the caret was when it opened, as a paste's do */}
           <input

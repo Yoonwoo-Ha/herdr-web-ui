@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type MouseEvent, type PointerEvent, type ReactNode } from "react";
-import { ChevronDown, ChevronUp, ClipboardPaste, Keyboard, PanelBottomClose, PanelBottomOpen, Paperclip } from "lucide-react";
+import { ChevronDown, ChevronUp, ClipboardPaste, Ellipsis, Keyboard, PanelBottomClose, PanelBottomOpen, Paperclip } from "lucide-react";
 
 import "./KeyBar.css";
 
@@ -192,6 +192,20 @@ function Key({ dataKey, label, pressed, latch, expanded, onPress, onHoldEnd, chi
       {children}
     </button>
   );
+}
+
+/**
+ * Settings > Terminal > Fold the key bar (#1531): in Input line mode on a touch screen the key bar's
+ * row is folded, and the line's actions (TerminalInput.tsx) start with a Terminal keys button that
+ * opens and folds it, pressed while it is open. A round target as the line's, without words over it:
+ * the line's own two keep the room for theirs. The mode key stays first in the opened row.
+ */
+export function LineKeysButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const t = useT();
+  return <button type="button" className="terminal-input-action terminal-input-keys" aria-label={t("Terminal keys")} title={t("Terminal keys")} aria-pressed={open}
+    onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={onToggle}>
+    <span className="terminal-input-face"><Ellipsis aria-hidden="true" /></span>
+  </button>;
 }
 
 type Direction = "up" | "down" | "left" | "right";
