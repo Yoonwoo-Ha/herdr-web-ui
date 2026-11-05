@@ -1641,7 +1641,33 @@ describe("gjc sessions", () => {
       JSON.stringify({ type: "message", timestamp: "2026-09-25T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "hi" }] } }),
       JSON.stringify({ type: "message", timestamp: "2026-09-25T00:00:01.000Z", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "401 Authentication Failed" } }),
     ].join("\n");
-    expect(parseOmpTranscript(text).at(-1)?.parts).toEqual([{ kind: "text", text: "Error: 401 Authentication Failed" }]);
+    expect(parseOmpTranscript(text).at(-1)?.parts).toEqual([{ kind: "text", text: "Error: 401 Authentication Failed", failed: true }]);
+  });
+
+  it("keeps each failed request apart from the attempt that followed it in the same turn", () => {
+    const failure = (at: string, error: string) => JSON.stringify({ type: "message", timestamp: at, message: { role: "assistant", content: [], stopReason: "error", errorMessage: error } });
+    const text = [
+      JSON.stringify({ type: "message", timestamp: "2026-09-25T00:00:00.000Z", message: { role: "user", content: [{ type: "text", text: "hi" }] } }),
+      failure("2026-09-25T00:00:01.000Z", "503 overloaded"),
+      failure("2026-09-25T00:00:05.000Z", "Connection error."),
+      JSON.stringify({ type: "message", timestamp: "2026-09-25T00:00:09.000Z", message: { role: "assistant", content: [{ type: "text", text: "hello" }], stopReason: "stop" } }),
+    ].join("\n");
+    expect(parseOmpTranscript(text).at(-1)?.parts).toEqual([
+      { kind: "text", text: "Error: 503 overloaded", failed: true },
+      { kind: "text", text: "Error: Connection error.", failed: true },
+      { kind: "text", text: "hello", phase: "final_answer" },
+    ]);
+  });
+
+  it("carries the token counts a compaction record states, and none it does not", () => {
+    const compaction = (extra: Record<string, unknown>) => JSON.stringify({ type: "compaction", id: "c1", parentId: "u1", timestamp: "2026-09-25T00:00:02.000Z", summary: "folded", firstKeptEntryId: "u1", ...extra });
+    const card = (extra: Record<string, unknown>) => parseOmpTranscript(compaction(extra)).at(-1)?.parts;
+    // OmO: the tokens before, and what its structural pass saved (senpi.compaction.summary.v1)
+    expect(card({ tokensBefore: 761969, details: { schema: "senpi.compaction.summary.v1", tokenEstimate: 736131, structuralYield: { savedTokens: 493241, savingsRatio: 0.65, tokensBefore: 761969 }, origin: "core-route" }, fromHook: true }))
+      .toEqual([{ kind: "compact", text: "folded", tokens_before: 761969, tokens_saved: 493241 }]);
+    // omp's handoff records the size after; a zero before is no count
+    expect(card({ tokensBefore: 0, tokensAfter: 7189, method: "handoff" })).toEqual([{ kind: "compact", text: "folded", tokens_after: 7189 }]);
+    expect(card({ tokensBefore: "many", details: { structuralYield: { savedTokens: -3 } } })).toEqual([{ kind: "compact", text: "folded" }]);
   });
 
   it("hides agent-attributed IRC deliveries without hiding quoted user text or adding a page boundary", () => {

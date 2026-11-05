@@ -109,7 +109,7 @@ test("settled boundaries survive previews, hidden wakeups, empty assistant messa
   ];
   expect(appendRecords(rows).snapshot().map((turn) => turn.parts)).toEqual([
     [{ kind: "text", text: "The complete answer", phase: "final_answer" }],
-    [{ kind: "thinking", text: "New work" }, { kind: "text", text: "Error: Provider unavailable" }, { kind: "text", text: "Recovered", phase: "final_answer" }],
+    [{ kind: "thinking", text: "New work" }, { kind: "text", text: "Error: Provider unavailable", failed: true }, { kind: "text", text: "Recovered", phase: "final_answer" }],
     [{ kind: "text", text: "Another wake", phase: "final_answer" }],
   ]);
 });

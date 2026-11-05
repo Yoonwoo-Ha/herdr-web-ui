@@ -421,7 +421,7 @@ function ompTranscriptParser(state: OmpParseState, images: boolean, callIds: boo
       if ((entry as { type?: unknown }).type === "compaction") {
         const summary = (entry as { summary?: unknown }).summary;
         if (typeof summary === "string" && summary.trim().length > 0) {
-          turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "compact", text: summary }] });
+          turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "compact", text: summary, ...compactionTokens(entry) }] });
         }
         continue;
       }
@@ -506,7 +506,7 @@ function ompTranscriptParser(state: OmpParseState, images: boolean, callIds: boo
         // a failed request (a 401, an overloaded provider) leaves an empty message: without its
         // error the chat showed the prompt with no answer at all
         if (message.stopReason === "error" && typeof message.errorMessage === "string" && message.errorMessage.length > 0) {
-          turn.parts.push({ kind: "text", text: `Error: ${message.errorMessage}` });
+          turn.parts.push({ kind: "text", text: `Error: ${message.errorMessage}`, failed: true });
         }
         state.settled = message.stopReason === "stop";
       }
@@ -527,6 +527,17 @@ function ompTranscriptParser(state: OmpParseState, images: boolean, callIds: boo
       return structuredClone(turns.filter((turn) => turn.parts.length > 0));
     },
   };
+}
+
+/** The token counts a pi-family compaction record states; a missing, zero or malformed count is left out. */
+function compactionTokens(entry: object): { tokens_before?: number; tokens_after?: number; tokens_saved?: number } {
+  const count = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  const { tokensBefore, tokensAfter, details } = entry as { tokensBefore?: unknown; tokensAfter?: unknown; details?: { structuralYield?: { savedTokens?: unknown } } | null };
+  const before = count(tokensBefore);
+  const after = count(tokensAfter);
+  // OmO (senpi.compaction.summary.v1) records what its structural pass saved, not the size after
+  const saved = typeof details === "object" && details !== null ? count(details.structuralYield?.savedTokens) : undefined;
+  return { ...(before !== undefined ? { tokens_before: before } : {}), ...(after !== undefined ? { tokens_after: after } : {}), ...(saved !== undefined ? { tokens_saved: saved } : {}) };
 }
 
 /** One-shot parsing shares the incremental record rules, including valid no-newline tails. */

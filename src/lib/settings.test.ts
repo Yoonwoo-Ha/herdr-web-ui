@@ -285,7 +285,7 @@ describe("saved theme migration", () => {
   });
 
   it("keeps Expand thinking, Collapse work and Files beside the pane in keys of their own, out of an old tab's whole-record save", () => {
-    for (const [key, stored] of [["expandThinking", "ovis:expand-thinking"], ["foldWork", "ovis:fold-work"], ["filesPanel", "ovis:files-panel"], ["filesDocuments", "ovis:files-documents"]] as const) {
+    for (const [key, stored] of [["expandThinking", "ovis:expand-thinking"], ["foldWork", "ovis:fold-work"], ["chatRequestDetails", "ovis:chat-request-details"], ["filesPanel", "ovis:files-panel"], ["filesDocuments", "ovis:files-documents"]] as const) {
       expect(loadSettings()[key]).toBe(false);
       saveSettings(sanitizeSettings({ [key]: true }));
       expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty(key);
@@ -516,7 +516,7 @@ it("keeps the composer's Paste and send button off until this device turns it on
 });
 
 it("keeps the chat's folds as they always started until this device chooses Expand thinking or Collapse work, and keeps that choice its own", () => {
-  for (const key of ["expandThinking", "foldWork"] as const) {
+  for (const key of ["expandThinking", "foldWork", "chatRequestDetails"] as const) {
     expect(sanitizeSettings({})[key]).toBe(false);
     expect(sanitizeSettings({ [key]: true })[key]).toBe(true);
     expect(sanitizeSettings({ [key]: "true" })[key]).toBe(false);

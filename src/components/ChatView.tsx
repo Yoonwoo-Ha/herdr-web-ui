@@ -34,7 +34,7 @@ import type { GalleryImage } from "../lib/imageViewer.ts";
 import { toolGalleryImage, userGalleryImages } from "../lib/chatImages.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.ts";
-import { endedOnAnswer, isLiveWorkTurn, isWaitingWorkTurn, formatWorkDuration, runNames, splitTurn, turnSegments, type WorkSegment, todoGroups, visibleWorkParts, workBlockStartsOpen, workFailed, workSummary, type TodoAttempt, type TodoGroup, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
+import { answerItems, endedOnAnswer, isLiveWorkTurn, isWaitingWorkTurn, formatWorkDuration, runNames, splitTurn, turnSegments, type WorkSegment, todoGroups, visibleWorkParts, workBlockStartsOpen, workFailed, workSummary, type TodoAttempt, type TodoGroup, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
 import { phaseRows, planRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
 import { isTodoTool, parseTodoAnswer, todoCallSummary, type TodoItem, type TodoStatus } from "../lib/todos.ts";
 import { formatGoalTime, goalWaitSources, goalWaitUntil, turnGoal, type GoalState, type GoalStatus } from "../lib/goals.ts";
@@ -992,6 +992,8 @@ interface TurnProps {
   /** Settings: the reasoning shown starts open (Expand thinking), the work blocks folded (Collapse work) */
   expandThinking?: boolean;
   foldWork?: boolean;
+  /** Settings: a compaction names its recorded token counts, and failed requests read as one row (Compaction and failed requests) */
+  requestDetails?: boolean;
   /** the pane's skill names: an answer's text chips them */
   skills?: SkillMatcher | null;
   /** omo only: the user's own `$skill:x` and the `[skill: x]` omo leaves where one stood are chipped too */
@@ -1058,6 +1060,28 @@ function TeammateMessageRow({ message, stateKey }: { message: TeammateMessage; s
   </ChatDetails>;
 }
 
+/** the token counts a compaction's record states, in the order they happened */
+function compactCounts(t: ReturnType<typeof useT>, part: Extract<ConversationPart, { kind: "compact" }>): string[] {
+  return [
+    part.tokens_before === undefined ? null : t("{n} tokens before", { n: formatTokens(part.tokens_before) }),
+    part.tokens_after === undefined ? null : t("{n} tokens after", { n: formatTokens(part.tokens_after) }),
+    part.tokens_saved === undefined ? null : t("{n} tokens saved", { n: formatTokens(part.tokens_saved) }),
+  ].filter((count) => count !== null);
+}
+
+/** A run of requests the agent recorded as failed: one row, each error on request. `followed`: the turn went on with another request. */
+function FailedRequests({ parts, followed, memoryKey }: { parts: readonly Extract<ConversationPart, { kind: "text" }>[]; followed: boolean; memoryKey: string }) {
+  const t = useT();
+  const n = parts.length;
+  const label = followed
+    ? t(n === 1 ? "Request failed, then tried again" : "{n} requests failed, then tried again", { n })
+    : t(n === 1 ? "Request failed" : "{n} requests failed", { n });
+  return <ChatDetails memoryKey={memoryKey} className="chat-skill is-error chat-failed-requests">
+    <summary><CircleAlert aria-hidden="true" /><span className="chat-skill-name">{label}</span><ChevronDown className="chat-skill-caret" aria-hidden="true" /></summary>
+    <ol className="chat-skill-detail chat-failed-requests-list">{parts.map((part, index) => <li key={index}>{part.text.replace(/^Error: /, "")}</li>)}</ol>
+  </ChatDetails>;
+}
+
 /** what a runtime notice was: a background result by name, anything else by its own first line */
 function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPart, { kind: "notice" }>): string {
   if (notice.source === undefined || notice.source === "async-result") return t("Background result delivered");
@@ -1107,7 +1131,7 @@ function GoalWaitRow({ wait }: { wait: GoalWait }) {
 }
 
 // a turn that did not change keeps its object across polls: skip re-rendering it
-export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, showThinking, expandThinking = false, foldWork = false, skills = null, userSkills = null, outcome = null, outcomeActions = null }: TurnProps) {
+export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, showThinking, expandThinking = false, foldWork = false, requestDetails = false, skills = null, userSkills = null, outcome = null, outcomeActions = null }: TurnProps) {
   const t = useT();
   const memory = useContext(ChatRowMemoryContext);
   // what the drawn runs, and the runs that drew no block, were named, by part index; the row's
@@ -1131,7 +1155,7 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, sh
   const compact = turn.parts.find((part): part is Extract<ConversationPart, { kind: "compact" }> => part.kind === "compact");
   if (compact !== undefined) {
     return <ChatDetails memoryKey="compact" className="chat-compact">
-      <summary>{t("Conversation compacted")}{time !== null && <> · {time}</>}</summary>
+      <summary>{t("Conversation compacted")}{requestDetails && compactCounts(t, compact).map((count) => ` · ${count}`).join("")}{time !== null && <> · {time}</>}</summary>
       <div className="chat-compact-text"><Markdown>{compact.text}</Markdown></div>
     </ChatDetails>;
   }
@@ -1189,7 +1213,8 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, sh
     </article>;
   }
   const { answer } = splitTurn(turn.parts);
-  const answerText = answer.map((part) => part.text).join("\n\n");
+  // a failed request drawn as its row is not the answer: Copy leaves it out
+  const answerText = answer.filter((part) => !requestDetails || part.failed !== true).map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
   // in the agent's own order, as the terminal shows it: words written before a tool stay above it
   const segments = turnSegments(turn.parts);
@@ -1223,7 +1248,10 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, sh
     {/* the pending head stands only above no answer: one above words would leave a gap when the turn ends */}
     {head === undefined && live && answer.length === 0 && block(null)}
     {segments.map((segment) => segment.kind === "work" ? block(segment)
-      : segment.parts.map((part) => <Markdown key={`answer:${work.at.get(part)}`} skills={skills}>{part.text}</Markdown>))}
+      : answerItems(segment.parts, requestDetails).map((item) => item.kind === "text"
+        ? <Markdown key={`answer:${work.at.get(item.part)}`} skills={skills}>{item.part.text}</Markdown>
+        // a later part of the turn is a later request: what the record shows, not whether it was a retry
+        : <FailedRequests key={`failed:${work.at.get(item.parts[0]!)}`} memoryKey={`failed:${work.at.get(item.parts[0]!)}`} parts={item.parts} followed={work.at.get(item.parts.at(-1)!)! < turn.parts.length - 1} />))}
     {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
       <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>
@@ -2669,9 +2697,9 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     const live = isLiveWorkTurn(turn, row.index === shownTurns.length - 1, workStatus, finishedBeforeSend);
     return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error" data-pane-content-error>{t("This message can't be shown here. The terminal has it.")}</p>}>
       <Turn paneId={paneId} turn={turn} rowKey={row.key} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking}
-        expandThinking={settings.expandThinking} foldWork={settings.foldWork} skills={skillMatcher} userSkills={skillMatcher} outcome={row.outcome} outcomeActions={outcomeActions} />
+        expandThinking={settings.expandThinking} foldWork={settings.foldWork} requestDetails={settings.chatRequestDetails} skills={skillMatcher} userSkills={skillMatcher} outcome={row.outcome} outcomeActions={outcomeActions} />
     </RenderBoundary>;
-  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, settings.expandThinking, settings.foldWork, skillMatcher, outcomeActions]);
+  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, settings.expandThinking, settings.foldWork, settings.chatRequestDetails, skillMatcher, outcomeActions]);
   // displayPaneTitle falls back to the pane id for a pane with nothing else to call it
   const shownTitle = title?.trim() ?? "";
   const logLabel = shownTitle !== "" && shownTitle !== paneId ? t("conversation of {pane}", { pane: shownTitle }) : t("Conversation");

@@ -82,6 +82,24 @@ export function runNames(runs: readonly WorkSegment[], at: ReadonlyMap<Conversat
   });
 }
 
+/** An answer run as the chat draws it: its words, and with request details on, each run of failed requests as one row. */
+export type AnswerItem = { kind: "text"; part: TextPart } | { kind: "failed"; parts: TextPart[] };
+
+/**
+ * With Compaction and failed requests on (Settings → Chat, #901), consecutive requests the agent
+ * recorded as failed read as one row; off, each stays the error line it always was.
+ */
+export function answerItems(parts: readonly TextPart[], requestDetails: boolean): AnswerItem[] {
+  const items: AnswerItem[] = [];
+  for (const part of parts) {
+    const last = items.at(-1);
+    if (!requestDetails || part.failed !== true) items.push({ kind: "text", part });
+    else if (last?.kind === "failed") last.parts.push(part);
+    else items.push({ kind: "failed", parts: [part] });
+  }
+  return items;
+}
+
 /**
  * A work block is open while its turn runs and folded once the turn settles: the answer stays
  * outside the fold, so a finished turn reads as its answer under one "Worked for" row.
