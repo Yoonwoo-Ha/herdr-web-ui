@@ -15,6 +15,8 @@ export const TERMINAL_JA: Record<string, string> = {
   "View only while you are not typing here · type or click to type": "入力していない間は表示のみ · 入力かクリックで入力",
   "Drop on the left": "左側にドロップ",
   "Drop on the right": "右側にドロップ",
+  "Drop above": "上にドロップ",
+  "Drop below": "下にドロップ",
   "Live terminal is coming to Windows PCs: herdr cannot attach a terminal there yet. The chat lens works now.": "Windows PC のライブターミナルは準備中です。herdr はまだ Windows でターミナルをアタッチできません。チャットは今すぐ使えます。",
   "Terminal for {title}": "{title} のターミナル",
   "Pane name": "ペイン名",

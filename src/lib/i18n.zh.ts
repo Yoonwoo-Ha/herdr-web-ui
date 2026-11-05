@@ -114,6 +114,8 @@ const BASE: Record<string, string> = {
   "Show the terminal": "显示终端",
   "Show the chat": "显示聊天",
   "Close this half": "关闭这一半",
+  "Remove from the split": "从拆分中移除",
+  "Resize the split": "调整拆分大小",
   "Toggle sidebar (⌘⇧B)": "切换侧边栏 (⌘⇧B)",
   "Chat transcript (⌘⇧J)": "聊天记录 (⌘⇧J)",
   "Live terminal (⌘⇧J)": "实时终端 (⌘⇧J)",

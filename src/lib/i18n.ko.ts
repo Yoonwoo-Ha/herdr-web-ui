@@ -110,6 +110,8 @@ const BASE: Record<string, string> = {
   "Show the terminal": "터미널 보기",
   "Show the chat": "채팅 보기",
   "Close this half": "이쪽 화면 닫기",
+  "Remove from the split": "분할에서 빼기",
+  "Resize the split": "분할 크기 조절",
   "Toggle sidebar (⌘⇧B)": "사이드바 토글 (⌘⇧B)",
   "Chat transcript (⌘⇧J)": "채팅 기록 (⌘⇧J)",
   "Live terminal (⌘⇧J)": "실시간 터미널 (⌘⇧J)",

@@ -1,5 +1,5 @@
 /**
- * Chinese for the settings keys of Settings → Chat → Composer's optional buttons and chips: the rest of the
+ * Chinese for the settings keys of Settings → Chat → Composer's optional buttons and chips, and of Settings → Terminal → Split into rows and columns: the rest of the
  * settings part (./settings.zh.ts), kept apart so each file stays short. Both files are the one settings part,
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
@@ -12,4 +12,6 @@ export const SETTINGS_COMPOSER_ZH: Record<string, string> = {
   "A chip in an OMP pane's message box lists the side conversations its session saved with /btw.": "在 OMP 窗格的输入框中显示一个标签，列出该会话用 /btw 保存的旁支对话。",
   "Paste and send button": "粘贴并发送按钮",
   "A button in the empty message box sends the text copied on this device as a message.": "空输入框中的按钮会把在此设备上复制的文本作为消息发送。",
+  "Split into rows and columns": "按行和列拆分",
+  "Drop a pane on the edge of another in the split view to open it beside, above or below that pane, up to four at once, and drag the line between two panes to resize them. Off: the split view keeps two halves side by side.": "在拆分视图中把窗格放到另一个窗格的边缘，即可在它的旁边、上方或下方打开，最多同时四个；拖动两个窗格之间的线可调整大小。关闭时，拆分视图保持左右两半。",
 };

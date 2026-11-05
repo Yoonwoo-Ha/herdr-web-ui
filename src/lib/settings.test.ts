@@ -440,6 +440,15 @@ it("leaves herdr's focus alone until this device asks to follow it, and keeps th
   expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("followHerdrFocus");
 });
 
+it("keeps the split view to two halves until this device turns on rows and columns, and keeps that choice its own", () => {
+  expect(DEFAULT_SETTINGS.splitGrid).toBe(false);
+  expect(sanitizeSettings({}).splitGrid).toBe(false);
+  expect(sanitizeSettings({ splitGrid: true }).splitGrid).toBe(true);
+  expect(sanitizeSettings({ splitGrid: "true" }).splitGrid).toBe(false);
+  expect(SETTING_SCOPE.splitGrid).toBe("device");
+  expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("splitGrid");
+});
+
 it("keeps the sidebar's hover peek off until this device turns it on, and keeps that choice its own", () => {
   expect(DEFAULT_SETTINGS.sidebarPeek).toBe(false);
   expect(sanitizeSettings({}).sidebarPeek).toBe(false);

@@ -15,6 +15,8 @@ export const TERMINAL_KO: Record<string, string> = {
   "View only while you are not typing here · type or click to type": "입력하지 않는 동안 보기 전용 · 입력하거나 클릭하면 입력",
   "Drop on the left": "왼쪽에 놓기",
   "Drop on the right": "오른쪽에 놓기",
+  "Drop above": "위에 놓기",
+  "Drop below": "아래에 놓기",
   "Live terminal is coming to Windows PCs: herdr cannot attach a terminal there yet. The chat lens works now.": "Windows PC의 실시간 터미널은 준비 중입니다. herdr가 아직 Windows에서 터미널 attach를 지원하지 않습니다. 채팅은 지금 바로 쓸 수 있습니다.",
   "Terminal for {title}": "{title} 터미널",
   "Pane name": "패널 이름",

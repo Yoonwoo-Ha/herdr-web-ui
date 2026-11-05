@@ -1,8 +1,9 @@
 import { useCallback, useState } from "react";
+import type { SplitSlot } from "./split.ts";
 
-/** Which pane's chat Search conversation opens over: the half of the split view it is in too, which may show the same tab as the other half. */
+/** Which pane's chat Search conversation opens over: the slot of the split view it is in too, which may show the same tab as another slot. */
 export interface SearchRequest {
-  slot: "a" | "b";
+  slot: SplitSlot;
   machineId: string;
   paneId: string;
   /** bumped for each request: the pane's chat (ChatView searchRequest) opens the search when it changes */
@@ -15,7 +16,7 @@ export interface SearchRequest {
  */
 export function useSearchRequest(setDrawerOpen: (open: boolean) => void) {
   const [searchRequest, setSearchRequest] = useState<SearchRequest>({ slot: "a", machineId: "", paneId: "", serial: 0 });
-  const requestSearch = useCallback((slot: "a" | "b", machineId: string, paneId: string) => {
+  const requestSearch = useCallback((slot: SplitSlot, machineId: string, paneId: string) => {
     setDrawerOpen(false);
     setSearchRequest((request) => ({ slot, machineId, paneId, serial: request.serial + 1 }));
   }, [setDrawerOpen]);

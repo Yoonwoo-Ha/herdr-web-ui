@@ -965,6 +965,105 @@ export async function checkSplitView(browser: Browser, origin: string): Promise<
       console.log("PASS a pane moved outside this browser keeps its half, its draft and its lens under the new ID");
     }
 
+    // Rows and columns (Settings' splitGrid): a pane dropped on a slot's bottom edge opens below it,
+    // the slots already open keep their terminals while the layout changes around them, a boundary
+    // moves from the keyboard, the layout is kept for a reload, and closing slots goes back to one pane.
+    {
+      const [one, two, three] = await panesFor("grid-one", "grid-two", "grid-three") as [string, string, string];
+      const sockets: WebSocket[] = [];
+      const { page, errors } = await open([one, two, three], "terminal", async (context) => {
+        await context.addInitScript(() => {
+          const settings = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as Record<string, unknown>;
+          if (!("splitGrid" in settings)) localStorage.setItem("ovis:settings", JSON.stringify({ ...settings, splitGrid: true }));
+        });
+        context.on("page", (opened) => opened.on("websocket", (socket) => sockets.push(socket)));
+      });
+      const slot = (id: string) => page.locator(`.pane-slot[data-slot="${id}"]`);
+      /** a sidebar row dragged to a point of the pane area (fractions of it), dropped where the guide shows `edge` */
+      const dropAt = async (pane: string, fx: number, fy: number, edge: string, slots: number): Promise<void> => {
+        const source = page.locator(`.pane-select[title^="${pane} —"]`);
+        await source.scrollIntoViewIfNeeded();
+        const from = (await source.boundingBox())!;
+        await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(from.x + from.width / 2 + 8, from.y + from.height / 2 + 4, { steps: 2 });
+        await page.waitForFunction(() => document.querySelector(".split-drop")?.classList.contains("is-visible") === true);
+        const box = (await page.locator(".pane-split").boundingBox())!;
+        await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy, { steps: 8 });
+        await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
+        await page.waitForFunction((which) => document.querySelector(".split-drop.is-grid.is-visible")?.getAttribute("data-edge") === which, edge);
+        await page.mouse.up();
+        await page.waitForFunction((count) => document.querySelectorAll(".pane-slot").length === count, slots);
+      };
+      const shows = (id: string, pane: string) => page.waitForFunction(([which, target]) =>
+        document.querySelector(`.pane-slot[data-slot="${which}"] [data-layout-pane="${target}"]:not([inert])`) !== null, [id, pane] as const);
+
+      // one pane: the right half of it opens a second slot beside it, as the halves do
+      await dropAt(two, 0.8, 0.5, "right", 2);
+      await shows("a", one);
+      await shows("b", two);
+      const kept = [(await slot("a").locator(".pane-terminal").elementHandle())!, (await slot("b").locator(".pane-terminal").elementHandle())!];
+      // the right slot's bottom band opens a third pane below it, which is then the active slot
+      await dropAt(three, 0.75, 0.93, "bottom", 3);
+      await shows("c", three);
+      await page.waitForFunction(() => document.querySelector('.pane-slot[data-slot="c"]')?.classList.contains("is-active") === true);
+      const area = (await page.locator(".pane-split").boundingBox())!;
+      const [a, b, c] = await Promise.all(["a", "b", "c"].map(async (id) => (await slot(id).boundingBox())!));
+      assert.ok(Math.abs(a!.height - area.height) < 2 && Math.abs(a!.width - area.width / 2) < 2, "the first pane keeps the left column");
+      assert.ok(Math.abs(b!.height - area.height / 2) < 2 && Math.abs(c!.y - (area.y + area.height / 2)) < 2, "the right column holds two panes stacked");
+      assert.equal(await page.locator('.pane-slot[data-side]').count(), 0, "three slots are not two halves");
+      assert.deepEqual(await Promise.all(kept.map((element) => element.evaluate((node) => node.isConnected))), [true, true], "the slots already open keep their terminals");
+      assert.equal(sockets.filter((socket) => !socket.isClosed()).length, 3, "each slot but the first draws on a connection of its own");
+
+      // the boundary between the columns, from the keyboard: two steps right is 60%
+      const boundary = page.getByRole("separator", { name: "Resize the split" }).first();
+      await boundary.focus();
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("ArrowRight");
+      await page.waitForFunction(() => document.querySelector('.pane-split-divider[data-dir="row"]')?.getAttribute("aria-valuenow") === "60");
+      await page.waitForFunction((width) => {
+        const box = document.querySelector('.pane-slot[data-slot="a"]')?.getBoundingClientRect();
+        return box !== undefined && Math.abs(box.width - width * 0.6) < 2;
+      }, area.width);
+      assert.equal(await kept[0]!.evaluate((node) => node.isConnected), true, "a resize keeps the terminal");
+
+      // a reload opens the same rows and columns
+      await page.reload();
+      await page.locator(".conn-live").waitFor();
+      await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 3);
+      await shows("b", two);
+      await shows("c", three);
+      await page.waitForFunction(() => document.querySelector('.pane-split-divider[data-dir="row"]')?.getAttribute("aria-valuenow") === "60");
+
+      // closing another slot leaves the active one where it is
+      const active = (await slot("c").locator(".pane-terminal").elementHandle())!;
+      await slot("b").getByRole("button", { name: "Remove from the split", exact: true }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2);
+      assert.equal(await active.evaluate((node) => node.isConnected), true, "the active slot keeps its terminal");
+      // three slots again, then the setting turned off: two halves, the active slot and the first other at half each
+      await dropAt(two, 0.75, 0.07, "top", 3);
+      await shows("b", two);
+      await page.evaluate(() => {
+        const settings = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as Record<string, unknown>;
+        localStorage.setItem("ovis:settings", JSON.stringify({ ...settings, splitGrid: false }));
+      });
+      await page.reload();
+      await page.locator(".conn-live").waitFor();
+      await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 2
+        && document.querySelector('.pane-slot[data-side="left"][data-slot="a"]') !== null
+        && document.querySelector('.pane-slot[data-side="right"][data-slot="b"].is-active') !== null);
+      assert.equal(await page.locator(".pane-split-divider").count(), 0, "two halves have no boundary to move");
+      await page.waitForFunction((width) => {
+        const box = document.querySelector('.pane-slot[data-slot="a"]')?.getBoundingClientRect();
+        return box !== undefined && Math.abs(box.width - width / 2) < 2;
+      }, area.width);
+      await slot("a").getByRole("button", { name: "Close this half", exact: true }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".pane-slot").length === 1 && sessionStorage.getItem("ovis:split") === null);
+      await shows("b", two);
+      assert.deepEqual(errors, []);
+      console.log("PASS rows and columns: a pane opens below a slot, slots keep their terminals, a boundary moves from the keyboard, a reload keeps the layout and the setting turned off leaves two halves");
+    }
+
     // A saved partner on a removed PC is discarded only after the roster arrives.
     {
       const [pane] = await panesFor("removed-machine") as [string];

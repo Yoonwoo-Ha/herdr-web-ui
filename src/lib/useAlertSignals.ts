@@ -12,7 +12,7 @@ import type { NotificationTarget } from "./notificationTarget.ts";
 import { dropletAllows, endedTurn, seedStatuses, showDroplet, trackTurn, type DropletKind } from "./droplet.ts";
 import { canPlayAlertSound, playAlertSound, recheckAlertSounds, unlockAlertSound, type AlertSoundKind } from "./alertSound.ts";
 import { createAlertTurnPlayer } from "./alertTurns.ts";
-import { sameTarget, type SplitState } from "./split.ts";
+import { splitShows, type SplitState } from "./split.ts";
 
 type PaneStatusMessage = Extract<ServerMessage, { type: "pane-status" }>;
 type PaneExitedMessage = Extract<ServerMessage, { type: "pane-exited" }>;
@@ -49,7 +49,7 @@ export function useAlertSignals({ settings, selectionRef, drawerOpenRef, splitRe
     if (!alertsOnRef.current || !alertInAppRef.current || document.visibilityState !== "visible") return;
     const open = selectionRef.current;
     if (open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
-    if (splitShownRef.current && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
+    if (splitShownRef.current && splitShows(splitRef.current, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
     showDroplet({
       machineId: machine.id,
       paneId: pane.pane_id,
@@ -81,7 +81,7 @@ export function useAlertSignals({ settings, selectionRef, drawerOpenRef, splitRe
     if (!alertsOnRef.current || !alertSoundRef.current || !canPlayAlertSound()) return;
     const open = selectionRef.current;
     if (document.visibilityState === "visible" && open.machineId === machine.id && open.paneId === pane.pane_id && !drawerOpenRef.current) return;
-    if (document.visibilityState === "visible" && splitShownRef.current && sameTarget(splitRef.current?.other ?? null, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
+    if (document.visibilityState === "visible" && splitShownRef.current && splitShows(splitRef.current, { machineId: machine.id, paneId: pane.pane_id }) && !drawerOpenRef.current) return;
     alertTurns.current?.chime(JSON.stringify([machine.id, pane.pane_id, kind]), kind);
   }, []);
 

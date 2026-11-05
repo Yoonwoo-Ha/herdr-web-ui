@@ -15,7 +15,7 @@ import type { AppLink } from "./deepLink.ts";
 import type { TerminalPeek } from "./terminalPeek.ts";
 import type { NotificationTarget } from "./notificationTarget.ts";
 import type { SelectionMark } from "./selectionMark.ts";
-import type { SplitState } from "./split.ts";
+import { otherTargets, type SplitState } from "./split.ts";
 import { deviceInUse, followsHerdrFocus, movingHerdrFocusOn } from "./followFocus.ts";
 import { pruneWaitingSends } from "./sentWaiting.ts";
 import { paneLifetimes } from "./paneLifetime.ts";
@@ -312,7 +312,7 @@ export function useRosterEvents({ onPaneMoved, machineSessions, locked, onRoster
       // is confirmed with its PC first, as a pane made here is (the selection effect below)
       if (message.type === "pane-focused" && followsHerdrFocus({
         enabled: followFocusRef.current, machineId: machine.id, paneId: message.pane_id, selection: selectionRef.current,
-        splitOther: splitShownRef.current ? splitRef.current?.other ?? null : null, linkPending: pendingLink.current !== null,
+        splitOthers: splitShownRef.current ? otherTargets(splitRef.current) : [], linkPending: pendingLink.current !== null,
         busy: deviceInUse(selectionRef.current), ownMove: movingHerdrFocusOn(machine.id),
       })) {
         selectionHint.current = null;

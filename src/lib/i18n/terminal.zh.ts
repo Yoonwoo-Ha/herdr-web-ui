@@ -15,6 +15,8 @@ export const TERMINAL_ZH: Record<string, string> = {
   "View only while you are not typing here · type or click to type": "未输入时仅查看 · 输入或点击即可输入",
   "Drop on the left": "放到左侧",
   "Drop on the right": "放到右侧",
+  "Drop above": "放到上方",
+  "Drop below": "放到下方",
   "Live terminal is coming to Windows PCs: herdr cannot attach a terminal there yet. The chat lens works now.": "Windows PC 的实时终端即将推出：herdr 目前还不能在 Windows 上附加终端。聊天视图现在即可使用。",
   "Terminal for {title}": "{title} 终端",
   "Pane name": "窗格名称",

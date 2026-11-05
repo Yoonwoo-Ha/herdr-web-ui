@@ -112,6 +112,8 @@ const BASE: Record<string, string> = {
   "Show the terminal": "ターミナルを表示",
   "Show the chat": "チャットを表示",
   "Close this half": "この半分を閉じる",
+  "Remove from the split": "分割から外す",
+  "Resize the split": "分割のサイズを変更",
   "Toggle sidebar (⌘⇧B)": "サイドバーの切り替え (⌘⇧B)",
   "Chat transcript (⌘⇧J)": "チャット履歴 (⌘⇧J)",
   "Live terminal (⌘⇧J)": "ライブターミナル (⌘⇧J)",
