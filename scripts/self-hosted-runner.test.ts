@@ -320,6 +320,14 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
     expect(dockerRun).toContain("--shm-size 2g");
   });
 
+  it("turns core dumps off in every runner container, so a crash leaves no file in the checkout", () => {
+    const { result, calls } = runRunner({ count: 2 });
+    expect(result.status).toBe(0);
+    const runs = calls.split("\n").filter((call) => runnerRun.test(call));
+    expect(runs).toHaveLength(2);
+    for (const run of runs) expect(run).toContain("--ulimit core=0");
+  });
+
   it("hands a host env file to every runner container, never to the network namespace one", () => {
     const { result, calls, envFile } = runRunner({ count: 2, envFile: "present" });
     expect(result.status).toBe(0);

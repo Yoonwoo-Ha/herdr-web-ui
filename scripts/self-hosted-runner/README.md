@@ -35,7 +35,8 @@ launcher starts first and stops last. The runners therefore share a loopback, an
 `CHECK_MAX_RUNS` and wait for a slot, instead of each runner believing it has the PC to itself.
 The namespace is not the host's: a job still cannot reach a service on the host's loopback. The
 `--shm-size 2g` Docker setting sizes `/dev/shm` for browser scratch space; it is not a total RAM
-limit. The container still has a pids limit of 8192.
+limit. The container still has a pids limit of 8192, and `--ulimit core=0`: a crash never leaves a
+core file in the checkout, where `scripts/check.ts` would count it as a source change.
 
 ## Prepared tools and caches
 
