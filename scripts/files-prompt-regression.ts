@@ -11,6 +11,7 @@ import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { UsageService } from "../server/usage.ts";
+import { PANE_DRAG_TYPE } from "../src/lib/split.ts";
 import { chromePath } from "./chrome-path.ts";
 import { runMoreItem } from "./header-more.ts";
 import "./test-herdr.ts";
@@ -113,6 +114,31 @@ async function checkFiles(page: Page, label: string, phone: boolean, paneA: stri
   }
   // The shortcut is intentionally global, including while the Files dialog is open.
   assert.equal(await selectedPane(page), paneB);
+  if (phone) return;
+  // Escape closes Files even when an earlier listener of the same key re-renders the app (#2631): here the
+  // split guide of a pane drag, which that Escape puts away first
+  await page.getByRole("button", { name: "Browse files", exact: true }).click();
+  await dialog.waitFor();
+  await page.evaluate((type) => {
+    const data = new DataTransfer();
+    data.setData(type, "{}");
+    window.dispatchEvent(new DragEvent("dragstart", { dataTransfer: data }));
+  }, PANE_DRAG_TYPE);
+  await page.locator(".split-drop.is-visible").waitFor({ state: "attached" });
+  await page.keyboard.press("Escape");
+  await page.locator(".split-drop.is-visible").waitFor({ state: "detached" });
+  await dialog.waitFor({ state: "hidden" });
+  // Settings opened by its shortcut with Files open takes the keyboard: one Escape closes Settings alone, the next Files
+  await page.getByRole("button", { name: "Browse files", exact: true }).click();
+  await dialog.waitFor();
+  await page.keyboard.press("Control+Shift+Comma");
+  const settings = page.locator(".settings-dialog");
+  await settings.waitFor();
+  await page.keyboard.press("Escape");
+  await settings.waitFor({ state: "detached" });
+  assert.equal(await dialog.isVisible(), true, "one Escape closed both Settings and Files");
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden" });
 }
 
 async function paintStartupMenu(pane: string): Promise<void> {

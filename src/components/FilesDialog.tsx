@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import { FolderSearch, X } from "lucide-react";
 
 import "./FilesDialog.css";
@@ -51,18 +51,26 @@ export function FilesDialog({ start, paneId, viewing, onOpenFile, onOpenDiff, on
   useSheetSwipe(surface, docked ? null : onClose);
   // a file opened from the list is drawn over it with an entry of its own: Back closes the file first
   usePhoneSheetBack(onClose, !viewing && !docked);
+  // the listener stays put across renders: an earlier listener of the same key that re-renders the app (the split
+  // guide Escape puts away) would otherwise swap it out mid-dispatch, and a listener removed then never runs (#2631)
+  const onKey = useEffectEvent((event: KeyboardEvent): void => {
+    // one Escape closes one dialog, the one with the keyboard: Settings opened with Files open holds the focus
+    // (it closes first), and Settings under Files may have taken this Escape already
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    const focusedModal = document.activeElement?.closest("[aria-modal='true']");
+    if (focusedModal && focusedModal !== surface.current) return;
+    // docked, the pane beside it is live: Escape there is the terminal's, so only one inside the panel closes it
+    if (docked && !surface.current?.contains(document.activeElement)) return;
+    // a native modal over it (Add PC, from the palette) takes its own Escape
+    if (nativeModalOver(surface.current)) return;
+    event.preventDefault();
+    onClose();
+  });
   useEffect(() => {
     if (viewing) return;
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
-      // docked, the pane beside it is live: Escape there is the terminal's, so only one inside the panel closes it
-      if (docked && !surface.current?.contains(document.activeElement)) return;
-      // a native modal over it (Add PC, from the palette) takes its own Escape
-      if (!nativeModalOver(surface.current)) onClose();
-    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, viewing, docked]);
+  }, [viewing]);
   // the palette's Open in Files names a folder for the browser: kept beside the pane on another tab, it shows Browse
   useEffect(() => subscribeFilesFolder(() => setTab("browse")), []);
   const show = (next: Tab): void => {
