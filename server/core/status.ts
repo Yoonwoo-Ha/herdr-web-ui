@@ -3,9 +3,9 @@
  * own status, background waits, plans, the machine roster and the one collector that feeds them.
  */
 import { createAlertWebhook } from "../alert-webhook.ts";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { RelaySocket } from "../../shared/relay-channel.ts";
-import type { AgentStatus, HerdrPane, PlanSummary, ServerMessage, SessionSnapshot } from "../../shared/protocol.ts";
+import type { AgentStatus, HerdrPane, PaneContext, PlanSummary, ServerMessage, SessionSnapshot } from "../../shared/protocol.ts";
 import { alertStatus, paneAlertsMuted, paneTitle } from "../../shared/notify-policy.ts";
 import { BackgroundWait } from "../background-wait.ts";
 import { busyPanes, DESKTOP_ACTIVITY_FILE, trackDesktopActivity } from "../desktop-activity.ts";
@@ -37,6 +37,8 @@ import type { PreferenceStore } from "../preferences.ts";
 import { currentPrompt, onChatSubmitted, promptWaitEnded, type OpenCodePromptState } from "../prompt.ts";
 import { type AlertTiming, createPushService, defaultStateDir } from "../push.ts";
 import { SessionPlans } from "../session-plan.ts";
+import { readStatuslineContext } from "../statusline.ts";
+import { userHome } from "../user-home.ts";
 import type { Telemetry } from "../telemetry.ts";
 import type { UsageLoginService } from "../usage-login.ts";
 import type { UsageService } from "../usage.ts";
@@ -256,13 +258,16 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     if (agent !== undefined && agent !== other) return true;
     return (tracker === "claude" ? opencodeAgents : claudeAgents).sessionOf(paneId)?.live !== true;
   }
-  /** the plan each Claude Code, Codex and OmO pane keeps, for the sidebar's progress (server/session-plan.ts) */
+  /** the plan each Claude Code, Codex and OmO pane keeps, and the context each Claude Code and Codex pane filled, for the sidebar (server/session-plan.ts) */
   const plans = new SessionPlans({
     claudePath: (paneId) => claudeAgents.sessionOf(paneId)?.path ?? null,
     omoPath: (paneId) => omo.pathOf(paneId),
     // only what is certain without reading the screen: the chat's own matching stays the chat's
     codexPath: async (pane) => codexOpenRollout(pane.pane_id, pane.cwd, await paneCodexHome(pane.pane_id, options.codexHome)),
     onChange: (paneId, summary) => planChanged(paneId, summary),
+    onContext: (paneId, context) => contextChanged(paneId, context),
+    // the window the chat's ring takes for a Claude session (conversation.ts)
+    claudeWindow: (path, model) => readStatuslineContext(userHome(), basename(path, ".jsonl"), model, path),
   });
   /** herdr's snapshot with OmO's and GJC's own status in it: what the completion tracker and web push are given */
   const rawSnapshot = async (): Promise<SessionSnapshot> => {
@@ -300,7 +305,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     return named;
   };
   const backgroundOf = (paneId: string): number => omo.backgroundOf(paneId) || claudeAgents.countOf(paneId) || opencodeAgents.countOf(paneId);
-  /** the snapshot clients get: finishes settled, OmO panes named, background tasks, waits and plan progress */
+  /** the snapshot clients get: finishes settled, OmO panes named, background tasks, waits, plan progress and context */
   const clientSnapshot = async (): Promise<SessionSnapshot> => {
     // the order this read can show is the one of the moves confirmed before it starts: taken before any wait,
     // and again by a read started afresh below
@@ -323,7 +328,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
         const background = backgroundOf(pane.pane_id);
         const waiting = waits.waiting(pane.pane_id);
         const plan = plans.summaryOf(pane.pane_id);
-        return background > 0 || waiting || plan !== null ? { ...pane, ...(background > 0 ? { background_tasks: background } : {}), ...(waiting ? { background_wait: true as const } : {}), ...(plan !== null ? { plan } : {}) } : pane;
+        const context = plans.contextOf(pane.pane_id);
+        return background > 0 || waiting || plan !== null || context !== null ? { ...pane, ...(background > 0 ? { background_tasks: background } : {}), ...(waiting ? { background_wait: true as const } : {}), ...(plan !== null ? { plan } : {}), ...(context !== null ? { context } : {}) } : pane;
       }),
     }, completions);
     return order ? { ...settled, ...order } : settled;
@@ -347,7 +353,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       .catch((error) => console.error(`telemetry: the visit was not counted (${error instanceof Error ? error.message : String(error)})`));
   }
   /** A pane's status frame: every one says whether the pane waits on its turn's background work. */
-  const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null } = {}): ServerMessage =>
+  const paneStatus = (paneId: string, status: AgentStatus, about: { background_tasks?: number; plan?: PlanSummary | null; context?: PaneContext | null } = {}): ServerMessage =>
     ({ type: "pane-status", pane_id: paneId, agent_status: status, ...finishes.status(paneId, status), ...about, ...(waits.waiting(paneId) ? { background_wait: true as const } : {}) });
   const machines = options.machines === false ? null : new MachineManager(options.stateDir ?? defaultStateDir(), push, completions, clientSnapshot, { bootId: options.orderSequence?.epoch, localFinishEpoch: () => finishes.epoch, relaySocket: options.relayPcSocket, serverId: options.serverId });
   if (machines && options.herdrProfiles) machines.watchHerdrProfiles(options.herdrProfiles);
@@ -443,6 +449,11 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   function planChanged(paneId: string, plan: PlanSummary | null): void {
     const status = completions.current(paneId);
     if (status !== undefined) broadcastAll(paneStatus(paneId, status, { plan }));
+  }
+
+  function contextChanged(paneId: string, context: PaneContext | null): void {
+    const status = completions.current(paneId);
+    if (status !== undefined) broadcastAll(paneStatus(paneId, status, { context }));
   }
 
   // a bridge (no roster of its own) tells its connection server instead (#555)

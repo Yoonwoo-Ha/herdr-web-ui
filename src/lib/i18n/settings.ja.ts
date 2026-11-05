@@ -122,6 +122,8 @@ export const SETTINGS_JA: Record<string, string> = {
   "Name tabs from the first message": "最初のメッセージでタブに名前を付ける",
   "A tab still named by its number shows a few words of the first message sent to it, in every browser. A name you gave a tab is kept, and herdr's own tab names do not change. Only those words are kept, on this server, until the tab closes; turning this off deletes them.": "番号だけのタブに、そのタブへ送った最初のメッセージの数語を表示します。すべてのブラウザに反映されます。自分で付けたタブ名はそのまま残り、herdr のタブ名は変わりません。保存するのはその数語だけで、タブを閉じるまでこのサーバーに残り、オフにすると削除されます。",
   "Show the Filter field above the sidebar's lists on this device. When off, Filter workspaces and agents in the command palette opens it.": "このデバイスで、サイドバーの一覧の上に絞り込み欄を表示します。オフのときは、コマンドパレットの「ワークスペースとエージェントを絞り込む」で開きます。",
+  "Context left on agent rows": "エージェント行に残りのコンテキスト",
+  "On this device, show the context ring from the chat's composer on each agent row, for the agents whose context window is known (Claude Code and Codex). It turns red at 20% left or less.": "このデバイスで、チャット入力欄のコンテキストリングを各エージェント行にも表示します。コンテキストウィンドウの大きさがわかるエージェント（Claude Code と Codex）だけに表示され、残りが 20% 以下になると赤くなります。",
   "Agents order": "エージェントの並び順",
   "Activity keeps a waiting agent on top, then the one that changed last; herdr's own order is not changed": "アクティビティ順では、応答待ちのエージェントを一番上に、その後は最近変化した順に並べます。herdr 自体の順序は変わりません",
   "Workspaces": "ワークスペース順",

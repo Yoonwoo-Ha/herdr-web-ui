@@ -417,6 +417,35 @@ describe("AgentSidebar fold memory", () => {
     expect((await sidebar.remount(inactive)).expanded()).toBe(true);
   });
 
+  it("draws the composer's context ring on agent rows only while Context left on agent rows is on", async () => {
+    // Given three agents: one with 40% left, one with 15% left, one whose window is not known.
+    const contexts: Record<string, { used: number; window: number | null }> = {
+      [paneId]: { used: 120_000, window: 200_000 },
+      "w1E:p1": { used: 170_000, window: 200_000 },
+      "w1F:p1": { used: 30_000, window: null },
+    };
+    const filled = roster().map((machine) => ({
+      ...machine,
+      snapshot: machine.snapshot === null ? null : { ...machine.snapshot, panes: machine.snapshot.panes.map((pane) => contexts[pane.pane_id] ? { ...pane, context: contexts[pane.pane_id] } : pane) },
+    }));
+    const rings = async () => {
+      await act(async () => { renderer?.unmount(); });
+      await act(async () => { renderer = create(<SettingsProvider><SidebarFilterProvider value={{ filter: inactive, reportBranches: () => {} }}>
+        <AgentSidebar machines={filled} selectedMachineId="local" selectedPaneId={null} stateWord={(machine) => machine.state} onSelect={() => {}} />
+      </SidebarFilterProvider></SettingsProvider>); });
+      return renderer!.root.findAll((node) => node.type === "span" && node.props["data-testid"] === "context-left")
+        .map((node) => [node.props["aria-label"], node.props.className]);
+    };
+    // When the setting was never chosen, no row draws a ring.
+    expect(await rings()).toEqual([]);
+    // When it is on, the rows with a known window draw the ring with the composer's words, red at 20% left or less.
+    stored.set("ovis:sidebar-context", "true");
+    expect(await rings()).toEqual([
+      ["Context 40% left · 120k of 200k tokens", "context-count"],
+      ["Context 15% left · 170k of 200k tokens", "context-count is-low"],
+    ]);
+  });
+
   it("draws the groups in one list, so a row whose state changes moves to its new group instead of being drawn anew", async () => {
     // Given grouping on for this device.
     stored.set("ovis:agent-groups", "true");

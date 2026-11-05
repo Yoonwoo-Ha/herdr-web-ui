@@ -121,8 +121,6 @@ export const COMPOSER_ZH: Record<string, string> = {
   "Transcription failed": "转录失败",
   "Use the suggestion": "使用建议",
   "Send “{reply}”": "发送“{reply}”",
-  "Context {percent}% left": "上下文剩余 {percent}%",
-  "{used} of {window} tokens": "{used} / {window} Token",
   "Terminal commands": "终端命令",
   "Skills and files": "技能和文件",
   "Plugins": "插件",

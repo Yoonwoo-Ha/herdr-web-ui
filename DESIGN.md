@@ -2620,6 +2620,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   maintainer-approved adaptation of agent-of-empires' plan strip (#1040): only its step
   visibility is taken, and herdr keeps its existing shared chip rather than importing that
   separate always-visible strip or a progress bar, so the status line stays one row on a phone.
+- Settings > Appearance > **Context left on agent rows** (the device setting `sidebarContext`, off
+  by default, #1305) adds the composer's context ring to each agent row, after the plan count
+  (`.context-count`): the same ring at the badges' size, then the percentage left in the same quiet
+  mono figures, with the composer's words as its name and title ("Context 62% left · 76k of 200k
+  tokens"). It turns `--status-blocked` at 20% left or less, the composer's own threshold, and
+  draws nothing where the composer's ring would draw nothing (no known window), so a row only
+  shows it for Claude Code and Codex panes, whose transcripts the server already reads for the
+  plan. The Codex app, Paseo and T3 Code keep the ring by the composer only, and so does Ovis by
+  default; the row ring is opt-in for people who watch several agents' context at once.
 - The chip opens one list above the card: a **Plan** heading with `N of M done`, the steps in wave
   order (a status glyph, the name, what a running step does now, then a dim state · time · teammate
   line; a waiting step's name is dim), then a **Background tasks** heading over the tasks list when

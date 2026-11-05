@@ -121,8 +121,6 @@ export const COMPOSER_JA: Record<string, string> = {
   "Transcription failed": "文字起こしに失敗しました",
   "Use the suggestion": "提案を使う",
   "Send “{reply}”": "「{reply}」を送信",
-  "Context {percent}% left": "コンテキスト残り {percent}%",
-  "{used} of {window} tokens": "{used} / {window} トークン",
   "Terminal commands": "ターミナルコマンド",
   "Skills and files": "スキルとファイル",
   "Plugins": "プラグイン",

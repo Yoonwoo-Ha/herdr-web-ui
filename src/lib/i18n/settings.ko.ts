@@ -122,6 +122,8 @@ export const SETTINGS_KO: Record<string, string> = {
   "Name tabs from the first message": "첫 메시지로 탭 이름 짓기",
   "A tab still named by its number shows a few words of the first message sent to it, in every browser. A name you gave a tab is kept, and herdr's own tab names do not change. Only those words are kept, on this server, until the tab closes; turning this off deletes them.": "번호로만 불리는 탭에 그 탭으로 보낸 첫 메시지의 몇 단어를 보여 줍니다. 모든 브라우저에 적용됩니다. 직접 지은 탭 이름은 그대로 두고, herdr의 탭 이름은 바꾸지 않습니다. 그 몇 단어만 탭이 닫힐 때까지 이 서버에 보관하며, 끄면 삭제됩니다.",
   "Show the Filter field above the sidebar's lists on this device. When off, Filter workspaces and agents in the command palette opens it.": "이 기기에서 사이드바 목록 위에 필터 입력란을 보여 줍니다. 끄면 명령 팔레트의 워크스페이스와 에이전트 필터로 엽니다.",
+  "Context left on agent rows": "에이전트 행에 남은 컨텍스트",
+  "On this device, show the context ring from the chat's composer on each agent row, for the agents whose context window is known (Claude Code and Codex). It turns red at 20% left or less.": "이 기기에서 채팅 입력칸의 컨텍스트 링을 각 에이전트 행에도 보여 줍니다. 컨텍스트 창 크기를 알 수 있는 에이전트(Claude Code, Codex)만 표시하며, 20% 이하로 남으면 빨간색이 됩니다.",
   "Agents order": "에이전트 정렬",
   "Activity keeps a waiting agent on top, then the one that changed last; herdr's own order is not changed": "활동순은 응답을 기다리는 에이전트를 맨 위에 두고, 그다음 가장 최근에 바뀐 순서로 놓습니다. herdr 자체의 순서는 바뀌지 않습니다",
   "Workspaces": "워크스페이스순",

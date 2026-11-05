@@ -427,6 +427,8 @@ const BASE: Record<string, string> = {
   "New group": "新分组",
   "Add group": "添加分组",
   "No group": "无分组",
+  "Context {percent}% left": "上下文剩余 {percent}%",
+  "{used} of {window} tokens": "{used} / {window} Token",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

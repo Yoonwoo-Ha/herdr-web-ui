@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, His
 
 import "./Sidebar.css";
 
-import type { AgentStatus, PaneInfo, PlanSummary, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
+import type { AgentStatus, PaneContext, PaneInfo, PlanSummary, SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import { paneTitle } from "../../shared/notify-policy.ts";
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
 import { renamesWorkspace } from "../lib/layoutTargets.ts";
@@ -21,6 +21,7 @@ import { focusWorkspaceListToggle } from "../lib/focus.ts";
 import { folderName, shortPathTitle, stripPaneChrome, tabTitle, taskRowLines } from "../lib/paneName.ts";
 import { ApiError } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
+import { contextLeftPercent, formatTokens } from "../lib/compose.ts";
 import { userErrorMessage } from "../lib/userError.ts";
 import { rosterPanes } from "../lib/dagPane.ts";
 import { useSidebarActivity } from "../lib/sidebarActivity.tsx";
@@ -150,6 +151,28 @@ export function PlanBadge({ plan }: { plan?: PlanSummary }) {
   return (
     <span className={`plan-count${plan.done === plan.total ? " is-done" : ""}`} title={plan.current ? `${label} · ${plan.current}` : label} aria-label={label} data-testid="plan-progress">
       <ListChecks aria-hidden="true" />{plan.done}/{plan.total}
+    </span>
+  );
+}
+
+/**
+ * What is left of the pane's context: the composer's ring, its words and its threshold (red at 20%
+ * left or less), so the two never disagree; a window nothing names draws nothing, as the ring does.
+ */
+export function ContextBadge({ context }: { context?: PaneContext | undefined }) {
+  const t = useT();
+  const left = context ? contextLeftPercent(context) : null;
+  if (!context || left === null || context.window === null) return null;
+  const label = `${t("Context {percent}% left", { percent: left })} · ${t("{used} of {window} tokens", { used: formatTokens(context.used), window: formatTokens(context.window) })}`;
+  const radius = 6;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <span className={`context-count${left <= 20 ? " is-low" : ""}`} title={label} aria-label={label} data-testid="context-left">
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <circle className="context-count-track" cx="8" cy="8" r={radius} />
+        <circle className="context-count-used" cx="8" cy="8" r={radius}
+          strokeDasharray={`${circumference * (100 - left) / 100} ${circumference}`} transform="rotate(-90 8 8)" />
+      </svg>{left}%
     </span>
   );
 }

@@ -425,6 +425,8 @@ const BASE: Record<string, string> = {
   "New group": "新しいグループ",
   "Add group": "グループを追加",
   "No group": "グループなし",
+  "Context {percent}% left": "コンテキスト残り {percent}%",
+  "{used} of {window} tokens": "{used} / {window} トークン",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

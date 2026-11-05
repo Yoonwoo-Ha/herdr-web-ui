@@ -423,6 +423,8 @@ const BASE: Record<string, string> = {
   "New group": "새 그룹",
   "Add group": "그룹 추가",
   "No group": "그룹 없음",
+  "Context {percent}% left": "컨텍스트 {percent}% 남음",
+  "{used} of {window} tokens": "{window} 토큰 중 {used}",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
