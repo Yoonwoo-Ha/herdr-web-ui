@@ -103,7 +103,7 @@ import { polledPrompt, screenWordsToShow } from "../lib/promptText.ts";
 import { paneLifetimes } from "../lib/paneLifetime.ts";
 import { composerDraftKey, composerDrafts } from "../lib/composerDraft.ts";
 import type { ConversationSearchMatch } from "../../shared/conversation-search.ts";
-import { pickedTurn } from "../../shared/conversation-search.ts";
+import { pickedTurn, pickSettled } from "../../shared/conversation-search.ts";
 import type { AgentStatus, CommandOutcome, ConversationMetadata, ConversationPart, ConversationResponse, ConversationTurn, InteractivePrompt, OmoTaskResult, PendingMessage, SlashCommand } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
 import { TurnTime } from "./TurnTime.tsx";
@@ -2542,24 +2542,26 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   }, [timelineRows, revealTick]);
   /**
    * Opens the chat at a search's pick: the pages before the oldest shown are read, the largest page
-   * at a time, until its turn is in. A turn that changed since the search has another name: once the
-   * beginning came without it, the one turn still that match is opened (pickedTurn), never one of
-   * two. `missing`: no such turn, or its transcript was replaced meanwhile.
+   * at a time, until its turn is in and no page not read yet can hold the turn it was (pickSettled). A
+   * turn that changed since the search has another name, which a later turn of its time may have
+   * taken: the one turn that is the match is opened (pickedTurn), never one of two. `missing`: no
+   * such turn, or its transcript was replaced meanwhile.
    */
   const revealTurn = async (match: ConversationSearchMatch): Promise<RevealResult> => {
-    const named = (turn: ConversationTurn): boolean => chatTurnAnchor(turn) === match.turn;
     const reveal = (): Promise<RevealResult> => new Promise((done) => {
       revealing.current?.done("missing");
       revealing.current = { match, done };
       setRevealTick((tick) => tick + 1);
     });
-    if (shownTurns.some(named)) return reveal();
+    let read: readonly ConversationTurn[] = shownTurns;
+    if (pickSettled(read, match)) return reveal();
     const generation = olderGeneration.current;
     for (let before = olderCursor; typeof before === "string";) {
       const page = await loadOlder({ before, prompts: LARGEST_PAGE });
       if (olderGeneration.current !== generation) return "missing";
       if (page === null) return "failed";
-      if (page.turns.some(named)) return reveal();
+      read = [...page.turns, ...read];
+      if (pickSettled(read, match)) return reveal();
       before = page.cursor;
     }
     return reveal();

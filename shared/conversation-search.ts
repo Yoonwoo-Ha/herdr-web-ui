@@ -130,12 +130,21 @@ export function searchedTurnChanged(turn: ConversationTurn, match: ConversationS
  * match's name, as before, unless a turn of its time before it changed into the match; else the one
  * turn changed since (searchedTurnChanged). `several` when an earlier turn changed into the match and
  * a later one has its name (an answer grew and a later answer of its time took its old name), or two
- * changed ones: none is opened, never the wrong one. Turns without a time are found by name only:
- * a time that is missing tells no turn apart.
+ * changed ones: none is opened, never the wrong one. Turns of its time that share the name (their
+ * first 80 characters agree, or their first tool call) go by which still has the matched words
+ * anywhere in its text, a progress note's too: an answer's words never leave it, though they can
+ * leave the search (Codex marks them commentary later). None when that is not exactly one. Turns
+ * without a time are found by name only: a time that is missing tells no turn apart.
  */
 export function pickedTurn(turns: readonly (ConversationTurn | null)[], match: ConversationSearchMatch): number | "none" | "several" {
-  const named = turns.findIndex((turn) => turn != null && conversationTurnAnchor(turn) === match.turn);
-  if (match.ts === null) return named >= 0 ? named : "none";
+  const names = turns.flatMap((turn, index) => turn != null && conversationTurnAnchor(turn) === match.turn ? [index] : []);
+  if (match.ts === null) return names[0] ?? "none";
+  const pattern = searchPattern(match.match);
+  const holds = (index: number): boolean => pattern !== null
+    && pattern.test(turns[index]!.parts.flatMap((part) => part.kind === "text" ? [plainText(part.text)] : []).join("\n\n"));
+  const holding = names.length > 1 ? names.filter(holds) : names;
+  if (holding.length > 1 || names.length > 1 && holding.length === 0) return "several";
+  const named = holding[0] ?? -1;
   let changed: number | null = null;
   // a turn that grew can lose its old name only to a later turn
   for (let index = 0; index < (named >= 0 ? named : turns.length); index++) {
@@ -145,6 +154,22 @@ export function pickedTurn(turns: readonly (ConversationTurn | null)[], match: C
     changed = index;
   }
   return named >= 0 ? named : changed ?? "none";
+}
+
+/**
+ * Whether the turns read so far (the conversation's end, earlier pages put before them) settle a
+ * pick: one has the match's name, and the turn the search found cannot be on a page not read yet. A
+ * turn that changed since loses its name only to a later turn of its time (pickedTurn), so a pick
+ * reads on until a turn before the named one is of an earlier time: turns come in time order, but for
+ * answers dated by an earlier start (Codex, when the user steers mid-task), which all follow that
+ * start. A time that cannot be read tells nothing; turns without a time go by name only.
+ */
+export function pickSettled(turns: readonly ConversationTurn[], match: ConversationSearchMatch): boolean {
+  const named = turns.findIndex((turn) => conversationTurnAnchor(turn) === match.turn);
+  if (named < 0) return false;
+  if (match.ts === null) return true;
+  const at = Date.parse(match.ts);
+  return turns.slice(0, named).some((turn) => turn.ts !== null && Date.parse(turn.ts) < at);
 }
 
 /** The turns that hold the pattern, newest first, each with its first match. */
