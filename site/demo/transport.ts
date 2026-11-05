@@ -18,6 +18,7 @@ import { NO_AGENT_MESSAGE } from "../../shared/submit-outcome.ts";
 import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, DevicePairedEvent, DevicesRevokedAll, HealthAuth, IntegrationsResponse, Machine, MachineEvent, OmoActivity, OmoTask, PairedDevice, PairingCode, PaneBackgroundAgentDetail, PaneDirection, PaneFindMatch, PaneFindRequest, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, RelayStatus, SecuritySummary, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, TabMovedToWorkspace, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import type { PushSubscriptionStatus, RepoBranchComparison, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRefs, RepoDiffRepository, RepoDiffScope, SessionHistoryAgent, SessionHistoryResponse, SessionResumeResponse } from "../../shared/protocol.ts";
 import { nextTabLabels, normalizeThemeChange, sharedPreferencesBody, type SharedPreferences } from "../../shared/preferences.ts";
+import type { PullRequestCheckLog, PullRequestView } from "../../shared/pull-request.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { ALERT_WEBHOOK_PRESETS, type AlertWebhookSave, type AlertWebhookView } from "../../shared/alert-webhook.ts";
 import { DEFAULT_ALERTS } from "../../shared/notify-policy.ts";
@@ -979,6 +980,52 @@ const DEMO_DIFF: { file: RepoDiffFile; patch: string | null }[] = [
  */
 const DEMO_HEAD = "4f2a9c1d7e3b5a8c6d0e1f2a3b4c5d6e7f8a9b0c";
 const DEMO_MAIN = "7a3e5c19b2d84f06a1c3e5b7d9f1a3c5e7b9d1f3";
+/**
+ * The pull request a worktree's branch has in the demo (GET /api/workspace/pr): one failing check
+ * whose log Send to agent reads, one still running, the rest passed, and two open review threads.
+ * Merge stays off (a required check failed), as GitHub would keep it.
+ */
+const DEMO_PR: PullRequestView = {
+  number: 128,
+  title: "Retry webhook deliveries with backoff",
+  url: "https://github.com/demo/checkout-api/pull/128",
+  state: "open",
+  draft: false,
+  head_ref: "",
+  base_ref: "main",
+  head_oid: DEMO_HEAD,
+  merge_state: "blocked",
+  merge_queue: false,
+  mergeable: false,
+  merge_method: "squash",
+  checks: [
+    { name: "test (node 22)", workflow: "CI", state: "fail", url: "https://github.com/demo/checkout-api/actions/runs/7001/job/9003", job_id: "9003" },
+    { name: "e2e", workflow: "CI", state: "pending", url: "https://github.com/demo/checkout-api/actions/runs/7001/job/9004", job_id: "9004" },
+    { name: "lint", workflow: "CI", state: "pass", url: "https://github.com/demo/checkout-api/actions/runs/7001/job/9001", job_id: "9001" },
+    { name: "typecheck", workflow: "CI", state: "pass", url: "https://github.com/demo/checkout-api/actions/runs/7001/job/9002", job_id: "9002" },
+  ],
+  threads: [
+    { path: "src/webhooks/retry.ts", line: 42, outdated: false, author: "mira", body: "Cap the backoff: after eight tries this waits over four minutes between attempts.", comments: 2, url: "https://github.com/demo/checkout-api/pull/128#discussion_r1" },
+    { path: "src/webhooks/queue.ts", line: 17, outdated: false, author: "jonas", body: "Can a delivery be retried twice if two workers pick it up?", comments: 1, url: "https://github.com/demo/checkout-api/pull/128#discussion_r2" },
+  ],
+  threads_truncated: false,
+};
+const DEMO_PR_LOG = [
+  "> checkout-api@2.4.0 test",
+  "> bun test",
+  "",
+  "src/webhooks/retry.test.ts:",
+  "(pass) retries a failed delivery [3.10ms]",
+  "(fail) gives up after the last attempt [1.42ms]",
+  "  expect(received).toBe(expected)",
+  "  Expected: \"failed\"",
+  "  Received: \"retrying\"",
+  "",
+  " 11 pass",
+  " 1 fail",
+  "error: script \"test\" exited with code 1",
+].join("\n");
+
 const DEMO_REFS: RepoDiffRefs["refs"] = [
   { name: "refs/heads/main", oid: DEMO_MAIN },
   { name: "refs/remotes/origin/main", oid: DEMO_MAIN },
@@ -2053,6 +2100,15 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const entry = changed.find((candidate) => candidate.file.path === query.get("path"));
     if (!entry) return error("not_found", "nothing changed at that path in this comparison", 404);
     return json({ ...shared, file: entry.file, patch: entry.patch, unavailable: entry.patch === null ? "binary" : null, truncated: false, limits: { max_patch_bytes: DEMO_DIFF_LIMITS.max_patch_bytes, context_lines: DEMO_DIFF_LIMITS.context_lines } } satisfies RepoDiffFilePatch);
+  }
+  if (path === "/api/workspace/pr" || path === "/api/workspace/pr/log" || path === "/api/workspace/pr/merge") {
+    const root = snapshot().panes.find((pane) => pane.pane_id === paneId)?.cwd ?? query.get("directory") ?? "/home/demo/checkout-api";
+    const branch = [...repositories.values()].flatMap((repo) => repo.checkouts).find((checkout) => checkout.path === root)?.branch ?? "main";
+    // a worktree's branch has a pull request in the demo; main has none
+    if (branch === "main") return error("no_pull_request", "This branch has no pull request", 404);
+    if (path === "/api/workspace/pr/merge") return error("merge_refused", "The demo merges nothing.", 409);
+    if (path === "/api/workspace/pr/log") return json({ job_id: query.get("job_id") ?? "", text: DEMO_PR_LOG, truncated: true } satisfies PullRequestCheckLog);
+    return json({ ...DEMO_PR, head_ref: branch } satisfies PullRequestView, 200, { "cache-control": "no-store" });
   }
   if (path.startsWith("/api/fs/")) return error("not_found", "the demo has no files to open", 404);
   return error("demo", `${method} ${path} is not part of the demo`, 404);

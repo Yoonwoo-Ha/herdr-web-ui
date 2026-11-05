@@ -4,6 +4,7 @@ import type { AlertWebhookSave, AlertWebhookView } from "../../shared/alert-webh
 import type { SeenFinish, SeenPresentation } from "../../shared/seen.ts";
 import type { AgentCatalogResponse, AgentTabStarted } from "../../shared/agent-catalog.ts";
 import { resumeConnectionTraces } from "./connectionTrace.ts";
+import type { PullRequestCheckLog, PullRequestMergeRequest, PullRequestView } from "../../shared/pull-request.ts";
 import { machinePath, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   WorkspaceMoved,
@@ -1170,6 +1171,31 @@ export async function fetchRepoDiffFile(query: RepoDiffQuery, path: string, oldP
   params.set("path", path);
   if (oldPath !== null) params.set("old_path", oldPath);
   return getJson<RepoDiffFilePatch>(machinePath(machineId, `workspace/diff/file?${params.toString()}`));
+}
+
+/** The folder whose branch's pull request is read: the pane's own, or `directory` when the pane is gone. */
+export interface PullRequestTarget { paneId: string | null; directory: string | null }
+
+function pullRequestParams(target: PullRequestTarget): URLSearchParams {
+  return new URLSearchParams({ ...(target.paneId ? { pane_id: target.paneId } : {}), ...(target.directory ? { directory: target.directory } : {}) });
+}
+
+/** GET /api/workspace/pr: the branch's pull request, its checks and open review threads, read through the PC's gh. */
+export async function fetchPullRequest(target: PullRequestTarget, machineId = "local"): Promise<PullRequestView> {
+  return getJson<PullRequestView>(machinePath(machineId, `workspace/pr?${pullRequestParams(target).toString()}`));
+}
+
+/** GET /api/workspace/pr/log: the last lines of a check's Actions job log. */
+export async function fetchPullRequestLog(target: PullRequestTarget, jobId: string, host: string, machineId = "local"): Promise<PullRequestCheckLog> {
+  const params = pullRequestParams(target);
+  params.set("job_id", jobId);
+  params.set("host", host);
+  return getJson<PullRequestCheckLog>(machinePath(machineId, `workspace/pr/log?${params.toString()}`));
+}
+
+/** POST /api/workspace/pr/merge: merges the pull request at the head it was read at, with the method shown. */
+export async function mergePullRequest(target: PullRequestTarget, merge: Pick<PullRequestMergeRequest, "number" | "head_oid" | "base_ref" | "method">, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "workspace/pr/merge"), "POST", { ...(target.paneId ? { pane_id: target.paneId } : {}), ...(target.directory ? { directory: target.directory } : {}), ...merge } satisfies PullRequestMergeRequest);
 }
 
 export type { CreateTabRequest, CreateWorkspaceRequest } from "../../shared/protocol.ts";

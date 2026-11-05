@@ -355,6 +355,20 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *  GET    /api/workspace/diff/refs?pane_id=&directory= -> RepoDiffRefs (the local and remote
  *         branches of that repository, as full refnames with their commits, for choosing a base:
  *         at most `limits.max_refs`, sorted, a remote's symbolic HEAD left out; nothing is fetched)
+ *  GET    /api/workspace/pr?pane_id=&directory= -> PullRequestView (shared/pull-request.ts: the
+ *         pull request of the branch checked out in the pane's folder, or `directory`, read through
+ *         that PC's own `gh` sign-in: title, state, checks failing first with their Actions job ids,
+ *         the unresolved review threads, whether GitHub would merge now and with which default
+ *         method. 409 gh_missing / gh_signed_out / no_github_remote / not_a_repository, 404
+ *         no_pull_request, 502 gh_failed, 504 gh_timeout. A watching device is refused, as for diffs)
+ *  GET    /api/workspace/pr/log?pane_id=&directory=&job_id=&host= -> PullRequestCheckLog (the last
+ *         lines of that Actions job's log, timestamps and colour codes removed, asked of the pull
+ *         request's host: github.com when absent; 400 invalid_job / invalid_host)
+ *  POST   /api/workspace/pr/merge { pane_id?, directory?, number, head_oid, base_ref, method } -> { ok: true }
+ *         (`gh pr merge --<method> --match-head-commit <head_oid>`: only the head the view showed is
+ *         merged, into the base it showed (read again first: 409 pull_request_changed), the branch
+ *         is kept; 400 invalid_body, 409 merge_queue (a base merged through a merge queue, where gh
+ *         would only queue it), 409 merge_refused with GitHub's reason)
  *  GET    /api/pane/prompt?pane_id=     -> PanePromptResponse
  *         (the agent's TUI question/approval menu currently on screen, parsed from the visible pane
  *         text; with no menu, the next prompt Claude Code suggests, grey in its empty input box, and
