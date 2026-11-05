@@ -15,7 +15,7 @@ import { myPcs } from "../account/myPcs.ts";
 import type { MyPc } from "../account/myPcs.ts";
 import { accountProvidersOf, accountServiceOf, AccountService, SignedOutError } from "../account/service.ts";
 import { beginSignIn, finishSignIn, SignInError, signInReturn } from "../account/signin.ts";
-import { enrollOnPc, linkThisDevice, needsLink, pcAccountStatus, planEnroll, sendQueuedAdds, takeIntroduction } from "../account/join.ts";
+import { enrollOnPc, keepRemovals, linkThisDevice, needsLink, pcAccountStatus, planEnroll, sendQueuedAdds, takeIntroduction } from "../account/join.ts";
 import { leaveAccount } from "../account/leave.ts";
 import { nativeSignIn, nativeSignInAvailable } from "../account/native.ts";
 import { indexedAccountStore } from "../account/store.ts";
@@ -390,6 +390,8 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       if (linking || fresh) opened.renew();
       // a PC of another account is not this account's to list or introduce from
       if (device.public_spki !== key.public_spki || (!linking && status.account !== session.account)) return;
+      // the account's removals this PC holds, checked and kept as signed, for a PC this client enrolls later (#2956)
+      if (!linking) await keepRemovals({ store: accountStore, account: session.account, removals: status.removals });
       // the PC lists this row as a member: only now does it count as in the account here
       if (!linking && device.account !== session.account && device.device_id !== null && !status.unlinked.includes(device.device_id)) {
         const known = device;

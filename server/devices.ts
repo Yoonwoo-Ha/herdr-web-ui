@@ -13,6 +13,7 @@
 import { createHash, createPublicKey, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { AccountRecordError, parseAccountRecord, type RemoveRecord } from "../shared/account-records.ts";
 import { type DevicePairedEvent, type DeviceRemovedEvent, type DevicePairToken, type DeviceRole, type DevicesRevokedAll, type PairedDevice, STREAM_COOKIE_PREFIX } from "../shared/protocol.ts";
 import type { Access } from "./access.ts";
 import { CLEAR_LEGACY_DEVICE_COOKIE, COOKIE_MAX_AGE_SECONDS, DEVICE_COOKIE_CLEARED, deviceCookie, isSecureRequest, noContent, parseCookies } from "./auth.ts";
@@ -175,8 +176,26 @@ export function readDeviceRegistry(path: string): DeviceRegistry {
   return { kind: "ok", gateClosedAt: parsed.gate_closed_at, devices: parsed.devices as StoredDevice[], placeholder: parsed.placeholder === true && parsed.devices.length === 0 };
 }
 
-/** A key removed through the account, kept in `account-tombstones.json` beside devices.json. */
-export interface AccountTombstone { key: string; account: string; record_id: string; removed_at: string }
+/**
+ * A key removed through the account, kept in `account-tombstones.json` beside devices.json; `records`
+ * are the signed `remove`s that removed it, as received, one per signer (at most
+ * TOMBSTONE_RECORDS_MAX), which a client relays to a PC it enrolls (#2956).
+ */
+export interface AccountTombstone { key: string; account: string; record_id: string; removed_at: string; records?: unknown[] }
+
+/** Signed removals kept per tombstone: one per signer, so a PC where only a later signer is a member can still apply one. */
+export const TOMBSTONE_RECORDS_MAX = 8;
+
+/** `records` with `more` added, one per signer, the earliest kept. */
+function withRecords(records: readonly unknown[] | undefined, more: readonly unknown[]): unknown[] | undefined {
+  const signer = (record: unknown) => isJsonObject(record) ? record.signer : undefined;
+  const kept = [...records ?? []];
+  for (const record of more) {
+    if (kept.length >= TOMBSTONE_RECORDS_MAX || kept.some((own) => signer(own) === signer(record))) continue;
+    kept.push(record);
+  }
+  return kept.length ? kept : undefined;
+}
 
 /** Null for a file that exists and will not parse; an absent file holds no tombstones. */
 function readTombstones(path: string): AccountTombstone[] | null {
@@ -186,7 +205,7 @@ function readTombstones(path: string): AccountTombstone[] | null {
   }
   if (!isJsonObject(parsed) || parsed.v !== 1 || !Array.isArray(parsed.tombstones)
     || !parsed.tombstones.every((t) => isJsonObject(t) && typeof t.key === "string" && typeof t.account === "string"
-      && typeof t.record_id === "string" && typeof t.removed_at === "string")) return null;
+      && typeof t.record_id === "string" && typeof t.removed_at === "string" && (t.records === undefined || Array.isArray(t.records)))) return null;
   return parsed.tombstones as AccountTombstone[];
 }
 
@@ -211,11 +230,14 @@ export function mergeAccountTombstones(active: string, sibling: string): string 
     const local = (t: AccountTombstone) => t.record_id === "local";
     const winner = local(kept) && !local(tombstone) ? tombstone : !local(kept) && local(tombstone) ? kept : tombstone.removed_at > kept.removed_at ? tombstone : kept;
     const removedAt = tombstone.removed_at > kept.removed_at ? tombstone.removed_at : kept.removed_at;
-    merged.set(tombstone.key, { ...winner, removed_at: removedAt });
+    // a revoke on the PC holds no removal: the account's signed ones of both dirs stay with the key
+    const records = local(winner) ? undefined : withRecords(winner.records, [...kept.records ?? [], ...tombstone.records ?? []]);
+    const { records: _records, ...rest } = winner;
+    merged.set(tombstone.key, { ...rest, removed_at: removedAt, ...(records ? { records } : {}) });
   }
   const tombstones = [...merged.values()];
   for (const [index, path] of paths.entries()) {
-    if ((read[index] ?? []).length !== tombstones.length || tombstones.some((t) => !read[index]?.some((own) => own.key === t.key && own.removed_at === t.removed_at && own.record_id === t.record_id))) {
+    if ((read[index] ?? []).length !== tombstones.length || tombstones.some((t) => !read[index]?.some((own) => own.key === t.key && own.removed_at === t.removed_at && own.record_id === t.record_id && JSON.stringify(own.records ?? []) === JSON.stringify(t.records ?? [])))) {
       writePrivateState(path, { v: 1, tombstones });
     }
   }
@@ -748,6 +770,20 @@ export class DeviceStore {
 
   isTombstoned(key: string): boolean { return this.tombstones.some((t) => t.key === key); }
 
+  /** The signed `remove`s behind this PC's tombstones for its account, as received: what /api/account/status lists. One that no longer parses is left out. */
+  accountRemovals(): RemoveRecord[] {
+    const account = this.account();
+    return this.tombstones.flatMap((t) => t.account !== account ? [] : (t.records ?? []).flatMap((value) => {
+      try {
+        const record = parseAccountRecord(value);
+        return record.kind === "remove" && record.key === t.key && record.account === t.account ? [record] : [];
+      } catch (error) {
+        if (error instanceof AccountRecordError) return [];
+        throw error;
+      }
+    }));
+  }
+
   hasKey(key: string): boolean { return this.devices.some((d) => d.relay_public_key === key && !this.stale(d)); }
 
   /** Whether `key` is a P-256 key devices.json accepts (readDeviceRegistry checks every row's). */
@@ -782,17 +818,23 @@ export class DeviceStore {
    * leaves the key refused; then every row holding the key is revoked, closing its sessions.
    * Returns whether anything changed.
    */
-  removeAccountKey(key: string, account: string, record: { id: string; issuedAt: string; by?: { device_id: string; label: string } }, now = Date.now()): boolean {
+  removeAccountKey(key: string, account: string, record: { id: string; issuedAt: string; by?: { device_id: string; label: string }; signed?: RemoveRecord }, now = Date.now()): boolean {
     this.assertAccountWritable();
     // a pairing made on this PC (no `added_by`) after the removal was signed wins: a replayed or late remove
     // leaves it be. A row an account record or a remote approval made goes, however late the remove arrives.
     if (this.devices.some((d) => d.relay_public_key === key && d.added_by === undefined && d.created_at > record.issuedAt)) return false;
     const recordId = record.id;
     const fresh = !this.isTombstoned(key);
-    const removal = { key, account, record_id: recordId, removed_at: new Date(now).toISOString() };
+    const removal: AccountTombstone = { key, account, record_id: recordId, removed_at: new Date(now).toISOString(), ...(record.signed ? { records: [record.signed] } : {}) };
+    const kept = this.tombstones.find((t) => t.key === key);
     if (fresh) this.writeTombstones([...this.tombstones, removal]);
     // a key this PC revoked first becomes the account's removal, so a code started through the relay cannot bring it back
-    else if (this.tombstones.some((t) => t.key === key && t.record_id === "local")) this.writeTombstones(this.tombstones.map((t) => t.key === key ? removal : t));
+    else if (kept?.record_id === "local") this.writeTombstones(this.tombstones.map((t) => t.key === key ? removal : t));
+    // another signer's removal of a removed key is kept beside the first, for a PC where only that signer is a member (#2956)
+    else if (kept && record.signed && kept.account === account) {
+      const records = withRecords(kept.records, [record.signed]);
+      if ((records?.length ?? 0) !== (kept.records?.length ?? 0)) this.writeTombstones(this.tombstones.map((t) => t === kept ? { ...t, ...(records ? { records } : {}) } : t));
+    }
     const ids = this.devices.filter((d) => d.relay_public_key === key).map((d) => d.id);
     for (const id of ids) this.revoke(id, record.by);
     return fresh || ids.length > 0;

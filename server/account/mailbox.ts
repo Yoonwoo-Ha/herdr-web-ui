@@ -67,6 +67,8 @@ export class AccountMailbox {
   private pulling: Promise<number> | undefined;
 
   private pending: unknown[];
+  /** The waiting records a pull took out of `pending` to retry, until it puts them back. */
+  private draining: unknown[] = [];
 
   constructor(private readonly options: AccountMailboxOptions) {
     this.pending = readPending(options.pendingPath);
@@ -108,6 +110,22 @@ export class AccountMailbox {
     return fresh();
   }
 
+  /**
+   * A `remove` a client relayed (POST /api/account/records) that was refused only because its signer
+   * is not a member here yet: kept with the mailbox's own such records, so it applies on the pull after
+   * its signer joins (#2956). One already waiting is not kept twice, and none is kept once PENDING_MAX
+   * wait: a relayed record never pushes out one that waits already.
+   */
+  wait(record: unknown): void {
+    const waiting = [...this.draining, ...this.pending];
+    const text = JSON.stringify(record);
+    if (waiting.length >= PENDING_MAX || waiting.some((kept) => JSON.stringify(kept) === text)) return;
+    const next = [...this.pending, record];
+    // on disk first, with the ones a pull is retrying, so a stop (or a failed write) loses none of them
+    if (this.options.pendingPath) writePrivateState(this.options.pendingPath, [...this.draining, ...next]);
+    this.pending = next;
+  }
+
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
@@ -128,6 +146,7 @@ export class AccountMailbox {
     let ack: number | null = null;
     // refused because their signer was not a member yet: a later add, in this pull or a later one, may make it one
     const early: unknown[] = this.pending.splice(0);
+    this.draining = early;
     /** Until a pass applies nothing more, so a chain of adds read in any order still reaches the remove at its end. */
     const retry = async () => {
       for (let progress = true; progress && early.length;) {
@@ -145,7 +164,8 @@ export class AccountMailbox {
       }
     };
     /** On disk before any page that put a record here is acknowledged, so a stop never loses one. */
-    const save = () => { if (this.options.pendingPath) writePrivateState(this.options.pendingPath, early.slice(-PENDING_MAX)); };
+    // with any a client relayed meanwhile (wait), which this.pending holds until the pull ends
+    const save = () => { if (this.options.pendingPath) writePrivateState(this.options.pendingPath, [...early, ...this.pending].slice(-PENDING_MAX)); };
     try {
       const admissions = new Map<string, number>();
       await retry();
@@ -167,15 +187,17 @@ export class AccountMailbox {
         ack = Math.max(...entries.map(({ seq }) => seq));
       }
       // still waiting on a signer: kept for later pulls, the oldest dropped past PENDING_MAX
-      this.pending = early.slice(-PENDING_MAX);
       save();
+      this.pending = [...early, ...this.pending].slice(-PENDING_MAX);
+      this.draining = [];
       this.admissions = admissions;
       this.lastPullAt = new Date().toISOString();
       this.error = null;
     } catch (error) {
       this.error = error instanceof Error ? error.message : String(error);
-      this.pending = early.slice(-PENDING_MAX);
       try { save(); } catch { /* the pull's own error is the one to show; what waits stays in memory */ }
+      this.pending = [...early, ...this.pending].slice(-PENDING_MAX);
+      this.draining = [];
     }
     return applied;
   }

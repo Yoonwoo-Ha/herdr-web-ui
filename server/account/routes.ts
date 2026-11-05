@@ -30,7 +30,7 @@ export async function handleAccountRequest(request: Request, pathname: string, c
   if (pathname === "/api/account/status" && request.method === "GET") {
     setRequestRoute(pathname);
     const mailbox = context.services.accountMailbox;
-    return reply({ account: devices.account(), ...devices.accountRows(), mailbox: { last_pull_at: mailbox.lastPullAt, error: mailbox.error } });
+    return reply({ account: devices.account(), ...devices.accountRows(), removals: devices.accountRemovals(), mailbox: { last_pull_at: mailbox.lastPullAt, error: mailbox.error } });
   }
   if (request.method !== "POST") return fail("method_not_allowed", "use POST", 405);
   if (!sameOrigin(request) || request.headers.get("x-herdr-machine") !== "1") return fail("invalid_origin", "Manage the account from this app", 403);
@@ -70,7 +70,14 @@ export async function handleAccountRequest(request: Request, pathname: string, c
           return fail("record_invalid", "An enrollment carries add records only", 400);
         }
       }
-      return reply({ results: await applyAccountRecords(devices, records, serverId) });
+      const results = await applyAccountRecords(devices, records, serverId);
+      // a removal whose signer is not a member here yet waits for it, as one from the mailbox does; only
+      // a member's session (a client relaying the account's removals: enrollPc) may leave one waiting
+      const member = peer.kind === "relay" && devices.isAccountApproverSession(peer.device.id, peer.key);
+      results.forEach((result, index) => {
+        if (member && result.outcome === "refused" && result.code === "signer_not_member" && (records[index] as { kind?: unknown }).kind === "remove") context.services.accountMailbox.wait(records[index]);
+      });
+      return reply({ results });
     }
     default: return fail("not_found", "Unknown account action", 404);
   }

@@ -51,6 +51,11 @@ interface Records {
    * brings into the account (account/join.ts, enrollPc)
    */
   devices: Readonly<Record<string, AddRecord | RemoveRecord>>;
+  /**
+   * By record id: other members' signed `remove`s that a PC of the account listed and this device
+   * checked (account/join.ts, keepRemovals), kept verbatim to relay to a PC it brings into the account
+   */
+  removals: Readonly<Record<string, RemoveRecord>>;
   /** by server_id: a PC this device brought into the account, and the records whose outcome it read there */
   enrolls: Readonly<Record<string, PlannedEnroll>>;
 }
