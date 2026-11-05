@@ -174,6 +174,8 @@ export const SETTINGS_JA: Record<string, string> = {
   "A program in a pane that copies (vim, tmux, Claude Code) puts its text on this device's clipboard, as a copy you made yourself would. Turn it off if a pane runs output you do not trust: it could replace what you paste next.": "ペインでコピーするプログラム（vim、tmux、Claude Code）は、自分でコピーしたときと同じようにこのデバイスのクリップボードにテキストを入れます。信頼できない出力を実行するペインがある場合はオフにしてください。次に貼り付ける内容が置き換えられることがあります。",
   "Pictures in the terminal": "ターミナル内の画像",
   "Shows the pictures a program draws in a pane (imgcat, img2sixel, chafa) as sixel or iTerm2 images, on this device. Only on a PC that runs herdr-core, as the desktop app does: herdr does not pass pictures on. A picture is gone once the pane is drawn again.": "ペインのプログラムが描く画像(imgcat、img2sixel、chafa)を sixel または iTerm2 画像としてこのデバイスで表示します。デスクトップアプリのように herdr-core で動く PC でのみ有効です。herdr は画像を渡しません。ペインが描き直されると画像は消えます。",
+  "Keyboard only from the key bar": "キーボードはキーバーからのみ",
+  "On a touch screen, a tap on the terminal, the input line or a key no longer brings up the keyboard. The key bar's keyboard key shows and hides it.": "タッチ画面で、ターミナル、入力行、キーをタップしてもキーボードは表示されません。キーバーのキーボードキーで表示と非表示を切り替えます。",
   "Draw with libghostty": "libghostty で描画",
   "Attach files button": "ファイル添付ボタン",
   "On a touch screen, a button in the input line and a key in the key bar while typing straight into the terminal pick files from this device. Each file is saved beside the pane, and its path goes into the line or the terminal, without Enter.": "タッチ画面で、入力行のボタンと、ターミナルに直接入力するときのキーバーのキーから、このデバイスのファイルを選びます。ファイルはペインの横に保存され、そのパスが Enter なしで入力行またはターミナルに入ります。",

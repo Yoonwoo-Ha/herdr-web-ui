@@ -52,7 +52,7 @@ import { learnFromSend } from "../lib/tabLabels.ts";
 import { useT } from "../lib/i18n.ts";
 import { isAppShortcut } from "../lib/shortcuts.ts";
 import { plainPageDirection } from "../lib/pageScroll.ts";
-import { keyboardTypingField } from "../lib/keyboard.ts";
+import { keyboardTypingField, keyboardUp } from "../lib/keyboard.ts";
 import { keyboardControl } from "../lib/keyboardControl.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { WebPanelContext } from "../lib/webPanel.ts";
@@ -567,6 +567,52 @@ export function PaneTerminal({
   const keyboardOwner = `${keyboardInstance}:${paneId === null ? "" : paneStorageId(machineId, paneId)}`;
   const keyboardOwnerRef = useRef(keyboardOwner);
   keyboardOwnerRef.current = keyboardOwner;
+  // Settings > Terminal > Keyboard only from the key bar (#1635): on a touch screen, until the control's
+  // Show asks for the keyboard, this pane's fields carry inputmode="none": a tap on the grid, the line,
+  // Send or a key still focuses them, and raises no keyboard. The request is the tap's, not the
+  // measurement's, which is blind to a floating keyboard or a zoomed page: it ends at Hide, at a
+  // keyboard measured going down (the back gesture), or when the focus leaves this pane's fields
+  const [keyboardRequested, setKeyboardRequested] = useState(false);
+  // only while the control can be pressed: offline, held, ended or view only, it is gone or disabled,
+  // and a line still taking a draft must raise the keyboard on a tap as it does with the setting off
+  const keyboardControlUsable = connected && inputReady && !held && !ended && !observing;
+  const keyboardHeld = settings.terminalKeyboardOnRequest && coarse && !keyboardRequested && keyboardControlUsable;
+  const keyboardControlUsableRef = useRef(keyboardControlUsable);
+  keyboardControlUsableRef.current = keyboardControlUsable;
+  useEffect(() => {
+    setKeyboardRequested(false);
+    let up = keyboardUp();
+    const unsubscribe = keyboardControl.subscribe(() => {
+      const now = keyboardUp();
+      if (up && !now) setKeyboardRequested(false);
+      up = now;
+    });
+    const stack = stackRef.current;
+    let timer: number | null = null;
+    // read where the focus landed once it has: Show's own blur-and-refocus lands back on the field
+    const onFocusOut = (): void => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        const focused = document.activeElement;
+        // the line or xterm's field only: the find bar's search is not where the request was made
+        if (!(focused instanceof HTMLElement && stack?.contains(focused) === true && focused.matches(".terminal-input-text, .xterm-helper-textarea"))) setKeyboardRequested(false);
+      }, 0);
+    };
+    // a tap into the line or the grid while the control cannot be pressed (offline, held) raised the
+    // keyboard itself: it stands as the request, so the control coming back (a reconnect) takes nothing away
+    const onFocusIn = (event: FocusEvent): void => {
+      if (!keyboardControlUsableRef.current && event.target instanceof HTMLElement && event.target.matches(".terminal-input-text, .xterm-helper-textarea")) setKeyboardRequested(true);
+    };
+    stack?.addEventListener("focusout", onFocusOut);
+    stack?.addEventListener("focusin", onFocusIn);
+    return () => {
+      unsubscribe();
+      stack?.removeEventListener("focusout", onFocusOut);
+      stack?.removeEventListener("focusin", onFocusIn);
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [paneId]);
   // a tap still in flight when this pane stops being the selected, shown one (another pane picked,
   // its tab left, or unmounted) is abandoned: coming back, its control reads the measurement
   useEffect(() => {
@@ -714,7 +760,7 @@ export function PaneTerminal({
     socketRef.current?.setMode(role);
   }, [role]);
 
-  const { sendDraft, discardDraft, submitComposerMessage, sendComposerText, sendTerminalLine, insertTerminalText, reassertGrid, pressEnter, toggleDirect } = useTerminalSends({ activeRef, agent, cancelTouchRef, chatView, coarse, composingRef, directTyping, draft, draftHeldForRef, heldRef, hostRef, inputLine, inputRowNow, keyboardOwnerRef, keyboardToggleFocusRef, lineFocus: lineRef, knownOutcomes, lineComposingRef, machineId, modifiersRef, consumeModifiers, onChatSuggestion, paneId, paneRef, pendingEpochRef, pendingSubmissionsRef, reassertIfStaleRef, redrawGreeting, releaseRef, secretRef, sessionRef, setChatRefresh, setChatSent, setChatUnsent, setDraft, showSentCommand, socketRef, stillOpenNote, stillOpenRef, submitRetention, tRef, termRef, updateSettings });
+  const { sendDraft, discardDraft, submitComposerMessage, sendComposerText, sendTerminalLine, insertTerminalText, reassertGrid, pressEnter, toggleDirect } = useTerminalSends({ activeRef, agent, cancelTouchRef, chatView, coarse, composingRef, directTyping, draft, draftHeldForRef, heldRef, hostRef, inputLine, inputRowNow, keyboardHeld, keyboardOwnerRef, keyboardToggleFocusRef, lineFocus: lineRef, knownOutcomes, lineComposingRef, machineId, modifiersRef, consumeModifiers, onChatSuggestion, paneId, paneRef, pendingEpochRef, pendingSubmissionsRef, reassertIfStaleRef, redrawGreeting, releaseRef, secretRef, sessionRef, setChatRefresh, setChatSent, setChatUnsent, setDraft, showSentCommand, socketRef, stillOpenNote, stillOpenRef, submitRetention, tRef, termRef, updateSettings });
 
   const { pressKey, toggleModifier, abortTurn } = useTypedKeys({ agent, agentStatus, barKeyRef, coarseRef, commitPendingText, compositionCommitPendingRef, composingRef, inputLineRef, modifiersRef, lockedRef, setLatch, consumeModifiers, paneId, reassertIfStaleRef, setInputError, socketRef, stopKeyRef, tRef, termRef });
 
@@ -785,8 +831,11 @@ export function PaneTerminal({
       owner: keyboardOwnerRef.current,
     });
     if (action !== "show" && action !== "hide") return;
+    setKeyboardRequested(action === "show");
     const show = (): void => {
       if (line === null) return;
+      // Keyboard only from the key bar: this tap is the request, so the field may raise it now
+      line.removeAttribute("inputmode");
       if (line === document.activeElement) {
         // a keyboard already put away while the field kept the focus (the back gesture): a blur and
         // a focus inside the tap is a new input session, which is what a phone raises a keyboard for
@@ -1397,7 +1446,7 @@ export function PaneTerminal({
           slot in the chat lens too (a box-less slot there, TerminalInput.css), so switching lenses
           keeps it mounted: a remount would drop what was typed and a send still on its way */}
       {((!chatView && lineSlot) || secretInput) && <div ref={setInputSlot} className={`terminal-input-slot${!chatView && lineSlot ? "" : " is-empty"}`}>
-        {secretInput ?? (!chatView && lineSlot && !secretActive && <TerminalInput key={paneId} ref={lineRef} active={active} owner={paneStorageId(machineId, paneId)} onComposing={setLineComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} onInsert={insertTerminalText} pasteTarget={pasteTarget} onPasting={setLinePasting} uploadFile={uploadImage} attach={settings.terminalAttachButton} onFocus={reassertGrid} />)}
+        {secretInput ?? (!chatView && lineSlot && !secretActive && <TerminalInput key={paneId} ref={lineRef} active={active} owner={paneStorageId(machineId, paneId)} onComposing={setLineComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} onInsert={insertTerminalText} pasteTarget={pasteTarget} onPasting={setLinePasting} uploadFile={uploadImage} attach={settings.terminalAttachButton} onFocus={reassertGrid} keyboardHeld={keyboardHeld} />)}
       </div>}
       {presented && paneId !== null && !secretActive && !observing && !chatView && <KeyBar disabled={composing || !connected || !inputReady || held || ended} onKey={pressKey}
         holdScope={`${paneStorageId(machineId, paneId)}:${view}`}

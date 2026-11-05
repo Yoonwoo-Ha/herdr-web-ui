@@ -174,6 +174,8 @@ export const SETTINGS_KO: Record<string, string> = {
   "A program in a pane that copies (vim, tmux, Claude Code) puts its text on this device's clipboard, as a copy you made yourself would. Turn it off if a pane runs output you do not trust: it could replace what you paste next.": "패널에서 복사하는 프로그램(vim, tmux, Claude Code)은 직접 복사한 것과 같이 이 기기의 클립보드에 텍스트를 넣습니다. 믿을 수 없는 출력을 실행하는 패널이 있다면 끄세요. 다음에 붙여 넣을 내용이 바뀔 수 있습니다.",
   "Pictures in the terminal": "터미널 속 그림",
   "Shows the pictures a program draws in a pane (imgcat, img2sixel, chafa) as sixel or iTerm2 images, on this device. Only on a PC that runs herdr-core, as the desktop app does: herdr does not pass pictures on. A picture is gone once the pane is drawn again.": "패널의 프로그램이 그리는 그림(imgcat, img2sixel, chafa)을 sixel이나 iTerm2 이미지로 이 기기에서 보여 줍니다. 데스크톱 앱처럼 herdr-core로 도는 PC에서만 됩니다. herdr는 그림을 넘겨주지 않습니다. 패널을 다시 그리면 그림은 사라집니다.",
+  "Keyboard only from the key bar": "키보드는 키 바에서만",
+  "On a touch screen, a tap on the terminal, the input line or a key no longer brings up the keyboard. The key bar's keyboard key shows and hides it.": "터치 화면에서 터미널, 입력 줄, 키를 눌러도 키보드가 올라오지 않습니다. 키 바의 키보드 키로 키보드를 열고 닫습니다.",
   "Draw with libghostty": "libghostty로 그리기",
   "Attach files button": "파일 첨부 버튼",
   "On a touch screen, a button in the input line and a key in the key bar while typing straight into the terminal pick files from this device. Each file is saved beside the pane, and its path goes into the line or the terminal, without Enter.": "터치 화면에서 입력창의 버튼과, 터미널에 바로 입력할 때 키 막대의 키로 이 기기의 파일을 고릅니다. 파일은 패널 옆에 저장되고 그 경로가 Enter 없이 입력창이나 터미널에 들어갑니다.",

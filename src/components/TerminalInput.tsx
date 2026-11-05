@@ -34,6 +34,8 @@ export interface TerminalInputProps {
   attach?: boolean;
   /** the line took the focus */
   onFocus?: () => void;
+  /** Settings > Terminal > Keyboard only from the key bar, with the keyboard down: focus raises none (#1635) */
+  keyboardHeld?: boolean;
   ref?: Ref<TerminalInputHandle>;
 }
 
@@ -67,7 +69,7 @@ interface SendAttempt {
  * keyboard's own editing and goes to the pane whole, then Enter. Autocorrect and spell-check stay
  * off, as in the composer: they would swap a flag, path or branch name for a dictionary word.
  */
-export function TerminalInput({ owner, active = true, connected, onSend, onEnter, onInsert, pasteTarget, onPasting, uploadFile, attach = false, onComposing, onFocus, ref }: TerminalInputProps) {
+export function TerminalInput({ owner, active = true, connected, onSend, onEnter, onInsert, pasteTarget, onPasting, uploadFile, attach = false, onComposing, onFocus, keyboardHeld = false, ref }: TerminalInputProps) {
   const t = useT();
   const text = useSyncExternalStore(subscribeTerminalDraft, () => readTerminalDraft(owner));
   const setText = useCallback((value: string | ((previous: string) => string)) => {
@@ -489,6 +491,7 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
         ref={box}
         id={fieldId}
         className="terminal-input-text"
+        inputMode={keyboardHeld ? "none" : undefined}
         rows={rows}
         value={text}
         maxLength={TERMINAL_LINE_LIMIT}

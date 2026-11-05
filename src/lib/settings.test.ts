@@ -198,6 +198,18 @@ describe("saved theme migration", () => {
     expect(loadSettings().terminalAttachButton).toBe(false);
   });
 
+  it("keeps Keyboard only from the key bar in its own key, out of an old tab's whole-record save", () => {
+    expect(loadSettings().terminalKeyboardOnRequest).toBe(false);
+    saveSettings(sanitizeSettings({ terminalKeyboardOnRequest: true }));
+    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("terminalKeyboardOnRequest");
+    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
+    expect(loadSettings().terminalKeyboardOnRequest).toBe(true);
+    saveSettings({ ...loadSettings(), terminalKeyboardOnRequest: false });
+    expect(loadSettings().terminalKeyboardOnRequest).toBe(false);
+    records.set("ovis:terminal-keyboard-on-request", "\"true\"");
+    expect(loadSettings().terminalKeyboardOnRequest).toBe(false);
+  });
+
   it("keeps the composer's Artifacts chip in its own key, out of an old tab's whole-record save", () => {
     expect(loadSettings().composerArtifacts).toBe(false);
     saveSettings(sanitizeSettings({ composerArtifacts: true }));
@@ -611,6 +623,13 @@ it("draws with libghostty until this device turns it off", () => {
   expect(sanitizeSettings({ terminalGhostty: "false" }).terminalGhostty).toBe(true);
   expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ terminalGhostty: false })))).terminalGhostty).toBe(false);
   expect(SETTING_SCOPE.terminalGhostty).toBe("device");
+});
+
+it("raises the terminal's keyboard on every tap until this device asks for it only from the key bar", () => {
+  expect(sanitizeSettings({}).terminalKeyboardOnRequest).toBe(false);
+  expect(sanitizeSettings({ terminalKeyboardOnRequest: "true" }).terminalKeyboardOnRequest).toBe(false);
+  expect(sanitizeSettings({ terminalKeyboardOnRequest: true }).terminalKeyboardOnRequest).toBe(true);
+  expect(SETTING_SCOPE.terminalKeyboardOnRequest).toBe("device");
 });
 
 it("draws no Attach files control in the terminal until this device turns it on", () => {
