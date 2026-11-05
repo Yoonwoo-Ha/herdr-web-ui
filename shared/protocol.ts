@@ -643,6 +643,12 @@ export interface ConversationResponse {
   activity?: "thinking" | "working" | "idle";
   /** Stable across appends; changes on transcript replacement or native context clear. */
   history_id?: string;
+  /**
+   * The PC's clock as it answered, which the turns' times are on (ISO time): the browser's clock runs
+   * ahead of it by no more than the time the answer was in hand less this. Absent on a scrollback
+   * fallback and from older bridges.
+   */
+  server_time?: string;
   source: "dsh-transcript" | "copilot-transcript" | "grok-transcript" | "agy-transcript" | "muse-transcript" | "letta-transcript" | "kimi-transcript" | "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "cmd-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "scrollback";
   turns: ConversationTurn[];
   metadata?: ConversationMetadata;

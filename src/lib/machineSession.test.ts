@@ -5,7 +5,7 @@ import { greetingMemory } from "./greeting.ts";
 import { MachineSession, MachineSessionRegistry } from "./machineSession.ts";
 import { paneLifetimes } from "./paneLifetime.ts";
 import { PendingMessageStore, pendingMessages } from "./pendingMessages.ts";
-import { currentWaitingSends, forgetWaitingSends, waitingKey } from "./sentWaiting.ts";
+import { currentWaitingSends, forgetWaitingSends, settleWaitingSends, waitingKey } from "./sentWaiting.ts";
 import type { HerdrSocket } from "./ws.ts";
 
 type FeaturesFrame = Extract<ServerMessage, { type: "features" }>;
@@ -304,6 +304,28 @@ describe("PC connection ownership", () => {
       clock.mockReturnValue(91_000);
       socket.receive({ type: "pending-messages", pane_id: "w1:p1", messages: [], removed: [{ id: "p1", outcome: "sent" }] });
       expect(currentWaitingSends(key)).toMatchObject([{ text: "review this next", at: 90_000 }]);
+    } finally { clock.mockRestore(); forgetWaitingSends(key); session.close(); }
+  });
+
+  it("settles a row by its turn though its frame came after its Enter, as one replayed after a reconnect does", () => {
+    const { session, socket } = setup("late-frame-pc");
+    const key = waitingKey("late-frame-pc", "w1:p1");
+    const pc = Date.parse("2026-11-05T10:00:00Z");
+    const user = (text: string, at: number) => ({ role: "user" as const, ts: new Date(at).toISOString(), parts: [{ kind: "text" as const, text }] });
+    const earlier = user("earlier", pc + 37);
+    const clock = spyOn(Date, "now").mockReturnValue(pc + 1_200_000);
+    try {
+      start(session, socket);
+      // the chat was opened ten minutes after its newest turn, and the PC answered that read at once
+      settleWaitingSends(key, [earlier], pc + 600_080, true, new Date(pc + 600_000).toISOString());
+      // Send now typed the row at pc + 1_200_000 and its turn was written at +400; the socket dropped
+      // before the row's `sending` came, and the reconnect replays it 1.5 s after the Enter
+      clock.mockReturnValue(pc + 1_201_500);
+      socket.receive({ type: "pending-messages", pane_id: "w1:p1", messages: [message("p1", "sending")] });
+      socket.receive({ type: "pending-messages", pane_id: "w1:p1", messages: [], removed: [{ id: "p1", outcome: "sent" }] });
+      expect(currentWaitingSends(key)).toHaveLength(1);
+      settleWaitingSends(key, [earlier, user("review this next", pc + 1_200_400)], pc + 1_201_600, true, new Date(pc + 1_201_550).toISOString());
+      expect(currentWaitingSends(key)).toEqual([]);
     } finally { clock.mockRestore(); forgetWaitingSends(key); session.close(); }
   });
 

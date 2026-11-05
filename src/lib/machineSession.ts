@@ -82,7 +82,12 @@ export class MachineSession {
         // taken before the row's Enter, as a composer send's are before it is submitted. A row back in
         // the queue or held was not typed: its next try takes its own
         for (const item of message.messages) {
-          if (item.state === "sending" && !this.going.has(item.id)) this.going.set(item.id, { at: Date.now(), after: waitingBaseline(key) });
+          if (item.state === "sending" && !this.going.has(item.id)) {
+            // that frame can come after the row's Enter (replayed after a reconnect, or handled late): the
+            // PC's answer would bound the skew too tightly for its time, so only the turns' times do
+            const after = waitingBaseline(key);
+            this.going.set(item.id, { at: Date.now(), after: after === null ? null : { ...after, pcTime: null } });
+          }
           else if (item.state === "queued" || item.state === "held") this.going.delete(item.id);
         }
         const typed = message.removed?.filter((item) => item.outcome === "sent" && this.store.isOwned(owner, item.id, scope)) ?? [];

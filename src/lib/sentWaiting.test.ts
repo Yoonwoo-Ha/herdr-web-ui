@@ -173,6 +173,52 @@ describe("waitingText", () => {
     } finally { forgetWaitingSends(key); }
   });
 
+  it("keeps a send waiting past an identical turn another device wrote just before it, though the chat read its turns long after the newest", () => {
+    const key = waitingKey("local", "other-device");
+    const pc = Date.parse("2026-11-05T10:00:00Z");
+    try {
+      // the phone runs 2 s ahead of the PC. The chat first read its one turn 10 s after it was
+      // written: the PC answered at pc + 10_037, the phone had the answer at its pc + 12_100
+      const earlier = user("earlier", pc + 37);
+      settleWaitingSends(key, [earlier], pc + 12_100, true, new Date(pc + 10_037).toISOString());
+      // another device wrote "repeat" at pc + 11_037; the phone sends "repeat" at the PC's pc + 12_500
+      rememberWaitingSend(key, "repeat", pc + 14_500, waitingBaseline(key));
+      settleWaitingSends(key, [earlier, user("repeat", pc + 11_037)], pc + 15_000, true, new Date(pc + 12_937).toISOString());
+      expect(currentWaitingSends(key).map((send) => send.text)).toEqual(["repeat"]);
+      settleWaitingSends(key, [earlier, user("repeat", pc + 11_037), user("repeat", pc + 12_800)], pc + 15_200, true, new Date(pc + 13_137).toISOString());
+      expect(currentWaitingSends(key)).toEqual([]);
+    } finally { forgetWaitingSends(key); }
+  });
+
+  it("allows for the two clocks drifting apart while an idle chat keeps its first read", () => {
+    const key = waitingKey("local", "clock-drift");
+    const pc = Date.parse("2026-11-05T10:00:00Z");
+    try {
+      // the chat read its turn ten minutes after it was written, with the phone 2 s ahead of the PC;
+      // an hour later the phone runs 2.3 s ahead
+      const earlier = user("earlier", pc + 37);
+      settleWaitingSends(key, [earlier], pc + 602_100, true, new Date(pc + 600_000).toISOString());
+      rememberWaitingSend(key, "an hour later", pc + 4_202_300, waitingBaseline(key));
+      settleWaitingSends(key, [earlier, user("an hour later", pc + 4_200_200)], pc + 4_202_600, true, new Date(pc + 4_200_250).toISOString());
+      expect(currentWaitingSends(key)).toEqual([]);
+    } finally { forgetWaitingSends(key); }
+  });
+
+  it("bounds an empty chat's read by the PC's clock too: another device's identical first message is not this send's", () => {
+    const key = waitingKey("local", "other-device-empty");
+    const pc = Date.parse("2026-11-05T10:00:00Z");
+    try {
+      // the chat read an empty transcript; the phone runs a minute ahead of the PC
+      settleWaitingSends(key, [], pc + 60_100, true, new Date(pc + 37).toISOString());
+      // another device wrote "first" at pc + 5_037; the phone sends "first" at the PC's pc + 8_000
+      rememberWaitingSend(key, "first", pc + 68_000, waitingBaseline(key));
+      settleWaitingSends(key, [user("first", pc + 5_037)], pc + 68_500, true);
+      expect(currentWaitingSends(key).map((send) => send.text)).toEqual(["first"]);
+      settleWaitingSends(key, [user("first", pc + 5_037), user("first", pc + 8_300)], pc + 68_900, true);
+      expect(currentWaitingSends(key)).toEqual([]);
+    } finally { forgetWaitingSends(key); }
+  });
+
   it("waits for the text that was typed: paste markers the composer strips are not part of it", () => {
     const key = waitingKey("local", "paste-markers");
     try {

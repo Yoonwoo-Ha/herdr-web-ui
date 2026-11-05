@@ -290,7 +290,8 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
       const etag = `W/"${version}${screenContext === null ? "" : `-ctx${screenContext.used}:${screenContext.window}`}"`;
       const headers = { etag, "cache-control": "no-store" };
       if (request.headers.get("if-none-match")?.replace(/^W\//, "") === etag.slice(2)) return new Response(null, { status: 304, headers });
-      return jsonResponse(answer, 200, headers);
+      // the turns' times are on this PC's clock, which the browser's can run ahead of (src/lib/sentWaiting.ts)
+      return jsonResponse({ ...answer, server_time: new Date().toISOString() }, 200, headers);
     } catch (error) {
       if (error instanceof HistoryChanged || error instanceof DevinHistoryChanged) return jsonResponse({ error: { code: "history_changed", message: error.message } }, 409);
       if (error instanceof ConversationReadPending) {
