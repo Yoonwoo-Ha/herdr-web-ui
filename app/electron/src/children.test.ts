@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -86,7 +86,7 @@ const posix = process.platform !== "win32";
 
 describe.skipIf(!posix)("startServer", () => {
   it("resolves with the address the server says it listens on, and stops it", async () => {
-    const programs = fakeServer(`console.log("Ovis listening on http://127.0.0.1:" + process.env.PORT); process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000);`);
+    const programs = fakeServer(`process.on("SIGTERM", () => process.exit(0)); console.log("Ovis listening on http://127.0.0.1:" + process.env.PORT); setInterval(() => {}, 1000);`);
     const log = openLog(join(tempDir(), "logs", "ovis.log"));
     const server = await startServer(programs, { ...process.env, PORT: "45678" }, log, 20_000);
     expect(server.url).toBe("http://127.0.0.1:45678");
@@ -103,7 +103,7 @@ describe.skipIf(!posix)("startServer", () => {
   });
 
   it("finds where it listens after more output than it keeps", async () => {
-    const programs = fakeServer(`process.stdout.write("x".repeat(200 * 1024) + "\\n"); console.log("Ovis listening on http://127.0.0.1:" + process.env.PORT); process.on("SIGTERM", () => process.exit(0)); setInterval(() => {}, 1000);`);
+    const programs = fakeServer(`process.on("SIGTERM", () => process.exit(0)); process.stdout.write("x".repeat(200 * 1024) + "\\n"); console.log("Ovis listening on http://127.0.0.1:" + process.env.PORT); setInterval(() => {}, 1000);`);
     const log = openLog(join(tempDir(), "ovis.log"));
     const server = await startServer(programs, { ...process.env, PORT: "45679" }, log, 20_000);
     expect(server.url).toBe("http://127.0.0.1:45679");
@@ -209,6 +209,18 @@ describe("openLog", () => {
     await new Promise<void>((resolve) => second.end("second run\n", resolve));
     expect(readFileSync(`${path}.1`, "utf8")).toBe("first run\n");
     expect(readFileSync(path, "utf8")).toBe("second run\n");
+  });
+
+  it("has the file open once it returns, so its folder going away later does not fail the stream", async () => {
+    const dir = tempDir();
+    const path = join(dir, "ovis.log");
+    const log = openLog(path);
+    expect(existsSync(path)).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+    const failed = new Promise<Error>((resolve) => log.once("error", resolve));
+    const closed = new Promise<null>((resolve) => log.once("close", () => resolve(null)));
+    log.end("after the folder went\n");
+    expect(await Promise.race([failed, closed])).toBeNull();
   });
 });
 

@@ -122,9 +122,9 @@ async function launch(): Promise<void> {
       setStatus({ core: "failed", detail: `This build has no bundled herdr-core and Bun in ${resources}. Build it with \`bun scripts/build.ts stage\` in app/electron.` });
       return;
     }
-    log = openLog(join(logs, "ovis.log"));
     let hc: string;
     try {
+      log = openLog(join(logs, "ovis.log"));
       hc = await installCore(programs.hc, join(app.getPath("userData"), "bin"), coreEnv(process.env), log);
       await startCore(hc, coreEnv(process.env), log);
       setStatus({ core: "ok" });
