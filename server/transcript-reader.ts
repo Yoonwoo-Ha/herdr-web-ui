@@ -92,6 +92,8 @@ const FILESYSTEM_MS = 60_000;
 export interface TranscriptFile {
   /** Identity already checked when this handle was opened, without another metadata round trip. */
   readonly initial: TranscriptVersion;
+  /** When the read is given up (Date.now()): its deadline, or its budget's end, the sooner; Infinity with neither. */
+  readonly deadline: number;
   stat(): Promise<TranscriptVersion>;
   /** The pinned handle's whole stat, for a reader that keys on more than a TranscriptVersion (its change time). */
   stats(): Promise<Stats>;
@@ -146,7 +148,8 @@ interface Request {
  * - A local disk that stops answering inside a call on the event loop blocks the loop, as a
  *   synchronous read would. The fallback notices a slow call only once it returns.
  * - A native operation that never settles (a read ahead or any other) keeps its lease, so two of
- *   them on two paths keep every lease, and every later read waits out its deadline.
+ *   them on two paths keep every lease, and every later read waits out its deadline (one with a
+ *   budget alone waits until its signal aborts).
  * - A cancelled lease keeps its path too, until its operations settle: a new read of that
  *   transcript waits behind it.
  */
@@ -166,14 +169,25 @@ export class TranscriptReader {
   private admitting: Request | null = null;
   constructor(private readonly io: TranscriptIO = nativeIO, readonly capacity = 2, private readonly waiting = 32) {}
 
-  /** `follow`: the path may be a link to the transcript (it is opened through one anyway), and is checked by the file it names. */
-  read<T>(path: string, work: (file: TranscriptFile) => Promise<T>, options: { signal?: AbortSignal; deadline?: number; follow?: boolean } = {}): Promise<T> {
-    const { signal, deadline, follow = false } = options;
+  /**
+   * `follow`: the path may be a link to the transcript (it is opened through one anyway), and is checked by the file it names.
+   * `deadline`: when the read is given up (Date.now()), its wait for a lease included. `budget`: how long it may take once
+   * its lease begins (its open included), however long it waited for it behind other reads.
+   */
+  read<T>(path: string, work: (file: TranscriptFile) => Promise<T>, options: { signal?: AbortSignal; deadline?: number; budget?: number; follow?: boolean } = {}): Promise<T> {
+    const { signal, budget, follow = false } = options;
+    let { deadline } = options;
     if (signal?.aborted || (deadline !== undefined && deadline <= Date.now())) return Promise.reject(new TranscriptBusyError("the transcript read was cancelled"));
     if (this.queue.length >= this.waiting && (this.active.size >= this.capacity || this.paths.has(path))) return Promise.reject(new TranscriptBusyError());
     return new Promise<T>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const cleanup = () => { signal?.removeEventListener("abort", request.cancel); clearTimeout(timer); };
+      const arm = () => {
+        if (deadline === undefined) return;
+        clearTimeout(timer);
+        timer = setTimeout(request.cancel, Math.max(0, deadline - Date.now()));
+        timer.unref?.();
+      };
       const current = () => {
         if (request.live && deadline !== undefined && Date.now() >= deadline) request.cancel();
         if (!request.live) throw new TranscriptBusyError("the transcript read was cancelled");
@@ -192,6 +206,8 @@ export class TranscriptReader {
           this.pump();
         },
         run: async () => {
+          // a budget counts from here: the time the read waited for its lease was another read's
+          if (budget !== undefined) { deadline = Math.min(deadline ?? Infinity, Date.now() + budget); arm(); }
           const immediate = this.admitting === request;
           let handle: Awaited<ReturnType<TranscriptIO["open"]>> | undefined;
           // the handle was opened on the event loop, and closes there
@@ -312,6 +328,7 @@ export class TranscriptReader {
             let initial: TranscriptVersion | undefined;
             const file: TranscriptFile = {
               get initial() { return initial!; },
+              deadline: deadline ?? Infinity,
               stat: () => now ? timed((direct) => {
                 const stats = direct.statNow();
                 // a transcript on another device than its directory (mounted into it) is not known to be
@@ -410,7 +427,7 @@ export class TranscriptReader {
         },
       };
       signal?.addEventListener("abort", request.cancel, { once: true });
-      if (deadline !== undefined) { timer = setTimeout(request.cancel, Math.max(0, deadline - Date.now())); timer.unref?.(); }
+      arm();
       this.queue.push(request);
       this.admitting = request;
       try { this.pump(); } finally { this.admitting = null; }

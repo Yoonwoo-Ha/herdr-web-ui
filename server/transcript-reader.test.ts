@@ -1,4 +1,4 @@
-import { afterEach, expect, it, setSystemTime, spyOn } from "bun:test";
+import { afterEach, expect, it, jest, setSystemTime, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import { mkdtempSync, renameSync, rmSync, writeFileSync, type Stats } from "node:fs";
 import * as fsp from "node:fs/promises";
@@ -265,6 +265,39 @@ it("never keeps the process alive for a read's deadline alone", async () => {
     expect(timers).toHaveBeenCalled();
     expect(kept).toBe(false);
   } finally { timers.mockRestore(); }
+});
+
+it("counts a read's budget from its lease, not from its wait behind another read of the path", async () => {
+  const b = backend(); const reader = new TranscriptReader(b.io);
+  const held = deferred(); b.reading.set("a", held);
+  // the timers and the clock move only as the test moves them
+  jest.useFakeTimers();
+  restores.push(() => jest.useRealTimers());
+  const first = reader.read("a", (file) => file.read(0, 4));
+  const queued = reader.read("a", async (file) => file.deadline, { budget: 10 });
+  await tick();
+  expect(reader.size()).toEqual({ active: 1, waiting: 1, paths: 1 });
+  // the lease ahead outlasts the budget many times over: no timer runs for the wait
+  expect(jest.getTimerCount()).toBe(0);
+  jest.advanceTimersByTime(1_000);
+  const leased = Date.now();
+  held.resolve(); await first;
+  expect(await queued).toBe(leased + 10);
+  expect(jest.getTimerCount()).toBe(0);
+  // within the lease the budget's timer runs: spent, it gives the read up, as a deadline does
+  const work = deferred(), entered = deferred();
+  const spent = reader.read("a", async () => { entered.resolve(); await work.promise; return "late"; }, { budget: 10 }).catch((e) => e);
+  await entered.promise;
+  jest.advanceTimersByTime(9);
+  expect(reader.size().active).toBe(1);
+  jest.advanceTimersByTime(1);
+  expect(await spent).toBeInstanceOf(TranscriptBusyError);
+  work.resolve(); await reader.settled();
+  expect(jest.getTimerCount()).toBe(0);
+  // with a deadline too, the sooner one counts
+  expect(await reader.read("a", async (file) => file.deadline, { deadline: Date.now() + 5, budget: 10 })).toBe(Date.now() + 5);
+  expect(await reader.read("a", async (file) => file.deadline)).toBe(Infinity);
+  expect(reader.size()).toEqual({ active: 0, waiting: 0, paths: 0 });
 });
 
 /** A backend whose reads at `held` positions wait for that position's gate; `log` has each read's start and end. */
