@@ -19,12 +19,48 @@ function loadWorker(self: unknown): { isAppWindow: (url: string) => boolean } {
   return new Function("self", `${readFileSync(join(import.meta.dir, "..", "public", "sw.js"), "utf8")}\nreturn { isAppWindow };`)(self);
 }
 
+type AlertData = { pane_id: string | null; machine_id: string; workspace_id: string | null; alert_id?: string };
+type Delivered = { title: string; tag: string; data: AlertData; close: () => void };
+
+/**
+ * The notification centre a worker's registration shows into. `ios`: every notification is
+ * its own, whatever its tag (webpushd), and close() removes the one it is called on.
+ * `tagged`: a tag replaces the last notification with it (Android, desktop), and a
+ * notification is named after its tag, so closing any handle of a tag closes what shows now.
+ */
+function notificationCentre(platform: "ios" | "tagged", options: { getNotifications?: (filter?: { tag?: string }) => Promise<Delivered[]>; refuseClose?: (notification: Delivered) => boolean } = {}) {
+  let delivered: Delivered[] = [];
+  const make = (title: string, tag: string, data: AlertData): Delivered => {
+    const notification: Delivered = {
+      title,
+      tag,
+      data,
+      close: () => {
+        // iOS within 30 s of showing: a console error, and the notification stays
+        if (options.refuseClose?.(notification)) return;
+        delivered = delivered.filter((other) => (platform === "tagged" ? other.tag !== tag : other !== notification));
+      },
+    };
+    return notification;
+  };
+  return {
+    shown: () => delivered.map((notification) => ({ title: notification.title, ...notification.data })),
+    add: (title: string, tag: string, data: AlertData) => { delivered.push(make(title, tag, data)); },
+    showNotification: async (title: string, shown: { tag: string; data: AlertData }) => {
+      if (platform === "tagged") delivered = delivered.filter((other) => other.tag !== shown.tag);
+      delivered.push(make(title, shown.tag, shown.data));
+    },
+    getNotifications: options.getNotifications ?? (async (filter?: { tag?: string }) => delivered.filter((notification) => !filter?.tag || notification.tag === filter.tag)),
+  };
+}
+
 /** Execute the shipped worker, including its asynchronous notificationclick listener. */
 function notifications(
   windows: WindowClient[],
   matchAll = async () => windows,
   openWindow: (url: string) => Promise<WindowClient | null> = async () => null,
   scope?: string,
+  centre: Partial<ReturnType<typeof notificationCentre>> = {},
 ) {
   const listeners = new Map<string, (event: unknown) => void>();
   const opened: string[] = [];
@@ -33,7 +69,11 @@ function notifications(
   const self = {
     addEventListener: (type: string, listener: (event: unknown) => void) => listeners.set(type, listener),
     clients: { matchAll, openWindow: async (url: string) => { opened.push(url); return openWindow(url); } },
-    registration: { scope, showNotification: async (title: string, options: { data: unknown }) => { shown.push({ title, options }); } },
+    registration: {
+      scope,
+      showNotification: async (title: string, options: { tag: string; data: AlertData }) => { shown.push({ title, options }); await centre.showNotification?.(title, options); },
+      ...(centre.getNotifications ? { getNotifications: centre.getNotifications } : {}),
+    },
   };
   loadWorker(self);
   const push = (payload: unknown): Promise<void> => {
@@ -166,8 +206,8 @@ describe("notification clicks", () => {
     await quiet.push({ pane_id: "w1:p9", workspace_id: "w1", title: "t", body: "terminal ended", tag: "x" });
     await quiet.push({ pane_id: "w1:p9", title: "t", body: "b", tag: "y" });
     expect(quiet.shown.map((shown) => shown.options.data)).toEqual([
-      { pane_id: "w1:p9", machine_id: "local", workspace_id: "w1" },
-      { pane_id: "w1:p9", machine_id: "local", workspace_id: null },
+      { pane_id: "w1:p9", machine_id: "local", workspace_id: "w1", alert_id: expect.any(String) },
+      { pane_id: "w1:p9", machine_id: "local", workspace_id: null, alert_id: expect.any(String) },
     ]);
 
     const app = client();
@@ -421,5 +461,95 @@ describe("notification clicks", () => {
     await second;
     expect(newer.selected.at(-1)).toEqual(selection);
     expect(worker.opened).toEqual(["/?machine=local&pane=pane-a&view=chat"]);
+  });
+});
+
+describe("one alert per pane", () => {
+  const alert = (pane: string, machine = "local", workspace = "w1") => ({
+    pane_id: pane,
+    workspace_id: workspace,
+    ...(machine === "local" ? {} : { machine_id: machine }),
+    title: `${machine} ${pane}`,
+    body: "needs input",
+    tag: machine === "local" ? `herdr-pane-${pane}` : `herdr-remote-${machine}-${pane}`,
+  });
+
+  it("closes the pane's earlier alert on iOS, where the tag replaces nothing", async () => {
+    const centre = notificationCentre("ios");
+    const worker = notifications([], undefined, undefined, undefined, centre);
+    await worker.push(alert("w1:p1"));
+    await worker.push(alert("w1:p1"));
+    expect(centre.shown().map((shown) => shown.pane_id)).toEqual(["w1:p1"]);
+    expect(centre.shown()[0]!.alert_id).toBe((worker.shown[1]!.options.data as AlertData).alert_id);
+  });
+
+  it("keeps the new alert where the tag already replaced the old one", async () => {
+    // closing a handle taken before showing would close the new alert here: same tag, same notification
+    const centre = notificationCentre("tagged");
+    const worker = notifications([], undefined, undefined, undefined, centre);
+    await worker.push(alert("w1:p1"));
+    await worker.push({ ...alert("w1:p1"), title: "newer" });
+    expect(centre.shown().map((shown) => shown.title)).toEqual(["newer"]);
+  });
+
+  it("never lets an earlier alert's slower clean-up close a newer alert", async () => {
+    for (const platform of ["ios", "tagged"] as const) {
+      const centre = notificationCentre(platform);
+      centre.add("old", "herdr-pane-w1:p1", { pane_id: "w1:p1", machine_id: "local", workspace_id: "w1", alert_id: "old" });
+      // hold the earlier alert's clean-up from the moment it is shown until the newer alert is done
+      const held = deferred();
+      const holding = deferred();
+      let earlierShown = false;
+      let holds = 0;
+      const worker = notifications([], undefined, undefined, undefined, {
+        ...centre,
+        showNotification: async (title, options) => {
+          await centre.showNotification(title, options);
+          if (title === "earlier") earlierShown = true;
+        },
+        getNotifications: async (filter) => {
+          if (earlierShown && holds++ === 0) {
+            holding.resolve();
+            await held.promise;
+          }
+          return centre.getNotifications(filter);
+        },
+      });
+      const earlier = worker.push({ ...alert("w1:p1"), title: "earlier" });
+      await holding.promise;
+      await worker.push({ ...alert("w1:p1"), title: "newer" });
+      held.resolve();
+      await earlier;
+      expect(centre.shown().map((shown) => shown.title)).toEqual(["newer"]);
+    }
+  });
+
+  it("leaves other panes' and other PCs' alerts alone", async () => {
+    const centre = notificationCentre("ios");
+    const worker = notifications([], undefined, undefined, undefined, centre);
+    await worker.push(alert("w1:p1"));
+    await worker.push(alert("w1:p2"));
+    await worker.push(alert("w1:p1", "mac"));
+    await worker.push(alert("w1:p1"));
+    expect(centre.shown().map((shown) => `${shown.machine_id} ${shown.pane_id}`)).toEqual(["local w1:p2", "mac w1:p1", "local w1:p1"]);
+  });
+
+  it("shows the new alert when the clean-up fails", async () => {
+    const listing = notifications([], undefined, undefined, undefined, { ...notificationCentre("ios"), getNotifications: async () => { throw new Error("not supported"); } });
+    await listing.push(alert("w1:p1"));
+    expect(listing.shown).toHaveLength(1);
+
+    // iOS will not close one shown in the last 30 s: the others still go, and the new one stays
+    const centre = notificationCentre("ios", { refuseClose: (notification) => notification.data.workspace_id === "recent" });
+    centre.add("recent", "herdr-pane-w1:p1", { pane_id: "w1:p1", machine_id: "local", workspace_id: "recent" });
+    centre.add("older", "herdr-pane-w1:p1", { pane_id: "w1:p1", machine_id: "local", workspace_id: "w1" });
+    const refused = notifications([], undefined, undefined, undefined, centre);
+    await refused.push({ ...alert("w1:p1"), title: "new" });
+    expect(centre.shown().map((shown) => shown.title)).toEqual(["recent", "new"]);
+
+    // a worker with no getNotifications at all (an older browser) shows it as before
+    const bare = notifications([]);
+    await bare.push(alert("w1:p1"));
+    expect(bare.shown).toHaveLength(1);
   });
 });

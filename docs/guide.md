@@ -525,6 +525,9 @@ While the app is in front on any device, its window visible and focused, no aler
 device: you are already looking at the change. Alerts resume once no window of the app is in use.
 The test push is always sent.
 
+Each pane keeps one alert: a new one replaces its last. iOS lets an alert be removed only
+30 seconds after it arrived, so a quicker repeat stays until the pane's next alert.
+
 ### Using the app
 
 On a phone:

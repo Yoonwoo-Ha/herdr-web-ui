@@ -368,6 +368,31 @@ function ofThisPc(url) {
   try { return new URL(url).pathname.startsWith(`/s/${shellServerId()}/`); } catch { return false; }
 }
 
+// The tag replaces the pane's last alert everywhere but iOS, whose webpushd files each one
+// under an id of its own (WebKit bugs 258922, 319860): the pane's earlier alerts are closed by
+// hand. Their alert_ids are noted before showing, so an alert shown meanwhile (another push for
+// the pane) is never closed, and the handles are listed again after showing: where the tag did
+// replace, an old handle names the new alert. iOS refuses close() for 30 s after showing, so a
+// quicker repeat waits for the next alert. A failed listing closes nothing.
+async function earlierAlerts(tag) {
+  try {
+    return new Set((await self.registration.getNotifications({ tag })).map((alert) => alert.data?.alert_id));
+  } catch {
+    return new Set();
+  }
+}
+
+async function closeEarlierAlerts(tag, earlier) {
+  if (earlier.size === 0) return;
+  try {
+    for (const alert of await self.registration.getNotifications({ tag })) {
+      if (earlier.has(alert.data?.alert_id)) alert.close();
+    }
+  } catch {
+    /* the new alert is up: a failed clean-up leaves only the old ones */
+  }
+}
+
 self.addEventListener("push", (event) => {
   let payload = {};
   try {
@@ -379,16 +404,20 @@ self.addEventListener("push", (event) => {
     (async () => {
       const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       const watching = windows.some((client) => client.visibilityState === "visible" && ofThisPc(client.url));
+      const tag = payload.tag || "herdr";
+      const alertId = crypto.randomUUID();
+      const earlier = await earlierAlerts(tag);
       await self.registration.showNotification(payload.title || "Ovis", {
         body: payload.body || "",
-        tag: payload.tag || "herdr",
+        tag,
         renotify: !watching,
         silent: watching,
-        data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local", workspace_id: payload.workspace_id || null },
+        data: { pane_id: payload.pane_id || null, machine_id: payload.machine_id || "local", workspace_id: payload.workspace_id || null, alert_id: alertId },
         icon: "/icons/icon-192.png?v=sheep1",
         // Android's status bar and small icon: white on transparent, or Chrome's bell
         badge: "/icons/badge-96.png?v=sheep1",
       });
+      await closeEarlierAlerts(tag, earlier);
     })(),
   );
 });
