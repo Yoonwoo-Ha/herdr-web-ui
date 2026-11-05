@@ -5,6 +5,7 @@
  * it; typing still goes through xterm. herdr's own server, or the setting off, keep xterm alone and
  * never fetch the module. Demo fixtures only: no herdr, hc or user state.
  */
+import { deflateSync } from "node:zlib";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -78,6 +79,26 @@ const kittySquare = (id: number, rgb: [number, number, number]): string => {
   return `\x1b_Ga=T,f=32,s=4,v=4,i=${id},c=4,r=2,q=2;${pixels.toString("base64")}\x1b\\`;
 };
 
+/** an iTerm2 inline picture (OSC 1337): a 24x24 PNG, as terminal-images-demo-regression.ts sends */
+const itermSquare = (): string => {
+  const chunk = (type: string, data: Uint8Array) => {
+    const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+    const out = Buffer.alloc(12 + data.length);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(Bun.hash.crc32(body), 8 + data.length);
+    return out;
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(24, 0);
+  header.writeUInt32BE(24, 4);
+  header.set([8, 2, 0, 0, 0], 8);
+  const row = Buffer.concat([Buffer.from([0]), ...Array.from({ length: 24 }, () => Buffer.from([0, 128, 0]))]);
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", header),
+    chunk("IDAT", deflateSync(Buffer.concat(Array.from({ length: 24 }, () => row)))), chunk("IEND", new Uint8Array())]);
+  return `\x1b]1337;File=inline=1;size=${png.length}:${png.toString("base64")}\x07`;
+};
+
 const settled = (page: Page) => page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 const print = async (page: Page, data: string, marker: string) => {
   await page.evaluate((data) => window.ghosttyFixture.print(data), `${data}${marker}\r\n`);
@@ -93,12 +114,13 @@ const picture = (page: Page) => page.evaluate(() => {
   return { rgb: [r, g, b], width: canvas.style.width, top: canvas.style.top };
 });
 
-async function open(browser: Browser, server: number, prefix: string, kind: "core" | "herdr", ghostty: boolean): Promise<{ page: Page; wasm: string[]; errors: string[] }> {
+async function open(browser: Browser, server: number, prefix: string, kind: "core" | "herdr", ghostty: boolean, images = false): Promise<{ page: Page; wasm: string[]; errors: string[] }> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
-  await context.addInitScript((ghostty) => {
+  await context.addInitScript(([ghostty, images]) => {
     localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", defaultView: "terminal", terminalInputMode: "direct", alertsOn: false }));
     localStorage.setItem("ovis:terminal-ghostty", JSON.stringify(ghostty));
-  }, ghostty);
+    localStorage.setItem("ovis:terminal-images", JSON.stringify(images));
+  }, [ghostty, images] as const);
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
   const wasm: string[] = [];
@@ -190,6 +212,29 @@ try {
         await page.waitForFunction(() => window.ghosttyFixture.inputs.some((frame) => frame.type === "input" && frame.text === "x"));
         assert.deepEqual(errors, [], "core: no page errors");
         await page.context().close();
+      }
+      {
+        // an iTerm2 picture (Pictures in the terminal): libghostty cannot draw it, xterm's image addon does and moves its
+        // cursor past it, so the text after it must be shown on the row xterm alone shows it on (#2980)
+        const shownRow = async (ghostty: boolean) => {
+          const { page, errors } = await open(browser, server.port, prefix, "core", ghostty, true);
+          if (ghostty) await page.locator(".pane-frame.is-current .pane-terminal[data-renderer=ghostty]").waitFor();
+          // the image addon loads on its own; until then xterm passes the picture by
+          await page.waitForFunction(() => typeof (document.querySelector(".pane-frame.is-current .xterm") as { imageAt?: unknown } | null)?.imageAt === "function");
+          await page.evaluate((data) => window.ghosttyFixture.print(data), `\x1b[2J\x1b[H${itermSquare()}IT2-AFTER\r\n`);
+          const row = await page.waitForFunction(() => {
+            const layer = document.querySelector(".pane-frame.is-current .pane-terminal[data-renderer=ghostty]");
+            const rows = [...document.querySelectorAll(layer ? ".pane-frame.is-current .ghostty-row" : ".pane-frame.is-current .xterm-rows > div")];
+            const index = rows.findIndex((row) => row.textContent?.includes("IT2-AFTER"));
+            return index >= 0 ? { index } : null;
+          }).then(async (handle) => (await handle.jsonValue())!.index);
+          assert.deepEqual(errors.filter((error) => !error.includes("libghostty")), [], `core, iTerm2 picture${ghostty ? "" : ", off"}: no page errors`);
+          await page.context().close();
+          return row;
+        };
+        const xtermRow = await shownRow(false);
+        assert.ok(xtermRow > 0, `core, iTerm2 picture, off: xterm moves past the picture (row ${xtermRow})`);
+        assert.equal(await shownRow(true), xtermRow, "core, iTerm2 picture: the text after it is shown on xterm's row");
       }
       for (const [kind, ghostty] of [["herdr", true], ["core", false]] as const) {
         const { page, wasm, errors } = await open(browser, server.port, prefix, kind, ghostty);

@@ -52,6 +52,11 @@ const SIZE_REPORTS = { getWinSizePixels: true, getCellSizePixels: true, getWinSi
  * them: herdr-core passes a pane's output on as it is, herdr draws the pane from its own grid again
  * and drops them; a pane drawn again (attached anew) comes back without its pictures either way.
  */
+/** whether xterm draws iTerm2 and sixel pictures in this terminal (Pictures in the terminal is on and loaded) */
+export function terminalDrawsPictures(terminal: Terminal): boolean {
+  return loaded.get(terminal)?.enabled === true;
+}
+
 export function useTerminalImages(terminal: Terminal | null, enabled: boolean, coarse: boolean): void {
   // the addon takes the caps of the pointer at the moment it loads, not at the moment its import began
   const coarseRef = useRef(coarse);

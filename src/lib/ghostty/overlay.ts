@@ -9,6 +9,7 @@
  * answers nothing: a reply it made to a replayed stream would reach the program as typing.
  */
 import type { IDisposable, Terminal } from "@xterm/xterm";
+import { terminalDrawsPictures } from "../terminalImages.ts";
 import { GhosttyVt, STYLE_BOLD, STYLE_FAINT, STYLE_INVERSE, STYLE_INVISIBLE, STYLE_ITALIC, STYLE_STRIKE, STYLE_UNDERLINE_MASK, type GhosttyColors, type GhosttyImage, type GhosttyRun } from "./vt.ts";
 
 const escapeHtml = (s: string): string => s.replace(/[&<>"]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;"));
@@ -29,6 +30,13 @@ export function newLines(before: readonly string[], after: readonly string[]): s
     if (matches > bestMatches) { best = shift; bestMatches = matches; }
   }
   return after.filter((line, y) => line && (y >= rows - best || before[y + best] !== line));
+}
+
+const latin1 = new TextDecoder("latin1");
+/** an iTerm2 inline picture (OSC 1337 File=) or a sixel one (DCS ... q): the pictures xterm's image addon draws */
+export function hasXtermPicture(data: string | Uint8Array): boolean {
+  const text = typeof data === "string" ? data : latin1.decode(data);
+  return text.includes("\x1b]1337;File=") || /\x1bP[0-9;]*q/.test(text);
 }
 
 /** lines of one frame read out, so a flood does not drown the reader */
@@ -65,7 +73,8 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
   if (!screen) throw new Error("ghostty overlay: the terminal is not open");
   const vt = await GhosttyVt.create(term.cols, term.rows);
   const backlog = takeBacklog();
-  if (!backlog) {
+  // a picture only xterm draws already moved xterm's rows: xterm keeps drawing this pane (#2980)
+  if (!backlog || (terminalDrawsPictures(term) && backlog.some(hasXtermPicture))) {
     vt.dispose();
     return null;
   }
@@ -293,6 +302,10 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
   // every byte xterm is given, libghostty is given first, in the same order
   const write = term.write.bind(term);
   term.write = ((data: string | Uint8Array, callback?: () => void) => {
+    // libghostty takes Kitty pictures but not iTerm2 or sixel ones: when xterm draws one (Pictures in the terminal),
+    // its cursor moves past the picture and libghostty's would not, so the text after it would sit on other rows.
+    // xterm draws the pane from that picture on (#2980)
+    if (!disposed && terminalDrawsPictures(term) && hasXtermPicture(data)) overlay.dispose();
     if (!disposed) {
       try {
         vt.write(data);
