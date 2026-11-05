@@ -702,7 +702,8 @@ async function regionalFixture({ rtt = { global: 130, regional: 13 } as { global
   const base = `http://127.0.0.1:${app.port}`;
   const post = (path: string) => fetch(`${base}/api/relay${path}`, { method: "POST", headers: { origin: base, "x-herdr-update": "1" } });
   return { dir, relays, synced, lost, probed, signals, service, post,
-    async offer() { return decodeOffer(((await (await post("/offer")).json()) as { url: string }).url)!; } };
+    async offer() { return decodeOffer(((await (await post("/offer")).json()) as { url: string }).url)!; },
+    async link() { return decodeOffer(((await (await post("/link")).json()) as { url: string }).url)!; } };
 }
 
 it("advertises a regional relay that answers much faster, stays on the global one too, and keeps the choice", async () => {
@@ -757,6 +758,24 @@ it("keeps no measurement that finishes after the relay was turned off", async ()
   await new Promise((resolve) => setImmediate(resolve));
   expect(existsSync(join(f.dir, "relay", "region.json"))).toBe(false);
   expect(f.service.status()).toMatchObject({ phase: "off", relay: "wss://global.test" });
+});
+
+it("names the relay new offers name in a pairing link without a code too", async () => {
+  // Given a PC that chose a regional relay
+  const f = await regionalFixture();
+  expect((await f.post("/start")).status).toBe(200);
+  await bounded(Promise.all([f.synced.global.promise, f.synced.regional.promise]));
+  // Then a link for comparing digits names the regional relay, as a QR code does
+  expect((await f.link()).relay).toBe("wss://regional.test");
+  // And the global relay while the regional link is down
+  await f.relays.regional.stop();
+  await bounded(f.lost.regional.promise);
+  expect((await f.link()).relay).toBe("wss://global.test");
+  // And a PC that chose no regional relay names the global one
+  const plain = await regionalFixture({ rtt: { global: 100, regional: 60 } });
+  expect((await plain.post("/start")).status).toBe(200);
+  await bounded(plain.synced.global.promise);
+  expect((await plain.link()).relay).toBe("wss://global.test");
 });
 
 it("names the global relay in new offers while the regional link is down, and reports the global link's state", async () => {

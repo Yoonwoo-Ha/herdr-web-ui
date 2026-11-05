@@ -262,7 +262,7 @@ export class RelayService {
   pairingLink(): { url: string } {
     if (!this.enabled || !this.identity || !this.services || this.blocked) throw new Error("Start the relay before pairing.");
     this.approvals.openWindow();
-    return { url: encodeOffer({ v: 1, server_id: this.identity.server_id, server_public_key: this.identity.public_key, relay: this.relay }, this.app) };
+    return { url: encodeOffer({ v: 1, server_id: this.identity.server_id, server_public_key: this.identity.public_key, relay: this.advertised }, this.app) };
   }
 
   async resetIdentity(): Promise<RelayStatus> {
