@@ -53,7 +53,7 @@ import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTOR
 import type { PiSessionReader } from "./pi-session-metadata.ts";
 import type { HerdrSidebarConfig } from "./herdr-sidebar.ts";
 import { readHerdrUi } from "./herdr-ui.ts";
-import { MachineRelay } from "./machine-relay.ts";
+import { MachineRelay, type RelayReceiptIds } from "./machine-relay.ts";
 import { sameOrigin } from "./machine-security.ts";
 import { handlePluginRequest } from "./plugin-routes.ts";
 import type { createServer } from "./index.ts";
@@ -68,6 +68,7 @@ type PortalStartup = { ok: true } | { ok: false; error: unknown };
 /** Per-server services shared by socket requests and other dispatch callers. */
 export interface RequestServices {
   readonly relay: RelayService;
+  readonly relayReceiptIds: RelayReceiptIds;
   readonly options: NonNullable<Parameters<typeof createServer>[0]>;
   readonly hostname: string;
   readonly token: string;
@@ -358,9 +359,14 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     if (machineId && machineId !== "local") {
       if (access.level === "none") return unauthorizedJson(access.reason);
       if (!machines?.endpoint(machineId)) return jsonResponse({ error: { code: "machine_offline", message: "This PC is disconnected" } }, 503);
+      // whose receipts these are: the paired device, else the Portal user or Tailscale login the request proved
+      const principal = deviceId !== undefined ? JSON.stringify(["device", deviceId])
+        : access.portal ? JSON.stringify(["portal", access.portal.method, access.portal.user])
+        : access.login !== undefined ? JSON.stringify(["tailscale", access.login.toLowerCase()]) : undefined;
       let relay: MachineRelay | undefined;
       try {
-        relay = new MachineRelay(machines, machineId, readOnly, browserSnapshot);
+        relay = new MachineRelay(machines, machineId, readOnly, browserSnapshot,
+          (browser) => ctx.services.relayReceiptIds.scope(machineId, principal, browser));
         await relay.ready;
         const upgraded = ctx.upgrade(request, { headers, data: connectionData({ relay, deviceId, readOnly, ...recheck }) });
         if (upgraded) return undefined;

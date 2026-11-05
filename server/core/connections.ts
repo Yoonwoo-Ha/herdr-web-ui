@@ -263,6 +263,8 @@ export function createConnections({ clients, present, pending, devices, detachCl
     const state = stateOf(client);
     if (client.data.deviceId) {
       state.unwatchDevice = devices.onRevoke(client.data.deviceId, () => end(client, "revoked"));
+      // a role change while the upgrade was pending (a remote PC's relay dials first) told its listeners before this one
+      if (!state.revoked && !client.data.readOnly && !devices.canDrive(client.data.deviceId)) end(client, "revoked");
       if (state.revoked) return false;
     }
     // a plain close: the page reconnects as after any other, and Portal decides whether it gets in

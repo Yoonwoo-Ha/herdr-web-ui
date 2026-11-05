@@ -1158,6 +1158,60 @@ it("a script pairs for its token in JSON and authenticates with Authorization: D
   }
 });
 
+it("a device downgraded to watch while its relayed /ws?machine_id= upgrade is pending is ended at admission, not left driving", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ovis-device-downgrade-relay-"));
+  let reached!: () => void, release!: () => void;
+  const reachedRemote = new Promise<void>((resolve) => { reached = resolve; });
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  let upstreamClosed!: () => void;
+  const closedUpstream = new Promise<void>((resolve) => { upstreamClosed = resolve; });
+  const forwarded: string[] = [];
+  const upstream = Bun.serve({
+    port: 0, hostname: "127.0.0.1",
+    async fetch(request, instance) {
+      reached(); await released;
+      return instance.upgrade(request) ? undefined : new Response(null, { status: 426 });
+    },
+    websocket: { open() {}, message(_ws, raw) { forwarded.push(String(raw)); }, close() { upstreamClosed(); } },
+  });
+  const endpoint = spyOn(MachineManager.prototype, "endpoint").mockImplementation((id) =>
+    id === "fictional-remote" ? { url: `http://127.0.0.1:${upstream.port}`, token: "fictional-remote" } : undefined);
+  const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir: root, token: "test-downgrade-relay", tailscaleOwner: null, sidecar: false });
+  const base = `http://127.0.0.1:${app.port}`;
+  const admin = { ...guard, authorization: "Bearer test-downgrade-relay" };
+  const stranger = { "x-forwarded-for": "100.64.0.9" };
+  let socket: WebSocket | undefined;
+  try {
+    const { code } = await (await fetch(`${base}/api/devices/pair/start`, { method: "POST", headers: admin })).json() as { code: string };
+    const paired = await fetch(`${base}/api/devices/pair`, { method: "POST", headers: { ...guard, ...stranger }, body: JSON.stringify({ code, label: "Phone" }) });
+    expect(paired.status).toBe(204);
+    const cookie = paired.headers.get("set-cookie")!.split(";")[0]!;
+    // its cookie coming back confirms the pairing
+    expect((await fetch(`${base}/api/session`, { headers: { ...stranger, cookie } })).status).toBe(200);
+    const { devices } = await (await fetch(`${base}/api/devices`, { headers: { ...stranger, cookie } })).json() as { devices: { id: string; current: boolean }[] };
+    const id = devices.find((device) => device.current)!.id;
+
+    const RuntimeSocket = WebSocket as unknown as new (url: string, options: { headers: { cookie: string } }) => WebSocket;
+    socket = new RuntimeSocket(`${base.replace("http:", "ws:")}/ws?machine_id=fictional-remote`, { headers: { cookie } });
+    const closed = new Promise<CloseEvent>((resolve) => socket!.addEventListener("close", resolve, { once: true }));
+    await reachedRemote;
+    // the role changes while the relay still dials the other PC: the socket was authorized to drive
+    app.context.services.devices.update(id, { role: "watch" });
+    release();
+    socket.addEventListener("open", () => socket!.send(JSON.stringify({ type: "attach", pane_id: "remote-pane", cols: 80, rows: 24, receipt_resume_id: crypto.randomUUID() })), { once: true });
+    const ended = await Promise.race([closed, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the downgraded socket was left open")), 5000))]);
+    expect(ended.code).toBe(1008);
+    await closedUpstream;
+    expect(forwarded).toEqual([]);
+  } finally {
+    socket?.close();
+    app.stop();
+    upstream.stop(true);
+    endpoint.mockRestore();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 15_000);
+
 it("a script's first pairing on a fresh install is kept at once, so its token still works after a restart (#2744)", async () => {
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-device-header-first-"));
   const options = { port: 0, hostname: "127.0.0.1", stateDir, token: "configured", tailscaleOwner: null, machines: false, sidecar: false } as const;

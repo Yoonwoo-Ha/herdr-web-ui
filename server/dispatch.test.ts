@@ -6,6 +6,8 @@ import { handleRequest, type ServerContext } from "./dispatch.ts";
 import * as herdr from "./herdr/client.ts";
 import { createServer } from "./index.ts";
 import { PortalService } from "./portal.ts";
+import { MachineManager } from "./machines.ts";
+import type { MachineRelay } from "./machine-relay.ts";
 
 for (const [path, status, expectedTimeouts] of [["/api/health", 200, [60]], ["/api/nope", 404, [60]]] as const) {
   it(`dispatches GET ${path} with a fake socket context`, async () => {
@@ -89,6 +91,55 @@ it("uses only the relay principal, even with valid driving cookies, bridge token
     proof.mockRestore();
     await portal.shutdown();
     app.stop();
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+it("scopes a remote PC's receipt identity to the Portal user, not only to a browser two sign-ins share", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-dispatch-portal-receipts-"));
+  const portal = new PortalService({ stateDir });
+  const forwarded: Array<string | undefined> = [];
+  let heard: (() => void) | undefined;
+  const upstream = Bun.serve({
+    port: 0, hostname: "127.0.0.1",
+    fetch(request, instance) { return instance.upgrade(request) ? undefined : new Response(null, { status: 426 }); },
+    websocket: { message(_socket, raw) { forwarded.push(JSON.parse(String(raw)).receipt_resume_id); heard?.(); } },
+  });
+  const endpoint = spyOn(MachineManager.prototype, "endpoint").mockImplementation((id) =>
+    id === "remote" ? { url: `http://127.0.0.1:${upstream.port}`, token: "remote" } : undefined);
+  const app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, portal, token: "shared-token", tailscaleOwner: null, sidecar: false });
+  const proof = spyOn(portal, "vouches").mockReturnValue(true);
+  const role = spyOn(portal, "roleFor").mockReturnValue("drive");
+  const relays: MachineRelay[] = [];
+  const ctx: ServerContext = {
+    ...app.context, requestIP: () => ({ address: "127.0.0.1" }), timeout: () => {},
+    upgrade: (_request, options) => { relays.push(options.data.relay!); return true; },
+  };
+  const browser = crypto.randomUUID();
+  const attachAs = async (user: string) => {
+    const response = await handleRequest(new Request(`http://127.0.0.1:${app.port}/ws?machine_id=remote`, { headers: {
+      host: `127.0.0.1:${app.port}`, origin: `http://127.0.0.1:${app.port}`, "x-forwarded-for": "100.64.0.1",
+      "x-portal-proof": "valid-portal-proof", "x-portal-user": user, "x-portal-auth": "credential",
+    } }), ctx);
+    expect(response).toBeUndefined();
+    // one attach at a time: each comes over its own upstream socket, so arrival order is not send order
+    const arrived = new Promise<void>((resolve) => { heard = resolve; });
+    relays.at(-1)!.message(JSON.stringify({ type: "attach", pane_id: "p", cols: 80, rows: 24, receipt_resume_id: browser }));
+    await arrived;
+  };
+  try {
+    await attachAs("alice"); await attachAs("bob"); await attachAs("alice");
+    const [alice, bob, aliceAgain] = forwarded;
+    expect(alice).toBeString();
+    expect(aliceAgain).toBe(alice);
+    expect(bob).toBeString();
+    expect(bob).not.toBe(alice);
+  } finally {
+    for (const relay of relays) relay.close();
+    proof.mockRestore(); role.mockRestore(); endpoint.mockRestore();
+    await portal.shutdown();
+    app.stop();
+    upstream.stop(true);
     rmSync(stateDir, { recursive: true, force: true });
   }
 });

@@ -2,6 +2,7 @@ import { afterEach, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import type { ServerWebSocket } from "bun";
 import type { ClientMessage, ServerMessage } from "../../shared/protocol.ts";
+import { RECEIPT_RESUME_ID } from "../../shared/receipt-resume.ts";
 import { decodeFrame, FrameType, LARGE_WS_MESSAGES, LIMITS_V1 } from "../../shared/relay-mux.ts";
 import type { createCore } from "../core/index.ts";
 import { handleRequest } from "../dispatch.ts";
@@ -304,7 +305,9 @@ it("routes machine_id through MachineRelay and resets upstream loss", async () =
     await socket.opened;
     expect(await socket.until((message) => message.type === "pty-data")).toMatchObject({ data: "REMOTE" });
     socket.send({ type: "attach", pane_id: "remote-pane", cols: 80, rows: 24, flow_control: "ack", receipt_resume_id: "12345678-1234-4234-8234-123456789abc" });
-    expect(await bounded(received.promise)).toEqual({ type: "attach", pane_id: "remote-pane", cols: 80, rows: 24, flow_control: "ack" });
+    const forwarded = await bounded(received.promise);
+    expect(forwarded).toEqual({ type: "attach", pane_id: "remote-pane", cols: 80, rows: 24, flow_control: "ack", receipt_resume_id: expect.stringMatching(RECEIPT_RESUME_ID) });
+    expect(forwarded).not.toHaveProperty("receipt_resume_id", "12345678-1234-4234-8234-123456789abc");
     await socket.until((message) => message.type === "pong");
     const reset = deferred<string>();
     link.onFrame = (frame) => { if (frame.type === FrameType.RESET) reset.resolve(frame.payload.code); };

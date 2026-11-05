@@ -130,6 +130,13 @@ herdr 0.9.3). Older bridge bundles keep waiting until updated, and observe conne
 
 ## Disconnects and updates
 
+When the connection server and remote bridge support receipt recovery, a returning browser can
+recover the exact outcome of a sent or discarded follow-up without typing it again. The connection
+server scopes the receipt identity to that server, PC, authenticated device (or Portal user or
+Tailscale login) and browser; watch-only connections cannot recover it. Receipts last at most ten
+minutes, with at most 1024 outcomes retained.
+A missing receipt or a restart of either server leaves the saved copy **Not confirmed**.
+
 **Update bridge** also reuses a bridge whose live identity verifies as current; it does not
 download, install or restart the same version again.
 
