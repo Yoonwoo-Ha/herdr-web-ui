@@ -167,6 +167,10 @@ async function renameGeometry(page: Page, manage: Locator, scenario: Scenario): 
   assert.ok(fit.list.scrollWidth <= fit.list.clientWidth + 1, `${scenario.name} a 100-character name does not widen the PC list: ${JSON.stringify(fit)}`);
   assert.ok(fit.field.left >= fit.sidebar.left - 1 && fit.field.right <= fit.sidebar.right + 1, `${scenario.name} the name's field fits the sidebar: ${JSON.stringify(fit)}`);
   await capture(page, scenario, "renaming");
+  // a press in the field places the caret: the name's own fold (a press on the name) stays out of it
+  await press(input, scenario);
+  assert.equal(await renamingGroup(page).evaluate((group) => group.classList.contains("is-folded")), false, `${scenario.name} a press in the name's field does not fold the PC`);
+  assert.equal(await input.evaluate((element) => document.activeElement === element), true, `${scenario.name} the field keeps the focus after a press in it`);
   await page.keyboard.press("Escape");
   await input.waitFor({ state: "detached" });
   // the field keeps its own Escape: a phone's drawer stays out (lib/useSidebarLayout.ts)

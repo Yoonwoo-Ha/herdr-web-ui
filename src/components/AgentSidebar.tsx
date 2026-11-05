@@ -8,6 +8,7 @@ import type { AgentStatus, HerdrPane, PlanSummary } from "../../shared/protocol.
 import { currentAgentRowTokens, subscribeAgentRowTokens } from "../lib/agentRowTokens.ts";
 import { useT } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
+import { useEdgeFades } from "../lib/useEdgeFades.ts";
 import { agentGroup, agentRoster, groupAgentRows, splitBackgroundRows, type AgentGroup, type AgentRow } from "../lib/agentRoster.ts";
 import { assignAgentGroup, liveGroupKeys, loadFoldedAgentGroups, rowAgentGroup, saveFoldedAgentGroups, splitNamedGroups } from "../lib/namedAgentGroups.ts";
 import { currentPaneMutes, paneMuteKey, prunePaneMutes, setPaneMutes, subscribePaneMutes, togglePaneMute } from "../lib/paneMutes.ts";
@@ -277,6 +278,9 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   // a pin moves the row to the other list, so React draws it anew: the control of the row that had
   // the focus (its row or its ⋯) gets it back
   const sectionRef = useRef<HTMLElement>(null);
+  // the list fades at an edge only while rows lie past it (lib/useEdgeFades.ts)
+  const listRef = useRef<HTMLDivElement>(null);
+  useEdgeFades(listRef);
   const refocusPin = useRef<{ key: string; control: string } | null>(null);
   useLayoutEffect(() => {
     const target = refocusPin.current;
@@ -484,10 +488,10 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     }}>
       {folded ? <ChevronRight className="agent-section-caret" aria-hidden="true" /> : <ChevronDown className="agent-section-caret" aria-hidden="true" />}
       <span>{t("Agents")}</span>
-      {/* the count is of the agents running, filter or not */}
-      {folded && allRows.length > 0 && <span className="agent-section-count">{allRows.length}</span>}
+      {/* the count is of the agents running, filter or not, open or folded */}
+      {allRows.length > 0 && <span className="agent-section-count">{allRows.length}</span>}
     </button>
-    <div className="agent-list-contents" id={listId} hidden={folded}>
+    <div ref={listRef} className="agent-list-contents" id={listId} hidden={folded}>
       <p className={shownEmpty === null ? "visually-hidden" : "agent-empty"} role="status">{shownEmpty}</p>
       {rows.length > 0 && <>
         {split.pinned.length > 0 && <>

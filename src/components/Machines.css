@@ -4,22 +4,12 @@
 .machine-list {
   position: relative;
   min-height: 0;
-  padding-top: var(--space-2);
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-padding-bottom: var(--space-4);
 }
 
-/* a list that is cut fades out at its lower edge */
-.machine-list::after {
-  content: "";
-  position: sticky;
-  bottom: 0;
-  display: block;
-  height: var(--space-4);
-  background: linear-gradient(transparent, var(--bg-panel));
-  pointer-events: none;
-}
+/* a list that is cut fades at the edge that cuts it (SidebarSections.css) */
 
 .machine-list > .tree-state { padding-left: calc(var(--side-gutter) + var(--side-box)); }
 
@@ -27,8 +17,10 @@
   --machine-indent: calc(var(--side-gutter) + var(--side-box));
 }
 
-/* a PC the sidebar's filter hides stays in the list, hidden: the gap is between the groups that show */
-.machine-group:not([hidden]) ~ .machine-group { margin-top: var(--space-4); }
+/* A folded PC is one row, with no gap to the next: a gap of its own made each about a row and a half
+   (issue 2617). An open PC's workspaces end with a short gap before the next PC's header. A PC the
+   filter hides stays in the list, hidden, and keeps no gap. */
+.machine-group:not(.is-folded):not([hidden]) { padding-bottom: var(--space-2); }
 
 .machine-header {
   display: flex;
@@ -194,13 +186,17 @@
   }
 }
 
-@media (pointer: coarse) {
+/* a touch screen, even beside a mouse, has no hover to find it: it stays shown, as the fold and + do
+   (SidebarSections.css) */
+@media (any-pointer: coarse) {
   .machine-manage {
     width: var(--side-action);
     overflow: visible;
     opacity: 1;
   }
+}
 
+@media (pointer: coarse) {
   .machine-new {
     width: var(--touch-target);
     height: var(--touch-target);
@@ -217,6 +213,10 @@
   font-size: var(--fs-xs);
   line-height: var(--lh-tight);
 }
+
+/* clipped while connected, it keeps no padding: the one under the last PC would otherwise lengthen the
+   list's scroll by it, and its edge would fade with nothing past it */
+.machine-state.visually-hidden { padding: 0; }
 
 .machine-state-word {
   color: var(--text-dim);

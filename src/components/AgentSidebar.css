@@ -19,18 +19,7 @@
 
 .agents-sidebar.is-empty .agent-list-contents { flex: 0 0 auto; }
 
-/* a list that is cut fades out; at the end of its scroll the fade lies over its own spare space */
-.agent-list-contents::after {
-  content: "";
-  position: sticky;
-  bottom: 0;
-  display: block;
-  height: var(--space-4);
-  background: linear-gradient(transparent, var(--bg-panel));
-  pointer-events: none;
-}
-
-.agents-sidebar.is-empty .agent-list-contents::after { display: none; }
+/* a list that is cut fades at the edge that cuts it (SidebarSections.css) */
 
 .agent-section-toggle {
   flex: 0 0 auto;
@@ -38,23 +27,16 @@
   cursor: pointer;
 }
 
-/* the fold's caret hangs in the leading cell and shows when it is of use */
+/* the fold's caret hangs in the leading cell, always in view, so the head reads as a fold at rest, as the
+   PCs head's does (SidebarSections.css) */
 .agent-section-caret {
   flex: none;
   width: var(--space-4);
   height: var(--space-4);
   margin-inline: calc((var(--side-box) - var(--space-4)) / 2);
-  opacity: 0;
 }
 
-.agent-section-toggle:focus-visible .agent-section-caret,
-.agents-sidebar.is-collapsed .agent-section-caret { opacity: 1; }
-
-@media (hover: hover) {
-  .agent-section-toggle:hover .agent-section-caret { opacity: 1; }
-}
-
-/* a folded list still says how many agents it holds */
+/* the list says how many agents it holds, open or folded, as the PCs head counts its PCs */
 .agent-section-count {
   width: var(--side-box);
   margin-left: auto;
@@ -118,7 +100,6 @@
 }
 
 .agent-background-label:first-child .agent-background-toggle { margin-top: 0; }
-.agent-background-toggle .agent-section-caret { opacity: 1; }
 .agent-background-toggle .agent-section-count { font-size: inherit; }
 
 /* Settings → Named agent groups: each group the user named under a heading that folds it, as the
@@ -454,8 +435,6 @@
 }
 
 @media (pointer: coarse) {
-  .agent-section-caret { opacity: 1; }
-
   /* Row menus stay visible on touch. */
   .agent-actions {
     width: auto;

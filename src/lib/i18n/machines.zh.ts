@@ -6,6 +6,10 @@
  */
 export const MACHINES_ZH: Record<string, string> = {
   "PCs": "PC",
+  "1 PC shown": "显示 1 台 PC",
+  "{n} PCs shown": "显示 {n} 台 PC",
+  "1 agent running": "1 个代理运行中",
+  "{n} agents running": "{n} 个代理运行中",
   "Keep this dialog open until the PC connects.": "请保持此对话框打开，直到 PC 连接成功。",
   "Waiting for Windows sign-in": "正在等待 Windows 登录",
   "Windows desktop startup failed": "Windows 桌面启动失败",
@@ -104,8 +108,6 @@ export const MACHINES_ZH: Record<string, string> = {
   "A hidden PC stays connected. A link or an alert still opens its panes.": "隐藏的 PC 仍保持连接。链接或提醒仍可打开其窗格。",
   "Show {name} in the sidebar": "在侧边栏显示 {name}",
   "Choose PCs in Settings…": "在设置中选择 PC…",
-  "Filter": "筛选",
-  "Workspaces and agents": "工作区和代理",
   "Clear filter": "清除筛选",
   "Close filter": "关闭筛选",
   "No workspaces or agents match": "没有匹配的工作区或代理",
