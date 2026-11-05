@@ -242,6 +242,13 @@ a pi-ask form can open there at any moment. The terminal answers those; without 
 pi's own dialogs keep their cards as before. Notes and
 **Elaborate** stay in Terminal. Checked with pi 1.4.0 and pi-ask 1.2.0.
 
+The same extension lets Chat suggest the slash commands that pi's extensions and installed packages
+register (such as `/team` or `/ponytail`), which no file can tell: it passes on the running pi's own
+list (`pi.getCommands()`, pi 1.3.0 or later), and a command named after a pi builtin is left out as
+pi's own menu does. An extension installed before this, pi without it, two pi processes in one pane,
+and Windows suggest only the builtins, prompts and skills; typing such a command in full still sends
+it. Run the installer again and restart pi to update an installed extension.
+
 Command Code chat needs the session herdr reports for the pane. Command Code sends that report
 and herdr keeps only the sessions of the agents it knows natively, so no released herdr accepts
 it yet: the pane's status, title and model arrive, its conversation does not. Without it the
