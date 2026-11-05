@@ -126,6 +126,16 @@ describe("saved theme migration", () => {
     expect(loadSettings().sidebarFilter).toBe(true);
   });
 
+  it("keeps the agent groups off until chosen, in keys of their own, out of an old tab's whole-record save", () => {
+    expect(loadSettings()).toMatchObject({ agentGroups: false, agentGroupSort: "wait" });
+    saveSettings(sanitizeSettings({ agentGroups: true, agentGroupSort: "name" }));
+    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("agentGroups");
+    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
+    expect(loadSettings()).toMatchObject({ agentGroups: true, agentGroupSort: "name", terminalFontSize: 18 });
+    expect(SETTING_SCOPE.agentGroups).toBe("device");
+    expect(sanitizeSettings({ agentGroups: "on", agentGroupSort: "oldest" })).toMatchObject({ agentGroups: false, agentGroupSort: "wait" });
+  });
+
   it("keeps the speech recognition in its own key, out of an old tab's whole-record save", () => {
     expect(loadSettings().voiceEngine).toBe("auto");
     saveSettings(sanitizeSettings({ voiceEngine: "browser" }));

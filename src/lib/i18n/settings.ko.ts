@@ -397,4 +397,8 @@ export const SETTINGS_KO: Record<string, string> = {
   "No SSH or open port. On the other PC, turn the relay on in Settings → Phone & devices, choose Copy link, and paste it here.": "SSH도 열린 포트도 필요 없습니다. 다른 PC의 설정 → 폰 및 기기에서 릴레이를 켜고 링크 복사를 누른 뒤 여기에 붙여 넣으세요.",
   "Pairing link": "페어링 링크",
   "{name} was added. Its workspaces join the sidebar.": "{name}을(를) 추가했습니다. 워크스페이스가 사이드바에 함께 보입니다.",
+  "Group agents by state": "에이전트를 상태별로 묶기",
+  "On this device, list the agents above the workspaces: the ones that need you first, then working, done and idle. Pinned agents stay on top.": "이 기기에서 에이전트를 워크스페이스 위에 보여 줍니다. 내 응답이 필요한 에이전트가 먼저, 그다음 작업 중, 완료, 대기 순입니다. 고정한 에이전트는 맨 위에 그대로 있습니다.",
+  "Within a state": "같은 상태 안에서",
+  "Longest wait": "오래 기다린 순",
 };

@@ -61,7 +61,6 @@ export const CHAT_ZH: Record<string, string> = {
   "{m}m {s}s": "{m} 分 {s} 秒",
   "Conversation": "对话",
   "Image {n} from {tool}": "{tool} 读取的图片 {n}",
-  "Needs you": "需要你回应",
   "failed": "失败",
   "Error": "错误",
   "{n} failed": "{n} 个失败",

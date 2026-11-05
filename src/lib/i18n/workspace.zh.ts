@@ -45,7 +45,6 @@ export const WORKSPACE_ZH: Record<string, string> = {
   "Agent": "Agent",
   "Directory": "目录",
   "absolute path or ~/…": "绝对路径或 ~/…",
-  "Name": "名称",
   "Optional workspace label": "工作区名称（可选）",
   "Workspace label; follows the branch until you change it": "工作区名称；修改之前跟随分支名",
   "Open": "打开",

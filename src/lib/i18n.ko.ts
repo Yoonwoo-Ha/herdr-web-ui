@@ -264,6 +264,9 @@ const BASE: Record<string, string> = {
   // ---- devices ----
   "Loading…": "불러오는 중…",
   "Done": "완료",
+  "Name": "이름",
+  "Recent": "최근",
+  "Needs you": "내 응답 필요",
 
   // ---- phone ----
   "Copy": "복사",

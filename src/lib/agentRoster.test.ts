@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { Machine, MachineState } from "../../shared/machines.ts";
 import type { AgentStatus, HerdrPane, SessionSnapshot } from "../../shared/protocol.ts";
 import fixture from "../../site/demo/fixtures/machines.json";
-import { agentRoster } from "./agentRoster.ts";
+import { agentRoster, groupAgentRows, type AgentRow } from "./agentRoster.ts";
 import { sidebarPinKey } from "./sidebarPins.ts";
 
 const template = fixture.machines[0]!.snapshot as SessionSnapshot;
@@ -45,5 +45,45 @@ describe("agent roster", () => {
     const panes: [string, AgentStatus, string?][] = [["x", "idle", "y"], ["y", "idle", "x"], ["z", "idle", "z"]];
     const split = agentRoster([machine("local", "connected", panes)], { byActivity: false, seqs: () => new Map(), pinned: [] });
     expect(split.rest.map(({ entry }) => entry.pane.pane_id)).toEqual(["x", "y", "z"]);
+  });
+
+  describe("in groups by state", () => {
+    const key = ({ machine, entry }: AgentRow) => `${machine.id}/${entry.pane.pane_id}`;
+    const grouped = (machines: Machine[], sort: "wait" | "recent" | "name", seqs: Record<string, Record<string, number>>, names: Record<string, string> = {}) =>
+      groupAgentRows(agentRoster(machines, { byActivity: false, seqs: () => new Map(), pinned: [] }).rest, {
+        sort,
+        status: ({ machine, entry }) => machine.state === "connected" ? entry.pane.agent_status : undefined,
+        name: ({ entry }) => names[entry.pane.pane_id] ?? entry.pane.pane_id,
+        seqs: (id) => new Map(Object.entries(seqs[id] ?? {})),
+      }).map(({ group, rows }) => [group, rows.map(key)]);
+
+    it("lists needs-you, working, done, then idle, each PC's longest wait first; BG works, unknown and an away PC rest", () => {
+      const machines = [
+        machine("local", "connected", [["a", "blocked"], ["b", "working"], ["c", "blocked"], ["d", "done"], ["e", "idle"], ["f", "waiting" as AgentStatus], ["g", "mystery" as AgentStatus]]),
+        machine("remote", "connected", [["h", "blocked"]]),
+        machine("away", "disconnected", [["i", "blocked"]]),
+      ];
+      const seqs = { local: { a: 5, b: 1, c: 2, d: 3, e: 4, f: 6, g: 7 }, remote: { h: 1 } };
+      expect(grouped(machines, "wait", seqs)).toEqual([
+        ["blocked", ["local/c", "local/a", "remote/h"]],
+        ["working", ["local/b", "local/f"]],
+        ["done", ["local/d"]],
+        ["idle", ["local/e", "local/g", "away/i"]],
+      ]);
+      expect(grouped(machines, "recent", seqs)[0]).toEqual(["blocked", ["local/a", "local/c", "remote/h"]]);
+    });
+
+    it("orders by name across PCs, numbers as numbers", () => {
+      const machines = [machine("local", "connected", [["a", "idle"], ["b", "idle"]]), machine("remote", "connected", [["c", "idle"]])];
+      expect(grouped(machines, "name", {}, { a: "task 10", b: "Beta", c: "task 9" })).toEqual([["idle", ["local/b", "remote/c", "local/a"]]]);
+    });
+
+    it("keeps a helper under its agent, in the group of the one of them that needs the reader most", () => {
+      const machines = [machine("local", "connected", [["a", "working"], ["b", "blocked", "a"], ["c", "done"], ["d", "idle", "c"]])];
+      expect(grouped(machines, "wait", { local: { a: 1, b: 2, c: 3, d: 4 } })).toEqual([
+        ["blocked", ["local/a", "local/b"]],
+        ["done", ["local/c", "local/d"]],
+      ]);
+    });
   });
 });

@@ -268,6 +268,9 @@ const BASE: Record<string, string> = {
   // ---- devices ----
   "Loading…": "正在加载…",
   "Done": "完成",
+  "Name": "名称",
+  "Recent": "最近",
+  "Needs you": "需要你回应",
 
   // ---- phone ----
   "Copy": "复制",

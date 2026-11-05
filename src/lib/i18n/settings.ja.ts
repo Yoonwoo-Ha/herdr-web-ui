@@ -397,4 +397,8 @@ export const SETTINGS_JA: Record<string, string> = {
   "No SSH or open port. On the other PC, turn the relay on in Settings → Phone & devices, choose Copy link, and paste it here.": "SSH も開いたポートも不要です。もう一方の PC の 設定 → スマートフォンとデバイス でリレーをオンにし、リンクをコピー を選んでここに貼り付けてください。",
   "Pairing link": "ペアリングリンク",
   "{name} was added. Its workspaces join the sidebar.": "{name} を追加しました。ワークスペースはサイドバーに並びます。",
+  "Group agents by state": "エージェントを状態ごとにまとめる",
+  "On this device, list the agents above the workspaces: the ones that need you first, then working, done and idle. Pinned agents stay on top.": "このデバイスでは、エージェントをワークスペースの上に表示します。応答が必要なものが先で、次に作業中、完了、待機の順です。ピン留めしたエージェントは一番上のままです。",
+  "Within a state": "同じ状態の中で",
+  "Longest wait": "待ち時間順",
 };

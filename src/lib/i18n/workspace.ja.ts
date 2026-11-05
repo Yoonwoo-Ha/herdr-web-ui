@@ -45,7 +45,6 @@ export const WORKSPACE_JA: Record<string, string> = {
   "Agent": "エージェント",
   "Directory": "ディレクトリ",
   "absolute path or ~/…": "絶対パスまたは ~/…",
-  "Name": "名前",
   "Optional workspace label": "ワークスペースのラベル (任意)",
   "Workspace label; follows the branch until you change it": "ワークスペースのラベル。変更するまでブランチ名に従います",
   "Open": "開く",

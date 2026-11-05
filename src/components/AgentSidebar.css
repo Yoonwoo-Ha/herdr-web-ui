@@ -79,6 +79,32 @@
   list-style: none;
 }
 
+/* Settings → Group agents by state: a quiet heading over each group, the leading cell left empty
+   so the words line up with the rows' titles, and the group's count in the trailing cell */
+.agent-group-label {
+  display: flex;
+  align-items: center;
+  margin: var(--space-2) 0 0;
+  padding-left: var(--side-box);
+  color: var(--text-dim);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+  line-height: var(--lh-tight);
+  text-transform: uppercase;
+}
+
+.agent-group-label:first-child { margin-top: 0; }
+
+.agent-group-label[data-group="blocked"] { color: var(--status-blocked); }
+
+.agent-group-count {
+  width: var(--side-box);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 /* Pinned agents stand first in a card (Sidebar.css); the Agents head stays the list's only head. */
 
 /* The agent row selects its pane; its ⋯ (or a right-click) opens its pin menu. */

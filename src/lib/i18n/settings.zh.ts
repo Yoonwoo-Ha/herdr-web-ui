@@ -397,4 +397,8 @@ export const SETTINGS_ZH: Record<string, string> = {
   "No SSH or open port. On the other PC, turn the relay on in Settings → Phone & devices, choose Copy link, and paste it here.": "无需 SSH，也无需开放端口。在另一台 PC 的 设置 → 手机和设备 中打开中继，选择 复制链接，然后粘贴到这里。",
   "Pairing link": "配对链接",
   "{name} was added. Its workspaces join the sidebar.": "已添加 {name}。它的工作区会显示在侧栏中。",
+  "Group agents by state": "按状态分组代理",
+  "On this device, list the agents above the workspaces: the ones that need you first, then working, done and idle. Pinned agents stay on top.": "在此设备上，把代理列在工作区上方：先是需要你回应的，然后是工作中、已完成和空闲。已固定的代理仍在最上面。",
+  "Within a state": "同一状态内",
+  "Longest wait": "按等待时长",
 };

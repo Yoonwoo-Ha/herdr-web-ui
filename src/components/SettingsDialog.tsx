@@ -397,6 +397,12 @@ function AppearancePage() {
       <SettingsRow label={t("Agents order")} description={t("Activity keeps a waiting agent on top, then the one that changed last; herdr's own order is not changed")} wide>
         <Segmented label={t("Agents order")} value={settings.agentOrder} onChange={(agentOrder) => update({ agentOrder })} options={[{ value: "workspace", label: t("Workspaces") }, { value: "activity", label: t("Activity") }]} />
       </SettingsRow>
+      <SettingsRow label={t("Group agents by state")} description={t("On this device, list the agents above the workspaces: the ones that need you first, then working, done and idle. Pinned agents stay on top.")}>
+        <Toggle label={t("Group agents by state")} checked={settings.agentGroups} onChange={(agentGroups) => update({ agentGroups })} />
+      </SettingsRow>
+      {settings.agentGroups && <SettingsRow label={t("Within a state")} wide>
+        <Segmented label={t("Within a state")} value={settings.agentGroupSort} onChange={(agentGroupSort) => update({ agentGroupSort })} options={[{ value: "wait", label: t("Longest wait") }, { value: "recent", label: t("Recent") }, { value: "name", label: t("Name") }]} />
+      </SettingsRow>}
       <SettingsRow label={t("Agent logos")} description={t("Draw each agent's logo in its brand colors, or without color")} wide>
         <Segmented label={t("Agent logos")} value={settings.agentMarks} onChange={(agentMarks) => update({ agentMarks })} options={[{ value: "color", label: t("Color") }, { value: "mono", label: t("Mono") }]} />
       </SettingsRow>

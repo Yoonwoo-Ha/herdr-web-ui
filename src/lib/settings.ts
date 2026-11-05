@@ -25,6 +25,9 @@ export type Density = "compact" | "comfortable";
 export type SidebarRows = "one" | "two";
 /** the Agents list's order: herdr's workspace order, or a waiting agent first and then the latest change */
 export type AgentOrder = "workspace" | "activity";
+/** Settings → Within a state: how each state group of the Agents list is ordered (lib/agentRoster.ts) */
+export const AGENT_GROUP_SORTS = ["wait", "recent", "name"] as const;
+export type AgentGroupSort = (typeof AGENT_GROUP_SORTS)[number];
 /** how agent logos are drawn: in their brand colors, or without color: Claude's in the text color, the others in grey (data-marks on <html>) */
 export type AgentMarks = "color" | "mono";
 /** what the plan meters count: the share of a limit used, or what is left of it */
@@ -82,6 +85,10 @@ export interface Settings {
   sidebarFilter: boolean;
   /** The Agents list's order. Activity is display-only: herdr's own order never changes. */
   agentOrder: AgentOrder;
+  /** this device lists the agents above the workspaces, in groups by state (lib/agentRoster.ts groupAgentRows); off, the list is as agentOrder says */
+  agentGroups: boolean;
+  /** the order within each state group while agentGroups is on */
+  agentGroupSort: AgentGroupSort;
   /** Agent logos: brand colors, or without color, so a list of one agent is not a stripe of tiles */
   agentMarks: AgentMarks;
   /** the sidebar's state marks: this app's own, or herdr's dots or symbols, as its `[ui] status_indicators` (lib/status.ts) */
@@ -217,14 +224,14 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 
 /** Raw custom text, key combinations and account keys are never copied. Requiring every other
  * Settings field in the projection makes a new field require an explicit collection decision.
- * fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, autoTabNames, composerNewTabButton, composerArtifacts, terminalMirrorWrap, sidebarFilter, voiceEngine, the
+ * fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, autoTabNames, composerNewTabButton, composerArtifacts, terminalMirrorWrap, sidebarFilter, voiceEngine, the agent groups, the
  * interface font, the chat's history page size and the folds its blocks start in are not collected: the telemetry schema
  * (shared/telemetry.ts) does not carry them. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily"
   | "quickReplies" | "usageOrder" | "usageHidden" | "fileOpen" | "webLinks" | "reuseExternalLinkTab" | "claudeLaunchMode" | "codexLaunchMode"
   | "followHerdrFocus" | "composerNewTabButton" | "composerArtifacts" | "terminalMirrorWrap" | "sidebarFilter" | "historyPrompts"
-  | "expandThinking" | "foldWork" | "autoTabNames" | "voiceEngine">;
+  | "expandThinking" | "foldWork" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -314,6 +321,8 @@ export const SETTING_SCOPE = {
   composerArtifacts: "device",
   // a desk with a keyboard may do without the field a phone keeps, as with the PCs it shows (lib/hiddenMachines.ts)
   sidebarFilter: "device",
+  // a phone may group its agents by state while a desk keeps herdr's order, as with the filter
+  agentGroups: "device", agentGroupSort: "device",
   keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertInApp: "device", alertSound: "device",
   paletteLight: "device", paletteDark: "device", statusIndicators: "device",
   voiceInput: "device", voiceLanguage: "device", voiceEngine: "device", voicePolishChat: "device", voicePolishTerminal: "device",
@@ -338,6 +347,8 @@ export const DEFAULT_SETTINGS: Settings = {
   sidebarRows: "one",
   sidebarFilter: true,
   agentOrder: "workspace",
+  agentGroups: false,
+  agentGroupSort: "wait",
   agentMarks: "color",
   statusIndicators: "classic",
   palette: DEFAULT_THEME,
@@ -522,6 +533,8 @@ export function sanitizeSettings(raw: unknown): Settings {
     sidebarRows: record["sidebarRows"] === "one" || record["sidebarRows"] === "two" ? record["sidebarRows"] : DEFAULT_SETTINGS.sidebarRows,
     sidebarFilter: typeof record["sidebarFilter"] === "boolean" ? record["sidebarFilter"] : DEFAULT_SETTINGS.sidebarFilter,
     agentOrder: record["agentOrder"] === "workspace" || record["agentOrder"] === "activity" ? record["agentOrder"] : DEFAULT_SETTINGS.agentOrder,
+    agentGroups: typeof record["agentGroups"] === "boolean" ? record["agentGroups"] : DEFAULT_SETTINGS.agentGroups,
+    agentGroupSort: AGENT_GROUP_SORTS.includes(record["agentGroupSort"] as AgentGroupSort) ? record["agentGroupSort"] as AgentGroupSort : DEFAULT_SETTINGS.agentGroupSort,
     agentMarks: record["agentMarks"] === "color" || record["agentMarks"] === "mono" ? record["agentMarks"] : DEFAULT_SETTINGS.agentMarks,
     statusIndicators: record["statusIndicators"] === "classic" || record["statusIndicators"] === "dots" || record["statusIndicators"] === "symbols" ? record["statusIndicators"] : DEFAULT_SETTINGS.statusIndicators,
     darkTheme,
@@ -633,6 +646,23 @@ function readSidebarFilter(): boolean {
   }
 }
 
+/** Settings → Appearance → Group agents by state and Within a state, kept in keys of their own for the same reason: an old tab's save drops a field it does not know. */
+export const AGENT_GROUPS_STORAGE_KEY = "ovis:agent-groups";
+export const AGENT_GROUP_SORT_STORAGE_KEY = "ovis:agent-group-sort";
+
+function readAgentGroups(): Pick<Settings, "agentGroups" | "agentGroupSort"> {
+  const read = (key: string): unknown => {
+    try {
+      const raw = window.localStorage.getItem(key);
+      return raw === null ? null : JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  };
+  const { agentGroups, agentGroupSort } = sanitizeSettings({ agentGroups: read(AGENT_GROUPS_STORAGE_KEY), agentGroupSort: read(AGENT_GROUP_SORT_STORAGE_KEY) });
+  return { agentGroups, agentGroupSort };
+}
+
 /** Settings → Voice input → Speech recognition, in a key of its own: an older tab's whole-record save would put it back on Auto. */
 export const VOICE_ENGINE_STORAGE_KEY = "ovis:voice-engine";
 
@@ -722,7 +752,7 @@ export function loadSettings(): Settings {
   const stored = readStoredAppearance(() => window.localStorage);
   const settings = stored.main === null ? DEFAULT_SETTINGS : sanitizeSettings(stored.main.value);
   const merged = stored.themes === null ? settings : sanitizeSettings({ ...settings, ...stored.themes });
-  return { ...merged, enterSends: readEnterSends(merged.enterSends), uiFontFamily: readUiFontFamily(), terminalMirrorWrap: readMirrorWrap(), sidebarFilter: readSidebarFilter(), voiceEngine: readVoiceEngine(), historyPrompts: readHistoryPrompts(), composerArtifacts: readComposerArtifacts(),
+  return { ...merged, enterSends: readEnterSends(merged.enterSends), uiFontFamily: readUiFontFamily(), terminalMirrorWrap: readMirrorWrap(), sidebarFilter: readSidebarFilter(), voiceEngine: readVoiceEngine(), ...readAgentGroups(), historyPrompts: readHistoryPrompts(), composerArtifacts: readComposerArtifacts(),
     expandThinking: readChatFold(EXPAND_THINKING_STORAGE_KEY, DEFAULT_SETTINGS.expandThinking), foldWork: readChatFold(FOLD_WORK_STORAGE_KEY, DEFAULT_SETTINGS.foldWork),
     reuseExternalLinkTab: readChatFold(REUSE_EXTERNAL_LINK_TAB_STORAGE_KEY, DEFAULT_SETTINGS.reuseExternalLinkTab) };
 }
@@ -735,11 +765,13 @@ export function saveSettings(settings: Settings): boolean {
       darkTheme: mirrored.darkTheme, lightTheme: mirrored.lightTheme,
       mirror: { palette: mirrored.palette, paletteDark: mirrored.paletteDark, paletteLight: mirrored.paletteLight },
     }));
-    const { uiFontFamily, terminalMirrorWrap, sidebarFilter, voiceEngine, historyPrompts, composerArtifacts, expandThinking, foldWork, reuseExternalLinkTab, ...main } = mirrored;
+    const { uiFontFamily, terminalMirrorWrap, sidebarFilter, voiceEngine, agentGroups, agentGroupSort, historyPrompts, composerArtifacts, expandThinking, foldWork, reuseExternalLinkTab, ...main } = mirrored;
     window.localStorage.setItem(VOICE_ENGINE_STORAGE_KEY, JSON.stringify(voiceEngine));
     window.localStorage.setItem(UI_FONT_STORAGE_KEY, JSON.stringify(uiFontFamily));
     window.localStorage.setItem(MIRROR_WRAP_STORAGE_KEY, JSON.stringify(terminalMirrorWrap));
     window.localStorage.setItem(SIDEBAR_FILTER_STORAGE_KEY, JSON.stringify(sidebarFilter));
+    window.localStorage.setItem(AGENT_GROUPS_STORAGE_KEY, JSON.stringify(agentGroups));
+    window.localStorage.setItem(AGENT_GROUP_SORT_STORAGE_KEY, JSON.stringify(agentGroupSort));
     window.localStorage.setItem(HISTORY_PROMPTS_STORAGE_KEY, JSON.stringify(historyPrompts));
     window.localStorage.setItem(COMPOSER_ARTIFACTS_STORAGE_KEY, JSON.stringify(composerArtifacts));
     window.localStorage.setItem(EXPAND_THINKING_STORAGE_KEY, JSON.stringify(expandThinking));

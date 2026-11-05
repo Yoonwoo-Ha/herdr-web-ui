@@ -266,6 +266,9 @@ const BASE: Record<string, string> = {
   // ---- devices ----
   "Loading…": "読み込んでいます…",
   "Done": "完了",
+  "Name": "名前",
+  "Recent": "最近",
+  "Needs you": "応答が必要",
 
   // ---- phone ----
   "Copy": "コピー",

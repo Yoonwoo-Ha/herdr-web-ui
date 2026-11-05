@@ -8,7 +8,7 @@ import type { AgentStatus, HerdrPane, PlanSummary } from "../../shared/protocol.
 import { currentAgentRowTokens, subscribeAgentRowTokens } from "../lib/agentRowTokens.ts";
 import { useT } from "../lib/i18n.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
-import { agentRoster, type AgentRow } from "../lib/agentRoster.ts";
+import { agentRoster, groupAgentRows, type AgentGroup, type AgentRow } from "../lib/agentRoster.ts";
 import { currentPaneMutes, paneMuteKey, prunePaneMutes, setPaneMutes, subscribePaneMutes, togglePaneMute } from "../lib/paneMutes.ts";
 import { agentContext, agentTabName, paneMark } from "../lib/sidebarAgents.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -124,6 +124,21 @@ export interface AgentSidebarProps {
   onSelect(machineId: string, paneId: string): void;
 }
 
+/** what a row is called: the pane's label, else its agent's title, else the pane's own */
+function rowTitle({ pane, agent }: AgentRow["entry"]): string {
+  return pane.label?.trim() || agent?.title?.trim() || pane.title?.trim() || displayPaneTitle(pane);
+}
+
+/** Settings → Group agents by state: each group's heading */
+function groupLabel(group: AgentGroup, t: (key: string) => string): string {
+  switch (group) {
+    case "blocked": return t("Needs you");
+    case "working": return t("Working");
+    case "done": return t("Done");
+    case "idle": return t("Idle");
+  }
+}
+
 /** the width under which the sidebar is a drawer (src/styles.css) */
 const DRAWER_QUERY = "(max-width: 768px)";
 /** the reader's fold of the list, kept on this device as a PC's fold is (MachineSidebar.tsx): a phone and a desktop each keep their own */
@@ -167,7 +182,8 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const activity = useSidebarActivity();
   // Settings → Agents order: herdr's order, or Activity within each PC (each herdr counts its own changes);
   // the pinned rows stand first, in the order they were pinned (lib/agentRoster.ts)
-  const byActivity = settings.agentOrder === "activity";
+  // grouped by state, the groups order their own rows: their ties keep herdr's order, never Activity's
+  const byActivity = settings.agentOrder === "activity" && !settings.agentGroups;
   const roster = useMemo(() => agentRoster(machines, { byActivity, seqs: activity.seqs, pinned }), [machines, byActivity, activity, pinned]);
   const allRows = useMemo(() => [...roster.pinned, ...roster.rest], [roster]);
   // the sidebar's filter (lib/sidebarFilter.ts) keeps the matched rows and the selected one, in the same
@@ -179,6 +195,13 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     return { pinned: roster.pinned.filter(kept), rest: roster.rest.filter(kept) };
   }, [roster, filter]);
   const rows = useMemo(() => [...split.pinned, ...split.rest], [split]);
+  // Settings → Group agents by state (this device): the unpinned rows in groups, needs-you first (lib/agentRoster.ts)
+  const groups = useMemo(() => !settings.agentGroups ? null : groupAgentRows(split.rest, {
+    sort: settings.agentGroupSort,
+    status: ({ machine, entry }) => machine.state === "connected" ? activity.status(machine.id, entry.pane) : undefined,
+    name: ({ entry }) => rowTitle(entry),
+    seqs: activity.seqs,
+  }), [settings.agentGroups, settings.agentGroupSort, split, activity]);
   // a folded list (a phone's starts so) opens while the filter keeps rows in it, so a match or the selection is
   // seen, not only kept; its caret then folds and opens it for the filter's time, the list's own fold untouched
   const [filterFold, setFilterFold] = useState<boolean | null>(null);
@@ -220,7 +243,7 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
   const describe = ({ machine, entry }: AgentRow) => {
     const { pane, workspace, tab, agent, agentLabel } = entry;
     const online = machine.state === "connected";
-    const title = pane.label?.trim() || agent?.title?.trim() || pane.title?.trim() || displayPaneTitle(pane);
+    const title = rowTitle(entry);
     const name = agent?.name?.trim() || null;
     // the name has its own place on the line: the label beside it says the kind instead
     const kindLabel = name !== null && agentLabel === name ? entry.canonicalAgent ?? agent?.title?.trim() ?? null : agentLabel;
@@ -249,12 +272,10 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     }
     return depth;
   };
-  // the pinned card keeps the pin order, where a helper need not follow its agent: no row steps in there
-  const restDepths = useMemo(() => depths(split.rest), [split]);
   // the tree line of each helper: it runs on (`more`) while a later helper of the same agent follows before a
   // shallower row, and a depth-2 row has its agent's line pass through it (`through`) when that line runs on
-  const restLines = useMemo(() => {
-    const level = split.rest.map((row) => Math.min(2, restDepths.get(row) ?? 0));
+  const treeLines = (list: readonly AgentRow[], listDepths: ReadonlyMap<AgentRow, number>): Map<AgentRow, { more: boolean; through: boolean }> => {
+    const level = list.map((row) => Math.min(2, listDepths.get(row) ?? 0));
     const more = level.map((depth, index) => {
       if (depth === 0) return false;
       for (let next = index + 1; next < level.length; next++) {
@@ -265,12 +286,24 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
     });
     const lines = new Map<AgentRow, { more: boolean; through: boolean }>();
     let parentMore = false;
-    split.rest.forEach((row, index) => {
+    list.forEach((row, index) => {
       if (level[index] === 1) parentMore = more[index]!;
       lines.set(row, { more: more[index]!, through: level[index] === 2 && parentMore });
     });
     return lines;
-  }, [split, restDepths]);
+  };
+  // the pinned card keeps the pin order, where a helper need not follow its agent: no row steps in there.
+  // Each state group is a list of its own: a helper steps in only under its agent in the same group.
+  const { restDepths, restLines } = useMemo(() => {
+    const restDepths = new Map<AgentRow, number>();
+    const restLines = new Map<AgentRow, { more: boolean; through: boolean }>();
+    for (const list of groups ? groups.map((group) => group.rows) : [split.rest]) {
+      const listDepths = depths(list);
+      for (const [row, depth] of listDepths) restDepths.set(row, depth);
+      for (const [row, line] of treeLines(list, listDepths)) restLines.set(row, line);
+    }
+    return { restDepths, restLines };
+  }, [split, groups]);
 
   const agentItem = (row: AgentRow) => {
     const { machine, entry } = row;
@@ -355,7 +388,12 @@ export function AgentSidebar({ machines, selectedMachineId, selectedPaneId, stat
           <p className="sidebar-pinned-label" aria-hidden="true"><span><Pin />{t("Pinned")}</span></p>
           <ul className="agent-list agent-list-pinned sidebar-pinned" aria-label={t("Pinned")}>{split.pinned.map(agentItem)}</ul>
         </>}
-        {split.rest.length > 0 && <ul className="agent-list">{split.rest.map(agentItem)}</ul>}
+        {/* one list, so a row that changes groups is moved, not drawn anew: its focus and open menu stay with it */}
+        {groups ? <ul className="agent-list agent-list-grouped">{groups.flatMap(({ group, rows: groupRows }) => [
+          <li className="agent-group-label" key={`group:${group}`} data-group={group} aria-hidden="true"><span>{groupLabel(group, t)}</span><span className="agent-group-count">{groupRows.length}</span></li>,
+          ...groupRows.map(agentItem),
+        ])}</ul>
+          : split.rest.length > 0 && <ul className="agent-list">{split.rest.map(agentItem)}</ul>}
       </>}
     </div>
     {menu && menuShown && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={menuShown.title} subtitle={menuShown.context} detail={[menuBlocked, ...menuShown.tokens].filter(Boolean).join(" · ") || undefined} onClose={closeMenu} items={[

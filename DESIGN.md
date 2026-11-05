@@ -1284,6 +1284,24 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   It changes only the Agents list; herdr's order and the workspace rows stay as they are.
   A raw counter rollback clears synthetic recency even on older bridges without an epoch.
   This ordering correction never changes finish identities or read records.
+- Appearance's **Group agents by state** (off by default, kept on this device, as the sidebar
+  filter is) moves the Agents list above the workspaces and splits its unpinned rows into
+  groups: **Needs you** (blocked), **Working** (BG included), **Done** (a finish not read yet)
+  and **Idle** (ready, a finish already read, an unknown state, or a PC that is away). Each
+  group has a quiet caps heading with its count in the trailing cell, as Slack's sidebar
+  sections do; the Needs you heading takes `--status-blocked`. An empty group is left out, and
+  the pinned card stays first. **Within a state** orders each group: **Longest wait** (the
+  default; the oldest `state_change_seq` first, as herdr's agent view sorts with
+  `state_change_seq` ascending, #2015), **Recent** (the newest first) or **Name**. herdr's
+  counters only compare within one PC, so Longest wait and Recent order each PC's rows in the
+  PCs' list order; Name orders across PCs. An agent and its helpers stay together, in the
+  group of the one of them that needs the reader most. The shared Agents order applies while
+  grouping is off.
+- An agent kind with no mark of its own draws its initial and its disc's ring in a color picked
+  from the kind's name: one of the theme's syntax colors (`--syntax-keyword`, `-string`,
+  `-number`, `-type`, `-variable`, `-meta`), which every theme sets in both modes and keeps
+  readable on `--bg-elevated`, the disc's fill. It is the same on every device, and two unknown
+  kinds tell apart. Agent logos → Mono leaves the mark quiet.
 - A DONE opened here draws as ready in the Agents list and its workspace roll-up, as herdr's
   own client does. This follows the Codex app's [unread completion dot](https://github.com/openai/codex/issues/50856).
   A finish read in one browser is read in every browser of the server (a phone and

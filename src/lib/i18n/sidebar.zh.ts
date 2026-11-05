@@ -56,4 +56,6 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Collapse": "折叠",
   "Expand": "展开",
   "Shell": "Shell",
+  "Working": "工作中",
+  "Idle": "空闲",
 };

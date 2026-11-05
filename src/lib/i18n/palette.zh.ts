@@ -13,7 +13,6 @@ export const PALETTE_ZH: Record<string, string> = {
   "Close command palette": "关闭命令面板",
   "Filter panes by status": "按状态筛选窗格",
   "All": "全部",
-  "Recent": "最近",
   "Workspace": "工作区",
   "Unknown workspace": "未知工作区",
   "Actions": "操作",
