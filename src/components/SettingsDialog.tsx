@@ -18,7 +18,7 @@ import { FILE_OPEN_TARGETS } from "../lib/filePresentation.ts";
 import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, HISTORY_PROMPTS, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, VOICE_ENGINES, enterSendsOn, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
 import { pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
-import { useFocusTrap } from "../lib/useFocusTrap.ts";
+import { focusInOtherModal, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { awaitRestart, restartState, subscribeRestart } from "../lib/runtimeSwitch.ts";
 import { paneLifetimes } from "../lib/paneLifetime.ts";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
@@ -1527,6 +1527,9 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       // an Escape that cancels an IME composition (the editor's Character field) is the IME's, and one that
       // closed Files drawn over Settings (focused by a click) is spent: one Escape closes one dialog
       if (event.key !== "Escape" || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+      // Files opened from the palette over Settings holds the focus: its Escape, though this listener runs first.
+      // A preview under Settings (a file opened from that Files) waits for Settings to close, focused or not
+      if (!overPreview && focusInOtherModal(surface.current)) return;
       event.preventDefault();
       // out of the key bar editor first; from any page, a phone's included, it closes the dialog
       if (keyBarOpen) setKeyBarOpen(false);
@@ -1534,7 +1537,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose, keyBarOpen]);
+  }, [onClose, keyBarOpen, overPreview]);
 
   /** the list is one Tab stop: the arrows walk it, and beside an open page they turn the page too */
   const onTabKey = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number): void => {

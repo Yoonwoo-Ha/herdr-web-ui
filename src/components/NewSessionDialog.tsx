@@ -28,7 +28,7 @@ import { composerDrafts } from "../lib/composerDraft.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import { inFlightGuard } from "../lib/sessionHistory.ts";
 import { userErrorMessage, type UserError } from "../lib/userError.ts";
-import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+import { focusInOtherModal, nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { passingFolder, recentDirectories } from "../lib/recent-directories.ts";
 
@@ -226,6 +226,8 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
     const onKeyDown = (event: KeyboardEvent): void => {
       // a native modal over it (Add PC, from the palette) takes its own Escape
       if (event.key !== "Escape" || nativeModalOver(surface.current)) return;
+      // Settings opened over it with its shortcut holds the focus: its Escape, though this listener runs first
+      if (focusInOtherModal(surface.current)) return;
       event.preventDefault();
       if (!pending) onClose();
     };

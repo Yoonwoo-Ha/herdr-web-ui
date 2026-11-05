@@ -10,7 +10,7 @@ import { useT } from "../lib/i18n.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { subscribeFilesFolder } from "../lib/paletteFolders.ts";
 import type { RepoComparison } from "../lib/repoDiff.ts";
-import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+import { focusInOtherModal, nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
@@ -57,8 +57,7 @@ export function FilesDialog({ start, paneId, viewing, onOpenFile, onOpenDiff, on
     // one Escape closes one dialog, the one with the keyboard: Settings opened with Files open holds the focus
     // (it closes first), and Settings under Files may have taken this Escape already
     if (event.key !== "Escape" || event.defaultPrevented) return;
-    const focusedModal = document.activeElement?.closest("[aria-modal='true']");
-    if (focusedModal && focusedModal !== surface.current) return;
+    if (focusInOtherModal(surface.current)) return;
     // docked, the pane beside it is live: Escape there is the terminal's, so only one inside the panel closes it
     if (docked && !surface.current?.contains(document.activeElement)) return;
     // a native modal over it (Add PC, from the palette) takes its own Escape
