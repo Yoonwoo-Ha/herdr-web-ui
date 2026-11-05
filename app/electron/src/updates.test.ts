@@ -21,9 +21,13 @@ describe("updatePlan", () => {
   });
 
   it("takes OVIS_UPDATE_URL over the built feed, https only", () => {
-    expect(updatePlan({ ...packaged, builtWithFeed: false, env: { OVIS_UPDATE_URL: "https://updates.example/desktop" } })).toEqual({ enabled: true, feed: "https://updates.example/desktop", channel: "stable", installer: "default" });
+    expect(updatePlan({ ...packaged, env: { OVIS_UPDATE_URL: "https://updates.example/desktop" } })).toEqual({ enabled: true, feed: "https://updates.example/desktop", channel: "stable", installer: "default" });
     expect(updatePlan({ ...packaged, env: { OVIS_UPDATE_URL: "http://updates.example/desktop" } }).enabled).toBe(false);
     expect(updatePlan({ ...packaged, env: { OVIS_UPDATE_URL: "not an address" } }).enabled).toBe(false);
+  });
+
+  it("leaves a build without a feed off under OVIS_UPDATE_URL, since electron-updater downloads only with app-update.yml", () => {
+    expect(updatePlan({ ...packaged, builtWithFeed: false, env: { OVIS_UPDATE_URL: "https://updates.example/desktop" } })).toEqual({ enabled: false, reason: "this build has no update feed" });
   });
 
   it("updates on Linux as an AppImage or a .deb install, each with its own installer", () => {

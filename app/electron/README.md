@@ -82,7 +82,7 @@ when it has a feed:
 | Setting | When | Effect |
 | --- | --- | --- |
 | `OVIS_UPDATE_FEED=https://…` | build | electron-builder writes the feed into the app (`app-update.yml`) and `latest*.yml` beside the installers, to upload there |
-| `OVIS_UPDATE_URL=https://…` | run | checks that feed instead |
+| `OVIS_UPDATE_URL=https://…` | run | checks that feed instead of the built-in one (a build without a feed stays off) |
 | `OVIS_UPDATES=0` | run | no checks |
 
 A development run never checks. The app checks after it starts and every 6 hours, downloads in the

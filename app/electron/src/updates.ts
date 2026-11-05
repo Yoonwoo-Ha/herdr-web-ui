@@ -1,7 +1,8 @@
 /**
  * Whether the app updates itself, and from where. A packaged build does when it was built with a
- * feed (OVIS_UPDATE_FEED at build time writes electron-builder's app-update.yml) or is started
- * with OVIS_UPDATE_URL; a development run never does, and OVIS_UPDATES=0 turns it off. On Linux
+ * feed (OVIS_UPDATE_FEED at build time writes electron-builder's app-update.yml); OVIS_UPDATE_URL
+ * only replaces that feed, since electron-updater reads app-update.yml again when it downloads. A
+ * development run never updates, and OVIS_UPDATES=0 turns it off. On Linux
  * the AppImage replaces itself, and a .deb install (electron-builder's `package-type` file in the
  * resources says `deb`) installs the downloaded .deb with apt-get behind the system's password prompt.
  *
@@ -65,6 +66,8 @@ export function updatePlan(options: { packaged: boolean; env: Env; platform: str
     else if (options.linuxPackage === "deb") installer = "deb";
     else return { enabled: false, reason: "only the AppImage and the .deb install update themselves" };
   }
+  // without app-update.yml electron-updater finds an update but fails to download it
+  if (!options.builtWithFeed) return { enabled: false, reason: "this build has no update feed" };
   const override = env["OVIS_UPDATE_URL"]?.trim();
   if (override) {
     let url: URL;
@@ -74,9 +77,6 @@ export function updatePlan(options: { packaged: boolean; env: Env; platform: str
   }
   // the beta workflow builds no Windows app yet, so its feed has none: Windows stays on the release
   // feed and its stable channel (latest.yml), since the release publishes no beta.yml
-  if (options.builtWithFeed) {
-    if (channel === "beta" && options.platform === "win32") return { enabled: true, feed: null, channel: "stable", installer };
-    return { enabled: true, feed: channel === "beta" ? BETA_FEED : null, channel, installer };
-  }
-  return { enabled: false, reason: "this build has no update feed" };
+  if (channel === "beta" && options.platform === "win32") return { enabled: true, feed: null, channel: "stable", installer };
+  return { enabled: true, feed: channel === "beta" ? BETA_FEED : null, channel, installer };
 }
