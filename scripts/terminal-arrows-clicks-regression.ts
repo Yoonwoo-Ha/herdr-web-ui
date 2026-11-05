@@ -90,7 +90,8 @@ async function open(browser: Browser, server: ReturnType<typeof createServer>, n
   let ready = false;
   page.on("websocket", (socket) => {
     socket.on("framesent", ({ payload }) => {
-      const message = JSON.parse(String(payload));
+      // `id` is the per-connection receipt number ("input-receipt"), not what was sent
+      const { id: _receipt, ...message } = JSON.parse(String(payload));
       if (message.pane_id === pane && (message.type === "input" || message.type === "keys")) frames.push(message);
     });
     socket.on("framereceived", ({ payload }) => {

@@ -58,7 +58,8 @@ process.stdin.on("data", (data) => {
     let inputReady = false;
     page.on("websocket", (socket) => {
       socket.on("framesent", ({ payload }) => {
-        const message = JSON.parse(String(payload));
+        // `id` is the per-connection receipt number ("input-receipt"), not what was sent
+        const { id: _receipt, ...message } = JSON.parse(String(payload));
         if (message.type === "input" || message.type === "keys") inputs.push(message);
       });
       // a mirror's fixed grid is told before input-ready, on the same socket
