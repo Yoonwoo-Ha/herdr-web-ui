@@ -152,7 +152,45 @@
 }
 
 /* the folded part's rows stay in the list (a row that changes part moves), only out of sight */
-.agent-list .agent-item[hidden] { display: none; }
+.agent-list .agent-item[hidden],
+.agent-list .agent-helpers[hidden] { display: none; }
+
+/* Settings → Fold helpers under their agent: the line under an agent that folds its helpers hangs from
+   it as a helper does (its elbow below), a helper's height, its caret where a helper's mark stands, its
+   count in the trailing cell, and a dot for each state among the helpers that asks for a look */
+.agent-helpers { position: relative; }
+
+.agent-helpers-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  min-height: var(--side-row);
+  padding: 0 0 0 var(--space-6);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-tight);
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-helpers-toggle:focus-visible { outline-offset: calc(var(--ring-offset) * -1); }
+.agent-helpers-toggle .agent-section-caret { margin-inline-end: 0; }
+
+.agent-helpers-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .agent-helpers-toggle:hover { background: var(--side-hover); color: var(--text); }
+}
 
 @media (hover: hover) {
   .agent-background-toggle:hover { color: var(--text); }
@@ -328,7 +366,8 @@
 .agent-item[data-depth="1"] .agent-row { padding-inline-start: var(--space-6); }
 .agent-item[data-depth="2"] .agent-row { padding-inline-start: calc(2 * var(--space-6)); }
 
-.agent-item[data-depth]::after {
+.agent-item[data-depth]::after,
+.agent-helpers::after {
   position: absolute;
   top: 0;
   inset-inline-start: calc(var(--side-box) / 2);
@@ -345,7 +384,8 @@
 
 /* a helper with a sibling further down (AgentSidebar.tsx, data-more): its line runs on through the
    row to the next one's elbow, so the siblings hang from one line with no break between them */
-.agent-item[data-more]::after {
+.agent-item[data-more]::after,
+.agent-helpers[data-more]::after {
   height: 100%;
   border: 0;
   /* the elbow's own corner, named as it is set: a rounded corner would clip the line's foot */
