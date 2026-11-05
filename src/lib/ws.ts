@@ -1142,8 +1142,19 @@ export class HerdrSocket {
         resolve({ ok: false, code: "timeout", message: "the pane did not confirm this request in time" });
       }, SUBMIT_TIMEOUT_MS);
     });
-    try { this.rawSend(message); this.trace.record("submit_sent", { request_id: id }); }
-    catch {
+    try {
+      this.rawSend(message);
+      this.trace.record("submit_sent", { request_id: id });
+      // a socket silent since the request left may be half-open (a network that dropped without a
+      // close): ask it now rather than at the idle check, up to IDLE_PROBE_MS away
+      const socket = this.socket;
+      const sentAt = Date.now();
+      window.setTimeout(() => {
+        // a hidden page is probed when it is shown again (onWake), as the idle check leaves it
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+        if (this.submits.has(id) && this.socket === socket && this.lastFrameAt <= sentAt) this.probe();
+      }, PROBE_TIMEOUT_MS);
+    } catch {
       this.submits.get(id)?.(NOT_TRANSMITTED);
       this.submits.delete(id);
       this.requests.delete(id);
