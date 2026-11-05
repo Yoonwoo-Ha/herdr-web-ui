@@ -16,6 +16,8 @@ export class ConversationRefresh {
   private pending = false;
   private invalidated = false;
   private running = false;
+  /** the newest read in flight, which a reconnect may give up on its own */
+  private current: AbortController | null = null;
   private timer: number | undefined;
   private newestAt = -Infinity;
   private pushes = false;
@@ -54,6 +56,16 @@ export class ConversationRefresh {
     this.pending = true;
     this.invalidated = false;
     void this.drain();
+  }
+
+  /**
+   * The connection came back. A newest read sent before it may wait on a connection that died
+   * silently until its deadline, holding every push behind it: it is given up and the pane read now.
+   */
+  restart(): void {
+    if (this.read === null) return;
+    this.current?.abort(new DOMException("The read was replaced after a reconnect.", "AbortError"));
+    this.refresh();
   }
 
   /** The first push after idle reads immediately; further pushes share a fixed trailing deadline. */
@@ -117,7 +129,17 @@ export class ConversationRefresh {
         this.invalidated = false;
         // Monotonic elapsed time keeps wall-clock corrections out of the rate bound.
         this.newestAt = performance.now();
-        await this.read(this.scope!.signal);
+        // its own signal, ended with the screen's: a reconnect gives up this read alone
+        const scope = this.scope!.signal;
+        const current = new AbortController();
+        const end = (): void => current.abort(scope.reason);
+        scope.addEventListener("abort", end, { once: true });
+        this.current = current;
+        try { await this.read(current.signal); }
+        finally {
+          scope.removeEventListener("abort", end);
+          if (this.current === current) this.current = null;
+        }
       }
     } finally {
       this.running = false;

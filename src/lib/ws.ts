@@ -2,7 +2,7 @@ import type { ClientMessage, ClientRole, PendingMessage, ServerFeature, ServerMe
 import { receiptResumeId } from "./receiptResume.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 import { ConnectionTrace } from "./connectionTrace.ts";
-import { getTransport, type WebSocketLike } from "./transport.ts";
+import { abandonNativeReads, getTransport, type WebSocketLike } from "./transport.ts";
 
 type Handler = (message: ServerMessage) => void;
 
@@ -185,6 +185,8 @@ export class HerdrSocket {
   private markProbeDone: () => void = () => {};
   /** probes since the last pong that ended in a drop: each doubles the next deadline */
   private probeDrops = 0;
+  /** a connection was found dead without a close: the reads sent meanwhile are given up once a new one opens */
+  private pathLost = false;
   /** whether the last snapshot listed "ping": kept across reconnects, so a socket whose snapshot never comes is probed too */
   private pingKnown = false;
   /** the periodic check that pings a connection silent for IDLE_PROBE_MS */
@@ -358,6 +360,11 @@ export class HerdrSocket {
       this.openedAt = Date.now();
       this.lastFrameAt = this.openedAt;
       this.watchIdle(socket);
+      // the path is back: reads sent on the lost one would hold the browser's connections to the server
+      if (this.pathLost) {
+        this.pathLost = false;
+        abandonNativeReads(new URL(this.url, "http://localhost").searchParams.get("machine_id") ?? "local");
+      }
       // always send the role, never only when non-default: a user can flip the role
       // while disconnected (setMode stores it without sending), so without this frame
       // the reconnect would leave the server on the stale role and no ack would ever
@@ -657,6 +664,7 @@ export class HerdrSocket {
   private drop(socket: WebSocketLike): void {
     this.trace.record("probe_drop", { pending: this.submits.size }, true);
     this.probeDrops += 1;
+    this.pathLost = true;
     this.endConnection();
     // a server close (4008) that comes after this still stops output
     this.endedEarly.add(socket);

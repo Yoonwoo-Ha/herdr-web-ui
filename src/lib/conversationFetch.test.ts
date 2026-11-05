@@ -778,6 +778,31 @@ describe("conversation invalidation refresh", () => {
     refresh.stop();
   });
 
+  it("gives up a newest read sent before a reconnect and reads again at once, not after its deadline", async () => {
+    refreshClock();
+    const refresh = pushedRefresh();
+    const signals: AbortSignal[] = [];
+    // the first read went out on a connection that died silently: only an abort ends it
+    refresh.setRead(async (signal) => {
+      signals.push(signal);
+      if (signals.length === 1) await new Promise<void>((done) => signal.addEventListener("abort", () => done(), { once: true }));
+    });
+    refresh.refresh();
+    // the reply's push waits behind it
+    refresh.invalidate();
+    expect(signals).toHaveLength(1);
+    refresh.restart();
+    await settleRefresh();
+    expect(signals).toHaveLength(2);
+    expect(signals[0]!.aborted).toBe(true);
+    expect(signals[1]!.aborted).toBe(false);
+    // with no read in flight, a reconnect reads once
+    refresh.restart();
+    await settleRefresh();
+    expect(signals).toHaveLength(3);
+    refresh.stop();
+  });
+
   it("keeps long in-flight reads serial and trails at the later of completion and the fixed deadline", async () => {
     const clock = refreshClock();
     const refresh = pushedRefresh();

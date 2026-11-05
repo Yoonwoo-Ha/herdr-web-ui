@@ -1752,7 +1752,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         showAnswer(conversation, next, moved);
         setReadPresentation(proved ? readKey : undefined);
       } catch (cause) {
-        if (cancelled || generation !== olderGeneration.current) return;
+        // a read given up for a reconnect is no failure: the read after it answers
+        if (cancelled || generation !== olderGeneration.current || (cause instanceof DOMException && cause.name === "AbortError")) return;
         setLoaded(true);
         setError(userFailure(cause));
         setErrorStatus(cause instanceof ApiError ? cause.status : null);
@@ -1808,7 +1809,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     if (connected) wasConnected.current = true;
     if (!connected || before || !visible) return;
     if (!reconnect && conversationRefresh.reading) return;
-    conversationRefresh.refresh();
+    // a read sent before the reconnect may wait on the connection lost with it
+    conversationRefresh.restart();
   }, [connected, visible, conversationRefresh]);
 
   const loadOlder = useCallback(async (): Promise<void> => {

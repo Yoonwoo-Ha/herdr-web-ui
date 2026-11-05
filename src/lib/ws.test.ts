@@ -1452,6 +1452,39 @@ it("drops an open socket that answers no ping, reconnects at once and replays th
   }
 });
 
+it("gives up the reads still in flight when a connection found dead is replaced", async () => {
+  jest.useFakeTimers();
+  const { client, socket } = liveClient(["submit", "ping"]);
+  const original = globalThis.fetch;
+  const signals: AbortSignal[] = [];
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    signals.push(init!.signal!);
+    return new Promise<Response>(() => undefined);
+  }) as typeof fetch;
+  try {
+    // a read that went out on the lost network, and one sent while the new connection was on its way
+    void nativeTransport.fetch("/api/pane/conversation?pane_id=w1:p1");
+    client.wake();
+    jest.advanceTimersByTime(6_000);
+    const fresh = FakeSocket.last;
+    expect(fresh).not.toBe(socket);
+    void nativeTransport.fetch("/api/health");
+    expect(signals.map((signal) => signal.aborted)).toEqual([false, false]);
+    fresh.open();
+    expect(signals.map((signal) => signal.aborted)).toEqual([true, true]);
+    // a reconnect after a plain close gives up nothing
+    void nativeTransport.fetch("/api/health");
+    fresh.disconnect();
+    jest.advanceTimersByTime(5_000);
+    FakeSocket.last.open();
+    expect(signals[2]!.aborted).toBe(false);
+  } finally {
+    globalThis.fetch = original;
+    client.close();
+    jest.useRealTimers();
+  }
+});
+
 it("keeps typing out of the socket while a probe waits, and takes it again only when its pong comes back", () => {
   jest.useFakeTimers();
   const { client, socket } = liveClient(["submit", "ping"]);
