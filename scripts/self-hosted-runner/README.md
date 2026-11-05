@@ -51,6 +51,15 @@ The namespace is not the host's: a job still cannot reach a service on the host'
 limit. The container still has a pids limit of 8192, and `--ulimit core=0`: a crash never leaves a
 core file in the checkout, where `scripts/check.ts` would count it as a source change.
 
+`--work-tmpfs SIZE` (say `4g`) puts each container's work folder (`/w`, the checkout) and `/tmp` in
+RAM, each capped at SIZE. A job's files end with its container anyway; on disk, its checkout, Bun
+cache copy and browser profiles are most of what a busy host writes. Only what a job writes takes
+memory (about 1-1.5 GB for the busiest jobs measured), and it is freed when the container exits.
+The caps are not reserved, but they are not a memory limit either: pick SIZE so that
+`--count` x 2 x SIZE stays below the host's free RAM (18 runners at `4g` can hold up to 144 GB).
+Below about 1g the checkout plus the seeded Bun cache no longer fits, and seeding falls back to
+downloading every package.
+
 ## Prepared tools and caches
 
 Self-hosted jobs verify the image's Bun version, requested Node major and herdr checksum instead

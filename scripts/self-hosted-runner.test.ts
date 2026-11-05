@@ -327,6 +327,25 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
     expect(dockerRun).toContain("--shm-size 2g");
   });
 
+  it("puts each runner container's checkout and /tmp in RAM only when asked", () => {
+    const tmpfsCalls = (args: string[]) => {
+      const { result, calls } = runRunner({ count: 2, args });
+      expect(result.status).toBe(0);
+      return calls.split("\n").filter((call) => runnerRun.test(call));
+    };
+    for (const run of tmpfsCalls([])) expect(run).not.toContain("--tmpfs");
+    const runs = tmpfsCalls(["--work-tmpfs", "16g"]);
+    expect(runs).toHaveLength(2);
+    for (const run of runs) {
+      // the runner registers with --work /w as uid 1001 (entrypoint.sh), so the mount must be its own
+      expect(run).toContain("--tmpfs /w:rw,exec,nosuid,size=16g,uid=1001,gid=1001,mode=0755");
+      expect(run).toContain("--tmpfs /tmp:rw,exec,nosuid,size=16g,mode=1777");
+    }
+    for (const size of ["16", "0g", "16t", "1,uid=0g", "123456g", "g"]) {
+      expect(runRunner({ args: ["--work-tmpfs", size] }).result.status).toBe(2);
+    }
+  });
+
   it("turns core dumps off in every runner container, so a crash leaves no file in the checkout", () => {
     const { result, calls } = runRunner({ count: 2 });
     expect(result.status).toBe(0);

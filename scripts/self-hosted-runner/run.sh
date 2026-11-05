@@ -5,6 +5,7 @@
 #          [--reserved N] [--reserved-labels self-hosted-ovis-main] [--env-file FILE] [--build] [--once]
 #          [--cache-dir DIR [--cache-wait SECONDS] | --no-cache] [--build-cache DIR [--build-cache-mb N] [--build-cache-writer LOGIN]]
 #          [--cpuset-cpus LIST]
+#          [--work-tmpfs SIZE]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,9 +27,10 @@ BUILD_CACHE_MB=2048
 BUILD_CACHE_WRITER=""
 # docker run's --cpuset-cpus for every container this launcher starts (README "Per-host limits")
 CPUSET_ARGS=()
+WORK_TMPFS=""
 
 usage() {
-  sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -48,6 +50,7 @@ while [ $# -gt 0 ]; do
     --build-cache-mb) BUILD_CACHE_MB="${2:?--build-cache-mb needs a value}"; shift 2 ;;
     --build-cache-writer) BUILD_CACHE_WRITER="${2:?--build-cache-writer needs a value}"; shift 2 ;;
     --cpuset-cpus) CPUSET_ARGS=(--cpuset-cpus "${2:?--cpuset-cpus needs a value}"); shift 2 ;;
+    --work-tmpfs) WORK_TMPFS="${2:?--work-tmpfs needs a value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -66,6 +69,16 @@ case "$BUILD_CACHE_MB" in ''|*[!0-9]*|??????*) echo "--build-cache-mb must be a 
 if [ "$((10#$BUILD_CACHE_MB))" -eq 0 ]; then echo "--build-cache-mb must be a positive whole number of MiB" >&2; exit 2; fi
 # a GitHub login: letters, digits and single hyphens
 case "$BUILD_CACHE_WRITER" in *[!A-Za-z0-9-]*|-*|??????????????????????????????????????*) echo "--build-cache-writer must be a GitHub login" >&2; exit 2 ;; esac
+# The job's checkout (/w) and /tmp in RAM: a job's files die with its container anyway, and on disk
+# its browser profiles and installs are most of the host's writes. SIZE caps each mount; only what
+# a job writes takes memory.
+WORK_TMPFS_ARGS=()
+if [ -n "$WORK_TMPFS" ]; then
+  case "$WORK_TMPFS" in [1-9]*[mg]) ;; *) echo "--work-tmpfs must be a size like 4g or 4096m" >&2; exit 2 ;; esac
+  case "${WORK_TMPFS%?}" in *[!0-9]*|??????*) echo "--work-tmpfs must be a size like 4g or 4096m" >&2; exit 2 ;; esac
+  WORK_TMPFS_ARGS=(--tmpfs "/w:rw,exec,nosuid,size=$WORK_TMPFS,uid=1001,gid=1001,mode=0755"
+    --tmpfs "/tmp:rw,exec,nosuid,size=$WORK_TMPFS,mode=1777")
+fi
 # What this host can take (CHECK_HOST_* in scripts/check.ts), for every runner container: read now,
 # so a missing file stops the launcher instead of every container failing to start.
 ENV_ARGS=()
@@ -450,6 +463,7 @@ slot_loop() {
       -e RUNNER_LABELS="$labels" \
       ${CACHE_ARGS[@]+"${CACHE_ARGS[@]}"} \
       ${BUILD_CACHE_ARGS[@]+"${BUILD_CACHE_ARGS[@]}"} \
+      ${WORK_TMPFS_ARGS[@]+"${WORK_TMPFS_ARGS[@]}"} \
       ${ENV_ARGS[@]+"${ENV_ARGS[@]}"} \
       "$IMAGE"; then
       container_status=0
