@@ -1,7 +1,7 @@
 /**
  * Japanese for the keys only the machines files use:
  * components/MachineSidebar.tsx (with STATE_WORD), components/MachineDialog.tsx,
- * lib/bridgeProgress.ts (with STAGES).
+ * lib/bridgeProgress.ts (with STAGES), components/MachineStats.tsx, lib/systemReport.ts.
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const MACHINES_JA: Record<string, string> = {
@@ -125,4 +125,23 @@ export const MACHINES_JA: Record<string, string> = {
   "Updating {name}'s own Ovis": "{name} の Ovis を更新しています",
   "That PC's own updater installs it there. Existing herdr sessions keep running.": "その PC 自身のアップデーターがそこにインストールします。既存の herdr セッションは動き続けます。",
   "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "この PC からだけ削除します。アクセスも止めるには、その PC の スマートフォンとデバイス で取り消してください。",
+  "CPU": "CPU",
+  "Memory": "メモリ",
+  "Disk": "ディスク",
+  "Disks": "ディスク",
+  "Load": "負荷",
+  "Uptime": "稼働時間",
+  "{count} cores": "{count} コア",
+  "Load average over 1, 5 and 15 minutes": "1分・5分・15分の負荷平均",
+  "Show system details for {name}": "{name} のシステム詳細を表示",
+  "Hide system details for {name}": "{name} のシステム詳細を隠す",
+  "Not measured": "未計測",
+  "{days}d {hours}h": "{days}日 {hours}時間",
+  "{hours}h {minutes}m": "{hours}時間 {minutes}分",
+  "{minutes}m": "{minutes}分",
+  "CPU {value}": "CPU {value}",
+  "Memory {value}": "メモリ {value}",
+  "Disk {value}": "ディスク {value}",
+  "PC load in the sidebar": "サイドバーに PC の負荷を表示",
+  "CPU, memory and the fullest disk under each open PC, on this device only. On by default when two or more PCs are connected.": "開いている各 PC の下に CPU、メモリ、最も使用率の高いディスクを表示します（このデバイスのみ）。2 台以上の PC が接続されているときは既定でオンです。",
 };

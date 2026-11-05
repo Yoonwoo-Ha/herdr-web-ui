@@ -8,6 +8,7 @@ import { describeProgress } from "../lib/bridgeProgress.ts";
 import { keepDismissed, noticeKey, readDismissed, waitingMachines, writeDismissed } from "../lib/machineNotice.ts";
 import type { AppActions } from "../lib/actions.ts";
 import { Sidebar } from "./Sidebar.tsx";
+import { MachineStats } from "./MachineStats.tsx";
 import { AgentSidebar } from "./AgentSidebar.tsx";
 import { SidebarSplit } from "./SidebarSplit.tsx";
 import { storedSidebarSplit, storeSidebarSplit, type SplitFold, type SplitOrder } from "../lib/sidebarSplit.ts";
@@ -51,7 +52,7 @@ export const STATE_WORD: Readonly<Record<MachineState, string>> = {
 
 /** `activity`: App's live counters per PC and finishes looked at here; both sidebar lists draw from it.
  *  `machines` are the PCs this device shows; `hiddenCount` says how many it keeps out (Settings → Remote PCs) */
-interface Props { machines: Machine[]; hiddenCount?: number; /** every PC of the roster, the hidden ones too: Manage PC's Hide on this device keeps those hidden (lib/hiddenMachines.ts) */ allMachines?: Machine[]; selectedMachineId: string; selectedPaneId: string | null; activity: SidebarActivity; actions: AppActions; watching?: boolean; /** whether the Herdr app's window owns a PC's workspaces (lib/machineContext.tsx AppLayoutContext); none without it */ appLayout?: (machineId: string) => LayoutOffer; /** a phone's drawer is out: closing it clears the filter */ drawerOpen?: boolean; /** counts the command palette's Filter workspaces and agents: each new count shows the field and focuses it */ filterRequest?: number; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void; /** a sign-in tab the usage popover opened */ onUsageLogin(paneId: string): void }
+interface Props { machines: Machine[]; hiddenCount?: number; /** every PC of the roster, the hidden ones too: Manage PC's Hide on this device keeps those hidden (lib/hiddenMachines.ts) */ allMachines?: Machine[]; selectedMachineId: string; selectedPaneId: string | null; activity: SidebarActivity; actions: AppActions; watching?: boolean; /** whether the Herdr app's window owns a PC's workspaces (lib/machineContext.tsx AppLayoutContext); none without it */ appLayout?: (machineId: string) => LayoutOffer; /** a phone's drawer is out: closing it clears the filter */ drawerOpen?: boolean; /** counts the command palette's Filter workspaces and agents: each new count shows the field and focuses it */ filterRequest?: number;/** each open, connected PC shows its CPU, memory and disk (lib/settings.ts pcLoadOn) */ pcLoad?: boolean; /** the sidebar is on screen (a wide window's that is not hidden, a phone's open drawer): the PC load is asked for only then */ shown?: boolean; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void; /** a sign-in tab the usage popover opened */ onUsageLogin(paneId: string): void }
 export function MachineSidebar(props: Props) {
   const t = useT();
   const activity = props.activity;
@@ -259,7 +260,7 @@ export function MachineSidebar(props: Props) {
       {/* folded, the list stays mounted, hidden, so the branches its rosters read stay findable to the filter */}
       <div className="machine-list" id={listId} hidden={pcsFolded} aria-label={t("PCs and workspaces")}>
         <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
-        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={machine.id === loneHost} canHide={canHideMachine(roster, hiddenIds, machine.id)} onHide={() => hideMachine(machine.id)} />)}
+        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={machine.id === loneHost} canHide={canHideMachine(roster, hiddenIds, machine.id)} onHide={() => hideMachine(machine.id)} listShown={!pcsFolded} />)}
         <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
         {/* a PC kept out on this device is said, with the way to show it again */}
         {hiddenCount > 0 && <button ref={hiddenNote} type="button" className="machine-hidden-note" title={t("Choose the PCs this device shows")} onClick={() => { requestSettingsPage({ page: "remote", section: "sidebar-pcs" }); props.actions.openSettings(); }}>{hiddenCount === 1 ? t("1 PC hidden on this device") : t("{n} PCs hidden on this device", { n: hiddenCount })}</button>}
@@ -321,7 +322,7 @@ export function manageActions(machine: Pick<Machine, "kind" | "herdr_profile_id"
  *  and its notice are lines of their own, the + is the New workspace row under the workspaces, and nothing is
  *  folded with no caret to open it. A Host has no Manage PC menu; Add PC is in Settings and the palette.
  *  `canHide`/`onHide`: the menu's Hide on this device, under MachineSidebar's rules. */
-function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }: Props & { machine: Machine; headerless?: boolean; canHide: boolean; onHide(): void }) {
+function MachineGroup({ machine, headerless = false, canHide, onHide, listShown, ...props }: Props & { machine: Machine; headerless?: boolean; canHide: boolean; onHide(): void; listShown: boolean }) {
   const t = useT();
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`ovis:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
   // Manage PC is a row menu (RowMenu: a popover, a sheet on a phone), as a workspace's ⋯ is. Rename… swaps the
@@ -448,6 +449,8 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
       {!noticed && machine.error && <span className="machine-state-detail">{machineErrorText(machine.error, t)}</span>}
       {nextStep !== null && <span className="machine-state-next">{nextStep}</span>}
     </p>
+    {/* a herdr-core machine's server runs on this PC, which cannot read that machine's load (server/system-stats.ts) */}
+    {props.pcLoad && online && !folded && !noticed && machine.kind !== "hc" && <MachineStats machine={machine} active={props.shown !== false && listShown && !hidden} />}
     {/* the menu's head names the PC and how it is reached; a PC herdr or herdr-core manages says where the rest is done */}
     {menu && <RowMenu anchor={menu} title={machine.name} items={manageItems()} onClose={closeMenu} header={<span className="machine-menu-head">
       <span className="machine-menu-name">{machine.name}</span>

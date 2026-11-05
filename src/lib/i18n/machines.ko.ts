@@ -1,7 +1,7 @@
 /**
  * Korean for the keys only the machines files use:
  * components/MachineSidebar.tsx (with STATE_WORD), components/MachineDialog.tsx,
- * lib/bridgeProgress.ts (with STAGES).
+ * lib/bridgeProgress.ts (with STAGES), components/MachineStats.tsx, lib/systemReport.ts.
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const MACHINES_KO: Record<string, string> = {
@@ -125,4 +125,23 @@ export const MACHINES_KO: Record<string, string> = {
   "Updating {name}'s own Ovis": "{name}의 Ovis 업데이트 중",
   "That PC's own updater installs it there. Existing herdr sessions keep running.": "그 PC의 자체 업데이터가 그곳에 설치합니다. 기존 herdr 세션은 계속 돕니다.",
   "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "이 PC에서만 지웁니다. 접근까지 끊으려면 그 PC의 폰 및 기기에서 취소하세요.",
+  "CPU": "CPU",
+  "Memory": "메모리",
+  "Disk": "디스크",
+  "Disks": "디스크",
+  "Load": "부하",
+  "Uptime": "가동 시간",
+  "{count} cores": "코어 {count}개",
+  "Load average over 1, 5 and 15 minutes": "1분·5분·15분 부하 평균",
+  "Show system details for {name}": "{name}의 시스템 상세 보기",
+  "Hide system details for {name}": "{name}의 시스템 상세 숨기기",
+  "Not measured": "측정 안 됨",
+  "{days}d {hours}h": "{days}일 {hours}시간",
+  "{hours}h {minutes}m": "{hours}시간 {minutes}분",
+  "{minutes}m": "{minutes}분",
+  "CPU {value}": "CPU {value}",
+  "Memory {value}": "메모리 {value}",
+  "Disk {value}": "디스크 {value}",
+  "PC load in the sidebar": "사이드바에 PC 부하 표시",
+  "CPU, memory and the fullest disk under each open PC, on this device only. On by default when two or more PCs are connected.": "열린 각 PC 아래에 CPU, 메모리, 가장 많이 찬 디스크를 표시합니다(이 기기에서만). PC가 2대 이상 연결되어 있으면 기본으로 켜집니다.",
 };

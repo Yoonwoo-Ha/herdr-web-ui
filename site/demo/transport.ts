@@ -19,6 +19,7 @@ import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, Conver
 import type { PushSubscriptionStatus, RepoBranchComparison, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRefs, RepoDiffRepository, RepoDiffScope, SessionHistoryAgent, SessionHistoryResponse, SessionResumeResponse } from "../../shared/protocol.ts";
 import { nextTabLabels, normalizeThemeChange, sharedPreferencesBody, type SharedPreferences } from "../../shared/preferences.ts";
 import type { PullRequestCheckLog, PullRequestView } from "../../shared/pull-request.ts";
+import type { SystemReport } from "../../shared/system.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { ALERT_WEBHOOK_PRESETS, type AlertWebhookSave, type AlertWebhookView } from "../../shared/alert-webhook.ts";
 import { DEFAULT_ALERTS } from "../../shared/notify-policy.ts";
@@ -1069,6 +1070,17 @@ let demoStatusline = false;
 const removedUsageAccounts = new Set<string>();
 const USAGE_STATE = new URLSearchParams(location.search).get("demo_usage");
 
+/** A calm PC, a little different each time it is asked, for the sidebar's CPU, memory and disk meters. */
+function systemReport(): SystemReport {
+  const wobble = (base: number, spread: number): number => Math.round((base + (Math.random() - 0.5) * spread) * 10) / 10;
+  const gib = 1024 ** 3;
+  return {
+    sampled_at: Date.now(), platform: "linux", uptime_s: 3 * 86400 + 5 * 3600, cpu_count: 8,
+    cpu_percent: wobble(24, 16), memory: { used: 11.2 * gib, total: 32 * gib, percent: 35 },
+    load: [0.86, 0.72, 0.64], disks: [{ path: "/", used: 412 * gib, total: 931 * gib, percent: 44.3 }],
+  };
+}
+
 /** Settings → Agents' accounts on the demo: plans as the workstation's CLIs might report them, resets counted from now. */
 /**
  * `?demo_sign_in=1`: the in-browser sign-in plays the flows recorded from Claude Code 2.1.312 and
@@ -1365,6 +1377,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/portal/start" || path === "/api/portal/stop" || path === "/api/portal/invite") return error("portal_unsupported", "The demo opens no public address.", 409);
   if (path === "/api/herdr-ui") return json({ copy_on_select: true }, 200, { "cache-control": "no-store" });
   if (path === "/api/access") return json({ port: 7317, relay: demoRelayStatus(), tailscale: { state: "running", dns_name: "workstation.example.ts.net", serving_url: "https://workstation.example.ts.net", serve_command: null, serve_url: null } });
+  if (path === "/api/system") return json(systemReport(), 200, { "cache-control": "no-store" });
   if (path === "/api/usage") {
     const report = usageReport();
     const removed = report.providers.filter((account) => removedUsageAccounts.has(account.key));

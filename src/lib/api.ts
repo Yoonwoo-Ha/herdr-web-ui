@@ -6,6 +6,8 @@ import type { AgentCatalogResponse, AgentTabStarted } from "../../shared/agent-c
 import type { ConversationSearchResponse } from "../../shared/conversation-search.ts";
 import { resumeConnectionTraces } from "./connectionTrace.ts";
 import type { PullRequestCheckLog, PullRequestMergeRequest, PullRequestView } from "../../shared/pull-request.ts";
+import type { SystemReport } from "../../shared/system.ts";
+import { parseSystemReport } from "./systemReport.ts";
 import { machinePath, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   WorkspaceMoved,
@@ -403,6 +405,14 @@ async function getJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await apiFetch(url, init);
   if (!response.ok) throw await errorFrom(url, response);
   return (await response.json()) as T;
+}
+
+/** GET /api/system on a PC: its load right now. A bridge from before this route answers 404. */
+export async function fetchSystem(machineId = "local", signal?: AbortSignal): Promise<SystemReport> {
+  const report = parseSystemReport(await getJson<unknown>(machinePath(machineId, "system"), { cache: "no-store", ...(signal ? { signal } : {}) }));
+  // another PC's bridge can be of another version: an answer the sidebar cannot draw is an unusable one
+  if (report === null) throw new ApiError(machinePath(machineId, "system"), 502, UNUSABLE_ANSWER["remote_response_invalid"]!(), "remote_response_invalid");
+  return report;
 }
 
 export async function fetchSession(machineId = "local"): Promise<SessionSnapshot> {

@@ -1,7 +1,7 @@
 /**
  * Simplified Chinese for the keys only the machines files use:
  * components/MachineSidebar.tsx (with STATE_WORD), components/MachineDialog.tsx,
- * lib/bridgeProgress.ts (with STAGES).
+ * lib/bridgeProgress.ts (with STAGES), components/MachineStats.tsx, lib/systemReport.ts.
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const MACHINES_ZH: Record<string, string> = {
@@ -125,4 +125,23 @@ export const MACHINES_ZH: Record<string, string> = {
   "Updating {name}'s own Ovis": "正在更新 {name} 的 Ovis",
   "That PC's own updater installs it there. Existing herdr sessions keep running.": "由那台 PC 自己的更新程序在那里安装。现有的 herdr 会话继续运行。",
   "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "仅从这台 PC 移除。要同时取消它的访问权限，请在那台 PC 的 手机和设备 中撤销。",
+  "CPU": "CPU",
+  "Memory": "内存",
+  "Disk": "磁盘",
+  "Disks": "磁盘",
+  "Load": "负载",
+  "Uptime": "运行时间",
+  "{count} cores": "{count} 核",
+  "Load average over 1, 5 and 15 minutes": "1、5、15 分钟平均负载",
+  "Show system details for {name}": "显示 {name} 的系统详情",
+  "Hide system details for {name}": "隐藏 {name} 的系统详情",
+  "Not measured": "未测量",
+  "{days}d {hours}h": "{days} 天 {hours} 小时",
+  "{hours}h {minutes}m": "{hours} 小时 {minutes} 分",
+  "{minutes}m": "{minutes} 分",
+  "CPU {value}": "CPU {value}",
+  "Memory {value}": "内存 {value}",
+  "Disk {value}": "磁盘 {value}",
+  "PC load in the sidebar": "在侧边栏显示 PC 负载",
+  "CPU, memory and the fullest disk under each open PC, on this device only. On by default when two or more PCs are connected.": "在每台展开的 PC 下显示 CPU、内存和占用最高的磁盘（仅限此设备）。连接两台或更多 PC 时默认开启。",
 };

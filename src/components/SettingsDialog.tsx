@@ -26,6 +26,7 @@ import { FileTextSizeRow } from "./FileTextSizeRow.tsx";
 import { FilesPanelRow } from "./FilesPanelRow.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { Segmented, SettingsGroup, SettingsRow, SettingsSelect, Stepper, Toggle } from "./SettingsControls.tsx";
+import { PcLoadSetting } from "./MachineStats.tsx";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "../lib/fontFamily.ts";
 import { UI_FONT_MAX, UI_FONT_MIN, UI_FONT_PRESET_FAMILY, uiFontPreset, type UiFontPreset } from "../lib/typography.ts";
 import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalledFonts } from "../lib/installedFonts.ts";
@@ -1173,6 +1174,7 @@ function RemotePcsPage({ actions, machines, pcSettings, pcSettingsError, onPcSet
           <Toggle label={t("Update PC bridges automatically")} checked={pcSettings.auto_update_bridges} onChange={(auto_update_bridges) => onPcSettings({ auto_update_bridges })} />
         </SettingsRow>
       )}
+      <PcLoadSetting machines={machines} />
       {/* a crash can leave the saved PCs unreadable: the server set the file aside and started without them.
           machines.json held the PCs added here; herdr-profile-state.json only the permission to connect to herdr's own */}
       {pcSettings?.set_aside?.some(heldAddedPcs) && <p className="settings-item settings-hint">

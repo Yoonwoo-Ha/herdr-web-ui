@@ -1591,6 +1591,30 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   the email or login right-aligned and ellipsized, then one row per limit (label, reset time, right-aligned percent) over a 4px bar. A problem
   note is dim, red for an expired sign-in or a failed request.
 
+### PC load (`.machine-stats`)
+- Shown while Settings → Remote PCs → **PC load in the sidebar** is on, for this device only. Until
+  it is flipped it follows the roster: on while two or more PCs are connected, off for a lone PC,
+  whose load is not what tells PCs apart.
+- Under an expanded, connected PC's name and above its workspaces: one button holding three
+  meters in a row, each a label, the percent in `tabular-nums` and a 3px bar on a `--border-strong`
+  track (the plan meters' construction): **CPU**, **Memory** (without the file cache) and
+  **Disk** (the fullest of the disks that hold the root and home folder), and a caret at the end
+  that opens the numbers behind them: memory used and total, load average and core count, uptime
+  and a bar per disk. From 85% the percent and bar take `--status-blocked`, as the plan meters do
+  from 80%; amber stays chrome. The open or closed choice is kept per PC in this browser.
+- It is drawn only for a PC that can say: a PC whose bridge is from before `GET /api/system`
+  shows nothing, and so does one that has not answered yet. A figure the PC cannot measure
+  is a dash, never `0%`. The meters are drawn only; the button's label carries the numbers for a
+  screen reader ("Show system details for Work PC. CPU 4%, Memory 22%, Disk 50%").
+- Nothing is read for a PC that is folded, offline or in a hidden tab, nor while the sidebar, its
+  PCs list or a phone's drawer is closed. The next ask starts 5 s after the last one came back or
+  timed out, so a stuck PC never has more than one open, and a reading no ask has renewed for a
+  minute is dropped rather than shown as now. A herdr-core machine shows none: its server runs on
+  the PC that reaches it, which cannot read that machine's load.
+- Reference: no app listed in `src/AGENTS.md` shows a machine's load in its project list that I
+  know of (they assume one machine); this follows the app's own plan meters and PC group header,
+  and differs only in measuring a PC instead of a subscription. No code is borrowed.
+
 ### New workspace dialog
 - Agent select comes from `GET /api/agents`; shell-only is always available. The bridge offers the
   agents it types into the pane's shell itself (omo, gjc) exactly where it can start them: its own
@@ -3351,7 +3375,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   herdr's focus), **Alerts**, **Voice input**, **Agents**,
   **Shortcuts** (the platform-resolved global bindings), **Phone & devices** (Connect a phone,
   Keep screen on, Install; then Portal, where the server offers it; then paired devices; then Access),
-  **Remote PCs** (Add PC, Update PC bridges automatically; then **Show in sidebar**), **About** (Updates, herdr, the repository links). A button that points at
+  **Remote PCs** (Add PC, Update PC bridges automatically, PC load in the sidebar; then **Show in sidebar**), **About** (Updates, herdr, the repository links). A button that points at
   Updates opens the dialog on About.
 - Every page is built from the same parts (`components/SettingsControls.tsx`). A group is an
   optional caption (`--fs-sm`, `--fw-semibold`, `--text-dim`, sentence case) over one card:
