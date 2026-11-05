@@ -132,12 +132,17 @@ const SHELL_SOURCES: Record<string, string> = {
   "frame-src": "'self' blob:",
 };
 
-/** The hosted shell's policy: `CONTENT_SECURITY_POLICY` with only the transport-related sources changed (SHELL_SOURCES). */
-export function shellContentSecurityPolicy(): string {
+/**
+ * The hosted shell's policy: `CONTENT_SECURITY_POLICY` with only the transport-related sources
+ * changed (SHELL_SOURCES). `connect` adds origins the shell may fetch from: the hosted build passes
+ * the regional copies of the app, whose build its first script compares (scripts/shell-build.ts).
+ */
+export function shellContentSecurityPolicy(connect: readonly string[] = []): string {
   return CSP_DIRECTIVES.map((directive) => {
     const name = directive.slice(0, directive.indexOf(" "));
     const sources = SHELL_SOURCES[name];
-    return sources === undefined ? directive : `${name} ${sources}`;
+    if (sources === undefined) return directive;
+    return name === "connect-src" && connect.length ? `${name} ${sources} ${connect.join(" ")}` : `${name} ${sources}`;
   }).join("; ");
 }
 

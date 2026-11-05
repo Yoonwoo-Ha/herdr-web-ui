@@ -639,6 +639,20 @@ them; the list is `REGIONAL_RELAYS` in [`shared/relay-regions.ts`](../shared/rel
   does not answer there) tries `relay.ovis.sh` at once, and keeps using the one that worked. A phone never falls back from any other relay, so a
   self-hosted one is never traded for Ovis's.
 
+- **The app comes from nearby too.** Beside each regional relay a copy of the hosted app is served
+  (`app-ap.ovis.sh` beside `relay-ap.ovis.sh`, `REGIONAL_APPS` in the same file). A browser that
+  opens a pairing link on `app.ovis.sh` for a regional relay moves to that copy before the app's
+  bundle loads (`regionalAppUrl`, run by the page's first script), and pairs there. Only a link
+  with a pairing code moves: a phone keeps a PC's key in the address it paired on, so a PC saved on
+  `app.ovis.sh` stays there, and a browser's list of PCs is then split between the two addresses
+  (each lists the PCs paired on it). The iOS and Android apps stay on `app.ovis.sh`. The page moves
+  only once the copy answers with the build `app.ovis.sh` serves, so a copy that is down or a
+  release behind is never moved to. Each file of the copy is checked byte for byte against
+  `app.ovis.sh` before it is served ([relay/README.md](../relay/README.md#a-regional-copy-of-the-app)),
+  but the box still delivers the code that holds the phone's keys: whoever controls it is a trust
+  root, as Cloudflare Pages is for `app.ovis.sh`
+  ([The hosted app is a trust root](#the-hosted-app-is-a-trust-root)).
+
 Which relay carries a connection changes nothing about its protection: the phone and the PC
 encrypt end to end whichever relay passes the frames on, and each relay sees what
 [What the relay sees](#what-the-relay-sees) says.
