@@ -1541,6 +1541,56 @@ it("holds typing the socket took when its connection ends before the server conf
   }
 });
 
+it("holds typing a bridge with input-receipt read but did not confirm typing when its connection ends (#2677)", () => {
+  const { client, socket } = liveClient(["submit", "ping", "input-receipt"]);
+  try {
+    expect(client.sendInput("w1:p1", "ls")).toBe(true);
+    expect(client.sendInput("w1:p1", " -la")).toBe(true);
+    expect(client.sendInput("w1:p1", "x")).toBe(true);
+    expect(client.sendInput("w1:p1", "\x1b[0n", false, true)).toBe(true);
+    expect(submissions(socket)).toEqual([
+      { type: "input", pane_id: "w1:p1", text: "ls", id: 1 },
+      { type: "input", pane_id: "w1:p1", text: " -la", id: 2 },
+      { type: "input", pane_id: "w1:p1", text: "x", id: 3 },
+      { type: "input", pane_id: "w1:p1", text: "\x1b[0n", automatic: true },
+    ]);
+    // receipts need no fence, and a pong proves only that the bridge read the frames
+    expect(pings(socket)).toEqual([]);
+    socket.receive({ type: "pong", id: 1 });
+    socket.receive({ type: "input-result", id: 1, pane_id: "w1:p1", ok: true });
+    // a refusal is told by its error frame, not held
+    socket.receive({ type: "input-result", id: 3, pane_id: "w1:p1", ok: false, code: "input_failed" });
+    // another pane's receipt confirms nothing here
+    socket.receive({ type: "input-result", id: 2, pane_id: "w1:p2", ok: true });
+    socket.disconnect();
+    expect(client.takeUnconfirmedInput("w1:p1")).toEqual([" -la"]);
+  } finally {
+    client.close();
+  }
+});
+
+it("waits for the receipt of typing sent before a bridge with input-receipt said what it takes (#2677)", () => {
+  const client = new HerdrSocket("ws://test/ws");
+  client.trustFeatures(() => false);
+  client.attach("w1:p1", 80, 24);
+  client.connect();
+  const socket = FakeSocket.last;
+  try {
+    socket.open();
+    socket.receive({ type: "features", features: ["input-ready", "ping", "input-receipt"], connection: "c1", herdr_lifetime: "replaced" });
+    socket.receive({ type: "input-ready", pane_id: "w1:p1" });
+    expect(client.sendInput("w1:p1", "echo early")).toBe(true);
+    expect(submissions(socket)).toEqual([{ type: "input", pane_id: "w1:p1", text: "echo early", id: 1 }]);
+    socket.receive(snapshot(["input-ready", "ping", "input-receipt"]));
+    expect(pings(socket)).toEqual([]);
+    socket.receive({ type: "pong", id: 1 });
+    socket.disconnect();
+    expect(client.takeUnconfirmedInput("w1:p1")).toEqual(["echo early"]);
+  } finally {
+    client.close();
+  }
+});
+
 it("keeps typing sent before the bridge said what it takes, and fences it once it says so", () => {
   const start = () => {
     const client = new HerdrSocket("ws://test/ws");

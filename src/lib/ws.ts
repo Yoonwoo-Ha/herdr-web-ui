@@ -139,9 +139,11 @@ export class HerdrSocket {
   /**
    * Per pane, typing sent on this connection that no pong has confirmed yet, in the order sent (see
    * awaitReceipt): `fence` is the id of the first ping sent after it, whose pong (or a later one) proves
-   * the server read it.
+   * the server read it. `id`: sent with its input to a bridge listing "input-receipt", whose input-result
+   * alone confirms it (a pong only proves the bridge read it, not that the pane took it).
    */
-  private readonly unconfirmed = new Map<string, { text: string; fence: number }[]>();
+  private readonly unconfirmed = new Map<string, { text: string; fence: number; id?: number }[]>();
+  private nextInput = 1;
   /** the ping that fences typing, while its pong is on its way: typing sent meanwhile waits for the next one */
   private inputFence: number | null = null;
   /**
@@ -436,6 +438,8 @@ export class HerdrSocket {
         // its connection is trusted as before rather than dropped at the deadline or left paused
         if (!this.pingKnown && this.probing) this.endProbe();
         // typing sent before this was kept unfenced: fenced now, or trusted as before by a bridge that answers no ping
+        // typing sent with an id to a bridge that now lists no receipts is fenced by a ping instead
+        if (!this.features.has("input-receipt")) for (const typed of this.unconfirmed.values()) for (const entry of typed) if (entry.id !== undefined) { delete entry.id; entry.fence = this.nextPing; }
         if (this.features.has("ping")) this.fenceInput();
         else { this.unconfirmed.clear(); this.inputFence = null; }
         if (!this.features.has("input-ready")) for (const pane of this.outputSeen) if (this.attached.has(pane)) this.inputReady.add(pane);
@@ -499,6 +503,13 @@ export class HerdrSocket {
       }
       if (message.type === "secret-result" && this.matchesRequest(message.id, "secret", message.pane_id)) {
         this.resolveRequest(message.id, message.ok ? { ok: true } : { ok: false, code: message.code ?? "secret_failed", message: "Secret was not sent. Check the prompt and enter it again." });
+      }
+      // written, or refused (an error frame tells the user): either way nothing is left to hold
+      if (message.type === "input-result") {
+        const typed = this.unconfirmed.get(message.pane_id);
+        const left = typed?.filter((entry) => entry.id !== message.id);
+        if (left && left.length > 0) this.unconfirmed.set(message.pane_id, left);
+        else this.unconfirmed.delete(message.pane_id);
       }
       if (message.type === "insert-result" && this.matchesRequest(message.id, "insert", message.pane_id)) {
         this.resolveRequest(message.id, message.ok ? { ok: true } : { ok: false, code: message.code ?? "insert_failed", message: message.message ?? "the pane did not take the text" });
@@ -1001,8 +1012,10 @@ export class HerdrSocket {
    * `secret`: typed at a masked prompt. Neither is kept to be held when its connection ends unconfirmed */
   sendInput(paneId: string, text: string, stop = false, automatic = false, secret = false): boolean {
     if (!this.canInput(paneId)) { this.traceProbeRefusal(); return false; }
-    try { this.rawSend({ type: "input", pane_id: paneId, text, ...(stop ? { stop: true } : {}), ...(automatic ? { automatic: true } : {}) }); } catch { return false; }
-    if (!secret && !automatic) this.awaitReceipt(paneId, text);
+    // an id before the bridge said what it takes too: an older bridge ignores it, and the typing is fenced by a ping then
+    const id = !secret && !automatic && (!this.featuresKnown || this.features.has("input-receipt")) ? this.nextInput++ : undefined;
+    try { this.rawSend({ type: "input", pane_id: paneId, text, ...(stop ? { stop: true } : {}), ...(automatic ? { automatic: true } : {}), ...(id !== undefined ? { id } : {}) }); } catch { return false; }
+    if (!secret && !automatic) this.awaitReceipt(paneId, text, id);
     return true;
   }
 
@@ -1012,19 +1025,26 @@ export class HerdrSocket {
    * connection's frames in order, so the pong of a ping sent after the typing proves it was read;
    * until then it is kept, and a connection that ends first leaves it to the pane's terminal, which
    * holds it for review (takeUnconfirmedInput). Typing sent before the bridge said what it takes is kept
-   * unfenced until it does; an older bridge, which answers no ping, is then trusted as before.
+   * unfenced until it does; an older bridge, which answers no ping, is then trusted as before. Typing sent
+   * with an `id` ("input-receipt") waits for its input-result instead: the bridge may have read it and still
+   * dropped it, queued behind the pane's input when its connection ended (#2677).
    */
-  private awaitReceipt(paneId: string, text: string): void {
-    if (this.featuresKnown && !this.features.has("ping")) return;
+  private awaitReceipt(paneId: string, text: string, id?: number): void {
+    if (id === undefined && this.featuresKnown && !this.features.has("ping")) return;
     const typed = this.unconfirmed.get(paneId) ?? [];
-    typed.push({ text, fence: this.nextPing });
+    typed.push({ text, fence: this.nextPing, ...(id !== undefined ? { id } : {}) });
     this.unconfirmed.set(paneId, typed);
     if (this.featuresKnown) this.fenceInput();
   }
 
+  private needsFence(): boolean {
+    for (const typed of this.unconfirmed.values()) if (typed.some((entry) => entry.id === undefined)) return true;
+    return false;
+  }
+
   /** Pings after the typing still unconfirmed, unless a fence is already on its way: one at a time, however fast the typing. */
   private fenceInput(): void {
-    if (this.inputFence !== null || this.unconfirmed.size === 0) return;
+    if (this.inputFence !== null || !this.needsFence()) return;
     this.inputFence = this.nextPing++;
     // a send that throws ends the connection, and its end holds the typing
     try { this.rawSend({ type: "ping", id: this.inputFence }); } catch { /* see above */ }
@@ -1033,7 +1053,7 @@ export class HerdrSocket {
   /** A pong confirms the typing sent before its ping: any ping's, a probe's included. */
   private confirmInput(pong: number): void {
     for (const [paneId, typed] of this.unconfirmed) {
-      const left = typed.filter((entry) => entry.fence > pong);
+      const left = typed.filter((entry) => entry.id !== undefined || entry.fence > pong);
       if (left.length === 0) this.unconfirmed.delete(paneId);
       else this.unconfirmed.set(paneId, left);
     }

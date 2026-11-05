@@ -911,7 +911,7 @@ export interface PromptAnswer {
  *    | insert {id, pane_id, text}
  *  Server -> client frames: snapshot | pty-data | pty-exit | pane-geometry | role-ack
  *    | pane-status | pane-exited | session-changed | conversation-changed | secret-result
- *    | insert-result | watch-data | watch-end | error
+ *    | insert-result | input-result | watch-data | watch-end | error
  *
  *  attach {flow_control:"ack"} opts into per-subscription output credit.
  *  pty-data.flow carries a stream_id and cumulative UTF-8 payload offset;
@@ -967,8 +967,10 @@ export type ClientMessage =
    * still on its way, and a message sent next waits for it; an older bridge types it like any key.
    * `automatic`: the browser's terminal made the text itself (an answer to the program's query), nobody
    * typed it. On herdr-core it reaches the program as hc's automatic input where hc confirmed it, so it
-   * does not make this viewer the active one; everywhere else, and on an older bridge, it is typed as before. */
-  | { type: "input"; pane_id: string; text: string; stop?: true; automatic?: true }
+   * does not make this viewer the active one; everywhere else, and on an older bridge, it is typed as before.
+   * `id` (feature "input-receipt"): a per-connection integer the bridge answers with an input-result once the
+   * text was written or refused. Without it no input-result comes, as on an older bridge. */
+  | { type: "input"; pane_id: string; text: string; stop?: true; automatic?: true; id?: number }
   | { type: "keys"; pane_id: string; keys: string[] }
   /** a composer message, sent to servers whose snapshot lists "submit": the server types it and
    * its own Enter after a short gap, and answers with a submit-result of the same id. `text` is
@@ -1088,7 +1090,7 @@ export interface ClientConnectionTrace {
  * the pane's last TERMINAL_HISTORY_LINES lines, so the client keeps the scrollback and scrolls it itself. Without it herdr
  * owns the scrollback and the client keeps none.
  */
-export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events" | "terminal-history";
+export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "machine-events" | "terminal-history" | "input-receipt";
 
 export type ServerMessage =
   | { type: "machine-event"; event: MachineEvent }
@@ -1136,6 +1138,10 @@ export type ServerMessage =
    * took or ran them; a refusal names why and nothing was typed, except `insert_failed`, whose bytes
    * may or may not have arrived. Older bridges never send it. */
   | { type: "insert-result"; id: number; pane_id: string; ok: boolean; code?: string; message?: string }
+  /** the answer to an `input` with an `id` (feature "input-receipt"): ok once its bytes were written to the pty or
+   * herdr took them, never that the program read them; a refusal names why (an error frame says it to the user too).
+   * Input whose connection ended before its turn is never typed, and nothing answers it. */
+  | { type: "input-result"; id: number; pane_id: string; ok: boolean; code?: string }
   /** Owner-only receipt and state; only an explicit removed outcome permits deleting a retained client message.
    * `dismissed` removes an uncertain copy, never proves withdrawal or delivery. Existing clients
    * remove owned IDs for any explicit outcome; Edit restores only `discarded`. */

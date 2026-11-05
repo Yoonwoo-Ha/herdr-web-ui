@@ -73,8 +73,15 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
   /** The terminal input frames a connection sends, each handled as its `case` in the socket's frame switch was. */
   const inputFrames = {
     input(client: Client, message: Frame<"input">): void {
+      // feature "input-receipt": an input with an id is answered once written or refused. A connection
+      // that ended before its turn gets nothing: its browser holds what no receipt confirmed
+      const id = Number.isSafeInteger(message.id) ? message.id : undefined;
+      const receipt = (ok: boolean, code?: string) => {
+        if (id !== undefined && clients.has(client)) send(client, { type: "input-result", id, pane_id: message.pane_id, ok, ...(code ? { code } : {}) });
+      };
       if (connectionOf(client).mode === "observe") {
         send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
+        receipt(false, "read_only");
         return;
       }
       // typing goes straight through the pty, unless a composer message is still in
@@ -85,6 +92,7 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
       const seen = sighting.facts();
       const inputFailed = () => {
         if (clients.has(client)) send(client, { type: "error", code: "input_failed", message: "Terminal input could not be confirmed. Check the terminal before typing again.", pane_id: message.pane_id });
+        receipt(false, "input_failed");
       };
       // without a pty (Windows: no terminal, or a mirrored one) typing, the key bar's Enter,
       // Stop and arrows go through herdr itself, each in its turn behind a message in flight.
@@ -97,6 +105,7 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
         // an older bridge's composer send, neither of which attaches first.
         if (seen.attached && !seen.member) {
           send(client, { type: "error", code: "input_not_ready", message: "Terminal input is not ready. Nothing was sent.", pane_id: message.pane_id });
+          receipt(false, "input_not_ready");
           return;
         }
         const text = message.text;
@@ -115,6 +124,7 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
           if (!clients.has(client)) return;
           authorizeSocket(client);
           await paneSendText(message.pane_id, shaped, undefined, allowed);
+          receipt(true);
           // the echo is read at once, not at the mirror's next idle read
           poke(message.pane_id);
         }).catch(inputFailed);
@@ -123,6 +133,7 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
       // another web bridge has this pane's terminal: nothing typed here reaches it
       if (!seen.member || !seen.ready || seen.held) {
         send(client, { type: "error", code: "input_not_ready", message: "Terminal input is not ready. Nothing was sent.", pane_id: message.pane_id });
+        receipt(false, "input_not_ready");
         return;
       }
       const typedIntoPty = (text: string) => {
@@ -155,9 +166,11 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
           if (mouse) {
             if (!allowed() || !sighting.write(text)) { inputFailed(); return; }
             typedIntoPty(text);
+            receipt(true);
             return;
           }
           await paneSendText(message.pane_id, text, undefined, allowed);
+          receipt(true);
           // herdr still holds a lone ESC a moment: a message after the Stop waits out the same
           // settling gap as after a typed one, and checks again for a question before pasting
           if (stop) typedIntoPty(text);
@@ -165,6 +178,7 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
       } else {
         if (!sighting.write(message.text, message.automatic === true)) { inputFailed(); return; }
         typedIntoPty(message.text);
+        receipt(true);
       }
       return;
     },
