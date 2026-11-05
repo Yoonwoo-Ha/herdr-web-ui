@@ -20,7 +20,8 @@ The Mac (`app/mac`) and Windows (`app/windows`) shells stay as they are; this ap
    the bundled one (left by a newer app before a rollback) is kept, since hc does not go back.
 2. Starts the Ovis server on the bundled Bun with `OVIS_RUNTIME=herdr-core`, `OVIS_HC_BIN` set to
    that hc, `HOST=127.0.0.1` and its own state folder (`<user data>/server`, or
-   `OVIS_STATE_DIR`). The server is the same code the installer runs; the app only starts it.
+   `OVIS_STATE_DIR`), and `OVIS_DESKTOP_APP=1`, so Settings → About says updates come with the app. The
+   server is the same code the installer runs; the app only starts it.
 3. Opens a window on the server's address. It keeps the port it had last time while that port is
    free, so the page keeps its storage (drafts, settings); otherwise it takes a free one.
 

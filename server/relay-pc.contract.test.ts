@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBunRelay } from "../relay/bun.ts";
-import type { Machine, MachineEvent } from "../shared/machines.ts";
+import type { HerdrIdentity, Machine, MachineEvent } from "../shared/machines.ts";
 import type { SessionSnapshot } from "../shared/protocol.ts";
 import { createServer } from "./index.ts";
 import { RelayService } from "./relay/service.ts";
@@ -121,6 +121,12 @@ it("adds a PC through the relay, shows its panes, signs in again after a restart
   const proxied = await fetch(`${a.base}/api/machines/${machine.id}/session`, { headers: { origin: a.base } });
   expect(proxied.status).toBe(200);
   expect((await proxied.json() as { snapshot: SessionSnapshot }).snapshot.panes.length).toBe(direct.snapshot.panes.length);
+
+  // A knows what runs B's terminals, as an SSH PC's bridge tells it, so its header shows no "herdr offline"
+  const health = await (await fetch(`http://127.0.0.1:${b.port}/api/health`, { headers: { origin: `http://127.0.0.1:${b.port}` } })).json() as { herdr: HerdrIdentity };
+  expect(health.herdr.protocol).toBeNumber();
+  const known = await machineWhen(a.base, (pc) => pc.id === machine.id && pc.herdr !== undefined);
+  expect(known.herdr).toEqual(health.herdr);
 
   // a terminal socket for that PC goes through the same tunnel
   const opened = deferred<string>();

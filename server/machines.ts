@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync
 import { createServer as tcpServer } from "node:net";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
-import { BRIDGE_PROTOCOL, LOCAL_MACHINE, OWN_UPDATE_OFFER, REMOTE_BUNDLE_VERSION, type BridgeIdentity, type RemoteOvis, type Machine, type MachineAction, type MachineEvent, type MachineSettings, type SetupAction, type SetupJob, type SetupProgress, type SetupRequest, type SshTarget } from "../shared/machines.ts";
+import { BRIDGE_PROTOCOL, LOCAL_MACHINE, OWN_UPDATE_OFFER, REMOTE_BUNDLE_VERSION, type BridgeIdentity, type HerdrIdentity, type RemoteOvis, type Machine, type MachineAction, type MachineEvent, type MachineSettings, type SetupAction, type SetupJob, type SetupProgress, type SetupRequest, type SshTarget } from "../shared/machines.ts";
 import type { ServerMessage, SessionSnapshot, HerdrPane } from "../shared/protocol.ts";
 import type { PushService } from "./push.ts";
 import { alertStatus } from "../shared/notify-policy.ts";
@@ -1266,6 +1266,16 @@ export class MachineManager {
     runtime?.terminals.add(close);
     return () => runtime?.terminals.delete(close);
   }
+  /** What runs a relay PC's terminals, from its /api/health; left unknown while it does not say. */
+  private async readRelayHerdr(runtime: Runtime, endpoint: { url: string; token: string }, generation: number): Promise<void> {
+    try {
+      const r = await fetch(endpoint.url + "/api/health", { headers: { authorization: `Bearer ${endpoint.token}` }, signal: AbortSignal.timeout(15_000) });
+      if (!r.ok) { await discard(r); return; }
+      const { herdr } = await readCappedJson<{ herdr?: HerdrIdentity }>(r, REMOTE_LIMITS.health);
+      if (generation !== runtime.generation || this.stopped) return;
+      if (typeof herdr?.version === "string" && Number.isInteger(herdr.protocol)) runtime.machine.herdr = herdr;
+    } catch { /* unknown until a later read; the roster read that follows says whether the PC answers */ }
+  }
   private async refresh(runtime: Runtime): Promise<void> {
     if (!runtime.endpoint || this.stopped) return;
     if (runtime.refreshing) { runtime.refreshQueued = true; return; }
@@ -1273,6 +1283,12 @@ export class MachineManager {
     const endpoint = runtime.endpoint;
     const generation = runtime.generation;
     try {
+      // a PC added through the relay has no bridge identity: its own health says what runs its terminals
+      if (runtime.tunnel && !runtime.machine.herdr) {
+        await this.readRelayHerdr(runtime, endpoint, generation);
+        // a reconnect while it was read: its queued load runs from the finally below, on the new endpoint
+        if (generation !== runtime.generation || this.stopped) return;
+      }
       do {
         runtime.refreshQueued = false;
         const revision = runtime.snapshotRevision;
@@ -1404,6 +1420,8 @@ export class MachineManager {
           throw new RelayPcRefused("This PC's relay key could not be read. Remove it and add it again with a new pairing link.", { cause: error });
         }
         if (generation !== runtime.generation || this.stopped) return;
+        // the PC may run another version or runtime since the last connection: read again once connected
+        delete runtime.machine.herdr;
         const tunnel = await openRelayPcTunnel(key.offer, key, { socket: this.relaySocket, onLost: (error) => this.lost(runtime, generation, error) });
         if (generation !== runtime.generation || this.stopped) { tunnel.close(); return; }
         runtime.tunnel = tunnel; runtime.endpoint = tunnel.endpoint;

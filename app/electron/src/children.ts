@@ -66,6 +66,8 @@ export function serverEnv(base: Env, options: { hc: string; stateDir: string; po
     OVIS_STATE_DIR: options.stateDir,
     HOST: "127.0.0.1",
     PORT: String(options.port),
+    // the app updates itself and this server with it: Settings says so instead of the plain server's way (shared/update.ts)
+    OVIS_DESKTOP_APP: "1",
   };
   const dropped = new Set(["HERDR_PLUGIN_ROOT", "HERDR_SOCKET", "OVIS_MANAGED", "OVIS_BOOT_ID", "OVIS_TOKEN"]);
   // the server would take a dropped setting back from its name before the rename (server/legacy-env.ts)
