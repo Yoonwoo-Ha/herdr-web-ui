@@ -2,7 +2,7 @@ import { afterEach, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decodeFrame, encodeFrame, FrameType, LIMITS_V1 } from "../../shared/relay-mux.ts";
+import { decodeFrame, encodeFrame, FrameType, LIMITS_V1, SERVER_TIME_HEADER } from "../../shared/relay-mux.ts";
 import { MuxStreamError } from "../../shared/relay-mux-engine.ts";
 import type { MachineEvent } from "../../shared/machines.ts";
 import { handleRequest } from "../dispatch.ts";
@@ -656,6 +656,18 @@ it("preserves every whitelisted security header and drops cookies and unrelated 
   expect(response.headers.has("set-cookie")).toBe(false);
   expect(response.headers.has("x-private")).toBe(false);
   expect(await response.text()).toBe("body");
+});
+
+it("tells its clock only to a phone that offered to take it: an older phone refuses the header", async () => {
+  const f = fixture();
+  const device = await relayDevice(f);
+  const dispatch = async () => new Response(null, { status: 304, headers: { etag: 'W/"v1"', "x-server-time": "2026-11-05T10:00:00.000Z" } });
+  for (const [features, told] of [[[], null], [[SERVER_TIME_HEADER], "2026-11-05T10:00:00.000Z"]] as const) {
+    const link = await relayConnection(f, { dispatch });
+    await link.auth(device, [...features]);
+    const response = await link.open("/api/pane/conversation?pane_id=w1%3Ap1").response;
+    expect([response.status, response.headers.get("etag"), response.headers.get("x-server-time")]).toEqual([304, 'W/"v1"', told]);
+  }
 });
 
 it("renders pages without an absolute page-media origin over the relay", async () => {

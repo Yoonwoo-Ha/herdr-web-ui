@@ -4,7 +4,7 @@ import type { SecureChannel } from "../../shared/relay-e2ee.ts";
 import { commitmentHolds, fromBase64Url, PAIR_APPROVAL_MS, pairDigits, randomPairNonce, toBase64Url } from "../../shared/relay-pair-sas.ts";
 import { MuxEngine, MuxStreamError } from "../../shared/relay-mux-engine.ts";
 import type { HttpStream, MuxClock, SessionFrame, WsStream } from "../../shared/relay-mux-engine.ts";
-import { ACCOUNT_FEATURE, FrameType, LARGE_WS_MESSAGES, LIMITS_V1, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL, REQUEST_HEADERS, RESPONSE_HEADERS, WS_CONTINUATION_CAPACITY } from "../../shared/relay-mux.ts";
+import { ACCOUNT_FEATURE, FrameType, LARGE_WS_MESSAGES, LIMITS_V1, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL, REQUEST_HEADERS, RESPONSE_HEADERS, SERVER_TIME_HEADER, WS_CONTINUATION_CAPACITY } from "../../shared/relay-mux.ts";
 import type { HeaderList, SessionError } from "../../shared/relay-mux.ts";
 import type { PairingIntent } from "../../shared/machines.ts";
 import { PairingRateLimitedError, type DeviceMatch } from "../devices.ts";
@@ -91,6 +91,8 @@ export class RelaySession {
   /** Whether the device signed in with AUTH, the only admission that proves it holds its key. */
   private keyProven = false;
   private hinting = false;
+  /** the phone offered SERVER_TIME_HEADER: one that did not refuses the header */
+  private serverTime = false;
   private unwatch: (() => void) | undefined;
   private sourceBytes = 0;
   private readonly clock: MuxClock;
@@ -233,6 +235,7 @@ export class RelaySession {
         // a large session's snapshot goes in one message only to a phone that takes it (#2773)
         const large = frame.payload.features.includes(LARGE_WS_MESSAGES);
         if (large) this.mux.sendLargeMessages();
+        this.serverTime = frame.payload.features.includes(SERVER_TIME_HEADER);
         // an intent is selected only with pair-sas, and only the one offered (docs/account.md, "Negotiation")
         const intents = frame.payload.features.filter((f) => f === PAIR_INTENT_PC || f === PAIR_INTENT_ACCOUNT);
         if (intents.length > 1) { this.close("protocol_error"); return; }
@@ -425,8 +428,7 @@ export class RelaySession {
         return;
       }
       if (!response) { stream.reset("internal_error"); return; }
-      const allowed: readonly string[] = RESPONSE_HEADERS;
-      const rejection = stream.reject(response.status, [...response.headers].filter(([name]) => allowed.includes(name)));
+      const rejection = stream.reject(response.status, this.responseHeaders(response.headers));
       // Rejection transfers disposal to an HTTP stream; it still owns the request signal.
       if (response.body) await rejection.sendBody(response.body);
       else rejection.end();
@@ -434,6 +436,12 @@ export class RelaySession {
       exchange.upgrade?.data.relay?.close();
       if (stream.live) stream.reset(error instanceof MuxStreamError ? error.code : "internal_error");
     }
+  }
+
+  /** The response headers this phone takes. */
+  private responseHeaders(headers: Headers): [string, string][] {
+    const allowed: readonly string[] = RESPONSE_HEADERS;
+    return [...headers].filter(([name]) => allowed.includes(name) && (name !== "x-server-time" || this.serverTime));
   }
 
   private context(device: DeviceMatch, timeout: ServerContext["timeout"], upgrade: ServerContext["upgrade"],
@@ -493,8 +501,7 @@ export class RelaySession {
       if (!stream.live || stream.final) { await response?.body?.cancel(); return; }
       if (!response) { stream.reset("internal_error"); return; }
       reader = response.body?.getReader();
-      const allowed: readonly string[] = RESPONSE_HEADERS;
-      stream.headers(response.status, [...response.headers].filter(([name]) => allowed.includes(name)));
+      stream.headers(response.status, this.responseHeaders(response.headers));
       if (!stream.live) return;
       if (!reader || stream.noBody) {
         await reader?.cancel();

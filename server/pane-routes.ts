@@ -288,10 +288,12 @@ export async function handlePaneRequest(request: Request, url: URL, pathname: st
       // weak: the same answer goes out gzipped or plain (compress.ts), which are not the same bytes
       // the screen's figure is not in `version`, so it is named here: a changed percent is a new answer
       const etag = `W/"${version}${screenContext === null ? "" : `-ctx${screenContext.used}:${screenContext.window}`}"`;
-      const headers = { etag, "cache-control": "no-store" };
+      // the turns' times are on this PC's clock, which the browser's can run ahead of (src/lib/sentWaiting.ts):
+      // an unchanged answer says it too, so an idle chat's bound stays as fresh as its last read
+      const serverTime = new Date().toISOString();
+      const headers = { etag, "cache-control": "no-store", "x-server-time": serverTime };
       if (request.headers.get("if-none-match")?.replace(/^W\//, "") === etag.slice(2)) return new Response(null, { status: 304, headers });
-      // the turns' times are on this PC's clock, which the browser's can run ahead of (src/lib/sentWaiting.ts)
-      return jsonResponse({ ...answer, server_time: new Date().toISOString() }, 200, headers);
+      return jsonResponse({ ...answer, server_time: serverTime }, 200, headers);
     } catch (error) {
       if (error instanceof HistoryChanged || error instanceof DevinHistoryChanged) return jsonResponse({ error: { code: "history_changed", message: error.message } }, 409);
       if (error instanceof ConversationReadPending) {

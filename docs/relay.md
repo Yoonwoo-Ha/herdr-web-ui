@@ -434,7 +434,9 @@ oversized frame ends the session before anything in it is parsed.
   only `content-type`, `content-length`, `content-range`, `accept-ranges`, `etag`, `last-modified`,
   `cache-control`, `content-disposition`, `retry-after`, `x-request-id` and the security headers
   `content-security-policy`, `x-content-type-options`, `cross-origin-resource-policy` and
-  `referrer-policy`, exactly as the handler set them. No cookie is ever set.
+  `referrer-policy`, exactly as the handler set them, and `x-server-time` (the PC's clock as it
+  answered a chat's read) to a phone that offered the `server-time-header` feature in HELLO: an
+  older phone refuses a header it does not list. No cookie is ever set.
 - **Bodies and event streams.** A request body may be up to 64 MiB. Responses stream as they're
   read, and an event stream such as the PC list's (`/api/machines/events`) is a response that stays
   open. A request gets the same time budget as on a direct connection: 60 seconds unless its route

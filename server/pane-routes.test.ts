@@ -100,11 +100,17 @@ it("answers a conversation with the PC's clock, which its turns' times are on", 
   const ask = (headers?: HeadersInit) => handlePaneRequest(new Request(url, { headers }), url, "/api/pane/conversation", {});
   try {
     const before = Date.now();
-    const body = await (await ask())!.json() as { server_time?: string };
+    const answered = (await ask())!;
+    const body = await answered.json() as { server_time?: string };
     expect(Date.parse(body.server_time ?? "")).toBeGreaterThanOrEqual(before);
     expect(Date.parse(body.server_time ?? "")).toBeLessThanOrEqual(Date.now());
-    // the time is no part of the answer's version: an unchanged transcript still answers 304
-    expect((await ask({ "if-none-match": 'W/"clock-fixture"' }))!.status).toBe(304);
+    expect(answered.headers.get("x-server-time")).toBe(body.server_time!);
+    // the time is no part of the answer's version: an unchanged transcript still answers 304, with the time as it answered
+    const after = Date.now();
+    const unchanged = (await ask({ "if-none-match": 'W/"clock-fixture"' }))!;
+    expect(unchanged.status).toBe(304);
+    expect(Date.parse(unchanged.headers.get("x-server-time") ?? "")).toBeGreaterThanOrEqual(after);
+    expect(Date.parse(unchanged.headers.get("x-server-time") ?? "")).toBeLessThanOrEqual(Date.now());
   } finally { read.mockRestore(); }
 });
 

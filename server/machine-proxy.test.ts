@@ -59,7 +59,7 @@ const remote = Bun.serve({
     }
     const ifNoneMatch = request.headers.get("if-none-match");
     asked.push(ifNoneMatch);
-    if (ifNoneMatch === "\"v1\"") return new Response(null, { status: 304, headers: { etag: "\"v1\"" } });
+    if (ifNoneMatch === "\"v1\"") return new Response(null, { status: 304, headers: { etag: "\"v1\"", "x-server-time": "2026-11-05T10:00:00.000Z" } });
     return Response.json({ source: "claude-transcript", turns: [] }, { headers: { etag: "\"v1\"" } });
   },
 });
@@ -80,6 +80,8 @@ describe("PC proxy", () => {
     const unchanged = await handleMachineRequest(new Request(url, { headers: { "if-none-match": "\"v1\"" } }), manager);
     expect(unchanged.status).toBe(304);
     expect(unchanged.headers.get("etag")).toBe("\"v1\"");
+    // that PC's clock as it answered, which its turns' times are on
+    expect(unchanged.headers.get("x-server-time")).toBe("2026-11-05T10:00:00.000Z");
     expect(await unchanged.text()).toBe("");
     expect(asked).toEqual([null, "\"v1\""]);
   });

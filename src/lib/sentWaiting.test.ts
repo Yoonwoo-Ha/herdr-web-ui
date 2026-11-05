@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import { clearMachineWaitingSends, currentWaitingSends, expireWaitingSends, forgetMachineWaitingSends, forgetWaitingBaseline, forgetWaitingSends, pruneWaitingSends, rememberWaitingSend, settleWaitingSends, WAITING_SEND_MS, waitingBaseline, waitingKey } from "./sentWaiting.ts";
+import { clearMachineWaitingSends, currentWaitingSends, expireWaitingSends, forgetMachineWaitingSends, forgetWaitingBaseline, forgetWaitingSends, observeWaitingClock, pruneWaitingSends, rememberWaitingSend, settleWaitingSends, WAITING_SEND_MS, waitingBaseline, waitingKey } from "./sentWaiting.ts";
 import type { ConversationTurn } from "../../shared/protocol.ts";
 import type { Machine } from "../../shared/machines.ts";
 import { paneLifetimes } from "./paneLifetime.ts";
@@ -178,28 +178,92 @@ describe("waitingText", () => {
     const pc = Date.parse("2026-11-05T10:00:00Z");
     try {
       // the phone runs 2 s ahead of the PC. The chat first read its one turn 10 s after it was
-      // written: the PC answered at pc + 10_037, the phone had the answer at its pc + 12_100
+      // written: the PC answered at pc + 10_037, and the answer came at the phone's monotonic 100
       const earlier = user("earlier", pc + 37);
-      settleWaitingSends(key, [earlier], pc + 12_100, true, new Date(pc + 10_037).toISOString());
-      // another device wrote "repeat" at pc + 11_037; the phone sends "repeat" at the PC's pc + 12_500
-      rememberWaitingSend(key, "repeat", pc + 14_500, waitingBaseline(key));
-      settleWaitingSends(key, [earlier, user("repeat", pc + 11_037)], pc + 15_000, true, new Date(pc + 12_937).toISOString());
+      settleWaitingSends(key, [earlier], pc + 12_100, true);
+      observeWaitingClock(key, new Date(pc + 10_037).toISOString(), 100);
+      // another device wrote "repeat" at pc + 11_037; the phone sends "repeat" 2.4 s after the answer came
+      rememberWaitingSend(key, "repeat", pc + 14_500, waitingBaseline(key, 2_500));
+      settleWaitingSends(key, [earlier, user("repeat", pc + 11_037)], pc + 15_000, true);
       expect(currentWaitingSends(key).map((send) => send.text)).toEqual(["repeat"]);
-      settleWaitingSends(key, [earlier, user("repeat", pc + 11_037), user("repeat", pc + 12_800)], pc + 15_200, true, new Date(pc + 13_137).toISOString());
+      settleWaitingSends(key, [earlier, user("repeat", pc + 11_037), user("repeat", pc + 12_800)], pc + 15_200, true);
       expect(currentWaitingSends(key)).toEqual([]);
     } finally { forgetWaitingSends(key); }
   });
 
-  it("allows for the two clocks drifting apart while an idle chat keeps its first read", () => {
+  it("bounds an idle chat's send by its last read, a 304 from a bridge upgraded since its turns were read too", () => {
+    const key = waitingKey("local", "idle-chat");
+    const pc = Date.parse("2026-11-05T10:00:00Z");
+    try {
+      // the chat read its turn ten minutes after it was written, from a bridge that does not say its time
+      const earlier = user("earlier", pc + 37);
+      settleWaitingSends(key, [earlier], pc + 602_100, true);
+      observeWaitingClock(key, undefined, 0);
+      // the turns stay as they were; ten minutes later the upgraded bridge answers a poll with a 304 and its time
+      observeWaitingClock(key, new Date(pc + 1_200_000).toISOString(), 600_050);
+      // another device wrote "same words" 300 ms before this phone sent them, 5 s after that poll
+      rememberWaitingSend(key, "same words", pc + 1_207_000, waitingBaseline(key, 605_000));
+      settleWaitingSends(key, [earlier, user("same words", pc + 1_204_700)], pc + 1_207_300, true);
+      expect(currentWaitingSends(key).map((send) => send.text)).toEqual(["same words"]);
+      settleWaitingSends(key, [earlier, user("same words", pc + 1_204_700), user("same words", pc + 1_205_200)], pc + 1_207_500, true);
+      expect(currentWaitingSends(key)).toEqual([]);
+    } finally { forgetWaitingSends(key); }
+  });
+
+  it("keeps the clock of the answer that arrived last, though an older read's body was parsed after it", () => {
+    const key = waitingKey("local", "late-body");
+    const pc = Date.parse("2026-11-05T10:00:00Z");
+    try {
+      settleWaitingSends(key, [], pc, true);
+      // the PC's clock was set back 10 s between the two reads; the newer answer is observed first
+      observeWaitingClock(key, new Date(pc).toISOString(), 300);
+      observeWaitingClock(key, new Date(pc + 10_000).toISOString(), 200);
+      rememberWaitingSend(key, "after the correction", pc + 500, waitingBaseline(key, 500));
+      settleWaitingSends(key, [user("after the correction", pc + 301)], pc + 700, true);
+      expect(currentWaitingSends(key)).toEqual([]);
+    } finally { forgetWaitingSends(key); }
+  });
+
+  it("counts a sleep the monotonic clock missed: another device's identical turn during it is not this send's", () => {
+    const key = waitingKey("local", "slept");
+    const pc = Date.parse("2026-11-05T10:00:00Z");
+    try {
+      settleWaitingSends(key, [], pc, true);
+      observeWaitingClock(key, new Date(pc).toISOString(), 1_000, pc);
+      // the phone slept an hour: its wall clock went on, its monotonic clock a second. It sends on waking,
+      // before a read is answered; another device wrote the same words 10 s before
+      rememberWaitingSend(key, "repeat", pc + 3_600_000, waitingBaseline(key, 2_000, pc + 3_600_000));
+      settleWaitingSends(key, [user("repeat", pc + 3_590_000)], pc + 3_600_300, true);
+      expect(currentWaitingSends(key).map((send) => send.text)).toEqual(["repeat"]);
+      settleWaitingSends(key, [user("repeat", pc + 3_590_000), user("repeat", pc + 3_600_200)], pc + 3_600_500, true);
+      expect(currentWaitingSends(key)).toEqual([]);
+    } finally { forgetWaitingSends(key); }
+  });
+
+  it("allows for the two clocks drifting apart since the chat's last read", () => {
     const key = waitingKey("local", "clock-drift");
     const pc = Date.parse("2026-11-05T10:00:00Z");
     try {
-      // the chat read its turn ten minutes after it was written, with the phone 2 s ahead of the PC;
-      // an hour later the phone runs 2.3 s ahead
+      // a hidden tab's last read; an hour later on this phone's clock, the PC's has gone on 300 ms less
       const earlier = user("earlier", pc + 37);
-      settleWaitingSends(key, [earlier], pc + 602_100, true, new Date(pc + 600_000).toISOString());
-      rememberWaitingSend(key, "an hour later", pc + 4_202_300, waitingBaseline(key));
-      settleWaitingSends(key, [earlier, user("an hour later", pc + 4_200_200)], pc + 4_202_600, true, new Date(pc + 4_200_250).toISOString());
+      settleWaitingSends(key, [earlier], pc + 600_000, true);
+      observeWaitingClock(key, new Date(pc + 600_000).toISOString(), 0);
+      rememberWaitingSend(key, "an hour later", pc + 4_200_000, waitingBaseline(key, 3_600_000));
+      settleWaitingSends(key, [earlier, user("an hour later", pc + 4_199_900)], pc + 4_200_300, true);
+      expect(currentWaitingSends(key)).toEqual([]);
+    } finally { forgetWaitingSends(key); }
+  });
+
+  it("settles a send by its own turn though this browser's wall clock stepped since the chat's read", () => {
+    const key = waitingKey("local", "clock-step");
+    const pc = Date.parse("2026-11-05T10:00:00Z");
+    try {
+      const earlier = user("earlier", pc + 37);
+      settleWaitingSends(key, [earlier], pc + 10_100, true);
+      observeWaitingClock(key, new Date(pc + 10_037).toISOString(), 100);
+      // the phone's wall clock was set a second ahead before the send; its monotonic clock was not
+      rememberWaitingSend(key, "after the step", pc + 13_500, waitingBaseline(key, 2_500));
+      settleWaitingSends(key, [earlier, user("after the step", pc + 12_600)], pc + 13_700, true);
       expect(currentWaitingSends(key)).toEqual([]);
     } finally { forgetWaitingSends(key); }
   });
@@ -209,9 +273,10 @@ describe("waitingText", () => {
     const pc = Date.parse("2026-11-05T10:00:00Z");
     try {
       // the chat read an empty transcript; the phone runs a minute ahead of the PC
-      settleWaitingSends(key, [], pc + 60_100, true, new Date(pc + 37).toISOString());
+      settleWaitingSends(key, [], pc + 60_100, true);
+      observeWaitingClock(key, new Date(pc + 37).toISOString(), 0);
       // another device wrote "first" at pc + 5_037; the phone sends "first" at the PC's pc + 8_000
-      rememberWaitingSend(key, "first", pc + 68_000, waitingBaseline(key));
+      rememberWaitingSend(key, "first", pc + 68_000, waitingBaseline(key, 7_963));
       settleWaitingSends(key, [user("first", pc + 5_037)], pc + 68_500, true);
       expect(currentWaitingSends(key).map((send) => send.text)).toEqual(["first"]);
       settleWaitingSends(key, [user("first", pc + 5_037), user("first", pc + 8_300)], pc + 68_900, true);
@@ -372,10 +437,10 @@ describe("waitingText", () => {
         settleWaitingSends(key, [user("earlier", 1)], 10, true);
         rememberWaitingSend(key, "next", 20, waitingBaseline(key));
       }
-      const baselines = keys.map(waitingBaseline);
+      const baselines = keys.map((key) => waitingBaseline(key));
       clearMachineWaitingSends("cleanup-PC");
       expect(keys.map((key) => currentWaitingSends(key).length)).toEqual([0, 0, 1]);
-      for (const [index, key] of keys.entries()) expect(waitingBaseline(key)).toBe(baselines[index]!);
+      for (const [index, key] of keys.entries()) expect(waitingBaseline(key)).toEqual(baselines[index]!);
       // A replaced Herdr must still forget those baselines before its pane IDs are reused.
       forgetMachineWaitingSends("cleanup-PC");
       expect(keys.map((key) => waitingBaseline(key) === null)).toEqual([true, true, false]);
@@ -391,18 +456,18 @@ describe("waitingText", () => {
         settleWaitingSends(key, [user("earlier", 1)], 10, true);
         rememberWaitingSend(key, "next", 20, waitingBaseline(key));
       }
-      const baselines = keys.map(waitingBaseline);
+      const baselines = keys.map((key) => waitingBaseline(key));
       pruneWaitingSends(roster("connected", { panes: [{ pane_id: "closed" }, { pane_id: "active" }, { pane_id: "sibling" }] } as Machine["snapshot"]));
-      expect(waitingBaseline(keys[4]!)).toBe(baselines[4]!);
+      expect(waitingBaseline(keys[4]!)).toEqual(baselines[4]!);
       for (const machines of [[], roster("disconnected", snapshot), roster("connecting", snapshot), roster("reconnecting", snapshot), roster("error", snapshot), roster("connected", null)]) {
         pruneWaitingSends(machines);
-        expect(keys.map(waitingBaseline)).toEqual(baselines);
+        expect(keys.map((key) => waitingBaseline(key))).toEqual(baselines);
         expect(keys.map((key) => currentWaitingSends(key).length)).toEqual([1, 1, 1, 1, 1]);
       }
       pruneWaitingSends(roster("connected", snapshot));
       expect(keys.map((key) => currentWaitingSends(key).length)).toEqual([0, 1, 1, 1, 1]);
       expect(waitingBaseline(keys[0]!)).toBeNull();
-      for (const index of [1, 2, 3, 4]) expect(waitingBaseline(keys[index]!)).toBe(baselines[index]!);
+      for (const index of [1, 2, 3, 4]) expect(waitingBaseline(keys[index]!)).toEqual(baselines[index]!);
       pruneWaitingSends(roster("connected", { panes: [...snapshot!.panes, { pane_id: "not-listed-yet" }] } as Machine["snapshot"]));
       pruneWaitingSends(roster("connected", snapshot));
       expect(waitingBaseline(keys[4]!)).toBeNull();
@@ -419,7 +484,7 @@ describe("waitingText", () => {
       settleWaitingSends(key, [user("new lifetime", 1)], 10, true);
       const baseline = waitingBaseline(key);
       pruneWaitingSends(roster([]));
-      expect(waitingBaseline(key)).toBe(baseline);
+      expect(waitingBaseline(key)).toEqual(baseline);
     } finally { forgetMachineWaitingSends("retired-PC"); }
   });
 
@@ -456,7 +521,7 @@ describe("waitingText", () => {
       const baseline = waitingBaseline(key);
       settleWaitingSends(key, [], 9_000, false);
       settleWaitingSends(key, [user("earlier", 1_000)], 9_100, true);
-      expect(waitingBaseline(key)).toBe(baseline);
+      expect(waitingBaseline(key)).toEqual(baseline);
     } finally { forgetWaitingSends(key); }
   });
 
@@ -468,7 +533,7 @@ describe("waitingText", () => {
       const retained = waitingBaseline(sibling);
       forgetWaitingBaseline(key);
       expect(waitingBaseline(key)).toBeNull();
-      expect(waitingBaseline(sibling)).toBe(retained);
+      expect(waitingBaseline(sibling)).toEqual(retained);
       rememberWaitingSend(key, "repeat", 3_100, waitingBaseline(key));
       settleWaitingSends(key, [turn], 3_200, true);
       expect(currentWaitingSends(key)).toEqual([]);

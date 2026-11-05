@@ -2575,11 +2575,11 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const waitKey = waitingKey(machineId, paneId);
   const sentWaiting = useWaitingSends(machineId, paneId, connected);
   // before paint: a frame never shows a send's turn and its waiting bubble together. Only a
-  // conversation read that answered says what the chat holds: a failed read leaves it unknown. The
-  // answer shown names the PC's clock as it answered, which bounds how far this browser's runs ahead
+  // conversation read that answered says what the chat holds: a failed read leaves it unknown. Each
+  // read's PC clock is taken as its answer arrives (lib/api.ts), a cached one's too
   const turnsRead = loaded && error === null && !stale && state.source === "conversation";
   useLayoutEffect(() => {
-    settleWaitingSends(waitKey, state.turns, Date.now(), turnsRead, lastAnswer.current?.server_time);
+    settleWaitingSends(waitKey, state.turns, Date.now(), turnsRead);
   }, [sentWaiting, state.turns, turnsRead, waitKey]);
   const waitWords = useAnnouncedText(!loaded && error === null ? t("Loading conversation…") : waiting ? t("Waiting for the PC…") : null);
   const retryRead = useCallback(() => { setFailures(0); conversationRefresh.refresh(); }, [conversationRefresh]);

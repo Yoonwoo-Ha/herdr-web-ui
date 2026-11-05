@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { ApiError, CONVERSATION_ANSWER_MAX_BYTES, CONVERSATION_ANSWERS_BYTES, CONVERSATION_ANSWERS_KEPT, fetchPaneConversation, fetchPaneTranscript, conversationAnswerBytes, observePaneSessions, paneSessionEvents, paneSessionsMoving, peekPaneConversation, pinPaneConversation, prefetchPaneConversation, PRESS_READ_MS, unpinPaneConversation } from "./api.ts";
 import { ConversationRefresh } from "./conversationRefresh.ts";
 import { withChatReadDeadline } from "./chatReadDeadline.ts";
+import { forgetWaitingSends, settleWaitingSends, waitingBaseline, waitingKey } from "./sentWaiting.ts";
 import type { ConversationResponse } from "../../shared/protocol.ts";
 
 const realFetch = globalThis.fetch;
@@ -102,6 +103,25 @@ describe("conversation polling", () => {
     await fetchPaneConversation("w1:p1", "local", { before: "c:10" });
     await fetchPaneConversation("w1:p1", "local", { before: "c:10" });
     expect(sent).toEqual([null, "\"v1\"", "\"v1\"", null, null]);
+  });
+
+  it("bounds a send by the PC's clock from each answered read, a 304's too, timed as the answer arrived", async () => {
+    let time = "2026-11-05T10:00:00.000Z";
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => new Headers(init?.headers).get("if-none-match") === '"c1"'
+      ? new Response(null, { status: 304, headers: { etag: '"c1"', "x-server-time": time } })
+      : Response.json({ source: "claude-transcript", turns: [], cursor: null, server_time: time }, { headers: { etag: '"c1"' } })) as typeof fetch;
+    const key = waitingKey("local", "clock-read");
+    const monotonic = spyOn(performance, "now").mockReturnValue(1_000);
+    try {
+      await fetchPaneConversation("clock-read");
+      settleWaitingSends(key, [], Date.now(), true);
+      expect(waitingBaseline(key, 1_000)?.pcFloor).toBe(Date.parse(time));
+      // ten minutes on, the unchanged transcript answers 304 with the PC's clock now
+      time = "2026-11-05T10:10:00.000Z";
+      monotonic.mockReturnValue(601_000);
+      await fetchPaneConversation("clock-read");
+      expect(waitingBaseline(key, 601_000)?.pcFloor).toBe(Date.parse(time));
+    } finally { monotonic.mockRestore(); forgetWaitingSends(key); }
   });
 
   it("keeps the polled answer however many older pages are read", async () => {
