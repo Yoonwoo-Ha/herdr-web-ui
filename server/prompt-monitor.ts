@@ -13,18 +13,15 @@ export interface PromptReader {
   read(pane: HerdrPane, panes: HerdrPane[]): Promise<string | null | undefined>;
 }
 
-/**
- * `shown`: what the last read found ("" for no prompt), undefined until a read after the watch began or the pane's
- * last blocked spell; `signature` is what the watchers were told of it
- */
+/** `shown`: what the last read found ("" for no prompt), undefined until the watch's first read; `signature` is what the watchers were told of it */
 interface WatchedPrompt { shown?: string; signature?: string; failures: number }
 
 /**
  * One read loop for the server's prompt watches (server/core/prompt-watch.ts): every watched pane is read every
  * 500 ms, however many connections watch it, and the watchers are told when what its prompt says changes. A pane
- * herdr reports blocked is not read: its status says it waits on the user (pane-status), and its first read after
- * that is told again. A working pane is read: Codex asks the questions in its queue while it works. A snapshot herdr
- * does not answer (a restart) skips the tick and ends no watch; only reads of the pane itself count.
+ * herdr reports blocked is read too: a form of several steps moves to its next one while the pane stays blocked, with
+ * no pane-status to say so. A working pane is read: Codex asks the questions in its queue while it works. A snapshot
+ * herdr does not answer (a restart) skips the tick and ends no watch; only reads of the pane itself count.
  */
 export class PromptMonitor {
   private readonly panes = new Map<string, WatchedPrompt>();
@@ -101,10 +98,6 @@ export class PromptMonitor {
     const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
     if (!pane) {
       this.end(paneId);
-      return;
-    }
-    if (pane.agent_status === "blocked") {
-      state.shown = undefined;
       return;
     }
     let shown: string | null | undefined;

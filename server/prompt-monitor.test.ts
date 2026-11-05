@@ -79,21 +79,21 @@ describe("PromptMonitor", () => {
     expect(changes).toHaveLength(1);
   });
 
-  it("reads no pane herdr reports blocked, and tells the first read after it again", async () => {
+  it("reads a blocked pane: a watch begun while it waits is told its prompt, and so is the next step of a form while it stays blocked", async () => {
     const { herdr, changes, monitor } = setup();
-    herdr.panes.set("p1", "idle");
+    herdr.panes.set("p1", "blocked");
+    herdr.screens.set("p1", "question 1 of 2");
     monitor.watch("p1");
     await monitor.tick();
-    const readsBefore = herdr.reads;
-    herdr.panes.set("p1", "blocked");
-    await monitor.tick();
-    expect(herdr.reads).toBe(readsBefore);
-    // a newcomer meanwhile is told nothing yet: the next read tells every watcher
-    expect(monitor.current("p1")).toBeUndefined();
-    herdr.panes.set("p1", "done");
+    expect(changes).toHaveLength(1);
+    herdr.screens.set("p1", "question 2 of 2");
     await monitor.tick();
     expect(changes).toHaveLength(2);
-    expect(changes[1]![1]).toBe(changes[0]![1]);
+    expect(changes[1]![1]).not.toBe(changes[0]![1]);
+    // the pane resting again with the same prompt shown tells nothing new
+    herdr.panes.set("p1", "idle");
+    await monitor.tick();
+    expect(changes).toHaveLength(2);
   });
 
   it("reads every watched pane from one snapshot a tick, and never runs two ticks at once", async () => {

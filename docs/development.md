@@ -562,13 +562,14 @@ Bridges that advertise `"prompt-watch"` take `prompt-watch {pane_id, enabled}` a
 `prompt-changed {pane_id, signature}` with the watch's first read and whenever the prompt on the
 pane's screen opens, closes or becomes another one; GET `/api/pane/prompt` stays authoritative.
 One 500 ms loop for the whole server reads each watched pane once however many clients watch it,
-at most four at a time, and reads none herdr reports blocked (pane-status says so; the first read
-after it is sent again): a client re-reads GET `/api/pane/prompt` itself while a pane stays
-blocked, as a multi-step prompt can move on without a frame. A working pane is read: Codex asks the
+at most four at a time, blocked panes included: a form of several steps moves to its next one while
+the pane stays blocked, with no pane-status to say so. A working pane is read: Codex asks the
 questions in its queue while it works. A pi pane is not read at all, as its pi-ask card keeps the
-answers to earlier steps in a draft a late read of an older form would replace. The prompt is compared by its text alone, and OpenCode's forms are read into a state of the
-watches' own, so a watch's reads start or end no asking and never move the ids or drafts
-`/api/pane/prompt` hands out. A closed pane, or 10 failed reads of it in a row, ends the watch with
+answers to earlier steps in a draft a late read of an older form would replace. The prompt is compared by its text alone, and OpenCode's forms and omp's session lookups are read into a state of the
+watches' own, so a watch's reads start or end no asking and never move the ids, drafts or call
+bindings `/api/pane/prompt` hands out. A blocked screen no reader knows is told by the fallback card
+GET offers for it, and an OpenCode form with the route's draft (read only), so an answer that moves
+its card to the next question is told too. A closed pane, or 10 failed reads of it in a row, ends the watch with
 an error `prompt_watch_ended`; a snapshot herdr does not answer (a restart) ends none. At most 32
 per connection (`too_many_prompt_watches`); a second watcher of a pane already read gets the
 current `prompt-changed` at once. The browser does not send it.

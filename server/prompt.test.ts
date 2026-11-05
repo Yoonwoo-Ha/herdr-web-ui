@@ -7466,6 +7466,6 @@ describe("a prompt watch's read", () => {
   test("reads nothing of a pi pane, whose pi-ask draft a late read would replace", async () => {
     // no such pane in herdr: any read of it would reject
     const pane = { pane_id: "w-prompt-watch-pi:p1", agent: "pi", agent_status: "idle", cwd: tmpdir() } as HerdrPane;
-    expect(await shownPromptText(pane, [pane], { openCodeState: new OpenCodePromptState() })).toBeUndefined();
+    expect(await shownPromptText(pane, [pane], { openCodeState: new OpenCodePromptState(), ompLookups: new Map() })).toBeUndefined();
   });
 });

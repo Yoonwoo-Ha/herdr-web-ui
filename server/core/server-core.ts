@@ -15,7 +15,7 @@ import type { DeviceStore } from "../devices.ts";
 import { ping } from "../herdr/client.ts";
 import { servingCore } from "../herdr-core/runtime.ts";
 import type { PreferenceStore } from "../preferences.ts";
-import { OpenCodePromptState, shownPromptText } from "../prompt.ts";
+import { type OmpLookups, OpenCodePromptState, shownPromptText } from "../prompt.ts";
 import { attachableIdentity, sidecarAvailable } from "../pty/sidecar.ts";
 import type { UsageLoginService } from "../usage-login.ts";
 import type { UsageService } from "../usage.ts";
@@ -82,9 +82,11 @@ export function createCore({ options, devices, preferences, usage, usageLogin, b
 
   const { pending, holdPending, holdPendingPane, movePendingPane, drainPending, pendingFrames, queueFirstMessage, attached, closeConnection, reconcilePiDeliveries } = createPendingDelivery({ options, clients, attachments, sight, serialize, lastTyped, submitText, authorizeSocket: (client) => authorizeSocket(client), clientSnapshot: () => clientSnapshot(), omo: { sessionOf: (paneId) => omo.sessionOf(paneId) }, queueHeld: (paneId) => queueHeld(paneId), SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, TYPED_SETTLE_MS });
 
-  // the watches read OpenCode's forms into a state of their own: the route's entries and drafts are its answers'
+  // the watches read OpenCode's forms and omp's sessions into a state of their own: the route's entries, drafts and
+  // lookups are its answers' (the route's drafts are only read, for the step an answer moved its card to)
   const watchedOpenCode = new OpenCodePromptState();
-  const promptWatch = createPromptWatch({ clients, read: (pane, panes) => shownPromptText(pane, panes, { codexHome: options.codexHome, openCodeStateDir: options.openCodeStateDir, openCodeState: watchedOpenCode }) });
+  const watchedOmp: OmpLookups = new Map();
+  const promptWatch = createPromptWatch({ clients, read: (pane, panes) => shownPromptText(pane, panes, { codexHome: options.codexHome, openCodeStateDir: options.openCodeStateDir, openCodeState: watchedOpenCode, ompLookups: watchedOmp, answers: options.openCodeState }) });
 
   const { mayType, authorizeSocket, admit, setRole, watchPane, unwatchPane, killWatches, end } = createConnections({ clients, present, pending: { close: closeConnection }, devices, detachClaimed,
     dropClaims: (client) => { dropClaims(client); promptWatch.drop(client); } });
