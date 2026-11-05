@@ -17,7 +17,9 @@ Everything a PR is checked against is in this repository: this file, the
 [DESIGN.md](DESIGN.md) and the `AGENTS.md` files ([root](AGENTS.md), [server](server/AGENTS.md),
 [src](src/AGENTS.md)), which hold the invariants that people and coding agents both follow.
 Contributions are licensed under the repository's [MIT license](LICENSE). Say in the PR when code is
-adapted from another project, with its license.
+adapted from another project, with its license. Before your first PR is merged, sign the
+[Contributor License Agreement](CLA.md): the CLA Assistant bot asks on the PR, and you sign once by
+commenting the sentence it gives.
 
 ## Set up
 
