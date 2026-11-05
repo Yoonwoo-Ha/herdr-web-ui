@@ -8,7 +8,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, unlinkSync } from "node:fs";
 import { hostname } from "node:os";
-import { openRelayChannel, UnsafeRelayDestinationError } from "../shared/relay-channel.ts";
+import { openRelayChannel, openRelayChannelWithFallback, UnsafeRelayDestinationError } from "../shared/relay-channel.ts";
 import type { RelayChannel, RelaySocket } from "../shared/relay-channel.ts";
 import { base64url, ServerIdentityChangedError } from "../shared/relay-device.ts";
 import type { RelayDevice, RelayDeviceStore } from "../shared/relay-device.ts";
@@ -155,12 +155,12 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
   let lost = (error: Error): void => { void error; };
   let channel: RelayChannel;
   try {
-    channel = await openRelayChannel(offer, {
+    ({ channel } = await openRelayChannelWithFallback(offer, {
       store: key, label: (await key.list())[0]!.label, socket: options.socket,
       // whoever asks through the forward sets the deadline (the machine proxy: 75 s, 165 s for its slow routes)
       requestTimeoutMs: () => 0,
-      onClose: (error) => { lost(error); },
-    });
+      onClose: (error: Error) => { lost(error); },
+    }, openRelayChannel));
   } catch (error) {
     throw fatal(error) ? new RelayPcRefused(refusal(error, offer.code !== undefined), { cause: error }) : error;
   }

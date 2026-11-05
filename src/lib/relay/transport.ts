@@ -5,6 +5,7 @@ import { MuxProtocolError } from "../../../shared/relay-mux.ts";
 import type { RelayOffer } from "../../../shared/relay-offer.ts";
 import type { EventSourceLike, Transport, WebSocketLike } from "../transport.ts";
 import { openRelayChannel, RelayPcOfflineError, UnsafeRelayDestinationError } from "./channel.ts";
+import { openRelayChannelWithFallback } from "../../../shared/relay-channel.ts";
 import type { RelayChannel, RelayChannelOptions, RelayServerInfo } from "./channel.ts";
 import { ServerIdentityChangedError } from "./device.ts";
 import { relayResourceUrl, serveRelayResources } from "./resources.ts";
@@ -117,6 +118,8 @@ export class RelayTransport implements Transport {
   private channel: RelayChannel | undefined;
   private known: RelayServerInfo | undefined;
   private generation = 0;
+  /** The relay the latest connection went through: the offer's, or the global one it falls back to. */
+  private relay: string;
   private opening: Promise<void> | undefined;
   private stopped = false;
   private delay = 1000;
@@ -137,6 +140,7 @@ export class RelayTransport implements Transport {
 
   constructor(private readonly offer: RelayOffer, private readonly options: RelayTransportOptions = {}) {
     options.signal?.throwIfAborted();
+    this.relay = offer.relay;
     this.stopResources = serveRelayResources(this, offer.server_id, () => !this.stopped && this.channel?.mux.active === true);
     options.signal?.addEventListener("abort", this.aborted, { once: true });
     globalThis.addEventListener?.("online", this.wake);
@@ -154,7 +158,8 @@ export class RelayTransport implements Transport {
     const generation = ++this.generation;
     // A one-use pairing code must never be reused after admission.
     const { code, ...savedOffer } = this.offer;
-    const channel = await (this.options.openChannel ?? openRelayChannel)(generation === 1 ? this.offer : savedOffer, {
+    const offer = generation === 1 ? this.offer : savedOffer;
+    const options: RelayChannelOptions = {
       ...this.options, signal: this.abort.signal,
       // a reconnect runs behind the app, not on a waiting screen: it waits at the relay nearly as long as the relay holds it
       ...(generation === 1 ? {} : { pcAnswerMs: RECONNECT_PC_ANSWER_MS }),
@@ -165,7 +170,9 @@ export class RelayTransport implements Transport {
         this.options.onClose?.(error);
         this.failed(error);
       },
-    });
+    };
+    const { channel, relay } = await openRelayChannelWithFallback(offer, options, this.options.openChannel ?? openRelayChannel, this.relay);
+    this.relay = relay;
     if (generation !== this.generation || this.stopped) { channel.close(); return; }
     if (!channel.mux.active) throw new TypeError("Relay carrier lost during admission");
     this.channel = channel;

@@ -8,7 +8,8 @@ import { nativeTransport, setTransport } from "../transport.ts";
 import type { WebSocketLike } from "../transport.ts";
 import { useResourceUrlState } from "../useResourceUrl.ts";
 import type { ResourceUrlState } from "../useResourceUrl.ts";
-import { RelayPcOfflineError } from "./channel.ts";
+import { RelayPcOfflineError, RelayUnreachableError } from "./channel.ts";
+import { GLOBAL_RELAY, REGIONAL_RELAYS } from "../../../shared/relay-regions.ts";
 import type { RelayChannelOptions } from "./channel.ts";
 import { isFatalRelayError, openRelayTransport, RECONNECT_PC_ANSWER_MS, RelayWebSocket, SSE_BUFFER_LIMIT } from "./transport.ts";
 import { LIMITS_V1, MuxProtocolError } from "../../../shared/relay-mux.ts";
@@ -22,7 +23,7 @@ afterEach(() => {
   setTransport(nativeTransport);
 });
 
-async function fixture(options: Partial<RelaySessionOptions> = {}) {
+async function fixture(options: Partial<RelaySessionOptions> = {}, { relay = "wss://relay.example", unreachable = 0 } = {}) {
   const app = relayFixture();
   cleanups.push(() => app.close());
   const device = await relayDevice(app);
@@ -31,16 +32,20 @@ async function fixture(options: Partial<RelaySessionOptions> = {}) {
   /** each channel's relay socket: `open` false is one closing with no close event yet */
   const carriers: { open: boolean }[] = [];
   const callbacks: NonNullable<RelayChannelOptions["onClose"]>[] = [];
-  const attempts = { count: 0, failures: 0, offline: 0, refusal: null as Error | null, pcAnswerMs: [] as (number | undefined)[] };
+  const attempts = { count: 0, failures: 0, offline: 0, unreachable, refusal: null as Error | null,
+    pcAnswerMs: [] as (number | undefined)[], relays: [] as string[], offered: [] as string[] };
   const fatal: Error[] = [];
   const offer = { v: 1 as const, server_id: "0123456789abcdef0123456789abcdef",
-    server_public_key: "", relay: "wss://relay.example" };
+    server_public_key: "", relay };
   const transport = await openRelayTransport(offer, {
     clock,
     onFatal: (error) => fatal.push(error),
-    openChannel: async (_offer, config = {}) => {
+    openChannel: async (channelOffer, config = {}) => {
       attempts.count++;
       attempts.pcAnswerMs.push(config.pcAnswerMs);
+      attempts.relays.push(config.carrier ?? channelOffer.relay);
+      attempts.offered.push(channelOffer.relay);
+      if (attempts.unreachable > 0) { attempts.unreachable--; throw new RelayUnreachableError(null, true); }
       if (attempts.refusal !== null) { const refusal = attempts.refusal; attempts.refusal = null; throw refusal; }
       if (attempts.failures > 0) { attempts.failures--; throw new TypeError("Network offline"); }
       if (attempts.offline > 0) { attempts.offline--; throw new RelayPcOfflineError(); }
@@ -903,3 +908,23 @@ it("keeps a StrictMode resource usable and revokes each owned blob on cleanup", 
   expect(revoked).toContain(url);
   await expect(fetch(url)).rejects.toBeInstanceOf(TypeError);
 });
+
+it("falls back to the global relay when a regional one cannot be reached, and reconnects through it", async () => {
+  // Given a PC paired through a regional relay that does not answer
+  const f = await fixture({}, { relay: REGIONAL_RELAYS[0]!, unreachable: 1 });
+  // Then the first open went on through the global relay, which the PC also keeps a link to
+  expect(f.attempts.relays).toEqual([REGIONAL_RELAYS[0]!, GLOBAL_RELAY]);
+  expect(f.connections).toHaveLength(1);
+  // And the device is still saved with the regional relay the offer named
+  expect(f.attempts.offered).toEqual([REGIONAL_RELAYS[0]!, REGIONAL_RELAYS[0]!]);
+  // And a reconnect starts where the last connection got through
+  await f.drop();
+  await f.transport.connect();
+  expect(f.attempts.relays).toEqual([REGIONAL_RELAYS[0]!, GLOBAL_RELAY, GLOBAL_RELAY]);
+});
+
+it("never falls back from a relay that is not one of Ovis's regional relays", async () => {
+  // Given a self-hosted relay that does not answer, the open fails without trying Ovis's relay
+  await expect(fixture({}, { relay: "wss://relay.example", unreachable: 1 })).rejects.toBeInstanceOf(RelayUnreachableError);
+});
+

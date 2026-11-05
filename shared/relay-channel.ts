@@ -10,6 +10,7 @@ import { MuxEngine } from "./relay-mux-engine.ts";
 import type { MuxOptions, SessionFrame } from "./relay-mux-engine.ts";
 import { isWssOrigin, SERVER_ID_PATTERN } from "./relay-offer.ts";
 import type { RelayOffer } from "./relay-offer.ts";
+import { relayFallback } from "./relay-regions.ts";
 import { getDevice, sign } from "./relay-device.ts";
 import type { RelayDevice, RelayDeviceStore } from "./relay-device.ts";
 
@@ -87,6 +88,8 @@ export interface RelayChannelOptions {
   readonly onClose?: (error: Error) => void;
   /** how long the relay may hold the connection for the PC before it is called offline; PC_ANSWER_MS by default */
   readonly pcAnswerMs?: number;
+  /** The relay to connect through when it is not the offer's own (a fallback); the device keeps the offer's. */
+  readonly carrier?: string;
   /** each request's deadline (MuxOptions.requestTimeoutMs); 60 s by default */
   readonly requestTimeoutMs?: MuxOptions["requestTimeoutMs"];
 }
@@ -113,8 +116,9 @@ export interface RelayServerInfo {
 /** Resolves only after protected Noise, WELCOME and device admission all succeeded. Never retries. */
 export async function openRelayChannel(offer: RelayOffer, options: RelayChannelOptions): Promise<RelayChannel> {
   if (typeof offer.relay !== "string" || !isWssOrigin(offer.relay)) throw new UnsafeRelayDestinationError("relay");
+  if (options.carrier !== undefined && !isWssOrigin(options.carrier)) throw new UnsafeRelayDestinationError("relay");
   if (typeof offer.server_id !== "string" || !SERVER_ID_PATTERN.test(offer.server_id)) throw new UnsafeRelayDestinationError("server_id");
-  const url = new URL("/v1/ws", offer.relay);
+  const url = new URL("/v1/ws", options.carrier ?? offer.relay);
   url.searchParams.set("server_id", offer.server_id);
   url.searchParams.set("role", "client");
   url.searchParams.set("v", "1");
@@ -300,4 +304,22 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
       }).catch(failed);
     };
   });
+}
+
+/**
+ * Opens through `first` (the offer's own relay by default) and, when the offer names one of Ovis's
+ * regional relays and that attempt failed before the PC answered (so no pairing code was spent),
+ * through the other of the offer's relay and the global one, which such a PC is always linked to.
+ * The device keeps the offer's relay either way; the result names the relay that carried the channel.
+ */
+export async function openRelayChannelWithFallback<O extends { readonly carrier?: string }>(
+  offer: RelayOffer, options: O, open: (offer: RelayOffer, options: O) => Promise<RelayChannel>, first = offer.relay,
+): Promise<{ channel: RelayChannel; relay: string }> {
+  const attempt = async (relay: string) => ({ channel: await open(offer, relay === offer.relay ? options : { ...options, carrier: relay }), relay });
+  try { return await attempt(first); }
+  catch (error) {
+    const fallback = relayFallback(offer.relay);
+    if (!fallback || !(error instanceof RelayUnreachableError || error instanceof RelayPcOfflineError)) throw error;
+    return attempt(first === fallback ? offer.relay : fallback);
+  }
 }

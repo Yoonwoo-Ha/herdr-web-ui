@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportPublicKey, generateKeyPair } from "../shared/relay-e2ee.ts";
 import type { RelayOffer } from "../shared/relay-offer.ts";
-import { RelayPcKey } from "./relay-pc.ts";
+import { RelayUnreachableError } from "../shared/relay-channel.ts";
+import { GLOBAL_RELAY, REGIONAL_RELAYS } from "../shared/relay-regions.ts";
+import { openRelayPcTunnel, RelayPcKey } from "./relay-pc.ts";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -42,4 +44,33 @@ it("writes no key for a PC removed while its pairing finished", async () => {
   wanted = false;
   await expect(key.update(pc.server_id, () => ({ ...device!, device_id: "device-1" }))).rejects.toThrow("removed");
   expect(existsSync(path)).toBe(false);
+});
+
+/** A relay socket that closes before the relay assigns it, as an unreachable relay's does; records where it was dialed. */
+function unreachable(dialed: string[]) {
+  return (url: string) => {
+    dialed.push(new URL(url).origin);
+    const socket = { binaryType: "arraybuffer" as BinaryType, readyState: 3, send() {}, close() {},
+      onmessage: null, onerror: null, onclose: null as ((event: CloseEvent) => void) | null };
+    queueMicrotask(() => socket.onclose?.(new CloseEvent("close", { code: 1006 })));
+    return socket;
+  };
+}
+
+it("adds a PC through the global relay when its regional relay cannot be reached", async () => {
+  // Given a PC whose offer names Ovis's regional relay, which does not answer
+  const pc = { ...offer(), relay: REGIONAL_RELAYS[0]! };
+  const key = await RelayPcKey.create(keyPath(), pc, () => true);
+  const dialed: string[] = [];
+  // Then the regional relay and then the global one, which that PC also keeps a link to, are tried
+  await expect(openRelayPcTunnel(pc, key, { socket: unreachable(dialed), onLost: () => {} })).rejects.toBeInstanceOf(RelayUnreachableError);
+  expect(dialed).toEqual([pc.relay, GLOBAL_RELAY]);
+});
+
+it("never tries Ovis's relay for a PC on a relay of its own", async () => {
+  const pc = offer();
+  const key = await RelayPcKey.create(keyPath(), pc, () => true);
+  const dialed: string[] = [];
+  await expect(openRelayPcTunnel(pc, key, { socket: unreachable(dialed), onLost: () => {} })).rejects.toBeInstanceOf(RelayUnreachableError);
+  expect(dialed).toEqual(["wss://relay.example"]);
 });
