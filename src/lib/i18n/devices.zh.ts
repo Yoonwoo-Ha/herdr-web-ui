@@ -3,7 +3,7 @@
  * components/DevicesPanel.tsx (with VIA), components/ConnectPhoneDialog.tsx, components/PhonePanel.tsx, components/PortalPanel.tsx,
  * components/PortalAuth.tsx, components/PortalInvite.tsx, components/RelayPanel.tsx,
  * components/PushTestControls.tsx, components/AccessGate.tsx, components/LanExposureNotice.tsx,
- * lib/install.ts, lib/portalAuth.ts, and shared/portal.ts (PORTAL_AUTH_PROBLEMS).
+ * components/InstallHint.tsx, lib/install.ts, lib/installHint.ts, lib/portalAuth.ts, and shared/portal.ts (PORTAL_AUTH_PROBLEMS).
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const DEVICES_ZH: Record<string, string> = {
@@ -201,4 +201,7 @@ export const DEVICES_ZH: Record<string, string> = {
   "Copy a link without a code": "复制不含配对码的链接",
   "Copied. Open it on the phone within 10 minutes: both screens show six digits to compare, and you approve the phone here.": "已复制。请在 10 分钟内在手机上打开它：两个屏幕会显示六位数字供比对，然后在这里批准手机。",
   "This PC's ID": "此电脑的 ID",
+  "Add to Home Screen for alerts: {glyph} Share → Add to Home Screen": "添加到主屏幕即可接收提醒：{glyph} 分享 → 添加到主屏幕",
+  "Install the app for alerts.": "安装应用即可接收提醒。",
+  "Install the app for alerts: Menu → Install app": "安装应用即可接收提醒：菜单 → 安装应用",
 };

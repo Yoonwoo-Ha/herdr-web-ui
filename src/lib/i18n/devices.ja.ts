@@ -3,7 +3,7 @@
  * components/DevicesPanel.tsx (with VIA), components/ConnectPhoneDialog.tsx, components/PhonePanel.tsx, components/PortalPanel.tsx,
  * components/PortalAuth.tsx, components/PortalInvite.tsx, components/RelayPanel.tsx,
  * components/PushTestControls.tsx, components/AccessGate.tsx, components/LanExposureNotice.tsx,
- * lib/install.ts, lib/portalAuth.ts, and shared/portal.ts (PORTAL_AUTH_PROBLEMS).
+ * components/InstallHint.tsx, lib/install.ts, lib/installHint.ts, lib/portalAuth.ts, and shared/portal.ts (PORTAL_AUTH_PROBLEMS).
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const DEVICES_JA: Record<string, string> = {
@@ -201,4 +201,7 @@ export const DEVICES_JA: Record<string, string> = {
   "Copy a link without a code": "コードなしのリンクをコピー",
   "Copied. Open it on the phone within 10 minutes: both screens show six digits to compare, and you approve the phone here.": "コピーしました。10 分以内にスマートフォンで開いてください。両方の画面に表示される 6 桁の数字を比べ、ここでスマートフォンを承認します。",
   "This PC's ID": "このPCのID",
+  "Add to Home Screen for alerts: {glyph} Share → Add to Home Screen": "通知を受け取るにはホーム画面に追加: {glyph} 共有 → ホーム画面に追加",
+  "Install the app for alerts.": "通知を受け取るにはアプリをインストールしてください。",
+  "Install the app for alerts: Menu → Install app": "通知を受け取るにはアプリをインストール: メニュー → アプリをインストール",
 };

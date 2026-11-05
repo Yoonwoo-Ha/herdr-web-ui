@@ -3,7 +3,7 @@
  * components/DevicesPanel.tsx (with VIA), components/ConnectPhoneDialog.tsx, components/PhonePanel.tsx, components/PortalPanel.tsx,
  * components/PortalAuth.tsx, components/PortalInvite.tsx, components/RelayPanel.tsx,
  * components/PushTestControls.tsx, components/AccessGate.tsx, components/LanExposureNotice.tsx,
- * lib/install.ts, lib/portalAuth.ts, and shared/portal.ts (PORTAL_AUTH_PROBLEMS).
+ * components/InstallHint.tsx, lib/install.ts, lib/installHint.ts, lib/portalAuth.ts, and shared/portal.ts (PORTAL_AUTH_PROBLEMS).
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const DEVICES_KO: Record<string, string> = {
@@ -201,4 +201,7 @@ export const DEVICES_KO: Record<string, string> = {
   "Copy a link without a code": "코드 없는 링크 복사",
   "Copied. Open it on the phone within 10 minutes: both screens show six digits to compare, and you approve the phone here.": "복사했습니다. 10분 안에 휴대폰에서 여세요. 두 화면에 같은 여섯 자리 숫자가 뜨면 비교한 뒤 여기서 휴대폰을 승인합니다.",
   "This PC's ID": "이 PC의 ID",
+  "Add to Home Screen for alerts: {glyph} Share → Add to Home Screen": "알림을 받으려면 홈 화면에 추가하세요: {glyph} 공유 → 홈 화면에 추가",
+  "Install the app for alerts.": "알림을 받으려면 앱을 설치하세요.",
+  "Install the app for alerts: Menu → Install app": "알림을 받으려면 앱을 설치하세요: 메뉴 → 앱 설치",
 };
