@@ -771,6 +771,28 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   .sidebar-footer-action:hover:not(:disabled) { background: var(--side-hover); }
 }
 
+/* which PC of the phone's several this is, and the way back to their list: a row above the gear */
+.sidebar-footer-pc {
+  min-height: var(--side-row);
+  margin-bottom: var(--space-1);
+}
+
+.sidebar-footer-pc-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-footer-pc-action {
+  flex: 0 0 auto;
+  margin-inline-start: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
 /* the gear first, the plan meters filling the rest */
 .sidebar-footer-row {
   display: flex;

@@ -1470,6 +1470,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   so a footer row kept showing in every browser tab and in browsers that never prompt. Settings →
   Phone & devices → Install offers it when the browser can install, and the steps otherwise,
   as the Claude web app keeps getting its apps in the account menu rather than a sidebar row.
+- Above that row, only where the page is one PC of a phone's list (a PC's page on the hosted
+  relay shell, or the phone app), one full-width row (`.sidebar-footer-pc`) names the PC, the lone
+  Host's name its header no longer shows, then **Change PC** in `--text-dim` and a switch glyph: a
+  tap goes back to the list of PCs (the shell's front page, or the app's list), as the Claude app's
+  sidebar foot names whose account it is and switches it in one tap. Settings → Phone & devices
+  keeps its Change PC row. A PC's own app never shows it: its sidebar lists its PCs itself.
 
 ### Plan meters (`.usage*`)
 - Right of the Settings gear, one button holding as many chips as the row has room for (judged
