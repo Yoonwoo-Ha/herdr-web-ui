@@ -1522,8 +1522,9 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent): void => {
-      // an Escape that cancels an IME composition (the editor's Character field) is the IME's
-      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
+      // an Escape that cancels an IME composition (the editor's Character field) is the IME's, and one that
+      // closed Files drawn over Settings (focused by a click) is spent: one Escape closes one dialog
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
       event.preventDefault();
       // out of the key bar editor first; from any page, a phone's included, it closes the dialog
       if (keyBarOpen) setKeyBarOpen(false);

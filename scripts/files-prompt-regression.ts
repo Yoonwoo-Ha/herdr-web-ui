@@ -139,6 +139,17 @@ async function checkFiles(page: Page, label: string, phone: boolean, paneA: stri
   assert.equal(await dialog.isVisible(), true, "one Escape closed both Settings and Files");
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "hidden" });
+  // Files is drawn over Settings: a click in it takes the keyboard back, and then its Escape leaves Settings open
+  await page.getByRole("button", { name: "Browse files", exact: true }).click();
+  await dialog.waitFor();
+  await page.keyboard.press("Control+Shift+Comma");
+  await settings.waitFor();
+  await dialog.getByRole("button", { name: "Browse", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden" });
+  assert.equal(await settings.isVisible(), true, "one Escape closed both Files and Settings");
+  await page.keyboard.press("Escape");
+  await settings.waitFor({ state: "detached" });
 }
 
 async function paintStartupMenu(pane: string): Promise<void> {
