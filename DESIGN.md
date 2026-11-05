@@ -1651,6 +1651,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   footer and scrolling when it outgrows the sidebar: per account its mark, name and plan pill with
   the email or login right-aligned and ellipsized, then one row per limit (label, reset time, right-aligned percent) over a 4px bar. A problem
   note is dim, red for an expired sign-in or a failed request.
+- Under the limits, only when the provider reports them: **Usage credits** (Claude's extra usage,
+  spent against its monthly cap in the provider's currency, over a bar counted like the limits) or
+  **Credits** (Codex's balance, in whole credits), then **Limit resets** (how many are left, and
+  when the soonest expires). Reference: Claude Code's `/usage` (its "Usage credits" row) and
+  Codex's `/status` (its "Credits" row), whose own readings these are; no code is borrowed.
 
 ### PC load (`.machine-stats`)
 - Shown while Settings → Remote PCs → **PC load in the sidebar** is on, for this device only. Until
