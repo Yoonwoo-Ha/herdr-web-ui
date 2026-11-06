@@ -27,7 +27,11 @@ The Mac (`app/mac`) and Windows (`app/windows`) shells stay as they are; this ap
 
 Until the server answers, or when it stops, the window shows the connection screen
 (`renderer/connect.html`): which step failed, the end of its output, **Try again** and
-**Show logs**. The logs are in `<user data>/logs/ovis.log` (the run before in `ovis.log.1`).
+**Show logs**. The logs are in `<user data>/logs/ovis.log` (the run before in `ovis.log.1`),
+with the app's update lines (why updates are off, a failed check or download).
+
+The tray and the menu bar speak the system's language when the Ovis pages have it (Korean,
+Japanese, Chinese; `src/text.ts`), English otherwise.
 
 - **Tray**: Open Ovis, Open in Browser, Keep Computer Awake, Restart Ovis Server, Restart to Update
   (once an update is downloaded), Quit Ovis. Closing the window keeps Ovis running in the tray; Quit stops the server.
@@ -54,6 +58,28 @@ Until the server answers, or when it stops, the window shows the connection scre
 
 `<user data>` is Electron's: `~/.config/Ovis` on Linux, `~/Library/Application Support/Ovis` on macOS,
 `%APPDATA%\Ovis` on Windows.
+
+## Removing the app
+
+The core outlives the app, but once the app is gone nothing could stop or update it, so removing
+the app stops it (`herdr-core server stop` for the `ovis` session), with the terminals and agents
+in it. Ovis's own data stays.
+
+- **.deb**: the package's `prerm` (`linux/before-remove.sh`) stops it for the user who removed the
+  package with `sudo` or `pkexec`; not on an upgrade, and never failing the removal. A removal by
+  root alone (no `SUDO_UID` or `PKEXEC_UID`, as some software centres run it) leaves it running,
+  and so does an app that ran with its data outside `~/.config/Ovis` (`XDG_CONFIG_HOME`,
+  `--user-data-dir`): the script cannot know where that was.
+- **AppImage** and **macOS** (dragging the app to the Trash) run nothing as they go. Stop the core
+  first:
+
+  ```sh
+  HC_SESSION=ovis ~/.config/Ovis/bin/herdr-core server stop                                # Linux
+  HC_SESSION=ovis ~/Library/Application\ Support/Ovis/bin/herdr-core server stop          # macOS
+  ```
+
+  An AppImage run unpacked (`APPIMAGE_EXTRACT_AND_RUN=1`, without FUSE) removes its unpacked
+  folder in the temporary folder as it quits.
 
 On Windows the installer replaces Ovis for Windows (`app/windows`, the one-file setup app), which has
 no uninstaller of its own (`windows/installer.nsh` runs `windows/replace-old-setup.ps1`):
