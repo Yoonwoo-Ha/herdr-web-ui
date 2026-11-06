@@ -1124,6 +1124,13 @@ describe("herdr-core adapter, agents on Windows", () => {
     expect(typed()).toBe(`& 'claude' '--model' 'say \\"hi\\"' '""'\r`);
   });
 
+  it("starts Claude Code with Ultracode's settings file from a profile folder holding & (#3084)", async () => {
+    const { socket, typed } = await windows(HC_SHELL, (line) => line ? [...idle, claude] : idle);
+    const settings = "C:\\Users\\R&D\\AppData\\Local\\ovis\\claude settings\\a.json";
+    await agentStart({ name: "claude-1", kind: "claude", paneId: "t1", args: ["--settings", settings] }, socket);
+    expect(typed()).toBe(`& 'claude' '--settings' '${settings}'\r`);
+  });
+
   it("types into no pane whose own program runs a program: the app's own, a script, cmd /c, and no cmd that expands !", async () => {
     for (const argv of [["powershell.exe", "-NoExit", "-Command", "& 'claude'"], ["powershell.exe", "-File", "start.ps1"], ["cmd.exe", "/d", "/c", "claude"], ["cmd.exe", "/q/k", "claude"], ["CMD.EXE", "/R", "x"], ["cmd.exe", "/V:ON"], ["claude.exe"]]) {
       const { socket, typed } = await windows(argv, () => idle);

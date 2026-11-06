@@ -54,7 +54,18 @@ it("gives a native program its arguments through Windows PowerShell 5.1 as they 
   for (const arg of ['say "hi"', "", "C:\\dir with space\\"]) expect(() => powershellNativeArgs("pwsh", [arg])).toThrow();
   // cmd reads an agent's arguments again when PowerShell finds it as a .cmd file: `&` there runs the rest
   for (const program of ["powershell", "pwsh"] as const) {
-    for (const arg of ['fix "a&echo ran&b" now', "a&b", "x|y", "a<b", "a>b", "^caret", "%PATH%"]) expect(() => powershellNativeArgs(program, [arg])).toThrow();
+    // and inside its quotes too: % and !NAME! expand, and a shim's `call` doubles a ^
+    for (const arg of ['fix "a&echo ran&b" now', "a&b", "x|y", "a<b", "a>b", "^caret", "%PATH%", "a b %OS%", "a & !OS!", "up ^ caret"]) expect(() => powershellNativeArgs(program, [arg])).toThrow();
+    // unless PowerShell puts it in quotes, for a space, where cmd reads & | < > as text
+    // (live-verified, 5.1.26100 and 7.6 to an npm-style .cmd shim): a profile folder named R&D (#3084)
+    const settings = "C:\\Users\\R&D\\AppData\\Local\\ovis\\claude settings\\a.json";
+    const quoted = [settings, "fix A & B", "x | y", "a < b > c"];
+    expect(powershellNativeArgs(program, quoted)).toEqual(quoted);
+    // but a `"` in any argument of the line toggles cmd's quotes, which run across arguments, and so
+    // does a `!Q!` delayed expansion turns into one (#3092)
+    for (const args of [['x"', "a & calc & rem"], ['"', " & echo INJECTED & rem "], ["--append-system-prompt", 'a 12" screen', "--settings", settings], ["!Q!", "a & calc & rem"]]) {
+      expect(() => powershellNativeArgs(program, args)).toThrow();
+    }
   }
 });
 
