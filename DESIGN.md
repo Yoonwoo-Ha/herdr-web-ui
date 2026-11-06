@@ -3566,6 +3566,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Remote PCs was a page and is a group of Devices and PCs; a link or a history entry naming either
   old page opens the page it went to (lib/deepLink.ts). A button that points at Updates opens the
   dialog on About.
+- Three rows each stand for two settings and keep both as they are stored: **Agents order** is
+  Workspaces, Activity (every browser's `agentOrder`) or By state (this device's `agentGroups`,
+  with **Within a state** under it); **Show thinking** is Hidden, Folded or Expanded
+  (`showThinking` and this device's `expandThinking`); **Tidy dictated text** is Off, Chat,
+  Terminal or Both (`voicePolishChat`, `voicePolishTerminal`), so no combination is lost.
 - **Agents** lists the agents on this PC, one row each that opens on its status (version, sign-in,
   accounts, session resume) and the settings that belong to that agent alone: Claude Code's
   permission mode, Artifacts chip and (on a touch screen) suggestion chip; Codex's sandbox and

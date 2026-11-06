@@ -601,6 +601,50 @@ async function foldedGroups(browser: import("playwright-core").Browser, url: str
   console.log("PASS folded groups at 1440 and 390px: closed on opening with a count of what changed, opened by a click, a link to a group inside and a search");
 }
 
+/**
+ * The three merged rows keep both settings each stands for: Agents order's By state groups this device's list
+ * (and shows Within a state), Show thinking's Expanded opens reasoning, and Tidy dictated text's Terminal tidies
+ * the terminal alone; each choice is kept through a reload.
+ */
+async function mergedRows(browser: import("playwright-core").Browser, url: string): Promise<void> {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en" });
+  try {
+    await context.addInitScript((settings) => { if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", settings); }, JSON.stringify({ ...SETTINGS, voiceInput: "on", voiceEngine: "auto" }));
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    const pick = async (pageName: string, group: string, option: string) => {
+      await page.goto(`${url}?settings=${pageName}`);
+      await page.locator(".conn-live").waitFor({ state: "attached" });
+      await openSettingsFolds(page);
+      await page.getByRole("group", { name: group, exact: true }).getByRole("button", { name: option, exact: true }).click();
+    };
+    const pressed = async (pageName: string, group: string) => {
+      await page.goto(`${url}?settings=${pageName}`);
+      await page.locator(".conn-live").waitFor({ state: "attached" });
+      await openSettingsFolds(page);
+      return page.getByRole("group", { name: group, exact: true }).locator("button[aria-pressed='true']").textContent();
+    };
+    await pick("appearance", "Agents order", "By state");
+    await page.getByRole("group", { name: "Within a state", exact: true }).waitFor();
+    assert.equal(await pressed("appearance", "Agents order"), "By state");
+    await pick("appearance", "Agents order", "Activity");
+    assert.equal(await page.getByRole("group", { name: "Within a state", exact: true }).count(), 0, "Within a state goes with By state");
+    assert.equal(await pressed("appearance", "Agents order"), "Activity");
+    await pick("chat", "Show thinking", "Expanded");
+    assert.equal(await pressed("chat", "Show thinking"), "Expanded");
+    await pick("chat", "Show thinking", "Hidden");
+    assert.equal(await pressed("chat", "Show thinking"), "Hidden");
+    await pick("chat", "Tidy dictated text", "Terminal");
+    assert.equal(await pressed("chat", "Tidy dictated text"), "Terminal");
+    assert.deepEqual(await page.evaluate(() => { const saved = JSON.parse(localStorage.getItem("ovis:settings")!); return [saved.voicePolishChat, saved.voicePolishTerminal]; }), [false, true]);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+  console.log("PASS the merged rows (Agents order, Show thinking, Tidy dictated text) keep both settings each stands for, through a reload");
+}
+
 try {
   await buildDemoApp(app);
   await buildDevelopmentDemoApp(devApp);
@@ -1191,6 +1235,7 @@ try {
       await settingsSearch(browser, url);
       await dialogSearch(browser, url);
       await foldedGroups(browser, url);
+      await mergedRows(browser, url);
       await heldGroupLanding(browser, devUrl);
     } finally {
       await browser.close();
