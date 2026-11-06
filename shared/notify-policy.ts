@@ -25,7 +25,9 @@ export function alertStatus(status: AgentStatus, waiting: boolean | undefined): 
 
 /** The name a pane goes by in the sidebar and in every notification. */
 export function paneTitle(pane: Pick<PaneInfo, "pane_id" | "cwd" | "terminal_title" | "terminal_title_stripped">): string {
-  return pane.terminal_title_stripped ?? pane.terminal_title ?? pane.cwd ?? pane.pane_id;
+  const title = pane.terminal_title_stripped ?? pane.terminal_title;
+  // herdr-core reports a title no program set as "": that is none, and the folder names the pane (#3231)
+  return title?.trim() ? title : pane.cwd || pane.pane_id;
 }
 
 const STATUS_BODY: Readonly<Record<string, string>> = {
