@@ -95,7 +95,7 @@ export function withoutClaudeSidePanel(screen: string): string {
     return columns;
   };
   const top = edges(lines[0] ?? "").filter((at) => at >= CLAUDE_SIDE_PANEL_MIN_COLUMN);
-  if (top.length === 0) return screen;
+  if (top.length === 0) return withoutClaudeEdgelessPanel(screen, lines);
   // each row's edges once, past the top row's check that turns away most screens
   const rowEdges = lines.map((line, index) => index === 0 ? top : edges(line));
   const rowsAt = (column: number): number => {
@@ -106,9 +106,48 @@ export function withoutClaudeSidePanel(screen: string): string {
   // the panel's edge runs through the footer; a table's column divider stops where the table ends
   const throughFooter = (rows: number): boolean => rows >= CLAUDE_SIDE_PANEL_MIN_ROWS && lines.slice(rows).every((line) => line.trim() === "");
   const column = top.find((at) => throughFooter(rowsAt(at)));
-  if (column === undefined) return screen;
+  if (column === undefined) return withoutClaudeEdgelessPanel(screen, lines);
   const rows = rowsAt(column);
   return lines.map((line, index) => index < rows ? line.slice(0, indexAtColumn(line, column)).trimEnd() : line).join("\n");
+}
+
+/**
+ * When its diff plugin is not drawing it, Claude Code draws the same panel as a plain sidebar: no `│`
+ * edge, only a background color, its `✕` at the end of one of the screen's top rows, beside the session's
+ * text on every row from the top (#2730, measured on 2.1.318 and 2.1.319). The session's column ends where
+ * its widest rule from column 0 ends (a menu's top border), and the panel's text starts past one blank
+ * column. Rows are cut there only when that column is blank on every row and the `✕` stands past it;
+ * without the panel the rule spans the pane and nothing stands past it. The rows keep their colors, which
+ * say which of Claude's question tabs is shown.
+ */
+function withoutClaudeEdgelessPanel(screen: string, lines: string[]): string {
+  const column = Math.max(0, ...lines.map((line) => /^─*/.exec(line)![0].length));
+  if (column < CLAUDE_SIDE_PANEL_MIN_COLUMN) return screen;
+  // where each row's text past the column starts: -1 when the row ends before it, null when the column is not blank
+  const starts = lines.map((line) => {
+    if (Bun.stringWidth(line) <= column) return -1;
+    const at = indexAtColumn(line, column);
+    return at >= 0 && line[at] === " " ? at : null;
+  });
+  if (starts.some((at) => at === null)) return screen;
+  const closable = lines.slice(0, 3).some((line, index) => starts[index]! >= 0 && line.trimEnd().endsWith("✕"));
+  if (!closable) return screen;
+  return screen.split(/\r?\n/).map((line, index) => starts[index]! >= 0 ? coloredBefore(line, column) : line).join("\n");
+}
+
+/** a colored line's text left of the terminal column `column`, its color codes kept */
+function coloredBefore(line: string, column: number): string {
+  let kept = "";
+  let width = 0;
+  for (const part of line.split(/(\u001b\[[0-?]*[ -/]*[@-~])/)) {
+    if (part.startsWith("\u001b[")) { kept += part; continue; }
+    for (const { segment } of GRAPHEMES.segment(part)) {
+      width += Bun.stringWidth(segment);
+      if (width > column) return kept.trimEnd();
+      kept += segment;
+    }
+  }
+  return kept.trimEnd();
 }
 
 /**

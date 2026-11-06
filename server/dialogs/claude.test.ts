@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { InteractivePrompt } from "../../shared/protocol.ts";
 import { answerKeys, claudeRewindOpen, parseInteractivePrompt } from "../prompt.ts";
+import { withoutClaudeSidePanel } from "./claude.ts";
 import { executeInteractionPlan } from "./interaction-plan.ts";
 import { registry } from "./registry.ts";
 import { ANSI_RE, parsedByPublicPrompt, type AnswerStep } from "./shared.ts";
@@ -325,6 +326,39 @@ describe("Claude's question beside its fullscreen diff panel", () => {
     expect(labels(prompt)).toEqual(["Red", "Green", "Blue"]);
   });
 
+  test("reads a command's approval beside the panel drawn without its edge (#2730)", () => {
+    // live-captured in a 196x45 pane with the diff plugin off: the panel is a plain sidebar from column 109,
+    // its "No changes this session" on the question's row and its file note on the last row
+    const edgeless = (version: string, state: string) =>
+      readFileSync(new URL(`../fixtures/claude-diff-panel-${version}-borderless-${state}-196.txt`, import.meta.url), "utf8");
+    for (const version of ["2.1.318", "2.1.319"]) {
+      const prompt = parseInteractivePrompt("claude", edgeless(version, "bash"));
+      expect(prompt, version).toMatchObject({ title: "Bash command", question: "Do you want to proceed?" });
+      expect(prompt!.body, version).toContain("git status --short > status.txt");
+      expect(labels(prompt), version).toEqual(["Yes", "Yes, and always allow access to /home/user/demo/repo from this project",
+        "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
+      expect(JSON.stringify(prompt), version).not.toMatch(/No changes this session|edited before this session|✕/);
+    }
+  });
+
+  test("cuts no row of a menu whose rule spans the pane", () => {
+    // a narrower rule above a full-width one, and a `✕` past it: the session's column is the pane
+    const screen = [
+      "Claude Code".padEnd(150) + "✕",
+      "─".repeat(60),
+      "Text wider than that rule ".repeat(6),
+      "─".repeat(160),
+      " Bash command",
+      " git status",
+      " Do you want to proceed?",
+      " ❯ 1. Yes",
+      "   2. No",
+      "",
+      " Esc to cancel · Tab to amend",
+    ].join("\n");
+    expect(withoutClaudeSidePanel(screen)).toBe(screen);
+  });
+
   test("an answered question beside the panel is not read as open", () => {
     // later output in the hint's place, the panel's edge still beside it
     const hint = "Enter to select · ↑/↓ to navigate · Esc to cancel";
@@ -504,6 +538,20 @@ describe("Claude Code's question tabs as the card's steps", () => {
     expect(first?.steps?.[0]?.current).toBe(true);
     expect(second?.steps?.[1]?.current).toBe(true);
     // a stale answer for one never reads as an answer for the other
+    expect(first?.id).not.toBe(second?.id);
+  });
+
+  test("keeps the tab shown beside the diff panel drawn without its edge (#2730)", () => {
+    // the 2.1.318 edgeless panel's geometry around the question: its `✕` on the top row, its note on the last,
+    // the session's rule ending at column 108; the cut must keep the colors that say which tab is shown
+    const bar = (lit: number) => "← " + [" ☐ Device ", " ☐ Device ", " ✔ Submit "]
+      .map((tab, at) => at === lit ? `\u001b[38;2;0;0;0m\u001b[48;2;177;185;249m${tab}\u001b[0m` : tab).join("") + " →";
+    const on = (lit: number) => ["Claude Code".padEnd(195) + "✕", ...tabsPanel("first").replace(/─{100,}/g, "─".repeat(108)).split("\n")
+      .map((line) => line.replace(ANSI_RE, "").startsWith("←") ? bar(lit) : line), `${" ".repeat(109)}+3 files edited before this session (show)`].join("\n");
+    const first = parseInteractivePrompt("claude", on(0));
+    const second = parseInteractivePrompt("claude", on(1));
+    expect(first?.steps?.[0]?.current).toBe(true);
+    expect(second?.steps?.[1]?.current).toBe(true);
     expect(first?.id).not.toBe(second?.id);
   });
 
