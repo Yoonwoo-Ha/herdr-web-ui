@@ -25,8 +25,10 @@ export interface RelayTransportOptions extends RelayChannelOptions {
   readonly directTailnet?: () => boolean;
 }
 
-/** How long a connection tries the PC's direct carriers before going through the relay. */
+/** How long a connection tries the PC's direct carriers. */
 export const DIRECT_BUDGET_MS = 1_500;
+/** How long the direct carriers have alone before the relay is opened too, and the first channel up is kept (happy eyeballs). */
+export const DIRECT_HEAD_START_MS = 300;
 /** A probe of the direct carriers at most this often while the relay carries the channel, unless the network changed. */
 const DIRECT_PROBE_EVERY_MS = 5 * 60_000;
 /** A switch to a direct carrier waits for no request to be under way, checking this often, this many times. */
@@ -168,6 +170,8 @@ export class RelayTransport implements Transport {
   private upgradeAbort: AbortController | undefined;
   /** the relay channel is being closed to reconnect on a direct carrier, not lost */
   private switching: RelayChannel | undefined;
+  /** the next connection follows a probe that proved a direct carrier: it gives the direct carriers their whole budget before the relay */
+  private switchingDirect = false;
   private readonly stopResources: () => void;
   private readonly wake = (): void => {
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
@@ -219,6 +223,7 @@ export class RelayTransport implements Transport {
         if (!switching) this.options.onClose?.(error);
         // closed on purpose to come back on a direct carrier: at once, with no pause; one that lands on the relay
         // again makes the next switch wait longer (a carrier that answers a probe but cannot carry a session)
+        if (switching) this.switchingDirect = true;
         if (switching) void this.connect().then(() => {
           if (this.channel && this.channel.direct === undefined) this.probeBackoff = Math.min(this.probeBackoff * 2, 12);
           else if (this.channel) this.probeBackoff = 1;
@@ -226,10 +231,7 @@ export class RelayTransport implements Transport {
         else this.failed(error);
       },
     };
-    const direct = generation === 1 && this.offer.code !== undefined ? undefined : await this.openDirect(offer, options);
-    if (generation !== this.generation || this.stopped) { direct?.close(); return; }
-    const { channel, relay } = direct ? { channel: direct, relay: this.relay }
-      : await openRelayChannelWithFallback(offer, { ...options, offerDirect: this.options.directSocket !== undefined, offerTailnet: this.options.directTailnet?.() === true }, this.options.openChannel ?? openRelayChannel, this.relay);
+    const { channel, relay } = await this.race(generation, offer, options);
     this.relay = relay;
     if (generation !== this.generation || this.stopped) { channel.close(); return; }
     if (!channel.mux.active) throw new TypeError("Relay carrier lost during admission");
@@ -254,36 +256,109 @@ export class RelayTransport implements Transport {
   }
 
   /**
-   * The channel on one of the PC's direct carriers, tried one after another within DIRECT_BUDGET_MS; undefined when
-   * none answered (off this network, or the PC names none), and the relay is used. Only a refusal by the PC itself,
-   * after Noise proved it is the PC, is final there as it is through the relay.
+   * The channel this connection goes on. Without the app's direct socket, or while pairing with a code, through the
+   * relay. Otherwise the PC's direct carriers first; when none is up within DIRECT_HEAD_START_MS, the relay is opened
+   * too and the first channel admitted is kept: the other attempt is ended, and a channel it still admits is closed
+   * without anyone being told of it. A refusal that cannot change (`isFatalRelayError`) on either ends both; any other
+   * failure of one waits for the other.
    */
-  private async openDirect(offer: RelayOffer, options: RelayChannelOptions): Promise<RelayChannel | undefined> {
+  private race(generation: number, offer: RelayOffer, options: RelayChannelOptions): Promise<{ channel: RelayChannel; relay: string }> {
+    const viaRelay = (signal: AbortSignal, onClose = options.onClose) => openRelayChannelWithFallback(offer,
+      { ...options, signal, onClose, offerDirect: this.options.directSocket !== undefined, offerTailnet: this.options.directTailnet?.() === true }, this.options.openChannel ?? openRelayChannel, this.relay);
+    if (!this.options.directSocket || (generation === 1 && this.offer.code !== undefined)) return viaRelay(this.abort.signal);
+    // a race the relay won by a hair would bring a switch the probe just earned back onto the relay, time after time
+    const headStartMs = this.switchingDirect ? undefined : DIRECT_HEAD_START_MS;
+    this.switchingDirect = false;
+    // only the channel kept may report its loss: one closed for losing the race is no lost carrier
+    let winner: "direct" | "relay" | undefined;
+    const lost = (side: "direct" | "relay") => (error: Error): void => { if (winner === side) options.onClose?.(error); };
+    const directEnd = new AbortController();
+    const relayEnd = new AbortController();
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let directDone = false;
+      let relayStarted = false;
+      let relayFailure: { error: unknown } | undefined;
+      let cancelHeadStart: (() => void) | undefined;
+      const win = (side: "direct" | "relay", result: { channel: RelayChannel; relay: string }): void => {
+        if (settled) { result.channel.close(); return; }
+        settled = true;
+        winner = side;
+        cancelHeadStart?.();
+        (side === "direct" ? relayEnd : directEnd).abort();
+        resolve(result);
+      };
+      const fail = (error: unknown): void => {
+        if (settled) return;
+        settled = true;
+        cancelHeadStart?.();
+        directEnd.abort();
+        relayEnd.abort();
+        reject(error);
+      };
+      const startRelay = (): void => {
+        if (relayStarted || settled) return;
+        relayStarted = true;
+        viaRelay(AbortSignal.any([this.abort.signal, relayEnd.signal]), lost("relay")).then((result) => win("relay", result), (error: unknown) => {
+          relayFailure = { error };
+          if (directDone || isFatalRelayError(error)) fail(error);
+        });
+      };
+      if (headStartMs !== undefined) cancelHeadStart = (this.options.clock ?? clock).setTimeout(startRelay, headStartMs);
+      this.openDirect(offer, { ...options, onClose: lost("direct") }, directEnd.signal).then((channel) => {
+        directDone = true;
+        if (channel) win("direct", { channel, relay: this.relay });
+        else if (relayFailure) fail(relayFailure.error);
+        else { cancelHeadStart?.(); startRelay(); }
+      }, (error: unknown) => { directDone = true; fail(error); });
+    });
+  }
+
+  /**
+   * The channel on one of the PC's direct carriers, all tried at once, each within DIRECT_BUDGET_MS; undefined when
+   * none answered (off this network, or the PC names none) or `ended` fired (the relay won), and the relay is used.
+   * Only a refusal by the PC itself, after Noise proved it is the PC, is final there as it is through the relay.
+   */
+  private async openDirect(offer: RelayOffer, options: RelayChannelOptions, ended: AbortSignal): Promise<RelayChannel | undefined> {
     const socket = this.options.directSocket;
     if (!socket) return undefined;
-    this.directCarriers ??= (await (this.options.store ?? indexedDeviceStore).get(offer.server_id).catch(() => undefined))?.direct ?? [];
-    const ends = performance.now() + DIRECT_BUDGET_MS;
-    const carriers = this.directCarriers;
-    for (const [index, direct] of carriers.entries()) {
-      const left = ends - performance.now();
-      if (left <= 0 || this.stopped) return undefined;
-      const attempt = new AbortController();
-      // a carrier that stays silent takes only its share, so the ones after it still get a turn
-      const timer = setTimeout(() => attempt.abort(), left / (carriers.length - index));
-      try {
-        // closing the transport ends an admitted channel too; the budget only an attempt under way
-        const signal = AbortSignal.any([this.abort.signal, attempt.signal]);
-        const channel = await (this.options.openChannel ?? openRelayChannel)(offer, { ...options, signal, direct, socket, offerDirect: true, offerTailnet: this.options.directTailnet?.() === true });
-        clearTimeout(timer);
-        return channel;
-      } catch (error) {
-        if (this.stopped) throw error;
-        if (isFatalRelayError(error) && !(error instanceof DirectCarrierUnusableError)) throw error;
-      } finally {
-        clearTimeout(timer);
-      }
+    if (this.directCarriers === undefined) {
+      const saved = (await (this.options.store ?? indexedDeviceStore).get(offer.server_id).catch(() => undefined))?.direct ?? [];
+      // a relay channel that won meanwhile may have brought the PC's newer list
+      this.directCarriers ??= saved;
     }
-    return undefined;
+    const carriers = this.directCarriers;
+    if (ended.aborted || carriers.length === 0) return undefined;
+    // every carrier at once (a silent LAN address must not keep the PC's Tailscale one out of the race), each within
+    // the budget; the first admitted is kept, and only it may report its loss
+    let kept: string | undefined;
+    const attempts = new Map<string, AbortController>();
+    // the admitted channel keeps its signal for good (closing the transport ends it): only the others are ended
+    const endOthers = (than?: string): void => { for (const [carrier, attempt] of attempts) if (carrier !== than) attempt.abort(); };
+    const offerTailnet = this.options.directTailnet?.() === true;
+    return new Promise((resolve, reject) => {
+      let left = carriers.length;
+      for (const direct of carriers) {
+        const attempt = new AbortController();
+        attempts.set(direct, attempt);
+        const timer = setTimeout(() => attempt.abort(), DIRECT_BUDGET_MS);
+        // closing the transport ends an admitted channel too; the budget only an attempt under way
+        const signal = AbortSignal.any([this.abort.signal, attempt.signal, ended]);
+        const onClose = (error: Error): void => { if (kept === direct) options.onClose?.(error); };
+        (this.options.openChannel ?? openRelayChannel)(offer, { ...options, onClose, signal, direct, socket, offerDirect: true, offerTailnet }).then((channel) => {
+          if (kept !== undefined || ended.aborted) { channel.close(); return; }
+          kept = direct;
+          endOthers(direct);
+          resolve(channel);
+        }, (error: unknown) => {
+          // only a refusal by the PC itself, after Noise proved it is the PC, is final
+          if (kept === undefined && (this.stopped || (isFatalRelayError(error) && !(error instanceof DirectCarrierUnusableError)))) { endOthers(); reject(error); }
+        }).finally(() => {
+          clearTimeout(timer);
+          if (--left === 0) resolve(undefined);
+        });
+      }
+    });
   }
 
   /**

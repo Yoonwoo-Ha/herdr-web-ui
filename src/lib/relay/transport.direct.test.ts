@@ -73,6 +73,14 @@ async function pcFixture(extraCarriers: readonly string[] = []) {
   return { app, service, offer, direct, directSocket, channels, openChannel, opened };
 }
 
+/** Settles once the transport's channel goes the given way: a channel reaches it only after the race that opened it settles. */
+function routeBecomes(transport: RelayTransport, route: RelayTransport["route"]): Promise<void> {
+  return bounded(new Promise<void>((resolve) => {
+    const stop = transport.onRouteChange(() => { if (transport.route === route) { stop(); resolve(); } });
+    if (transport.route === route) { stop(); resolve(); }
+  }));
+}
+
 async function transportFor(pc: Awaited<ReturnType<typeof pcFixture>>, store: MemoryStore, offer: RelayOffer, extra: Partial<Parameters<typeof openRelayTransport>[1]> = {}): Promise<RelayTransport> {
   const transport = await openRelayTransport(offer, { store, openChannel: pc.openChannel, directSocket: pc.directSocket, ...extra });
   cleanup.push(() => transport.close());
@@ -94,7 +102,7 @@ describe("direct carriers in the relay transport", () => {
     const direct = await moved;
     expect(direct.direct).toBe(store.saved!.direct![0]);
     expect(direct.device.device_id).toBe(pc.channels[0]!.device.device_id);
-    expect(transport.route).toBe("direct");
+    await routeBecomes(transport, "direct");
   });
 
   it("opens directly first next time, without the relay", async () => {
@@ -169,6 +177,111 @@ describe("direct carriers in the relay transport", () => {
   });
 });
 
+describe("racing the relay at the start", () => {
+  /** A phone that paired and was told the PC's direct carrier, opening the PC again without its code. */
+  async function paired() {
+    const pc = await pcFixture();
+    const store = new MemoryStore();
+    (await transportFor(pc, store, pc.offer)).close();
+    const { code: _code, ...saved } = pc.offer;
+    return { pc, store, saved };
+  }
+
+  it("opens the relay too while the saved direct carrier stays silent, before giving up on it", async () => {
+    // Given a phone away from home: its saved direct carrier assigns the connection and never answers
+    const silent = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request, server) => server.upgrade(request) ? undefined : new Response(null, { status: 426 }),
+      websocket: { open: (socket) => { socket.send(JSON.stringify({ type: "assigned", connection_id: "ab".repeat(16) })); }, message() {} } });
+    cleanup.push(() => silent.stop(true));
+    const { pc, store, saved } = await paired();
+    const order: string[] = [];
+    const openChannel = (channelOffer: RelayOffer, options?: RelayChannelOptions): Promise<RelayChannel> => {
+      if (options?.direct === undefined) order.push("relay");
+      else options.signal?.addEventListener("abort", () => order.push("direct given up"), { once: true });
+      return pc.openChannel(channelOffer, options);
+    };
+    // When it opens the PC
+    const transport = await transportFor(pc, store, saved, { openChannel, directSocket: () => new WebSocket(`ws://127.0.0.1:${silent.port}/v1/ws?v=1`) });
+    // Then the relay was opened while the direct attempt was still under way, and carries the channel
+    expect(order[0]).toBe("relay");
+    expect(transport.route).toBe("relay");
+  });
+
+  it("keeps a direct carrier that is up first after the relay started, and never reports the relay channel it drops", async () => {
+    // Given a phone at home whose direct carrier answers only after the relay attempt began,
+    // and a relay that admits it just after that
+    const { pc, store, saved } = await paired();
+    const relayStarted = deferred<void>();
+    const directUp = deferred<void>();
+    const late = deferred<RelayChannel>();
+    const openChannel = async (channelOffer: RelayOffer, options?: RelayChannelOptions): Promise<RelayChannel> => {
+      if (options?.direct !== undefined) {
+        await relayStarted.promise;
+        const channel = await pc.openChannel(channelOffer, options);
+        directUp.resolve();
+        return channel;
+      }
+      relayStarted.resolve();
+      await directUp.promise;
+      // admitted although the transport no longer wants it: the race was lost by a hair
+      const { signal: _signal, ...rest } = options ?? {};
+      const channel = await pc.openChannel(channelOffer, rest);
+      late.resolve(channel);
+      return channel;
+    };
+    const losses: Error[] = [];
+    // When it opens the PC
+    const transport = await transportFor(pc, store, saved, { openChannel, onClose: (error) => losses.push(error) });
+    // Then the direct carrier carries the channel
+    expect(transport.route).toBe("direct");
+    // and the relay channel admitted after it is closed, with nobody told of a lost carrier
+    const dropped = await bounded(late.promise);
+    await bounded(new Promise<void>((resolve) => { const check = (): void => { if (!dropped.mux.active) resolve(); else queueMicrotask(check); }; check(); }));
+    expect(losses).toEqual([]);
+    expect(transport.route).toBe("direct");
+  });
+
+  it("races the PC's Tailscale carrier too when a saved LAN address stays silent", async () => {
+    // Given a phone away from home on Tailscale: its saved LAN address assigns and never answers, its Tailscale one is the PC
+    const silent = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request, server) => server.upgrade(request) ? undefined : new Response(null, { status: 426 }),
+      websocket: { open: (socket) => { socket.send(JSON.stringify({ type: "assigned", connection_id: "ab".repeat(16) })); }, message() {} } });
+    cleanup.push(() => silent.stop(true));
+    const { pc, store, saved } = await paired();
+    const port = pc.service.status().direct!.carriers.at(-1)!.split(":").at(-1);
+    const tailscale = `ws://100.64.0.7:${port}`;
+    store.saved = { ...store.saved!, direct: [`ws://${LAN}:9`, tailscale] };
+    const socketFor = (url: string): WebSocket => new WebSocket(url.startsWith(tailscale) ? url.replace("ws://100.64.0.7:", "ws://127.0.0.1:") : `ws://127.0.0.1:${silent.port}/v1/ws?v=1`);
+    // When it opens the PC
+    const transport = await transportFor(pc, store, saved, { directTailnet: () => true, directSocket: socketFor });
+    // Then the Tailscale carrier carries the channel, not the relay
+    expect(transport.route).toBe("direct");
+    expect(pc.channels.at(-1)!.direct).toBe(tailscale);
+  });
+
+  it("gives a switch a probe just earned the direct carriers' whole budget, without racing the relay again", async () => {
+    // Given a phone pairing through the relay, whose PC's direct carrier then admits it only slowly
+    const pc = await pcFixture();
+    const clock = new TestClock();
+    let paired = false;
+    let relayAfterPairing = 0;
+    const directAsked = deferred<void>();
+    const gate = deferred<void>();
+    const openChannel = async (channelOffer: RelayOffer, options?: RelayChannelOptions): Promise<RelayChannel> => {
+      if (options?.direct === undefined && paired) relayAfterPairing++;
+      if (options?.direct !== undefined) { directAsked.resolve(); await gate.promise; }
+      return pc.openChannel(channelOffer, options);
+    };
+    const transport = await transportFor(pc, new MemoryStore(), pc.offer, { openChannel, clock });
+    paired = true;
+    // When the probe proves the carrier, the relay channel closes for the switch, and the head start passes
+    await bounded(directAsked.promise, 15_000);
+    clock.advance(300);
+    gate.resolve();
+    // Then the relay was not opened again, and the switch lands on the direct carrier
+    await routeBecomes(transport, "direct");
+    expect(relayAfterPairing).toBe(0);
+  });
+});
+
 describe("direct carriers that do not all answer", () => {
   it("comes back on the carrier that proved to be the PC, past one that stays silent", async () => {
     // Given a PC that names a silent address first (a host that assigns and never answers), then its own
@@ -208,7 +321,8 @@ describe("probing again", () => {
     clock.advance(5 * 60_000);
     // Then the phone probes again and comes back on it
     expect((await moved).direct).toBeDefined();
-    expect(transport.route).toBe("direct");
+    // the channel reaches the transport once the race that opened it settles
+    await routeBecomes(transport, "direct");
   });
 });
 
