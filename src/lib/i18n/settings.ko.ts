@@ -209,6 +209,7 @@ export const SETTINGS_KO: Record<string, string> = {
   "An agent asks you something": "에이전트가 무언가를 물어볼 때",
   "An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input.": "에이전트가 명령을 실행하거나 파일을 바꾸기 전에 허락을 구할 때. 무엇을 기다리는지 알리지 않는 에이전트는 입력 필요로 알립니다.",
   "Stopped on an error": "오류로 멈춤",
+  "Alert me when": "알릴 일",
   "A turn that ended on an error, as OmO and GJC report it": "OmO와 GJC가 알려 주는, 오류로 끝난 턴",
   "Alerts from": "알림 받을 PC",
   "Alerts from {name}": "{name}의 알림",

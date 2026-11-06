@@ -35,6 +35,7 @@ export function settingsPageEntries(t: Translate): SettingsPageEntry[] {
     { id: "devices", label: t("Devices and PCs"), aliases: t("phone install keep screen on app") },
     { id: "about", label: t("About"), aliases: t("version update release herdr") },
     { id: "chat", section: "voice", label: t("Voice input"), aliases: t("dictation microphone speech openai") },
+    { id: "chat", section: "voice-more", label: t("Dictation language"), aliases: "" },
     { id: "devices", section: "remote", label: t("Remote PCs"), aliases: t("machines computers ssh bridge plugins") },
     { id: "agents", section: "guide", label: t("Setup guide"), aliases: t("onboarding first run getting started welcome") },
     { id: "appearance", section: "typography", label: t("Typography"), aliases: t("Interface font size") },

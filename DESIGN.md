@@ -3568,15 +3568,18 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   left, are no Back of the user's. Its own step that lands over a second after it was asked for is
   taken for one, as Back then may be the user's.
 - Pages, in order (eight): **Appearance** (theme, dark theme, light theme, density, language;
-  **Typography**: interface font size; **Sidebar**: sidebar rows, agents order, tab names), **Chat**
+  **Typography**: interface font size; **Sidebar**: sidebar rows, agents order), **Chat**
   (panes open in, show thinking, chat width, chat font size; **Composer**: Enter sends; **Quick
-  replies**; **File viewer**: wrap long lines, open files, web links; **Voice input**: microphone
-  button, dictation language), **Terminal** (font size, font family, input mode, Key bar),
-  **Alerts**, **Agents**, **Shortcuts** (the platform-resolved global bindings), **Devices and PCs**
-  (Phone: Connect a phone, Keep screen on, Install; then Portal, Account and paired devices; then
+  replies**, whose list shows only while they are on; **File viewer**: open files, web links;
+  **Voice input**: microphone button), **Terminal** (font size, font family, input mode, Key bar),
+  **Alerts** (the test, sound and other destinations; which alerts come is the **Alert me when**
+  group of its More settings, as almost every install keeps them), **Agents**, **Shortcuts** (the
+  platform-resolved global bindings), **Devices and PCs**
+  (Phone: Connect a phone, Install; then Portal, Account and paired devices; then
   **Remote PCs**: Add PC, Add a PC through the relay; then **Show in sidebar**), **About** (Updates,
   herdr, the repository links). Each page's other rows are in its folds (above). Voice input was a
-  page and is Chat's group (its speech recognition, tidying and OpenAI key in Chat's More settings);
+  page and is Chat's group (its dictation language, speech recognition, tidying and OpenAI key in
+  Chat's More settings);
   Remote PCs was a page and is a group of Devices and PCs; a link or a history entry naming either
   old page opens the page it went to (lib/deepLink.ts). A button that points at Updates opens the
   dialog on About.

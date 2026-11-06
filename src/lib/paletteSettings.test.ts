@@ -27,6 +27,8 @@ const MATRIX: readonly (readonly [Language, string, SettingsPageId, string])[] =
   ["en", "Send queued messages automatically", "chat", "composer-more"],
   ["en", "Suggestion chip", "agents", "-"],
   ["en", "Show above the message box", "chat", "quick-replies"],
+  ["en", "Dictation language", "chat", "voice-more"],
+  ["ko", "받아쓰기 언어", "chat", "voice-more"],
   ["ko", "인터페이스 글자 크기", "appearance", "typography"],
   ["ko", "채팅 글자 크기", "chat", "-"],
   ["ko", "Enter로 보내기", "chat", "composer"],
@@ -102,7 +104,7 @@ describe("settings entries", () => {
       const expected = { page, section: section === "-" ? actual.section : section };
       return actual.page === expected.page && actual.section === expected.section ? [] : [{ language, query, expected, actual }];
     });
-    expect(MATRIX.length).toBe(46);
+    expect(MATRIX.length).toBe(48);
     expect(misses).toEqual([]);
   });
 

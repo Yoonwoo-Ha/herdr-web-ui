@@ -209,6 +209,7 @@ export const SETTINGS_JA: Record<string, string> = {
   "An agent asks you something": "エージェントが何かを尋ねたとき",
   "An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input.": "エージェントがコマンドを実行したりファイルを変更したりする前に許可を求めたとき。何を待っているかを伝えないエージェントは「入力が必要」として通知します。",
   "Stopped on an error": "エラーで停止",
+  "Alert me when": "通知すること",
   "A turn that ended on an error, as OmO and GJC report it": "OmO と GJC が報告する、エラーで終わったターン",
   "Alerts from": "通知を受け取る PC",
   "Alerts from {name}": "{name} からの通知",

@@ -943,6 +943,12 @@ try {
             await openSettingsPage(page, "Chat");
             const replies = page.locator(".quick-replies-list li");
             assert.ok(await replies.count() > 0);
+            // the list is edited only while the replies show; off, the row stands alone
+            const showReplies = page.getByRole("switch", { name: "Show above the message box", exact: true });
+            await showReplies.tap();
+            await page.locator(".quick-replies-list").waitFor({ state: "detached" });
+            await showReplies.tap();
+            await replies.first().waitFor();
             await page.getByRole("button", { name: "Remove quick reply 1", exact: true }).tap();
             assert.equal(await replies.count(), (JSON.parse(await page.evaluate(() => localStorage.getItem("ovis:settings")!)) as { quickReplies: string[] }).quickReplies.length);
             await page.getByRole("button", { name: "Restore defaults", exact: true }).tap();

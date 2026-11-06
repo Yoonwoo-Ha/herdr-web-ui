@@ -41,7 +41,7 @@ import { LOCAL_MACHINE, pcAlertKey, type HerdrCoreFacts, type HerdrRuntimeFacts,
 import { codeFailureText, typedCodeFailure } from "./codeFailureText.ts";
 import { KeyId } from "./KeyId.tsx";
 import { canHideMachine, isMachineShown, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
-import { updateAlertFilters, useAlertFilters } from "../lib/alertFilters.ts";
+import { alertFiltersChanged, updateAlertFilters, useAlertFilters } from "../lib/alertFilters.ts";
 import { addFoundRelayPc, addRelayPc, ApiError, findRelayPc, fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
 import type { PushActionResult } from "../lib/pushHealth.ts";
@@ -421,13 +421,13 @@ function AppearancePage() {
       {settings.agentGroups && <SettingsRow label={t("Within a state")} wide>
         <Segmented label={t("Within a state")} value={settings.agentGroupSort} onChange={(agentGroupSort) => update({ agentGroupSort })} options={[{ value: "wait", label: t("Longest wait") }, { value: "recent", label: t("Recent") }, { value: "name", label: t("Name") }]} />
       </SettingsRow>}
-      <SettingsRow label={t("Name tabs from the first message")} description={t("A tab still named by its number shows a few words of the first message sent to it, in every browser. A name you gave a tab is kept, and herdr's own tab names do not change. Only those words are kept, on this server, until the tab closes; turning this off deletes them.")}>
-        <Toggle label={t("Name tabs from the first message")} checked={settings.autoTabNames} onChange={(autoTabNames) => update({ autoTabNames })} />
-      </SettingsRow>
     </SettingsGroup>
 
-    <SettingsFold kind="more" keys={["sidebarFilter", "sidebarPeek", "sidebarBackgroundWorkspaces", "sidebarContext", "sidebarAgentTree", "foldHelpers", "agentNamedGroups", "agentMarks", "statusIndicators", "uiFontFamily", "fileFontSize"]}>
+    <SettingsFold kind="more" keys={["autoTabNames", "sidebarFilter", "sidebarPeek", "sidebarBackgroundWorkspaces", "sidebarContext", "sidebarAgentTree", "foldHelpers", "agentNamedGroups", "agentMarks", "statusIndicators", "uiFontFamily", "fileFontSize"]}>
       <SettingsGroup title={t("Sidebar")} section="sidebar-more">
+        <SettingsRow label={t("Name tabs from the first message")} description={t("A tab still named by its number shows a few words of the first message sent to it, in every browser. A name you gave a tab is kept, and herdr's own tab names do not change. Only those words are kept, on this server, until the tab closes; turning this off deletes them.")}>
+          <Toggle label={t("Name tabs from the first message")} checked={settings.autoTabNames} onChange={(autoTabNames) => update({ autoTabNames })} />
+        </SettingsRow>
         <SettingsRow label={t("Sidebar filter")} description={t("Show the Filter field above the sidebar's lists on this device. When off, Filter workspaces and agents in the command palette opens it.")}>
           <Toggle label={t("Sidebar filter")} checked={settings.sidebarFilter} onChange={(sidebarFilter) => update({ sidebarFilter })} />
         </SettingsRow>
@@ -509,7 +509,7 @@ function ChatPage() {
         <SettingsRow label={t("Show above the message box")} description={t("One-tap messages above the message box, on this device. Each is sent as if typed: queued while the agent works, an answer when a question is open.")}>
           <Toggle label={t("Show above the message box")} checked={settings.showQuickReplies} onChange={(showQuickReplies) => update({ showQuickReplies })} />
         </SettingsRow>
-        <div className="settings-item">
+        {settings.showQuickReplies && <div className="settings-item">
           <ol className="quick-replies-list">
             {settings.quickReplies.map((reply, index) => (
               <li key={index}>
@@ -533,13 +533,10 @@ function ChatPage() {
             <button type="button" className="btn" disabled={settings.quickReplies.length >= QUICK_REPLIES_MAX} onClick={() => update({ quickReplies: [...settings.quickReplies, ""] })}><Plus aria-hidden="true" />{t("Add reply")}</button>
             <button type="button" className="btn btn-ghost" onClick={() => update({ quickReplies: [...DEFAULT_SETTINGS.quickReplies] })}>{t("Restore defaults")}</button>
           </div>
-        </div>
+        </div>}
       </SettingsGroup>
 
       <SettingsGroup title={t("File viewer")} section="file-viewer">
-        <SettingsRow label={t("Wrap long lines")}>
-          <Toggle label={t("Wrap long lines")} checked={settings.wrapCode} onChange={(wrapCode) => update({ wrapCode })} />
-        </SettingsRow>
         <SettingsRow label={t("Open files")} description={t("On a wide window, text and code can open beside the pane. Media, PDFs and folders always open in a popup, and the viewer's header button moves the file open now.")} wide>
           <Segmented label={t("Open files")} value={settings.fileOpen} onChange={(fileOpen) => update({ fileOpen })} options={FILE_OPEN_TARGETS.map((fileOpen) => ({ value: fileOpen, label: fileOpen === "panel" ? t("Beside the pane") : t("In a popup") }))} />
         </SettingsRow>
@@ -550,7 +547,7 @@ function ChatPage() {
 
       <VoiceMain />
 
-      <SettingsFold kind="more" keys={["foldWork", "chatRequestDetails", "chatFontFamily", "autoSendQueued", "composerPasteSend", "editTextFiles", "markdownOutline", "filesPanel", "filesDocuments", "reuseExternalLinkTab", "voiceEngine", "voicePolishChat", "voicePolishTerminal"]}>
+      <SettingsFold kind="more" keys={["foldWork", "chatRequestDetails", "chatFontFamily", "autoSendQueued", "composerPasteSend", "wrapCode", "editTextFiles", "markdownOutline", "filesPanel", "filesDocuments", "reuseExternalLinkTab", ...(settings.voiceInput === "off" ? [] : ["voiceLanguage", "voiceEngine", "voicePolishChat", "voicePolishTerminal"] as const)]}>
         <SettingsGroup title={t("Chat")} section="chat-more">
           <SettingsRow label={t("Collapse work")} description={t("A turn's work starts folded to one line, also while the agent works, unless it needs you. One you open or fold stays that way for its message")}>
             <Toggle label={t("Collapse work")} checked={settings.foldWork} onChange={(foldWork) => update({ foldWork })} />
@@ -571,6 +568,9 @@ function ChatPage() {
           </SettingsRow>
         </SettingsGroup>
         <SettingsGroup title={t("File viewer")} section="file-viewer-more">
+          <SettingsRow label={t("Wrap long lines")}>
+            <Toggle label={t("Wrap long lines")} checked={settings.wrapCode} onChange={(wrapCode) => update({ wrapCode })} />
+          </SettingsRow>
           <SettingsRow label={t("Edit text files")} description={t("Adds Edit to the file viewer for a text file in the pane's folder. Saving asks first, and stops if the file changed since you opened it.")}>
             <Toggle label={t("Edit text files")} checked={settings.editTextFiles} onChange={(editTextFiles) => update({ editTextFiles })} />
           </SettingsRow>
@@ -668,15 +668,6 @@ function AlertsPage({ onEnableNotifications, machines }: { onEnableNotifications
     <>
     <SettingsGroup note={t("For this device. An alert waits a little first, and none comes when the pane changes meanwhile, as when you answer at the PC.")}>
       <PushTestControls onEnable={onEnableNotifications} />
-      <SettingsRow label={t("Needs input")} description={t("An agent asks you something")}>
-        <Toggle label={t("Needs input")} checked={settings.alertInput} onChange={(alertInput) => update({ alertInput })} />
-      </SettingsRow>
-      <SettingsRow label={t("Needs permission")} description={t("An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input.")}>
-        <Toggle label={t("Needs permission")} checked={filters.permission ?? settings.alertInput} onChange={(permission) => updateAlertFilters({ permission })} />
-      </SettingsRow>
-      <SettingsRow label={t("Finished")} description={t("Long turns: only work that took a minute or more")} wide>
-        <Segmented label={t("Finished")} value={settings.alertDone} onChange={(alertDone) => update({ alertDone })} options={[{ value: "off", label: t("Off") }, { value: "long", label: t("Long turns") }, { value: "always", label: t("Every turn") }]} />
-      </SettingsRow>
       <SettingsRow label={t("Sound")} description={t("While a tab of the app is open, it chimes for these alerts, also when a Focus or Do Not Disturb silences notifications.")}>
         <Toggle label={t("Sound")} checked={settings.alertSound} onChange={(alertSound) => {
           update({ alertSound });
@@ -690,11 +681,24 @@ function AlertsPage({ onEnableNotifications, machines }: { onEnableNotifications
     <AlertPcsGroup machines={machines} />
     {/* a destination's last failed post is said in its group, so the group stays in sight */}
     <AlertWebhookGroup />
-    <SettingsFold kind="more" keys={["alertInApp"]}>
-      <SettingsGroup section="alerts-more">
+    {/* which alerts come: nearly everyone keeps the defaults, so they wait in the fold */}
+    <SettingsFold kind="more" keys={["alertInput", "alertDone", "alertInApp"]}
+      elsewhere={alertFiltersChanged(filters, settings.alertInput)}>
+      <SettingsGroup title={t("Alert me when")} section="alert-kinds">
+        <SettingsRow label={t("Needs input")} description={t("An agent asks you something")}>
+          <Toggle label={t("Needs input")} checked={settings.alertInput} onChange={(alertInput) => update({ alertInput })} />
+        </SettingsRow>
+        <SettingsRow label={t("Needs permission")} description={t("An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input.")}>
+          <Toggle label={t("Needs permission")} checked={filters.permission ?? settings.alertInput} onChange={(permission) => updateAlertFilters({ permission })} />
+        </SettingsRow>
+        <SettingsRow label={t("Finished")} description={t("Long turns: only work that took a minute or more")} wide>
+          <Segmented label={t("Finished")} value={settings.alertDone} onChange={(alertDone) => update({ alertDone })} options={[{ value: "off", label: t("Off") }, { value: "long", label: t("Long turns") }, { value: "always", label: t("Every turn") }]} />
+        </SettingsRow>
         <SettingsRow label={t("Stopped on an error")} description={t("A turn that ended on an error, as OmO and GJC report it")}>
           <Toggle label={t("Stopped on an error")} checked={filters.error === true} onChange={(error) => updateAlertFilters({ error })} />
         </SettingsRow>
+      </SettingsGroup>
+      <SettingsGroup section="alerts-more">
         <SettingsRow label={t("In the app")} description={t("While the app is open, these drop in from the top of the screen at once. Tap one to open its pane.")}>
           <Toggle label={t("In the app")} checked={settings.alertInApp} onChange={(alertInApp) => update({ alertInApp })} />
         </SettingsRow>
@@ -749,7 +753,7 @@ function DictationLanguageSelect() {
   );
 }
 
-/** Settings → Chat → Voice input: whether the microphone button shows, and the language it listens for. */
+/** Settings → Chat → Voice input: whether the microphone button shows; the language it listens for is in Chat's folded part (VoiceMore). */
 function VoiceMain() {
   const { settings, update } = useSettings();
   const t = useT();
@@ -772,16 +776,11 @@ function VoiceMain() {
       <SettingsRow label={t("Microphone button")} description={<>{t("Auto: in the chat on a desktop, where dictation can work. On: on a phone and in the terminal input line too.")}{micProblem !== null && <span className="voice-error">{micProblem}</span>}</>} wide>
         <Segmented label={t("Microphone button")} value={settings.voiceInput} onChange={(voiceInput) => void chooseVoiceInput(voiceInput)} options={VOICE_BUTTONS.map((voiceInput) => ({ value: voiceInput, label: t(voiceInput === "auto" ? "Auto" : voiceInput === "on" ? "On" : "Off") }))} />
       </SettingsRow>
-      {settings.voiceInput !== "off" && (
-        <SettingsRow label={t("Dictation language")} description={t("Auto listens for the app's language, or for the browser's when the app is not translated into it")} htmlFor="settings-voice-language" wide>
-          <DictationLanguageSelect />
-        </SettingsRow>
-      )}
     </SettingsGroup>
   );
 }
 
-/** Chat's folded part for voice input: the speech recognition, tidying dictated text, and the OpenAI key. */
+/** Chat's folded part for voice input: the dictation language, the speech recognition, tidying dictated text, and the OpenAI key. */
 function VoiceMore() {
   const { settings, update } = useSettings();
   const t = useT();
@@ -807,6 +806,9 @@ function VoiceMore() {
     <>
       {settings.voiceInput !== "off" && <>
         <SettingsGroup section="voice-more">
+          <SettingsRow label={t("Dictation language")} description={t("Auto listens for the app's language, or for the browser's when the app is not translated into it")} htmlFor="settings-voice-language" wide>
+            <DictationLanguageSelect />
+          </SettingsRow>
           <SettingsRow label={t("Speech recognition")} description={<>{t(settings.voiceEngine === "auto" ? "Auto uses the API key when one is saved, else the browser" : settings.voiceEngine === "browser" ? "The browser recognizes the speech, even with a key saved" : "Only the API key below transcribes")}{settings.voiceEngine === "server" && voice && !voice.configured && <span className="voice-error">{t("Save an API key to use the mic")}</span>}</>} wide>
             <Segmented label={t("Speech recognition")} value={settings.voiceEngine} onChange={(voiceEngine) => update({ voiceEngine })} options={VOICE_ENGINES.map((voiceEngine) => ({ value: voiceEngine, label: t(voiceEngine === "auto" ? "Auto" : voiceEngine === "browser" ? "Browser" : "API key") }))} />
           </SettingsRow>
@@ -1149,9 +1151,6 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, pcs, pcsMore }: 
         </>}>
           <button type="button" className="btn btn-primary" onClick={() => setConnecting({ route: defaultRoute(plan, relay), startCode: false })}>{t("Connect")}</button>
         </SettingsRow>
-        <SettingsRow label={t("Keep screen on")} description={<>{t("While a terminal or chat pane is open.")}{wakeLockProblem !== null && <span className="settings-condition">{wakeLockProblem}</span>}</>}>
-          <Toggle label={t("Keep screen on")} checked={settings.keepScreenOn} onChange={(keepScreenOn) => update({ keepScreenOn })} />
-        </SettingsRow>
         <SettingsRow label={t("Install")} description={installPrompt.installed ? t("Installed") : installPrompt.canInstall ? undefined : installPrompt.help}>
           {!installPrompt.installed && installPrompt.canInstall && <button type="button" className="btn btn-primary" onClick={() => void installPrompt.install()}>{t("Install app")}</button>}
         </SettingsRow>
@@ -1168,7 +1167,12 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, pcs, pcsMore }: 
 
       {pcs}
 
-      <SettingsFold kind="more" keys={["pcLoad"]}>
+      <SettingsFold kind="more" keys={["keepScreenOn", "pcLoad"]}>
+        <SettingsGroup section="phone-more">
+          <SettingsRow label={t("Keep screen on")} description={<>{t("While a terminal or chat pane is open.")}{wakeLockProblem !== null && <span className="settings-condition">{wakeLockProblem}</span>}</>}>
+            <Toggle label={t("Keep screen on")} checked={settings.keepScreenOn} onChange={(keepScreenOn) => update({ keepScreenOn })} />
+          </SettingsRow>
+        </SettingsGroup>
         <AccessFacts facts={security} />
         {pcsMore}
       </SettingsFold>

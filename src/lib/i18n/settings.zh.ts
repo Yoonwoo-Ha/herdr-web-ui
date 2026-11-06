@@ -209,6 +209,7 @@ export const SETTINGS_ZH: Record<string, string> = {
   "An agent asks you something": "代理向你提问时",
   "An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input.": "代理在运行命令或修改文件前请求许可时。不说明在等待什么的代理按“需要输入”提醒。",
   "Stopped on an error": "因错误停止",
+  "Alert me when": "提醒哪些事",
   "A turn that ended on an error, as OmO and GJC report it": "OmO 和 GJC 报告的因错误结束的回合",
   "Alerts from": "接收提醒的电脑",
   "Alerts from {name}": "来自 {name} 的提醒",

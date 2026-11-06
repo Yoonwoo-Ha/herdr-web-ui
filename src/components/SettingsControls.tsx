@@ -40,16 +40,17 @@ export function matchesSettingsQuery(words: readonly string[], ...texts: ReactNo
 /**
  * The groups a page keeps out of its first view, folded under one line at its end: **More settings**
  * for what few people change, **Experimental** for what is still being shaped. The line counts the
- * `keys` this device has moved off their defaults, so a choice is never hidden without a trace. A
+ * `keys` this device has moved off their defaults, and `elsewhere` more choices kept outside the
+ * settings record (Alerts' filters), so a choice is never hidden without a trace. A
  * search shows what it finds inside as if unfolded; a link to a group inside opens it
  * (SettingsDialog.tsx). Native details, so the browser's find-in-page opens it too.
  */
-export function SettingsFold({ kind, keys, children }: { kind: "more" | "experimental"; keys: readonly (keyof Settings)[]; children: ReactNode }) {
+export function SettingsFold({ kind, keys, elsewhere = 0, children }: { kind: "more" | "experimental"; keys: readonly (keyof Settings)[]; elsewhere?: number; children: ReactNode }) {
   const t = useT();
   const words = useContext(SettingsQuery);
   const { settings } = useSettings();
   if (words.length > 0) return <>{children}</>;
-  const changed = keys.filter((key) => JSON.stringify(settings[key]) !== JSON.stringify(DEFAULT_SETTINGS[key])).length;
+  const changed = keys.filter((key) => JSON.stringify(settings[key]) !== JSON.stringify(DEFAULT_SETTINGS[key])).length + elsewhere;
   return (
     <details className="settings-fold" data-fold={kind}>
       <summary>
