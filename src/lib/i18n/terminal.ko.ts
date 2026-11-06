@@ -124,4 +124,6 @@ export const TERMINAL_KO: Record<string, string> = {
   "Fewer keys": "키 줄이기",
   "{key}, locked": "{key}, 고정됨",
   "Recover unsent text": "보내지 않은 글 복구",
+  "Codex selected this: Shift+drag copies or quotes it here": "Codex가 선택했습니다. 여기서 복사하거나 인용하려면 Shift+끌기",
+  "Codex selected this: Option+drag copies or quotes it here": "Codex가 선택했습니다. 여기서 복사하거나 인용하려면 Option+끌기",
 };

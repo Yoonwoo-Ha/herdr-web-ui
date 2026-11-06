@@ -56,7 +56,7 @@ type Typed = { input: string; keys: string[] | null; chord: boolean; stop: boole
 
 export interface TerminalMountDeps {
   activeRef: RefObject<boolean>;
-  /** the pane's agent as herdr reports it: OpenCode takes a plain drag itself */
+  /** the pane's agent as herdr reports it: OpenCode, and Codex where codexDrag is on, take a plain drag themselves (onMouseDown) */
   agentRef: RefObject<string | null>;
   barKeyRef: RefObject<{ key: string; chord: string | null; } | null>;
   baseFontRef: RefObject<number>;
@@ -115,6 +115,8 @@ export interface TerminalMountDeps {
   openWebRef: RefObject<(uri: string, shiftKey: boolean) => boolean>;
   reuseExternalLinkTabRef: RefObject<boolean>;
   osc52AllowedRef: RefObject<boolean>;
+  /** Settings' codexDrag: a plain drag in a Codex pane is Codex's (onMouseDown) */
+  codexDragRef: RefObject<boolean>;
   outputTargetRef: RefObject<string>;
   palette: Palette;
   paneRef: RefObject<string | null>;
@@ -186,7 +188,7 @@ export interface TerminalMountDeps {
 }
 
 export function useTerminalMount(deps: TerminalMountDeps): void {
-  const { typeAheadRef, activeRef, agentRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, watchedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, consumeModifiers, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, reuseExternalLinkTabRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setViewHeld, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, attachFilesRef, watchingRef, wheelStateRef } = deps;
+  const { typeAheadRef, activeRef, agentRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, watchedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, consumeModifiers, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, reuseExternalLinkTabRef, osc52AllowedRef, codexDragRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setViewHeld, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, attachFilesRef, watchingRef, wheelStateRef } = deps;
 
     // Where this terminal is: its pane, and whether it is active, presented, shown and not the chat view.
     // Counted on every commit that changes it: an explicit copy still waiting for herdr's text is
@@ -724,10 +726,10 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         if (edgeTimer !== null) window.clearInterval(edgeTimer);
         edgeTimer = null;
       };
-      /** the pane an OpenCode press went to as it is (xterm reports it): its release may copy too */
-      let openCodePress: string | null = null;
+      /** a press that went to the program as it is, in one that selects on its own (xterm reports it): its release may copy too */
+      let programPress: { pane: string | null; cell: Cell; codex: boolean; moved: boolean } | null = null;
       const onMouseDown = (event: MouseEvent): void => {
-        openCodePress = null;
+        programPress = null;
         // a click handed on to the program (forwardClick) is not a new drag
         if (event.button !== 0 || !event.isTrusted) return;
         if ((event as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities?.firesTouchEvents) return;
@@ -741,11 +743,16 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         // a press that clears a selection, or opens a link, is not the program's click
         const onLink = term.element?.querySelector(".xterm-screen")?.classList.contains("xterm-cursor-pointer") === true;
         // OpenCode reads the mouse and selects inside the panel a drag starts in, as in a native terminal
-        // (#2362): a plain press is its own, drags included, as a click is, and it clears a selection made
-        // here. herdr reports which agent runs, never a program's mouse mode, so this goes by the agent.
-        if (reporting && agentRef.current === "opencode" && !event.shiftKey && !event.altKey && !onLink && !term.options.disableStdin) {
+        // (#2362). Codex selects through the history of its alternate screen and scrolls it while a drag is
+        // held past an edge, where Ovis's selection stops at the screen (#2384), but it copies only with OSC 52,
+        // which herdr's attach drops: a device hands it the drag only by choice (Settings, codexDrag). A plain
+        // press is the program's, drags included, as a click is, and it clears a selection made here. herdr
+        // reports which agent runs, never a program's mouse mode, so this goes by the agent.
+        const agent = agentRef.current;
+        const selfSelecting = agent === "opencode" || (agent === "codex" && codexDragRef.current);
+        if (reporting && selfSelecting && !event.shiftKey && !event.altKey && !onLink && !term.options.disableStdin) {
           term.clearSelection();
-          openCodePress = paneRef.current;
+          programPress = { pane: paneRef.current, cell: cellAt(event).cell, codex: agent === "codex", moved: false };
           return;
         }
         const click: ClickKeys | null = reporting && !selecting && !onLink && !term.hasSelection()
@@ -776,6 +783,11 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       const onMouseMove = (event: MouseEvent): void => {
         const d = drag;
         if (!d) {
+          // a press the program has became a drag once it left its cell, even if it comes back
+          if (programPress && !programPress.moved && (event.buttons & 1) !== 0) {
+            const { cell, edge } = cellAt(event);
+            programPress.moved = edge !== 0 || cell.row !== programPress.cell.row || cell.col !== programPress.cell.col;
+          }
           // With herdr's copy_on_select off the selection is kept to be copied: a buttonless move over
           // the grid would reach the program as a hover report, and xterm clears its selection on any
           // input. herdr reports no moves to a pane holding a selection either. Copying on, the first
@@ -820,14 +832,22 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
       const onBlur = (): void => {
         stopEdge();
         drag = null;
+        programPress = null;
       };
       const onMouseUp = (event: MouseEvent): void => {
         const d = drag;
         if (event.button !== 0) return;
         if (!d) {
-          const pane = openCodePress;
-          openCodePress = null;
-          if (pane !== null && pane === paneRef.current && mayReserveCopy()) reserveCopy(pane);
+          const press = programPress;
+          programPress = null;
+          if (press?.pane == null || press.pane !== paneRef.current) return;
+          if (mayReserveCopy()) reserveCopy(press.pane);
+          // Codex's drag made Codex's own selection: on herdr its copy never reaches this device, and Ovis
+          // cannot quote what it cannot read, so the way that does both is said where the drag ended
+          if (press.codex && press.moved && socketRef.current?.hasTerminalHistory() !== true) {
+            const t = tRef.current; // the language of now, not of the attach
+            noteClipboard(isMac ? t("Codex selected this: Option+drag copies or quotes it here") : t("Codex selected this: Shift+drag copies or quotes it here"));
+          }
           return;
         }
         drag = null;

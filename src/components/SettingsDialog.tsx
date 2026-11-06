@@ -647,6 +647,13 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
         </SettingsRow>
       </SettingsGroup>
     </SettingsFold>
+    <SettingsFold kind="experimental" keys={["codexDrag"]}>
+      <SettingsGroup>
+        <SettingsRow label={t("Codex panes: let Codex select and scroll")} description={t("On this device, a drag in a Codex pane goes to Codex, which selects through its whole history and scrolls it while the drag is held past the top or bottom edge. Ctrl+C or Enter copies it, but on herdr that copy does not reach this device's clipboard: Shift+drag (Option+drag on a Mac) still selects, copies and quotes in Ovis, up to the screen's edge.")}>
+          <Toggle label={t("Codex panes: let Codex select and scroll")} checked={settings.codexDrag} onChange={(codexDrag) => update({ codexDrag })} />
+        </SettingsRow>
+      </SettingsGroup>
+    </SettingsFold>
     </>
   );
 }

@@ -124,4 +124,6 @@ export const TERMINAL_JA: Record<string, string> = {
   "Fewer keys": "キーを減らす",
   "{key}, locked": "{key}、ロック中",
   "Recover unsent text": "未送信のテキストを復元",
+  "Codex selected this: Shift+drag copies or quotes it here": "Codex が選択しました。ここでコピーや引用をするには Shift+ドラッグ",
+  "Codex selected this: Option+drag copies or quotes it here": "Codex が選択しました。ここでコピーや引用をするには Option+ドラッグ",
 };

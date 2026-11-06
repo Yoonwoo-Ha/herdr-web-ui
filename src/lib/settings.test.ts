@@ -448,6 +448,15 @@ it("keeps the split view to two halves until this device turns on rows and colum
   expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("splitGrid");
 });
 
+it("keeps a Codex pane's drag Ovis's until this device hands it to Codex, and keeps that choice its own", () => {
+  expect(DEFAULT_SETTINGS.codexDrag).toBe(false);
+  expect(sanitizeSettings({}).codexDrag).toBe(false);
+  expect(sanitizeSettings({ codexDrag: true }).codexDrag).toBe(true);
+  expect(sanitizeSettings({ codexDrag: "true" }).codexDrag).toBe(false);
+  expect(SETTING_SCOPE.codexDrag).toBe("device");
+  expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("codexDrag");
+});
+
 it("keeps the sidebar's hover peek off until this device turns it on, and keeps that choice its own", () => {
   expect(DEFAULT_SETTINGS.sidebarPeek).toBe(false);
   expect(sanitizeSettings({}).sidebarPeek).toBe(false);
