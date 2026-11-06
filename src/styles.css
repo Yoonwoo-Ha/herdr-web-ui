@@ -2300,11 +2300,13 @@ button {
   background: var(--strip-bg);
 }
 
+/* no tab is drawn narrower than its name and close need (lib/tabOverflow.ts TAB_MIN_WIDTH): the ones
+   that do not fit wait behind the More button after the + (TabStrip) */
 .header-tabs .tab-strip-item {
   position: relative;
   align-items: center;
   flex: 0 1 220px;
-  min-width: 44px;
+  min-width: 120px;
   height: 36px;
   margin-bottom: 0;
   border-radius: 10px 10px 0 0;
@@ -2315,7 +2317,6 @@ button {
 }
 
 .header-tabs .tab-strip-item.is-active {
-  min-width: 120px;
   background: var(--tab-open-bg);
   box-shadow: none;
 }
@@ -2410,6 +2411,39 @@ button {
   margin-left: var(--space-1);
   border-radius: var(--radius-pill);
   box-shadow: none;
+}
+
+/* as wide as lib/tabOverflow.ts TAB_MORE_WIDTH reserves, with its gap */
+.header-tabs .tab-strip-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  align-self: center;
+  flex: 0 0 auto;
+  width: 52px;
+  height: 28px;
+  margin-left: var(--space-1);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.header-tabs .tab-strip-more:hover,
+.header-tabs .tab-strip-more:focus-visible,
+.header-tabs .tab-strip-more[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text-strong);
+}
+
+.header-tabs .tab-strip-more svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* a touch screen wide enough for the header's row (a tablet): each tab is a finger tall, and its menu,
