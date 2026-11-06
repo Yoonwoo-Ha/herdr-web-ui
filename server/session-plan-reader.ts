@@ -29,9 +29,11 @@ import { claudeCommandEchoRecord, opensTurn } from "./transcript-turns.ts";
  * filled, for the sidebar's ring: the lines that can say it are folded as the chat's metadata folds them.
  * A Claude rewind leaves the answers it went back over in the file, and the next prompt hangs from
  * the record it went back to (followClaudeBranch, which the chat follows). A prompt that hangs from
- * a record before the last answer forks the session: from then on, no figure is told until the next
- * request, and requests are folded afresh from the fork. Only the records since the last answer are
- * kept to tell it.
+ * a record before the last answer forks the session. The chat then leaves out every record written
+ * after the one the prompt hangs from up to the prompt, so the figure goes back to the one the branch
+ * had at that record (none when its place is not known), and later requests are folded onto it. Only
+ * the records since the last answer are kept to tell a fork, and the places of the last MAX_PLACES
+ * records and the last MAX_FIGURES figures to go back to.
  */
 export const PLAN_BUDGET = 32 * 1024 * 1024;
 const LINE_BUDGET = 8 * 1024 * 1024;
@@ -67,6 +69,15 @@ interface Read {
 const CHAIN_LINE = 1024 * 1024;
 /** the most records since an answer (or hanging from a held echo) that are kept: past it, as after a record too long to read, no fork is told until the next answer (a held echo forks) */
 const MAX_SINCE = 10_000;
+/** the most records whose place is kept, for a fork that hangs from one of them: a fork from farther back starts with no figure */
+const MAX_PLACES = 2_000;
+/** the most figures kept to go back to: a fork from before the oldest starts with none */
+const MAX_FIGURES = 2_000;
+/** a uuid longer than this (Claude Code writes 36 characters) gets no place */
+const MAX_UUID = 64;
+
+/** the figure on a branch from the record at `at` (its place in the file) on */
+interface Figure { at: number; context: ConversationMetadata["context"] }
 
 interface ClaudeChain {
   /** the uuids of the main chain's records since its last answer (null: the start), or null when one of them could not be read */
@@ -81,7 +92,13 @@ interface ClaudeChain {
    * a prompt hangs from one of them, and while the chain's tip is one of them; a prompt hanging from
    * anywhere else drops it
    */
-  echo?: { line: Set<string>; forked: { context?: ConversationMetadata["context"] } };
+  echo?: { line: Set<string>; forked: { context?: ConversationMetadata["context"] }; figures: Figure[] };
+  /** how many records were followed: the place of the next one */
+  count: number;
+  /** the place of each of the last records followed, by uuid */
+  places: Map<string, number>;
+  /** each figure the branch had, in order: a fork leaves out the ones from after the record it hangs from, as the chat leaves out their requests */
+  figures: Figure[];
 }
 const reads = new Map<string, Read>();
 
@@ -100,7 +117,7 @@ export function planState(source: PlanSource, path: string, budget: { left: numb
   let state = reads.get(key);
   if (!state || state.id !== stat.id || state.offset > stat.size) {
     state = { id: stat.id, offset: 0, skipping: false, catching: true, behind: true, steps: new Map(), calls: new Map(), metadata: { model: null, reasoning_effort: null } };
-    if (source === "claude-transcript") state.claude = { since: new Set([null]), forked: null, last: null };
+    if (source === "claude-transcript") state.claude = { since: new Set([null]), forked: null, last: null, count: 0, places: new Map(), figures: [] };
   }
   remember(reads, key, state, MAX_FILES);
   const read = state;
@@ -110,7 +127,7 @@ export function planState(source: PlanSource, path: string, budget: { left: numb
   while (read.offset < stat.size && budget.left > 0) {
     const done = readLines(path, read.offset, stat.size, LINE_BUDGET, each, read.skipping);
     // a line given up may have been a prompt that forked the session
-    if (done.skipping && read.claude) read.claude = { since: null, forked: {}, last: null };
+    if (done.skipping && read.claude) read.claude = { since: null, forked: {}, last: null, count: 0, places: new Map(), figures: [] };
     // the file could not be read this time (gone, out of descriptors): not caught up, tried again at the next poll
     if (done.failed) { read.behind = true; break; }
     const consumed = done.offset - read.offset;
@@ -125,29 +142,37 @@ export function planState(source: PlanSource, path: string, budget: { left: numb
   return { steps: read.catching || read.steps.size === 0 ? null : [...read.steps.values()].map((step) => ({ ...step, blocked_by: [...step.blocked_by] })), behind: read.behind, metadata: read.catching ? null : onBranch(read) };
 }
 
-/** The metadata, its context the one of the requests since the fork when a Claude session forked. */
+/** The metadata, its context the fork's when a Claude session forked: the branch's at the record it hangs from, with the requests made since folded onto it. */
 function onBranch(read: Read): ConversationMetadata {
-  const chain = read.claude;
-  const forked = chain?.echo && chain.last !== null && chain.echo.line.has(chain.last) ? chain.echo.forked : chain?.forked;
+  const forked = forkOf(read.claude);
   if (!forked) return read.metadata;
   const { context: _, ...metadata } = read.metadata;
   return forked.context === undefined ? metadata : { ...metadata, context: forked.context };
 }
 
+/** The fork the chain's tip is on: a held echo's while the tip hangs from it. */
+function forkOf(chain: ClaudeChain | undefined): ClaudeChain["forked"] {
+  return chain?.echo && chain.last !== null && chain.echo.line.has(chain.last) ? chain.echo.forked : chain?.forked ?? null;
+}
+
 /**
  * Follows a Claude record on the session's chain: a prompt that hangs from before the last answer
- * forks it, and a command's echo that does is held until the conversation goes on from it.
+ * forks it, and a command's echo that does is held until the conversation goes on from it. Either
+ * starts with the figure the branch had at the record it hangs from. The record's place, when it is
+ * on the chain.
  */
-function followChain(chain: ClaudeChain, line: string): void {
-  if (!line.includes('"uuid"')) return;
+function followChain(chain: ClaudeChain, line: string): number | null {
+  if (!line.includes('"uuid"')) return null;
   const text = line.length > CHAIN_LINE ? withoutPictureBytes(line) : line;
   let entry: Row | null = null;
   if (text.length <= CHAIN_LINE) try { entry = row(JSON.parse(text)); } catch { /* not a record: its uuid is not known */ }
-  if (entry === null) { chain.since = null; chain.last = null; return; }
+  if (entry === null) { chain.since = null; chain.last = null; return null; }
   const uuid = entry["uuid"];
-  if (typeof uuid !== "string" || entry["isSidechain"] === true) return;
+  if (typeof uuid !== "string" || entry["isSidechain"] === true) return null;
   chain.last = uuid;
-  if (isContextClear(entry, "claude-transcript")) { chain.since = new Set([null, uuid]); chain.forked = null; chain.echo = undefined; return; }
+  const place = chain.count++;
+  if (isContextClear(entry, "claude-transcript")) { chain.since = new Set([null, uuid]); chain.forked = null; chain.echo = undefined; chain.places.clear(); chain.figures = []; return place; }
+  if (uuid.length <= MAX_UUID) remember(chain.places, uuid, place, MAX_PLACES);
   // a compaction's boundary starts a chain of its own, and names the record it continues
   const parent = entry["parentUuid"] === null ? typeof entry["logicalParentUuid"] === "string" ? entry["logicalParentUuid"] : null
     : typeof entry["parentUuid"] === "string" ? entry["parentUuid"] : undefined;
@@ -157,14 +182,28 @@ function followChain(chain: ClaudeChain, line: string): void {
   const prompt = !answer && (echo !== undefined || offChain) && opensTurn("claude-transcript", text, null) !== false;
   if (echo && typeof parent === "string" && echo.line.has(parent)) {
     // past the bound the echo is taken as the fork it may become, as a line too long to read is
-    if (prompt || echo.line.add(uuid).size > MAX_SINCE) { chain.forked = echo.forked; chain.echo = undefined; }
+    if (prompt || echo.line.add(uuid).size > MAX_SINCE) { chain.forked = echo.forked; chain.figures = echo.figures; chain.echo = undefined; }
   } else if (prompt) chain.echo = undefined;
-  if (offChain && prompt) chain.forked = {};
-  else if (offChain && claudeCommandEchoRecord(entry)) chain.echo = { line: new Set([uuid]), forked: {} };
-  if (answer) { chain.since = new Set([uuid]); return; }
-  if (chain.since === null) return;
-  chain.since.add(uuid);
-  if (chain.since.size > MAX_SINCE) chain.since = null;
+  if (offChain && (prompt || claudeCommandEchoRecord(entry))) {
+    // a parent of null (before the first message), or one whose place is not kept: no figure yet
+    const at = typeof parent === "string" ? chain.places.get(parent) : undefined;
+    const figures = at === undefined ? [] : chain.figures.filter((figure) => figure.at <= at);
+    const forked = { context: figures.at(-1)?.context };
+    if (prompt) { chain.forked = forked; chain.figures = figures; } else chain.echo = { line: new Set([uuid]), forked, figures };
+  }
+  if (answer) chain.since = new Set([uuid]);
+  else if (chain.since !== null) {
+    chain.since.add(uuid);
+    if (chain.since.size > MAX_SINCE) chain.since = null;
+  }
+  return place;
+}
+
+/** Keeps `context` as the branch's figure from the record at `at` on, when it changed. */
+function note(figures: Figure[], at: number, context: ConversationMetadata["context"]): void {
+  if (figures.at(-1)?.context === context) return;
+  figures.push({ at, context });
+  if (figures.length > MAX_FIGURES) figures.shift();
 }
 
 /** The lines that can say what a request filled, or reset or change the model: only these are parsed for the context. */
@@ -176,14 +215,19 @@ const CONTEXT_MARKS: Record<PlanSource, readonly string[]> = {
 };
 
 function contextLine(read: Read, source: PlanSource, line: string): void {
-  if (read.claude) followChain(read.claude, line);
-  if (source === "omo-session" || !CONTEXT_MARKS[source].some((mark) => line.includes(mark))) return;
-  const before = read.metadata.context;
-  read.metadata = parseConversationMetadata(line, source, read.metadata);
-  // a new figure is a request: after a fork (or a held echo) it is folded from there on, not from the answers it left
-  const { context, model } = read.metadata;
-  if (context === undefined || context === before) return;
-  for (const forked of [read.claude?.forked, read.claude?.echo?.forked]) if (forked) forked.context = contextOf(context.used, model, null, forked.context);
+  const chain = read.claude;
+  const place = chain ? followChain(chain, line) : null;
+  if (source !== "omo-session" && CONTEXT_MARKS[source].some((mark) => line.includes(mark))) {
+    const before = read.metadata.context;
+    read.metadata = parseConversationMetadata(line, source, read.metadata);
+    // a new figure is a request: after a fork (or a held echo) it is folded onto the fork's, not onto the answers it left
+    const { context, model } = read.metadata;
+    if (context !== undefined && context !== before) for (const forked of [chain?.forked, chain?.echo?.forked]) if (forked) forked.context = contextOf(context.used, model, null, forked.context);
+  }
+  if (chain && place !== null) {
+    note(chain.figures, place, chain.forked ? chain.forked.context : read.metadata.context);
+    if (chain.echo) note(chain.echo.figures, place, chain.echo.forked.context);
+  }
 }
 
 /** Forgets every read (tests). */

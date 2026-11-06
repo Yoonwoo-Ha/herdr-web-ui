@@ -221,7 +221,7 @@ describe("SessionPlans", () => {
     expect(transcriptPage("claude-transcript", f.path).metadata.context).toBeUndefined();
   });
 
-  it("tells no figure after a Claude rewind until the next answer, then that answer's", async () => {
+  it("tells the figure a Claude rewind went back to until the next answer, then that answer's", async () => {
     // Given two answered prompts.
     const f = file();
     const user = (uuid: string, parentUuid: string | null, content: string) => f.add({ type: "user", uuid, parentUuid, isSidechain: false, message: { role: "user", content } });
@@ -239,10 +239,11 @@ describe("SessionPlans", () => {
     user("u3", "s2", "three");
     plans.poll();
     expect(plans.contextOf("p1")).toEqual({ used: 50_000, window: 200_000 });
-    // When a prompt is sent again from the first answer, the second answer's figure goes.
+    // When a prompt is sent again from the first answer, the second answer's figure goes for the first's, as in the chat.
     user("u4", "a1", "two again");
     plans.poll();
-    expect(plans.contextOf("p1")).toBeNull();
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toEqual({ used: 10_000, window: null });
+    expect(plans.contextOf("p1")).toEqual({ used: 10_000, window: 200_000 });
     // Then its own answer is the figure.
     answer("a4", "u4", 12_000);
     plans.poll();
@@ -308,6 +309,58 @@ describe("SessionPlans", () => {
     // Then the row keeps the window the chat keeps.
     expect(transcriptPage("claude-transcript", f.path).metadata.context).toEqual({ used: 12_000, window: 1_000_000 });
     expect(plans.contextOf("p1")).toEqual({ used: 12_000, window: 1_000_000 });
+  });
+
+  it("keeps the 1M window of an answer before the range a Claude fork left", async () => {
+    // Given a request past 200k, a later answer, then a /context echo from before that answer (#3114's transcript).
+    const f = file();
+    const answer = (uuid: string, parentUuid: string, input: number) => f.add({ type: "assistant", uuid, parentUuid, message: { role: "assistant", model: "claude-opus-5-5", content: [], usage: { input_tokens: input } } });
+    f.add({ type: "user", uuid: "u0", parentUuid: null, message: { role: "user", content: "u0" } });
+    answer("a0", "u0", 250_000);
+    f.add({ type: "user", uuid: "u1", parentUuid: "a0", message: { role: "user", content: "u1" } });
+    answer("a1", "u1", 30_000);
+    f.add({ type: "system", subtype: "local_command", uuid: "c", parentUuid: "u1", content: "<command-name>/context</command-name>" });
+    const plans = new SessionPlans({ claudePath: () => f.path, codexPath: async () => null, onChange: () => {} });
+    await plans.refresh([pane("p1", "claude")]);
+    plans.poll();
+    // While the tip hangs from the echo, the row tells what the branch had there, as the chat does.
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toEqual({ used: 250_000, window: 1_000_000 });
+    expect(plans.contextOf("p1")).toEqual({ used: 250_000, window: 1_000_000 });
+    // When the conversation goes on from the echo, its requests keep the window the answer before it set.
+    answer("a2", "c", 12_000);
+    f.add({ type: "user", uuid: "u2", parentUuid: "a2", message: { role: "user", content: "u2" } });
+    plans.poll();
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toEqual({ used: 12_000, window: 1_000_000 });
+    expect(plans.contextOf("p1")).toEqual({ used: 12_000, window: 1_000_000 });
+    // And so after a prompt sent again from that answer.
+    f.add({ type: "user", uuid: "u3", parentUuid: "a0", message: { role: "user", content: "u3" } });
+    answer("a3", "u3", 15_000);
+    plans.poll();
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toEqual({ used: 15_000, window: 1_000_000 });
+    expect(plans.contextOf("p1")).toEqual({ used: 15_000, window: 1_000_000 });
+  });
+
+  it("goes back to the chat's Claude figure on forks that leave each other's answers, or hang from a dropped echo", async () => {
+    const row = async (lines: object[]) => {
+      const f = file();
+      for (const line of lines) f.add(line);
+      const plans = new SessionPlans({ claudePath: () => f.path, codexPath: async () => null, onChange: () => {} });
+      await plans.refresh([pane("p1", "claude")]);
+      plans.poll();
+      return { row: plans.contextOf("p1"), chat: transcriptPage("claude-transcript", f.path).metadata.context ?? null };
+    };
+    const user = (uuid: string, parentUuid: string | null) => ({ type: "user", uuid, parentUuid, message: { role: "user", content: uuid } });
+    const answer = (uuid: string, parentUuid: string, input: number) => ({ type: "assistant", uuid, parentUuid, message: { role: "assistant", model: "claude-opus-5-5", content: [], usage: { input_tokens: input } } });
+    // Given a rewind to before a 250k answer, then another to after it: the chat leaves out both answers before the second.
+    const nested = [user("u0", null), answer("a0", "u0", 250_000), user("u1", "a0"), answer("a1", "u1", 30_000), user("u2", "u0"), answer("a2", "u2", 10_000), user("u3", "a1")];
+    expect(await row(nested)).toEqual({ row: null, chat: null });
+    expect(await row([...nested, answer("a3", "u3", 12_000)])).toEqual({ row: { used: 12_000, window: null }, chat: { used: 12_000, window: null } });
+    // Given a /context echo after a 250k answer's prompt, dropped by a prompt sent on from the answer, then a prompt from the echo's output.
+    const dropped = [user("u0", null), answer("a0", "u0", 10_000), user("u1", "a0"), answer("a1", "u1", 250_000),
+      { type: "system", subtype: "local_command", uuid: "e", parentUuid: "u1", content: "<command-name>/context</command-name>" },
+      { type: "system", subtype: "turn_duration", uuid: "o", parentUuid: "e" }, user("u2", "a1"), answer("a2", "u2", 12_000), user("u3", "o")];
+    expect(await row(dropped)).toEqual({ row: { used: 250_000, window: 1_000_000 }, chat: { used: 250_000, window: 1_000_000 } });
+    expect(await row([...dropped, answer("a3", "u3", 15_000)])).toEqual({ row: { used: 15_000, window: 1_000_000 }, chat: { used: 15_000, window: 1_000_000 } });
   });
 
   it("does not carry the 1M window of an answer a Claude rewind left", async () => {
