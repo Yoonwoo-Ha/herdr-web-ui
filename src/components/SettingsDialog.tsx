@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { AppWindow, ArrowLeft, AudioLines, Bell, Bot, Box, Brain, CheckCheck, ChevronLeft, ChevronRight, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink, FilePen, FlaskConical, Globe, Image as ImageIcon, Info, Keyboard, Languages, Layers, ListCollapse, Lock, MessageCircleQuestionMark, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, OctagonX, Palette, PanelRight, Plus, Puzzle, Search, Send, ShieldAlert, Smartphone, Sparkles, SquareTerminal, Star, Tags, TextCursorInput, Timer, Volume2, WandSparkles, WrapText, X, type LucideIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, AudioLines, Bell, Bot, Box, Brain, CheckCheck, ChevronLeft, ChevronRight, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink, FilePen, FlaskConical, Globe, Image as ImageIcon, Info, Keyboard, Languages, Layers, ListCollapse, Lock, MessageCircleQuestionMark, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, OctagonX, Palette, PanelRight, Plus, Puzzle, Search, Send, ShieldAlert, Smartphone, Sparkles, SquareTerminal, Star, Tags, TextCursorInput, Timer, Volume2, WandSparkles, WrapText, X, ALargeSmall, ArrowDownUp, CircleDot, Filter, Gauge, ListTree, PanelLeft, Rows3, Shapes, SunMoon, Tag, Type, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
@@ -350,6 +350,15 @@ function ThemeCard({ id, side, checked, onPick }: { id: ThemeId; side: Mode; che
   );
 }
 
+/** Sidebar rows, drawn: a workspace on one line, or its agent's line above it */
+function SidebarRowsPreview({ rows }: { rows: "one" | "two" }) {
+  return (
+    <span className={rows === "two" ? "sidebar-rows-preview is-two" : "sidebar-rows-preview"}>
+      {[0, 1].map((item) => <span key={item} className="sidebar-rows-preview-item"><i />{rows === "two" && <i />}</span>)}
+    </span>
+  );
+}
+
 /**
  * The themes of one side in one row of cards that scrolls sideways (a trackpad, Shift and the wheel, a
  * swipe, or the arrows at its ends), the chosen one brought into view: the row stays one card tall
@@ -408,7 +417,7 @@ function ThemePicker() {
   const scroll = (direction: 1 | -1): void => strip.current?.scrollBy({ left: direction * strip.current.clientWidth * 0.8, behavior: "smooth" });
   return (
     <>
-      <SettingsRow label={label} keywords={`${t("Dark theme")} ${t("Light theme")} ${t("Shown in dark mode")} ${t("Shown in light mode")}`} reset={[side === "dark" ? "darkTheme" : "lightTheme"]}>
+      <SettingsRow icon={Palette} label={label} keywords={`${t("Dark theme")} ${t("Light theme")} ${t("Shown in dark mode")} ${t("Shown in light mode")}`} reset={[side === "dark" ? "darkTheme" : "lightTheme"]}>
         <Segmented label={`${t("Dark theme")} · ${t("Light theme")}`} value={side} onChange={setPicked} options={[{ value: "dark", label: t("Dark"), name: t("Show dark themes") }, { value: "light", label: t("Light"), name: t("Show light themes") }]} />
       </SettingsRow>
       <div className="settings-item theme-strip">
@@ -445,7 +454,7 @@ function InterfaceFontRows() {
   };
   return (
     <>
-      <SettingsRow label={t("Interface font")} description={interfaceFontDescription} htmlFor="settings-ui-font" reset={["uiFontFamily"]}>
+      <SettingsRow icon={Type} label={t("Interface font")} description={interfaceFontDescription} htmlFor="settings-ui-font" reset={["uiFontFamily"]}>
         <SettingsSelect id="settings-ui-font" value={custom ? "custom" : preset} onChange={(event) => choose(event.target.value as UiFontPreset | "custom")}>
           <option value="default">{t("Default")}</option>
           <option value="system">{t("System")}</option>
@@ -454,7 +463,7 @@ function InterfaceFontRows() {
         </SettingsSelect>
       </SettingsRow>
       {custom && (
-        <SettingsRow label={t("Custom interface font")} description={t("Comma-separated, tried in order, in front of the default. A font this device does not have falls back to the default.")} keywords={`${t("Interface font")} ${interfaceFontDescription}`} wide>
+        <SettingsRow icon={Type} label={t("Custom interface font")} description={t("Comma-separated, tried in order, in front of the default. A font this device does not have falls back to the default.")} keywords={`${t("Interface font")} ${interfaceFontDescription}`} wide>
           <FontFamilyInput value={settings.uiFontFamily} label={t("Custom interface font")} placeholder={UI_FONT_PLACEHOLDER} onCommit={(uiFontFamily) => update({ uiFontFamily })} />
         </SettingsRow>
       )}
@@ -469,24 +478,24 @@ function AppearancePage() {
   return (
     <SettingsBare.Provider value={true}>
     <SettingsGroup>
-      <SettingsRow label={t("Theme")} wide reset={["theme"]}>
+      <SettingsRow icon={SunMoon} label={t("Theme")} wide reset={["theme"]}>
         <Segmented label={t("Theme")} value={settings.theme} onChange={(theme) => update({ theme })} options={[{ value: "dark", label: t("Dark") }, { value: "light", label: t("Light") }, { value: "system", label: t("System") }]} />
       </SettingsRow>
       <ThemePicker />
     </SettingsGroup>
 
     <SettingsGroup title={t("Typography")} section="typography">
-      <SettingsRow label={t("Interface font size")} description={t("Menus, lists, dialogs and the sidebar. The chat follows it until it has a size of its own; the terminal keeps its own.")} reset={["uiFontSize"]}>
+      <SettingsRow icon={ALargeSmall} label={t("Interface font size")} description={t("Menus, lists, dialogs and the sidebar. The chat follows it until it has a size of its own; the terminal keeps its own.")} reset={["uiFontSize"]}>
         <Stepper label={t("Interface font size")} value={uiFontSize(settings)} text={`${uiFontSize(settings)}px`} min={UI_FONT_MIN} max={UI_FONT_MAX} decreaseLabel={t("Decrease interface font size")} increaseLabel={t("Increase interface font size")} onChange={(size) => update({ uiFontSize: size })} />
       </SettingsRow>
       <InterfaceFontRows />
-      <SettingsRow label={t("Terminal font")} description={t("Comma-separated, tried in order. A font this device does not have falls back to the default.")} keywords={`${t("Terminal font size")} ${t("Applied to every terminal pane")}`} wide reset={["terminalFontFamily", "terminalFontSize"]}>
+      <SettingsRow icon={SquareTerminal} label={t("Terminal font")} description={t("Comma-separated, tried in order. A font this device does not have falls back to the default.")} keywords={`${t("Terminal font size")} ${t("Applied to every terminal pane")}`} wide reset={["terminalFontFamily", "terminalFontSize"]}>
         <span className="settings-font-size">
           <FontFamilyInput value={settings.terminalFontFamily} label={t("Terminal font")} fixedWidthFor="terminal" onCommit={(terminalFontFamily) => update({ terminalFontFamily })} />
           <Stepper label={t("Terminal font size")} value={settings.terminalFontSize} text={`${settings.terminalFontSize}px`} min={TERMINAL_FONT_MIN} max={TERMINAL_FONT_MAX} decreaseLabel={t("Decrease terminal font size")} increaseLabel={t("Increase terminal font size")} onChange={(terminalFontSize) => update({ terminalFontSize })} />
         </span>
       </SettingsRow>
-      <SettingsRow label={t("Chat font")} description={t("Message text; code stays monospace. Comma-separated, tried in order. A font this device does not have falls back to the default.")} keywords={`${t("Chat font size")} ${t("Messages, code, prompt cards and the message box in the chat view")}`} wide reset={["chatFontFamily", "chatFontSize"]}>
+      <SettingsRow icon={MessageSquare} label={t("Chat font")} description={t("Message text; code stays monospace. Comma-separated, tried in order. A font this device does not have falls back to the default.")} keywords={`${t("Chat font size")} ${t("Messages, code, prompt cards and the message box in the chat view")}`} wide reset={["chatFontFamily", "chatFontSize"]}>
         <span className="settings-font-size">
           <FontFamilyInput value={settings.chatFontFamily} label={t("Chat font")} onCommit={(chatFontFamily) => update({ chatFontFamily })} />
           <Stepper label={t("Chat font size")} value={chatFontSize(settings)} text={`${chatFontSize(settings)}px`} min={CHAT_FONT_MIN} max={CHAT_FONT_MAX} decreaseLabel={t("Decrease chat font size")} increaseLabel={t("Increase chat font size")} onChange={(size) => update({ chatFontSize: size })} />
@@ -495,10 +504,10 @@ function AppearancePage() {
     </SettingsGroup>
 
     <SettingsGroup>
-      <SettingsRow label={t("Density")} reset={["density"]}>
+      <SettingsRow icon={Rows3} label={t("Density")} wide reset={["density"]}>
         <Segmented label={t("Density")} value={settings.density} onChange={(density) => update({ density })} options={[{ value: "comfortable", label: t("Comfortable") }, { value: "compact", label: t("Compact") }]} />
       </SettingsRow>
-      <SettingsRow label={t("Language")} description={t("Follows the browser unless you choose one")} htmlFor="settings-language" reset={["language"]}>
+      <SettingsRow icon={Languages} label={t("Language")} description={t("Follows the browser unless you choose one")} htmlFor="settings-language" reset={["language"]}>
         <SettingsSelect id="settings-language" value={settings.language} onChange={(event) => update({ language: event.target.value as typeof settings.language })}>
           {LANGUAGE_SETTINGS.map((language) => <option key={language} value={language}>{language === "system" ? t("System") : LANGUAGE_NAMES[language]}</option>)}
         </SettingsSelect>
@@ -506,44 +515,44 @@ function AppearancePage() {
     </SettingsGroup>
 
     <SettingsGroup title={t("Sidebar")} section="sidebar">
-      <SettingsRow label={t("Sidebar rows")} description={t("Name each workspace on one line, or show what its agent is doing with the workspace under it")} wide reset={["sidebarRows"]}>
+      <SettingsRow icon={PanelLeft} preview={<SidebarRowsPreview rows={settings.sidebarRows} />} label={t("Sidebar rows")} description={t("Name each workspace on one line, or show what its agent is doing with the workspace under it")} wide reset={["sidebarRows"]}>
         <Segmented label={t("Sidebar rows")} value={settings.sidebarRows} onChange={(sidebarRows) => update({ sidebarRows })} options={[{ value: "one", label: t("One line") }, { value: "two", label: t("Two lines") }]} />
       </SettingsRow>
-      <SettingsRow label={t("Agents order")} description={t("Activity keeps a waiting agent on top, then the one that changed last. By state lists the agents above the workspaces on this device: the ones that need you first, then working, done and idle. herdr's own order is not changed.")} wide reset={["agentOrder", "agentGroups"]}>
+      <SettingsRow icon={ArrowDownUp} label={t("Agents order")} description={t("Activity keeps a waiting agent on top, then the one that changed last. By state lists the agents above the workspaces on this device: the ones that need you first, then working, done and idle. herdr's own order is not changed.")} wide reset={["agentOrder", "agentGroups"]}>
         {/* By state is this device's grouping (agentGroups); Workspaces and Activity are every browser's order (agentOrder), the grouping off */}
         <Segmented label={t("Agents order")} value={settings.agentGroups ? "state" : settings.agentOrder} onChange={(order) => update(order === "state" ? { agentGroups: true } : { agentOrder: order, agentGroups: false })} options={[{ value: "workspace", label: t("Workspaces") }, { value: "activity", label: t("Activity") }, { value: "state", label: t("By state") }] as const} />
       </SettingsRow>
-      {settings.agentGroups && <SettingsRow label={t("Within a state")} wide>
+      {settings.agentGroups && <SettingsRow icon={ArrowDownUp} label={t("Within a state")} wide>
         <Segmented label={t("Within a state")} value={settings.agentGroupSort} onChange={(agentGroupSort) => update({ agentGroupSort })} options={[{ value: "wait", label: t("Longest wait") }, { value: "recent", label: t("Recent") }, { value: "name", label: t("Name") }]} />
       </SettingsRow>}
     </SettingsGroup>
 
     <SettingsFold kind="more" keys={["autoTabNames", "sidebarFilter", "sidebarPeek", "sidebarBackgroundWorkspaces", "sidebarContext", "sidebarAgentTree", "foldHelpers", "agentMarks", "statusIndicators", "fileFontSize"]}>
       <SettingsGroup title={t("Sidebar")} section="sidebar-more">
-        <SettingsRow label={t("Name tabs from the first message")} description={t("A tab still named by its number shows a few words of the first message sent to it, in every browser. A name you gave a tab is kept, and herdr's own tab names do not change. Only those words are kept, on this server, until the tab closes; turning this off deletes them.")}
+        <SettingsRow icon={Tag} label={t("Name tabs from the first message")} description={t("A tab still named by its number shows a few words of the first message sent to it, in every browser. A name you gave a tab is kept, and herdr's own tab names do not change. Only those words are kept, on this server, until the tab closes; turning this off deletes them.")}
           condition={<span className="settings-condition">{t("Only those words are kept, on this server, until the tab closes; turning this off deletes them.")}</span>} reset={["autoTabNames"]}>
           <Toggle label={t("Name tabs from the first message")} checked={settings.autoTabNames} onChange={(autoTabNames) => update({ autoTabNames })} />
         </SettingsRow>
-        <SettingsRow label={t("Sidebar filter")} description={t("Show the Filter field above the sidebar's lists on this device. When off, Filter workspaces and agents in the command palette opens it.")}>
+        <SettingsRow icon={Filter} label={t("Sidebar filter")} description={t("Show the Filter field above the sidebar's lists on this device. When off, Filter workspaces and agents in the command palette opens it.")}>
           <Toggle label={t("Sidebar filter")} checked={settings.sidebarFilter} onChange={(sidebarFilter) => update({ sidebarFilter })} />
         </SettingsRow>
-        <SettingsRow label={t("Show the sidebar on hover")} description={t("On this device, while the sidebar is hidden, resting the mouse on its button shows it over the pane until the mouse leaves. Click the button to keep it open.")}>
+        <SettingsRow icon={MousePointer2} label={t("Show the sidebar on hover")} description={t("On this device, while the sidebar is hidden, resting the mouse on its button shows it over the pane until the mouse leaves. Click the button to keep it open.")}>
           <Toggle label={t("Show the sidebar on hover")} checked={settings.sidebarPeek} onChange={(sidebarPeek) => update({ sidebarPeek })} />
         </SettingsRow>
-        <SettingsRow label={t("Background workspaces apart")} description={t("On this device, workspaces a tool tagged role=background (herdr workspace report-metadata --token role=background) stand after the others under a folded Background workspaces heading. The open one, and one whose agent asks a question, stay in sight.")}>
+        <SettingsRow icon={Layers} label={t("Background workspaces apart")} description={t("On this device, workspaces a tool tagged role=background (herdr workspace report-metadata --token role=background) stand after the others under a folded Background workspaces heading. The open one, and one whose agent asks a question, stay in sight.")}>
           <Toggle label={t("Background workspaces apart")} checked={settings.sidebarBackgroundWorkspaces} onChange={(sidebarBackgroundWorkspaces) => update({ sidebarBackgroundWorkspaces })} />
         </SettingsRow>
-        <SettingsRow label={t("Context left on agent rows")} description={t("On this device, show the context ring from the chat's composer on each agent row, for the agents whose context window is known (Claude Code and Codex). It turns red at 20% left or less.")}>
+        <SettingsRow icon={Gauge} label={t("Context left on agent rows")} description={t("On this device, show the context ring from the chat's composer on each agent row, for the agents whose context window is known (Claude Code and Codex). It turns red at 20% left or less.")}>
           <Toggle label={t("Context left on agent rows")} checked={settings.sidebarContext} onChange={(sidebarContext) => update({ sidebarContext })} />
         </SettingsRow>
-        <SettingsRow label={t("Agents under workspaces")} description={t("On this device, list each workspace's agents under it in the PCs list, so every PC shows its workspaces and the agents running in them. The Agents list stays as it is.")}>
+        <SettingsRow icon={ListTree} label={t("Agents under workspaces")} description={t("On this device, list each workspace's agents under it in the PCs list, so every PC shows its workspaces and the agents running in them. The Agents list stays as it is.")}>
           <Toggle label={t("Agents under workspaces")} checked={settings.sidebarAgentTree} onChange={(sidebarAgentTree) => update({ sidebarAgentTree })} />
         </SettingsRow>
         <FoldHelpersRow />
-        <SettingsRow label={t("Agent logos")} description={t("Draw each agent's logo in its brand colors, or without color")} wide>
+        <SettingsRow icon={Shapes} label={t("Agent logos")} description={t("Draw each agent's logo in its brand colors, or without color")} wide>
           <Segmented label={t("Agent logos")} value={settings.agentMarks} onChange={(agentMarks) => update({ agentMarks })} options={[{ value: "color", label: t("Color") }, { value: "mono", label: t("Mono") }]} />
         </SettingsRow>
-        <SettingsRow label={t("Status indicators")} description={t("Classic marks only the states that ask for a look; Dots and Symbols draw every state as herdr's TUI does")} wide>
+        <SettingsRow icon={CircleDot} label={t("Status indicators")} description={t("Classic marks only the states that ask for a look; Dots and Symbols draw every state as herdr's TUI does")} wide>
           <Segmented label={t("Status indicators")} value={settings.statusIndicators} onChange={(statusIndicators) => update({ statusIndicators })} options={[{ value: "classic", label: t("Classic") }, { value: "dots", label: t("Dots") }, { value: "symbols", label: t("Symbols") }]} />
         </SettingsRow>
       </SettingsGroup>

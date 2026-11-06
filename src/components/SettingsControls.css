@@ -404,6 +404,36 @@
   color: var(--accent);
 }
 
+/* Sidebar rows, drawn: two workspace rows, each one line or two */
+.sidebar-rows-preview {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 34px;
+  padding: 3px;
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.sidebar-rows-preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-rows-preview-item i {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--text-dim);
+}
+
+.sidebar-rows-preview.is-two .sidebar-rows-preview-item i + i {
+  width: 65%;
+  opacity: 0.55;
+}
+
 /* a font list and its size on one line, wrapping the size under the list when the row has no room */
 .settings-row > .settings-font-size {
   flex: 0 1 auto;
