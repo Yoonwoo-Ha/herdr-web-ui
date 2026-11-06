@@ -673,6 +673,11 @@ export interface ConversationMetadata {
    * response reports its usage. `window` is null when the transcript does not say it.
    */
   context?: PaneContext;
+  /**
+   * The provider the conversation runs at, as omp, omo, gjc and pi name it (`anthropic`,
+   * `openai-codex`): set by a model change and by each answer, absent when none is named.
+   */
+  provider?: string;
 }
 
 export type { OmoTask, OmoRunNode, OmoRun, OmoActivity, PaneBackgroundAgentDetail } from "./tasks.ts";

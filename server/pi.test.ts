@@ -154,7 +154,7 @@ describe("pi transcripts render as chat", () => {
     expect(page.source).toBe("pi-transcript");
     // the window pi itself states for the answer, and its totalTokens: the figure pi's own
     // footer divides by a window, so the two views of one session cannot disagree
-    expect(page.metadata).toEqual({ model: "qwen-test", reasoning_effort: "medium", context: { used: 480, window: null } });
+    expect(page.metadata).toEqual({ model: "qwen-test", reasoning_effort: "medium", context: { used: 480, window: null }, provider: "test" });
     expect(page.turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
 
     const [prompt, answer] = page.turns as [ConversationTurn, ConversationTurn];
