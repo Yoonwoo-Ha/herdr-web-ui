@@ -1001,21 +1001,24 @@ it("a repository's checkouts are refused to a watching device on this PC, its al
   store.match(drive.token);
   const server = createServer({ port: 0, stateDir: root, token: "test-worktree-list", tailscaleOwner: null });
   const base = `http://127.0.0.1:${server.port}`;
-  // every checkout of the workspace's repository: paths and branches, those not open in herdr too
-  const route = "worktree/list?workspace_id=ovis-test-absent";
+  // every checkout of the workspace's repository: paths and branches, those not open in herdr too;
+  // the inventory answers the same for several workspaces at once (#2661)
   try {
-    for (const prefix of ["api", "api/machines/local", "api/machines/pc1"]) {
+    for (const route of ["worktree/list?workspace_id=ovis-test-absent", "worktree/inventory?workspace_id=ovis-test-absent"]) for (const prefix of ["api", "api/machines/local", "api/machines/pc1"]) {
       const path = `${prefix}/${route}`;
       const response = await fetch(`${base}/${path}`, { headers: { cookie: `ovis_device=${watch.token}` } });
       expect([path, response.status, ((await response.json()) as { error: { code: string } }).error.code]).toEqual([path, 403, "read_only"]);
     }
     // a driving device reaches the route: this PC asks herdr, its alias too, and no such PC is connected
     const driving = { cookie: `ovis_device=${drive.token}` };
+    const route = "worktree/list?workspace_id=ovis-test-absent";
     for (const prefix of ["api", "api/machines/local"]) {
       const response = await fetch(`${base}/${prefix}/${route}`, { headers: driving });
       expect([prefix, response.status, ((await response.json()) as { error: { code: string } }).error.code]).toEqual([prefix, 404, "workspace_not_found"]);
+      const inventory = await fetch(`${base}/${prefix}/worktree/inventory?workspace_id=ovis-test-absent`, { headers: driving });
+      expect([prefix, inventory.status, ((await inventory.json()) as { entries: { error?: { code: string } }[] }).entries.map((entry) => entry.error?.code)]).toEqual([prefix, 200, ["workspace_not_found"]]);
     }
-    expect((await fetch(`${base}/api/machines/pc1/${route}`, { headers: driving })).status).toBe(503);
+    for (const path of [route, "worktree/inventory?workspace_id=ovis-test-absent"]) expect((await fetch(`${base}/api/machines/pc1/${path}`, { headers: driving })).status).toBe(503);
   } finally {
     server.stop(); rmSync(root, { recursive: true, force: true });
   }

@@ -1565,14 +1565,14 @@ try {
   await until(async () => await initialRow.locator(".workspace-name").textContent() === "Existing checkout", "a named worktree's row is titled by its workspace name");
   assert.equal(await initialRow.locator(".worktree-workspace-label").textContent(), "browser/initial", "the list API discovers an existing worktree's exact branch, said after the name");
   assert.equal(await repoRow.locator(".workspace-name").textContent(), "ovis-test-repo", "the parent keeps its workspace name");
-  // A list read from before creation must not erase the branch supplied by the create response.
+  // An inventory read from before creation must not erase the branch supplied by the create response (#2661: one read per PC).
   let releaseWorktreeList!: () => void;
   const heldWorktreeList = new Promise<void>((resolve) => { releaseWorktreeList = resolve; });
   releases.push(releaseWorktreeList);
   let worktreeListCaptured = false;
   let staleWorktreeListFinished = false;
   let freshWorktreeListFinished = false;
-  await page.route("**/api/worktree/list?*", async (route) => {
+  await page.route("**/api/worktree/inventory?*", async (route) => {
     const response = await route.fetch();
     if (!worktreeListCaptured) {
       worktreeListCaptured = true;
@@ -1641,7 +1641,7 @@ try {
   await until(() => staleWorktreeListFinished && freshWorktreeListFinished, "the stale inventory is followed by a fresh one");
   assert.equal(await childHeader.locator(".worktree-workspace-label").textContent(), "browser/sidebar", "a pre-create inventory cannot erase the new branch");
   assert.equal(await childHeader.locator(".workspace-name").textContent(), "Sidebar redesign", "nor the name it was given");
-  await page.unroute("**/api/worktree/list?*");
+  await page.unroute("**/api/worktree/inventory?*");
   await childHeader.locator(".workspace-select").click({ button: "right" });
   await page.getByRole("menuitem", { name: "Rename workspace", exact: true }).click();
   const worktreeRename = childHeader.getByRole("textbox", { name: "Workspace name", exact: true });

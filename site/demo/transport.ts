@@ -16,7 +16,7 @@
  */
 import { NO_AGENT_MESSAGE } from "../../shared/submit-outcome.ts";
 import { resolveHerdrKeys } from "../../shared/herdr-keys.ts";
-import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, DevicePairedEvent, DevicesRevokedAll, HealthAuth, IntegrationsResponse, Machine, MachineEvent, OmoActivity, OmoTask, PairedDevice, PairingCode, PaneBackgroundAgentDetail, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, RelayStatus, SecuritySummary, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, TabMovedToWorkspace, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, DevicePairedEvent, DevicesRevokedAll, HealthAuth, IntegrationsResponse, Machine, MachineEvent, OmoActivity, OmoTask, PairedDevice, PairingCode, PaneBackgroundAgentDetail, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, RelayStatus, SecuritySummary, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, TabMovedToWorkspace, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeInventory, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import type { PushSubscriptionStatus, RepoBranchComparison, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRefs, RepoDiffRepository, RepoDiffScope, SessionHistoryAgent, SessionHistoryResponse, SessionResumeResponse } from "../../shared/protocol.ts";
 import { nextTabLabels, normalizeThemeChange, sharedPreferencesBody, type SharedPreferences } from "../../shared/preferences.ts";
 import type { PullRequestCheckLog, PullRequestView } from "../../shared/pull-request.ts";
@@ -1503,6 +1503,20 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const created = await route(new URL("/api/tab/create", url), "POST", { method: "POST", body: JSON.stringify({ workspace_id: workspaceId, agent: { kind: "claude", args: ["--resume", sessionId] } }) }, input);
     if (!created.ok) return created;
     return json({ action: "created", ...(await created.json() as { workspace_id: string; pane_id: string; agent_started: boolean }) } satisfies SessionResumeResponse);
+  }
+
+  // the sidebar's one read for every repository (#2661): each workspace answered as the list route answers it
+  if (path === "/api/worktree/inventory") {
+    if (method !== "GET") return error("method_not_allowed", "use GET", 400);
+    const workspaceIds = [...new Set(query.getAll("workspace_id"))];
+    if (workspaceIds.length === 0 || workspaceIds.includes("")) return error("missing_workspace_id", "workspace_id is required", 400);
+    const entries = await Promise.all(workspaceIds.map(async (workspaceId) => {
+      const answer = await route(new URL(`/api/worktree/list?workspace_id=${encodeURIComponent(workspaceId)}`, url), "GET", undefined, input);
+      if (answer.ok) return { workspace_id: workspaceId, listing: await answer.json() as WorktreeListing };
+      const refused = await answer.json() as { error: { code: string; message: string } };
+      return { workspace_id: workspaceId, error: { status: answer.status, code: refused.error.code, message: refused.error.message } };
+    }));
+    return json({ entries } satisfies WorktreeInventory);
   }
 
   if (path === "/api/worktree/list" || path === "/api/worktree/create" || path === "/api/worktree/open" || path === "/api/worktree/remove") {

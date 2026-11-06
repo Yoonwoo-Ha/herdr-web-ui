@@ -89,6 +89,7 @@ import type {
   PluginActionResult,
   PluginActions,
   PluginActionsResponse,
+  WorktreeInventory,
   WorktreeListing,
   WorktreeOpened,
   WorktreeRemoved,
@@ -1273,6 +1274,14 @@ export async function createWorktree(request: CreateWorktreeRequest, machineId =
 /** GET /api/worktree/list: every checkout of the workspace's repository, with the workspace each is open in. */
 export function listWorktrees(workspaceId: string, machineId = "local"): Promise<WorktreeListing> {
   return getJson<WorktreeListing>(`${machinePath(machineId, "worktree/list")}?workspace_id=${encodeURIComponent(workspaceId)}`);
+}
+
+/**
+ * GET /api/worktree/inventory: what listWorktrees answers for each workspace, in one read (at most
+ * MAX_INVENTORY_WORKSPACES). A PC whose bridge is from before it answers 404 not_found (routeMissing).
+ */
+export function readWorktreeInventory(workspaceIds: readonly string[], machineId = "local"): Promise<WorktreeInventory> {
+  return getJson<WorktreeInventory>(`${machinePath(machineId, "worktree/inventory")}?${workspaceIds.map((id) => `workspace_id=${encodeURIComponent(id)}`).join("&")}`);
 }
 
 /** POST /api/worktree/open: an existing checkout as a workspace; the one it already has when it is open. */

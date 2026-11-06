@@ -8,6 +8,7 @@ import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { MAX_LABEL_CHARS } from "../shared/labels.ts";
+import { MAX_INVENTORY_WORKSPACES, type WorktreeInventoryEntry } from "../shared/workspace-lifecycle.ts";
 import { argumentText, firstMessageFault } from "../shared/launch-rules.ts";
 import type { DirectoryCreated, PendingMessage, ServerMessage, TabMoved, TabMovedToWorkspace, WorkspaceMoved } from "../shared/protocol.ts";
 import type { MoveReceipt } from "./order-sequence.ts";
@@ -59,6 +60,11 @@ export const MAX_ENV_VARS = 64;
 export const MAX_ENV_BYTES = 32 * 1024;
 /** an environment variable's name as a shell takes it in `NAME=value` */
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/**
+ * How long one inventory read keeps asking herdr: a workspace still unread then is answered as a timed-out
+ * read, so a stalled herdr (10 s per call) cannot hold the answer past the request's 60 s idle limit.
+ */
+export const INVENTORY_BUDGET_MS = 30_000;
 
 /**
  * What is wrong with a create request's `env`, in the API's words; null when herdr can set it (or there
@@ -273,6 +279,37 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     } catch (error) {
       return errorResponse(error);
     }
+  }
+
+  // The sidebar's branch labels: every repository and unmarked git workspace of this PC in one request
+  // instead of one each (#2661). herdr is still asked once per workspace, one after another: four at once
+  // left about one read in four waiting ~100 ms longer, where one at a time took ~22 ms for eight.
+  if (pathname === "/api/worktree/inventory") {
+    setRequestRoute(pathname);
+    if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+    const asked = url.searchParams.getAll("workspace_id");
+    if (asked.length === 0 || asked.includes("")) return badRequest("missing_workspace_id", "workspace_id is required");
+    const workspaceIds = [...new Set(asked)];
+    if (workspaceIds.length > MAX_INVENTORY_WORKSPACES) return badRequest("too_many_workspaces", `at most ${MAX_INVENTORY_WORKSPACES} workspaces per read`);
+    const entries: WorktreeInventoryEntry[] = [];
+    const deadline = Date.now() + INVENTORY_BUDGET_MS;
+    for (const workspaceId of workspaceIds) {
+      // a client that left, or a herdr too slow to finish in time: the rest is not asked (the client keeps their last branches)
+      if (request.signal.aborted || Date.now() >= deadline) {
+        entries.push({ workspace_id: workspaceId, error: { status: 502, code: "timeout", message: "not read: the inventory ran out of time" } });
+        continue;
+      }
+      try {
+        const listing = await worktreeList(workspaceId);
+        entries.push({ workspace_id: workspaceId, listing: { source: listing.source, worktrees: listing.worktrees } });
+      } catch (error) {
+        // the status and words GET /api/worktree/list would have answered for it alone
+        const refused = errorResponse(error);
+        const body = (await refused.json()) as { error: { code: string; message: string } };
+        entries.push({ workspace_id: workspaceId, error: { status: refused.status, code: body.error.code, message: body.error.message } });
+      }
+    }
+    return jsonResponse({ entries });
   }
 
   if (pathname === "/api/worktree/remove") {
