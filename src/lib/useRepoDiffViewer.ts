@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { WEB_PANEL_BELOW_KEY } from "./historyKeys.ts";
 import { diffTargetFromState, diffTargetState, type RepoDiffTarget } from "./repoDiff.ts";
 
 /**
@@ -24,7 +25,12 @@ export function useRepoDiffViewer() {
     const state = diffTargetState(window.history.state, target);
     // another file of the same list replaces the entry: Back still returns to the list in one step
     if (diffTargetFromState(window.history.state)) window.history.replaceState(state, "");
-    else window.history.pushState(state, "");
+    else {
+      // an entry of its own holds none of the web panel's entries under the one it copies (#3095): a
+      // file that takes it over must not go back past them
+      const { [WEB_PANEL_BELOW_KEY]: _below, ...pushed } = state;
+      window.history.pushState(pushed, "");
+    }
     setViewing(target);
   }, []);
 

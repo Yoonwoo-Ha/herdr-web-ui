@@ -161,6 +161,31 @@ describe("a phone's sheet in the history", () => {
     expect(fake.at()).toBe(start + 1); expect(fake.marks()[start + 1]).toBe(false);
   });
 
+  it("leaves a retired entry copied from a web page's as one more of the page's, so closing the page goes past it (#3058)", async () => {
+    const start = fake.at();
+    const under = h.state;
+    h.replaceState({ "ovis:web-panel": { url: "http://localhost:3000/a" }, "ovis:web-panel-below": 1 }, "");
+    hooks.enter(() => {});
+    h.back(); await settled();
+    h.forward(); await settled();
+    expect(fake.at()).toBe(start + 1);
+    expect(h.state).toMatchObject({ "ovis:web-panel": { url: "http://localhost:3000/a" }, "ovis:web-panel-below": 2 });
+    // an entry that copied no page's stays as it was
+    h.replaceState(null, "");
+    h.back(); await settled();
+    h.replaceState(under, "");
+    hooks.enter(() => {});
+    h.back(); await settled();
+    h.forward(); await settled();
+    expect(h.state).not.toHaveProperty("ovis:web-panel-below");
+    // a docked file that took a stacked page's entry over holds the count without the page's marks
+    h.replaceState({ "ovis:file-preview": { path: "/r/README.md", machineId: "local", paneId: "p" }, "ovis:web-panel-below": 2 }, "");
+    hooks.enter(() => {});
+    h.back(); await settled();
+    h.forward(); await settled();
+    expect(h.state).toMatchObject({ "ovis:web-panel-below": 3 });
+  });
+
   it("keeps a sheet that opens while the step off a closed sheet's entry is on its way", async () => {
     const start = fake.at();
     let closed = 0;

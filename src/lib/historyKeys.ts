@@ -10,8 +10,28 @@ export const SHEET_UNDER_KEY = "ovis:sheet-under";
 
 export const WEB_PANEL_KEY = "ovis:web-panel";
 export const WEB_PANEL_DOCKED_KEY = "ovis:web-panel-docked";
-/** how many of the web panel's own entries lie right under this one (a page opened over a page from a phone sheet) */
+/**
+ * how many of the web panel's own entries lie right under this one (a page opened over a page from a
+ * phone sheet); a docked file that takes over such a page's entry keeps it (lib/useFileViewer.ts)
+ */
 export const WEB_PANEL_BELOW_KEY = "ovis:web-panel-below";
+
+/** How many of the web panel's own entries lie right under the entry `state` is: closing what holds it goes back past them too. */
+export function webPagesBelow(state: Record<string, unknown>): number {
+  const below = state[WEB_PANEL_BELOW_KEY];
+  return typeof below === "number" && Number.isInteger(below) && below > 0 ? below : 0;
+}
+
+/**
+ * A phone sheet's entry copies the one it opened over, the web panel's marks included. Once it is an
+ * ordinary entry (a reload, Forward onto it after Back closed the sheet), a copy of the panel's entry
+ * is one more of the panel's entries over that one, which closing the panel goes back past too (#3058).
+ * So is a copy of a docked file's entry that holds the panel's count: closing the file goes past it.
+ */
+export function overCopiedWebPanel(state: Record<string, unknown>): Record<string, unknown> {
+  if (state[WEB_PANEL_KEY] === undefined && state[WEB_PANEL_DOCKED_KEY] !== true && webPagesBelow(state) === 0) return state;
+  return { ...state, [WEB_PANEL_BELOW_KEY]: webPagesBelow(state) + 1 };
+}
 
 /** A different panel's entry must not inherit the web panel's ownership marks. */
 export function withoutWebPanel(state: Record<string, unknown>): Record<string, unknown> {
