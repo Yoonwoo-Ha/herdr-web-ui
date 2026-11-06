@@ -15,6 +15,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -315,6 +316,20 @@ final class PCStore {
             else if (https || publicHttp(hop)) return hop;
         }
         return null;
+    }
+
+    /**
+     * The origin on the way from the address being opened (`from`) to a held-back redirect's `target`
+     * that the app refuses to go to on its own, or null. With `ovis`, the Ovis server ovisOrigin found
+     * over `path`, it is judged by that whole way (insecureHop). Without one the target is taken for a
+     * sign-in in front of the PC, which loads without the bridge: judged by the target's own origin,
+     * as the probe's later hops are not where the WebView goes; a target with no origin this class can
+     * read (an underscore in its host) is refused as it is.
+     */
+    static String refusedHop(String from, String target, String ovis, List<String> path) {
+        if (ovis != null) return insecureHop(from, path);
+        String next = origin(target);
+        return next == null ? target : insecureHop(from, Collections.singletonList(next));
     }
 
     private static final Pattern IPV4 = Pattern.compile("^(0|[1-9]\\d{0,2})\\.(0|[1-9]\\d{0,2})\\.(0|[1-9]\\d{0,2})\\.(0|[1-9]\\d{0,2})$");

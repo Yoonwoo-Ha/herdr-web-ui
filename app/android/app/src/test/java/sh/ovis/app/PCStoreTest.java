@@ -189,6 +189,21 @@ public class PCStoreTest {
     }
 
     @Test
+    public void aSignInInFrontOfThePcIsRefusedOnlyOverInsecureHttp() {
+        List<String> probed = Collections.singletonList("https://team.cloudflareaccess.com");
+        // a sign-in in front of the PC (no Ovis at the end): judged by where the redirect itself leads
+        assertNull(PCStore.refusedHop("https://ovis.example.com", "https://team.cloudflareaccess.com/cdn-cgi/access/login", null, probed));
+        assertNull(PCStore.refusedHop("http://100.64.0.1", "http://auth.tail1234.ts.net/sign_in", null, Collections.emptyList()));
+        assertEquals("http://team.example.com", PCStore.refusedHop("https://ovis.example.com", "http://team.example.com/login", null, Collections.emptyList()));
+        assertEquals("http://auth.example.com", PCStore.refusedHop("http://100.64.0.1", "http://auth.example.com/sign_in", null, Collections.emptyList()));
+        // an address with no origin Java can read (an underscore in the host) is refused, not a crash
+        assertEquals("https://auth_server.corp.example/login", PCStore.refusedHop("https://ovis.example.com", "https://auth_server.corp.example/login", null, Collections.emptyList()));
+        // an Ovis server: judged by the whole way the probe went
+        assertNull(PCStore.refusedHop("http://100.64.0.1", "https://pc.example.com/", "https://pc.example.com", Collections.singletonList("https://pc.example.com")));
+        assertEquals("http://pc.example.com", PCStore.refusedHop("https://a.example.com", "https://b.example.com/", "http://pc.example.com", java.util.Arrays.asList("https://b.example.com", "http://pc.example.com")));
+    }
+
+    @Test
     public void publicHttpIsWhatTheConnectScreenWarnsAbout() {
         // a number in any form but a plain dotted quad is some IPv4 address to the web view, never judged private
         for (String warned : new String[] {"http://8.8.8.8", "http://172.15.0.1", "http://100.128.0.1", "http://[2001:db8::1]", "http://pc.example.com", "http://134744072:7421", "http://010.0.0.1", "http://0x8.8.8.8", "http://10.0.0.256", "http://134217729", "http://0x08000001"}) {
