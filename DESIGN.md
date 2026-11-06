@@ -4599,3 +4599,7 @@ app whichever PC is selected, and it goes through the same `panelUrl` checks: th
 and pages the panel refuses get no row. Nothing is proxied: the browser reaches the page under the
 app's hostname, as for a clicked link. This follows VS Code's Simple Browser, which a palette
 command opens on a typed address; no code is copied.
+
+## Touch prompt suggestions
+
+The empty composer follows Claude Code's [prompt suggestion model](https://code.claude.com/docs/en/interactive-mode): accept into an editable draft, then send separately. On a touch screen with Settings → Chat → Composer buttons → Suggestion on (off by default), the grey words also accept a tap; with it off, a tap there only focuses the box, so a user who taps the words to write their own reply never gets the suggestion inserted. Only the words receive taps; the surrounding input keeps native focus and scrolling. Tab and the optional suggestion chip share the same acceptance function. A focused inline suggestion also accepts Enter and Space. A suggestion that exceeds the message limit leaves the draft unchanged and shows the limit in the existing alert. No code or visual assets are copied.
