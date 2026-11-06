@@ -7,6 +7,8 @@ import type { HerdrIdentity, Machine, MachineEvent } from "../shared/machines.ts
 import type { SessionSnapshot } from "../shared/protocol.ts";
 import { createServer } from "./index.ts";
 import { RelayService } from "./relay/service.ts";
+import { openRelayPcTunnel, RelayPcKey } from "./relay-pc.ts";
+import { decodeOffer } from "../shared/relay-offer.ts";
 import { bounded, deferred } from "./relay/test-helpers.ts";
 
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -18,8 +20,14 @@ function stateDir(): string {
   return dir;
 }
 
-/** PC B with the relay on, PC A that adds it through the relay, and the local relay between them. */
-async function twoPcs() {
+/** The private address B names for its direct carrier in these tests; A's dials to it reach B's loopback listener. */
+const LAN = "10.99.0.1";
+
+/**
+ * PC B with the relay on, PC A that adds it through the relay, and the local relay between them. `direct`: B also
+ * listens on its network, and A reaches that address on the dials `reachable` lets through (else nothing answers).
+ */
+async function twoPcs(options: { direct?: { reachable: (dial: number) => boolean; held?: (dial: number) => Promise<void> | undefined } } = {}) {
   const relay = startBunRelay({ port: 0, limiters: {
     perAddress: { async limit() { return { success: true }; } },
     global: { async limit() { return { success: true }; } },
@@ -43,7 +51,8 @@ async function twoPcs() {
     return socket;
   };
   const bState = stateDir();
-  const service = new RelayService({ stateDir: bState, relay: `wss://127.0.0.1:${relay.port}`, connect: local, pairCodeRelay: `wss://127.0.0.1:${relay.port}` });
+  const service = new RelayService({ stateDir: bState, relay: `wss://127.0.0.1:${relay.port}`, connect: local, pairCodeRelay: `wss://127.0.0.1:${relay.port}`,
+    ...(options.direct ? { direct: { addresses: () => ["127.0.0.1"], advertise: (port: number) => [`ws://${LAN}:${port}`], peerAllowed: () => true, preferredPort: 0 } } : {}) });
   const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relay: service });
   cleanup.push(async () => { await service.shutdown(); b.stop(); });
   const bBase = `http://127.0.0.1:${b.port}`;
@@ -60,14 +69,31 @@ async function twoPcs() {
   expect(approvals.localOnlyOpen()).toBe(true);
   const { url: link } = await offered.json() as { url: string };
   const aState = stateDir();
+  const lan = { dials: 0 };
+  const onLan = (url: string): WebSocket => {
+    const target = new URL(url);
+    expect(target.hostname).toBe(LAN);
+    // port 1 on loopback refuses at once, as an address of another network does
+    const dial = ++lan.dials;
+    const port = options.direct?.reachable(dial) ? target.port : "1";
+    const socket = new WebSocket(`ws://127.0.0.1:${port}${target.pathname}${target.search}`);
+    const held = options.direct?.held?.(dial);
+    if (!held) return socket;
+    // what the PC answers on this dial reaches A only once `held` settles: a sign-in that takes its time
+    const answer = Object.getOwnPropertyDescriptor(WebSocket.prototype, "onmessage")!;
+    let handler: ((event: MessageEvent) => void) | null = null;
+    answer.set!.call(socket, (event: MessageEvent) => { void held.then(() => handler?.(event)); });
+    Object.defineProperty(socket, "onmessage", { get: () => handler, set: (next) => { handler = next; } });
+    return socket;
+  };
   const startA = () => {
-    const a = createServer({ port: 0, hostname: "127.0.0.1", stateDir: aState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relayPcSocket: local });
+    const a = createServer({ port: 0, hostname: "127.0.0.1", stateDir: aState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relayPcSocket: local, relayPcDirectSocket: onLan });
     let stopped = false;
     const stop = () => { if (!stopped) { stopped = true; a.stop(); } };
     cleanup.push(stop);
     return { app: a, base: `http://127.0.0.1:${a.port}`, stop };
   };
-  return { b, bBase, link, aState, startA, delay };
+  return { b, bBase, link, aState, startA, delay, lan, local, onLan };
 }
 
 const findRelayPc = (base: string, code: string) => postRelay(base, { code }, "/code");
@@ -86,8 +112,9 @@ function postRelay(base: string, body: Record<string, string>, path = ""): Promi
 }
 
 /** The first roster on A's machine events stream (the browser's own feed) in which `wanted` holds for a PC. */
-async function machineWhen(base: string, wanted: (machine: Machine) => boolean): Promise<Machine> {
+async function machineWhen(base: string, wanted: (machine: Machine) => boolean, stop?: AbortSignal): Promise<Machine> {
   const abort = new AbortController();
+  stop?.addEventListener("abort", () => abort.abort(), { once: true });
   const response = await fetch(`${base}/api/machines/events`, { headers: { origin: base }, signal: abort.signal });
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
@@ -248,4 +275,154 @@ it("waits for a PC that answers slower than an idle connection's default limit",
   delay.ms = 12_000;
   const slow = await fetch(`${a.base}/api/machines/${machine.id}/session`, { headers: { origin: a.base } });
   expect(slow.status).toBe(200);
+}, 60_000);
+
+/** Opens a terminal socket for the PC through A and resolves with its first frame. */
+async function terminalAnswers(base: string, machineId: string): Promise<string> {
+  const opened = deferred<string>();
+  const RuntimeSocket = WebSocket as unknown as new (url: string, options: { headers: Record<string, string> }) => WebSocket;
+  const terminal = new RuntimeSocket(`${base.replace("http:", "ws:")}/ws?machine_id=${machineId}`, { headers: { origin: base } });
+  terminal.onmessage = (event) => opened.resolve(String(event.data));
+  terminal.onclose = (event) => opened.reject(new Error(`terminal socket closed ${event.code}`));
+  try { return await bounded(opened.promise); } finally { terminal.onclose = null; terminal.close(); }
+}
+
+it("moves a relay PC's connection to its same-network address without dropping it, and starts there after a restart", async () => {
+  // Given B listening on its network as well, and A on that network
+  const { link, startA } = await twoPcs({ direct: { reachable: () => true } });
+  let a = startA();
+  const { machine } = await (await addRelayPc(a.base, link, "Lab")).json() as { machine: Machine };
+  // When A has paired through the relay (pairing never goes direct) and B named its address inside the channel
+  const seen: string[] = [];
+  const routedEarly: string[] = [];
+  const moved = await machineWhen(a.base, (pc) => {
+    if (pc.id !== machine.id) return false;
+    if (pc.state !== "connected" || seen.length > 0) seen.push(pc.state);
+    if (pc.route !== undefined && pc.state !== "connected") routedEarly.push(`${pc.state}/${pc.route}`);
+    return pc.route === "direct";
+  });
+  // Then the connection moved to that address with no disconnect in between, and still carries routes and terminals
+  expect(moved.state).toBe("connected");
+  expect(seen.filter((state) => state !== "connected")).toEqual([]);
+  // a route is told only for a connected PC
+  expect(routedEarly).toEqual([]);
+  expect((await fetch(`${a.base}/api/machines/${machine.id}/session`, { headers: { origin: a.base } })).status).toBe(200);
+  expect(JSON.parse(await terminalAnswers(a.base, machine.id)).type).toBeString();
+
+  // and a restart signs in there first, from the address A kept with the key
+  a.stop();
+  a = startA();
+  const back = await machineWhen(a.base, (pc) => pc.id === machine.id && pc.state === "connected");
+  expect(back.route).toBe("direct");
+  // and that channel outlives the deadline its sign-in had (each carrier's share of 1.5 s)
+  const watch = new AbortController();
+  const dropped: string[] = [];
+  const watching = machineWhen(a.base, (pc) => { if (pc.id === machine.id && pc.state !== "connected") dropped.push(pc.state); return false; }, watch.signal).catch(() => undefined);
+  // fixed wait: proving nothing happens past the sign-in deadline
+  await Bun.sleep(2_500);
+  watch.abort();
+  await watching;
+  expect(dropped).toEqual([]);
+  expect((await fetch(`${a.base}/api/machines/${machine.id}/session`, { headers: { origin: a.base } })).status).toBe(200);
+}, 60_000);
+
+it("keeps a relay PC on the relay while its same-network address does not answer", async () => {
+  // Given B listening on a network A is not on
+  const { link, startA, lan } = await twoPcs({ direct: { reachable: () => false } });
+  let a = startA();
+  const { machine } = await (await addRelayPc(a.base, link, "Lab")).json() as { machine: Machine };
+  await machineWhen(a.base, (pc) => pc.id === machine.id && pc.state === "connected");
+  // When A restarts, it tries that address first
+  a.stop();
+  const dialsBefore = lan.dials;
+  a = startA();
+  const back = await machineWhen(a.base, (pc) => pc.id === machine.id && pc.state === "connected");
+  // Then it falls back to the relay by itself, and the PC works there
+  expect(lan.dials).toBeGreaterThan(dialsBefore);
+  expect(back.route).toBe("relay");
+  expect(JSON.parse(await terminalAnswers(a.base, machine.id)).type).toBeString();
+}, 60_000);
+
+it("lets a request that starts while a move signs in finish, and still moves", async () => {
+  // Given a tunnel to B paired through the relay, whose move to B's network has its sign-in held there
+  // (dial 1 is the probe after admission, dial 2 the move's session)
+  const release = deferred<void>();
+  const holding = deferred<void>();
+  const { link, local, onLan } = await twoPcs({ direct: { reachable: () => true, held: (dial) => {
+    if (dial !== 2) return undefined;
+    holding.resolve();
+    return release.promise;
+  } } });
+  const offer = decodeOffer(link)!;
+  const key = await RelayPcKey.create(join(stateDir(), "key.json"), offer, () => true);
+  const lost: Error[] = [];
+  const moved = deferred<void>();
+  const tunnel = await openRelayPcTunnel(offer, key, { socket: local as never, directSocket: onLan as never, onLost: (error) => lost.push(error), onMoved: () => moved.resolve() });
+  cleanup.push(() => tunnel.close());
+  await bounded(holding.promise);
+  // When a request starts in that window and the sign-in then completes
+  const request = fetch(`${tunnel.endpoint.url}/api/session`, { headers: { authorization: `Bearer ${tunnel.endpoint.token}` } });
+  release.resolve();
+  // Then the request is answered, the move happens, and the connection was never lost
+  expect((await bounded(request)).status).toBe(200);
+  await bounded(moved.promise, 30_000);
+  expect(tunnel.route).toBe("direct");
+  expect(lost).toEqual([]);
+}, 60_000);
+
+it("keeps the old session when input is sent while a move signs in, and moves on a later try", async () => {
+  // Given a tunnel whose first move has its sign-in held (dial 2), and a socket that sends while it is held
+  const release = deferred<void>();
+  const holding = deferred<void>();
+  const { link, local, onLan, lan } = await twoPcs({ direct: { reachable: () => true, held: (dial) => {
+    if (dial !== 2) return undefined;
+    holding.resolve();
+    return release.promise;
+  } } });
+  const offer = decodeOffer(link)!;
+  const key = await RelayPcKey.create(join(stateDir(), "key.json"), offer, () => true);
+  const lost: Error[] = [];
+  const moved = deferred<void>();
+  const tunnel = await openRelayPcTunnel(offer, key, { socket: local as never, directSocket: onLan as never, onLost: (error) => lost.push(error), onMoved: () => moved.resolve() });
+  cleanup.push(() => tunnel.close());
+  await bounded(holding.promise);
+  const RuntimeSocket = WebSocket as unknown as new (url: string, options: { headers: Record<string, string> }) => WebSocket;
+  const socket = new RuntimeSocket(`${tunnel.endpoint.url.replace("http:", "ws:")}/ws`, { headers: { authorization: `Bearer ${tunnel.endpoint.token}` } });
+  cleanup.push(() => socket.close());
+  const open = deferred<void>();
+  socket.onopen = () => open.resolve();
+  await bounded(open.promise);
+  // When input goes out on it before the held sign-in completes
+  socket.send(JSON.stringify({ type: "role", mode: "observe" }));
+  release.resolve();
+  // Then that attempt's session is dropped, a later one moves, and the connection was never lost
+  await bounded(moved.promise, 45_000);
+  expect(lan.dials).toBeGreaterThanOrEqual(3);
+  expect(tunnel.route).toBe("direct");
+  expect(lost).toEqual([]);
+}, 60_000);
+
+it("checks the direct route again when this PC's addresses change, and moves there", async () => {
+  // Given a tunnel on the relay because B's address did not answer after the sign-in
+  const lanUp = { now: false };
+  const { link, local, onLan } = await twoPcs({ direct: { reachable: () => lanUp.now } });
+  const offer = decodeOffer(link)!;
+  const key = await RelayPcKey.create(join(stateDir(), "key.json"), offer, () => true);
+  const network = { now: "192.168.1.5" };
+  const lost: Error[] = [];
+  const moved = deferred<void>();
+  const probed = deferred<void>();
+  const tunnel = await openRelayPcTunnel(offer, key, { socket: local as never, onLost: (error) => lost.push(error), onMoved: () => moved.resolve(),
+    directSocket: ((url: string) => { if (!lanUp.now) probed.resolve(); return onLan(url); }) as never,
+    network: () => network.now, networkCheckMs: 50 });
+  cleanup.push(() => tunnel.close());
+  await bounded(probed.promise);
+  expect(tunnel.route).toBe("relay");
+  // When this PC joins B's network (its addresses change) well before the next timed check
+  lanUp.now = true;
+  network.now = "10.99.0.20";
+  // Then it checks again at once and moves to B's address, never losing the connection
+  await bounded(moved.promise);
+  expect(tunnel.route).toBe("direct");
+  expect(lost).toEqual([]);
 }, 60_000);

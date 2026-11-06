@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportPublicKey, generateKeyPair } from "../shared/relay-e2ee.ts";
@@ -33,6 +33,23 @@ it("saves an admitted key privately and signs in with it again", async () => {
   const loaded = await RelayPcKey.load(path, () => true);
   expect(loaded.paired).toBe(true);
   expect(loaded.offer).toEqual({ v: 1, server_id: pc.server_id, server_public_key: pc.server_public_key, relay: pc.relay });
+});
+
+it("reads back only direct carriers an AUTH_OK could name, at most four, from an edited key file", async () => {
+  // Given a saved key whose carriers were edited to name other hosts and kinds
+  const path = keyPath();
+  const pc = offer();
+  const key = await RelayPcKey.create(path, pc, () => true);
+  const [device] = await key.list();
+  await key.update(pc.server_id, () => ({ ...device!, device_id: "device-1", direct: ["ws://192.168.0.10:7319"] }));
+  const saved = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  saved.direct = ["ws://8.8.8.8:7319", "wss://192.168.0.11:7319", 7, "ws://192.168.0.12:7319/v1/ws", "ws://10.0.0.1:1",
+    "ws://100.64.0.7:7319", "ws://172.16.0.2:7319", "ws://169.254.0.3:7319", "ws://192.168.0.13:7319"];
+  writeFileSync(path, JSON.stringify(saved));
+  // When it is read back
+  const loaded = await RelayPcKey.load(path, () => true);
+  // Then only private or Tailscale ws:// carriers come back, as many as one AUTH_OK holds
+  expect(loaded.direct).toEqual(["ws://10.0.0.1:1", "ws://100.64.0.7:7319", "ws://172.16.0.2:7319", "ws://169.254.0.3:7319"]);
 });
 
 it("writes no key for a PC removed while its pairing finished", async () => {

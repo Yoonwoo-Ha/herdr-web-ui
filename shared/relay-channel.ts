@@ -6,7 +6,7 @@
 import { channelBinding, openClientSecureChannel } from "./relay-e2ee.ts";
 import { fromBase64Url, PAIR_APPROVAL_MS, pairCommitment, pairDigits, randomPairNonce, toBase64Url } from "./relay-pair-sas.ts";
 import type { SecureChannel, Transport } from "./relay-e2ee.ts";
-import { ACCOUNT_FEATURE, decodeFrame, DIRECT_CARRIER, DIRECT_TAILNET, FrameType, isDirectCarrier, LARGE_WS_MESSAGES, LIMITS_V1, MuxProtocolError, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL, SERVER_TIME_HEADER } from "./relay-mux.ts";
+import { ACCOUNT_FEATURE, decodeFrame, DIRECT_CARRIER, DIRECT_TAILNET, FrameType, isDirectCarrier, isTailnetCarrier, LARGE_WS_MESSAGES, LIMITS_V1, MuxProtocolError, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_SAS_FEATURE, RELAY_HINTS, RELAY_PROTOCOL, SERVER_TIME_HEADER } from "./relay-mux.ts";
 import { hintedRelay } from "./relay-regions.ts";
 import { MuxEngine } from "./relay-mux-engine.ts";
 import type { MuxOptions, SessionFrame } from "./relay-mux-engine.ts";
@@ -473,6 +473,18 @@ export function probeDirect(offer: RelayOffer, direct: string, socketFor: (url: 
       }).then((channel) => { secure = channel; if (settled) channel.close(4000, "probe done"); }, () => settle(false));
     };
   });
+}
+
+/**
+ * A PC's direct carriers in the order to try them: same-network addresses first, then Tailscale ones, each kind in
+ * the order the PC named them, except that `worked` (the carrier that last carried the channel) leads its kind.
+ * The relay always comes after all of them.
+ */
+export function orderDirectRoutes(carriers: readonly string[], worked?: string): string[] {
+  const rank = (carrier: string): number => isTailnetCarrier(carrier) ? 1 : 0;
+  return carriers.map((carrier, index) => ({ carrier, index }))
+    .sort((a, b) => rank(a.carrier) - rank(b.carrier) || Number(b.carrier === worked) - Number(a.carrier === worked) || a.index - b.index)
+    .map(({ carrier }) => carrier);
 }
 
 /**

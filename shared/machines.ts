@@ -25,6 +25,11 @@ export interface Machine {
   /** a PC added through the Ovis relay (no SSH): its relay ID and the relay it is reached through */
   relay?: { server_id: string; relay: string };
   /**
+   * How a connected relay PC is reached now: on one of its direct carriers (its own network, or Tailscale), or
+   * through the relay. Absent while it is not connected, and for other kinds of PC.
+   */
+  route?: "relay" | "direct";
+  /**
    * The PC's relay ID (server/relay/identity.ts) as its own server has it: the local PC's own, an SSH PC's
    * from its /api/health. Absent where that server has none, or is older. What a device turns its alerts off by.
    */

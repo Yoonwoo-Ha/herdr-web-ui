@@ -825,6 +825,11 @@ plugin ([native-app.md](native-app.md#direct-on-the-same-network)); a browser st
   falls back to the relay silently; a refusal by the PC (a removed device) is final as over the
   relay. The carriers are saved with the pairing for the next start. A browser has no such socket
   and always uses the relay.
+- **Other PCs too.** A PC added through the relay ([remote-pcs.md](remote-pcs.md#through-the-relay))
+  reaches it the same way from its own server: direct carriers first (same network before
+  Tailscale), then the relay, probing earlier routes after admission, every 5 minutes at most and
+  when its own addresses change or it wakes. It opens the session on the proven carrier before it
+  closes the relay one, so the PC never shows as lost.
 - **Said where it is.** While the relay is on, Settings → Devices and PCs → My devices shows "Same
   Wi-Fi direct connection on" (who can sign in there, and that it is on Tailscale too when it is)
   with its one switch, which turns both off. `/api/health` names the
