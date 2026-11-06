@@ -22,7 +22,7 @@ import { ChatMinimap } from "./ChatMinimap.tsx";
 import { minimapTurns } from "../lib/chatMinimap.ts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { continuesHistory, createChatRowSlots, growChatRowSlots, prependChatRowSlots } from "../lib/chatRows.ts";
-import { ChatDetails, ChatRowMemoryContext, useChatRowToggle, useRowFocus, type ChatRowMemory } from "../lib/chatRowState.tsx";
+import { ChatDetails, ChatRowMemoryContext, chatRowMemory, useChatRowToggle, useRowFocus, type ChatRowMemory } from "../lib/chatRowState.tsx";
 import { turnRevision } from "../lib/turnRevision.ts";
 import { conversationFinishEvidence, conversationFinishPresented } from "../lib/panePresentation.ts";
 import { seenKey } from "../lib/seenFinishes.ts";
@@ -34,7 +34,7 @@ import type { GalleryImage } from "../lib/imageViewer.ts";
 import { toolGalleryImage, userGalleryImages } from "../lib/chatImages.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.ts";
-import { answerItems, endedOnAnswer, isLiveWorkTurn, isWaitingWorkTurn, formatWorkDuration, runNames, splitTurn, turnSegments, type WorkSegment, todoGroups, visibleWorkParts, workBlockStartsOpen, workFailed, workSummary, type TodoAttempt, type TodoGroup, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
+import { answerItems, endedOnAnswer, foldedRequestsMatch, isLiveWorkTurn, isWaitingWorkTurn, formatWorkDuration, runNames, splitTurn, turnSegments, type WorkSegment, todoGroups, visibleWorkParts, workBlockStartsOpen, workFailed, workSummary, type TodoAttempt, type TodoGroup, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
 import { phaseRows, planRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
 import { isTodoTool, parseTodoAnswer, todoCallSummary, type TodoItem, type TodoStatus } from "../lib/todos.ts";
 import { formatGoalTime, goalWaitSources, goalWaitUntil, turnGoal, type GoalState, type GoalStatus } from "../lib/goals.ts";
@@ -1070,14 +1070,17 @@ function compactCounts(t: ReturnType<typeof useT>, part: Extract<ConversationPar
   ].filter((count) => count !== null);
 }
 
-/** A run of requests the agent recorded as failed: one row, each error on request. `followed`: the turn went on with another request. */
-function FailedRequests({ parts, followed, memoryKey }: { parts: readonly Extract<ConversationPart, { kind: "text" }>[]; followed: boolean; memoryKey: string }) {
+/**
+ * A run of requests the agent recorded as failed: one row, each error on request, named by its first
+ * part's index (`at`). `followed`: the turn went on with another request.
+ */
+function FailedRequests({ parts, followed, at }: { parts: readonly Extract<ConversationPart, { kind: "text" }>[]; followed: boolean; at: number }) {
   const t = useT();
   const n = parts.length;
   const label = followed
     ? t(n === 1 ? "Request failed, then tried again" : "{n} requests failed, then tried again", { n })
     : t(n === 1 ? "Request failed" : "{n} requests failed", { n });
-  return <ChatDetails memoryKey={memoryKey} className="chat-skill is-error chat-failed-requests">
+  return <ChatDetails memoryKey={`failed:${at}`} data-failed-requests={at} className="chat-skill is-error chat-failed-requests">
     <summary><CircleAlert aria-hidden="true" /><span className="chat-skill-name">{label}</span><ChevronDown className="chat-skill-caret" aria-hidden="true" /></summary>
     <ol className="chat-skill-detail chat-failed-requests-list">{parts.map((part, index) => <li key={index}>{part.text.replace(/^Error: /, "")}</li>)}</ol>
   </ChatDetails>;
@@ -1252,7 +1255,7 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, sh
       : answerItems(segment.parts, requestDetails).map((item) => item.kind === "text"
         ? <Markdown key={`answer:${work.at.get(item.part)}`} skills={skills}>{item.part.text}</Markdown>
         // a later part of the turn is a later request: what the record shows, not whether it was a retry
-        : <FailedRequests key={`failed:${work.at.get(item.parts[0]!)}`} memoryKey={`failed:${work.at.get(item.parts[0]!)}`} parts={item.parts} followed={work.at.get(item.parts.at(-1)!)! < turn.parts.length - 1} />))}
+        : <FailedRequests key={`failed:${work.at.get(item.parts[0]!)}`} at={work.at.get(item.parts[0]!)!} parts={item.parts} followed={work.at.get(item.parts.at(-1)!)! < turn.parts.length - 1} />))}
     {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
       <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>
@@ -2610,6 +2613,15 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     const index = pickedTurn(timelineRows.map((row) => row.turn), pick.match);
     if (typeof index !== "number") { pick.done("missing"); return; }
     placeRow(list, node, index, 0);
+    // a match folded in a row of failed requests (Compaction and failed requests on) opens it: a row
+    // drawn later reads its memory, one drawn already is opened in place (#3082)
+    const { turn, key } = timelineRows[index]!;
+    const folded = settings.chatRequestDetails && turn !== null ? foldedRequestsMatch(turn, pick.match.match) : null;
+    if (folded !== null) {
+      chatRowMemory(rowMemories, key).toggles.set(`failed:${folded}`, true);
+      const row = node.querySelector<HTMLDetailsElement>(`[data-chat-row="${CSS.escape(key)}"] details[data-failed-requests="${folded}"]`);
+      if (row !== null) row.open = true;
+    }
     pick.done("shown");
   }, [timelineRows, revealTick]);
   /**

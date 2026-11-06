@@ -1,4 +1,5 @@
 import type { ConversationPart, ConversationTurn } from "../../shared/protocol.ts";
+import { matchPart, searchPattern } from "../../shared/conversation-search.ts";
 import { turnSkills } from "./skillActivity.ts";
 import { isTodoTool, todoSnapshot, type TodoItem } from "./todos.ts";
 import { t } from "./i18n.ts";
@@ -98,6 +99,24 @@ export function answerItems(parts: readonly TextPart[], requestDetails: boolean)
     else items.push({ kind: "failed", parts: [part] });
   }
   return items;
+}
+
+/**
+ * With failed requests drawn as rows, the row a search's match (its matched words) is folded in: the
+ * index of its first part, which names the row (`failed:<index>`). Null when the turn's first match
+ * of those words, the one the search's snippet shows, is drawn outside every such row.
+ */
+export function foldedRequestsMatch(turn: ConversationTurn, match: string): number | null {
+  const pattern = searchPattern(match);
+  const index = pattern === null ? undefined : matchPart(turn, pattern);
+  const part = index === undefined ? undefined : turn.parts[index];
+  if (turn.role === "user" || part?.kind !== "text" || part.failed !== true) return null;
+  for (const segment of turnSegments(turn.parts)) {
+    if (segment.kind === "work") continue;
+    const row = answerItems(segment.parts, true).find((item) => item.kind === "failed" && item.parts.includes(part));
+    if (row?.kind === "failed") return turn.parts.indexOf(row.parts[0]!);
+  }
+  return null;
 }
 
 /**
