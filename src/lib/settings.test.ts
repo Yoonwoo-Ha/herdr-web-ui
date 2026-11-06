@@ -240,18 +240,6 @@ describe("saved theme migration", () => {
     expect(loadSettings().terminalFoldKeyBar).toBe(false);
   });
 
-  it("keeps Markdown outline in its own key, out of an old tab's whole-record save", () => {
-    expect(loadSettings().markdownOutline).toBe(false);
-    saveSettings(sanitizeSettings({ markdownOutline: true }));
-    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("markdownOutline");
-    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
-    expect(loadSettings().markdownOutline).toBe(true);
-    saveSettings({ ...loadSettings(), markdownOutline: false });
-    expect(loadSettings().markdownOutline).toBe(false);
-    records.set("ovis:markdown-outline", "\"true\"");
-    expect(loadSettings().markdownOutline).toBe(false);
-  });
-
   it("keeps Keyboard only from the key bar in its own key, out of an old tab's whole-record save", () => {
     expect(loadSettings().terminalKeyboardOnRequest).toBe(false);
     saveSettings(sanitizeSettings({ terminalKeyboardOnRequest: true }));
@@ -289,7 +277,7 @@ describe("saved theme migration", () => {
   });
 
   it("keeps Expand thinking, Collapse work and Files beside the pane in keys of their own, out of an old tab's whole-record save", () => {
-    for (const [key, stored] of [["expandThinking", "ovis:expand-thinking"], ["foldWork", "ovis:fold-work"], ["chatRequestDetails", "ovis:chat-request-details"], ["filesPanel", "ovis:files-panel"], ["filesDocuments", "ovis:files-documents"]] as const) {
+    for (const [key, stored] of [["expandThinking", "ovis:expand-thinking"], ["foldWork", "ovis:fold-work"], ["filesPanel", "ovis:files-panel"]] as const) {
       expect(loadSettings()[key]).toBe(false);
       saveSettings(sanitizeSettings({ [key]: true }));
       expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty(key);
@@ -537,7 +525,7 @@ it("keeps the composer's Paste and send button off until this device turns it on
 });
 
 it("keeps the chat's folds as they always started until this device chooses Expand thinking or Collapse work, and keeps that choice its own", () => {
-  for (const key of ["expandThinking", "foldWork", "chatRequestDetails"] as const) {
+  for (const key of ["expandThinking", "foldWork"] as const) {
     expect(sanitizeSettings({})[key]).toBe(false);
     expect(sanitizeSettings({ [key]: true })[key]).toBe(true);
     expect(sanitizeSettings({ [key]: "true" })[key]).toBe(false);
@@ -785,11 +773,9 @@ it("raises the terminal's keyboard on every tap until this device asks for it on
   expect(SETTING_SCOPE.terminalKeyboardOnRequest).toBe("device");
 });
 
-it("draws no Markdown outline until this device turns it on", () => {
-  expect(sanitizeSettings({}).markdownOutline).toBe(false);
-  expect(sanitizeSettings({ markdownOutline: "true" }).markdownOutline).toBe(false);
-  expect(sanitizeSettings({ markdownOutline: true }).markdownOutline).toBe(true);
-  expect(SETTING_SCOPE.markdownOutline).toBe("device");
+it("drops a stored choice for the switches that are always on now: compaction details, Markdown outline, Files' Documents tab", () => {
+  const stored = sanitizeSettings({ chatRequestDetails: false, markdownOutline: false, filesDocuments: false });
+  for (const key of ["chatRequestDetails", "markdownOutline", "filesDocuments"]) expect(stored).not.toHaveProperty(key);
 });
 
 it("keeps the key bar under the input line until this device folds it", () => {
@@ -1420,10 +1406,6 @@ it("keeps where web links open to a tab or the panel, a tab by default", () => {
   expect(DEFAULT_SETTINGS.filesPanel).toBe(false);
   expect(sanitizeSettings({ filesPanel: true }).filesPanel).toBe(true);
   for (const bad of ["true", 1, null]) expect(sanitizeSettings({ filesPanel: bad }).filesPanel).toBe(false);
-  // so is Files' Documents tab
-  expect(DEFAULT_SETTINGS.filesDocuments).toBe(false);
-  expect(sanitizeSettings({ filesDocuments: true }).filesDocuments).toBe(true);
-  for (const bad of ["true", 1, null]) expect(sanitizeSettings({ filesDocuments: bad }).filesDocuments).toBe(false);
   expect(sanitizeSettings({ fileOpen: "panel" }).fileOpen).toBe("panel");
   for (const bad of ["tab", "", null, true]) expect(sanitizeSettings({ fileOpen: bad }).fileOpen).toBe("popup");
   expect(sanitizeSettings({ webLinks: "panel" }).webLinks).toBe("panel");

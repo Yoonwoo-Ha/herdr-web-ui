@@ -659,6 +659,13 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
   and a pane in the theme's own colours (T3 Code's and herdr-app's theme previews; no code taken):
   Dark and Light pick the side, the side drawn now first, its own kind of theme first and the other
   kind after a rule, so any theme still goes on either side.
+- Settings → Chat and Settings → Agents take the same rows (a search still matches the sentences, and
+  every group keeps its `section` for links). Chat keeps short group headings (Conversation, Composer,
+  Quick replies, Files, Voice input) and its quick replies list as it was. The message box's optional
+  buttons, each off by default, are one row of chips, pressed when on. Agents has no captions: each
+  agent's row shows what New tab starts it with (model and effort), as T3 Code's provider rows show
+  their state, herdr's integrations for other agents fold under one line, and Plan limits is one row
+  (Off, Used, Remaining).
 - `theme`: `dark`, `light`, or `system`; default `dark`.
 - `palette`: the legacy mirror of the drawn side's theme for older app versions; default `codex`.
   A record with no palette (saved before palettes) or a removed one (`report`, `lilac`, `forest`)
@@ -698,11 +705,11 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
 - Composer Enter behavior and folded thinking visibility are preferences, not typography tokens.
 - File viewer: `wrapCode` (wrap long lines instead of scrolling sideways; default off),
   `diffStyle`: `unified` (default) or `split` for a repository diff, set by the diff viewer's own
-  Unified and Split switch (a phone draws one column whatever it says, and the viewer says so), and
-  `markdownOutline` (off by default, below). These layout choices stay on this device, like chat
+  Unified and Split switch (a phone draws one column whatever it says, and the viewer says so). The
+  Markdown outline (below) is always drawn. These layout choices stay on this device, like chat
   width. A Markdown preview keeps the chat's readable lane (`--chat-w`, centered); Settings no
   longer offers a full-width preview, and a stored `markdownWidth` is ignored.
-- Markdown outline (`markdownOutline`, #636): a Preview with two headings or more lists the
+- Markdown outline (#636, always on; a stored `markdownOutline` is ignored): a Preview with two headings or more lists the
   document's own headings (not ones inside a quote), levels stepped in, a repeated title one entry
   per heading. It follows Zed's outline panel: the heading being read (the last past a line 32 px
   under the body's top; at the document's end the last in view) is marked with the accent on a
@@ -2178,7 +2185,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   owner was replaced, and there is no app precedent to follow. A PC whose server names no herdr (an older bridge) keeps its drafts in the page alone.
 
 ### Documents list (`.md-docs`)
-- Settings > Chat > **Documents in Files** (a device setting, off by default) adds a fourth face to
+- Files always has a fourth face (the old Documents in Files switch is gone, a stored value ignored),
   Files, **Documents**: the Markdown files (`.md`, `.markdown`) under the pane's folder, newest
   first (GET /api/pane/docs: git's files that are not ignored, or a Markdown-only walk outside a
   repository). It is the folder browser's card and
@@ -3809,7 +3816,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   account on a remote PC) and the hub are under **Other accounts** with its **Add account**. **Install
   another agent (N)** is shut until opened (the setup guide's tiles), **New agents** holds the
   launch modes of Claude Code and Codex (always shown, whatever the PC has), and **Plan limits** closes the
-  page: Show plan limits, then Meters show and Limit shown side by side on one row, then Claude's
+  page: one Plan limits row (Off, Used, Remaining), Limit shown under it while on, then Claude's
   status-line switch. Old `?settings=usage` and `?settings=integrations` links open Agents.
 - An account row (Agents) has email/name, then dim source (**This PC** or **Hub**), known plan and written
   sign-in status with an existing status-token dot, without badge pills. Within-provider reorder

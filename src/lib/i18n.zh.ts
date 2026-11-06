@@ -437,8 +437,6 @@ const BASE: Record<string, string> = {
   "No group": "无分组",
   "Context {percent}% left": "上下文剩余 {percent}%",
   "{used} of {window} tokens": "{used} / {window} Token",
-  "Suggestion chip": "建议标签",
-  "Artifacts chip": "Artifact 标签",
   "Permission mode": "权限模式",
   "Model": "模型",
   "One model name, without spaces.": "填写一个不含空格的模型名称。",
@@ -462,6 +460,9 @@ const BASE: Record<string, string> = {
   "Phones paired through the relay will need to scan a new code.": "通过中继配对的手机需要重新扫描新代码。",
   "Pairs this phone through the relay, so Ovis keeps working away from home.": "通过中继配对这部手机，离家在外也能使用 Ovis。",
   "This PC": "本机",
+  "Paste and send": "粘贴并发送",
+  "Conversation": "对话",
+  "Off": "关闭",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

@@ -81,7 +81,7 @@ const MATRIX: readonly (readonly ["en" | "ko" | "ja" | "zh", string, string, str
   ["en", "OpenAI API key", "chat", "openai-key"],
   ["en", "Return inserts a new line", "chat", "composer"],
   ["en", "Send queued messages automatically", "chat", "composer-more"],
-  ["en", "Suggestion chip", "agents", "-"],
+  ["en", "Suggestion chip", "chat", "composer"],
   ["en", "Show above the message box", "chat", "quick-replies"],
   ["ko", "인터페이스 글자 크기", "appearance", "typography"],
   ["ko", "채팅 글자 크기", "appearance", "typography"],
@@ -590,6 +590,17 @@ async function foldedGroups(browser: import("playwright-core").Browser, url: str
       // an agent's own setting is found with its agent's row shut, in a group named after it
       await dialog.getByRole("searchbox", { name: "Search settings", exact: true }).fill("sandbox");
       await dialog.getByRole("region", { name: "Search results", exact: true }).getByLabel("Sandbox and approvals", { exact: true }).waitFor();
+      // Model and Effort are alike for every agent: each found group says whose it is
+      await dialog.getByRole("searchbox", { name: "Search settings", exact: true }).fill("effort");
+      const found = dialog.getByRole("region", { name: "Search results", exact: true });
+      await found.locator("[data-section='agent-codex']").waitFor();
+      assert.deepEqual(await found.locator("[data-section='agent-claude'] > h3, [data-section='agent-codex'] > h3").allTextContents(), ["Claude Code", "Codex"], `${width}px: a found agent's rows sit under its name`);
+      await closeSettings(page);
+
+      // an old link to the Chat page's folded Chat group lands on Conversation, where its row went
+      await page.goto(`${url}?settings=chat&section=chat-more`);
+      await page.getByRole("switch", { name: "Collapse work", exact: true }).waitFor();
+      assert.equal(await page.locator(".settings-body:not([hidden]) [data-section='conversation']").evaluate((group) => document.activeElement === group), true, `${width}px: chat-more lands on Conversation`);
       await closeSettings(page);
 
       // a link to a group inside a fold opens it on that group
@@ -1067,7 +1078,8 @@ try {
               assert.equal(await body.locator("[role='alert']").count(), 0, "the Agents page shows no error");
               assert.deepEqual(await body.locator(".agents-item").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-agent"))), ["claude", "codex", "omp", "pi", "hermes"]);
               assert.deepEqual(await body.locator("[data-section='other-accounts'] .usage-provider-heading > span:not(.usage-account-count):not(.agent-mark)").allTextContents(), ["Cursor", "OpenCode"]);
-              assert.deepEqual(await body.locator("h3").allTextContents(), [label("On this PC"), label("Other agents herdr found"), label("Other accounts"), label("Plan limits")]);
+              // herdr-app's rows: no group captions on this page
+              assert.deepEqual(await body.locator("h3").allTextContents(), []);
               // an agent's own settings are in its row: Claude Code's permission mode for New tab
               await body.locator(".agents-item[data-agent='claude'] .agents-toggle").click();
               await body.locator(".agents-item[data-agent='claude']").getByLabel(label("Permission mode"), { exact: true }).waitFor();

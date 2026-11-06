@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { AppWindow, ArrowLeft, Bell, Bot, Box, CheckCheck, ChevronLeft, ChevronRight, ClipboardCopy, Command, FlaskConical, Globe, Image as ImageIcon, Info, Keyboard, LayoutGrid, Lock, MessageCircleQuestionMark, MessageSquare, MessagesSquare, Monitor, Mouse, MousePointer2, OctagonX, Palette, Plus, Puzzle, Search, ShieldAlert, Smartphone, SquareTerminal, Star, Tags, TextCursorInput, Timer, Volume2, X, type LucideIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, AudioLines, Bell, Bot, Box, Brain, CheckCheck, ChevronLeft, ChevronRight, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink, FilePen, FlaskConical, Globe, Image as ImageIcon, Info, Keyboard, Languages, Layers, LayoutGrid, ListCollapse, Lock, MessageCircleQuestionMark, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, OctagonX, Palette, PanelRight, Plus, Puzzle, Search, Send, ShieldAlert, Smartphone, Sparkles, SquareTerminal, Star, Tags, TextCursorInput, Timer, Volume2, WandSparkles, WrapText, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
@@ -27,8 +27,7 @@ import { paneLifetimes } from "../lib/paneLifetime.ts";
 import { KeyBarSettings, KeyBarToggles } from "./KeyBarSettings.tsx";
 import { FileTextSizeRow } from "./FileTextSizeRow.tsx";
 import { FoldHelpersRow } from "./FoldHelpersRow.tsx";
-import { FilesDocumentsRow, FilesPanelRow } from "./FilesPanelRow.tsx";
-import { MarkdownOutlineRow } from "./MarkdownOutlineRow.tsx";
+import { FilesPanelRow } from "./FilesPanelRow.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { ChipToggles, SettingsBare, Segmented, SettingsFold, SettingsGroup, SettingsQuery, SettingsRow, SettingsSelect, Stepper, Toggle, settingsQueryWords } from "./SettingsControls.tsx";
 import { PcLoadSetting } from "./MachineStats.tsx";
@@ -555,15 +554,23 @@ function AppearancePage() {
   );
 }
 
+/** Wrap long lines, drawn: one long line of code wrapped onto the next, or running past the edge. */
+function WrapPreview({ wrap }: { wrap: boolean }) {
+  return <span className={wrap ? "settings-wrap-preview is-wrapped" : "settings-wrap-preview"}><code>{WRAP_PREVIEW_CODE}</code></span>;
+}
+const WRAP_PREVIEW_CODE = "const total = items.reduce(sum, 0);";
+
 function ChatPage() {
   const { settings, update } = useSettings();
   const t = useT();
   const touch = useMediaQuery("(pointer: coarse)");
   const filePanelAvailable = useMediaQuery(FILE_PANEL_DOCK_QUERY);
+  const chip = (Icon: LucideIcon, label: string, on: boolean, change: (on: boolean) => void) => <button type="button" className="settings-chip" aria-pressed={on} onClick={() => change(!on)}><Icon aria-hidden="true" />{label}</button>;
+  // herdr-app rows (a label and its control) under short group headings; the sentences stay for search only
   return (
-    <>
-      <SettingsGroup>
-        <SettingsRow label={t("Panes open in")} description={t("Every pane on this device. Switching a pane's lens keeps it there until this changes. Auto: chat for an agent on a touch screen, else the terminal.")} wide>
+    <SettingsBare.Provider value="rows">
+      <SettingsGroup title={t("Conversation")} section="conversation">
+        <SettingsRow icon={AppWindow} label={t("Panes open in")} description={t("Every pane on this device. Switching a pane's lens keeps it there until this changes. Auto: chat for an agent on a touch screen, else the terminal.")} wide reset={["defaultView"]} resetAlso={{ changed: false, restore: forgetPaneViews }}>
           <Segmented label={t("Panes open in")} value={settings.defaultView} options={[{ value: "auto", label: t("Auto") }, { value: "chat", label: t("Chat") }, { value: "terminal", label: t("Terminal") }]} onChange={(defaultView) => {
             if (settings.defaultView === defaultView) return;
             // one choice for every pane: what each one remembered gives way to it
@@ -572,22 +579,34 @@ function ChatPage() {
           }} />
         </SettingsRow>
         {/* showThinking is every browser's, whether reasoning starts open (expandThinking) this device's */}
-        <SettingsRow label={t("Show thinking")} description={t("The agent's reasoning blocks: left out, folded to one line, or open. One you open or fold stays that way for its message.")} wide>
+        <SettingsRow icon={Brain} label={t("Show thinking")} description={t("The agent's reasoning blocks: left out, folded to one line, or open. One you open or fold stays that way for its message.")} wide reset={["showThinking", "expandThinking"]}>
           <Segmented label={t("Show thinking")} value={!settings.showThinking ? "hidden" : settings.expandThinking ? "expanded" : "folded"} onChange={(shown) => update(shown === "hidden" ? { showThinking: false } : { showThinking: true, expandThinking: shown === "expanded" })} options={[{ value: "hidden", label: t("Hidden") }, { value: "folded", label: t("Folded") }, { value: "expanded", label: t("Expanded") }] as const} />
         </SettingsRow>
-        <SettingsRow label={t("Chat width")} description={t("How wide the conversation and the message box run on a large screen")} wide>
+        <SettingsRow icon={MoveHorizontal} label={t("Chat width")} description={t("How wide the conversation and the message box run on a large screen")} wide reset={["chatWidth"]}>
           <Segmented label={t("Chat width")} value={settings.chatWidth} onChange={(chatWidth) => update({ chatWidth })} options={CHAT_WIDTHS.map((chatWidth) => ({ value: chatWidth, label: t(chatWidth === "narrow" ? "Narrow" : chatWidth === "wide" ? "Wide" : chatWidth === "full" ? "Full" : "Default") }))} />
+        </SettingsRow>
+        <SettingsRow icon={ListCollapse} label={t("Collapse work")} description={t("A turn's work starts folded to one line, also while the agent works, unless it needs you. One you open or fold stays that way for its message")} reset={["foldWork"]}>
+          <Toggle label={t("Collapse work")} checked={settings.foldWork} onChange={(foldWork) => update({ foldWork })} />
         </SettingsRow>
       </SettingsGroup>
 
       <SettingsGroup title={t("Composer")} section="composer">
-        <SettingsRow label={touch ? t("Return inserts a new line") : t("Enter sends")} description={touch ? t("When on, use Send or hardware Mod+Enter to send.") : t("When off, Mod+Enter sends")}>
+        <SettingsRow icon={CornerDownLeft} label={touch ? t("Return inserts a new line") : t("Enter sends")} description={touch ? t("When on, use Send or hardware Mod+Enter to send.") : t("When off, Mod+Enter sends")} reset={["enterSends"]}>
           <Toggle label={touch ? t("Return inserts a new line") : t("Enter sends")} checked={touch ? !enterSendsOn(settings, touch) : enterSendsOn(settings, touch)} onChange={(checked) => update({ enterSends: touch ? !checked : checked })} />
+        </SettingsRow>
+        {/* the message box's optional buttons and chips, each off by default; the suggestion chip is drawn on a touch screen only (Composer.tsx) */}
+        <SettingsRow icon={Sparkles} label={t("Composer buttons")} wide reset={touch ? ["composerPasteSend", "composerArtifacts", "suggestionChip"] : ["composerPasteSend", "composerArtifacts"]}
+          keywords={[t("Paste and send button"), t("A button in the empty message box sends the text copied on this device as a message."), t("Artifacts chip"), t("A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool."), ...(touch ? [t("Suggestion chip"), t("A chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.")] : [])].join(" ")}>
+          <span className="settings-chips">
+            {chip(ClipboardPaste, t("Paste and send"), settings.composerPasteSend, (composerPasteSend) => update({ composerPasteSend }))}
+            {chip(Layers, t("Artifacts (Claude Code)"), settings.composerArtifacts, (composerArtifacts) => update({ composerArtifacts }))}
+            {touch && chip(Sparkles, t("Suggestion (Claude Code)"), settings.suggestionChip, (suggestionChip) => update({ suggestionChip }))}
+          </span>
         </SettingsRow>
       </SettingsGroup>
 
       <SettingsGroup title={t("Quick replies")} section="quick-replies">
-        <SettingsRow label={t("Show above the message box")} description={t("One-tap messages above the message box, on this device. Each is sent as if typed: queued while the agent works, an answer when a question is open.")}>
+        <SettingsRow icon={MessageSquareReply} label={t("Show above the message box")} description={t("One-tap messages above the message box, on this device. Each is sent as if typed: queued while the agent works, an answer when a question is open.")} reset={["showQuickReplies"]}>
           <Toggle label={t("Show above the message box")} checked={settings.showQuickReplies} onChange={(showQuickReplies) => update({ showQuickReplies })} />
         </SettingsRow>
         {settings.showQuickReplies && <div className="settings-item">
@@ -617,51 +636,39 @@ function ChatPage() {
         </div>}
       </SettingsGroup>
 
-      <SettingsGroup title={t("File viewer")} section="file-viewer">
-        <SettingsRow label={t("Open files")} description={t("On a wide window, text and code can open beside the pane. Media, PDFs and folders always open in a popup, and the viewer's header button moves the file open now.")} wide>
+      <SettingsGroup title={t("Files")} section="file-viewer">
+        <SettingsRow icon={PanelRight} label={t("Open files")} description={t("On a wide window, text and code can open beside the pane. Media, PDFs and folders always open in a popup, and the viewer's header button moves the file open now.")} wide reset={["fileOpen"]}>
           <Segmented label={t("Open files")} value={settings.fileOpen} onChange={(fileOpen) => update({ fileOpen })} options={FILE_OPEN_TARGETS.map((fileOpen) => ({ value: fileOpen, label: fileOpen === "panel" ? t("Beside the pane") : t("In a popup") }))} />
         </SettingsRow>
-        <SettingsRow label={t("Web links")} description={t(filePanelAvailable ? "Only a page this PC serves, such as a dev server on localhost, opens beside the pane. Shift-click opens it the other way." : "Pages this PC serves, such as Tailscale reports, can open in the app. Shift-click opens the other way.")} wide>
+        <SettingsRow icon={Globe} label={t("Web links")} description={t(filePanelAvailable ? "Only a page this PC serves, such as a dev server on localhost, opens beside the pane. Shift-click opens it the other way." : "Pages this PC serves, such as Tailscale reports, can open in the app. Shift-click opens the other way.")} wide reset={["webLinks"]}>
           <Segmented label={t("Web links")} value={settings.webLinks} onChange={(webLinks) => update({ webLinks })} options={WEB_LINK_TARGETS.map((webLinks) => ({ value: webLinks, label: webLinks === "panel" ? t(filePanelAvailable ? "Beside the pane" : "In the app") : t("In a new tab") }))} />
         </SettingsRow>
       </SettingsGroup>
 
       <VoiceMain />
 
-      <SettingsFold kind="more" keys={["foldWork", "chatRequestDetails", "autoSendQueued", "composerPasteSend", "wrapCode", "editTextFiles", "markdownOutline", "filesPanel", "filesDocuments", "reuseExternalLinkTab", ...(settings.voiceInput === "off" ? [] : ["voiceLanguage", "voiceEngine", "voicePolishChat", "voicePolishTerminal"] as const)]}>
-        <SettingsGroup title={t("Chat")} section="chat-more">
-          <SettingsRow label={t("Collapse work")} description={t("A turn's work starts folded to one line, also while the agent works, unless it needs you. One you open or fold stays that way for its message")}>
-            <Toggle label={t("Collapse work")} checked={settings.foldWork} onChange={(foldWork) => update({ foldWork })} />
-          </SettingsRow>
-          <SettingsRow label={t("Compaction and failed requests")} description={t("On this device, a compaction names the token counts the agent recorded with it, and each run of back-to-back failed requests shows as one row that opens to their errors. OmO, omp and pi record them.")}>
-            <Toggle label={t("Compaction and failed requests")} checked={settings.chatRequestDetails} onChange={(chatRequestDetails) => update({ chatRequestDetails })} />
-          </SettingsRow>
-        </SettingsGroup>
+      <SettingsFold kind="more" keys={["autoSendQueued", "wrapCode", "editTextFiles", "filesPanel", "reuseExternalLinkTab", ...(settings.voiceInput === "off" ? [] : ["voiceLanguage", "voiceEngine", "voicePolishChat", "voicePolishTerminal"] as const)]}>
         <SettingsGroup title={t("Composer")} section="composer-more">
-          <SettingsRow label={t("Send queued messages automatically")} description={t("A message sent while the agent works goes by itself when the turn ends. When off, it waits until you press Send now.")}>
+          <SettingsRow icon={Send} label={t("Send queued messages automatically")} description={t("A message sent while the agent works goes by itself when the turn ends. When off, it waits until you press Send now.")} reset={["autoSendQueued"]}>
             <Toggle label={t("Send queued messages automatically")} checked={settings.autoSendQueued} onChange={(autoSendQueued) => update({ autoSendQueued })} />
           </SettingsRow>
-          <SettingsRow label={t("Paste and send button")} description={t("A button in the empty message box sends the text copied on this device as a message.")}>
-            <Toggle label={t("Paste and send button")} checked={settings.composerPasteSend} onChange={(composerPasteSend) => update({ composerPasteSend })} />
-          </SettingsRow>
         </SettingsGroup>
-        <SettingsGroup title={t("File viewer")} section="file-viewer-more">
-          <SettingsRow label={t("Wrap long lines")}>
+        <SettingsGroup title={t("Files")} section="file-viewer-more">
+          <SettingsRow icon={WrapText} label={t("Wrap long lines")} reset={["wrapCode"]} preview={<WrapPreview wrap={settings.wrapCode} />}>
             <Toggle label={t("Wrap long lines")} checked={settings.wrapCode} onChange={(wrapCode) => update({ wrapCode })} />
           </SettingsRow>
-          <SettingsRow label={t("Edit text files")} description={t("Adds Edit to the file viewer for a text file in the pane's folder. Saving asks first, and stops if the file changed since you opened it.")}>
+          <SettingsRow icon={FilePen} label={t("Edit text files")} description={t("Adds Edit to the file viewer for a text file in the pane's folder. Saving asks first, and stops if the file changed since you opened it.")} reset={["editTextFiles"]}>
             <Toggle label={t("Edit text files")} checked={settings.editTextFiles} onChange={(editTextFiles) => update({ editTextFiles })} />
           </SettingsRow>
-          <MarkdownOutlineRow />
           <FilesPanelRow />
-          <FilesDocumentsRow />
-          {canReuseExternalLinkTab() && <SettingsRow label={t("Reuse tab for external links")} description={t("External links reuse one browser tab instead of opening a new tab each time. The site in that tab can see and navigate this Ovis tab, so this is off by default.")}>
+          {canReuseExternalLinkTab() && <SettingsRow icon={ExternalLink} label={t("Reuse tab for external links")} description={t("External links reuse one browser tab instead of opening a new tab each time. The site in that tab can see and navigate this Ovis tab, so this is off by default.")} reset={["reuseExternalLinkTab"]}
+            condition={<span className="settings-condition">{t("The site in that tab can see and navigate this Ovis tab.")}</span>}>
             <Toggle label={t("Reuse tab for external links")} checked={settings.reuseExternalLinkTab} onChange={(reuseExternalLinkTab) => update({ reuseExternalLinkTab })} />
           </SettingsRow>}
         </SettingsGroup>
         <VoiceMore />
       </SettingsFold>
-    </>
+    </SettingsBare.Provider>
   );
 }
 
@@ -850,7 +857,7 @@ function VoiceMain() {
   const micProblem = settings.voiceInput === "off" ? null : !window.isSecureContext ? t("Voice input needs HTTPS") : micDenied ? t("Microphone permission was denied") : null;
   return (
     <SettingsGroup title={t("Voice input")} section="voice">
-      <SettingsRow label={t("Microphone button")} description={<>{t("Auto: in the chat on a desktop, where dictation can work. On: on a phone and in the terminal input line too.")}{micProblem !== null && <span className="voice-error">{micProblem}</span>}</>} wide>
+      <SettingsRow icon={Mic} label={t("Microphone button")} description={t("Auto: in the chat on a desktop, where dictation can work. On: on a phone and in the terminal input line too.")} condition={micProblem !== null ? <span className="voice-error">{micProblem}</span> : undefined} wide>
         <Segmented label={t("Microphone button")} value={settings.voiceInput} onChange={(voiceInput) => void chooseVoiceInput(voiceInput)} options={VOICE_BUTTONS.map((voiceInput) => ({ value: voiceInput, label: t(voiceInput === "auto" ? "Auto" : voiceInput === "on" ? "On" : "Off") }))} />
       </SettingsRow>
     </SettingsGroup>
@@ -882,17 +889,17 @@ function VoiceMore() {
   return (
     <>
       {settings.voiceInput !== "off" && <>
-        <SettingsGroup section="voice-more">
-          <SettingsRow label={t("Dictation language")} description={t("Auto listens for the app's language, or for the browser's when the app is not translated into it")} htmlFor="settings-voice-language" wide>
+        <SettingsGroup title={t("Voice input")} section="voice-more">
+          <SettingsRow icon={Languages} label={t("Dictation language")} description={t("Auto listens for the app's language, or for the browser's when the app is not translated into it")} htmlFor="settings-voice-language" wide>
             <DictationLanguageSelect />
           </SettingsRow>
-          <SettingsRow label={t("Speech recognition")} description={<>{t(settings.voiceEngine === "auto" ? "Auto uses the API key when one is saved, else the browser" : settings.voiceEngine === "browser" ? "The browser recognizes the speech, even with a key saved" : "Only the API key below transcribes")}{settings.voiceEngine === "server" && voice && !voice.configured && <span className="voice-error">{t("Save an API key to use the mic")}</span>}</>} wide>
+          <SettingsRow icon={AudioLines} label={t("Speech recognition")} description={<>{t(settings.voiceEngine === "auto" ? "Auto uses the API key when one is saved, else the browser" : settings.voiceEngine === "browser" ? "The browser recognizes the speech, even with a key saved" : "Only the API key below transcribes")}</>} condition={settings.voiceEngine === "server" && voice && !voice.configured ? <span className="voice-error">{t("Save an API key to use the mic")}</span> : undefined} wide>
             <Segmented label={t("Speech recognition")} value={settings.voiceEngine} onChange={(voiceEngine) => update({ voiceEngine })} options={VOICE_ENGINES.map((voiceEngine) => ({ value: voiceEngine, label: t(voiceEngine === "auto" ? "Auto" : voiceEngine === "browser" ? "Browser" : "API key") }))} />
           </SettingsRow>
         </SettingsGroup>
         {settings.voiceEngine !== "browser" && (
           <SettingsGroup section="tidy-dictation">
-            <SettingsRow label={t("Tidy dictated text")} description={t("Drops fillers and fixes spacing; code and paths stay as spoken. Where it is off, the text stays exactly as transcribed.")} wide>
+            <SettingsRow icon={WandSparkles} label={t("Tidy dictated text")} description={t("Drops fillers and fixes spacing; code and paths stay as spoken. Where it is off, the text stays exactly as transcribed.")} wide>
               <Segmented label={t("Tidy dictated text")} value={settings.voicePolishChat ? (settings.voicePolishTerminal ? "both" : "chat") : settings.voicePolishTerminal ? "terminal" : "off"} onChange={(where) => update({ voicePolishChat: where === "chat" || where === "both", voicePolishTerminal: where === "terminal" || where === "both" })} options={[{ value: "off", label: t("Off") }, { value: "chat", label: t("Chat") }, { value: "terminal", label: t("Terminal") }, { value: "both", label: t("Both") }] as const} />
             </SettingsRow>
           </SettingsGroup>
@@ -1175,7 +1182,7 @@ function AccessFacts({ facts }: { facts: SecurityFacts }) {
  * Groups of Devices and PCs that merged into My devices (Connect a device holds the ways in, Portal among them),
  * by their old link names (`?settings=devices&section=…`).
  */
-const MOVED_GROUPS: Readonly<Record<string, string>> = { phone: "devices", remote: "devices", portal: "devices" };
+const MOVED_GROUPS: Readonly<Record<string, string>> = { phone: "devices", remote: "devices", portal: "devices", "chat-more": "conversation" };
 
 /**
  * What a paired device is, read from the label the app first gave it (lib/phone.ts deviceLabel, "iPhone · Safari");

@@ -25,7 +25,7 @@ const MATRIX: readonly (readonly [Language, string, SettingsPageId, string])[] =
   ["en", "OpenAI API key", "chat", "openai-key"],
   ["en", "Return inserts a new line", "chat", "composer"],
   ["en", "Send queued messages automatically", "chat", "composer-more"],
-  ["en", "Suggestion chip", "agents", "-"],
+  ["en", "Suggestion chip", "chat", "composer"],
   ["en", "Show above the message box", "chat", "quick-replies"],
   ["en", "Dictation language", "chat", "voice-more"],
   ["ko", "받아쓰기 언어", "chat", "voice-more"],

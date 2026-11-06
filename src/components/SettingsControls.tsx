@@ -103,7 +103,8 @@ export function SettingsRow({ label, description, keywords, held = false, htmlFo
   /** a tiny drawing of what the choice does, beside the control */
   preview?: ReactNode;
   /** what applies right now (a refusal, a missing key): shown under the name even where sentences are not */
-  condition?: ReactNode; children: ReactNode }) {
+  condition?: ReactNode;
+  children: ReactNode }) {
   const words = useContext(SettingsQuery);
   const bare = useContext(SettingsBare);
   const { settings, update } = useSettings();
@@ -133,7 +134,8 @@ export function SettingsRow({ label, description, keywords, held = false, htmlFo
             </button>}
           </span>
         ) : label_}
-        {bare === false && description !== undefined && <span className="settings-description">{description}</span>}
+        {/* a page without sentences still has them read out, and found by search */}
+        {description !== undefined && <span className={bare === false ? "settings-description" : "visually-hidden"}>{description}</span>}
         {condition}
       </div>
       {preview !== undefined && <span className="settings-row-preview" aria-hidden="true">{preview}</span>}

@@ -2322,12 +2322,11 @@ try {
   await until(async () => await mobileComposer.getAttribute("placeholder") === "run the tests", "a phone shows the suggestion as the placeholder");
   assert.equal(await mobilePage.locator(".voice-mic").count(), 0, "a phone's chat has no mic until Settings asks for it");
   assert.equal(await mobilePage.getByTitle("Use the suggestion", { exact: true }).count(), 0, "a phone shows no suggestion chip by default");
-  // the switch is Claude Code's own (#3108): in its row on Agents when this PC has Claude, else in a group of its own there
-  await mobilePage.goto(`${origin}/?pane=${encodeURIComponent(paneB)}&settings=agents`);
-  const claudeRow = mobilePage.locator(".agents-item[data-agent='claude']");
-  await mobilePage.locator(".agents-item[data-agent='claude'], [data-section='agent-claude']").first().waitFor();
-  if (await claudeRow.count() > 0) await claudeRow.locator(".agents-toggle").click();
-  await mobilePage.getByRole("switch", { name: "Suggestion chip", exact: true }).setChecked(true);
+  // the chip is one of Chat → Composer buttons, a chip each, pressed when on
+  await mobilePage.goto(`${origin}/?pane=${encodeURIComponent(paneB)}&settings=chat`);
+  const suggestion = mobilePage.getByRole("button", { name: "Suggestion (Claude Code)", exact: true });
+  await suggestion.click();
+  await until(async () => await suggestion.getAttribute("aria-pressed") === "true", "the Suggestion chip is pressed");
   await mobilePage.getByRole("button", { name: "Close settings", exact: true }).click();
   await mobileComposer.fill("");
   await mobilePage.getByTitle("Use the suggestion", { exact: true }).click();

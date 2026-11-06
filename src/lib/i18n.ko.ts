@@ -433,8 +433,6 @@ const BASE: Record<string, string> = {
   "No group": "그룹 없음",
   "Context {percent}% left": "컨텍스트 {percent}% 남음",
   "{used} of {window} tokens": "{window} 토큰 중 {used}",
-  "Suggestion chip": "제안 칩",
-  "Artifacts chip": "아티팩트 칩",
   "Permission mode": "권한 모드",
   "Model": "모델",
   "One model name, without spaces.": "띄어쓰기 없는 모델 이름 하나를 적으세요.",
@@ -458,6 +456,9 @@ const BASE: Record<string, string> = {
   "Phones paired through the relay will need to scan a new code.": "릴레이로 페어링된 폰은 새 코드를 다시 스캔해야 합니다.",
   "Pairs this phone through the relay, so Ovis keeps working away from home.": "이 폰을 릴레이로 페어링해 집 밖에서도 Ovis를 쓸 수 있게 합니다.",
   "This PC": "이 PC",
+  "Paste and send": "붙여넣고 보내기",
+  "Conversation": "대화",
+  "Off": "끄기",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

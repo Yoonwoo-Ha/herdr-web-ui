@@ -435,8 +435,6 @@ const BASE: Record<string, string> = {
   "No group": "グループなし",
   "Context {percent}% left": "コンテキスト残り {percent}%",
   "{used} of {window} tokens": "{used} / {window} トークン",
-  "Suggestion chip": "提案チップ",
-  "Artifacts chip": "アーティファクトチップ",
   "Permission mode": "権限モード",
   "Model": "モデル",
   "One model name, without spaces.": "空白を含まないモデル名を一つ指定してください。",
@@ -460,6 +458,9 @@ const BASE: Record<string, string> = {
   "Phones paired through the relay will need to scan a new code.": "リレー経由でペアリングしたスマートフォンは、新しいコードを読み取り直す必要があります。",
   "Pairs this phone through the relay, so Ovis keeps working away from home.": "このスマートフォンをリレー経由でペアリングし、外出先でも Ovis を使えるようにします。",
   "This PC": "この PC",
+  "Paste and send": "貼り付けて送信",
+  "Conversation": "会話",
+  "Off": "オフ",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
