@@ -951,7 +951,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 ### Modal (`.modal*`)
 - `.modal-scrim` centers an `aria-modal` dialog at `--z-modal`; `.modal` is a capped scrollable
   column with header, body and footer and `--shadow-pop`.
+- The scrim's padding is at least each safe-area inset, so a centered card (Settings on a phone held
+  sideways) keeps clear of the notch on either side and of the home indicator. Popovers placed by
+  script (`RowMenu`) clamp to the same safe area (`lib/safeArea.ts`).
 - At `<=640px`, it becomes a bottom sheet with top `--radius-xl` corners and safe-area padding.
+  As an iPhone's own sheets do, its top never reaches under the status bar or Dynamic Island: its
+  height is capped at `100%` less the top inset and `--space-2`, the search sheet's too.
   Every surface on a `.modal-scrim` (dialogs, the palette, the row sheet) rises from the bottom
   edge as an iPhone's sheet does (`--dur-sheet` on `--ease-spring`, the scrim darkening with it),
   follows a finger dragged down from its head or from a list at its top, and drops

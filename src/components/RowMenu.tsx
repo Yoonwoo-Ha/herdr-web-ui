@@ -18,6 +18,7 @@ import { useT } from "../lib/i18n.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { SHEET_QUERY, useSheetSwipe } from "../lib/sheets.ts";
 import { useSheetHistory } from "../lib/sheetHistory.ts";
+import { safeAreaInsets } from "../lib/safeArea.ts";
 
 export interface RowMenuItem {
   id: string;
@@ -105,27 +106,33 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, detail
   // first. The height is capped to the room on that side, and only to that: a tab's menu lists
   // its panes and herdr's layout operations and is tall, so it scrolls, as AgentPicker's list
   // does, only on a screen too short for it. An item below the fold must not be reachable by
-  // keyboard while the pointer cannot see it
+  // keyboard while the pointer cannot see it. The screen's edges are those of its safe area: a
+  // landscape phone's notch and home indicator are no room for a menu
   useLayoutEffect(() => {
     if (sheet) return;
     const menu = surface.current;
     if (!menu || !anchor.isConnected) { onClose(); return; }
     const rect = anchor.getBoundingClientRect();
     placedAt.current = { top: rect.top, left: rect.left };
+    const safe = safeAreaInsets();
+    const minX = safe.left + EDGE;
+    const maxX = window.innerWidth - safe.right - EDGE;
+    const minY = safe.top + EDGE;
+    const maxY = window.innerHeight - safe.bottom - EDGE;
     if (point) {
       setPlace({
-        left: Math.max(EDGE, Math.min(point.x, window.innerWidth - menu.offsetWidth - EDGE)),
-        top: Math.max(EDGE, Math.min(point.y, window.innerHeight - menu.offsetHeight - EDGE)),
-        maxHeight: window.innerHeight - EDGE * 2,
+        left: Math.max(minX, Math.min(point.x, maxX - menu.offsetWidth)),
+        top: Math.max(minY, Math.min(point.y, maxY - menu.offsetHeight)),
+        maxHeight: maxY - minY,
       });
       return;
     }
-    const left = Math.max(EDGE, Math.min(align === "start" ? rect.left : rect.right - menu.offsetWidth, window.innerWidth - menu.offsetWidth - EDGE));
+    const left = Math.max(minX, Math.min(align === "start" ? rect.left : rect.right - menu.offsetWidth, maxX - menu.offsetWidth));
     const below = rect.bottom + GAP;
-    const roomBelow = window.innerHeight - below - EDGE;
-    const roomAbove = rect.top - GAP - EDGE;
-    const up = below + menu.offsetHeight + EDGE > window.innerHeight && roomAbove > roomBelow;
-    const top = up ? Math.max(EDGE, rect.top - GAP - menu.offsetHeight) : below;
+    const roomBelow = maxY - below;
+    const roomAbove = rect.top - GAP - minY;
+    const up = below + menu.offsetHeight > maxY && roomAbove > roomBelow;
+    const top = up ? Math.max(minY, rect.top - GAP - menu.offsetHeight) : below;
     setPlace({ top, left, maxHeight: Math.max(EDGE, up ? roomAbove : roomBelow) });
   }, [align, anchor, onClose, point, sheet]);
 
