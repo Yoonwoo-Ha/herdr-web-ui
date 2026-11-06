@@ -22,17 +22,17 @@ const MATRIX: readonly (readonly [Language, string, SettingsPageId, string])[] =
   ["en", "notifications", "alerts", "-"],
   ["en", "shortcuts", "shortcuts", "-"],
   ["en", "phone", "devices", "-"],
-  ["en", "OpenAI API key", "voice", "openai-key"],
+  ["en", "OpenAI API key", "chat", "openai-key"],
   ["en", "Return inserts a new line", "chat", "composer"],
   ["en", "Send queued messages automatically", "chat", "composer-more"],
-  ["en", "Suggestion chip", "chat", "composer-more"],
+  ["en", "Suggestion chip", "agents", "-"],
   ["en", "Show above the message box", "chat", "quick-replies"],
   ["ko", "인터페이스 글자 크기", "appearance", "typography"],
   ["ko", "채팅 글자 크기", "chat", "-"],
   ["ko", "Enter로 보내기", "chat", "composer"],
   ["ko", "빠른 답장", "chat", "quick-replies"],
   ["ko", "터미널 글자 크기", "terminal", "-"],
-  ["ko", "OpenAI API 키", "voice", "openai-key"],
+  ["ko", "OpenAI API 키", "chat", "openai-key"],
   ["ko", "단축키", "shortcuts", "-"],
   ["ko", "알림", "alerts", "-"],
   ["ko", "대기 메시지 자동 전송", "chat", "composer-more"],
@@ -42,7 +42,7 @@ const MATRIX: readonly (readonly [Language, string, SettingsPageId, string])[] =
   ["ja", "Enter で送信", "chat", "composer"],
   ["ja", "クイック返信", "chat", "quick-replies"],
   ["ja", "ターミナルのフォントサイズ", "terminal", "-"],
-  ["ja", "OpenAI API キー", "voice", "openai-key"],
+  ["ja", "OpenAI API キー", "chat", "openai-key"],
   ["ja", "ショートカット", "shortcuts", "-"],
   ["ja", "通知", "alerts", "-"],
   ["ja", "送信待ちメッセージを自動で送信", "chat", "composer-more"],
@@ -52,7 +52,7 @@ const MATRIX: readonly (readonly [Language, string, SettingsPageId, string])[] =
   ["zh", "按 Enter 发送", "chat", "composer"],
   ["zh", "快捷回复", "chat", "quick-replies"],
   ["zh", "终端字号", "terminal", "-"],
-  ["zh", "OpenAI API 密钥", "voice", "openai-key"],
+  ["zh", "OpenAI API 密钥", "chat", "openai-key"],
   ["zh", "快捷键", "shortcuts", "-"],
   ["zh", "提醒", "alerts", "-"],
   ["zh", "自动发送排队消息", "chat", "composer-more"],
@@ -145,7 +145,7 @@ describe("requested page", () => {
     // the palette's own opening clears what it asked before, so Settings opened another way finds nothing
     requestSettingsPage(null);
     expect(requestedSettingsPage()).toBeNull();
-    requestSettingsPage({ page: "voice" });
+    requestSettingsPage({ page: "terminal" });
     expect(requestedSettingsPage()?.section).toBeUndefined();
   });
 });

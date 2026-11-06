@@ -14,7 +14,7 @@ import { SettingsRow } from "./SettingsControls.tsx";
 export function wayBackIn(t: Translate, viaPortal: boolean, oidc = false): { row: string; confirm: string } {
   return viaPortal
     ? { row: t("Forget this browser's sign-in. Getting back in means signing in through Portal again."), confirm: oidc ? t("Getting back in means signing in through Portal again. While this browser is still signed in to Google or your company's login, that sign-in lets it straight back in: sign out there too.") : t("Getting back in means signing in through Portal again.") }
-    : { row: t("Forget this browser's sign-in. Getting back in takes the access token or a pairing code."), confirm: t("Getting back in takes the access token, or a pairing code from the PC: Settings → Phone & devices there, or the pair command in its terminal.") };
+    : { row: t("Forget this browser's sign-in. Getting back in takes the access token or a pairing code."), confirm: t("Getting back in takes the access token, or a pairing code from the PC: Settings → Devices and PCs there, or the pair command in its terminal.") };
 }
 
 /** Settings → Phone & devices → Devices → Sign out: forget this browser's sign-in, after asking once. */

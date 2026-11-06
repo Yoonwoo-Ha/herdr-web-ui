@@ -213,7 +213,7 @@ export function MachineSidebar(props: Props) {
     focusPcsHead.current = hiddenList.length === 1 && hiddenList[0]!.id === id;
     setHiddenMachines(withMachineHidden(roster, hiddenIds, id, false));
   };
-  const openRemoteSettings = () => { requestSettingsPage({ page: "remote", section: "sidebar-pcs" }); props.actions.openSettings(); };
+  const openRemoteSettings = () => { requestSettingsPage({ page: "devices", section: "sidebar-pcs" }); props.actions.openSettings(); };
   // the PCs section folds to its head as Agents does (AgentSidebar.tsx), kept on this device; while the
   // filter keeps rows in it, it stands open and its caret folds it for the filter's time only
   const listId = useId();

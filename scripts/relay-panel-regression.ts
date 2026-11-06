@@ -81,7 +81,7 @@ export async function openPhoneSettings(page: Page, origin: string): Promise<voi
   await page.goto(origin, { waitUntil: "domcontentloaded" });
   await page.locator(".conn-live").waitFor({ state: "attached" });
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
-  await openSettingsPage(page, "Phone & devices");
+  await openSettingsPage(page, "Devices and PCs");
 }
 
 export async function checkRelayPanel(browser: Browser): Promise<void> {

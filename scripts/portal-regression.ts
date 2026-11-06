@@ -58,7 +58,7 @@ const portalFetchPage = async (context: BrowserContext): Promise<void> => {
 const openPhoneSettings = async (page: Page): Promise<void> => {
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await page.locator(".settings-dialog").waitFor({ timeout: 10_000 });
-  await openSettingsPage(page, "Phone & devices");
+  await openSettingsPage(page, "Devices and PCs");
 };
 const settingsOf = (page: Page) => page.locator(".settings-dialog");
 const reopenPhoneSettings = async (page: Page): Promise<void> => {

@@ -4,10 +4,6 @@
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
 export const SETTINGS_COMPOSER_JA: Record<string, string> = {
-  "Artifacts chip": "アーティファクトチップ",
-  "A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.": "Claude Code のペインの入力欄に、セッションが Artifact ツールで公開したページの一覧を出すチップを表示します。",
-  "Side conversations chip (experimental)": "サイド会話チップ（実験的）",
-  "A chip in an OMP pane's message box lists the side conversations its session saved with /btw.": "OMP ペインの入力欄に、セッションが /btw で保存したサイド会話の一覧を開くチップを表示します。",
   "Paste and send button": "貼り付けて送信ボタン",
   "A button in the empty message box sends the text copied on this device as a message.": "空の入力欄のボタンで、このデバイスでコピーしたテキストをメッセージとして送ります。",
   "Split into rows and columns": "行と列に分割",

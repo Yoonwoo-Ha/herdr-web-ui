@@ -4,10 +4,6 @@
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
 export const SETTINGS_COMPOSER_KO: Record<string, string> = {
-  "Artifacts chip": "아티팩트 칩",
-  "A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.": "Claude Code 패널의 입력창에 세션이 Artifact 도구로 게시한 페이지 목록을 여는 칩을 표시합니다.",
-  "Side conversations chip (experimental)": "곁가지 대화 칩 (실험적)",
-  "A chip in an OMP pane's message box lists the side conversations its session saved with /btw.": "OMP 패널의 입력창에 세션이 /btw로 저장한 곁가지 대화 목록을 여는 칩을 표시합니다.",
   "Paste and send button": "붙여넣고 보내기 버튼",
   "A button in the empty message box sends the text copied on this device as a message.": "빈 입력창의 버튼으로 이 기기에서 복사한 글을 메시지로 보냅니다.",
   "Split into rows and columns": "행과 열로 나누기",

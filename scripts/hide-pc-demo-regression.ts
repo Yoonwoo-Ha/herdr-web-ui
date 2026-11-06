@@ -157,7 +157,7 @@ try {
 
           // as a person does it: the gear, then Remote PCs, on top of the pane open on Work PC
           await page.locator(".sidebar-footer-settings").click();
-          await openSettingsPage(page, "Remote PCs");
+          await openSettingsPage(page, "Devices and PCs");
           const dialog = page.locator(".settings-dialog");
           const work = dialog.getByRole("switch", { name: "Show Work PC in sidebar", exact: true });
           const laptop = dialog.getByRole("switch", { name: "Show Laptop in sidebar", exact: true });
@@ -357,7 +357,7 @@ try {
             if (phone) await hiddenChoice(page, phone, "Choose PCs in Settings…").tap();
             else await hiddenChoice(page, phone, "Choose PCs in Settings…").click();
             const dialog = page.locator(".settings-dialog");
-            await dialog.getByRole("tabpanel", { name: "Remote PCs", exact: true }).waitFor();
+            await dialog.getByRole("tabpanel", { name: "Devices and PCs", exact: true }).waitFor();
             await page.waitForFunction(() => (document.activeElement as HTMLElement | null)?.dataset.section === "sidebar-pcs");
             const laptop = dialog.getByRole("switch", { name: "Show Laptop in sidebar", exact: true });
             assert.equal(await laptop.getAttribute("aria-checked"), "true");

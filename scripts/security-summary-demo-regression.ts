@@ -24,7 +24,7 @@ const app = mkdtempSync(join(tmpdir(), "herdr-security-summary-demo-"));
 const evidence = process.env["UI_EVIDENCE_DIR"] || "";
 const SECTION = '.settings-body:not([hidden]) [data-section="access"]';
 const LAN = '[data-testid="lan-exposure-notice"]';
-const LAN_TEXT = "Anyone who can reach 0.0.0.0 on your network can type into every pane: no access token is set and no device is paired yet.Phone & devices";
+const LAN_TEXT = "Anyone who can reach 0.0.0.0 on your network can type into every pane: no access token is set and no device is paired yet.Devices and PCs";
 
 const known = { "Access token": "Set", "Pairing gate": "Closed", "Listens on": "Loopback", "This connection": "Through Tailscale", "Public internet": "Unknown" };
 const FACTS: Record<string, Record<string, string>> = {
@@ -288,7 +288,7 @@ async function capture(browser: Browser): Promise<void> {
               else {
                 // a read-only fact has no hover of its own: the pointer rests on the page list beside it
                 await neighbour.evaluate((node) => (node as HTMLElement).blur());
-                await page.getByRole("tab", { name: "Remote PCs", exact: true }).hover();
+                await page.getByRole("tab", { name: "Devices and PCs", exact: true }).hover();
               }
             }
             if (state === "offline") {

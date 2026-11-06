@@ -448,7 +448,7 @@ try {
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   const settingsOverPreview = page.getByRole("dialog", { name: "Settings", exact: true });
   await settingsOverPreview.waitFor();
-  await openSettingsPage(page, "Remote PCs");
+  await openSettingsPage(page, "Devices and PCs");
   await settingsOverPreview.getByRole("button", { name: "Add PC", exact: true }).click();
   const addPc = page.locator("dialog.machine-dialog");
   await addPc.waitFor();

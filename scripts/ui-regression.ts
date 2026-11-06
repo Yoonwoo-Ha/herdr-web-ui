@@ -762,7 +762,7 @@ try {
   // Add PC lives in Settings → Remote PCs, not in the sidebar; opening it closes Settings behind it
   assert.equal(await page.locator(".sidebar").getByRole("button", { name: "Add PC", exact: true }).count(), 0, "the sidebar has no Add PC button");
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
-  await openSettingsPage(page, "Remote PCs");
+  await openSettingsPage(page, "Devices and PCs");
   await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Add PC", exact: true }).click();
   await page.getByRole("dialog", { name: "Add PC", exact: true }).waitFor();
   assert.equal(await page.getByRole("dialog", { name: "Settings" }).count(), 0, "Add PC closes Settings");
@@ -2504,7 +2504,7 @@ try {
   await securedPage.keyboard.press("Escape");
   await securedPage.getByRole("dialog", { name: "Command palette", exact: true }).waitFor({ state: "hidden" });
   await securedPage.keyboard.press("ControlOrMeta+Shift+Comma");
-  await openSettingsPage(securedPage, "Phone & devices");
+  await openSettingsPage(securedPage, "Devices and PCs");
   const settingsSignOut = securedPage.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Sign out", exact: true });
   const signOutConfirm = securedPage.getByRole("alertdialog", { name: "Sign out of this browser?", exact: true });
   await settingsSignOut.click();
@@ -2531,7 +2531,7 @@ try {
   await securedPage.reload();
   await securedPage.locator(".app-header.is-zoned").waitFor();
   await securedPage.keyboard.press("ControlOrMeta+Shift+Comma");
-  await openSettingsPage(securedPage, "Phone & devices");
+  await openSettingsPage(securedPage, "Devices and PCs");
   await settingsSignOut.click();
   await signOutConfirm.getByRole("button", { name: "Sign out", exact: true }).click();
   await securedPage.getByTestId("token-gate").waitFor();

@@ -6,7 +6,7 @@ import { chromium, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp, buildDevelopmentDemoApp } from "./demo-build.ts";
 import { DEMO_FILE_PREVIEW_SCRIPT } from "./demo-file-preview.ts";
-import { openSettingsPage, sheetRisen } from "./settings-page.ts";
+import { openSettingsFolds, openSettingsPage, sheetRisen } from "./settings-page.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
 import { JA } from "../src/lib/i18n.ja.ts";
 import { ZH } from "../src/lib/i18n.zh.ts";
@@ -20,7 +20,7 @@ import { comboKey, LEGACY_COMBOS } from "./theme-baseline.ts";
 // HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
 const devApp = mkdtempSync(join(tmpdir(), "herdr-settings-dev-"));
-const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Voice input", "Agents", "Shortcuts", "Phone & devices", "Remote PCs", "About"];
+const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Agents", "Shortcuts", "Devices and PCs", "About"];
 const SETTINGS = { language: "en", showUsage: true, voiceInput: true, showQuickReplies: true, fileOpen: "panel" };
 
 const dialogOf = (page: Page) => page.getByRole("dialog", { name: "Settings", exact: true });
@@ -75,17 +75,17 @@ const MATRIX: readonly (readonly ["en" | "ko" | "ja" | "zh", string, string, str
   ["en", "notifications", "alerts", "-"],
   ["en", "shortcuts", "shortcuts", "-"],
   ["en", "phone", "devices", "-"],
-  ["en", "OpenAI API key", "voice", "openai-key"],
+  ["en", "OpenAI API key", "chat", "openai-key"],
   ["en", "Return inserts a new line", "chat", "composer"],
   ["en", "Send queued messages automatically", "chat", "composer-more"],
-  ["en", "Suggestion chip", "chat", "composer-more"],
+  ["en", "Suggestion chip", "agents", "-"],
   ["en", "Show above the message box", "chat", "quick-replies"],
   ["ko", "인터페이스 글자 크기", "appearance", "typography"],
   ["ko", "채팅 글자 크기", "chat", "-"],
   ["ko", "Enter로 보내기", "chat", "composer"],
   ["ko", "빠른 답장", "chat", "quick-replies"],
   ["ko", "터미널 글자 크기", "terminal", "-"],
-  ["ko", "OpenAI API 키", "voice", "openai-key"],
+  ["ko", "OpenAI API 키", "chat", "openai-key"],
   ["ko", "단축키", "shortcuts", "-"],
   ["ko", "알림", "alerts", "-"],
   ["ko", "대기 메시지 자동 전송", "chat", "composer-more"],
@@ -95,7 +95,7 @@ const MATRIX: readonly (readonly ["en" | "ko" | "ja" | "zh", string, string, str
   ["ja", "Enter で送信", "chat", "composer"],
   ["ja", "クイック返信", "chat", "quick-replies"],
   ["ja", "ターミナルのフォントサイズ", "terminal", "-"],
-  ["ja", "OpenAI API キー", "voice", "openai-key"],
+  ["ja", "OpenAI API キー", "chat", "openai-key"],
   ["ja", "ショートカット", "shortcuts", "-"],
   ["ja", "通知", "alerts", "-"],
   ["ja", "送信待ちメッセージを自動で送信", "chat", "composer-more"],
@@ -105,7 +105,7 @@ const MATRIX: readonly (readonly ["en" | "ko" | "ja" | "zh", string, string, str
   ["zh", "按 Enter 发送", "chat", "composer"],
   ["zh", "快捷回复", "chat", "quick-replies"],
   ["zh", "终端字号", "terminal", "-"],
-  ["zh", "OpenAI API 密钥", "voice", "openai-key"],
+  ["zh", "OpenAI API 密钥", "chat", "openai-key"],
   ["zh", "快捷键", "shortcuts", "-"],
   ["zh", "提醒", "alerts", "-"],
   ["zh", "自动发送排队消息", "chat", "composer-more"],
@@ -145,7 +145,7 @@ const landing = async (page: Page, label: (name: string) => string): Promise<{ p
   return { page: id, section, visible };
   });
   // the panel is named by its page's label in the language shown: back to the page's id
-  const ids = ["appearance", "chat", "terminal", "alerts", "voice", "agents", "shortcuts", "devices", "remote", "about"];
+  const ids = ["appearance", "chat", "terminal", "alerts", "agents", "shortcuts", "devices", "about"];
   return { ...shown, page: shown.page === null ? null : ids[PAGES.findIndex((name) => label(name) === shown.page)] ?? `unknown: ${shown.page}` };
 };
 /** Anything in the palette or Settings wider than the window: a long query or label must not push the sheet sideways. */
@@ -583,6 +583,9 @@ async function foldedGroups(browser: import("playwright-core").Browser, url: str
       await openSettings(page);
       await dialog.getByRole("searchbox", { name: "Search settings", exact: true }).fill("sidebar on hover");
       await dialog.getByRole("region", { name: "Search results", exact: true }).getByRole("switch", { name: "Show the sidebar on hover", exact: true }).waitFor();
+      // an agent's own setting is found with its agent's row shut, in a group named after it
+      await dialog.getByRole("searchbox", { name: "Search settings", exact: true }).fill("sandbox");
+      await dialog.getByRole("region", { name: "Search results", exact: true }).getByLabel("Sandbox and approvals", { exact: true }).waitFor();
       await closeSettings(page);
 
       // a link to a group inside a fold opens it on that group
@@ -657,7 +660,9 @@ try {
             if (name === "Appearance" && process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `select-arrows-${width}-${language}.png`), animations: "disabled" });
             await checkSelectArrows(page);
             if (name === "Agents") await page.locator(".usage-accounts-row").first().waitFor();
-            if (name === "Voice input") {
+            if (name === "Chat") {
+              // Voice input is Chat's group; its OpenAI key is in Chat's More settings
+              await openSettingsFolds(page);
               await page.locator(".voice-key").waitFor();
               const dictation = page.getByLabel(label("Dictation language"), { exact: true });
               await dictation.selectOption("hu-HU");
@@ -675,19 +680,22 @@ try {
               assert.equal(await body.locator("[role='alert']").count(), 0, "the Agents page shows no error");
               assert.deepEqual(await body.locator(".agents-item").evaluateAll((rows) => rows.map((row) => row.getAttribute("data-agent"))), ["claude", "codex", "omp", "pi", "hermes"]);
               assert.deepEqual(await body.locator("[data-section='other-accounts'] .usage-provider-heading > span:not(.usage-account-count):not(.agent-mark)").allTextContents(), ["Cursor", "OpenCode"]);
-              assert.deepEqual(await body.locator("h3").allTextContents(), [label("On this PC"), label("Other agents herdr found"), label("Other accounts"), label("New agents"), label("Plan limits")]);
+              assert.deepEqual(await body.locator("h3").allTextContents(), [label("On this PC"), label("Other agents herdr found"), label("Other accounts"), label("Plan limits")]);
+              // an agent's own settings are in its row: Claude Code's permission mode for New tab
+              await body.locator(".agents-item[data-agent='claude'] .agents-toggle").click();
+              await body.locator(".agents-item[data-agent='claude']").getByLabel(label("Permission mode"), { exact: true }).waitFor();
+              await body.locator(".agents-item[data-agent='claude'] .agents-toggle").click();
               // herdr's integrations no row shows, each with its command; one with neither its agent nor its
               // hook on the PC (copilot, cursor, antigravity-cli) is not listed at all (#2738)
               assert.deepEqual(await body.locator("[data-section='integrations'] .settings-label").allTextContents(), ["opencode"]);
               assert.equal(await body.locator("[data-section='integrations-missing']").count(), 0);
-              // the launch modes are always there, whatever the PC has
-              assert.equal(await body.locator("[data-section='launch-modes'] select").count(), 2);
               const install = (target: string): string => `herdr integration install ${target}`;
               const copyLabel = (target: string): string => label("Copy the command for {name}").replace("{name}", target);
               // a row opens on its accounts and herdr's session resume
               const codex = body.locator(".agents-item[data-agent='codex']");
               await codex.locator(".agents-toggle").tap();
               assert.equal(await codex.locator(".agents-toggle").getAttribute("aria-expanded"), "true");
+              assert.equal(await codex.getByLabel(label("Sandbox and approvals"), { exact: true }).count(), 1, "Codex's row holds the mode New tab starts it in");
               assert.equal(await codex.locator(".usage-accounts-row").count(), 2, "Codex's two accounts are in its row");
               assert.equal(await codex.locator("code").textContent(), install("codex"));
               const copy = codex.getByRole("button", { name: copyLabel("codex"), exact: true });

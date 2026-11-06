@@ -3553,23 +3553,25 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   closed entry (the palette's), stays open: those steps, and the address the app writes on the entry
   left, are no Back of the user's. Its own step that lands over a second after it was asked for is
   taken for one, as Back then may be the user's.
-- Pages, in order: **Appearance** (theme, dark theme, light theme, density, language, sidebar rows; then
-  **Typography**: interface font size and interface font), **Chat**
-  (panes open in, show thinking, chat width, chat font size and family; then
-  **Composer**: Enter sends, send queued messages automatically, the Artifacts chip (off by default, the device setting
-  `composerArtifacts`), the Side conversations chip (experimental, off by default, the device setting
-  `composerBtw`), the Paste and send button (off by default, the device setting
-  `composerPasteSend`), and on a touch screen the suggestion chip (off by default); then
-  **Quick replies**; then **File viewer**: wrap long lines, Markdown outline (off by default, the device setting `markdownOutline`)), **Terminal** (font size, font family, wheel
-  speed, input mode, Key bar, Keyboard only from the key bar (off by default, the device setting
-  `terminalKeyboardOnRequest`), Fold the key bar (touch screens, off by default, the device setting
-  `terminalFoldKeyBar`), Clipboard from a pane, Pictures in the terminal (off by default, the
-  device setting `terminalImages`), Use alongside herdr's own window, Follow
-  herdr's focus), **Alerts**, **Voice input**, **Agents**,
-  **Shortcuts** (the platform-resolved global bindings), **Phone & devices** (Connect a phone,
-  Keep screen on, Install; then Portal, where the server offers it; then paired devices; then Access),
-  **Remote PCs** (Add PC, Update PC bridges automatically, PC load in the sidebar; then **Show in sidebar**), **About** (Updates, herdr, the repository links). A button that points at
-  Updates opens the dialog on About.
+- Pages, in order (eight): **Appearance** (theme, dark theme, light theme, density, language;
+  **Typography**: interface font size; **Sidebar**: sidebar rows, agents order, tab names), **Chat**
+  (panes open in, show thinking, chat width, chat font size; **Composer**: Enter sends; **Quick
+  replies**; **File viewer**: wrap long lines, open files, web links; **Voice input**: microphone
+  button, dictation language), **Terminal** (font size, font family, input mode, Key bar),
+  **Alerts**, **Agents**, **Shortcuts** (the platform-resolved global bindings), **Devices and PCs**
+  (Phone: Connect a phone, Keep screen on, Install; then Portal, Account and paired devices; then
+  **Remote PCs**: Add PC, Add a PC through the relay; then **Show in sidebar**), **About** (Updates,
+  herdr, the repository links). Each page's other rows are in its folds (above). Voice input was a
+  page and is Chat's group (its speech recognition, tidying and OpenAI key in Chat's More settings);
+  Remote PCs was a page and is a group of Devices and PCs; a link or a history entry naming either
+  old page opens the page it went to (lib/deepLink.ts). A button that points at Updates opens the
+  dialog on About.
+- **Agents** lists the agents on this PC, one row each that opens on its status (version, sign-in,
+  accounts, session resume) and the settings that belong to that agent alone: Claude Code's
+  permission mode, Artifacts chip and (on a touch screen) suggestion chip; Codex's sandbox and
+  approvals; OMP's side conversations chip (experimental). New workspace, New tab and New worktree
+  start the agent in that mode; Ovis never writes the agent's own configuration. A search shows each
+  installed agent's settings in a group of its own. An agent that is not on the PC offers none.
 - Every page is built from the same parts (`components/SettingsControls.tsx`). A group is an
   optional caption (`--fs-sm`, `--fw-semibold`, `--text-dim`, sentence case) over one card:
   `--bg-elevated`, hairline `--border`, `--radius-lg`, its rows parted by hairlines and never

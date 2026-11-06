@@ -139,7 +139,7 @@ try {
   await create.waitFor(); await create.getByRole("button", { name: "Close dialog", exact: true }).click();
   // Add PC lives in Settings → Remote PCs; opening it closes Settings
   await page.locator(".sidebar-footer").getByRole("button", { name: "Settings", exact: true }).click();
-  await openSettingsPage(page, "Remote PCs");
+  await openSettingsPage(page, "Devices and PCs");
   await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Add PC", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Add PC", exact: true }); await dialog.waitFor();
   await page.screenshot({ path: join(evidence, "desktop-add-pc-dark.png") });
@@ -154,7 +154,7 @@ try {
   await page.waitForFunction(() => Math.abs(document.querySelector(".sidebar.is-open")!.getBoundingClientRect().x) < 1);
   await page.screenshot({ path: join(evidence, "mobile-light.png") });
   await page.locator(".sidebar-footer").getByRole("button", { name: "Settings", exact: true }).click();
-  await openSettingsPage(page, "Remote PCs");
+  await openSettingsPage(page, "Devices and PCs");
   await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Add PC", exact: true }).click();
   await page.screenshot({ path: join(evidence, "mobile-add-pc-light.png") });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);

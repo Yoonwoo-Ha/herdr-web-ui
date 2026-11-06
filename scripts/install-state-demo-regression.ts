@@ -43,7 +43,7 @@ const CHROMIUM_HELP = "Use the install icon in the address bar, or the browser m
 /** Settings → Phone & devices → Install, opened in this page. */
 const installRow = async (page: Page): Promise<Locator> => {
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
-  await openSettingsPage(page, "Phone & devices");
+  await openSettingsPage(page, "Devices and PCs");
   return page.locator(".settings-row").filter({ has: page.locator(".settings-label", { hasText: /^Install$/ }) });
 };
 const installButton = (row: Locator): Locator => row.getByRole("button", { name: "Install app", exact: true });

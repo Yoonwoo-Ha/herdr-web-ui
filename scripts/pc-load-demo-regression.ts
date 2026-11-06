@@ -141,7 +141,7 @@ try {
 
           // turned off on this device: the line leaves every PC, kept in its own key
           await page.locator(".sidebar-footer-settings").click();
-          await openSettingsPage(page, "Remote PCs");
+          await openSettingsPage(page, "Devices and PCs");
           const toggle = page.locator(".settings-dialog").getByRole("switch", { name: "PC load in the sidebar", exact: true });
           assert.equal(await toggle.getAttribute("aria-checked"), "true");
           await toggle.click();

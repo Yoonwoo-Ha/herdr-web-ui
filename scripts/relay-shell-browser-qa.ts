@@ -626,7 +626,7 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
       // A same-carrier relay API round trip is a barrier after the rename, not a timed absence check.
       const statusesBefore = await relayStatuses();
       await page.keyboard.press("ControlOrMeta+Shift+Comma");
-      await openSettingsPage(page, "Phone & devices");
+      await openSettingsPage(page, "Devices and PCs");
       await page.getByRole("button", { name: "Rename Renamed QA phone", exact: true }).waitFor();
       // the hosted shell offers no relay at all (a relayed phone can neither pair nor reset there:
       // relayOffered in components/ConnectPhoneDialog.tsx): no relay state in the Connect a phone row, checked once the page consumed the relay status the group would follow,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ArrowLeft, Bell, Bot, ChevronRight, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plus, Search, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, Bot, ChevronRight, Info, Keyboard, MessageSquare, Monitor, Palette, Plus, Search, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
@@ -266,11 +266,9 @@ export const PAGES: readonly { id: SettingsPage; icon: LucideIcon }[] = [
   { id: "chat", icon: MessageSquare },
   { id: "terminal", icon: SquareTerminal },
   { id: "alerts", icon: Bell },
-  { id: "voice", icon: Mic },
   { id: "agents", icon: Bot },
   { id: "shortcuts", icon: Keyboard },
   { id: "devices", icon: Smartphone },
-  { id: "remote", icon: Monitor },
   { id: "about", icon: Info },
 ];
 
@@ -557,7 +555,9 @@ function ChatPage() {
         </SettingsRow>
       </SettingsGroup>
 
-      <SettingsFold kind="more" keys={["foldWork", "chatRequestDetails", "chatFontFamily", "autoSendQueued", "composerArtifacts", "composerPasteSend", "suggestionChip", "editTextFiles", "markdownOutline", "filesPanel", "filesDocuments", "reuseExternalLinkTab"]}>
+      <VoiceMain />
+
+      <SettingsFold kind="more" keys={["foldWork", "chatRequestDetails", "chatFontFamily", "autoSendQueued", "composerPasteSend", "editTextFiles", "markdownOutline", "filesPanel", "filesDocuments", "reuseExternalLinkTab", "voiceEngine", "voicePolishChat", "voicePolishTerminal"]}>
         <SettingsGroup title={t("Chat")} section="chat-more">
           <SettingsRow label={t("Collapse work")} description={t("A turn's work starts folded to one line, also while the agent works, unless it needs you. One you open or fold stays that way for its message")}>
             <Toggle label={t("Collapse work")} checked={settings.foldWork} onChange={(foldWork) => update({ foldWork })} />
@@ -573,17 +573,9 @@ function ChatPage() {
           <SettingsRow label={t("Send queued messages automatically")} description={t("A message sent while the agent works goes by itself when the turn ends. When off, it waits until you press Send now.")}>
             <Toggle label={t("Send queued messages automatically")} checked={settings.autoSendQueued} onChange={(autoSendQueued) => update({ autoSendQueued })} />
           </SettingsRow>
-          <SettingsRow label={t("Artifacts chip")} description={t("A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.")}>
-            <Toggle label={t("Artifacts chip")} checked={settings.composerArtifacts} onChange={(composerArtifacts) => update({ composerArtifacts })} />
-          </SettingsRow>
           <SettingsRow label={t("Paste and send button")} description={t("A button in the empty message box sends the text copied on this device as a message.")}>
             <Toggle label={t("Paste and send button")} checked={settings.composerPasteSend} onChange={(composerPasteSend) => update({ composerPasteSend })} />
           </SettingsRow>
-          {touch && (
-            <SettingsRow label={t("Suggestion chip")} description={t("A chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.")}>
-              <Toggle label={t("Suggestion chip")} checked={settings.suggestionChip} onChange={(suggestionChip) => update({ suggestionChip })} />
-            </SettingsRow>
-          )}
         </SettingsGroup>
         <SettingsGroup title={t("File viewer")} section="file-viewer-more">
           <SettingsRow label={t("Edit text files")} description={t("Adds Edit to the file viewer for a text file in the pane's folder. Saving asks first, and stops if the file changed since you opened it.")}>
@@ -596,13 +588,7 @@ function ChatPage() {
             <Toggle label={t("Reuse tab for external links")} checked={settings.reuseExternalLinkTab} onChange={(reuseExternalLinkTab) => update({ reuseExternalLinkTab })} />
           </SettingsRow>}
         </SettingsGroup>
-      </SettingsFold>
-      <SettingsFold kind="experimental" keys={["composerBtw"]}>
-        <SettingsGroup section="chat-experimental">
-          <SettingsRow label={t("Side conversations chip (experimental)")} description={t("A chip in an OMP pane's message box lists the side conversations its session saved with /btw.")}>
-            <Toggle label={t("Side conversations chip (experimental)")} checked={settings.composerBtw} onChange={(composerBtw) => update({ composerBtw })} />
-          </SettingsRow>
-        </SettingsGroup>
+        <VoiceMore />
       </SettingsFold>
     </>
   );
@@ -763,16 +749,11 @@ function DictationLanguageSelect() {
   );
 }
 
-function VoicePage() {
+/** Settings → Chat → Voice input: whether the microphone button shows, and the language it listens for. */
+function VoiceMain() {
   const { settings, update } = useSettings();
   const t = useT();
-  // the server only says whether it holds a key; the key typed here is never kept past a save
-  const [voice, setVoice] = useState<VoiceStatus | null>(null);
-  const [voiceKey, setVoiceKey] = useState("");
-  const [voiceBusy, setVoiceBusy] = useState(false);
-  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [micDenied, setMicDenied] = useState(false);
-  useEffect(() => { fetchVoiceStatus().then(setVoice, () => setVoice(null)); }, []);
   /**
    * On asks now, so the first dictation does not stop at the browser's permission prompt. Not in an
    * iPhone home-screen app, which this request closed or reloaded (#2343): there the first tap of the mic asks.
@@ -785,6 +766,31 @@ function VoicePage() {
     try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((track) => track.stop()); }
     catch { setMicDenied(true); }
   };
+  const micProblem = settings.voiceInput === "off" ? null : !window.isSecureContext ? t("Voice input needs HTTPS") : micDenied ? t("Microphone permission was denied") : null;
+  return (
+    <SettingsGroup title={t("Voice input")} section="voice">
+      <SettingsRow label={t("Microphone button")} description={<>{t("Auto: in the chat on a desktop, where dictation can work. On: on a phone and in the terminal input line too.")}{micProblem !== null && <span className="voice-error">{micProblem}</span>}</>} wide>
+        <Segmented label={t("Microphone button")} value={settings.voiceInput} onChange={(voiceInput) => void chooseVoiceInput(voiceInput)} options={VOICE_BUTTONS.map((voiceInput) => ({ value: voiceInput, label: t(voiceInput === "auto" ? "Auto" : voiceInput === "on" ? "On" : "Off") }))} />
+      </SettingsRow>
+      {settings.voiceInput !== "off" && (
+        <SettingsRow label={t("Dictation language")} description={t("Auto listens for the app's language, or for the browser's when the app is not translated into it")} htmlFor="settings-voice-language" wide>
+          <DictationLanguageSelect />
+        </SettingsRow>
+      )}
+    </SettingsGroup>
+  );
+}
+
+/** Chat's folded part for voice input: the speech recognition, tidying dictated text, and the OpenAI key. */
+function VoiceMore() {
+  const { settings, update } = useSettings();
+  const t = useT();
+  // the server only says whether it holds a key; the key typed here is never kept past a save
+  const [voice, setVoice] = useState<VoiceStatus | null>(null);
+  const [voiceKey, setVoiceKey] = useState("");
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  useEffect(() => { fetchVoiceStatus().then(setVoice, () => setVoice(null)); }, []);
   const changeVoiceKey = async (api_key: string | null) => {
     setVoiceBusy(true);
     try {
@@ -797,40 +803,25 @@ function VoicePage() {
     } catch (e) { setVoiceError(e instanceof Error ? e.message : String(e)); }
     finally { setVoiceBusy(false); }
   };
-  const micProblem = settings.voiceInput === "off" ? null : !window.isSecureContext ? t("Voice input needs HTTPS") : micDenied ? t("Microphone permission was denied") : null;
   return (
     <>
-      <SettingsGroup>
-        <SettingsRow label={t("Microphone button")} description={<>{t("Auto: in the chat on a desktop, where dictation can work. On: on a phone and in the terminal input line too.")}{micProblem !== null && <span className="voice-error">{micProblem}</span>}</>} wide>
-          <Segmented label={t("Microphone button")} value={settings.voiceInput} onChange={(voiceInput) => void chooseVoiceInput(voiceInput)} options={VOICE_BUTTONS.map((voiceInput) => ({ value: voiceInput, label: t(voiceInput === "auto" ? "Auto" : voiceInput === "on" ? "On" : "Off") }))} />
-        </SettingsRow>
-        {settings.voiceInput !== "off" && (
-          <SettingsRow label={t("Dictation language")} description={t("Auto listens for the app's language, or for the browser's when the app is not translated into it")} htmlFor="settings-voice-language" wide>
-            <DictationLanguageSelect />
+      {settings.voiceInput !== "off" && <>
+        <SettingsGroup section="voice-more">
+          <SettingsRow label={t("Speech recognition")} description={<>{t(settings.voiceEngine === "auto" ? "Auto uses the API key when one is saved, else the browser" : settings.voiceEngine === "browser" ? "The browser recognizes the speech, even with a key saved" : "Only the API key below transcribes")}{settings.voiceEngine === "server" && voice && !voice.configured && <span className="voice-error">{t("Save an API key to use the mic")}</span>}</>} wide>
+            <Segmented label={t("Speech recognition")} value={settings.voiceEngine} onChange={(voiceEngine) => update({ voiceEngine })} options={VOICE_ENGINES.map((voiceEngine) => ({ value: voiceEngine, label: t(voiceEngine === "auto" ? "Auto" : voiceEngine === "browser" ? "Browser" : "API key") }))} />
           </SettingsRow>
-        )}
-      </SettingsGroup>
-
-      {settings.voiceInput !== "off" && (
-        <SettingsFold kind="more" keys={["voiceEngine", "voicePolishChat", "voicePolishTerminal"]}>
-          <SettingsGroup section="voice-more">
-            <SettingsRow label={t("Speech recognition")} description={<>{t(settings.voiceEngine === "auto" ? "Auto uses the API key when one is saved, else the browser" : settings.voiceEngine === "browser" ? "The browser recognizes the speech, even with a key saved" : "Only the API key below transcribes")}{settings.voiceEngine === "server" && voice && !voice.configured && <span className="voice-error">{t("Save an API key to use the mic")}</span>}</>} wide>
-              <Segmented label={t("Speech recognition")} value={settings.voiceEngine} onChange={(voiceEngine) => update({ voiceEngine })} options={VOICE_ENGINES.map((voiceEngine) => ({ value: voiceEngine, label: t(voiceEngine === "auto" ? "Auto" : voiceEngine === "browser" ? "Browser" : "API key") }))} />
+        </SettingsGroup>
+        {settings.voiceEngine !== "browser" && (
+          <SettingsGroup title={t("Tidy dictated text")} section="tidy-dictation">
+            <SettingsRow label={t("In chat")} description={t("Drops fillers and fixes spacing; code and paths stay as spoken")}>
+              <Toggle label={t("Tidy dictated text in chat")} checked={settings.voicePolishChat} onChange={(voicePolishChat) => update({ voicePolishChat })} />
+            </SettingsRow>
+            <SettingsRow label={t("In the terminal")} description={t("Off keeps a command exactly as transcribed")}>
+              <Toggle label={t("Tidy dictated text in the terminal")} checked={settings.voicePolishTerminal} onChange={(voicePolishTerminal) => update({ voicePolishTerminal })} />
             </SettingsRow>
           </SettingsGroup>
-          {settings.voiceEngine !== "browser" && (
-            <SettingsGroup title={t("Tidy dictated text")} section="tidy-dictation">
-              <SettingsRow label={t("In chat")} description={t("Drops fillers and fixes spacing; code and paths stay as spoken")}>
-                <Toggle label={t("Tidy dictated text in chat")} checked={settings.voicePolishChat} onChange={(voicePolishChat) => update({ voicePolishChat })} />
-              </SettingsRow>
-              <SettingsRow label={t("In the terminal")} description={t("Off keeps a command exactly as transcribed")}>
-                <Toggle label={t("Tidy dictated text in the terminal")} checked={settings.voicePolishTerminal} onChange={(voicePolishTerminal) => update({ voicePolishTerminal })} />
-              </SettingsRow>
-            </SettingsGroup>
-          )}
-        </SettingsFold>
-      )}
-
+        )}
+      </>}
       <SettingsGroup title={t("OpenAI API key")} section="openai-key">
         <div className="settings-item">
           {voice && (
@@ -1093,7 +1084,7 @@ function AccessFacts({ facts }: { facts: SecurityFacts }) {
   );
 }
 
-function DevicesPage({ auth, security, onSignOut, onRevokedAll }: { auth: HealthAuth | null; security: SecurityFacts; onSignOut: (() => Promise<void>) | null; onRevokedAll: () => void }) {
+function DevicesPage({ auth, security, onSignOut, onRevokedAll, pcs, pcsMore }: { auth: HealthAuth | null; security: SecurityFacts; onSignOut: (() => Promise<void>) | null; onRevokedAll: () => void; /** the PCs' groups (RemotePcs), after the devices */ pcs: ReactNode; /** and their folded rows (RemotePcsMore) */ pcsMore: ReactNode }) {
   const { settings, update } = useSettings();
   const t = useT();
   const installPrompt = useInstallPrompt();
@@ -1176,8 +1167,11 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll }: { auth: Health
         {onSignOut && <SignOutRow viaPortal={auth?.via === "portal"} oidc={auth?.portal?.method === "oidc"} onSignOut={onSignOut} />}
       </SettingsGroup>
 
-      <SettingsFold kind="more" keys={[]}>
+      {pcs}
+
+      <SettingsFold kind="more" keys={["pcLoad"]}>
         <AccessFacts facts={security} />
+        {pcsMore}
       </SettingsFold>
 
       {connecting !== null && (
@@ -1252,7 +1246,7 @@ export function AddRelayPc() {
   if (found !== null) {
     const pc = found.name ?? t("this PC");
     return (
-      <SettingsRow label={t("Does {name}'s screen show this ID?", { name: pc })} description={t("The PC shows its ID under the code, in Settings → Phone & devices. Pair only if every group matches.")} held wide>
+      <SettingsRow label={t("Does {name}'s screen show this ID?", { name: pc })} description={t("The PC shows its ID under the code, in Settings → Devices and PCs (Phone & devices on an older Ovis). Pair only if every group matches.")} held wide>
         <div className="relay-pc-found">
           <KeyId id={found.server_id} label={t("ID of the PC this code found")} />
           <div className="relay-pc-actions">
@@ -1265,7 +1259,7 @@ export function AddRelayPc() {
   }
   return (
     <>
-      <SettingsRow label={t("Add a PC through the relay")} description={t("No SSH or open port. On the other PC, turn the relay on in Settings → Phone & devices. Paste its link here (Copy link), or type the code it shows (Show a code to type).")} wide>
+      <SettingsRow label={t("Add a PC through the relay")} description={t("No SSH or open port. On the other PC, turn the relay on in Settings → Devices and PCs (Phone & devices on an older Ovis). Paste its link here (Copy link), or type the code it shows (Show a code to type).")} wide>
         <form className="relay-pc-form" onSubmit={(event) => { event.preventDefault(); submit(); }}>
           <input ref={input} className="input relay-pc-input" type="text" placeholder={t("Link or code")} aria-label={t("Pairing link or code")}
             autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={busy} />
@@ -1280,11 +1274,12 @@ export function AddRelayPc() {
 /** a set-aside copy of machines.json (the PCs added in this app), not of herdr-profile-state.json */
 const heldAddedPcs = (name: string): boolean => name.startsWith("machines.json.");
 
-function RemotePcsPage({ actions, machines, pcSettings, pcSettingsError, onPcSettings }: { actions: AppActions; machines: readonly Machine[]; pcSettings: MachineSettings | null; pcSettingsError: string | null; onPcSettings: (patch: Partial<MachineSettings>) => void }) {
+/** Settings → Devices and PCs: the PCs added here, and which of them this device shows. */
+function RemotePcs({ actions, machines, pcSettings }: { actions: AppActions; machines: readonly Machine[]; pcSettings: MachineSettings | null }) {
   const t = useT();
   return (
     <>
-    <SettingsGroup>
+    <SettingsGroup title={t("Remote PCs")} section="remote">
       <SettingsRow label={t("Add PC")} description={t("Connect another PC over an SSH alias or user@host. Its workspaces join the sidebar.")}>
         <button type="button" className="btn" onClick={actions.openAddPc}><Monitor aria-hidden="true" />{t("Add PC")}</button>
       </SettingsRow>
@@ -1299,20 +1294,25 @@ function RemotePcsPage({ actions, machines, pcSettings, pcSettingsError, onPcSet
       </p>}
     </SettingsGroup>
     <SidebarPcsGroup machines={machines} />
-    <SettingsFold kind="more" keys={["pcLoad"]}>
-      <SettingsGroup section="remote-more">
-        {/* the switch is the server's and waits for its answer; Add PC never does */}
-        {pcSettings && (
-          <SettingsRow label={t("Update PC bridges automatically")} description={t("When an app update needs a newer bridge, PCs that connect with their saved key are updated in the background. PCs that need a password ask first.")}>
-            <Toggle label={t("Update PC bridges automatically")} checked={pcSettings.auto_update_bridges} onChange={(auto_update_bridges) => onPcSettings({ auto_update_bridges })} />
-          </SettingsRow>
-        )}
-        {/* a refused change of the switch above, beside it: in a search too */}
-        {pcSettingsError && <p className="settings-item settings-hint" role="alert">{pcSettingsError}</p>}
-        <PcLoadSetting machines={machines} />
-      </SettingsGroup>
-    </SettingsFold>
     </>
+  );
+}
+
+/** The PCs' rarely changed rows, in the page's More settings fold: the server's bridge updates and the load line. */
+function RemotePcsMore({ machines, pcSettings, pcSettingsError, onPcSettings }: { machines: readonly Machine[]; pcSettings: MachineSettings | null; pcSettingsError: string | null; onPcSettings: (patch: Partial<MachineSettings>) => void }) {
+  const t = useT();
+  return (
+    <SettingsGroup section="remote-more">
+      {/* the switch is the server's and waits for its answer; Add PC never does */}
+      {pcSettings && (
+        <SettingsRow label={t("Update PC bridges automatically")} description={t("When an app update needs a newer bridge, PCs that connect with their saved key are updated in the background. PCs that need a password ask first.")}>
+          <Toggle label={t("Update PC bridges automatically")} checked={pcSettings.auto_update_bridges} onChange={(auto_update_bridges) => onPcSettings({ auto_update_bridges })} />
+        </SettingsRow>
+      )}
+      {/* a refused change of the switch above, beside it: in a search too */}
+      {pcSettingsError && <p className="settings-item settings-hint" role="alert">{pcSettingsError}</p>}
+      <PcLoadSetting machines={machines} />
+    </SettingsGroup>
   );
 }
 
@@ -1554,8 +1554,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
   const following = useRef<{ group: HTMLElement; page: SettingsPage | null } | null>(null);
   // the group a landing named that was not drawn yet, waited for until the reader moves the page
   const awaited = useRef<{ named: string; page: SettingsPage | null } | null>(null);
-  const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "alerts" ? "Alerts" : id === "voice" ? "Voice input"
-    : id === "agents" ? "Agents" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Phone & devices" : id === "remote" ? "Remote PCs" : "About");
+  const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "alerts" ? "Alerts" : id === "agents" ? "Agents" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Devices and PCs" : "About");
   const openPage = (id: SettingsPage): void => { setKeyBarOpen(false); setChosen(id); };
   // Settings' search: every page's rows that hold all the words typed, each where it can be changed
   // at once, under its page's name, as Zed's and VS Code's settings searches show them
@@ -1650,7 +1649,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
   const [pcSettingsError, setPcSettingsError] = useState<string | null>(null);
   // asked when a page that shows them opens, so a request that failed earlier is made again
   useEffect(() => {
-    if (page !== "remote" && page !== "about" && !searching) return;
+    if (page !== "devices" && page !== "about" && !searching) return;
     let live = true;
     machineRequest<MachineSettings>("/settings").then((settings) => { if (live) setPcSettings(settings); }, () => { if (live) setPcSettings(null); });
     return () => { live = false; };
@@ -1698,12 +1697,12 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "chat": return <ChatPage />;
       case "terminal": return <TerminalPage keyBarButtonRef={keyBarButtonRef} onEditKeyBar={openKeyBar} />;
       case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} machines={machines} />;
-      case "voice": return <VoicePage />;
       case "agents": return <AgentsSettings watching={auth?.role === "watch"} onLocalLogin={onUsageLogin} onOpenPane={onOpenPane} onOpenGuide={onClose} />;
       case "shortcuts": return <ShortcutsPage />;
       // after every device went, its own pairing included, a browser asks the server where it stands: the roster answers, or the gate does
-      case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} />;
-      case "remote": return <RemotePcsPage actions={actions} machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;
+      case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh}
+        pcs={<RemotePcs actions={actions} machines={machines} pcSettings={pcSettings} />}
+        pcsMore={<RemotePcsMore machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />} />;
       case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} herdrRuntime={herdrRuntime} herdrCore={herdrCore} herdrRuntimeFacts={herdrRuntimeFacts} bootId={bootId} onServerRestarted={onServerRestarted} bridgesFollow={pcSettings?.auto_update_bridges === true} />;
       default: return null;
     }
