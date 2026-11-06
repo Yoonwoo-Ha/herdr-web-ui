@@ -118,8 +118,9 @@ export function withoutClaudeSidePanel(screen: string): string {
 function previewBox(lines: string[], from: number, to: number): { top: number; column: number; inner: number } | null {
   for (let index = from; index <= to; index += 1) {
     const line = lines[index] ?? "";
-    const corner = /\s{2,}[┌╭]/.exec(line);
-    if (corner === null) continue;
+    // the box stands right of the menu: a corner in an option's own label is further left
+    const corner = [...line.matchAll(/\s{2,}[┌╭]/g)].at(-1);
+    if (corner === undefined) continue;
     const left = corner.index + corner[0].length - 1;
     const right = /^[─━]*[┐╮]/.exec(line.slice(left + 1));
     return { top: index, column: Bun.stringWidth(line.slice(0, left)), inner: right === null ? 0 : right[0].length - 1 };
@@ -160,9 +161,14 @@ function previewText(lines: string[], box: { top: number; column: number; inner:
 }
 
 function withoutPreview(lines: string[], from: number, to: number): string[] {
-  const column = previewBox(lines, from, to)?.column ?? -1;
-  return lines.map((line) => {
-    const at = column >= 2 ? indexAtColumn(line, column) : -1;
+  // Claude opens the box on the first option's row: a box drawn higher up (a diagram in its answer)
+  // stands at a column of its own
+  const first = menuRows(lines, from, to)[0]?.lineIndex;
+  const box = (first === undefined ? null : previewBox(lines, first, first)) ?? previewBox(lines, from, to);
+  const column = box?.column ?? -1;
+  return lines.map((line, index) => {
+    // nothing above the box's top row is the box's: a question may draw an edge at its column
+    const at = column >= 2 && index >= box!.top ? indexAtColumn(line, column) : -1;
     const edge = at >= 0 ? line[at] : undefined;
     const boxed = edge !== undefined && PREVIEW_EDGE.includes(edge) && line.slice(Math.max(0, at - 2), at) === "  ";
     // only the preview's own notes line goes: a question may begin with "Notes:" too

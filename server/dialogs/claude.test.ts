@@ -576,6 +576,23 @@ describe("the preview Claude draws for the option under its cursor (#1212)", () 
     expect(parseInteractivePrompt("claude", beside)?.option_preview?.text).toBe("+--+ +--+\n|  | |  |\n+--+ +--+\ngrid of cards");
   });
 
+  test("cuts the options at the preview box, not at a box drawn above them (#3062)", () => {
+    const screen = readFileSync(new URL("../fixtures/claude-question-preview-2.1.312-grid-67.txt", import.meta.url), "utf8");
+    // a diagram in Claude's earlier answer, at another column than the preview box
+    const diagram = [`${" ".repeat(20)}┌──────┐`, `${" ".repeat(20)}│ api  │`, `${" ".repeat(20)}└──────┘`].join("\n");
+    const card = parseInteractivePrompt("claude", screen.replace(" ☐ Layout", `${diagram}\n ☐ Layout`));
+    expect(card?.options).toEqual(shown("grid", 67)?.options);
+    expect(card?.id).toBe(shown("grid", 67)?.id);
+    expect(card?.option_preview).toEqual({ option_index: 0, text: "+--+ +--+\n|  | |  |\n+--+ +--+\ngrid of cards" });
+    // nor at a corner in the first option's own label, left of the preview box
+    const label = parseInteractivePrompt("claude", screen.replace("❯ 1. Grid                         ┌", "❯ 1. API  ┌────┐                  ┌"));
+    expect(label?.options.map((option) => option.label)).toEqual(["API  ┌────┐", "Wide", "Tall"]);
+    expect(label?.option_preview?.text).toBe("+--+ +--+\n|  | |  |\n+--+ +--+\ngrid of cards");
+    // nor in the question above the box, at the box's column
+    const asked = parseInteractivePrompt("claude", screen.replace("\nWhich layout?\n", `\nWhich layout?${" ".repeat(21)}│ keep this │\n`));
+    expect(asked?.question).toContain("keep this");
+  });
+
   test("shows no preview from a box too narrow to read, and still the card", () => {
     // a 40-column pane: Claude draws the box four columns wide, the grid in pieces
     const screen = readFileSync(new URL("../fixtures/claude-question-preview-2.1.312-grid-40.txt", import.meta.url), "utf8");
