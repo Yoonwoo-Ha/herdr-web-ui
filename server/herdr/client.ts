@@ -52,13 +52,17 @@ export function sameSocket(path: string): string {
  * a script whose scripts/test-herdr.ts import Bun dropped (its binding unused) would otherwise create,
  * type into and close panes there. Both homes count (HOME may be changed for a fixture after the
  * socket was chosen), and every spelling of the same socket.
+ * The XDG_CONFIG_HOME that counts is the one the test run started with (scripts/test-herdr.ts records
+ * it in OVIS_TEST_USER_XDG_CONFIG_HOME, and children inherit it), not one a test gave a child of its
+ * own: refusing that would refuse the test's own herdr. Without the record, this process's own counts.
  */
 function refuseLiveHerdr(socketPath: string, env: Record<string, string | undefined> = process.env): void {
   if (!liveSessionsRefused(env)) return;
   const homes = [...new Set([env["HOME"], homedir()].filter((home): home is string => Boolean(home)))];
+  const config = env["OVIS_TEST_USER_XDG_CONFIG_HOME"] ?? env["XDG_CONFIG_HOME"];
   const defaults = [
     ...homes.map((home) => join(home, ".config", "herdr", "herdr.sock")),
-    ...(env["XDG_CONFIG_HOME"] ? [join(env["XDG_CONFIG_HOME"], "herdr", "herdr.sock")] : []),
+    ...(config ? [join(config, "herdr", "herdr.sock")] : []),
     ...(process.platform === "win32" && env["APPDATA"] ? [`${env["APPDATA"]}\\herdr\\herdr.sock`] : []),
   ].map(sameSocket);
   if (defaults.includes(sameSocket(socketPath))) {
