@@ -175,6 +175,8 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *  POST   /api/relay/pairing             -> { ok: true }; JSON { id, decision: "approve" | "decline" } for a phone
  *         waiting with the same digits (`relay-pairings` on /api/machines/events); 400 invalid_relay_pairing,
  *         404 relay_pairing_gone once it left, was decided or ran out of time
+ *  POST   /api/relay/direct              -> RelayStatus; JSON { on: boolean }: direct connections on this PC's
+ *         networks while the relay is on (on unless turned off; off ends every direct session); 400 invalid_relay_direct, 409 direct_unavailable on a server without them
  *  POST   /api/relay/reset-identity      -> RelayStatus; revokes relay devices and reconnects if enabled
  *         Relay mutations require drive role, same origin and X-Herdr-Update: 1, and a direct connection
  *         (403 local_required over the relay); a Portal visitor gets 403 owner_only (see Access).
@@ -554,6 +556,11 @@ export interface RelayStatus {
   readonly sessions: number;
   readonly blocked: null | "serve_only" | "identity_unreadable";
   readonly error: string | null;
+  /**
+   * Direct connections on this PC's networks (docs/relay.md): whether they are on, and the carriers
+   * listened on now (none while the relay is off). Absent from a server without them.
+   */
+  readonly direct?: { readonly on: boolean; readonly carriers: readonly string[] };
 }
 
 /** POST /api/devices/pair's answer to a request that accepts JSON: the device's own credential. */
