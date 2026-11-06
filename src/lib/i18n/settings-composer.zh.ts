@@ -6,8 +6,6 @@
 export const SETTINGS_COMPOSER_ZH: Record<string, string> = {
   "Paste and send button": "粘贴并发送按钮",
   "A button in the empty message box sends the text copied on this device as a message.": "空输入框中的按钮会把在此设备上复制的文本作为消息发送。",
-  "Split into rows and columns": "按行和列拆分",
-  "Drop a pane on the edge of another in the split view to open it beside, above or below that pane, up to four at once, and drag the line between two panes to resize them. Off: the split view keeps two halves side by side.": "在拆分视图中把窗格放到另一个窗格的边缘，即可在它的旁边、上方或下方打开，最多同时四个；拖动两个窗格之间的线可调整大小。关闭时，拆分视图保持左右两半。",
   "Compaction and failed requests": "压缩与失败的请求",
   "On this device, a compaction names the token counts the agent recorded with it, and each run of back-to-back failed requests shows as one row that opens to their errors. OmO, omp and pi record them.": "在此设备上，对话压缩会显示代理随之记录的 token 数，连续失败的请求合并为一行，展开可查看错误。OmO、omp 和 pi 会记录这些信息。",
   "Background workspaces apart": "单独放置后台工作区",
@@ -20,5 +18,6 @@ export const SETTINGS_COMPOSER_ZH: Record<string, string> = {
   "herdr's prefix in its config.toml cannot be used here, so no key is taken.": "config.toml 中的 herdr 前缀键无法在此使用，因此不会占用任何按键。",
   "herdr's prefix, then a key herdr's config.toml on this PC binds, runs that action here: the ones listed below. The prefix no longer reaches the pane: press it twice to send it. Fields, dialogs and IME input keep their keys.": "按下 herdr 前缀键后，再按此 PC 的 herdr config.toml 绑定的键，即可在这里执行下方列出的操作。前缀键将不再发送到窗格：按两次即可发送。输入框、对话框和输入法输入保留其按键。",
   "Codex panes: let Codex select and scroll": "Codex 窗格：由 Codex 选择和滚动",
+"Split into rows and columns": "按行和列拆分",
   "On this device, a drag in a Codex pane goes to Codex, which selects through its whole history and scrolls it while the drag is held past the top or bottom edge. Ctrl+C or Enter copies it, but on herdr that copy does not reach this device's clipboard: Shift+drag (Option+drag on a Mac) still selects, copies and quotes in Ovis, up to the screen's edge.": "在此设备上，Codex 窗格中的拖动交给 Codex，它会在完整历史中选择，并在拖动停在顶部或底部边缘之外时滚动历史。Ctrl+C 或 Enter 复制所选内容，但在 herdr 上该复制不会到达此设备的剪贴板：Shift+拖动（Mac 上为 Option+拖动）仍会在 Ovis 中选择、复制和引用，直到屏幕边缘。",
 };

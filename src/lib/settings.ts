@@ -141,9 +141,10 @@ export interface Settings {
    *  Stored under this key, not 0.4.1's `terminalOsc52`: settings are saved whole, so a `false` there
    *  was written by any change at all, not chosen, and is ignored. */
   paneClipboard: boolean;
-  /** draw the pictures a pane program prints as sixel or iTerm2 inline images (lib/terminalImages.ts); off by
-   *  default. Only herdr-core passes them on: herdr redraws a pane from its own grid, which keeps no pictures. */
-  terminalImages: boolean;
+  /** draw the pictures a pane program prints as sixel or iTerm2 inline images (lib/terminalImages.ts). Only herdr-core
+   *  passes them on: herdr redraws a pane from its own grid, which keeps no pictures. null, not chosen: on where the
+   *  pane's server keeps the terminal's history (herdr-core), off on herdr; a choice made on this device stays. */
+  terminalImages: boolean | null;
   /** on a touch screen, an Attach files button in the terminal's input line and a key in the key bar while typing
    *  straight into the grid pick files to store beside the pane (POST /api/pane/image); off by default */
   terminalAttachButton: boolean;
@@ -477,7 +478,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalWheelSpeed: 1,
   terminalFontFamily: "",
   paneClipboard: true,
-  terminalImages: false,
+  terminalImages: null,
   terminalAttachButton: false,
   terminalKeyboardOnRequest: false,
   terminalFoldKeyBar: false,
@@ -716,7 +717,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     uiFontSize: sanitizeUiFontSize(record["uiFontSize"]),
     uiFontFamily: sanitizeFontFamily(record["uiFontFamily"]),
     paneClipboard: typeof record["paneClipboard"] === "boolean" ? record["paneClipboard"] : DEFAULT_SETTINGS.paneClipboard,
-    terminalImages: record["terminalImages"] === true,
+    terminalImages: typeof record["terminalImages"] === "boolean" ? record["terminalImages"] : null,
     terminalAttachButton: record["terminalAttachButton"] === true,
     terminalKeyboardOnRequest: record["terminalKeyboardOnRequest"] === true,
     terminalFoldKeyBar: record["terminalFoldKeyBar"] === true,
@@ -923,7 +924,10 @@ export const FOLD_WORK_STORAGE_KEY = "ovis:fold-work";
 /** Settings > Chat > Compaction and failed requests, in a key of its own for the same reason: off until chosen. */
 export const CHAT_REQUEST_DETAILS_STORAGE_KEY = "ovis:chat-request-details";
 /** Settings > Terminal > Pictures in the terminal, in a key of its own for the same reason: off until chosen. */
-export const TERMINAL_IMAGES_STORAGE_KEY = "ovis:terminal-images";
+/** Pictures in the terminal, chosen on this device. Its own key: up to 0.5.0 every save wrote "ovis:terminal-images",
+ *  false included, so a false there was not a choice; a true there was, and is still read. */
+export const TERMINAL_IMAGES_STORAGE_KEY = "ovis:terminal-pictures";
+const LEGACY_TERMINAL_IMAGES_STORAGE_KEY = "ovis:terminal-images";
 /** Settings > Terminal > Attach files button, in a key of its own for the same reason: off until chosen. */
 export const TERMINAL_ATTACH_BUTTON_STORAGE_KEY = "ovis:terminal-attach-button";
 /** Settings > Terminal > Keyboard only from the key bar, in a key of its own for the same reason: off until chosen. */
@@ -948,6 +952,17 @@ export const SIDEBAR_CONTEXT_STORAGE_KEY = "ovis:sidebar-context";
 export const FOLD_HELPERS_STORAGE_KEY = "ovis:fold-helpers";
 /** Settings > Appearance > Agents under workspaces, kept in a key of its own for the same reason: off until chosen. */
 export const SIDEBAR_AGENT_TREE_STORAGE_KEY = "ovis:sidebar-agent-tree";
+
+/** a device's own on or off in its own key; null where it chose neither */
+function readChosen(key: string): boolean | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    const value: unknown = raw === null ? null : JSON.parse(raw);
+    return typeof value === "boolean" ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 function readChatFold(key: string, fallback: boolean): boolean {
   try {
@@ -1011,7 +1026,7 @@ export function loadSettings(): Settings {
     sidebarContext: readChatFold(SIDEBAR_CONTEXT_STORAGE_KEY, DEFAULT_SETTINGS.sidebarContext),
     foldHelpers: readChatFold(FOLD_HELPERS_STORAGE_KEY, DEFAULT_SETTINGS.foldHelpers),
     sidebarAgentTree: readChatFold(SIDEBAR_AGENT_TREE_STORAGE_KEY, DEFAULT_SETTINGS.sidebarAgentTree),
-    terminalImages: readChatFold(TERMINAL_IMAGES_STORAGE_KEY, DEFAULT_SETTINGS.terminalImages),
+    terminalImages: readChosen(TERMINAL_IMAGES_STORAGE_KEY) ?? (readChosen(LEGACY_TERMINAL_IMAGES_STORAGE_KEY) === true ? true : null),
     terminalAttachButton: readChatFold(TERMINAL_ATTACH_BUTTON_STORAGE_KEY, DEFAULT_SETTINGS.terminalAttachButton),
     terminalKeyboardOnRequest: readChatFold(TERMINAL_KEYBOARD_ON_REQUEST_STORAGE_KEY, DEFAULT_SETTINGS.terminalKeyboardOnRequest),
     terminalFoldKeyBar: readChatFold(TERMINAL_FOLD_KEY_BAR_STORAGE_KEY, DEFAULT_SETTINGS.terminalFoldKeyBar),
@@ -1050,6 +1065,8 @@ export function saveSettings(settings: Settings): boolean {
     window.localStorage.setItem(FOLD_HELPERS_STORAGE_KEY, JSON.stringify(foldHelpers));
     window.localStorage.setItem(SIDEBAR_AGENT_TREE_STORAGE_KEY, JSON.stringify(sidebarAgentTree));
     window.localStorage.setItem(TERMINAL_IMAGES_STORAGE_KEY, JSON.stringify(terminalImages));
+    // the earlier key's true would come back under a reset to null
+    if (window.localStorage.getItem(LEGACY_TERMINAL_IMAGES_STORAGE_KEY) !== null) window.localStorage.removeItem(LEGACY_TERMINAL_IMAGES_STORAGE_KEY);
     window.localStorage.setItem(TERMINAL_ATTACH_BUTTON_STORAGE_KEY, JSON.stringify(terminalAttachButton));
     window.localStorage.setItem(TERMINAL_KEYBOARD_ON_REQUEST_STORAGE_KEY, JSON.stringify(terminalKeyboardOnRequest));
     window.localStorage.setItem(TERMINAL_FOLD_KEY_BAR_STORAGE_KEY, JSON.stringify(terminalFoldKeyBar));

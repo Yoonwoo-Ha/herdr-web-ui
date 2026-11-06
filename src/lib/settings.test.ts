@@ -25,6 +25,7 @@ describe("saved theme migration", () => {
     Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: {
       getItem: (key: string) => records.get(key) ?? null,
       setItem: (key: string, value: string) => records.set(key, value),
+      removeItem: (key: string) => records.delete(key),
     } } });
   });
   afterEach(() => {
@@ -187,7 +188,7 @@ describe("saved theme migration", () => {
   });
 
   it("keeps Pictures in the terminal in its own key, out of an old tab's whole-record save", () => {
-    expect(loadSettings().terminalImages).toBe(false);
+    expect(loadSettings().terminalImages).toBe(null);
     saveSettings(sanitizeSettings({ terminalImages: true }));
     expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("terminalImages");
     oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
@@ -195,8 +196,24 @@ describe("saved theme migration", () => {
     expect(loadSettings().terminalFontSize).toBe(18);
     saveSettings({ ...loadSettings(), terminalImages: false });
     expect(loadSettings().terminalImages).toBe(false);
-    records.set("ovis:terminal-images", "\"true\"");
+    records.set("ovis:terminal-pictures", "\"true\"");
+    expect(loadSettings().terminalImages).toBe(null);
+  });
+
+  it("reads an earlier version's pictures key as a choice only when it says on", () => {
+    records.set("ovis:terminal-images", "false");
+    expect(loadSettings().terminalImages).toBe(null);
+    records.set("ovis:terminal-images", "true");
+    expect(loadSettings().terminalImages).toBe(true);
+    records.set("ovis:terminal-pictures", "false");
     expect(loadSettings().terminalImages).toBe(false);
+  });
+
+  it("keeps a reset of pictures after an earlier version's on", () => {
+    records.set("ovis:terminal-images", "true");
+    expect(loadSettings().terminalImages).toBe(true);
+    saveSettings({ ...loadSettings(), terminalImages: null });
+    expect(loadSettings().terminalImages).toBe(null);
   });
 
   it("keeps the terminal's Attach files button in its own key, out of an old tab's whole-record save", () => {
@@ -753,10 +770,11 @@ describe("clipboard from a pane", () => {
   });
 });
 
-it("draws no terminal pictures until this device turns them on", () => {
-  expect(sanitizeSettings({}).terminalImages).toBe(false);
-  expect(sanitizeSettings({ terminalImages: "true" }).terminalImages).toBe(false);
+it("leaves terminal pictures to the server until this device chooses, and keeps either choice", () => {
+  expect(sanitizeSettings({}).terminalImages).toBe(null);
+  expect(sanitizeSettings({ terminalImages: "true" }).terminalImages).toBe(null);
   expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ terminalImages: true })))).terminalImages).toBe(true);
+  expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ terminalImages: false })))).terminalImages).toBe(false);
   expect(SETTING_SCOPE.terminalImages).toBe("device");
 });
 
