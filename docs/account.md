@@ -34,6 +34,10 @@ are ([Ovis Mux v1](relay.md#ovis-mux-v1)).
    the account service handed it.
 7. **The account service can hide records, never forge them.** It stores the PC directory
    (`server_id` and a name, no keys), a mailbox of signed records per PC, and admission requests.
+8. **Tailscale is not membership.** **PCs on your Tailscale** ([remote-pcs.md](remote-pcs.md#through-the-relay))
+   adds a PC through the relay with a code that PC hands over to your own Tailscale login. That makes
+   it a paired device of that PC, never an account member by itself: membership comes only from the
+   rules here (a device linking its own pairing, or an approval by a member).
 
 ## Account members
 
@@ -621,6 +625,11 @@ is and roughly where it asked from:
   device says, so it tells a mistake apart, not a liar.
 - `country` (ISO 3166-1 alpha-2) and `city`: where Cloudflare saw the request come from. Never the
   address. Unknown, Tor and a city without a country are `null`.
+
+The service keeps these on the admission or link page request itself: they are served for that
+row's ten minutes and deleted with it by the daily cleanup, so kept at most about a day. The
+privacy policy ([ovis.sh/privacy](https://ovis.sh/privacy/#account)) lists them with everything
+else the service stores.
 
 The approval card (`AccountApprovalPrompt`) shows the admission's (`GET /v1/admissions`, the one
 for this PC and key, read from the account service and not from the PC) as "iOS · Near Seoul,

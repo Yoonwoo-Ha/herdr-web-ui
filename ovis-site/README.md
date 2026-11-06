@@ -67,8 +67,10 @@ A preview deploy serves it too, so a pull request can check `/demo/` on its prev
 ## Keep in step with the app
 
 - The privacy policy states what the app keeps (the saved PC addresses and each PC's sign-in
-  cookie), that the camera only reads the pairing QR code, and what the Ovis server's anonymous usage
-  counts hold (docs/guide.md, "Anonymous usage counts"). Change it, and its date, in both
+  cookie), that the camera only reads the pairing QR code, what the Ovis server's anonymous usage
+  counts hold (docs/guide.md, "Anonymous usage counts"), what the account service keeps
+  (docs/account.md, "Who is asking") and what the direct connections listen on (docs/relay.md,
+  "Direct on the same network"). Change it, and its date, in both
   languages when any of those changes, before the release that changes them.
 - The beta page ships its iPhone and Android sections hidden; `assets/beta.js` shows each one once
   its link is set in `BETA_LINKS` there: the TestFlight public link, and the Google Group whose

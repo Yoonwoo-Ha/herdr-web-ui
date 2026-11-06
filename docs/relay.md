@@ -779,7 +779,9 @@ own adapter (`tailscale0`, Windows' `Tailscale`), or on a macOS `utun` only when
 `tailscale status` names (with one named, only that one); never one on a real adapter (an ISP's
 shared address space) or another VPN's tunnel. It keeps one of the four
 places. A phone that can reach one of them opens
-it there instead of through `relay.ovis.sh`. The iOS and Android apps open it through their OvisDirect
+it there instead of through `relay.ovis.sh`. A phone's app tries its direct carriers at once and opens
+the relay beside them when none is up within 300 ms; a PC added through the relay tries the same
+network, then Tailscale, within 1.5 s, then the relay (below). The iOS and Android apps open it through their OvisDirect
 plugin ([native-app.md](native-app.md#direct-on-the-same-network)); a browser stays on the relay.
 
 - **Same channel, same trust.** The listener speaks to a phone what the relay does (`/v1/ws`, an
@@ -832,7 +834,12 @@ plugin ([native-app.md](native-app.md#direct-on-the-same-network)); a browser st
   closes the relay one, so the PC never shows as lost.
 - **Said where it is.** While the relay is on, Settings → Devices and PCs → My devices shows "Same
   Wi-Fi direct connection on" (who can sign in there, and that it is on Tailscale too when it is)
-  with its one switch, which turns both off. `/api/health` names the
+  with its one switch, which turns both off. Each device paired with a relay key says there how it
+  reaches the PC right now (**Same Wi-Fi, direct**, **Tailscale, direct**, the relay it uses, or
+  **Offline** with when it was last seen and why), with the round trip of its session's keepalive:
+  `GET /api/devices` adds `connection` to a device with a session up, and `?check=1` (**Check now**)
+  measures every session first, for at most 3 s. The phone's **Your PCs** list probes each saved PC
+  the way the app would connect (no session is opened) and shows the same line. `/api/health` names the
   listener to a client that got in (`lan_exposure` with `direct: true`), and the app's banner
   says it in paired-only words. The open-server warning (`lanExposed`) is about the main listener
   only; starting the relay closes the pairing gate, so it never applies while this listener runs.
