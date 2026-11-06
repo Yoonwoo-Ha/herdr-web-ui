@@ -30,6 +30,7 @@ import { RELAY_JA } from "./i18n/relay.ja.ts";
  * in English. Placeholders in braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "View only": "表示のみ",
   "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "貼り付けていません: ファイルのパスに改行があり、ターミナルが Enter として受け取ります。",
   "Attach files": "ファイルを添付",
   "Sign out": "サインアウト",
@@ -203,10 +204,7 @@ const BASE: Record<string, string> = {
   "Via Tailscale, or Funnel from the internet": "Tailscale 経由、またはインターネットから Funnel 経由",
   "Via the local network": "ローカルネットワーク経由",
   "Straight to this address": "このアドレスへ直接",
-  "Sessions on this PC": "この PC のセッション",
-  "{count} working": "作業中 {count} 件",
   "{count} waiting for you": "応答待ち {count} 件",
-  "{count} done": "完了 {count} 件",
   "Open the next session waiting for you": "応答を待っている次のセッションを開く",
   "Tab {index} of {count}": "タブ {index}/{count}",
   "Tabs of {workspace}": "{workspace} のタブ",

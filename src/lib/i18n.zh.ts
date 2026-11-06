@@ -32,6 +32,7 @@ import { RELAY_ZH } from "./i18n/relay.zh.ts";
  * Placeholders in braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "View only": "仅查看",
   "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "未粘贴：文件路径中含有换行，终端会将其当作 Enter。",
   "Attach files": "附加文件",
   "Sign out": "退出登录",
@@ -205,10 +206,7 @@ const BASE: Record<string, string> = {
   "Via Tailscale, or Funnel from the internet": "经由 Tailscale，或经由 Funnel 从互联网连接",
   "Via the local network": "经由局域网",
   "Straight to this address": "直接连接此地址",
-  "Sessions on this PC": "此 PC 上的会话",
-  "{count} working": "{count} 个工作中",
   "{count} waiting for you": "{count} 个等待你回应",
-  "{count} done": "{count} 个已完成",
   "Open the next session waiting for you": "打开下一个等待你回应的会话",
   "Tab {index} of {count}": "第 {index} 个标签页，共 {count} 个",
   "Tabs of {workspace}": "{workspace} 的标签页",

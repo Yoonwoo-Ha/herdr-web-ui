@@ -28,6 +28,7 @@ import { RELAY_KO } from "./i18n/relay.ko.ts";
  * braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "View only": "보기 전용",
   "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "붙여넣지 않았습니다: 파일 경로에 줄바꿈이 있어 터미널이 Enter로 받아들입니다.",
   "Attach files": "파일 첨부",
   "Sign out": "로그아웃",
@@ -201,10 +202,7 @@ const BASE: Record<string, string> = {
   "Via Tailscale, or Funnel from the internet": "Tailscale을 거쳐 연결, 또는 인터넷에서 Funnel로 연결",
   "Via the local network": "로컬 네트워크를 거쳐 연결",
   "Straight to this address": "이 주소로 바로 연결",
-  "Sessions on this PC": "이 PC의 세션",
-  "{count} working": "작업 중 {count}개",
   "{count} waiting for you": "내 응답 대기 {count}개",
-  "{count} done": "완료 {count}개",
   "Open the next session waiting for you": "응답을 기다리는 다음 세션 열기",
   "Tab {index} of {count}": "탭 {count}개 중 {index}번째",
   "Tabs of {workspace}": "{workspace}의 탭",

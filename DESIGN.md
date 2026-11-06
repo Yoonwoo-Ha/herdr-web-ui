@@ -852,22 +852,51 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   `.terminal-host`. While a phone's soft keyboard is up (`data-keyboard`), `--app-height` follows
   `visualViewport` so the keyboard does not cover input; otherwise the shell is `100dvh`, because an
   iPhone home screen app reports a visual viewport shorter than the screen without a keyboard.
-- The header is one line at every width. Anatomy, left to right: mobile drawer toggle / desktop
-  sidebar toggle and the command palette (`.header-side`); the flexible context, agent mark and
-  title then the PC › workspace › folder crumb; segmented Chat/Terminal switch; from `769px` a
-  hairline and the Files button (`.header-files-button`); the connection
-  chip while the bridge is not live (herdr version in its tooltip), the offline pill, sign out and
-  the More menu (`⋯`). Theme lives in Settings and the palette; the herdr version is also read
-  in Settings.
+- The header is one line at every width. Below `769px`, left to right: the drawer toggle; the
+  flexible context, agent mark and title (it opens the workspace's tabs on a phone) then the
+  PC › workspace › folder crumb; the Chat/Terminal switch; the connection chip while the bridge is
+  not live, the offline pill and the More menu (`⋯`). From `769px` with one pane in view the row is
+  a browser's tab strip (Chrome's, sized after the Herdr app's tab bar, THIRD_PARTY_NOTICES.md):
+  the sidebar's head (`.header-side`: the Ovis wordmark, `src/assets/brand/logo-light.png`
+  or `logo-dark.png` by the resolved theme, then the palette and the sidebar toggle, as the Herdr
+  app orders them), then the workspace's tabs (`.header-tabs`), `+` right after the last tab,
+  flexible space, and at the far end the Chat/Terminal switch, Files (`.header-files-button`, its
+  glyph alone) and More as compact pills. The row is tinted with the accent (16% of `--accent`
+  into `--bg-panel` in a light theme, 5% in a dark one, so it stays near the pane's colour); each
+  tab is its agent's mark (a shell's glyph when it has none) and its name, a working agent's ring
+  turning round the mark, tabs at rest parted by short `--divider` rules and sharing the width
+  evenly (220px each at most, 44px at least); the open tab takes the pane's surface (`--bg` under
+  the chat lens, `--term-bg` otherwise) with rounded top corners and no line under it, so it runs
+  on into the pane; its close (×) shows on the open tab and a hovered one. A split view keeps a
+  strip per half and the title in the header. The Herdr app's Changes button is not carried over:
+  Files holds the changes as one of its tabs.
+- The Chat/Terminal switch (`.view-switch`) shows both lenses as Apple's segmented control: a
+  track with the open lens on a raised thumb that slides to it in 180ms (`--ease-out`; no motion
+  under reduced motion), each lens `aria-pressed`. The chat's label is in the rounded face beside
+  its bubble, the terminal's in `--font-mono` beside its prompt glyph, so the two read as
+  different places. A phone draws the two glyphs alone in a bordered control, each a
+  `--touch-target-header` wide. Mod+Shift+J switches too.
+- From `769px` with a fine pointer (a touch screen keeps the room for its key bar) the pane column ends in a 28px status bar (`.status-bar`, after the Herdr app's
+  workspace status line) on `--bg-panel` under a `--divider` rule: the PC › workspace (› folder)
+  and the branch at its start, the session's worked time; at its end View only on a watching
+  device, a tinted "N waiting for you" button that opens the next session waiting, and the
+  connection (Connected, or the word while it is not live). The header draws no session counts
+  and no connection route; More's first item still jumps to the next waiting session, with a
+  waiting dot on its button on a phone. More's header keeps the session's lines and the route, and
+  the place and path where no status bar shows them.
+  `--divider` (each theme's `--border-strong`) draws the lines between the shell's regions: the
+  sidebar's seam, the status bar's rule, the tabs' rules; `--border` stays for lines inside a
+  region.
 - From `769px` the header is two zones. Over the sidebar, `.header-side` is the sidebar's own top
-  row (toggle at its start, palette at its end) on `--bg-panel`, as wide as `--sidebar-w`, and the
-  sidebar's seam runs to the top of the window. Over the pane, the header takes the pane's
-  surface: under the chat lens `--bg` with no bottom rule, the transcript scrolling under a
-  `--space-5` fade from `--bg`; under the terminal lens, with no pane, or with a pane herdr could
-  not restore, `--term-bg` and the rule. A tab strip takes the same surface as the header over
-  it from `769px` (`--strip-bg`: `--bg` under the chat lens, `--term-bg` otherwise, `--bg-panel`
-  below `769px`) and keeps its hairline, under the chat the one line over the transcript (no
-  fade under it). The update notice, the alerts health notice, a PC's action banner and the pairing line (below) are drawn in
+  row (the wordmark, then the palette and the toggle) on `--bg-panel`, as wide as `--sidebar-w`, and
+  the sidebar's seam runs to the top of the window. Over the pane, with the tabs in the row, the
+  header is the accent-tinted strip and the open tab carries the pane's surface down into it;
+  without them (a split view, the setup guide, no pane), the header takes the pane's surface: under
+  the chat lens `--bg` with no bottom rule, the transcript scrolling under a `--space-5` fade from
+  `--bg`; under the terminal lens, with no pane, or with a pane herdr could not restore, `--term-bg`
+  and the rule. A split view's strips take the same surface as the header over them (`--strip-bg`:
+  `--bg` under the chat lens, `--term-bg` otherwise, `--bg-panel` below `769px`) and keep their
+  hairline, under the chat the one line over the transcript (no fade under it). The update notice, the alerts health notice, a PC's action banner and the pairing line (below) are drawn in
   the pane column, over the tab strip, never across the window: the sidebar and its top row stay
   one piece. A device pairing with this server while a window is open (`device-paired` on the
   machines event stream) is one `.update-notice.is-paired` line there: a `--accent` phone glyph
@@ -2366,7 +2395,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   the PC and split half the header shows, by the half that reported it: a recovery on one PC or half
   is not said once another is shown, and a pane's first connection is not a reconnect. A stalled
   output, which retries nothing, gets no line: the chip says disconnected. The return sends nothing: a draft stays a draft.
-- Beside the chip, always shown, one quiet mark says how this device reaches Ovis (`.conn-route`,
+- In More's header, one quiet mark says how this device reaches Ovis (`.conn-route`,
   `components/ConnectionRouteMark.tsx`, `lib/connectionRoute.ts`): a 14px glyph and one short
   `--text-dim` word, **relay** (the hosted shell, or a request Portal vouched for, whatever signed it in), **Tailscale** (a tailnet address, or a
   request the server saw come through serve; a MagicDNS name alone says "Via Tailscale, or Funnel
@@ -2375,31 +2404,20 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   **local** (loopback: this PC, or a tunnel to another, which nothing can tell apart). The route,
   not the connection's state, is its title and accessible text ("Via Tailscale"); the chip tells the
   state. It is read from what the page owns and the server's own word on the request
-  (`observed_ingress`), never guessed. It is not a button and never wraps. At `<=480px` only the
-  relay keeps its word (the one most asked for) and the rest keep the glyph; below `360px` the
-  relay's word goes too, so the pane title keeps its room. The phone app's demo shows none. It
+  (`observed_ingress`), never guessed. It is not a button and never wraps. The phone app's demo
+  shows none. It
   follows Paseo's app, which says beside a host whether it is reached directly or through its relay.
-- Beside the route mark, the PC's sessions by state (`.header-sessions`,
-  `components/HeaderSessions.tsx`, `lib/headerSessions.ts`): one figure per state that has any,
-  in the sidebar's colours and marks, `--status-working` dot for running (a turn waiting on its own
-  background work counts), `--status-blocked` question mark for waiting for an answer,
-  `--status-done` dot for finished and not looked at yet (a finish looked at reads as ready, as in
-  the sidebar). Tabular figures, so a count that changes moves nothing; nothing at all while every
-  session rests, and nothing for a PC that is not connected (its cached roster is greyed out in the
-  sidebar). The waiting figure is the one button: tinted with its state, it opens the next waiting
-  session after the selected one in the roster's order, wrapping, never the selected one and never
-  one a zoomed tab hides (a pick of it lands on the zoomed pane); with none to open it stays a
-  button, `aria-disabled`, so a keyboard's focus is not dropped. It follows Slack's "next unread"
-  rather than a coding-agent app, because the question on a phone is the same: which conversation
-  needs me now. After the title, `--text-dim` and kept whole, the selected tab's place in its
-  workspace's strip (`.context-position`, "1/2", said "Tab 1 of 2"), only with two tabs or more.
-  At `<=480px` the header's line is the title's, as wide as without these: the figures become one
-  pill (waiting, else running, else done, tinted with its state) at the end of the tab row under the
-  header (`.tab-strip-sessions`), a full `--touch-target-header` target. Where that row is not drawn
-  (a phone, whose title lists the tabs, or a lone tab on a cramped screen) More carries the jump: **Open the next session waiting for you** is
-  its first item, and its button wears a `--status-blocked` dot (`.header-more-dot.is-waiting`, in
-  place of the alerts-off dot) and says the count in its name. Below `420px` the tab's place leaves
-  the header: the title's list marks the open tab.
+- The header draws no session counts: the sidebar and each tab's mark say every session's state, and
+  the status bar (from `769px` with a fine pointer) its waiting count. Its "N waiting for you" button
+  (`lib/headerSessions.ts` `nextWaitingPane`) opens the next waiting session after the selected one in
+  the roster's order, wrapping, never the selected one and never one a zoomed tab hides; with none
+  to open it stays a button, `aria-disabled`, so a keyboard's focus is not dropped. It follows
+  Slack's "next unread". More carries the same jump: **Open the next session waiting for you** is
+  its first item, and where no status bar shows the count its button wears a `--status-blocked` dot
+  (`.header-more-dot.is-waiting`, in place of the alerts-off dot) and says the count in its name.
+  Below `769px` the title is followed, `--text-dim` and kept whole, by the selected tab's place in
+  its workspace's strip (`.context-position`, "1/2", said "Tab 1 of 2"), only with two tabs or more;
+  below `420px` it leaves the header and the title's list marks the open tab.
 
 ### Chat turn (`.chat-turn`)
 - Native conversation rows use LegendList 3.3.5, with the chat view as the single

@@ -1803,7 +1803,9 @@ try {
   await strip.waitFor();
   assert.deepEqual(await strip.getByRole("tab").allTextContents(), ["Tab 1", "second"]);
   assert.equal(await strip.getByRole("tab", { selected: true }).textContent(), "second");
-  assert.equal(await strip.locator(".tab-strip-close, .tab-strip-panes").count(), 0, "tab close buttons and chevrons are removed");
+  assert.equal(await strip.locator(".tab-strip-panes").count(), 0, "tab chevrons are removed");
+  // the header's row is a browser's tab strip: the open tab carries its close, a tab at rest only while hovered
+  assert.equal(await strip.locator(".tab-strip-close:visible").count(), 1, "only the open tab shows its close at rest");
   assert.equal(await strip.locator(".tab-strip-menu:visible").count(), 0, "desktop tabs show no menu button at rest");
   // the selected tab's actions button waits hidden in its place: the pointer over the strip or the
   // tab's keyboard focus brings it into view, and no other tab draws one
