@@ -250,6 +250,66 @@ describe("SessionPlans", () => {
     expect(transcriptPage("claude-transcript", f.path).metadata.context).toEqual({ used: 12_000, window: null });
   });
 
+  it("takes a Claude command's echo from before the last answer as a fork only once the conversation goes on from it, as the chat does", async () => {
+    // Given an answered prompt, then a /context echo hanging from the prompt (as 2.1.304 links it after a Restore) and its output.
+    const f = file();
+    const echo = (uuid: string, parentUuid: string, content: string) => f.add({ type: "system", subtype: "local_command", uuid, parentUuid, isSidechain: false, content });
+    f.add({ type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "one" } });
+    f.add({ type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", model: "claude-opus-5-5", content: [], usage: { input_tokens: 30_000 } } });
+    echo("c1", "u1", "<command-name>/context</command-name>\n<command-message>context</command-message>\n<command-args></command-args>");
+    echo("o1", "c1", "<local-command-stdout>ok</local-command-stdout>");
+    const plans = new SessionPlans({ claudePath: () => f.path, codexPath: async () => null, onChange: () => {}, claudeWindow: () => 200_000 });
+    await plans.refresh([pane("p1", "claude")]);
+    plans.poll();
+    // While the chain's tip hangs from the echo, the answer before it is off the branch, for the chat too.
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toBeUndefined();
+    expect(plans.contextOf("p1")).toBeNull();
+    // When a prompt is sent on from the answer, the echo is dropped and its figure is back.
+    f.add({ type: "user", uuid: "u2", parentUuid: "a1", message: { role: "user", content: "two" } });
+    plans.poll();
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toEqual({ used: 30_000, window: null });
+    expect(plans.contextOf("p1")).toEqual({ used: 30_000, window: 200_000 });
+    // When another echo hangs from before that answer and a prompt is sent on from its output, the session forked.
+    echo("c2", "u1", "<command-name>/context</command-name>");
+    echo("o2", "c2", "<local-command-stdout>ok</local-command-stdout>");
+    f.add({ type: "system", subtype: "turn_duration", uuid: "s2", parentUuid: "a1", isSidechain: false });
+    f.add({ type: "user", uuid: "u3", parentUuid: "o2", message: { role: "user", content: "three" } });
+    plans.poll();
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toBeUndefined();
+    expect(plans.contextOf("p1")).toBeNull();
+  });
+
+  it("takes a held Claude command's echo as a fork past the most records it keeps, while the chat still does", async () => {
+    // Given an answered prompt, then a /context echo from before the answer and 10,001 records hanging from it in a row.
+    const f = file();
+    f.add({ type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "one" } });
+    f.add({ type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", model: "claude-opus-5-5", content: [], usage: { input_tokens: 30_000 } } });
+    f.add({ type: "system", subtype: "local_command", uuid: "s0", parentUuid: "u1", content: "<command-name>/context</command-name>" });
+    appendFileSync(f.path, Array.from({ length: 10_001 }, (_, i) => `${JSON.stringify({ type: "system", subtype: "turn_duration", uuid: `s${i + 1}`, parentUuid: `s${i}` })}\n`).join(""));
+    const plans = new SessionPlans({ claudePath: () => f.path, codexPath: async () => null, onChange: () => {}, claudeWindow: () => 200_000 });
+    await plans.refresh([pane("p1", "claude")]);
+    plans.poll();
+    // Then the answer before the echo stays off the branch, as the chat keeps it.
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toBeUndefined();
+    expect(plans.contextOf("p1")).toBeNull();
+  });
+
+  it("keeps the 1M window of an answer when a Claude command's echo is dropped", async () => {
+    // Given a request past 200k, a /context echo from before it, then a prompt sent on from that answer and its answer.
+    const f = file();
+    f.add({ type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "one" } });
+    f.add({ type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", model: "claude-opus-5-5", content: [], usage: { input_tokens: 250_000 } } });
+    f.add({ type: "system", subtype: "local_command", uuid: "c1", parentUuid: "u1", content: "<command-name>/context</command-name>" });
+    f.add({ type: "user", uuid: "u2", parentUuid: "a1", message: { role: "user", content: "two" } });
+    f.add({ type: "assistant", uuid: "a2", parentUuid: "u2", message: { role: "assistant", model: "claude-opus-5-5", content: [], usage: { input_tokens: 12_000 } } });
+    const plans = new SessionPlans({ claudePath: () => f.path, codexPath: async () => null, onChange: () => {} });
+    await plans.refresh([pane("p1", "claude")]);
+    plans.poll();
+    // Then the row keeps the window the chat keeps.
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toEqual({ used: 12_000, window: 1_000_000 });
+    expect(plans.contextOf("p1")).toEqual({ used: 12_000, window: 1_000_000 });
+  });
+
   it("does not carry the 1M window of an answer a Claude rewind left", async () => {
     // Given a request past 200k (so in the 1M window), then a prompt sent again from before it, and its answer.
     const f = file();
