@@ -15,7 +15,7 @@ import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib
 import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "../lib/shortcutBindings.ts";
 import { WEB_LINK_TARGETS } from "../lib/webPanel.ts";
 import { FILE_OPEN_TARGETS } from "../lib/filePresentation.ts";
-import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, HISTORY_PROMPTS, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, VOICE_ENGINES, enterSendsOn, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, VOICE_ENGINES, enterSendsOn, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
 import { pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
 import { focusInOtherModal, useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -458,8 +458,6 @@ function ChatPage() {
   const t = useT();
   const touch = useMediaQuery("(pointer: coarse)");
   const filePanelAvailable = useMediaQuery(FILE_PANEL_DOCK_QUERY);
-  // the same query Composer.tsx hides the New tab button by
-  const compactComposer = useMediaQuery("(max-width: 640px), (pointer: coarse)");
   return (
     <>
       <SettingsGroup>
@@ -495,9 +493,6 @@ function ChatPage() {
         <SettingsRow label={t("Chat font")} description={t("Message text; code stays monospace. Comma-separated, tried in order. A font this device does not have falls back to the default.")} wide>
           <FontFamilyInput value={settings.chatFontFamily} label={t("Chat font")} onCommit={(chatFontFamily) => update({ chatFontFamily })} />
         </SettingsRow>
-        <SettingsRow label={t("History page size")} description={t("Prompts per page; older turns load a page at a time as you scroll up. Hermes keeps its own page of messages")} wide>
-          <Segmented label={t("History page size")} value={String(settings.historyPrompts)} onChange={(value) => update({ historyPrompts: Number(value) })} options={HISTORY_PROMPTS.map((prompts) => ({ value: String(prompts), label: String(prompts) }))} />
-        </SettingsRow>
       </SettingsGroup>
 
       <SettingsGroup title={t("Composer")} section="composer">
@@ -507,12 +502,6 @@ function ChatPage() {
         <SettingsRow label={t("Send queued messages automatically")} description={t("A message sent while the agent works goes by itself when the turn ends. When off, it waits until you press Send now.")}>
           <Toggle label={t("Send queued messages automatically")} checked={settings.autoSendQueued} onChange={(autoSendQueued) => update({ autoSendQueued })} />
         </SettingsRow>
-        {/* the button is drawn in a wide, mouse-driven window only (Composer.tsx), so it is offered only there */}
-        {!compactComposer && (
-          <SettingsRow label={t("New tab button")} description={t("A button in the message box opens New tab with an agent… on the pane's workspace. The tab menu offers it either way.")}>
-            <Toggle label={t("New tab button")} checked={settings.composerNewTabButton} onChange={(composerNewTabButton) => update({ composerNewTabButton })} />
-          </SettingsRow>
-        )}
         <SettingsRow label={t("Artifacts chip")} description={t("A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.")}>
           <Toggle label={t("Artifacts chip")} checked={settings.composerArtifacts} onChange={(composerArtifacts) => update({ composerArtifacts })} />
         </SettingsRow>
@@ -567,14 +556,7 @@ function ChatPage() {
         <SettingsRow label={t("Edit text files")} description={t("Adds Edit to the file viewer for a text file in the pane's folder. Saving asks first, and stops if the file changed since you opened it.")}>
           <Toggle label={t("Edit text files")} checked={settings.editTextFiles} onChange={(editTextFiles) => update({ editTextFiles })} />
         </SettingsRow>
-        <SettingsRow label={t("Markdown width")}>
-          {/* literal keys, so the i18n check finds them */}
-          <Segmented label={t("Markdown width")} value={settings.markdownWidth} onChange={(markdownWidth) => update({ markdownWidth })} options={MARKDOWN_WIDTHS.map((markdownWidth) => ({ value: markdownWidth, label: markdownWidth === "full" ? t("Full width") : t("Default") }))} />
-        </SettingsRow>
         <MarkdownOutlineRow />
-        <SettingsRow label={t("Diff layout")} description={t("A phone shows one column either way.")}>
-          <Segmented label={t("Diff layout")} value={settings.diffStyle} onChange={(diffStyle) => update({ diffStyle })} options={DIFF_STYLES.map((diffStyle) => ({ value: diffStyle, label: diffStyle === "split" ? t("Split") : t("Unified") }))} />
-        </SettingsRow>
         <SettingsRow label={t("Open files")} description={t("On a wide window, text and code can open beside the pane. Media, PDFs and folders always open in a popup, and the viewer's header button moves the file open now.")}>
           <Segmented label={t("Open files")} value={settings.fileOpen} onChange={(fileOpen) => update({ fileOpen })} options={FILE_OPEN_TARGETS.map((fileOpen) => ({ value: fileOpen, label: fileOpen === "panel" ? t("Beside the pane") : t("In a popup") }))} />
         </SettingsRow>

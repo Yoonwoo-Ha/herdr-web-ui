@@ -4,8 +4,6 @@
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
 export const SETTINGS_COMPOSER_JA: Record<string, string> = {
-  "New tab button": "新しいタブボタン",
-  "A button in the message box opens New tab with an agent… on the pane's workspace. The tab menu offers it either way.": "入力欄のボタンで、このペインのワークスペースに「エージェント付きの新しいタブ…」を開きます。タブメニューからはいつでも開けます。",
   "Artifacts chip": "アーティファクトチップ",
   "A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.": "Claude Code のペインの入力欄に、セッションが Artifact ツールで公開したページの一覧を出すチップを表示します。",
   "Side conversations chip (experimental)": "サイド会話チップ（実験的）",

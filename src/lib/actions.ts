@@ -6,7 +6,6 @@
 
 import type { SplitPaneDirection } from "../../shared/protocol.ts";
 import type { ZoomMode } from "./layoutMap.ts";
-import type { ChatLaunch } from "./agentLaunchMode.ts";
 
 export type PaneView = "chat" | "terminal";
 
@@ -32,10 +31,9 @@ export interface AppActions {
   openNewSession: () => void;
   /**
    * The New tab dialog for a workspace: the named one (a sidebar row's menu, on its own PC),
-   * else the selected pane's. Nothing happens without a workspace to add the tab to. `chat`: opened
-   * from a chat's composer, the dialog starts on that chat's agent, model and effort.
+   * else the selected pane's. Nothing happens without a workspace to add the tab to.
    */
-  openNewTab: (target?: { machineId: string; workspaceId: string }, chat?: ChatLaunch | null) => void;
+  openNewTab: (target?: { machineId: string; workspaceId: string }) => void;
   /** The inline name field of the selected pane's tab, as the tab menu's Rename opens it; nothing while the tab strip is not drawn. */
   renameTab: () => void;
   /**

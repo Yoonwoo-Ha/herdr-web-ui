@@ -518,13 +518,13 @@ export function App() {
         setNewTab(null);
         setNewSessionOpen(true);
       },
-      openNewTab: (target, chat = null) => {
+      openNewTab: (target) => {
         const found = newTabTarget(target);
         if (!found) return;
         const { machineId, workspace, cwd } = found;
         setDrawerOpen(false);
         setNewSessionMachineId(machineId);
-        setNewTab({ workspaceId: workspace.workspace_id, workspaceLabel: workspace.label, cwd, number: workspace.tab_count + 1, chat });
+        setNewTab({ workspaceId: workspace.workspace_id, workspaceLabel: workspace.label, cwd, number: workspace.tab_count + 1 });
         setNewSessionOpen(true);
       },
       renameTab: () => {
@@ -1065,8 +1065,6 @@ export function App() {
                         onEndPeek={endPeek}
                         // /resume lists the pane's own agent's sessions, and only for an agent whose store is read
                         onOpenHistory={item && sessionHistoryAgent(item.agent) !== null ? () => actions.openSessionHistory({ machineId, workspaceId: item.workspace_id, agent: item.agent, scope: "pane", paneId: item.pane_id }) : undefined}
-                        // the composer's new-agent button: the New tab dialog on this pane's workspace, as the tab menu opens it
-                        onOpenNewSession={item ? (chat) => actions.openNewTab({ machineId, workspaceId: item.workspace_id }, chat) : undefined}
                         // the other half never takes the keyboard: a press in it makes it active first
                         active={active && itemActive}
                         // the paging shortcuts reach the selected pane of the active half only

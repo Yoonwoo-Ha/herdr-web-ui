@@ -218,4 +218,7 @@ export const FILES_ZH: Record<string, string> = {
   "Some Markdown files here are not listed.": "此文件夹中的部分 Markdown 文件未列出。",
   "This PC's bridge cannot list documents yet.": "此电脑的桥接还不能列出文档。",
   "Documents could not be loaded.": "无法加载文档列表。",
+  "Diff layout": "差异布局",
+  "Unified": "单栏",
+  "Split": "并排",
 };

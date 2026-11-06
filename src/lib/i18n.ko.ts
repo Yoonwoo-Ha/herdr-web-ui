@@ -371,9 +371,6 @@ const BASE: Record<string, string> = {
   "Copy details": "자세한 내용 복사",
   "This pane can't be shown.": "이 패널을 표시할 수 없습니다.",
   "The sidebar can't be shown.": "사이드바를 표시할 수 없습니다.",
-  "Diff layout": "비교 보기 방식",
-  "Unified": "한 열",
-  "Split": "나란히",
   // t3code ports (a)
   // t3code ports (d)
   "Change PC": "PC 바꾸기",

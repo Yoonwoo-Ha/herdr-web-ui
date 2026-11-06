@@ -25,7 +25,6 @@ const MATRIX: readonly (readonly [Language, string, SettingsPageId, string])[] =
   ["en", "OpenAI API key", "voice", "openai-key"],
   ["en", "Return inserts a new line", "chat", "composer"],
   ["en", "Send queued messages automatically", "chat", "composer"],
-  ["en", "New tab button", "chat", "composer"],
   ["en", "Suggestion chip", "chat", "composer"],
   ["en", "Show above the message box", "chat", "quick-replies"],
   ["ko", "인터페이스 글자 크기", "appearance", "typography"],
@@ -103,7 +102,7 @@ describe("settings entries", () => {
       const expected = { page, section: section === "-" ? actual.section : section };
       return actual.page === expected.page && actual.section === expected.section ? [] : [{ language, query, expected, actual }];
     });
-    expect(MATRIX.length).toBe(47);
+    expect(MATRIX.length).toBe(46);
     expect(misses).toEqual([]);
   });
 

@@ -11,7 +11,7 @@ import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
 import { SHARED_SETTING_KEYS } from "../../shared/preferences.ts";
 import { NOTICE_VERSION, TELEMETRY_SETTINGS_KEYS, TELEMETRY_THEME_SIDE_KEYS, telemetrySettings } from "../../shared/telemetry.ts";
-import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, VOICE_ENGINES, wantsVoiceInput } from "./settings.ts";
+import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, VOICE_ENGINES, wantsVoiceInput } from "./settings.ts";
 import { applyToDocument, loadSettings, pcLoadOn, saveSettings } from "./settings.ts";
 import { sanitizeSettings as oldSanitizeSettings, saveSettings as oldSaveSettings } from "./settings.legacy-fixture.ts";
 import { themeFor } from "./themeFor.ts";
@@ -158,19 +158,6 @@ describe("saved theme migration", () => {
     expect(loadSettings().terminalFontSize).toBe(18);
     records.set("ovis:voice-engine", "not json");
     expect(loadSettings().voiceEngine).toBe("auto");
-  });
-
-  it("keeps the history page size in its own key, out of an old tab's whole-record save", () => {
-    expect(loadSettings().historyPrompts).toBe(10);
-    saveSettings(sanitizeSettings({ historyPrompts: 50 }));
-    expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("historyPrompts");
-    oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
-    expect(loadSettings().historyPrompts).toBe(50);
-    expect(loadSettings().terminalFontSize).toBe(18);
-    records.set("ovis:history-prompts", "12");
-    expect(loadSettings().historyPrompts).toBe(10);
-    records.set("ovis:history-prompts", "not json");
-    expect(loadSettings().historyPrompts).toBe(10);
   });
 
   it("keeps the file text size in its own key, out of an old tab's whole-record save", () => {
@@ -479,11 +466,10 @@ it("keeps background workspaces in place until this device turns their part on, 
   expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("sidebarBackgroundWorkspaces");
 });
 
-it("keeps the composer's New tab button off until this device turns it on, and keeps that choice its own", () => {
-  expect(sanitizeSettings({}).composerNewTabButton).toBe(false);
-  expect(sanitizeSettings({ composerNewTabButton: true }).composerNewTabButton).toBe(true);
-  expect(sanitizeSettings({ composerNewTabButton: "true" }).composerNewTabButton).toBe(false);
-  expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("composerNewTabButton");
+it("ignores what was saved for the rows Settings no longer has", () => {
+  const settings = sanitizeSettings({ historyPrompts: 50, composerNewTabButton: true, markdownWidth: "full" });
+  for (const key of ["historyPrompts", "composerNewTabButton", "markdownWidth"]) expect(settings).not.toHaveProperty(key);
+  expect(telemetrySettingsSnapshot(settings).markdownWidth).toBe("readable");
 });
 
 it("shows each PC's load while two or more PCs are connected, until this device chooses", () => {
@@ -587,7 +573,6 @@ describe("telemetry settings snapshot", () => {
       voiceInput: "on",
       voiceLanguage: "ko-KR",
       wrapCode: true,
-      markdownWidth: "full",
       paletteLight: "catppuccin",
       paletteDark: "amber",
       darkTheme: "amber",
@@ -620,7 +605,7 @@ describe("telemetry settings snapshot", () => {
       voiceInput: "on",
       voiceLanguage: "ko-KR",
       wrapCode: true,
-      markdownWidth: "full",
+      markdownWidth: "readable",
       paletteLight: "catppuccin",
       paletteDark: "amber",
       darkTheme: "amber",
@@ -1389,12 +1374,6 @@ it("keeps the file viewer's wrap setting only when it is a boolean", () => {
   expect(DEFAULT_SETTINGS.wrapCode).toBe(false);
   expect(sanitizeSettings({ wrapCode: true }).wrapCode).toBe(true);
   expect(sanitizeSettings({ wrapCode: "yes" }).wrapCode).toBe(false);
-});
-
-it("keeps the Markdown preview's width to readable or full, readable by default", () => {
-  expect(DEFAULT_SETTINGS.markdownWidth).toBe("readable");
-  for (const width of MARKDOWN_WIDTHS) expect(sanitizeSettings({ markdownWidth: width }).markdownWidth).toBe(width);
-  for (const bad of ["narrow", "medium", "wide", "", null, 80]) expect(sanitizeSettings({ markdownWidth: bad }).markdownWidth).toBe("readable");
 });
 
 it("keeps where web links open to a tab or the panel, a tab by default", () => {

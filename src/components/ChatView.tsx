@@ -85,8 +85,8 @@ const READER_ALLOWANCE_PX = 1;
 // no input this page sees (a screen reader's, a Firefox scrollbar's) leaves the end only past it, and
 // only over a transcript that did not shrink under it (onScroll, #2042).
 const LAYOUT_ALLOWANCE_PX = 48;
-/** a search's pick reads back to its turn a page of the largest size there is (the server's own cap) */
-const LARGEST_PAGE = Math.max(...HISTORY_PROMPTS);
+/** a search's pick reads back to its turn a page of the server's own cap */
+const LARGEST_PAGE = 50;
 /** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
 const ChatPaneContext = createContext<string | null>(null);
 const ChatHistoryContext = createContext("");
@@ -1373,8 +1373,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
-  // older turns load a page at a time; the setting decides how many prompts a page holds
-  const pagePrompts = settings.historyPrompts;
+  // older turns load a page at a time
+  const pagePrompts = HISTORY_PROMPTS;
   // read by the conversation reads as they answer: turning the setting on or off needs no new read
   const autoTabNames = useRef(settings.autoTabNames);
   autoTabNames.current = settings.autoTabNames;

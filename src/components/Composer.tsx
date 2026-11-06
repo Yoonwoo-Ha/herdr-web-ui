@@ -12,12 +12,11 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, ClipboardPaste, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, MessageSquarePlus, Minimize2, Package, Plus, Puzzle, Square, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
+import { ArrowUp, ClipboardPaste, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, Minimize2, Package, Plus, Puzzle, Square, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
 
 import "./Composer.css";
 
 import type { AgentStatus, ClientRole, ConversationMetadata, PlanSummary, SlashCommand } from "../../shared/protocol.ts";
-import type { ChatLaunch } from "../lib/agentLaunchMode.ts";
 import { skillSyntax } from "../../shared/skill-syntax.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { composerDraftKey, composerDrafts, underSendLock } from "../lib/composerDraft.ts";
@@ -113,7 +112,6 @@ export interface ComposerProps {
   /** opens the New tab dialog on this pane's workspace, to start another agent with its model, effort, skills
    * and first message (NewSessionDialog), on this chat's agent and the model and effort it recorded; none: the pane has no
    * workspace to add a tab to */
-  onOpenNewSession?: (chat: ChatLaunch | null) => void;
   /** the pane's working folder, named in the strip tucked under the card; nothing is drawn for it while absent */
   cwd?: string | null;
   /** the pane's branch, beside the folder in that strip; nothing is drawn for it while absent */
@@ -263,7 +261,6 @@ export function Composer({
   role = "interact",
   inert = false,
   onOpenHistory,
-  onOpenNewSession,
   cwd = null,
   branch = null,
   worktreeRepo = null,
@@ -1522,20 +1519,6 @@ export function Composer({
             </button>
           )}
           {dictation.shown && <MicButton dictation={dictation} />}
-          {/* only once this device turned it on (Settings → Chat → Composer; the composer's row stays minimal, and
-              the tab menu opens the same dialog), and in a mouse-driven window only, like the usage glance: a phone's
-              card has no row to spare beside the mic and the tasks chip, and its tab menu carries New tab with agent… already */}
-          {onOpenNewSession && settings.composerNewTabButton && role !== "observe" && !mobile && (
-            <button
-              type="button"
-              className="icon-button composer-new-session"
-              aria-label={t("New tab with an agent…")}
-              title={t("New tab with an agent…")}
-              onClick={() => onOpenNewSession(agent ? { agent, model: metadata?.model ?? null, effort: metadata?.reasoning_effort ?? null } : null)}
-            >
-              <MessageSquarePlus aria-hidden="true" />
-            </button>
-          )}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} subagents={agent === "claude" || agent === "opencode"} plan={plan} />
           {agent === "claude" && <Artifacts paneId={paneId} status={agentStatus} />}
           {agent === "omp" && <OmpBtw paneId={paneId} />}

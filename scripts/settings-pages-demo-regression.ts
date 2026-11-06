@@ -78,7 +78,6 @@ const MATRIX: readonly (readonly ["en" | "ko" | "ja" | "zh", string, string, str
   ["en", "OpenAI API key", "voice", "openai-key"],
   ["en", "Return inserts a new line", "chat", "composer"],
   ["en", "Send queued messages automatically", "chat", "composer"],
-  ["en", "New tab button", "chat", "composer"],
   ["en", "Suggestion chip", "chat", "composer"],
   ["en", "Show above the message box", "chat", "quick-replies"],
   ["ko", "인터페이스 글자 크기", "appearance", "typography"],

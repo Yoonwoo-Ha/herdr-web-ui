@@ -689,10 +689,11 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
   `>`, `\` and control characters stripped and names with spaces quoted.
 - Composer Enter behavior and folded thinking visibility are preferences, not typography tokens.
 - File viewer: `wrapCode` (wrap long lines instead of scrolling sideways; default off),
-  `markdownWidth`: `readable` (the chat lane, `--chat-w`, centered; default) or `full`, and
-  `diffStyle`: `unified` (default) or `split` for a repository diff (a phone draws one column
-  whatever it says, and the viewer says so), and `markdownOutline` (off by default, below).
-  These layout choices stay on this device, like chat width.
+  `diffStyle`: `unified` (default) or `split` for a repository diff, set by the diff viewer's own
+  Unified and Split switch (a phone draws one column whatever it says, and the viewer says so), and
+  `markdownOutline` (off by default, below). These layout choices stay on this device, like chat
+  width. A Markdown preview keeps the chat's readable lane (`--chat-w`, centered); Settings no
+  longer offers a full-width preview, and a stored `markdownWidth` is ignored.
 - Markdown outline (`markdownOutline`, #636): a Preview with two headings or more lists the
   document's own headings (not ones inside a quote), levels stepped in, a repeated title one entry
   per heading. It follows Zed's outline panel: the heading being read (the last past a line 32 px
@@ -1808,21 +1809,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   route, is said in one hint line. Start sends exactly one create: a ref-held in-flight guard
   (`lib/sessionHistory.ts` inFlightGuard) refuses a second press before the disabled fields have
   rendered.
-- In a mouse-driven window wider than 640px (the composer's own `(max-width: 640px), (pointer:
-  coarse)` query) the chat's composer can show a **New tab with an agent…** icon button
-  (lucide `MessageSquarePlus`, beside Attach) that opens this dialog as New tab on the pane's
-  workspace, as the tab menu does, but on the chat's own agent and the model and effort its
-  transcript recorded last (`ConversationMetadata`, the composer's model pill), each only where
-  the agent's launch takes it (`recordedChoices`); every field stays editable before Start. The tab
-  menu and the shortcuts keep the last agent picked and the agent's own model. This follows the
-  Codex app's new thread, which starts on the model and reasoning effort already shown in its
-  composer rather than resetting them. It is off until this device turns it on (Settings → Chat →
-  Composer, **New tab button**, the device setting `composerNewTabButton`): the composer's row stays
-  minimal, as the Codex and Claude apps keep theirs (attach and the mic; a new thread starts from the
-  sidebar), and the tab menu opens the same dialog either way. A phone's card has no row to spare for
-  it beside the mic and the tasks chip (the model label would lose its pill), so there the tab's own
-  menu keeps **New tab with agent…**, and Settings does not offer the toggle on a touch screen or in
-  a window 640px wide or narrower.
+- The chat's composer has no New tab button: its row stays minimal, as the Codex and Claude apps
+  keep theirs (attach and the mic; a new thread starts from the sidebar). The tab menu's **New tab
+  with agent…**, the command palette and its shortcut open this dialog, and a stored
+  `composerNewTabButton` from an older version is ignored.
   The existing shortcuts are untouched.
 - The design follows the Codex app's new thread screen (the model and reasoning-effort pickers
   under the prompt box, the prompt sent as the thread starts) and Claude Code's own session flags
@@ -3545,12 +3535,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - Pages, in order: **Appearance** (theme, dark theme, light theme, density, language, sidebar rows; then
   **Typography**: interface font size and interface font), **Chat**
   (panes open in, show thinking, chat width, chat font size and family; then
-  **Composer**: Enter sends, send queued messages automatically, in a mouse-driven window wider than
-  640px the New tab button (off by default), the Artifacts chip (off by default, the device setting
+  **Composer**: Enter sends, send queued messages automatically, the Artifacts chip (off by default, the device setting
   `composerArtifacts`), the Side conversations chip (experimental, off by default, the device setting
   `composerBtw`), the Paste and send button (off by default, the device setting
   `composerPasteSend`), and on a touch screen the suggestion chip (off by default); then
-  **Quick replies**; then **File viewer**: wrap long lines, Markdown width, Markdown outline (off by default, the device setting `markdownOutline`), Diff layout), **Terminal** (font size, font family, wheel
+  **Quick replies**; then **File viewer**: wrap long lines, Markdown outline (off by default, the device setting `markdownOutline`)), **Terminal** (font size, font family, wheel
   speed, input mode, Key bar, Keyboard only from the key bar (off by default, the device setting
   `terminalKeyboardOnRequest`), Fold the key bar (touch screens, off by default, the device setting
   `terminalFoldKeyBar`), Clipboard from a pane, Pictures in the terminal (off by default, the

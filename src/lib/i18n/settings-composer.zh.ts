@@ -4,8 +4,6 @@
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
 export const SETTINGS_COMPOSER_ZH: Record<string, string> = {
-  "New tab button": "新标签页按钮",
-  "A button in the message box opens New tab with an agent… on the pane's workspace. The tab menu offers it either way.": "输入框中的按钮可在该面板的工作区打开“带代理的新标签页…”。标签页菜单中始终可用。",
   "Artifacts chip": "Artifact 标签",
   "A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.": "在 Claude Code 面板的输入框中显示一个标签，列出该会话用 Artifact 工具发布的页面。",
   "Side conversations chip (experimental)": "旁支对话标签（实验性）",
