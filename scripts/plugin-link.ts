@@ -12,9 +12,12 @@
  * It talks only to a server on this machine (a loopback address): approving a device is an act of
  * the PC itself (docs/account.md, "Who may admit a device"), and the sign-in lives in this process.
  */
+import { hostname } from "node:os";
+
 import qrcode from "qrcode-generator";
 
 import { isLoopbackHost } from "../server/access.ts";
+import { accountOsOfPlatform } from "../shared/account-asker.ts";
 import { decodeOffer } from "../shared/relay-offer.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
 import { startDeviceSignIn, startLinkPageSignIn } from "../src/lib/account/deviceSignIn.ts";
@@ -268,7 +271,9 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
   const serviceFetch = options.serviceFetch ?? fetch;
   // the Ovis link page where the service has it (one code, GitHub or Google picked there); a provider's own device page otherwise, or when named
   const offer = forced === undefined ? await offeredProviders(options.accountService, ["github"], { fetch: serviceFetch }) : null;
-  const startOptions = { service: options.accountService, store, lock, fetch: serviceFetch, now, wait };
+  // the link page shows who is asking (docs/account.md, "Who is asking"): this PC's name and system
+  const requester = { label: hostname(), os: accountOsOfPlatform(process.platform) };
+  const startOptions = { service: options.accountService, store, lock, fetch: serviceFetch, now, wait, requester };
   const signIn = offer !== null && offer.page.length > 0 ? await startLinkPageSignIn(startOptions, offer.device[0] ?? "github") : await startDeviceSignIn({ ...startOptions, provider: forced ?? "github" });
   const provider = signIn.provider;
   out((provider === "ovis"

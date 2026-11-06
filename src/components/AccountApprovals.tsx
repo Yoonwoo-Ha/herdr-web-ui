@@ -6,8 +6,9 @@
  */
 import { useEffect, useState } from "react";
 
+import type { AccountAsker } from "../../shared/account-asker.ts";
 import type { RemotePairingRequest } from "../../shared/protocol.ts";
-import { admitToAccount, approveJoin, UnverifiedJoinError } from "../lib/account/join.ts";
+import { admitToAccount, approveJoin, UnverifiedJoinError, vouchedAdmission } from "../lib/account/join.ts";
 import { useT } from "../lib/i18n.ts";
 import { accountServiceOf, AccountService } from "../lib/account/service.ts";
 import { indexedAccountStore } from "../lib/account/store.ts";
@@ -22,6 +23,28 @@ export function AccountApprovals({ pairings }: { pairings: readonly RemotePairin
   const request = pairings[0];
   const serverId = serverIdOfPath(window.location.pathname);
   const [where, setWhere] = useState<{ pcName: string; pcCount: number }>({ pcName: "", pcCount: 1 });
+  // who is asking, as the account service saw the device ring at this PC (never as the PC says);
+  // until it is known an account join cannot be approved (AccountApprovalPrompt `asker` undefined)
+  const [asker, setAsker] = useState<{ id: string; asker: AccountAsker; label: string | null } | null>(null);
+  const joiningId = request?.intent === "account" ? request.id : null;
+  const joiningKey = request?.key;
+  useEffect(() => {
+    if (joiningId === null || joiningKey === undefined || serverId === null) return;
+    let live = true;
+    void (async () => {
+      // nothing found, signed out or no answer: the card says the place is unknown rather than leave the line out
+      let found: { asker: AccountAsker; label: string | null } = { asker: { os: null, country: null, city: null }, label: null };
+      try {
+        const service = new AccountService({ store: indexedAccountStore });
+        if (accountServiceOf(document) !== null && await service.session() !== undefined) {
+          const rang = vouchedAdmission(await service.recentAdmissions(), serverId, joiningKey, Date.now());
+          if (rang !== undefined) found = { asker: { os: rang.os, country: rang.country, city: rang.city }, label: rang.label };
+        }
+      } catch (error) { console.warn("Ovis: who is asking could not be read", error instanceof Error ? error.name : error); }
+      if (live) setAsker({ id: joiningId, ...found });
+    })();
+    return () => { live = false; };
+  }, [joiningId, joiningKey, serverId]);
 
   useEffect(() => {
     if (serverId === null) return;
@@ -53,9 +76,9 @@ export function AccountApprovals({ pairings }: { pairings: readonly RemotePairin
       await approveJoin({
         request, digits, through: serverId, service,
         decide: (answer, picked) => decideRelayPairing(request.id, answer, picked),
-        admit: async () => admitToAccount({
+        admit: async (admission) => admitToAccount({
           fetch: (path, init) => transport.fetch(path, init), service, key: await indexedAccountStore.key(), account: session.account,
-          joining: { key: request.key, label: request.label }, through: serverId, paired: await indexedDeviceStore.list(),
+          joining: { key: request.key, label: admission.label }, through: serverId, paired: await indexedDeviceStore.list(),
           directory: (await service.listPcs()).map((pc) => pc.server_id), store: indexedAccountStore,
         }),
       });
@@ -65,5 +88,9 @@ export function AccountApprovals({ pairings }: { pairings: readonly RemotePairin
     }
   };
 
-  return <AccountApprovalPrompt key={request.id} request={request} pcName={where.pcName} pcCount={where.pcCount} onDecide={decide} />;
+  const known = asker?.id === request.id ? asker : null;
+  // an account join shows the name the device gave the account service; a request for this PC only has no admission
+  const shown = known?.label == null ? request : { ...request, label: known.label };
+  return <AccountApprovalPrompt key={request.id} request={shown} pcName={where.pcName} pcCount={where.pcCount}
+    asker={request.intent === "account" ? known?.asker : null} onDecide={decide} />;
 }

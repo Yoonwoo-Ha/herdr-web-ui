@@ -9,6 +9,7 @@
  * With `provider: "ovis"` the code is the service's own, typed at its link page (<service>/link),
  * where the person picks GitHub or Google; the polls are the same.
  */
+import { accountLabel, type AccountOs } from "../../../shared/account-asker.ts";
 import { toBase64Url } from "../../../shared/relay-pair-sas.ts";
 import { AccountServiceError, failure, sessionOf, type DeviceProvider } from "./service.ts";
 import { SignInError } from "./signin.ts";
@@ -52,6 +53,8 @@ export interface DeviceSignInOptions {
   readonly lock?: AccountLock;
   /** GitHub unless named */
   readonly provider?: DeviceSignInProvider;
+  /** what this device is, for the link page's confirmation (docs/account.md, "Who is asking"); a provider's own device page takes none */
+  readonly requester?: { readonly label: string; readonly os: AccountOs | null };
 }
 
 function waitFor(ms: number, signal: AbortSignal): Promise<void> {
@@ -87,6 +90,13 @@ function retryAfterMs(response: Response, fallback: number): number {
   return Number.isFinite(header) && header > 0 ? Math.max(header * 1000, fallback) : fallback;
 }
 
+/** The link page start's `label` and `os`, each left out when there is nothing to say. */
+function requesterFields(requester: DeviceSignInOptions["requester"]): { label?: string; os?: AccountOs } {
+  if (requester === undefined) return {};
+  const label = accountLabel(requester.label);
+  return { ...(label === "" ? {} : { label }), ...(requester.os === null ? {} : { os: requester.os }) };
+}
+
 export async function startDeviceSignIn(options: DeviceSignInOptions): Promise<DeviceSignIn> {
   const fetchImpl = options.fetch ?? ((input, init) => fetch(input, init));
   const now = options.now ?? Date.now;
@@ -96,10 +106,14 @@ export async function startDeviceSignIn(options: DeviceSignInOptions): Promise<D
   const verifier = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = toBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
   // redirect "manual": a redirect is a failure here, never a way to carry the challenge, the device code or the verifier to another address
-  const response = await fetchImpl(new URL(`/v1/signin/${provider}/device`, options.service), {
+  const start = (extra: object): Promise<Response> => fetchImpl(new URL(`/v1/signin/${provider}/device`, options.service), {
     method: "POST", headers: { "content-type": "application/json" }, redirect: "manual",
-    body: JSON.stringify({ code_challenge: challenge, code_challenge_method: "S256" }),
+    body: JSON.stringify({ code_challenge: challenge, code_challenge_method: "S256", ...extra }),
   });
+  const told = provider === "ovis" ? requesterFields(options.requester) : {};
+  let response = await start(told);
+  // an account service from before "Who is asking" takes the challenge alone: start again without the name, once
+  if (response.status === 400 && Object.keys(told).length > 0 && (await failure(response.clone())).code === "invalid_request") response = await start({});
   if (!response.ok) throw await failure(response);
   const started: unknown = await response.json();
   const body = typeof started === "object" && started !== null ? started as Record<string, unknown> : {};

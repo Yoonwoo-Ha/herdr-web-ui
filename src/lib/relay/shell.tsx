@@ -24,7 +24,7 @@ import { encodeOffer } from "../../../shared/relay-offer.ts";
 import type { AccountProvider, AccountStore } from "../account/store.ts";
 import { fetchUpdateStatus, requestUpdate } from "../api.ts";
 import { t } from "../i18n.ts";
-import { deviceLabel } from "../phone.ts";
+import { deviceLabel, deviceOs } from "../phone.ts";
 import { registerPendingPush } from "../push.ts";
 import type { PendingPushStore } from "../push.ts";
 import { alertPrefs, loadSettings, SettingsProvider } from "../settings.ts";
@@ -418,7 +418,10 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     // service (approvers check that ring); without one, it asks to pair this PC only
     let intent: "pc" | "account" = "pc";
     if (accountKey && attempt.offer.code === undefined && (await store.get(attempt.offer.server_id))?.device_id == null) {
-      try { await account.postAdmission(attempt.offer.server_id, label.slice(0, 48), accountKey.public_spki); intent = "account"; }
+      try {
+        await account.postAdmission(attempt.offer.server_id, label.slice(0, 48), accountKey.public_spki, deviceOs(navigator.userAgent, navigator.maxTouchPoints ?? 0));
+        intent = "account";
+      }
       catch (error) { console.warn("Ovis: the account service did not take the join; pairing this PC only", error instanceof Error ? error.name : error); }
     }
     let opened: RelayTransport;

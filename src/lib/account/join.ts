@@ -11,7 +11,7 @@ import { isWssOrigin } from "../../../shared/relay-offer.ts";
 import type { RemotePairingRequest } from "../../../shared/protocol.ts";
 import type { RelayDevice, RelayDeviceStore } from "../relay/device.ts";
 import { keyIdOf } from "../relay/shellState.ts";
-import type { AccountService } from "./service.ts";
+import type { AccountService, Admission } from "./service.ts";
 import type { AccountKey, AccountStore } from "./store.ts";
 
 export type PcFetch = (input: string, init?: RequestInit) => Promise<Response>;
@@ -169,19 +169,33 @@ export const ADMISSION_MS = 10 * 60_000;
  */
 export async function approveJoin(options: {
   request: RemotePairingRequest; digits: string; through: string; service: AccountService;
-  decide: (decision: "approve" | "decline", digits?: string) => Promise<void>; admit: () => Promise<unknown>; now?: () => number;
+  decide: (decision: "approve" | "decline", digits?: string) => Promise<void>;
+  /** with the admission that vouched for the device: its name is the one the device gave the account service, not the PC's */
+  admit: (admission: Admission) => Promise<unknown>; now?: () => number;
 }): Promise<void> {
   const { request } = options;
   if (request.intent !== "account") { await options.decide("approve", options.digits); return; }
-  const now = (options.now ?? Date.now)();
-  const vouched = (await options.service.recentAdmissions()).some((admission) => admission.server_id === options.through
-    && admission.key === request.key && now - Date.parse(admission.at) <= ADMISSION_MS);
-  if (!vouched) {
+  const vouched = vouchedAdmission(await options.service.recentAdmissions(), options.through, request.key, (options.now ?? Date.now)());
+  if (vouched === undefined) {
     await options.decide("decline");
     throw new UnverifiedJoinError();
   }
   await options.decide("approve", options.digits);
-  await options.admit();
+  await options.admit(vouched);
+}
+
+/**
+ * The newest admission of `key` at PC `through` from the last ADMISSION_MS, whatever order the
+ * account service lists them in: the one the approval card shows and the one an approval rests on.
+ */
+export function vouchedAdmission(admissions: readonly Admission[], through: string, key: string, now: number): Admission | undefined {
+  let newest: Admission | undefined;
+  for (const admission of admissions) {
+    const at = Date.parse(admission.at);
+    if (admission.server_id !== through || admission.key !== key || !(now - at <= ADMISSION_MS)) continue;
+    if (newest === undefined || at > Date.parse(newest.at)) newest = admission;
+  }
+  return newest;
 }
 
 /** How long the approver waits for PC X to let the new device in once both sides said yes. */

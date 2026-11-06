@@ -486,7 +486,9 @@ OAuth's authorization code flow with PKCE, `S256` only:
    types or scans it on any device, chooses GitHub or Google there, signs in, and confirms on the
    page in the same browser; the polls are the same. A client refuses an answer naming any other
    page, and shows no QR code for a link carrying another code. Signing in this way adds no PC and
-   no device: adding still needs an approval on a device already in the account.
+   no device: adding still needs an approval on a device already in the account. The start may
+   carry `label` (1-48 characters, no control characters) and `os`, which the page's confirmation
+   shows (Who is asking, below); a provider's own device start takes neither.
 6. `POST /v1/signout` (Bearer) answers 204 and ends that sign-in's family.
 
 `GET /v1/providers` (no sign-in) answers `{ "providers": ["github", "google"], "device": ["github",
@@ -562,8 +564,8 @@ Clients:
 | `PUT /v1/pcs/{server_id}` | `{ "label", "public_key", "relay" }` | `{ "pc": … }`: adds or renames a PC in the directory. 400 `server_key_mismatch` unless `public_key` (X25519, 64 hex) gives `server_id` (`deriveServerId`), 400 `invalid_relay` unless `relay` is a `wss:` origin |
 | `DELETE /v1/pcs/{server_id}` | | `204` |
 | `POST /v1/records` | `{ "server_ids": [...], "record" }` | `{ "queued": n }`: puts a signed record of the caller's account in that account's mailbox for each listed PC; the service checks only its shape and signature. 429 `mailbox_full` past 1000 records waiting for one PC |
-| `GET /v1/admissions` | | `{ "admissions": [{ "key", "label", "server_id", "at" }] }`: this account's admissions of the last 10 minutes. Before it signs an `add` for a device a PC showed it, the approving client checks that PC and key are listed here |
-| `POST /v1/admissions` | `{ "server_id", "label", "key" }` | `{ "id" }`: the signed-in device says it waits at that PC with its account key (`key`); rings the account's other clients (push), and reaches that PC's mailbox for 10 minutes |
+| `GET /v1/admissions` | | `{ "admissions": [{ "key", "label", "server_id", "at", "os", "country", "city" }] }`: this account's admissions of the last 10 minutes, with who is asking (below). Before it signs an `add` for a device a PC showed it, the approving client checks that PC and key are listed here |
+| `POST /v1/admissions` | `{ "server_id", "label", "key", "os"? }` | `{ "id" }`: the signed-in device says it waits at that PC with its account key (`key`); rings the account's other clients (push), and reaches that PC's mailbox for 10 minutes |
 | `POST /v1/signout` | | `204`: ends this sign-in's tokens |
 
 Push (the doorbell), per signed-in device:
@@ -605,6 +607,26 @@ belongs to an account.
 The `account` role keeps the two proofs apart: the relay verifies `control` and `data` only, so an
 answer the PC gave the account service is no use to the relay, and a relay's challenge passed on by
 the account service gets an answer the relay refuses.
+
+### Who is asking
+
+A device code can be phished: someone starts a sign-in on their own device and talks a person into
+typing its code (RFC 8628 section 5.4). Signing in admits nothing by itself, but a device of the
+account may then ask to join it, so every approval for a device the person cannot see says what it
+is and roughly where it asked from:
+
+- `os`: what the device says it runs, one of `ios`, `android`, `macos`, `windows`, `linux`,
+  `chromeos`; anything else is kept as unknown (`null`). A browser sends it from its user agent
+  (`src/lib/phone.ts` `deviceOs`), `link` from the PC's platform. With `label`, it is what the
+  device says, so it tells a mistake apart, not a liar.
+- `country` (ISO 3166-1 alpha-2) and `city`: where Cloudflare saw the request come from. Never the
+  address. Unknown, Tor and a city without a country are `null`.
+
+The approval card (`AccountApprovalPrompt`) shows the admission's (`GET /v1/admissions`, the one
+for this PC and key, read from the account service and not from the PC) as "iOS · Near Seoul,
+South Korea", or "Location unknown", above "approve only if you started this yourself just now".
+The link page's confirmation shows the PC's ("Asked by Desk (Linux), near Seoul, South Korea")
+with "continue only if you started this on your own PC".
 
 ## Errors
 
