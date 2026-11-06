@@ -143,9 +143,13 @@ async function linkWithCode(options: LinkOptions, api: Api): Promise<number> {
   const wait = options.wait ?? waitFor;
   await relayOnline(options, api);
   let asked = false;
+  // the six-digit code the QR code last carried: only that pairing is taken back, not one started since
+  let shown: string | null = null;
   try {
     for (;;) {
       asked = true;
+      // until this round's offer names its code, the pending pairing is the one this round asks for
+      shown = null;
       // the code first: it starts a new pairing, which the offer then carries (RelayPanel CompactRelay);
       // the offer comes whether the code did or not, since its QR code still pairs
       let code: { code: string; expires_at: string; server_id: string } | null = null;
@@ -157,6 +161,7 @@ async function linkWithCode(options: LinkOptions, api: Api): Promise<number> {
       const offer = await api<{ url: string; expires_at: string }>("POST", "/api/relay/offer");
       const decoded = decodeOffer(offer.url);
       if (decoded === null) throw new LocalError("The relay's pairing link did not parse.");
+      shown = decoded.code ?? null;
       const until = Math.min(code === null ? Infinity : Date.parse(code.expires_at), Date.parse(offer.expires_at));
       const left = remaining(Math.max(0, until - now()));
       out([
@@ -175,7 +180,7 @@ async function linkWithCode(options: LinkOptions, api: Api): Promise<number> {
   } catch (error) {
     if (!signal.aborted) throw error;
   } finally {
-    if (asked) await takeBack(api, out);
+    if (asked) await takeBack(api, out, shown);
   }
   return 0;
 }
@@ -183,12 +188,14 @@ async function linkWithCode(options: LinkOptions, api: Api): Promise<number> {
 /**
  * Takes back what --code showed, however it ends (Ctrl+C, an error): the six-digit code the QR code
  * carries, and with it the typed code bound to it. With a signal of its own, since Ctrl+C aborted the
- * command's. An Ovis from before /api/devices/pair/cancel can take back the typed code only.
+ * command's. `code` names the pairing it showed, so one started since (in Settings, on another device)
+ * stays; null when no QR code came, and then whatever is pending ends, as the typed code it asked for
+ * started it. An Ovis from before /api/devices/pair/cancel can take back the typed code only.
  */
-async function takeBack(api: Api, out: (text: string) => void): Promise<void> {
+async function takeBack(api: Api, out: (text: string) => void, code: string | null): Promise<void> {
   const signal = AbortSignal.timeout(5_000);
   try {
-    await api("POST", "/api/devices/pair/cancel", { signal });
+    await api("POST", "/api/devices/pair/cancel", { signal, ...code === null ? {} : { body: { code } } });
     out("Stopped: the code and the QR code no longer work.\n");
   } catch (error) {
     if (error instanceof LocalError && error.status === 404) {
@@ -206,10 +213,11 @@ interface Listing { readonly serverId: string; readonly entry: { label: string; 
 /**
  * Lists this PC in the account with its relay key, which opens the approve-here window (addThisPc.ts
  * listThisPc). An entry about to stop showing as new is listed anew: the service keeps `added_at`
- * over a PUT, so only a DELETE then a PUT shows the card again. When that PUT fails, the entry is
- * `pending`: the caller lists it again until it is back, so a renewal never leaves the PC unlisted.
+ * over a PUT, so only a DELETE then a PUT shows the card again. The entry is `unlisted.listing` from
+ * before that DELETE (whose answer can be lost after the service applied it) until the PUT lands: the
+ * caller lists it again until it is back, so a renewal never leaves the PC unlisted.
  */
-async function listThisPc(api: Api, service: AccountService, now: () => number): Promise<{ listing: Listing; pending: boolean }> {
+async function listThisPc(api: Api, service: AccountService, now: () => number, unlisted: { listing: Listing | null }): Promise<Listing> {
   const { url } = await api<{ url: string }>("POST", "/api/relay/link", { headers: { "x-ovis-local-only": "1" } });
   const offer = decodeOffer(url);
   if (offer === null) throw new LocalError("This PC's pairing link did not parse.");
@@ -219,10 +227,13 @@ async function listThisPc(api: Api, service: AccountService, now: () => number):
   const listed = (await service.listPcs()).find((pc) => pc.server_id === offer.server_id);
   if (listed === undefined || now() - Date.parse(listed.added_at) < NEW_PC_MS - RELIST_MS) {
     await service.putPc(listing.serverId, listing.entry);
-    return { listing, pending: false };
+    unlisted.listing = null;
+    return listing;
   }
+  unlisted.listing = listing;
   await service.deletePc(offer.server_id);
-  return { listing, pending: !await putListing(service, listing) };
+  if (await putListing(service, listing)) unlisted.listing = null;
+  return listing;
 }
 
 /** Puts the entry back; false when the service did not take it (it stays pending). */
@@ -264,12 +275,13 @@ async function linkToAccount(options: LinkOptions, api: Api, provider: DevicePro
   ].join("\n"));
   await signIn.finish(signal);
   const service = new AccountService({ store, lock, fetch: serviceFetch, now });
-  let pending: Listing | null = null;
+  // a listing a renewal took away and has not put back yet
+  const pending: { listing: Listing | null } = { listing: null };
   const unlisted = "This PC could not be listed in your account again just now; it is tried again until it is.\n";
   try {
-    const first = await listThisPc(api, service, now);
-    if (first.pending) { pending = first.listing; out(unlisted); }
-    const name = first.listing.entry.label;
+    const first = await listThisPc(api, service, now, pending);
+    if (pending.listing !== null) out(unlisted);
+    const name = first.entry.label;
     let listedAt = now();
     out([
       `Signed in. This PC is listed in your account as ${name}.`,
@@ -304,10 +316,13 @@ async function linkToAccount(options: LinkOptions, api: Api, provider: DevicePro
         out("This PC is in your account: every device of your account can use it.\n");
         return 0;
       }
-      if (pending !== null && await putListing(service, pending)) pending = null;
+      if (pending.listing !== null && await putListing(service, pending.listing)) pending.listing = null;
       if (now() - listedAt >= RELIST_MS) {
-        const renewed = await listThisPc(api, service, now);
-        if (renewed.pending) { pending = renewed.listing; out(unlisted); }
+        // a renewal that failed after its DELETE went out keeps waiting: the listing is put back above, as after a failed PUT
+        try { await listThisPc(api, service, now, pending); } catch (error) {
+          if (pending.listing === null) throw error;
+        }
+        if (pending.listing !== null) out(unlisted);
         listedAt = now();
       }
       try { await wait(POLL_MS, signal); } catch (error) {
@@ -317,7 +332,7 @@ async function linkToAccount(options: LinkOptions, api: Api, provider: DevicePro
     }
   } finally {
     // a listing a renewal took away is put back before the sign-in that can put it ends
-    if (pending !== null && !await putListing(service, pending)) out("This PC dropped out of your account's list; run link again to list it.\n");
+    if (pending.listing !== null && !await putListing(service, pending.listing)) out("This PC dropped out of your account's list; run link again to list it.\n");
     // the sign-in was only for this: it ends with it, and nothing of it stays on the PC
     await service.signOut().catch(() => out("The sign-in could not be ended at the account service; it ends by itself when it runs out.\n"));
   }

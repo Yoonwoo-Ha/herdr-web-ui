@@ -300,9 +300,10 @@ Both turn the relay on first when it is off, and wait until it is online.
   (**Pair with a code**), the relay pairing link as a QR code drawn in the terminal, and this PC's
   ID for the other device to compare. Both renew when they run out. When the relay mints no typed
   code (a relay that is not Ovis's own, or one that refuses it), it says why and shows the QR code
-  alone, as Settings does. Ctrl+C, or any error, takes both back
-  (`POST /api/devices/pair/cancel`, which ends the pending six-digit code and the typed code bound
-  to it). Redeeming them follows the usual admission rules.
+  alone, as Settings does. Ctrl+C, SIGTERM, SIGHUP (the terminal closing), or any error, takes both
+  back (`POST /api/devices/pair/cancel` with `{ "code" }`, the six-digit code it showed, which ends
+  that pending code and the typed code bound to it; a pairing started since, in Settings or on
+  another device, stays). Redeeming them follows the usual admission rules.
 
 **Which copy runs.** An in-app update (**Settings → Updates**) installs a new release beside the
 plugin checkout and does not replace the checkout. `link` follows the release that runs, as

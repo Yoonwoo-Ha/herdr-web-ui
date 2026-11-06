@@ -459,10 +459,15 @@ export class DeviceStore {
     return started;
   }
 
-  /** Takes the pending six-digit code back, and the typed relay code bound to it: nothing it was shown as pairs any more. */
-  endPairing(): void {
+  /**
+   * Takes the pending six-digit code back, and the typed relay code bound to it: nothing it was shown as pairs any more.
+   * With `code`, only when that is the code pending, so a caller never ends a pairing started after its own; false when it did not.
+   */
+  endPairing(code?: string): boolean {
+    if (code !== undefined && (this.pending === null || !same(code, this.pending.code))) return false;
     this.pending = null;
     for (const listener of this.codeStarts) listener();
+    return true;
   }
 
   /** `{ token }` when the code is right; null when it is wrong, spent or expired. */
@@ -1026,8 +1031,13 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     if (access.level === "full" && access.via === "relay" && store.account() !== null && !(access.device && store.isAccountApproverSession(access.device.id, relayKey ?? ""))) {
       return jsonResponse({ error: { code: "account_required", message: "End a pairing on this PC, or from a device linked to your account" } }, 403);
     }
-    store.endPairing();
-    return jsonResponse({ ok: true }, 200, { "cache-control": "no-store" });
+    // `{ code }` names the pairing the caller showed (link --code); without it, whatever is pending ends
+    const text = await request.text();
+    let body: unknown = {};
+    try { if (text.trim() !== "") body = JSON.parse(text); } catch { return badRequest("invalid_json", "request body must be JSON"); }
+    const code = isJsonObject(body) ? body["code"] : undefined;
+    if (!isJsonObject(body) || (code !== undefined && (typeof code !== "string" || !/^\d{6}$/.test(code)))) return badRequest("invalid_body", "code must be the six-digit pairing code");
+    return jsonResponse({ ok: true, cancelled: store.endPairing(code) }, 200, { "cache-control": "no-store" });
   }
   if (pathname === "/api/devices/revoke-all") {
     setRequestRoute("/api/devices/revoke-all");
