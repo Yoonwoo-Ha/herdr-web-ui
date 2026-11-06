@@ -17,8 +17,8 @@ export interface SettingsPageEntry {
 /**
  * The Settings pages as the palette lists them. The aliases are one translated phrase per page, so
  * a user finds a page by the words of their own language ("theme", "font", "sound"); every phrase is
- * a literal key, which keeps it in the translation files. A setting's own label is added where
- * Japanese and Chinese write it as one word the phrase lacks (Chat font size, Terminal font size).
+ * a literal key, which keeps it in the translation files. The font rows of every page are in Appearance's
+ * Typography group, found by their own labels.
  *
  * After the pages come the groups a setting is looked for by but whose page's words do not say it,
  * as Zed's settings search lands on the setting: each is found by its heading and the labels of the
@@ -27,8 +27,8 @@ export interface SettingsPageEntry {
 export function settingsPageEntries(t: Translate): SettingsPageEntry[] {
   return [
     { id: "appearance", label: t("Appearance"), aliases: t("theme themes palette dark light mode colors density language sidebar logos") },
-    { id: "chat", label: t("Chat"), aliases: `${t("chat font size message width composer enter send thinking code")} ${t("Chat font size")} ${t("Expand thinking")} ${t("Collapse work")}` },
-    { id: "terminal", label: t("Terminal"), aliases: `${t("terminal font size key bar keyboard clipboard")} ${t("Terminal font size")}` },
+    { id: "chat", label: t("Chat"), aliases: `${t("chat message width composer enter send thinking code")} ${t("Expand thinking")} ${t("Collapse work")}` },
+    { id: "terminal", label: t("Terminal"), aliases: t("terminal key bar keyboard clipboard") },
     { id: "alerts", label: t("Alerts"), aliases: t("notifications sound push bell needs input finished") },
     { id: "agents", label: t("Agents"), aliases: [t("agents hooks claude codex install"), t("plan limits quota meters"), t("Subscription usage"), t("Agent integrations"), t("Permission mode"), t("Sandbox and approvals"), t("Artifacts chip"), t("Suggestion chip"), t("Side conversations chip (experimental)")].join(" ") },
     { id: "shortcuts", label: t("Shortcuts"), aliases: t("keyboard keys bindings hotkeys") },
@@ -38,8 +38,8 @@ export function settingsPageEntries(t: Translate): SettingsPageEntry[] {
     { id: "chat", section: "voice-more", label: t("Dictation language"), aliases: "" },
     { id: "devices", section: "devices", label: t("My devices"), aliases: t("machines computers ssh bridge plugins phone pair relay QR code Remote PCs") },
     { id: "agents", section: "guide", label: t("Setup guide"), aliases: t("onboarding first run getting started welcome") },
-    { id: "appearance", section: "typography", label: t("Typography"), aliases: t("Interface font size") },
-    { id: "appearance", section: "typography-more", label: `${t("Typography")} · ${t("More settings")}`, aliases: t("Interface font") },
+    { id: "appearance", section: "typography", label: t("Typography"), aliases: [t("Interface font size"), t("Interface font"), t("Terminal font"), t("Terminal font size"), t("Chat font"), t("Chat font size")].join(" ") },
+    { id: "appearance", section: "typography-more", label: `${t("Typography")} · ${t("More settings")}`, aliases: "" },
     { id: "chat", section: "composer", label: t("Composer"), aliases: [t("Enter sends"), t("Return inserts a new line")].join(" ") },
     { id: "chat", section: "composer-more", label: `${t("Composer")} · ${t("More settings")}`, aliases: [t("Send queued messages automatically"), t("Paste and send button")].join(" ") },
     { id: "chat", section: "quick-replies", label: t("Quick replies"), aliases: t("Show above the message box") },

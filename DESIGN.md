@@ -651,6 +651,14 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
   one-word stub.
 
 ### Settings
+- Settings → Appearance follows herdr-app's Look page: each row is a label and its control, with no
+  sentence under it and no group captions (a search still matches the sentences), in the order theme, size
+  and fonts (the interface's, the terminal's and the chat's, each font with its size), density and
+  language, then the sidebar. From T3 Code it takes a ↺ beside a row whose value is off its default,
+  which puts the row's keys back. Themes are cards in one row that scrolls sideways, each a sidebar
+  and a pane in the theme's own colours (T3 Code's and herdr-app's theme previews; no code taken):
+  Dark and Light pick the side, the side drawn now first, its own kind of theme first and the other
+  kind after a rule, so any theme still goes on either side.
 - `theme`: `dark`, `light`, or `system`; default `dark`.
 - `palette`: the legacy mirror of the drawn side's theme for older app versions; default `codex`.
   A record with no palette (saved before palettes) or a removed one (`report`, `lilac`, `forest`)
