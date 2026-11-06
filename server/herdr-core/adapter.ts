@@ -519,37 +519,58 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
   };
 
   /**
-   * hc's text read of the screen with its colors (paintedScreen): hc reads text only, so this is the
-   * first paint of an attach that only watches, which never types or resizes, closed once the screen
-   * is in. No paint within PAINT_MS, a stream that ends first, or a paint of another shape answers
-   * the plain text, as a read without colors.
+   * The first paint (with `history` lines, else a screen's worth) of an attach that only watches, which never types or
+   * resizes, closed once the screen is in, and the rows it was painted at. null: no paint within
+   * PAINT_MS of hc answering the attach, or a stream that ended first.
    */
-  const coloredScreen = async (paneId: string): Promise<string> => {
+  const watchedPaint = async (paneId: string, history?: number): Promise<{ paint: string | null; rows: number }> => {
     const record = await terminal(paneId);
     const decoder = new TextDecoder();
     let paint = "";
     const { promise, resolve } = Promise.withResolvers<string | null>();
-    const timer = setTimeout(() => resolve(null), PAINT_MS);
-    const { result, channel } = await hc.open("terminal.attach", { terminal: paneId, cols: record.cols, rows: record.rows, history: record.rows, observe: true }, {
+    const { result, channel } = await hc.open("terminal.attach", { terminal: paneId, cols: record.cols, rows: record.rows, history: history ?? record.rows, observe: true }, {
       onData: (payload) => {
         paint += decoder.decode(payload, { stream: true });
         if (paint.includes(PAINT_END)) resolve(paint);
       },
       onClose: () => resolve(null),
-    }).catch((error: unknown) => {
-      clearTimeout(timer);
-      throw error;
     });
-    let screen: string | null;
+    // from hc's answer on: opening may take longer itself (another machine's relayed attach)
+    const timer = setTimeout(() => resolve(null), PAINT_MS);
     try {
-      const painted = await promise;
       // resized since it was looked up: the paint has the rows it has now
-      screen = painted === null ? null : paintedScreen(painted, result.terminal?.rows ?? record.rows);
+      return { paint: await promise, rows: result.terminal?.rows ?? record.rows };
     } finally {
       clearTimeout(timer);
       await channel.close();
     }
+  };
+
+  /**
+   * hc's text read of the screen with its colors (paintedScreen): hc reads text only, so this is the
+   * first paint of a watch-only attach. No paint, or a paint of another shape, answers the plain
+   * text, as a read without colors.
+   */
+  const coloredScreen = async (paneId: string): Promise<string> => {
+    const { paint, rows } = await watchedPaint(paneId);
+    const screen = paint === null ? null : paintedScreen(paint, rows);
     return screen ?? (await hc.call("terminal.read", { terminal: paneId, lines: 0 })).text;
+  };
+
+  /**
+   * Whether the terminal's program is on the alternate screen, which hc's record does not say: hc
+   * paints its reset, which ends in a clear, then the alternate screen first if the program is on it
+   * (herdr-core ghostty-vt `paint`). No paint, or an attach hc refused (a kept terminal whose
+   * program is lost, whose stored screen hc still reads), counts as the alternate screen.
+   */
+  const onAlternateScreen = async (paneId: string): Promise<boolean> => {
+    const { paint } = await watchedPaint(paneId, 0).catch((error: unknown) => {
+      if (error instanceof HcError) return { paint: null };
+      throw error;
+    });
+    if (paint === null) return true;
+    const cleared = paint.indexOf("\u001b[H\u001b[2J");
+    return cleared === -1 || paint.startsWith("\u001b[?1049h", cleared + "\u001b[H\u001b[2J".length);
   };
 
   /** Input to one pane in the order it was asked for: each attach and its bytes finish before the next. */
@@ -725,15 +746,18 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       if (format === "ansi" && source === "visible" && params["strip_ansi"] !== true) {
         return { read: { pane_id: paneId, workspace_id: pane.workspace_id, tab_id: pane.tab_id, source, format, text: await coloredScreen(paneId), revision: pane.revision, truncated: false } };
       }
-      // hc reads the screen plus `lines` of history above it; herdr's recent read is the last `lines` lines
-      const read = await hc.call("terminal.read", { terminal: paneId, lines: recent ? wanted ?? 1000 : 0 });
+      // hc reads the screen plus `lines` of history above it; herdr's recent read is the last `lines` lines.
+      // A program on the alternate screen keeps no history there, as on herdr: for one, hc would scroll
+      // the program to read its own, then repaint every viewer, a drag in it included (#3128)
+      const history = recent && !(await onAlternateScreen(paneId));
+      const read = await hc.call("terminal.read", { terminal: paneId, lines: history ? wanted ?? 1000 : 0 });
       let text = read.text;
       if (recent && wanted !== null) {
         const rows = text.split("\n");
         if (rows.length > wanted) text = rows.slice(-wanted).join("\n");
       }
       // hc reads text only: plain text is an ANSI screen without colours
-      return { read: { pane_id: paneId, workspace_id: pane.workspace_id, tab_id: pane.tab_id, source, format, text, revision: pane.revision, truncated: !read.complete } };
+      return { read: { pane_id: paneId, workspace_id: pane.workspace_id, tab_id: pane.tab_id, source, format, text, revision: pane.revision, truncated: !read.complete || (recent && !history) } };
     },
     // herdr starts an agent by its kind (its command is its kind) from herdr's own manifests; hc has
     // none, so the kinds Ovis knows are offered, and the start types the command into the pane's
