@@ -40,10 +40,22 @@ export interface LanExposure {
   /** the address the server is bound to, so the warning can name where it is reachable */
   readonly host: string;
   /**
-   * The relay's direct carrier listens on this PC's network (docs/relay.md, "Direct on the same network"),
-   * and that is all: only devices paired through the relay sign in there. `host` is then its first address.
+   * Only from the 0.4.23 betas, which named the relay's direct carrier here: `host` is then that
+   * carrier's address, and the client words it as DirectExposure. This server sends DirectExposure instead.
    */
   readonly direct?: true;
+}
+
+/**
+ * GET /api/health, as `direct_exposure`, to a request that got in, while LanExposure is not sent: the
+ * relay's direct carrier listens on this PC's network (docs/relay.md, "Direct on the same network"),
+ * and that is all: only devices paired through the relay sign in there. Its own field, not a flag on
+ * `lan_exposure`: a 0.4.x client takes any `lan_exposure` for an open server and warns that anyone
+ * on the network can type into every pane.
+ */
+export interface DirectExposure {
+  /** the direct carrier's first address */
+  readonly host: string;
 }
 
 /** The configured bind address, read from its literal (`bindScope` in server/access.ts): never a DNS lookup or the request's Host. */

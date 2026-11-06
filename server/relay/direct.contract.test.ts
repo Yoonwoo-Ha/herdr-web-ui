@@ -582,9 +582,10 @@ describe("direct connections with the relay", () => {
     await relayDevice(fixture);
     // When this PC asks for its health
     const base = `http://127.0.0.1:${fixture.app.port}`;
-    const health = await (await fetch(`${base}/api/health`)).json() as { lan_exposure?: { host: string; direct?: true } };
-    // Then the direct listener is named, as paired-only
-    expect(health.lan_exposure).toEqual({ host: "10.0.0.7", direct: true });
+    const health = await (await fetch(`${base}/api/health`)).json() as { lan_exposure?: unknown; direct_exposure?: unknown };
+    // Then the direct listener is named in a field of its own: a 0.4.x client takes any lan_exposure for an open server
+    expect(health.direct_exposure).toEqual({ host: "10.0.0.7" });
+    expect(health.lan_exposure).toBeUndefined();
   });
 
   it("are told in /api/health while herdr does not answer", async () => {
@@ -595,11 +596,12 @@ describe("direct connections with the relay", () => {
     cleanup.push(() => { if (previous === undefined) delete process.env["HERDR_SOCKET"]; else process.env["HERDR_SOCKET"] = previous; });
     // When this PC asks for its health
     const response = await fetch(`http://127.0.0.1:${fixture.app.port}/api/health`);
-    const health = await response.json() as { error?: unknown; lan_exposure?: { host: string; direct?: true } };
+    const health = await response.json() as { error?: unknown; lan_exposure?: unknown; direct_exposure?: unknown };
     // Then the answer is the failure, and still names the direct listener
     expect(response.ok).toBe(false);
     expect(health.error).toBeDefined();
-    expect(health.lan_exposure).toEqual({ host: "10.0.0.7", direct: true });
+    expect(health.direct_exposure).toEqual({ host: "10.0.0.7" });
+    expect(health.lan_exposure).toBeUndefined();
   });
 
   it("stop with the relay", async () => {

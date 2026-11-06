@@ -982,7 +982,7 @@ export function App() {
         <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />
         {layoutNotice && <p className="pane-notice" role="alert">{layoutNotice}</p>}
         {/* the last answer that got through: a listener does not stop because herdr's ping failed */}
-        {health?.lan_exposure && <LanExposureNotice host={health.lan_exposure.host} direct={health.lan_exposure.direct === true} onOpen={() => { setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
+        {(health?.lan_exposure ?? health?.direct_exposure) && <LanExposureNotice host={(health.lan_exposure ?? health.direct_exposure)!.host} direct={!health.lan_exposure || health.lan_exposure.direct === true} onOpen={() => { setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         <PushHealthNotice onRepair={repairNotifications} onOpen={() => { setSettingsLinkPage("alerts"); setSettingsOpen(true); }} />
         <InstallHint />
         {setupGuide.guide !== null && setupGuide.paused && <SetupGuideResume onResume={setupGuide.resume} />}

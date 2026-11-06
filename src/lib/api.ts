@@ -29,6 +29,7 @@ import type {
   HealthAuth,
   IntegrationsResponse,
   LanExposure,
+  DirectExposure,
   SecuritySummary,
   InteractivePrompt,
   MoveTabRequest,
@@ -877,6 +878,8 @@ export interface HealthInfo {
   auth?: HealthAuth;
   /** present only while this server is reachable beyond this PC with no token and nothing paired */
   lan_exposure?: LanExposure;
+  /** present only while lan_exposure is not: the relay's direct carrier listens on this PC's network, for relay-paired devices only */
+  direct_exposure?: DirectExposure;
   /** authenticated only; absent from an older server, which the summary shows as unavailable */
   security?: SecuritySummary;
   /** authenticated only; absent from an older server and until the server's first look for hc has ended */
