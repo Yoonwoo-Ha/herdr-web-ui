@@ -712,6 +712,15 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
   `fullAccess`, each a `--sandbox` and `--ask-for-approval` pair) become the `agent.args` the new
   workspace, tab and worktree dialogs send (src/lib/agentLaunchMode.ts). `default` (the default)
   adds nothing, so the agent's own configuration decides. Both are shared across devices.
+  Beside each mode, the same agent's row has a model and an effort (`claudeLaunchModel`,
+  `claudeLaunchEffort`, `codexLaunchModel`, `codexLaunchEffort`, shared too). They fill the new
+  workspace and tab dialogs' Model and Effort fields as the dialog opens on that agent or the
+  agent is picked, and New worktree passes them as they are (`launchDefaults`). Empty adds no
+  flag. Only what that agent's launch takes is kept (`launchChoiceFault`: one `--model` name,
+  an effort level it names), so a value never reaches another agent's command line, and an
+  effort the reader picked in the dialog stays when the next agent has none set. Codex and the
+  Claude Code app keep a default model and effort per agent the same way; Ovis never writes the
+  agent's own config file for it.
   The viewer loads a Markdown file's first 256 KB through one bounded streaming reader, with abort
   on close or navigation and a 5 s deadline; any other text that fits 256 KB reads whole under the
   same budget, and a larger one reads up to 8 MB and 200 000 lines with a 30 s deadline

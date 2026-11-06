@@ -728,6 +728,18 @@ try {
               // an agent's own settings are in its row: Claude Code's permission mode for New tab
               await body.locator(".agents-item[data-agent='claude'] .agents-toggle").click();
               await body.locator(".agents-item[data-agent='claude']").getByLabel(label("Permission mode"), { exact: true }).waitFor();
+              // and the model and effort New tab fills in for it: a name its --model takes is kept, any other is said why
+              const claudeRow = body.locator(".agents-item[data-agent='claude']");
+              const launchDefaults = () => page.evaluate(() => { const stored = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}"); return [stored.claudeLaunchModel ?? "", stored.claudeLaunchEffort ?? ""]; });
+              await claudeRow.getByLabel(label("Model"), { exact: true }).fill("opus");
+              await claudeRow.getByLabel(label("Effort"), { exact: true }).selectOption("high");
+              await page.waitForFunction(() => { const stored = JSON.parse(localStorage.getItem("ovis:settings")!); return stored.claudeLaunchModel === "opus" && stored.claudeLaunchEffort === "high"; });
+              await claudeRow.getByLabel(label("Model"), { exact: true }).fill("opus --verbose");
+              await claudeRow.locator("[role='alert']").filter({ hasText: label("One model name, without spaces.") }).waitFor();
+              assert.deepEqual(await launchDefaults(), ["opus", "high"], "a name --model would refuse is not kept");
+              await claudeRow.getByLabel(label("Model"), { exact: true }).fill("");
+              await claudeRow.getByLabel(label("Effort"), { exact: true }).selectOption("");
+              await page.waitForFunction(() => { const stored = JSON.parse(localStorage.getItem("ovis:settings")!); return stored.claudeLaunchModel === "" && stored.claudeLaunchEffort === ""; });
               await body.locator(".agents-item[data-agent='claude'] .agents-toggle").click();
               // herdr's integrations no row shows, each with its command; one with neither its agent nor its
               // hook on the PC (copilot, cursor, antigravity-cli) is not listed at all (#2738)
@@ -740,6 +752,7 @@ try {
               await codex.locator(".agents-toggle").tap();
               assert.equal(await codex.locator(".agents-toggle").getAttribute("aria-expanded"), "true");
               assert.equal(await codex.getByLabel(label("Sandbox and approvals"), { exact: true }).count(), 1, "Codex's row holds the mode New tab starts it in");
+              assert.equal(await codex.getByLabel(label("Effort"), { exact: true }).count(), 1, "and the effort New tab fills in for it");
               assert.equal(await codex.locator(".usage-accounts-row").count(), 2, "Codex's two accounts are in its row");
               assert.equal(await codex.locator("code").textContent(), install("codex"));
               const copy = codex.getByRole("button", { name: copyLabel("codex"), exact: true });

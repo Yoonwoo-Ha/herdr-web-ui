@@ -1409,6 +1409,16 @@ it("keeps where web links open to a tab or the panel, a tab by default", () => {
     expect(sanitizeSettings({ claudeLaunchMode: bad }).claudeLaunchMode).toBe("default");
     expect(sanitizeSettings({ codexLaunchMode: bad }).codexLaunchMode).toBe("default");
   }
+  // a new agent's model and effort: none set starts it on its own, and only what its launch takes is kept
+  expect(DEFAULT_SETTINGS).toMatchObject({ claudeLaunchModel: "", claudeLaunchEffort: "", codexLaunchModel: "", codexLaunchEffort: "" });
+  expect(sanitizeSettings({ claudeLaunchModel: "opus", claudeLaunchEffort: "max", codexLaunchModel: "gpt-5-codex", codexLaunchEffort: "ultra" }))
+    .toMatchObject({ claudeLaunchModel: "opus", claudeLaunchEffort: "max", codexLaunchModel: "gpt-5-codex", codexLaunchEffort: "ultra" });
+  for (const bad of ["opus --verbose", "-p", " ", 1, null, ["opus"]]) {
+    expect(sanitizeSettings({ claudeLaunchModel: bad }).claudeLaunchModel).toBe("");
+    expect(sanitizeSettings({ codexLaunchModel: bad }).codexLaunchModel).toBe("");
+  }
+  for (const bad of ["ultra", "ultracode", "High", "", null, 3]) expect(sanitizeSettings({ claudeLaunchEffort: bad }).claudeLaunchEffort).toBe("");
+  for (const bad of ["minimal", "High", null]) expect(sanitizeSettings({ codexLaunchEffort: bad }).codexLaunchEffort).toBe("");
 });
 
 describe("shared settings", () => {

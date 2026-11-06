@@ -15,7 +15,7 @@ import type { UsageLoginRequest } from "../../shared/usage-login.ts";
 /** A sign-in the page follows in its own dialog, hosted at the page's root so no row or list it came from can take it away. */
 type FollowedSignIn = Extract<UsageLoginRequest, { provider: "claude" | "codex" }>;
 import { agentsPage, signInState, type AgentsPageRow } from "../lib/agentsPage.ts";
-import { CLAUDE_LAUNCH_MODES, CODEX_LAUNCH_MODES, type ClaudeLaunchMode, type CodexLaunchMode } from "../lib/agentLaunchMode.ts";
+import { CLAUDE_EFFORTS, CLAUDE_LAUNCH_MODES, CODEX_EFFORTS, CODEX_LAUNCH_MODES, launchChoiceFault, modelDraftAfterSync, modelSuggestions, type ClaudeLaunchMode, type CodexLaunchMode } from "../lib/agentLaunchMode.ts";
 import { ApiError, cliProxyRequest, fetchAgentCatalog } from "../lib/api.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { useT } from "../lib/i18n.ts";
@@ -59,6 +59,42 @@ function codexModeName(mode: CodexLaunchMode, t: Translate): string {
 }
 
 /**
+ * The model and effort New workspace, New tab and New worktree fill in for a new Claude Code or Codex
+ * (lib/agentLaunchMode.ts launchDefaults), each still changeable there. A model is kept once it is a name the
+ * agent's `--model` takes; until then the field says why and the last one kept stays.
+ */
+function LaunchDefaultRows({ agent, model, effort, efforts, onModel, onEffort }: { agent: "claude" | "codex"; model: string; effort: string; efforts: readonly string[]; onModel: (model: string) => void; onEffort: (effort: string) => void }) {
+  const t = useT();
+  const [draft, setDraft] = useState(model);
+  // another device's change shows here, but never over text the reader is still fixing
+  useEffect(() => { setDraft((current) => modelDraftAfterSync(agent, current, model)); }, [agent, model]);
+  const invalid = launchChoiceFault(agent, { model: draft }) === "model";
+  const suggestions = modelSuggestions(agent);
+  const modelId = `settings-${agent}-launch-model`;
+  const effortId = `settings-${agent}-launch-effort`;
+  return <>
+    <SettingsRow label={t("Model")} htmlFor={modelId} wide
+      description={invalid ? <span id={`${modelId}-error`} className="settings-condition" role="alert">{t("One model name, without spaces.")}</span> : t("New workspace and New tab fill it in, still changeable there; New worktree starts the agent on it. Empty: the agent's own model.")}>
+      <input id={modelId} className="input settings-font-input" value={draft} placeholder={t("Agent default")}
+        list={suggestions.length > 0 ? `${modelId}-list` : undefined} aria-invalid={invalid || undefined} aria-describedby={invalid ? `${modelId}-error` : undefined}
+        spellCheck={false} autoCapitalize="off" autoCorrect="off" autoComplete="off"
+        onChange={(event) => {
+          const next = event.target.value;
+          setDraft(next);
+          if (launchChoiceFault(agent, { model: next }) === null && next.trim() !== model) onModel(next.trim());
+        }} />
+      {suggestions.length > 0 && <datalist id={`${modelId}-list`}>{suggestions.map((alias) => <option key={alias} value={alias} />)}</datalist>}
+    </SettingsRow>
+    <SettingsRow label={t("Effort")} htmlFor={effortId} description={t("Filled in the same way. Agent default adds no flag; the levels a model takes depend on the model.")}>
+      <SettingsSelect id={effortId} value={effort} onChange={(event) => onEffort(event.target.value)}>
+        <option value="">{t("Agent default")}</option>
+        {efforts.map((level) => <option key={level} value={level}>{level}</option>)}
+      </SettingsSelect>
+    </SettingsRow>
+  </>;
+}
+
+/**
  * The settings that belong to one agent, in its row on this page (and in its own group while Settings is
  * searched): the mode New workspace, New tab and New worktree start Claude Code or Codex in
  * (lib/agentLaunchMode.ts), and the chips its chat's message box can carry. Nothing here writes the agent's
@@ -77,6 +113,8 @@ function AgentOwnRows({ agentId }: { agentId: string }) {
           {CLAUDE_LAUNCH_MODES.map((mode) => <option key={mode} value={mode}>{claudeModeName(mode, t)}</option>)}
         </SettingsSelect>
       </SettingsRow>
+      <LaunchDefaultRows agent="claude" model={settings.claudeLaunchModel} effort={settings.claudeLaunchEffort} efforts={CLAUDE_EFFORTS}
+        onModel={(claudeLaunchModel) => update({ claudeLaunchModel })} onEffort={(effort) => update({ claudeLaunchEffort: CLAUDE_EFFORTS.find((level) => level === effort) ?? "" })} />
       <SettingsRow label={t("Artifacts chip")} description={t("A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.")}>
         <Toggle label={t("Artifacts chip")} checked={settings.composerArtifacts} onChange={(composerArtifacts) => update({ composerArtifacts })} />
       </SettingsRow>
@@ -84,13 +122,15 @@ function AgentOwnRows({ agentId }: { agentId: string }) {
         <Toggle label={t("Suggestion chip")} checked={settings.suggestionChip} onChange={(suggestionChip) => update({ suggestionChip })} />
       </SettingsRow>}
     </>;
-    case "codex": return (
+    case "codex": return <>
       <SettingsRow label={t("Sandbox and approvals")} description={launch} htmlFor="settings-codex-launch-mode">
         <SettingsSelect id="settings-codex-launch-mode" value={settings.codexLaunchMode} onChange={(event) => update({ codexLaunchMode: event.target.value as CodexLaunchMode })}>
           {CODEX_LAUNCH_MODES.map((mode) => <option key={mode} value={mode}>{codexModeName(mode, t)}</option>)}
         </SettingsSelect>
       </SettingsRow>
-    );
+      <LaunchDefaultRows agent="codex" model={settings.codexLaunchModel} effort={settings.codexLaunchEffort} efforts={CODEX_EFFORTS}
+        onModel={(codexLaunchModel) => update({ codexLaunchModel })} onEffort={(effort) => update({ codexLaunchEffort: CODEX_EFFORTS.find((level) => level === effort) ?? "" })} />
+    </>;
     case "omp": return (
       <SettingsRow label={t("Side conversations chip (experimental)")} description={t("A chip in an OMP pane's message box lists the side conversations its session saved with /btw.")}>
         <Toggle label={t("Side conversations chip (experimental)")} checked={settings.composerBtw} onChange={(composerBtw) => update({ composerBtw })} />

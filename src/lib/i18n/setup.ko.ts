@@ -80,4 +80,6 @@ export const SETUP_KO: Record<string, string> = {
   "A chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.": "입력창 위의 칩을 누르면 Claude Code가 제안한 다음 프롬프트가 입력창에 들어갑니다. 키보드에서는 Tab으로 넣습니다.",
   "A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.": "Claude Code 패널의 입력창에 세션이 Artifact 도구로 게시한 페이지 목록을 여는 칩을 표시합니다.",
   "A chip in an OMP pane's message box lists the side conversations its session saved with /btw.": "OMP 패널의 입력창에 세션이 /btw로 저장한 곁가지 대화 목록을 여는 칩을 표시합니다.",
+  "New workspace and New tab fill it in, still changeable there; New worktree starts the agent on it. Empty: the agent's own model.": "새 작업 공간과 새 탭에 미리 채워지며 거기서 바꿀 수 있고, 새 워크트리는 이 모델로 에이전트를 시작합니다. 비우면 에이전트 자체 모델을 씁니다.",
+  "Filled in the same way. Agent default adds no flag; the levels a model takes depend on the model.": "같은 방식으로 미리 채워집니다. 에이전트 기본값은 플래그를 붙이지 않으며, 고를 수 있는 수준은 모델에 따라 다릅니다.",
 };

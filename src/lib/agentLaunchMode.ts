@@ -130,6 +130,39 @@ export function firstPromptDelivery(kind: string, prompt: string | undefined): "
   return launchCapabilities(kind).positionalPrompt && argumentText(text) ? "positional" : "pending";
 }
 
+/** Settings > Agents: the model and effort a new Claude Code or Codex starts on; "" leaves each to the agent's own configuration. */
+export interface LaunchDefaultSettings {
+  claudeLaunchModel: string;
+  claudeLaunchEffort: string;
+  codexLaunchModel: string;
+  codexLaunchEffort: string;
+}
+
+/**
+ * The model and effort `kind` starts on from New workspace, New tab and New worktree, as Settings > Agents sets
+ * them for that agent: only what its launch takes (launchChoiceFault's rules), and none for an agent without
+ * such a setting, so a value never reaches another agent's command line.
+ */
+export function launchDefaults(kind: string, settings: LaunchDefaultSettings): { model: string; effort: string } {
+  const set = kind === "claude" ? { model: settings.claudeLaunchModel, effort: settings.claudeLaunchEffort }
+    : kind === "codex" ? { model: settings.codexLaunchModel, effort: settings.codexLaunchEffort } : null;
+  if (set === null) return { model: "", effort: "" };
+  const model = set.model.trim();
+  return {
+    model: launchChoiceFault(kind, { model }) === null ? model : "",
+    effort: launchChoiceFault(kind, { effort: set.effort }) === null ? set.effort : "",
+  };
+}
+
+/**
+ * What Settings > Agents' model field shows once the kept model changed (on another device, or by the field itself):
+ * text the reader is still fixing, a name `--model` would refuse, stays theirs; otherwise the kept name, in the
+ * field's own spelling when that is the same name.
+ */
+export function modelDraftAfterSync(kind: string, draft: string, model: string): string {
+  return draft.trim() === model || launchChoiceFault(kind, { model: draft }) === "model" ? draft : model;
+}
+
 /** The arguments a new agent of `kind` starts with; undefined when there are none to add. */
 export function launchArgs(kind: string, modes: { claudeLaunchMode: ClaudeLaunchMode; codexLaunchMode: CodexLaunchMode }, choices: LaunchChoices = {}): string[] | undefined {
   const args: string[] = [];

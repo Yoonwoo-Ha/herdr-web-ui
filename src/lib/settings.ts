@@ -71,7 +71,7 @@ import type { StatusIndicators } from "./status.ts";
 import { sanitizeGroupNames, sanitizeGroupOf } from "./namedAgentGroups.ts";
 import { WEB_LINK_TARGETS, type WebLinkTarget } from "./webPanel.ts";
 import { FILE_OPEN_TARGETS, type FilePresentation } from "./filePresentation.ts";
-import { CLAUDE_LAUNCH_MODES, CODEX_LAUNCH_MODES, type ClaudeLaunchMode, type CodexLaunchMode } from "./agentLaunchMode.ts";
+import { CLAUDE_EFFORTS, CLAUDE_LAUNCH_MODES, CODEX_EFFORTS, CODEX_LAUNCH_MODES, launchChoiceFault, type ClaudeLaunchMode, type CodexLaunchMode } from "./agentLaunchMode.ts";
 
 export interface Settings {
   terminalInputMode: "auto" | "line" | "direct";
@@ -279,6 +279,14 @@ export interface Settings {
   claudeLaunchMode: ClaudeLaunchMode;
   /** the same for Codex: a sandbox and approval preset */
   codexLaunchMode: CodexLaunchMode;
+  /** the model (`--model`) a Claude Code started from those dialogs is filled in with; "" is its own (lib/agentLaunchMode.ts launchDefaults) */
+  claudeLaunchModel: string;
+  /** the same for its effort level (`--effort`) */
+  claudeLaunchEffort: (typeof CLAUDE_EFFORTS)[number] | "";
+  /** the same for Codex's model (`--model`) */
+  codexLaunchModel: string;
+  /** and Codex's effort (`-c model_reasoning_effort=`) */
+  codexLaunchEffort: (typeof CODEX_EFFORTS)[number] | "";
 }
 
 export const DIFF_STYLES = ["unified", "split"] as const;
@@ -292,6 +300,7 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "keyBarExpanded" | "shortcutOverrides" | "herdrPrefixKeys" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily"
   | "quickReplies" | "agentLocks" | "lockedAgents" | "agentNamedGroups" | "agentGroupNames" | "agentGroupOf" | "usageOrder" | "usageHidden" | "fileOpen" | "filesPanel" | "filesDocuments" | "webLinks" | "reuseExternalLinkTab" | "claudeLaunchMode" | "codexLaunchMode"
+  | "claudeLaunchModel" | "claudeLaunchEffort" | "codexLaunchModel" | "codexLaunchEffort"
   | "followHerdrFocus" | "sidebarPeek" | "sidebarBackgroundWorkspaces" | "splitGrid" | "composerArtifacts" | "composerPasteSend" | "composerBtw" | "terminalMirrorWrap" | "sidebarFilter" | "sidebarContext" | "sidebarAgentTree" | "foldHelpers" | "pcLoad"
   | "expandThinking" | "foldWork" | "chatRequestDetails" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort" | "terminalImages" | "terminalAttachButton"
   | "terminalKeyboardOnRequest" | "terminalFoldKeyBar" | "markdownOutline" | "fileFontSize" | "fileFontBase" | "editTextFiles">;
@@ -419,6 +428,7 @@ export const SETTING_SCOPE = {
   wrapCode: "device", editTextFiles: "device", markdownOutline: "device", diffStyle: "device", fileOpen: "device", filesPanel: "device", filesDocuments: "device", webLinks: "device", reuseExternalLinkTab: "device",
   // a new agent starts the same way whichever device opened it
   claudeLaunchMode: "shared", codexLaunchMode: "shared",
+  claudeLaunchModel: "shared", claudeLaunchEffort: "shared", codexLaunchModel: "shared", codexLaunchEffort: "shared",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 /** The shared part of `settings`, by the names shared/preferences.ts lists. */
@@ -519,11 +529,21 @@ export const DEFAULT_SETTINGS: Settings = {
   reuseExternalLinkTab: false,
   claudeLaunchMode: "default",
   codexLaunchMode: "default",
+  claudeLaunchModel: "",
+  claudeLaunchEffort: "",
+  codexLaunchModel: "",
+  codexLaunchEffort: "",
 };
 
 export const QUICK_REPLIES_MAX = 12;
 /** accounts the usage order and hiding remember; more are a hand-edited record */
 export const USAGE_KEYS_MAX = 64;
+
+/** A new agent's model from Settings > Agents: one name its `--model` takes, trimmed, or "" for its own. */
+function launchModel(kind: "claude" | "codex", value: unknown): string {
+  const model = typeof value === "string" ? value.trim() : "";
+  return launchChoiceFault(kind, { model }) === null ? model : "";
+}
 
 /** A list of usage keys: strings only, each once, bounded. */
 function usageKeys(value: unknown): string[] {
@@ -745,6 +765,11 @@ export function sanitizeSettings(raw: unknown): Settings {
     reuseExternalLinkTab: typeof record["reuseExternalLinkTab"] === "boolean" ? record["reuseExternalLinkTab"] : DEFAULT_SETTINGS.reuseExternalLinkTab,
     claudeLaunchMode: CLAUDE_LAUNCH_MODES.find((mode) => mode === record["claudeLaunchMode"]) ?? DEFAULT_SETTINGS.claudeLaunchMode,
     codexLaunchMode: CODEX_LAUNCH_MODES.find((mode) => mode === record["codexLaunchMode"]) ?? DEFAULT_SETTINGS.codexLaunchMode,
+    // only a name the agent's launch takes: anything else would start it on a flag nobody chose
+    claudeLaunchModel: launchModel("claude", record["claudeLaunchModel"]),
+    claudeLaunchEffort: CLAUDE_EFFORTS.find((level) => level === record["claudeLaunchEffort"]) ?? DEFAULT_SETTINGS.claudeLaunchEffort,
+    codexLaunchModel: launchModel("codex", record["codexLaunchModel"]),
+    codexLaunchEffort: CODEX_EFFORTS.find((level) => level === record["codexLaunchEffort"]) ?? DEFAULT_SETTINGS.codexLaunchEffort,
   };
 }
 
