@@ -744,6 +744,18 @@ with the apps that open it.
   against one set of limits whichever way they came (relay links and direct carriers together):
   eight at once and four per device key, whose oldest gives way. Peers outside private IPv4 are refused before upgrade. Removing a device, stopping
   the relay, resetting its identity or turning direct connections off ends them.
+- **The app moves on its own.** An app with a socket for it (`RelayTransport` `directSocket`)
+  tries the PC's direct carriers first, one at a time within 1.5 s, whenever it connects or
+  reconnects, then the relay. While the relay carries it, it probes them (a socket, `assigned` and
+  the Noise handshake to the pinned key, closed before `HELLO`, so the PC holds no session) after
+  each admission (at most every 5 minutes, the next one due even across a reconnect), on `online`
+  and when the page comes back to the foreground; once one proves to be the PC, no request is under
+  way (uploads still being read included) and no WebSocket sent anything for 3 s, it closes the
+  relay channel and the reconnect lands on that carrier, which nobody is told of as a lost carrier. A
+  stream is never moved: the switch is a reconnect like any other. A failure before the PC answers
+  falls back to the relay silently; a refusal by the PC (a removed device) is final as over the
+  relay. The carriers are saved with the pairing for the next start. A browser has no such socket
+  and always uses the relay.
 - **On unless turned off.** `POST /api/relay/direct` with `{ "on": false }` turns it off (kept in
   `relay/direct.json`; a file that cannot be read counts as off); `GET /api/relay` says whether it is on and where it listens. Addresses are
   read again every 30 s, and the listener follows them on the same port. On Windows the first
