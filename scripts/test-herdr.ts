@@ -70,7 +70,11 @@ export async function useTestHerdr(): Promise<string | null> {
   }
   if (process.env["HERDR_TEST_LIVE"] === "1") return null;
   const herdr = herdrBinary();
-  if (!herdr) return null;
+  // no herdr to isolate: a socket that does not exist, never the default one (the user's own session)
+  if (!herdr) {
+    process.env["HERDR_SOCKET"] = join(tmpdir(), "ovis-tests-found-no-herdr.sock");
+    return null;
+  }
   const socket = testSocketPath();
   // an empty ZDOTDIR: a pane's zsh (macOS's login shell) reads none of the user's own files,
   // where a shell integration can start a CLI herdr takes for an agent, ending the agent a test
