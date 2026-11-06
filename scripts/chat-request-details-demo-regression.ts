@@ -113,7 +113,8 @@ async function check(browser: Browser, origin: string, width: number, theme: "li
       // folded again, a search's pick of words in an error opens the row it is in
       await row.locator("summary").click();
       await page.waitForFunction((element) => !(element as HTMLDetailsElement).open, await row.elementHandle());
-      if (phone) await page.locator(".tab-strip-menu").first().click();
+      // a phone's header lists the tabs, so its More carries the pane's actions
+      if (phone) await page.locator(".header-more-button").click();
       else await scope.locator(".chat-view").click({ button: "right", position: { x: 300, y: 200 } });
       await page.getByText("Search conversation", { exact: true }).click();
       const search = page.getByRole("dialog", { name: "Search conversation" });
