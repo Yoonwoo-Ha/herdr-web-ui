@@ -115,8 +115,7 @@ two panes trade places. Drop it on another pane's body to move it beside that pa
 nearest the pointer; the highlighted half shows where it goes. Within its own tab a title only
 arranges the tab: to open it in a half, drop it on the other half while that half shows another tab.
 
-To see more than two panes at once, turn on **Settings > Terminal > Split into rows and columns**.
-Then drop a pane on the edge of another pane in the split to open it beside, above or below that
+To see more than two panes at once, drop a pane on the edge of another pane in the split to open it beside, above or below that
 pane, up to four at once, or on its middle to open it in that pane's place. Drag the line between
 two panes, or focus it and use the arrow keys, to resize them.
 

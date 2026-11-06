@@ -444,13 +444,8 @@ it("leaves herdr's focus alone until this device asks to follow it, and keeps th
   expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("followHerdrFocus");
 });
 
-it("keeps the split view to two halves until this device turns on rows and columns, and keeps that choice its own", () => {
-  expect(DEFAULT_SETTINGS.splitGrid).toBe(false);
-  expect(sanitizeSettings({}).splitGrid).toBe(false);
-  expect(sanitizeSettings({ splitGrid: true }).splitGrid).toBe(true);
-  expect(sanitizeSettings({ splitGrid: "true" }).splitGrid).toBe(false);
-  expect(SETTING_SCOPE.splitGrid).toBe("device");
-  expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("splitGrid");
+it("drops the rows-and-columns choice an older version stored: the split view always takes rows and columns", () => {
+  expect(sanitizeSettings({ splitGrid: false })).not.toHaveProperty("splitGrid");
 });
 
 it("keeps a Codex pane's drag Ovis's until this device hands it to Codex, and keeps that choice its own", () => {
