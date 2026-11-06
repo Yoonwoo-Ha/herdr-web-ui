@@ -64,7 +64,6 @@ export const SETUP_JA: Record<string, string> = {
   "Remove hub?": "ハブを削除しますか？",
   "Its accounts disappear from this list. The hub itself is not changed.": "一覧からハブのアカウントが消えます。ハブ自体は変わりません。",
   "No accounts yet.": "まだアカウントがありません。",
-  "This PC": "この PC",
   "No accounts signed in": "ログイン済みアカウントなし",
   "Turn on plan limits to see accounts.": "プラン上限をオンにするとアカウントが表示されます。",
   "Shows plan usage beside Settings. Sign-ins are sent to each provider's usage API; never refreshed here.": "設定の横にプラン使用量を表示します。ログイン情報を各サービスの使用量APIに送信し、ここでは更新しません。",

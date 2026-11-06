@@ -254,7 +254,6 @@ const BASE: Record<string, string> = {
   "New code": "新代码",
   "Paired: {name}.": "已配对：{name}。",
   "QR code that pairs a phone with code {code}": "使用代码 {code} 配对手机的二维码",
-  "Connect a phone": "连接手机",
   "Pairing code": "配对码",
   "Open this address on your phone": "在手机上打开此地址",
   "{agent} is ready": "{agent} 已就绪",
@@ -438,7 +437,6 @@ const BASE: Record<string, string> = {
   "One model name, without spaces.": "填写一个不含空格的模型名称。",
   "Effort": "推理强度",
   "Sandbox and approvals": "沙箱与审批",
-  "The PC shows its ID under the code, in Settings → Devices and PCs (Phone & devices on an older Ovis). Pair only if every group matches.": "电脑会在“设置 → 设备和电脑（旧版 Ovis 中为 手机和设备）”中代码下方显示它的 ID。只有每一组都一致时才配对。",
   "Add this PC to my account": "将此电脑添加到我的账号",
   "Add this PC to your account, so every device of your account can use it with one approval.": "将此电脑添加到账号后，只需批准一次，账号的所有设备都能使用它。",
   "Every device of your account can use this PC after that.": "之后，账号的所有设备都能使用此电脑。",
@@ -448,6 +446,15 @@ const BASE: Record<string, string> = {
   "New terminal": "新建终端",
   "New terminal failed: {reason}": "新建终端失败：{reason}",
   "herdr prefix: press a key": "herdr 前缀键：请按一个键",
+  "Connect a device": "连接设备",
+  "This device": "此设备",
+  "Sign out of {provider}": "退出 {provider} 登录",
+  "Ovis relay": "Ovis 中继",
+  "Reset relay identity": "重置中继身份",
+  "Reset the relay identity?": "要重置中继身份吗？",
+  "Phones paired through the relay will need to scan a new code.": "通过中继配对的手机需要重新扫描新代码。",
+  "Pairs this phone through the relay, so Ovis keeps working away from home.": "通过中继配对这部手机，离家在外也能使用 Ovis。",
+  "This PC": "本机",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

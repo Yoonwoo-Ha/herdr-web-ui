@@ -3575,8 +3575,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   **Alerts** (the test, sound and other destinations; which alerts come is the **Alert me when**
   group of its More settings, as almost every install keeps them), **Agents**, **Shortcuts** (the
   platform-resolved global bindings), **Devices and PCs**
-  (Phone: Connect a phone, Install; then Portal, Account and paired devices; then
-  **Remote PCs**: Add PC, Add a PC through the relay; then **Show in sidebar**), **About** (Updates,
+  (**Account**; **My devices**: Connect a device, this PC with its ID, the other PCs and the paired
+  phones and browsers in one list; its More settings: This device, Ovis relay, Show in sidebar,
+  Access, the PCs' bridge updates and load line), **About** (Updates,
   herdr, the repository links). Each page's other rows are in its folds (above). Voice input was a
   page and is Chat's group (its dictation language, speech recognition, tidying and OpenAI key in
   Chat's More settings);
@@ -3636,66 +3637,55 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   held modifiers. Restore defaults returns the original row. The keyboard mode control stays first.
 - A font family is a text field saved when it is left, on Enter or when the dialog closes, not
   per keystroke.
-- Remote PCs: an **Add PC** row (label, one-line description, button) opens the PC
-  setup dialog and closes Settings behind it; when that dialog closes, focus lands on the header's
-  workspace-list toggle. Under the row, once the server has answered, the bridge auto-update switch.
-- Connect a phone (`components/ConnectPhoneDialog.tsx`) is the Phone group's first row: its
-  sentence says where a phone stands in a few words, and names the relay as well as Tailscale
-  wherever the relay is offered, so a user on a tailnet still learns a phone needs no Tailscale
-  (ready through the Ovis relay; ready at the Tailscale address, or the relay with no Tailscale;
-  the relay from anywhere, or Tailscale; Tailscale or a pairing code where no relay is offered),
-  and its one primary **Connect** button opens a `.modal`
-  (a bottom sheet on a phone) titled **Connect a phone**. The settings page itself shows no QR
-  code; every QR code is in this dialog. The ways are choice cards at the top
-  (`.connect-phone-choices`: a grid, one column on a phone), each a pressed/unpressed button with
-  its name and a one-line hint read as its description, the chosen one in the accent: **Ovis
-  relay** ("From anywhere. Nothing to install."; where the server has the route and this is not the
-  hosted shell), **Tailscale** and **Pairing code** (not for a Portal visitor). A tab row hid the
-  relay: an owner who saw Tailscale first took it for the only way. No reference app offers more
-  than one way to reach its host (Paseo's pairing flow has one), so there is no precedent for the
-  choice itself; cards that say in one line what each way needs are the plainest way to show all
-  three at once. It opens on the relay whenever
-  the relay is offered, except with the relay off and Tailscale already serving this PC (or the page
-  on its HTTPS address): then on Tailscale. Until a card is picked the dialog follows that default
-  as the relay's and Tailscale's answers arrive, so one opened before they did does not stay on its
-  guess; using the relay's switch picks the relay. The relay's card carries the relay's one switch
-  in its corner, for the PC's owner where nothing blocks the relay (the gate condition under the
-  cards while it is off): turned on, the dialog moves to the relay's details. With no relay offered
-  the dialog opens on Tailscale. The relay route is the relay's state sentence (Blocked says why),
-  a start that failed with its reason and **Try again**, the pairing offer once it is online, and
-  last, quiet under a hairline, **Reset relay identity** (a ghost button, confirmed in the shared
-  `ConfirmDialog`; Escape there closes the confirmation, not the dialog; a serve-only install is
-  offered none, since the server refuses it, and an unreadable identity keeps it, since the reset
-  mends it). A watching device or Portal visitor gets no switch and no reset, and the relay route
-  says only the PC's owner can control the relay, through a direct connection. The Tailscale route is the address and QR code, or the command to run (plain, in
-  `.phone-command`, with no accent rail: a rail read as a focus ring there) with **Check again**;
-  the pairing code route is one sentence (a phone that can already open this address: the same
-  Wi-Fi, a tunnel, a proxy) and **Get a pairing code**, then the code, its QR code when the
-  address is known, the link with Copy, the countdown and **New code**. All three stay mounted
-  while the dialog is up and only the chosen one shows, so the relay's offer and the pairing code
-  follow each other's New code. The explanations (what the relay sees, who Tailscale lets in, the
-  README links) wait behind one accent **How it works** under a hairline.
-  Devices' **Pair a device** opens the dialog on the pairing code with a code started, as the
-  button always did, and the dialog closes by itself once the Devices group sees the device the
-  code let in, its "Paired" line then in the list. The relay's offer announces its code as well,
-  the first one the server made included, so a phone paired through the relay closes it too. The
-  relay has no group of its own on the page: the row's second line is its state (**Ovis relay:**
-  Off, Connecting…, Online with how many phones, Error, Blocked with the reason), and every relay
-  control is in this dialog, so nothing is said twice. What pairing grants is said once, in
-  Devices. The precedent is Paseo's desktop Settings, where the host's **Pair a device** opens the
-  pairing flow, with Enable relay and the QR code there rather than inline
-  ([docs](https://paseo.sh/docs/connectivity)); this differs in offering Tailscale and a pairing
-  code beside the relay in the same dialog.
-- Install (a row of the Phone group) reflects installed, promptable or browser-instructions state;
+- Devices and PCs follows WhatsApp's **Linked devices**: the account on top, then one list of
+  everything connected (**My devices**) under one **Connect a device** row whose **Connect** button
+  opens every way in, as Tailscale's admin **Add device** does. Devices and other PCs are one list
+  because to the person they are one thing: something connected to this PC. Rows are as short as
+  the page allows; what pairing means is one folded sentence, and what few people change is in
+  More settings. Old links to the Phone, Remote PCs and Portal groups land on My devices.
+- My devices (`MyPcRows` in SettingsDialog.tsx, then `components/DevicesPanel.tsx`): this PC
+  first (its name, a **This PC** pill in the accent and its relay ID in `--font-mono` under it: the
+  ID a device that typed this PC's code compares, so it is shown here and not in the dialog), then
+  the PCs this app shows (a neutral **PC** pill and their state; removing an eligible PC stays in
+  the sidebar's PC menu), then signed in the account's other PCs (their
+  account state, no action), then the paired phones and browsers with a neutral kind pill (Phone,
+  Tablet or Browser, read from the name the app first gave the device), Rename and Revoke as
+  before, then **Revoke every device**. On a touch phone on this PC's own address, with the relay
+  online, the phone's own row carries **Use the relay** (its own offer opens there). **Sign out of
+  this PC** (the browser's own pairing) and the account's **Sign out of GitHub** are named apart.
+- Connect a device (`components/ConnectPhoneDialog.tsx`, a `.modal`, a bottom sheet on a phone):
+  signed in to the account, with this PC in it and the relay online, it asks the new device to
+  sign in with GitHub and be approved once on a device already in the account (the approval is
+  the account's own prompt, picking the number out of three, on that device: never on the PC's
+  own windows) and shows no code until **Connect with a code (no sign-in)**. Otherwise one way
+  first: the Ovis relay's QR code and the code to type side by side (`components/CompactPair.tsx`,
+  132px QR, the code in `--font-mono`), with only **Refresh** and **Copy**; signed out where the
+  account is offered, one bordered line above it says signing in skips the code. While the relay
+  is not online its state sentence shows instead, with its switch for the PC's owner (and the gate
+  condition), a failed start's reason and **Try again**; a watching device or Portal visitor reads
+  the state and that only the owner controls the relay. **Enter a code from another device** opens
+  the typed-code form for a PC that shows its own code (the ID match step as before). **Other ways
+  to connect** folds the rest, one bordered line each that opens under itself: **Same Wi-Fi** (the
+  six-digit pairing code and its QR code, Refresh and Copy), **Tailscale** (the address and QR
+  code, or the command to run), **Portal** (where the server offers it: the whole Portal group as
+  before) and **Add a PC over SSH** (closes Settings and opens the PC setup dialog). With no relay
+  offered the six-digit code is the first way. The dialog closes by itself once My devices sees the
+  device a code let in. A six-digit code started anywhere ends the relay's typed code on the PC,
+  so that code goes and Refresh makes another; it is never asked for on its own, or the two would
+  keep ending each other.
+- The Ovis relay's own group in More settings: its state as the row's sentence with the switch,
+  then **Reset relay identity** (confirmed in the shared `ConfirmDialog`; none for a serve-only
+  install, which refuses it). Not shown in the hosted shell or to a read-only device.
+- Install (a row of More settings' This device, shown only when the browser can install) offers it;
   About links the repository.
-- In the hosted relay shell (app.ovis.sh, `<meta name="ovis-shell">`, lib/shellMode.ts) the Phone
-  group opens with two rows the native build never shows: **Change PC** (a neutral button to the
+- In the hosted relay shell (app.ovis.sh, `<meta name="ovis-shell">`, lib/shellMode.ts) the page
+  opens with a **This app** group of two rows the native build never shows: **Change PC** (a neutral button to the
   shell's front page, which lists every paired PC, the same row the iOS app gets for its own list)
   and **Forget this PC** (a neutral button that asks once in a `ConfirmDialog`, **Forget**, then
   deletes this phone's key for the PC and leaves for the front page). Neither is destructive on the
   PC, which keeps listing the phone until it is revoked there, so neither is a `.btn-danger`.
-- Portal, a group of its own between Phone and Devices where the server offers it: while it runs,
-  the address and QR code as Connect a phone's Tailscale route draws them over a Relay row with Stop; otherwise one
+- Portal, under Connect a device's Other ways to connect where the server offers it: while it runs,
+  the address and QR code as the Tailscale way draws them over a Relay row with Stop; otherwise one
   hint for what blocks it (no token, serve-only, no `portal` or an old one, with a link to get it)
   or a wide Relay row whose text field and Start stack on a phone. Starting and stopping are one
   dim status line, at body size (`--fs-md`, `--fs-lg` under a finger) since it is what Portal is
@@ -3731,8 +3721,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - The Ovis relay's state and pairing offer (`components/RelayPanel.tsx`: `statusText`,
   `RelayPairing`; `lib/useRelay.ts`), shown where the server answers `/api/relay`: the state in
   words is one step above a row's sentence (`--fs-sm`) and never above its label. While the relay
-  is online the pairing offer is a QR code beside its words in Connect a phone's relay route
-  (`.relay-pairing`, stacked on a phone), with a countdown and **New code**. The server keeps one
+  is online the pairing offer is Connect a device's QR code beside the code to type (`.compact-pair`),
+  with **Refresh**; the setup guide keeps the longer `.relay-pairing` with its countdown and **New code**. The server keeps one
   pending pairing code, which this offer and the dialog's pairing code both carry, so the offer is
   asked for when the dialog opens with the relay online, when the pairing code route starts a
   code (`PAIRING_CODE_EVENT`, lib/useRelay.ts: both then show the same code), when its countdown
@@ -3749,7 +3739,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   key and relay in a QR `#offer=` fragment the phone confirms, shown while the relay is up); this
   differs in keeping the state a sentence in the switch's row rather than a status badge, and in
   sharing one pending code with the pairing code route instead of a code of its own.
-- Access, the last group of Phone & devices, is read-only: one row per fact the server reports
+- Access, a group of Devices and PCs' More settings, is read-only: one row per fact the server reports
   (`security` on `/api/health`), each a label, its dim sentence and the value in place of a
   control (`.settings-fact`: `--fs-md`, `--fw-medium`, `--text-strong`, end-aligned, at most 45%
   of the line). Access token Set or Not set; Pairing gate Not yet closed, Closed or Unavailable;

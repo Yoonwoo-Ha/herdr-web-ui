@@ -436,7 +436,9 @@ function readSnapshot(machine: Machine): SessionSnapshot | null {
 function readRoster(): Machine[] {
   return machines.map((machine) => {
     const order = orderOf(machine.id);
-    const { source_boot_id: _proof, ...rest } = machine;
+    const { source_boot_id: _proof, ...withoutId } = machine;
+    // with the device routes on, the Host carries the fictional relay ID My devices shows at its top
+    const rest = DEVICE_STATE !== null && machine.kind === "local" ? { ...withoutId, server_id: demoRelayServerId() } : withoutId;
     if (order.legacy) return { ...rest, snapshot: readSnapshot(machine) };
     // a restart its manager has not proved yet: the cache keeps the last accepted server's read
     if (order.epoch !== order.accepted) return { ...rest, snapshot: structuredClone(order.cached), source_boot_id: order.accepted };
@@ -1150,6 +1152,7 @@ function usageReport(): UsageReport {
  * it, the phone enters the code a moment later, as a visitor to the demo expects.
  */
 const DEVICE_STATE = new URLSearchParams(location.search).get("demo_devices");
+const ACCOUNT_MEMBER = new URLSearchParams(location.search).get("demo_account") === "member";
 const CONNECTION_DROPS = new URLSearchParams(location.search).get("demo_connection") === "drops";
 let connectionLost = false;
 /** `?demo_connection=switch`: the page loses the bridge connection with `herdrDemoLoseConnection()` and lets it
@@ -1290,6 +1293,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     }
     return json(startDemoPairing(), 200, { "cache-control": "no-store" });
   }
+  // `?demo_account=member`: this PC belongs to an account, so a signed-in Settings offers joining by signing in
+  if (path === "/api/account/status" && ACCOUNT_MEMBER) return json({ account: "demo-account", unlinked: [], removals: [], adds: [], blocked: [] }, 200, { "cache-control": "no-store" });
   // without `?demo_devices=` the demo answers no other device route: its /api/devices stays a 404, as before
   if (DEVICE_STATE !== null) {
     if (path === "/api/devices") {

@@ -759,11 +759,13 @@ try {
   await page.getByRole("button", { name: "Close settings", exact: true }).click();
   console.log("PASS settings shortcut and theme");
 
-  // Add PC lives in Settings → Remote PCs, not in the sidebar; opening it closes Settings behind it
+  // Add PC lives in Settings → Devices and PCs → Connect → Other ways to connect, not in the sidebar; opening it closes Settings behind it
   assert.equal(await page.locator(".sidebar").getByRole("button", { name: "Add PC", exact: true }).count(), 0, "the sidebar has no Add PC button");
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(page, "Devices and PCs");
-  await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Add PC", exact: true }).click();
+  await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByRole("dialog", { name: "Connect a device", exact: true }).locator(".connect-other > summary").click();
+  await page.getByRole("dialog", { name: "Connect a device", exact: true }).getByRole("button", { name: "Add a PC over SSH", exact: true }).click();
   await page.getByRole("dialog", { name: "Add PC", exact: true }).waitFor();
   assert.equal(await page.getByRole("dialog", { name: "Settings" }).count(), 0, "Add PC closes Settings");
   await page.getByRole("button", { name: "Close PC setup", exact: true }).click();
@@ -2509,7 +2511,7 @@ try {
   await securedPage.getByRole("dialog", { name: "Command palette", exact: true }).waitFor({ state: "hidden" });
   await securedPage.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(securedPage, "Devices and PCs");
-  const settingsSignOut = securedPage.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Sign out", exact: true });
+  const settingsSignOut = securedPage.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Sign out of this PC", exact: true });
   const signOutConfirm = securedPage.getByRole("alertdialog", { name: "Sign out of this browser?", exact: true });
   await settingsSignOut.click();
   await signOutConfirm.getByRole("button", { name: "Cancel", exact: true }).click();

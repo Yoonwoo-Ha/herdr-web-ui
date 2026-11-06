@@ -64,7 +64,7 @@ export interface AppActions {
   agentStarted: (machineId: string, paneId: string) => void;
   openFind: () => void;
   openSettings: () => void;
-  /** the Add PC dialog, from Settings → Remote PCs and the palette; Settings closes first */
+  /** the Add PC dialog, from Settings → Devices and PCs and the palette; Settings closes first */
   openAddPc: () => void;
   toggleSidebar: () => void;
   /** the sidebar's Filter field, focused, with the drawer or the sidebar opened first: drawn even where Settings → Appearance leaves it out */

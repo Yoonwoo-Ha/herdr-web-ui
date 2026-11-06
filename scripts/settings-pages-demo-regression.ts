@@ -607,9 +607,8 @@ async function foldedGroups(browser: import("playwright-core").Browser, url: str
  * the terminal alone; each choice is kept through a reload.
  */
 /**
- * Signed in on a PC's own page, Settings > Devices and PCs lists the account's PCs as the relay
- * shell does: one row each with a hairline under it, though the relay shell's own styles are not
- * loaded there. The sign-in is a fixture in this page's IndexedDB and the account service a route
+ * Signed in on a PC's own page, Settings > Devices and PCs lists the account's PCs in My devices, one
+ * row each with a hairline under it and a PC pill, after this PC; the Account group lists none of its own. The sign-in is a fixture in this page's IndexedDB and the account service a route
  * of this context: nothing reaches GitHub or account.ovis.sh.
  */
 async function accountPcList(browser: import("playwright-core").Browser, url: string): Promise<void> {
@@ -650,13 +649,16 @@ async function accountPcList(browser: import("playwright-core").Browser, url: st
       }), service);
       await openSettings(page);
       await openSettingsPage(page, "Devices and PCs");
-      const list = page.locator("[data-section='account'] .relay-shell-pcs");
-      await list.locator(".relay-shell-pc").nth(1).waitFor();
+      const list = page.locator("[data-section='devices'] .my-pcs");
+      const accountRows = list.locator(".devices-row").filter({ hasText: /home-server|office-mac/ });
+      await accountRows.nth(1).waitFor();
+      assert.deepEqual(await accountRows.locator(".devices-kind").allTextContents(), ["PC", "PC"], `each account PC is marked PC (${width}px, ${theme})`);
       const style = await list.evaluate((node) => {
-        const row = node.querySelector(".relay-shell-pc")!;
+        const row = node.querySelector(".devices-row:not([data-testid='this-pc'])")!;
         return { listStyle: getComputedStyle(node).listStyleType, display: getComputedStyle(row).display, border: getComputedStyle(row).borderBottomStyle };
       });
-      assert.deepEqual(style, { listStyle: "none", display: "flex", border: "solid" }, `the account's PCs are styled rows in Settings (${width}px, ${theme})`);
+      assert.deepEqual(style, { listStyle: "none", display: "flex", border: "solid" }, `the account's PCs are styled rows in My devices (${width}px, ${theme})`);
+      assert.equal(await page.locator("[data-section='account'] .relay-shell-pcs").count(), 0, "the Account group does not list the PCs a second time");
       if (process.env.UI_EVIDENCE_DIR) {
         await list.scrollIntoViewIfNeeded();
         await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `account-pcs-${width}-${theme}.png`), animations: "disabled" });
@@ -666,7 +668,7 @@ async function accountPcList(browser: import("playwright-core").Browser, url: st
       await context.close();
     }
   }
-  console.log("PASS the account's PCs in Settings are styled rows at 390 and 1280px, light and dark");
+  console.log("PASS the account's PCs are styled rows of My devices at 390 and 1280px, light and dark");
 }
 
 async function mergedRows(browser: import("playwright-core").Browser, url: string): Promise<void> {

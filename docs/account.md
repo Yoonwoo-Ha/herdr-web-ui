@@ -322,7 +322,7 @@ How a person adds a PC to the account in the apps (WhatsApp's linked devices and
 Tailnet Lock follow the same idea: an existing device approves once, and the server only carries
 messages):
 
-1. On the new PC, Settings → Phone & devices → Account: sign in, then **Add this PC to my account**.
+1. On the new PC, Settings → Devices and PCs → Account: sign in, then **Add this PC to my account**.
    The PC lists itself in the account's directory (`PUT /v1/pcs`, its relay key and relay) and opens
    a pairing window with `POST /api/relay/link` and the header `x-ovis-local-only: 1`. What that window takes is decided on
    this PC only: it is never listed to account members (`remote-pairings`) or approved by one, even

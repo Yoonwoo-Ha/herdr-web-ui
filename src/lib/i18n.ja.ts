@@ -252,7 +252,6 @@ const BASE: Record<string, string> = {
   "New code": "新しいコード",
   "Paired: {name}.": "ペアリングしました: {name}。",
   "QR code that pairs a phone with code {code}": "コード {code} でスマートフォンをペアリングする QR コード",
-  "Connect a phone": "スマートフォンを接続",
   "Pairing code": "ペアリングコード",
   "Open this address on your phone": "スマートフォンでこのアドレスを開いてください",
   "{agent} is ready": "{agent} の準備ができました",
@@ -436,7 +435,6 @@ const BASE: Record<string, string> = {
   "One model name, without spaces.": "空白を含まないモデル名を一つ指定してください。",
   "Effort": "推論レベル",
   "Sandbox and approvals": "サンドボックスと承認",
-  "The PC shows its ID under the code, in Settings → Devices and PCs (Phone & devices on an older Ovis). Pair only if every group matches.": "PC は「設定 → デバイスと PC（古い Ovis では スマートフォンとデバイス）」のコードの下に自分の ID を表示します。すべてのまとまりが一致する場合だけペアリングしてください。",
   "Add this PC to my account": "このPCをアカウントに追加",
   "Add this PC to your account, so every device of your account can use it with one approval.": "このPCをアカウントに追加すると、一度の承認でアカウントのすべてのデバイスから使えます。",
   "Every device of your account can use this PC after that.": "その後は、アカウントのすべてのデバイスからこのPCを使えます。",
@@ -446,6 +444,15 @@ const BASE: Record<string, string> = {
   "New terminal": "新しいターミナル",
   "New terminal failed: {reason}": "新しいターミナルを開けませんでした: {reason}",
   "herdr prefix: press a key": "herdrプレフィックス: キーを押してください",
+  "Connect a device": "デバイスを接続",
+  "This device": "このデバイス",
+  "Sign out of {provider}": "{provider} からサインアウト",
+  "Ovis relay": "Ovis リレー",
+  "Reset relay identity": "リレー ID をリセット",
+  "Reset the relay identity?": "リレー ID をリセットしますか？",
+  "Phones paired through the relay will need to scan a new code.": "リレー経由でペアリングしたスマートフォンは、新しいコードを読み取り直す必要があります。",
+  "Pairs this phone through the relay, so Ovis keeps working away from home.": "このスマートフォンをリレー経由でペアリングし、外出先でも Ovis を使えるようにします。",
+  "This PC": "この PC",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

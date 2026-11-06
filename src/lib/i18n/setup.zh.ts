@@ -64,7 +64,6 @@ export const SETUP_ZH: Record<string, string> = {
   "Remove hub?": "移除中心？",
   "Its accounts disappear from this list. The hub itself is not changed.": "中心账号将从列表中消失，中心本身不变。",
   "No accounts yet.": "尚无账号。",
-  "This PC": "本机",
   "No accounts signed in": "没有已登录的账号",
   "Turn on plan limits to see accounts.": "开启套餐限额以查看账号。",
   "Shows plan usage beside Settings. Sign-ins are sent to each provider's usage API; never refreshed here.": "在设置旁显示套餐用量。登录信息会发送至各服务的用量 API，此处不会刷新。",

@@ -18,14 +18,14 @@ export function wayBackIn(t: Translate, viaPortal: boolean, oidc = false): { row
 }
 
 /** Settings → Phone & devices → Devices → Sign out: forget this browser's sign-in, after asking once. */
-export function SignOutRow({ viaPortal, oidc = false, onSignOut }: { viaPortal: boolean; oidc?: boolean; onSignOut: () => Promise<void> }) {
+export function SignOutRow({ viaPortal, oidc = false, onSignOut, label }: { viaPortal: boolean; oidc?: boolean; onSignOut: () => Promise<void>; /** the row's and its button's name, beside another Sign out on the page */ label?: string }) {
   const t = useT();
   const [confirming, setConfirming] = useState(false);
   const words = wayBackIn(t, viaPortal, oidc);
   return (
     <>
-      <SettingsRow label={t("Sign out")} description={words.row}>
-        <button type="button" className="btn" onClick={() => setConfirming(true)}>{t("Sign out")}</button>
+      <SettingsRow label={label ?? t("Sign out")} description={words.row}>
+        <button type="button" className="btn" onClick={() => setConfirming(true)}>{label ?? t("Sign out")}</button>
       </SettingsRow>
       {confirming && <ConfirmDialog title={t("Sign out of this browser?")} body={words.confirm} confirmLabel={t("Sign out")} onClose={() => setConfirming(false)} onConfirm={onSignOut} />}
     </>

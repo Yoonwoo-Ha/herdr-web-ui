@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ArrowLeft, Bell, Bot, ChevronRight, Info, Keyboard, MessageSquare, Monitor, Palette, Plus, Search, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, Bot, ChevronRight, Info, Keyboard, MessageSquare, Palette, Plus, Search, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
@@ -8,7 +8,7 @@ import { useInstallPrompt } from "../lib/install.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { canReuseExternalLinkTab } from "../lib/terminalFileLinks.ts";
 import { loadRelayShell } from "../lib/relay.ts";
-import { inRelayShell, useRelay } from "../lib/useRelay.ts";
+import { inRelayShell, useRelay, type RelayState } from "../lib/useRelay.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
 import { SHORTCUTS, bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutDisplayKeys, shortcutKeys, shortcutConflict, type ShortcutId } from "../lib/shortcuts.ts";
 import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
@@ -38,11 +38,9 @@ import { canListInstalledFonts, filterFamilies, isMonospaceFamily, queryInstalle
 import type { UpdatesModel } from "../lib/updates.ts";
 import type { UserError } from "../lib/userError.ts";
 import { LOCAL_MACHINE, pcAlertKey, type HerdrCoreFacts, type HerdrRuntimeFacts, type Machine, type MachineSettings } from "../../shared/machines.ts";
-import { codeFailureText, typedCodeFailure } from "./codeFailureText.ts";
-import { KeyId } from "./KeyId.tsx";
 import { canHideMachine, isMachineShown, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
 import { alertFiltersChanged, updateAlertFilters, useAlertFilters } from "../lib/alertFilters.ts";
-import { addFoundRelayPc, addRelayPc, ApiError, findRelayPc, fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
+import { fetchMachines, fetchRemoteAccess, requestRelayOffer, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
 import type { PushActionResult } from "../lib/pushHealth.ts";
 import type { HealthAuth, PluginActions, RemoteAccess } from "../../shared/protocol.ts";
@@ -52,11 +50,15 @@ import type { VoiceStatus } from "../../shared/voice.ts";
 import { dictationLocale, VOICE_CONFIG_EVENT } from "../lib/voice.ts";
 import { DevicesPanel } from "./DevicesPanel.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
-import { PortalPanel } from "./PortalPanel.tsx";
 import { SignOutRow } from "./SignOutRow.tsx";
-import { statusText } from "./RelayPanel.tsx";
-import { AccountSection } from "./AccountSection.tsx";
-import { ConnectPhoneDialog, defaultRoute, relayOffered, type ConnectRoute } from "./ConnectPhoneDialog.tsx";
+import { failureText, openOwnOffer, statusText } from "./RelayPanel.tsx";
+import { AccountSection, accountOffered, type AccountState } from "./AccountSection.tsx";
+import { accountPcStateText } from "./AccountPcs.tsx";
+import { STATE_WORD } from "./MachineSidebar.tsx";
+import { pcAccountStatus } from "../lib/account/join.ts";
+import { apiFetch } from "../lib/api-request-id.ts";
+import type { MyPc } from "../lib/account/myPcs.ts";
+import { ConnectPhoneDialog, relayOffered } from "./ConnectPhoneDialog.tsx";
 import { PushTestControls } from "./PushTestControls.tsx";
 import { AlertWebhookGroup } from "./AlertWebhookGroup.tsx";
 import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
@@ -1085,7 +1087,37 @@ function AccessFacts({ facts }: { facts: SecurityFacts }) {
   );
 }
 
-function DevicesPage({ auth, security, onSignOut, onRevokedAll, pcs, pcsMore }: { auth: HealthAuth | null; security: SecurityFacts; onSignOut: (() => Promise<void>) | null; onRevokedAll: () => void; /** the PCs' groups (RemotePcs), after the devices */ pcs: ReactNode; /** and their folded rows (RemotePcsMore) */ pcsMore: ReactNode }) {
+/**
+ * Groups of Devices and PCs that merged into My devices (Connect a device holds the ways in, Portal among them),
+ * by their old link names (`?settings=devices&section=…`).
+ */
+const MOVED_GROUPS: Readonly<Record<string, string>> = { phone: "devices", remote: "devices", portal: "devices" };
+
+/**
+ * What a paired device is, read from the label the app first gave it (lib/phone.ts deviceLabel, "iPhone · Safari");
+ * a device renamed since says nothing of what it is, so its row carries no pill rather than a guess.
+ */
+function deviceKind(label: string, t: ReturnType<typeof useT>): string | null {
+  const named = /^(iPhone|iPad|Android|Mac|Windows|Chromebook|Linux|Device)( · (Edge|Firefox|Chrome|Safari))?$/.exec(label);
+  if (named === null) return null;
+  if (named[1] === "iPhone" || named[1] === "Android") return t("Phone");
+  if (named[1] === "iPad") return t("Tablet");
+  return t("Browser");
+}
+
+/** a relay ID in groups of four, as KeyId draws it, on one line */
+const groupedId = (id: string): string => id.match(/.{1,4}/g)?.join(" ") ?? id;
+
+/**
+ * Settings → Devices and PCs, as WhatsApp's Linked devices: the account on top, then one list of everything
+ * that uses or joins this PC (this PC with its ID, the other PCs shown here and, signed in, the account's,
+ * then the paired phones and browsers), with one Connect a device whose dialog holds every way in. What few
+ * people change waits in More settings.
+ */
+function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSettings, pcSettingsError, onPcSettings, openAddPc }: {
+  auth: HealthAuth | null; security: SecurityFacts; onSignOut: (() => Promise<void>) | null; onRevokedAll: () => void;
+  machines: readonly Machine[]; pcSettings: MachineSettings | null; pcSettingsError: string | null; onPcSettings: (patch: Partial<MachineSettings>) => void; openAddPc: () => void;
+}) {
   const { settings, update } = useSettings();
   const t = useT();
   const installPrompt = useInstallPrompt();
@@ -1107,81 +1139,209 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, pcs, pcsMore }: 
   const pairUrl = plan.kind === "here" || plan.kind === "served" ? plan.url : isLoopbackHost(window.location.hostname) ? null : window.location.origin;
   // what keeps the switch from working here, only while it does (lib/wakeLock.ts asks for the same two)
   const wakeLockProblem = !window.isSecureContext ? t("Needs HTTPS or localhost.") : !("wakeLock" in navigator) ? t("This browser can't keep the screen on.") : null;
-  // one relay state for the Connect a phone row and its dialog, so the row shows the dialog's change at once
   const relay = useRelay();
   const relayReadOnly = auth?.role === "watch" || auth?.via === "portal";
   const closesGate = security.state === "known" && security.summary.pairing_gate === "open" && !security.summary.token_configured;
-  // the dialog with the ways a phone connects, and the way it opens on; null while it is closed
-  const [connecting, setConnecting] = useState<{ route: ConnectRoute; startCode: boolean } | null>(null);
-  const closeConnect = useCallback(() => setConnecting(null), []);
-  // a relay this PC can turn on: offered here and nothing blocking it (a serve-only install, an unreadable identity)
-  const relayUsable = relayOffered(relay) && relay.status?.blocked === null;
-  const connectSummary = relayOffered(relay) && relay.status?.phase === "online" ? t("Ready through the Ovis relay.")
-    : plan.kind === "here" || plan.kind === "served" ? (relayUsable ? t("Ready at {url}. Or use the Ovis relay, no Tailscale needed.", { url: plan.url }) : t("Ready at {url}.", { url: plan.url }))
-    : relayUsable ? t("The Ovis relay works from anywhere with nothing to install, or use Tailscale.")
-    : t("Use Tailscale or a pairing code.");
+  const [connecting, setConnecting] = useState(false);
+  const closeConnect = useCallback(() => setConnecting(false), []);
+  // a reset relay identity is a new ID for this PC: My devices reads it again
+  const [identityResets, setIdentityResets] = useState(0);
+  // the account as AccountSection reads it: signed in or not, and the account's PCs for the list
+  const [account, setAccount] = useState<AccountState>({ signedIn: false, account: null, pcs: null });
+  // a new device joins by signing in only to a PC in the account this browser is signed in to (docs/account.md
+  // "Joining through the account"): read again each time the dialog opens, since this PC may have joined meanwhile
+  const [pcAccount, setPcAccount] = useState<string | null>(null);
+  useEffect(() => {
+    if (account.account === null) { setPcAccount(null); return; }
+    let live = true;
+    pcAccountStatus(apiFetch).then((status) => { if (live) setPcAccount(status.account); }, () => { if (live) setPcAccount(null); });
+    return () => { live = false; };
+  }, [account.account, connecting]);
+  const joinBySignIn = account.account !== null && pcAccount === account.account && relay.status?.phase === "online";
+  const signIn = useCallback(() => {
+    setConnecting(false);
+    // the account's own sign-in, at the top of this page
+    const group = document.querySelector<HTMLElement>('.settings-dialog [data-section="account"]');
+    group?.scrollIntoView({ block: "start" });
+    group?.querySelector<HTMLElement>("button")?.focus();
+  }, []);
+  // a touch phone on this PC's own address pairs itself through the relay in one tap: beside its own row
+  const touchPhone = useMediaQuery("(pointer: coarse)");
+  const selfRelay = touchPhone && relayOffered(relay) && relay.status?.phase === "online" && !relayReadOnly ? <UseRelayHere /> : null;
   return (
     <>
-      <SettingsGroup title={t("Phone")} section="phone">
-        {nativeApp && (
-          <SettingsRow label={t("Change PC")} description={window.location.protocol === "capacitor:" ? t("This is the demo. Go back to the app's list of PCs to open yours.") : t("This app shows {address}. Go back to its list of PCs to open another.", { address: window.location.host })}>
-            <button type="button" className="btn" onClick={() => void changePc()}>{t("Change PC")}</button>
-          </SettingsRow>
-        )}
-        {relayPc !== null && (
-          <>
-            <SettingsRow label={t("Change PC")} description={t("This page shows one PC. The front page lists every PC this phone is paired with.")}>
-              <button type="button" className="btn" onClick={() => window.location.assign("/")}>{t("Change PC")}</button>
+      {(nativeApp || relayPc !== null) && (
+        <SettingsGroup title={t("This app")} section="this-app">
+          {nativeApp && (
+            <SettingsRow label={t("Change PC")} description={window.location.protocol === "capacitor:" ? t("This is the demo. Go back to the app's list of PCs to open yours.") : t("This app shows {address}. Go back to its list of PCs to open another.", { address: window.location.host })}>
+              <button type="button" className="btn" onClick={() => void changePc()}>{t("Change PC")}</button>
             </SettingsRow>
-            <SettingsRow label={t("Forget this PC")} description={t("Deletes this phone's key for this PC. Pairing again takes a new QR code from the PC.")}>
-              <button type="button" className="btn" onClick={() => setConfirmForget(true)}>{t("Forget this PC")}</button>
-            </SettingsRow>
-            {confirmForget && (
-              <ConfirmDialog title={t("Forget this PC?")}
-                body={t("This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.")}
-                confirmLabel={t("Forget")} onClose={() => setConfirmForget(false)}
-                onConfirm={async () => { await (await loadRelayShell()).forgetSavedPc(relayPc); window.location.assign("/"); }} />
-            )}
-          </>
-        )}
-        {/* the relay's state lives here; its switch, reset and failures are in the Connect a phone dialog */}
-        <SettingsRow label={t("Connect a phone")} description={<>
-          <span className="connect-phone-summary">{connectSummary}</span>
-          {relayOffered(relay) && relay.status !== null && <span className="relay-status">{t("Ovis relay: {state}", { state: statusText(t, relay.status) })}</span>}
-        </>}>
-          <button type="button" className="btn btn-primary" onClick={() => setConnecting({ route: defaultRoute(plan, relay), startCode: false })}>{t("Connect")}</button>
+          )}
+          {relayPc !== null && (
+            <>
+              <SettingsRow label={t("Change PC")} description={t("This page shows one PC. The front page lists every PC this phone is paired with.")}>
+                <button type="button" className="btn" onClick={() => window.location.assign("/")}>{t("Change PC")}</button>
+              </SettingsRow>
+              <SettingsRow label={t("Forget this PC")} description={t("Deletes this phone's key for this PC. Pairing again takes a new QR code from the PC.")}>
+                <button type="button" className="btn" onClick={() => setConfirmForget(true)}>{t("Forget this PC")}</button>
+              </SettingsRow>
+              {confirmForget && (
+                <ConfirmDialog title={t("Forget this PC?")}
+                  body={t("This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.")}
+                  confirmLabel={t("Forget")} onClose={() => setConfirmForget(false)}
+                  onConfirm={async () => { await (await loadRelayShell()).forgetSavedPc(relayPc); window.location.assign("/"); }} />
+              )}
+            </>
+          )}
+        </SettingsGroup>
+      )}
+
+      <AccountSection onAccount={setAccount} />
+
+      <SettingsGroup title={t("My devices")} section="devices">
+        <SettingsRow label={t("Connect a device")} keywords={t("phone browser PC pair pairing code QR relay Tailscale Wi-Fi SSH Portal add PC remote PCs")}>
+          <button type="button" className="btn btn-primary" onClick={() => setConnecting(true)}><Plus aria-hidden="true" />{t("Connect")}</button>
         </SettingsRow>
-        <SettingsRow label={t("Install")} description={installPrompt.installed ? t("Installed") : installPrompt.canInstall ? undefined : installPrompt.help}>
-          {!installPrompt.installed && installPrompt.canInstall && <button type="button" className="btn btn-primary" onClick={() => void installPrompt.install()}>{t("Install app")}</button>}
-        </SettingsRow>
+        <div className="settings-item my-devices">
+          <MyPcRows machines={machines} accountPcs={account.pcs} relayKey={`${relay.status?.phase ?? ""}:${identityResets}`} />
+          <DevicesPanel onDevicePaired={closeConnect} auth={auth} onRevokedAll={onRevokedAll} kindOf={(label) => deviceKind(label, t)} currentAction={selfRelay} />
+        </div>
+        <DamagedPcFiles pcSettings={pcSettings} />
+        {onSignOut && <SignOutRow viaPortal={auth?.via === "portal"} oidc={auth?.portal?.method === "oidc"} onSignOut={onSignOut} label={t("Sign out of this PC")} />}
       </SettingsGroup>
-
-      <PortalPanel readOnly={auth?.role === "watch" || auth?.via === "portal"} />
-
-      <AccountSection />
-
-      <SettingsGroup title={t("Devices")} section="devices">
-        <div className="settings-item"><DevicesPanel onPair={() => setConnecting({ route: "code", startCode: true })} onDevicePaired={closeConnect} auth={auth} onRevokedAll={onRevokedAll} /></div>
-        {onSignOut && <SignOutRow viaPortal={auth?.via === "portal"} oidc={auth?.portal?.method === "oidc"} onSignOut={onSignOut} />}
-      </SettingsGroup>
-
-      {pcs}
 
       <SettingsFold kind="more" keys={["keepScreenOn", "pcLoad"]}>
-        <SettingsGroup section="phone-more">
+        <SettingsGroup title={t("This device")} section="phone-more">
           <SettingsRow label={t("Keep screen on")} description={<>{t("While a terminal or chat pane is open.")}{wakeLockProblem !== null && <span className="settings-condition">{wakeLockProblem}</span>}</>}>
             <Toggle label={t("Keep screen on")} checked={settings.keepScreenOn} onChange={(keepScreenOn) => update({ keepScreenOn })} />
           </SettingsRow>
+          {/* the steps where the browser holds no prompt (Safari has none): the only way to learn how to install */}
+          <SettingsRow label={t("Install")} description={installPrompt.installed ? t("Installed") : installPrompt.canInstall ? undefined : installPrompt.help}>
+            {!installPrompt.installed && installPrompt.canInstall && <button type="button" className="btn btn-primary" onClick={() => void installPrompt.install()}>{t("Install app")}</button>}
+          </SettingsRow>
         </SettingsGroup>
+        {relayOffered(relay) && !relayReadOnly && <RelayControls relay={relay} closesGate={closesGate} onReset={() => setIdentityResets((count) => count + 1)} />}
+        <SidebarPcsGroup machines={machines} />
         <AccessFacts facts={security} />
-        {pcsMore}
+        <RemotePcsMore machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={onPcSettings} />
       </SettingsFold>
 
-      {connecting !== null && (
-        <ConnectPhoneDialog route={connecting.route} startCode={connecting.startCode} plan={plan} loading={access === undefined} onRefresh={loadAccess} pairUrl={pairUrl}
-          relay={relay} readOnly={relayReadOnly} closesGate={closesGate} canPair={auth?.via !== "portal"} onClose={closeConnect} />
+      {connecting && (
+        <ConnectPhoneDialog plan={plan} loading={access === undefined} onRefresh={loadAccess} pairUrl={pairUrl}
+          relay={relay} readOnly={relayReadOnly} closesGate={closesGate} canPair={auth?.via !== "portal"}
+          joinBySignIn={joinBySignIn} onSignIn={accountOffered() && !account.signedIn ? signIn : null}
+          onAddPcSsh={() => { setConnecting(false); openAddPc(); }} onClose={closeConnect} />
       )}
     </>
+  );
+}
+
+/** This phone through the relay, from its own row: its offer opens here as a QR code would on a phone that scanned it. */
+function UseRelayHere() {
+  const t = useT();
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <>
+      <button type="button" className="btn" disabled={opening} title={t("Pairs this phone through the relay, so Ovis keeps working away from home.")} onClick={() => {
+        setError(null);
+        setOpening(true);
+        requestRelayOffer().then((offer) => openOwnOffer(offer.url)).catch((reason: unknown) => setError(failureText(reason))).finally(() => setOpening(false));
+      }}>{t("Use the relay")}</button>
+      {error !== null && <span className="settings-hint relay-error" role="alert">{error}</span>}
+    </>
+  );
+}
+
+/** The relay's switch and its identity reset: rarely touched once it is on, so in More settings (Connect a device turns it on). */
+function RelayControls({ relay, closesGate, onReset }: { relay: RelayState; closesGate: boolean; onReset: () => void }) {
+  const t = useT();
+  const { status, pending, request } = relay;
+  const [error, setError] = useState<string | null>(null);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const resetButton = useRef<HTMLButtonElement>(null);
+  if (status === null) return null;
+  const on = status.blocked === null && status.phase !== "off";
+  const run = async (action: "start" | "stop") => {
+    setError(null);
+    try { await request(action); } catch (reason) { setError(failureText(reason)); }
+  };
+  return (
+    <SettingsGroup title={t("Ovis relay")} section="relay">
+      <SettingsRow label={t("Ovis relay")} description={statusText(t, status)}>
+        {status.blocked === null && <Toggle label={t("Ovis relay")} checked={on} onChange={(next) => { if (!pending) void run(next ? "start" : "stop"); }} />}
+      </SettingsRow>
+      {closesGate && !on && status.blocked === null && <p className="settings-item settings-condition">{t("Turning on the relay closes the device gate: a new browser then needs a pairing code or the access token.")}</p>}
+      {error !== null && <p className="settings-item settings-hint relay-error" role="alert">{error}</p>}
+      {/* a serve-only install refuses the reset too; an unreadable identity is what the reset mends */}
+      {status.blocked !== "serve_only" && (
+        <SettingsRow label={t("Reset relay identity")}>
+          <button ref={resetButton} type="button" className="btn" disabled={pending} onClick={() => setConfirmingReset(true)}>{t("Reset")}</button>
+        </SettingsRow>
+      )}
+      {confirmingReset && (
+        <ConfirmDialog title={t("Reset the relay identity?")} body={t("Phones paired through the relay will need to scan a new code.")}
+          confirmLabel={t("Reset")} onClose={() => setConfirmingReset(false)} onConfirm={async () => {
+            await request("reset-identity");
+            setConfirmingReset(false);
+            onReset();
+            // the confirmation hands focus back only when it is dismissed: after the reset it goes back here
+            window.requestAnimationFrame(() => resetButton.current?.focus());
+          }} />
+      )}
+    </SettingsGroup>
+  );
+}
+
+/**
+ * The PCs at the top of My devices: this PC with its relay ID (what a device that typed this PC's code compares,
+ * AddRelayPc and the hosted app's code screen), the PCs this app shows (SSH, relay, herdr-core machines), and,
+ * signed in, the account's other PCs. One PC is one row: an account PC this app already shows is not listed twice.
+ * The ID is read again whenever the relay's state or identity changes (`relayKey`): turning the relay on can make
+ * this PC's first ID, and a reset makes a new one, before the roster's next read would say so; a new ID in the roster
+ * (a reset in another window) is read again too. Removing a PC stays
+ * in the sidebar's PC menu, which moves the selection off it first and knows the PCs herdr manages.
+ */
+function MyPcRows({ machines, accountPcs, relayKey }: { machines: readonly Machine[]; accountPcs: readonly MyPc[] | null; relayKey: string }) {
+  const t = useT();
+  const local = machines.find((machine) => machine.kind === "local");
+  const [ownId, setOwnId] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchMachines().then((list) => { if (live) setOwnId(list.find((machine) => machine.kind === "local")?.server_id ?? null); }, () => undefined);
+    return () => { live = false; };
+  }, [relayKey, local?.server_id]);
+  const id = ownId ?? local?.server_id;
+  const others = machines.filter((machine) => machine.kind !== "local");
+  const shown = new Set<string>([id, local?.server_id, ...others.map((machine) => machine.server_id ?? machine.relay?.server_id)].filter((id): id is string => id !== undefined));
+  const fromAccount = (accountPcs ?? []).filter((pc) => !shown.has(pc.server_id));
+  return (
+    <ul className="devices-list my-pcs">
+      {local !== undefined && (
+        <li className="devices-row my-device-self" data-testid="this-pc">
+          <div className="devices-name">
+            <span className="settings-label">{local.name}<span className="devices-kind is-self">{t("This PC")}</span></span>
+            {id !== undefined && <span className="settings-description my-device-id">{t("ID {id}", { id: groupedId(id) })}</span>}
+          </div>
+        </li>
+      )}
+      {others.map((machine) => (
+        <li key={machine.id} className="devices-row">
+          <div className="devices-name">
+            <span className="settings-label">{machine.name}<span className="devices-kind">PC</span></span>
+            <span className="settings-description">{t(STATE_WORD[machine.state])}</span>
+          </div>
+        </li>
+      ))}
+      {fromAccount.map((pc) => (
+        <li key={pc.server_id} className="devices-row" data-pc-state={pc.state}>
+          <div className="devices-name">
+            <span className="settings-label">{pc.name}<span className="devices-kind">PC</span></span>
+            <span className="settings-description">{accountPcStateText(pc, t)}</span>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1208,95 +1368,21 @@ function SidebarPcsGroup({ machines }: { machines: readonly Machine[] }) {
   );
 }
 
-/**
- * Another PC through the Ovis relay, no SSH: its pairing link (Settings → Phone & devices → Copy link there), or the code
- * it shows (Show a code to type), pairs this PC's server with it as a phone would. Both hold a one-time code, so they
- * stay in the input, never in state. A typed code first finds the PC, and the person matches its ID with the one that
- * PC shows before it is added, as the hosted app's code screen asks (RelayShell.tsx).
- */
-export function AddRelayPc() {
-  const t = useT();
-  const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [found, setFound] = useState<{ ticket: string; server_id: string; name: string | null } | null>(null);
-  const [result, setResult] = useState<{ error: boolean; text: string } | null>(null);
-  const added = (machine: Machine) => setResult({ error: false, text: t("{name} was added. Its workspaces join the sidebar.", { name: machine.name }) });
-  const failed = (error: unknown) => {
-    const failure = error instanceof ApiError ? typedCodeFailure(error.code) : null;
-    setResult({ error: true, text: failure !== null ? codeFailureText(t, failure) : error instanceof Error ? error.message : String(error) });
-  };
-  const run = async (work: () => Promise<void>) => {
-    setBusy(true);
-    setResult(null);
-    try { await work(); } catch (error) { failed(error); } finally { setBusy(false); }
-  };
-  const submit = () => {
-    const field = input.current;
-    const value = field?.value.trim() ?? "";
-    if (!field || !value) return;
-    // a link carries its offer; anything else is taken as a typed code
-    const link = /^https?:\/\//i.test(value);
-    void run(async () => {
-      if (link) { added((await addRelayPc(value)).machine); field.value = ""; return; }
-      // one try per tap, as on the phone: the code is not kept for another
-      field.value = "";
-      setFound(await findRelayPc(value));
-    });
-  };
-  const match = (ticket: string) => void run(async () => {
-    try { added((await addFoundRelayPc(ticket)).machine); } finally { setFound(null); }
-  });
-  if (found !== null) {
-    const pc = found.name ?? t("this PC");
-    return (
-      <SettingsRow label={t("Does {name}'s screen show this ID?", { name: pc })} description={t("The PC shows its ID under the code, in Settings → Devices and PCs (Phone & devices on an older Ovis). Pair only if every group matches.")} held wide>
-        <div className="relay-pc-found">
-          <KeyId id={found.server_id} label={t("ID of the PC this code found")} />
-          <div className="relay-pc-actions">
-            <button type="button" className="btn btn-primary" disabled={busy} aria-busy={busy || undefined} onClick={() => match(found.ticket)}>{t("It matches")}</button>
-            <button type="button" className="btn" disabled={busy} onClick={() => setFound(null)}>{t("Cancel")}</button>
-          </div>
-        </div>
-      </SettingsRow>
-    );
-  }
-  return (
-    <>
-      <SettingsRow label={t("Add a PC through the relay")} description={t("No SSH or open port. On the other PC, turn the relay on in Settings → Devices and PCs (Phone & devices on an older Ovis). Paste its link here (Copy link), or type the code it shows (Show a code to type).")} wide>
-        <form className="relay-pc-form" onSubmit={(event) => { event.preventDefault(); submit(); }}>
-          <input ref={input} className="input relay-pc-input" type="text" placeholder={t("Link or code")} aria-label={t("Pairing link or code")}
-            autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={busy} />
-          <button type="submit" className="btn" disabled={busy} aria-busy={busy || undefined} aria-label={t("Add a PC through the relay")}>{t("Add PC")}</button>
-        </form>
-      </SettingsRow>
-      {result && <p className="settings-item settings-hint" role={result.error ? "alert" : "status"}>{result.text}</p>}
-    </>
-  );
-}
-
 /** a set-aside copy of machines.json (the PCs added in this app), not of herdr-profile-state.json */
 const heldAddedPcs = (name: string): boolean => name.startsWith("machines.json.");
 
-/** Settings → Devices and PCs: the PCs added here, and which of them this device shows. */
-function RemotePcs({ actions, machines, pcSettings }: { actions: AppActions; machines: readonly Machine[]; pcSettings: MachineSettings | null }) {
+/** A crash can leave the saved PCs unreadable: the server set the file aside and started without them. */
+function DamagedPcFiles({ pcSettings }: { pcSettings: MachineSettings | null }) {
   const t = useT();
+  // machines.json held the PCs added here; herdr-profile-state.json only the permission to connect to herdr's own
   return (
     <>
-    <SettingsGroup title={t("Remote PCs")} section="remote">
-      <SettingsRow label={t("Add PC")} description={t("Connect another PC over an SSH alias or user@host. Its workspaces join the sidebar.")}>
-        <button type="button" className="btn" onClick={actions.openAddPc}><Monitor aria-hidden="true" />{t("Add PC")}</button>
-      </SettingsRow>
-      <AddRelayPc />
-      {/* a crash can leave the saved PCs unreadable: the server set the file aside and started without them.
-          machines.json held the PCs added here; herdr-profile-state.json only the permission to connect to herdr's own */}
       {pcSettings?.set_aside?.some(heldAddedPcs) && <p className="settings-item settings-hint">
         {t("Saved PC data was damaged and could not be read when the app started. It was set aside as {files}; add any missing PC again.", { files: pcSettings.set_aside.filter(heldAddedPcs).join(", ") })}
       </p>}
       {pcSettings?.set_aside?.some((name) => !heldAddedPcs(name)) && <p className="settings-item settings-hint">
         {t("The permission to connect to the PCs saved in herdr was damaged and could not be read when the app started. It was set aside as {files}; choose Connect on those PCs again.", { files: pcSettings.set_aside.filter((name) => !heldAddedPcs(name)).join(", ") })}
       </p>}
-    </SettingsGroup>
-    <SidebarPcsGroup machines={machines} />
     </>
   );
 }
@@ -1591,7 +1677,9 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
     } else if (before === null) {
       // a button that points at Updates opens on it, and the focus goes there too; so does a link
       // to a group, and a group the palette named
-      const named = section === "updates" ? "updates" : asked?.section ?? (linked && linkSection ? linkSection : null);
+      const asName = section === "updates" ? "updates" : asked?.section ?? (linked && linkSection ? linkSection : null);
+      // a group that moved keeps its old links: they land where its rows went
+      const named = asName === null ? null : MOVED_GROUPS[asName] ?? asName;
       const pointed = named ? settingsBodyRef.current?.querySelector<HTMLElement>(`[data-section="${CSS.escape(named)}"]`) : null;
       if (pointed) {
         openFolds(pointed);
@@ -1703,9 +1791,8 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "agents": return <AgentsSettings watching={auth?.role === "watch"} onLocalLogin={onUsageLogin} onOpenPane={onOpenPane} onOpenGuide={onClose} />;
       case "shortcuts": return <ShortcutsPage />;
       // after every device went, its own pairing included, a browser asks the server where it stands: the roster answers, or the gate does
-      case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh}
-        pcs={<RemotePcs actions={actions} machines={machines} pcSettings={pcSettings} />}
-        pcsMore={<RemotePcsMore machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />} />;
+      case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} openAddPc={actions.openAddPc}
+        machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;
       case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} herdrRuntime={herdrRuntime} herdrCore={herdrCore} herdrRuntimeFacts={herdrRuntimeFacts} bootId={bootId} onServerRestarted={onServerRestarted} bridgesFollow={pcSettings?.auto_update_bridges === true} />;
       default: return null;
     }

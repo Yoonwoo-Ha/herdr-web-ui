@@ -250,7 +250,6 @@ const BASE: Record<string, string> = {
   "New code": "새 코드",
   "Paired: {name}.": "페어링됨: {name}.",
   "QR code that pairs a phone with code {code}": "코드 {code}로 폰을 페어링하는 QR 코드",
-  "Connect a phone": "폰 연결",
   "Pairing code": "페어링 코드",
   "Open this address on your phone": "폰에서 이 주소를 여세요",
   "{agent} is ready": "{agent} 준비 완료",
@@ -434,7 +433,6 @@ const BASE: Record<string, string> = {
   "One model name, without spaces.": "띄어쓰기 없는 모델 이름 하나를 적으세요.",
   "Effort": "노력 수준",
   "Sandbox and approvals": "샌드박스와 승인",
-  "The PC shows its ID under the code, in Settings → Devices and PCs (Phone & devices on an older Ovis). Pair only if every group matches.": "PC는 설정 → 기기와 PC(이전 Ovis에서는 폰 및 기기)의 코드 아래에 자기 ID를 보여 줍니다. 모든 묶음이 같을 때만 페어링하세요.",
   "Add this PC to my account": "이 PC를 내 계정에 추가",
   "Add this PC to your account, so every device of your account can use it with one approval.": "이 PC를 계정에 추가하면 한 번만 승인해서 계정의 모든 기기가 쓸 수 있습니다.",
   "Every device of your account can use this PC after that.": "그 뒤에는 계정의 모든 기기가 이 PC를 쓸 수 있습니다.",
@@ -444,6 +442,15 @@ const BASE: Record<string, string> = {
   "New terminal": "새 터미널",
   "New terminal failed: {reason}": "새 터미널 열기 실패: {reason}",
   "herdr prefix: press a key": "herdr 접두키: 키를 누르세요",
+  "Connect a device": "기기 연결",
+  "This device": "이 기기",
+  "Sign out of {provider}": "{provider} 로그아웃",
+  "Ovis relay": "Ovis 릴레이",
+  "Reset relay identity": "릴레이 신원 재설정",
+  "Reset the relay identity?": "릴레이 신원을 재설정할까요?",
+  "Phones paired through the relay will need to scan a new code.": "릴레이로 페어링된 폰은 새 코드를 다시 스캔해야 합니다.",
+  "Pairs this phone through the relay, so Ovis keeps working away from home.": "이 폰을 릴레이로 페어링해 집 밖에서도 Ovis를 쓸 수 있게 합니다.",
+  "This PC": "이 PC",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

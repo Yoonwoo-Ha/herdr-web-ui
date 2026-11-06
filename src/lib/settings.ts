@@ -822,7 +822,7 @@ function readSidebarFilter(): boolean {
   }
 }
 
-/** Settings → Remote PCs → PC load in the sidebar, kept in a key of its own for the same reason; null until chosen. */
+/** Settings → Devices and PCs → PC load in the sidebar, kept in a key of its own for the same reason; null until chosen. */
 export const PC_LOAD_STORAGE_KEY = "ovis:pc-load";
 
 function readPcLoad(): boolean | null {

@@ -51,7 +51,7 @@ export function AccountFinePrint() {
   return <p className="account-fineprint">{t("The account only lists your PCs. Sessions stay end-to-end encrypted.")}</p>;
 }
 
-function stateText(pc: MyPc, t: ReturnType<typeof useT>): string {
+export function accountPcStateText(pc: MyPc, t: ReturnType<typeof useT>): string {
   switch (pc.state) {
     // a pairing from before the account: removing this device through the account does not reach it yet
     case "paired": return pc.linked ? t("Ready") : t("Ready · not in the account yet");
@@ -70,7 +70,7 @@ export function AccountPcList({ pcs, onJoin }: { pcs: readonly MyPc[]; onJoin?: 
         const body = (
           <span className="account-pc-text">
             <span className="relay-shell-pc-name">{pc.name}</span>
-            <span className="account-pc-state"><span className="account-pc-dot" aria-hidden="true" />{stateText(pc, t)}</span>
+            <span className="account-pc-state"><span className="account-pc-dot" aria-hidden="true" />{accountPcStateText(pc, t)}</span>
           </span>
         );
         return (

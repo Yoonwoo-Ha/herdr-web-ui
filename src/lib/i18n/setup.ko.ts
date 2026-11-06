@@ -64,7 +64,6 @@ export const SETUP_KO: Record<string, string> = {
   "Remove hub?": "허브를 제거할까요?",
   "Its accounts disappear from this list. The hub itself is not changed.": "허브 계정이 목록에서 사라져요. 허브 자체는 그대로예요.",
   "No accounts yet.": "아직 계정이 없어요.",
-  "This PC": "이 PC",
   "No accounts signed in": "로그인된 계정 없음",
   "Turn on plan limits to see accounts.": "요금제 한도를 켜면 계정이 보여요.",
   "Shows plan usage beside Settings. Sign-ins are sent to each provider's usage API; never refreshed here.": "설정 옆에 요금제 사용량을 보여줘요. 로그인 정보가 각 서비스의 사용량 API로 전송되며, 여기서 갱신하지 않아요.",
