@@ -316,6 +316,27 @@ the new PC's mailbox, is missed: the removed device then comes back on the new P
 as any admission is. A client reading its other PCs first makes that need every PC holding the
 removal to be off or unreachable.
 
+### Adding a PC
+
+How a person adds a PC to the account in the apps (WhatsApp's linked devices and Tailscale's
+Tailnet Lock follow the same idea: an existing device approves once, and the server only carries
+messages):
+
+1. On the new PC, Settings → Phone & devices → Account: sign in, then **Add this PC to my account**.
+   The PC lists itself in the account's directory (`PUT /v1/pcs`, its relay key and relay) and opens
+   a pairing window with `POST /api/relay/link` and the header `x-ovis-local-only: 1`. What that window takes is decided on
+   this PC only: it is never listed to account members (`remote-pairings`) or approved by one, even
+   once the PC has members. The screen keeps the window open while it waits.
+2. On any device already in the account, the PC shows as a card, **Add {name} to your account?**,
+   for 10 minutes after the directory took it. Its key comes from the directory and is checked
+   against its id, as for any PC there; the person then **types the six digits the new PC shows**
+   (not a tap: the directory's name is anyone's), and approves on the PC.
+3. The device is then the PC's first member: it links, and enrolls the PC
+   ([Enrolling a PC](#enrolling-a-pc)), so the account's other devices are let in and introduced.
+
+A wrong number ends that comparison; the person starts again from the card. QR codes and pairing
+codes stay under **Other ways** for a device without an account.
+
 ### Introductions
 
 A device just admitted on PC X learns the account's other PCs from the member that approved it,

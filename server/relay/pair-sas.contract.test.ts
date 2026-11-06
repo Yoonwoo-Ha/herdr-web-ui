@@ -882,3 +882,34 @@ test("a watching account member's machine-event socket hears of no account join"
   await socket.until(((message: { type: string; event?: { type: string } }) => message.type === "machine-event" && message.event?.type === "device-paired") as never);
   expect(socket.messages.some((message) => remotePairings(1)(message as never))).toBe(false);
 });
+
+test("what a PC's own add-me screen lets in is decided on that PC only, never by an account member", async () => {
+  const { f, member } = await accountFixture();
+  const approvals = f.app.context.services.relay.approvals;
+  approvals.openWindow(Date.now(), { localOnly: true });
+  const asked = approvals.ask("New phone", "123456", Date.now() + 90_000, { intent: "pc", key: member.publicKey, deviceId: "00112233445566aa" });
+  if (!asked) throw new Error("no room to ask");
+  const id = approvals.list()[0]!.id;
+  expect(approvals.remoteList()).toEqual([]);
+  expect(approvals.decideRemote(id, true, "123456", { id: member.id, label: "Account phone", role: "drive" })).toEqual({ outcome: "gone" });
+  expect(approvals.decide(id, true)).toBe(true);
+  expect(await asked.decision).toEqual({ approved: true });
+});
+
+test("a comparison asked under the add-me screen stays the PC's own even when that screen's window closes before its digits show", async () => {
+  const { f } = await accountFixture();
+  const approvals = f.app.context.services.relay.approvals;
+  approvals.openWindow(Date.now(), { localOnly: true });
+  const { p } = await direct(f);
+  await p.hello([PAIR_SAS_FEATURE, PAIR_INTENT_PC]);
+  const nonce = randomPairNonce();
+  await p.send({ type: FrameType.PAIR_REQUEST, flags: 0, stream_id: 0, payload: { label: "New phone", public_key: p.publicKey, commitment: toBase64Url(pairCommitment(p.binding(), p.publicKey, nonce)) } });
+  expect((await p.inbox.next()).type).toBe(FrameType.PAIR_CHALLENGE);
+  // the window this screen opened has run out by the time the phone shows its digits
+  approvals.openWindow(Date.now() - 60 * 60_000, { localOnly: true });
+  const listed = deferred<void>();
+  const stop = approvals.subscribe((list) => { if (list.length > 0) listed.resolve(); });
+  await p.send({ type: FrameType.PAIR_REVEAL, flags: 0, stream_id: 0, payload: { nonce: toBase64Url(nonce) } });
+  await bounded(listed.promise).finally(stop);
+  expect(approvals.remoteList()).toEqual([]);
+});

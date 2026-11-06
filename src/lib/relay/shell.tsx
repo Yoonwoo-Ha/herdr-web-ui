@@ -164,7 +164,19 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   let outdated: { opened: RelayTransport; attempt: Attempt; name: string | null; version: string } | null = null;
   let updating = false;
   /** the comparison on screen: its digits, and the phone's answer that they match */
-  let comparison: { name: string | null; digits: string; matched: () => void } | null = null;
+  let comparison: { name: string | null; digits: string; matched: () => void; typed: boolean } | null = null;
+  /**
+   * A PC of the account joined from its card: this phone types the digits that PC shows, as it may not
+   * be the owner's (directory names are anyone's). Kept in this tab's session storage, since opening the
+   * PC loads its page anew; only ever makes a comparison stricter.
+   */
+  const TYPED_JOIN = "ovis-typed-join";
+  const typedJoinFor = (serverId: string): boolean => {
+    try { return sessionStorage.getItem(TYPED_JOIN) === serverId; } catch { return false; }
+  };
+  const setTypedJoin = (serverId: string | null): void => {
+    try { if (serverId === null) sessionStorage.removeItem(TYPED_JOIN); else sessionStorage.setItem(TYPED_JOIN, serverId); } catch { /* no storage: the plain comparison stays */ }
+  };
   /** the offer a typed code found, until its ID is compared on screen */
   let codeOffer: RelayOffer | null = null;
   const findByCode = mount.findByCode ?? offerFromCode;
@@ -223,11 +235,15 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     await showFront();
   };
 
-  /** A PC of the account this device is not paired with: compare digits with it, as a link without a code does. */
-  const joinPc = (pc: MyPc): void => {
+  /**
+   * A PC of the account this device is not paired with: compare digits with it, as a link without a
+   * code does. `typed`: from the new-PC card, whose PC shows its digits on its own screen (docs/account.md, "Adding a PC").
+   */
+  const joinPc = (pc: MyPc, options: { typed?: boolean } = {}): void => {
     const join = pc.join;
     if (join === undefined) return;
     const link = new URL(encodeOffer({ v: 1, server_id: pc.server_id, server_public_key: join.server_public_key, relay: join.relay, name: pc.name }, window.location.origin));
+    setTypedJoin(options.typed ? pc.server_id : null);
     navigate(link.pathname + link.hash);
   };
 
@@ -323,8 +339,8 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
         compare: (digits) => new Promise<void>((resolve) => {
           if (controller.signal.aborted) return;
           attempt.compared = true;
-          comparison = { name: attempt.offer.name ?? null, digits, matched: resolve };
-          show({ kind: "compare", name: comparison.name, digits, confirmed: false });
+          comparison = { name: attempt.offer.name ?? null, digits, matched: resolve, typed: typedJoinFor(attempt.offer.server_id) };
+          show({ kind: "compare", name: comparison.name, digits, confirmed: false, ...(comparison.typed ? { typed: true } : {}) });
         }),
         // the PC turned this phone away after it was in: the app goes, and the reason takes its place
         onFatal: (error) => {
@@ -552,9 +568,19 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     void connect(last);
   };
 
-  const match = (): void => {
+  const match = (typed?: string): void => {
     const current = comparison;
     if (current === null) return;
+    if (current.typed && typed !== current.digits) {
+      // one wrong entry ends this comparison: a guess never gets a second try at the same digits
+      comparison = null;
+      setTypedJoin(null);
+      opening?.abort();
+      opening = null;
+      show({ kind: "compare", name: current.name, digits: "", confirmed: false, typed: true, wrong: true });
+      return;
+    }
+    setTypedJoin(null);
     show({ kind: "compare", name: current.name, digits: current.digits, confirmed: true });
     current.matched();
   };
@@ -593,6 +619,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
 
   const cancel = (): void => {
     comparison = null;
+    setTypedJoin(null);
     codeOffer = null;
     opening?.abort();
     opening = null;
