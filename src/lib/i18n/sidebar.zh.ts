@@ -67,7 +67,6 @@ export const SIDEBAR_ZH: Record<string, string> = {
   "Close group": "关闭分组",
   "Collapse": "折叠",
   "Expand": "展开",
-  "Shell": "Shell",
   "Working": "工作中",
   "Idle": "空闲",
   "{count} need you": "{count} 个需要你",

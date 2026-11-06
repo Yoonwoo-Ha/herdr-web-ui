@@ -523,12 +523,12 @@ export interface WorkspaceCreateResult {
 }
 
 export async function workspaceCreate(
-  options: { cwd?: string; label?: string; env?: Record<string, string> },
+  options: { cwd?: string; label?: string; env?: Record<string, string>; move?: string },
   socketPath?: string,
 ): Promise<WorkspaceCreateResult> {
   return herdrRpc(
     "workspace.create",
-    { ...(options.cwd === undefined ? {} : { cwd: options.cwd }), ...(options.label === undefined ? {} : { label: options.label }), ...(options.env === undefined ? {} : { env: options.env }), focus: false },
+    { ...(options.cwd === undefined ? {} : { cwd: options.cwd }), ...(options.label === undefined ? {} : { label: options.label }), ...(options.env === undefined ? {} : { env: options.env }), ...moveParam(options.move), focus: false },
     socketPath,
   );
 }
@@ -541,12 +541,12 @@ export interface TabCreateResult {
 
 /** Another tab in an existing workspace. Without `cwd` herdr uses the workspace's folder. */
 export async function tabCreate(
-  options: { workspaceId: string; cwd?: string; label?: string; env?: Record<string, string> },
+  options: { workspaceId: string; cwd?: string; label?: string; env?: Record<string, string>; move?: string },
   socketPath?: string,
 ): Promise<TabCreateResult> {
   return herdrRpc(
     "tab.create",
-    { workspace_id: options.workspaceId, ...(options.cwd === undefined ? {} : { cwd: options.cwd }), ...(options.label === undefined ? {} : { label: options.label }), ...(options.env === undefined ? {} : { env: options.env }), focus: false },
+    { workspace_id: options.workspaceId, ...(options.cwd === undefined ? {} : { cwd: options.cwd }), ...(options.label === undefined ? {} : { label: options.label }), ...(options.env === undefined ? {} : { env: options.env }), ...moveParam(options.move), focus: false },
     socketPath,
   );
 }
@@ -866,6 +866,18 @@ export async function paneFocus(paneId: string, socketPath?: string): Promise<vo
  * A new pane beside `paneId` (herdr's prefix+v / prefix+-), answered as herdr's snapshot lists it.
  * herdr's focus stays where it is unless `focus` asks for the new pane, as its --focus does.
  */
+/**
+ * `move`: the id of a move from herdr (runtime-move-run.ts), which only Ovis's herdr-core adapter
+ * reads: it labels the terminal it starts with it. herdr itself is never asked with one.
+ */
+const moveParam = (move: string | undefined): Record<string, string> => move === undefined ? {} : { move };
+
+/** A split on Ovis's herdr-core adapter, its new side started in `cwd` and labeled with the move (adapter.ts pane.split). */
+export async function paneSplitForMove(paneId: string, direction: SplitPaneDirection, options: { cwd?: string; move: string }, socketPath: string): Promise<PaneInfo> {
+  const result = await herdrRpc<{ pane: PaneInfo }>("pane.split", { target_pane_id: paneId, direction, focus: false, ...(options.cwd === undefined ? {} : { cwd: options.cwd }), ...moveParam(options.move) }, socketPath);
+  return result.pane;
+}
+
 export async function paneSplit(paneId: string, direction: SplitPaneDirection, focus: boolean, socketPath?: string): Promise<PaneInfo> {
   const result = await queueHerdrFocus(socketPath, (socket) => herdrRpc<{ pane: PaneInfo }>("pane.split", { target_pane_id: paneId, direction, focus }, socket));
   return result.pane;

@@ -67,7 +67,6 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Close group": "グループを閉じる",
   "Collapse": "折りたたむ",
   "Expand": "展開",
-  "Shell": "シェル",
   "Working": "作業中",
   "Idle": "待機",
   "{count} need you": "{count} 件が対応待ち",

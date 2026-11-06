@@ -1294,6 +1294,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const lan = variant === "unknown" ? { lan_exposure: { host: "0.0.0.0" } } : {};
     return json({ ok: true, herdr: { version: "0.9.0", protocol: 22, terminal_attach: true }, auth, relay: demoRelayStatus(), ...lan, ...facts, ...DEMO_RUNTIME_FACTS, web_ui: { boot_id: orderOf(local.id).epoch, revision: null } }, 200, { "cache-control": "no-store" });
   }
+  // the demo serves no herdr TUI of its own: no move to herdr-core is offered
+  if (path === "/api/runtime/move") return json({ available: false, reason: "not_herdr", status: { state: "idle" } }, 200, { "cache-control": "no-store" });
   // a code starts here from the Devices group or from the relay panel's New code; the fictional phone
   // enters it only where the demo has a device list to add it to
   if (path === "/api/devices/pair/start") {

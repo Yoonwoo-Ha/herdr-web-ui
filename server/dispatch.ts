@@ -33,6 +33,8 @@ import { textEditAllowed } from "./file-edit.ts";
 import { handleFileRequest } from "./file-routes.ts";
 import { BACKGROUND_AGENT_PATH, handleBackgroundAgentRequest } from "./background-agent.ts";
 import { paneGet, ping } from "./herdr/client.ts";
+import { RUNTIME_MOVE_PATH } from "./runtime-move.ts";
+import type { MoveService } from "./runtime-move-service.ts";
 import { handlePushRequest } from "./push.ts";
 import { handlePromptRequest, type OpenCodePromptState } from "./prompt.ts";
 import { attachableIdentity } from "./pty/sidecar.ts";
@@ -75,6 +77,8 @@ type PortalStartup = { ok: true } | { ok: false; error: unknown };
 
 /** Per-server services shared by socket requests and other dispatch callers. */
 export interface RequestServices {
+  /** the move of herdr's session to herdr-core, where the runtime can be switched from here */
+  readonly runtimeMove: MoveService | null;
   readonly relay: RelayService;
   readonly relayReceiptIds: RelayReceiptIds;
   readonly options: NonNullable<Parameters<typeof createServer>[0]>;
@@ -590,8 +594,36 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     if (!options.runtimeService) return jsonResponse({ error: { code: "runtime_locked", message: "this server cannot switch its runtime" } }, 409);
     let body: unknown;
     try { body = await request.json(); } catch { return badRequest("invalid_json", "send { \"runtime\": \"herdr\" | \"herdr-core\" }"); }
+    // a move to herdr-core switches by itself once everything is built there; checked after the body's
+    // await, right before the switch, so a move that started meanwhile is seen
+    if (ctx.services.runtimeMove?.busy()) return jsonResponse({ error: { code: "runtime_switching", message: "a move to herdr-core is waiting or running" } }, 409);
     const answer = options.runtimeService.request(body !== null && typeof body === "object" ? (body as Record<string, unknown>)["runtime"] : undefined);
     return answer.ok ? jsonResponse({ accepted: true }, 202) : jsonResponse({ error: { code: answer.code, message: answer.message } }, answer.status);
+  }
+
+  if (pathname === RUNTIME_MOVE_PATH) {
+    setRequestRoute(pathname);
+    // folders and conversation ids of every pane, and agents ended and started: the runtime switch's own boundary
+    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can move its runtime" } }, 403);
+    const move = ctx.services.runtimeMove;
+    if (!move) return jsonResponse({ error: { code: "runtime_locked", message: "this server cannot switch its runtime" } }, 409);
+    if (request.method === "GET") {
+      try { return jsonResponse(await move.read(), 200, { "cache-control": "no-store" }); } catch (error) { return errorResponse(error); }
+    }
+    if (request.method !== "POST" && request.method !== "DELETE") return badRequest("method_not_allowed", "use GET, POST or DELETE");
+    if (!updateRequestAllowed(request)) return jsonResponse({ error: { code: "forbidden", message: "a runtime move must come from this app's own page" } }, 403);
+    if (request.method === "DELETE") { move.cancel(); return jsonResponse({ ok: true }); }
+    let body: unknown;
+    try { body = await request.json(); } catch { return badRequest("invalid_json", "send { \"revision\": \"...\" }"); }
+    const revision = body !== null && typeof body === "object" ? (body as Record<string, unknown>)["revision"] : undefined;
+    if (typeof revision !== "string" || revision === "") return badRequest("invalid_revision", "revision must name the plan shown");
+    try {
+      const refused = await move.start(revision);
+      if (refused === null) return jsonResponse({ accepted: true }, 202);
+      return jsonResponse({ error: { code: refused, message: refused === "plan_changed" ? "the panes changed since the plan was shown: look again" : refused === "already_moving" ? "a move is already waiting or running" : refused === "runtime_switching" ? "the server is switching its runtime: try again once it is back" : "no move to herdr-core is offered here" } }, 409);
+    } catch (error) {
+      return errorResponse(error);
+    }
   }
 
   if (pathname === "/api/herdr-ui") {

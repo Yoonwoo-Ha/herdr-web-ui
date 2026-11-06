@@ -7,6 +7,7 @@ import type { ConversationSearchResponse } from "../../shared/conversation-searc
 import { resumeConnectionTraces } from "./connectionTrace.ts";
 import type { PullRequestCheckLog, PullRequestMergeRequest, PullRequestView } from "../../shared/pull-request.ts";
 import type { SystemReport } from "../../shared/system.ts";
+import type { MovePlanResponse, MoveStartRequest } from "../../shared/runtime-move.ts";
 import type { EditableText, PaneDocuments, TextSaved, TextSaveRequest } from "../../shared/files.ts";
 import { parseSystemReport } from "./systemReport.ts";
 import { machinePath, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
@@ -219,6 +220,25 @@ export function fetchHerdrUpdate(): Promise<HerdrUpdateStatus> {
 export async function switchRuntime(runtime: "herdr" | "herdr-core"): Promise<void> {
   const url = "/api/runtime";
   const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ runtime }) });
+  if (!response.ok) throw await errorFrom(url, response);
+}
+
+/** Settings → About → Terminals: the move of this PC's whole herdr session to herdr-core, as it stands now (server/runtime-move.ts). */
+export function fetchMovePlan(): Promise<MovePlanResponse> {
+  return getJson<MovePlanResponse>("/api/runtime/move", { cache: "no-store" });
+}
+
+/** Starts the move of the plan shown, by its revision; a busy pane makes it wait, and the server goes by itself once none is. */
+export async function startMove(revision: string): Promise<void> {
+  const url = "/api/runtime/move";
+  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ revision } satisfies MoveStartRequest) });
+  if (!response.ok) throw await errorFrom(url, response);
+}
+
+/** Ends a wait for busy panes; a move under way is not stopped. */
+export async function cancelMove(): Promise<void> {
+  const url = "/api/runtime/move";
+  const response = await apiFetch(url, { method: "DELETE", headers: { "x-herdr-update": "1" } });
   if (!response.ok) throw await errorFrom(url, response);
 }
 

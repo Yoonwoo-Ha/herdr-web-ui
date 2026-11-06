@@ -17,6 +17,7 @@ import { GUIDE_ZH } from "./i18n/guide.zh.ts";
 import { UPDATES_ZH } from "./i18n/updates.zh.ts";
 import { PALETTE_ZH } from "./i18n/palette.zh.ts";
 import { RELAY_ZH } from "./i18n/relay.zh.ts";
+import { RUNTIME_MOVE_ZH } from "./i18n/runtime-move.zh.ts";
 
 /**
  * Simplified Chinese for every `t("…")` in src/ that no part in lib/i18n/ holds: keys more than
@@ -452,6 +453,7 @@ const BASE: Record<string, string> = {
   "New terminal": "新建终端",
   "New terminal failed: {reason}": "新建终端失败：{reason}",
   "herdr prefix: press a key": "herdr 前缀键：请按一个键",
+  "Shell": "Shell",
   "Connect a device": "连接设备",
   "This device": "此设备",
   "Sign out of {provider}": "退出 {provider} 登录",
@@ -484,6 +486,7 @@ export const ZH_PARTS: Record<string, Record<string, string>> = {
   updates: UPDATES_ZH,
   palette: PALETTE_ZH,
   relay: RELAY_ZH,
+  "runtime-move": RUNTIME_MOVE_ZH,
 };
 
 export const ZH: Record<string, string> = Object.assign({}, ...Object.values(ZH_PARTS));

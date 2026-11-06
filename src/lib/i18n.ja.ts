@@ -17,6 +17,7 @@ import { GUIDE_JA } from "./i18n/guide.ja.ts";
 import { UPDATES_JA } from "./i18n/updates.ja.ts";
 import { PALETTE_JA } from "./i18n/palette.ja.ts";
 import { RELAY_JA } from "./i18n/relay.ja.ts";
+import { RUNTIME_MOVE_JA } from "./i18n/runtime-move.ja.ts";
 
 /**
  * Japanese for every `t("…")` in src/ that no part in lib/i18n/ holds: keys more than one feature
@@ -450,6 +451,7 @@ const BASE: Record<string, string> = {
   "New terminal": "新しいターミナル",
   "New terminal failed: {reason}": "新しいターミナルを開けませんでした: {reason}",
   "herdr prefix: press a key": "herdrプレフィックス: キーを押してください",
+  "Shell": "シェル",
   "Connect a device": "デバイスを接続",
   "This device": "このデバイス",
   "Sign out of {provider}": "{provider} からサインアウト",
@@ -482,6 +484,7 @@ export const JA_PARTS: Record<string, Record<string, string>> = {
   updates: UPDATES_JA,
   palette: PALETTE_JA,
   relay: RELAY_JA,
+  "runtime-move": RUNTIME_MOVE_JA,
 };
 
 export const JA: Record<string, string> = Object.assign({}, ...Object.values(JA_PARTS));

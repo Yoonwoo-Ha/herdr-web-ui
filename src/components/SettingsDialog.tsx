@@ -49,6 +49,7 @@ import type { VoiceStatus } from "../../shared/voice.ts";
 import { dictationLocale, VOICE_CONFIG_EVENT } from "../lib/voice.ts";
 import { DevicesPanel } from "./DevicesPanel.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
+import { RuntimeMove } from "./RuntimeMove.tsx";
 import { SignOutRow } from "./SignOutRow.tsx";
 import { failureText, openOwnOffer, RelayDirectRow, statusText } from "./RelayPanel.tsx";
 import { AccountSection, accountOffered, type AccountState } from "./AccountSection.tsx";
@@ -1533,7 +1534,8 @@ function PluginsGroup() {
  * Which runtime this PC's terminals come from, and the switch between herdr's TUI and the Herdr
  * app when this PC has both and nothing else decides it. A switch asks first, saves the choice and
  * restarts Ovis on it; once a new server answers, the app reads it again in place (no reload). Where the switch cannot run,
- * one quiet line says why, or how to switch by hand.
+ * one quiet line says why, or how to switch by hand. The move of the whole herdr session to herdr-core
+ * (RuntimeMove) is one more row, whose dialog outlives the restart its own switch starts.
  */
 function RuntimeFacts({ version, runtime, core, facts: healthFacts, bootId, onServerRestarted }: { version: string | null; runtime: "herdr" | "herdr-core" | null; core: HerdrCoreFacts | null; facts: HerdrRuntimeFacts | null; bootId: string | null; onServerRestarted?: () => void }) {
   const t = useT();
@@ -1552,18 +1554,22 @@ function RuntimeFacts({ version, runtime, core, facts: healthFacts, bootId, onSe
     const timer = setInterval(() => void read(), 10_000);
     return () => { live = false; clearInterval(timer); };
   }, [restarting, bootId]);
+  const facts = bridgeFacts ?? healthFacts;
+  // the runtime the bridge serves now; the last health answer's version only when it was about that runtime
+  const served = facts?.serving ?? runtime;
+  const known = served === runtime ? version : null;
+  // the move's row goes with the rows while the page waits for the restarted server; its dialog stays:
+  // the key keeps the one element across both lists below
+  const move = <RuntimeMove key="move" bootId={bootId} hidden={restarting !== null} onServerRestarted={onServerRestarted} />;
   if (restarting !== null) {
     return (
       <SettingsGroup title={t("Terminals")} section="runtime">
         <p className="settings-item settings-hint" role="status">{restarting.lost ? t("Ovis has not answered since the restart. Reload this page in a moment; if it stays away, start Ovis again on this PC.")
           : restarting.to === "herdr-core" ? t("Restarting Ovis on the Herdr app…") : t("Restarting Ovis on herdr TUI…")}</p>
+        {move}
       </SettingsGroup>
     );
   }
-  const facts = bridgeFacts ?? healthFacts;
-  // the runtime the bridge serves now; the last health answer's version only when it was about that runtime
-  const served = facts?.serving ?? runtime;
-  const known = served === runtime ? version : null;
   if (served === null || (known === null && facts === null)) return null;
   const onCore = served === "herdr-core";
   const vars = { version: core?.version ?? "", setting: "OVIS_RUNTIME=herdr-core", command: "herdr plugin config-dir devswha.ovis" };
@@ -1600,6 +1606,7 @@ function RuntimeFacts({ version, runtime, core, facts: healthFacts, bootId, onSe
         </SettingsRow>
       ))}
       {hint && <p className="settings-item settings-hint">{hint}</p>}
+      {move}
       {confirming && target !== null && (
         <ConfirmDialog
           title={toCore ? t("Show the Herdr app's terminals?") : t("Show herdr TUI's terminals?")}
