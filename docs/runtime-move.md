@@ -5,6 +5,15 @@ herdr-core, can switch its runtime (Linux and macOS, started by Ovis's launcher)
 installed (the app arranges a core in a document Ovis never writes). It moves all of herdr's session
 or nothing.
 
+On such a PC without herdr-core (Linux and macOS, x64 and arm64), the row reads "Install herdr-core
+and move everything" instead. Its button installs herdr-core 0.1.17 the way herdr-core's own installer
+does, into `~/.local/bin/herdr-core` (with `hc` linked beside it when no `hc` exists), without
+sudo: the version and the SHA-256 of each archive are pinned in `server/herdr-core/install.ts`
+(the same hc the desktop app carries), the download must match it and the program must answer
+`--version` as that hc before anything is written there. A `herdr-core` already in `~/.local/bin` is
+never replaced, and a failed install leaves the folder as it was. herdr's TUI and its config are not
+touched. Once it is in, the move's plan opens as usual; nothing moves until "Move everything".
+
 ## What moves
 
 | herdr | herdr-core |

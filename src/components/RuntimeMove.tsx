@@ -15,7 +15,7 @@ import "./RuntimeMove.css";
 
 import type { MovePlanResponse } from "../../shared/runtime-move.ts";
 import { LOCAL_MACHINE } from "../../shared/machines.ts";
-import { ApiError, cancelMove, fetchBridgeHealth, fetchMovePlan, startMove } from "../lib/api.ts";
+import { ApiError, cancelMove, fetchBridgeHealth, fetchMovePlan, installHerdrCore, startMove } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
 import { paneLifetimes } from "../lib/paneLifetime.ts";
 import { moveInProgress } from "../lib/runtimeMove.ts";
@@ -42,6 +42,8 @@ export function RuntimeMove({ bootId, hidden, onServerRestarted }: Props) {
   const t = useT();
   const [answer, setAnswer] = useState<MovePlanResponse | null>(null);
   const [open, setOpen] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
   const from = useRef<string | null>(bootId);
   const followed = useRef(false);
 
@@ -54,13 +56,40 @@ export function RuntimeMove({ bootId, hidden, onServerRestarted }: Props) {
 
   if (answer === null) return null;
   const { state } = answer.status;
-  // a move that just finished is answered by a server no longer offering one: its dialog stays to follow the restart
-  if (!answer.available && !open) return null;
   const openDialog = (): void => {
     // the bridge answering now (its boot id needs no herdr): the move's own switch restarts it
     void fetchBridgeHealth().then((health) => { from.current = health.web_ui?.boot_id ?? bootId; }, () => { from.current = bootId; });
     setOpen(true);
   };
+  // no herdr-core yet: one press installs it, then the move's plan opens as it would have
+  if (!answer.available && answer.install && !open) {
+    const install = async (): Promise<void> => {
+      setInstalling(true);
+      setInstallError(null);
+      try {
+        await installHerdrCore();
+        const next = await fetchMovePlan();
+        setAnswer(next);
+        if (next.available) openDialog();
+      } catch (reason: unknown) {
+        setInstallError(said(reason));
+        // an install that went in while its answer was lost: the row follows what the server offers now
+        void fetchMovePlan().then(setAnswer, () => {});
+      } finally {
+        setInstalling(false);
+      }
+    };
+    if (hidden) return null;
+    return (
+      <SettingsRow label={t("Install herdr-core and move everything")}
+        description={t("Installs herdr-core {version} into ~/.local/bin, then shows what moves before anything does.", { version: answer.install.version })}
+        condition={installError === null ? undefined : <span className="settings-condition" role="alert">{t("Could not install: {detail}", { detail: installError })}</span>}>
+        <button type="button" className="btn" disabled={installing} onClick={() => void install()}>{installing ? t("Installing…") : t("Install and move…")}</button>
+      </SettingsRow>
+    );
+  }
+  // a move that just finished is answered by a server no longer offering one: its dialog stays to follow the restart
+  if (!answer.available && !open) return null;
   return (
     <>
       {!hidden && answer.available && (

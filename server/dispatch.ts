@@ -607,6 +607,23 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     return answer.ok ? jsonResponse({ accepted: true }, 202) : jsonResponse({ error: { code: answer.code, message: answer.message } }, answer.status);
   }
 
+  if (pathname === `${RUNTIME_MOVE_PATH}/install`) {
+    setRequestRoute(pathname);
+    // downloads and runs a program on this PC: the runtime switch's own boundary, and only from this app's page
+    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can install herdr-core" } }, 403);
+    if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    if (!updateRequestAllowed(request)) return jsonResponse({ error: { code: "forbidden", message: "an install must come from this app's own page" } }, 403);
+    const move = ctx.services.runtimeMove;
+    if (!move) return jsonResponse({ error: { code: "runtime_locked", message: "this server cannot switch its runtime" } }, 409);
+    try {
+      const refused = await move.install();
+      if (refused === null) return jsonResponse({ installed: true });
+      return jsonResponse({ error: { code: refused, message: refused === "installing" ? "herdr-core is already being installed" : "Ovis offers no herdr-core install here" } }, 409);
+    } catch (error) {
+      return jsonResponse({ error: { code: "install_failed", message: error instanceof Error ? error.message : String(error) } }, 502);
+    }
+  }
+
   if (pathname === RUNTIME_MOVE_PATH) {
     setRequestRoute(pathname);
     // folders and conversation ids of every pane, and agents ended and started: the runtime switch's own boundary

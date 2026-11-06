@@ -6,6 +6,11 @@
 export const RUNTIME_MOVE_JA: Record<string, string> = {
   "Move everything to herdr-core": "herdr-core にすべて移す",
   "Every workspace, tab and agent reopens on herdr-core, all at once.": "すべてのワークスペース・タブ・エージェントを一度に herdr-core で開き直します。",
+  "Install herdr-core and move everything": "herdr-core をインストールしてすべて移す",
+  "Installs herdr-core {version} into ~/.local/bin, then shows what moves before anything does.": "herdr-core {version} を ~/.local/bin にインストールし、何が移るかを先に表示します。",
+  "Install and move…": "インストールして移す…",
+  "Installing…": "インストール中…",
+  "Could not install: {detail}": "インストールできませんでした: {detail}",
   "Move…": "移す…",
   "Waiting…": "待機中…",
   "Moving…": "移動中…",

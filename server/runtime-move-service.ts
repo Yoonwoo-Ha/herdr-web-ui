@@ -36,6 +36,15 @@ export interface MoveServiceOptions {
   accepted: () => boolean;
   /** a runtime switch was asked for (Settings) and the server restarts for it: no agent is ended meanwhile */
   switching: () => boolean;
+  /** installs herdr-core where the PC has none (server/herdr-core/install.ts), so the move can be offered */
+  installer?: HcInstaller;
+}
+
+export interface HcInstaller {
+  /** the version Ovis would install, or null: no build for this PC, or herdr-core was not looked for yet or is there */
+  offer: () => { version: string } | null;
+  /** installs it and looks for herdr-core again; throws, leaving the PC as it was, when it cannot */
+  install: () => Promise<void>;
 }
 
 export interface MoveService {
@@ -43,6 +52,8 @@ export interface MoveService {
   /** starts the move, or waits for every pane to be done first; an error code when it cannot */
   start: (revision: string) => Promise<"plan_changed" | "unavailable" | "already_moving" | "runtime_switching" | null>;
   cancel: () => void;
+  /** installs herdr-core where only that keeps the move from being offered; an error code when it is not offered, throws when the install fails */
+  install: () => Promise<"unavailable" | "installing" | null>;
   /** a move waits or runs: no other runtime switch meanwhile */
   busy: () => boolean;
   stop: () => void;
@@ -219,11 +230,21 @@ export function moveService(options: MoveServiceOptions): MoveService {
     } catch { /* herdr did not answer this look: the next one asks again */ }
     if (wait === generation && status.state === "waiting") timer = setTimeout(() => void look(wait), WAIT_LOOK_MS);
   };
+  let installing = false;
+  /** herdr-core is all the move lacks here, and Ovis can install it */
+  const installOffer = (): { version: string } | null => {
+    const facts = options.facts();
+    if (moveUnavailable(options.serving(), facts) !== "no_herdr_core" || facts?.app_installed !== false) return null;
+    return options.installer?.offer() ?? null;
+  };
   return {
     read: async () => {
       if (status.state === "moving" && status.step === "switching" && !running) status = settle();
       const reason = moveUnavailable(options.serving(), options.facts());
-      if (reason !== null) return { available: false, reason, status };
+      if (reason !== null) {
+        const install = reason === "no_herdr_core" ? installOffer() : null;
+        return { available: false, reason, ...(install ? { install } : {}), status };
+      }
       return { available: true, plan: await plan(), status };
     },
     start: async (revision) => {
@@ -245,6 +266,13 @@ export function moveService(options: MoveServiceOptions): MoveService {
       } finally {
         starting = false;
       }
+    },
+    install: async () => {
+      if (installing) return "installing";
+      if (installOffer() === null || options.installer === undefined) return "unavailable";
+      installing = true;
+      try { await options.installer.install(); } finally { installing = false; }
+      return null;
     },
     cancel: () => {
       if (status.state === "interrupted") {

@@ -75,7 +75,11 @@ export type MoveStatus =
   | { state: "done" }
   | { state: "rolled_back" | "interrupted"; reason: string; left: { pane_id: string; agent: string; why: string }[] };
 
-export type MovePlanResponse = ({ available: true; plan: MovePlan } | { available: false; reason: MoveUnavailable }) & { status: MoveStatus };
+/**
+ * `install`: no herdr-core is on this PC, and Ovis can install that version itself
+ * (POST /api/runtime/move/install); once it is in, the move is offered.
+ */
+export type MovePlanResponse = ({ available: true; plan: MovePlan } | { available: false; reason: MoveUnavailable; install?: { version: string } }) & { status: MoveStatus };
 
 /** POST /api/runtime/move: the plan's revision as shown. Busy panes make it wait; DELETE cancels a wait. */
 export interface MoveStartRequest {

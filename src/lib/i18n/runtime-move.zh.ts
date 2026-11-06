@@ -6,6 +6,11 @@
 export const RUNTIME_MOVE_ZH: Record<string, string> = {
   "Move everything to herdr-core": "全部迁移到 herdr-core",
   "Every workspace, tab and agent reopens on herdr-core, all at once.": "所有工作区、标签页和 Agent 一次性在 herdr-core 上重新打开。",
+  "Install herdr-core and move everything": "安装 herdr-core 并全部迁移",
+  "Installs herdr-core {version} into ~/.local/bin, then shows what moves before anything does.": "将 herdr-core {version} 安装到 ~/.local/bin,然后先显示将迁移的内容。",
+  "Install and move…": "安装并迁移…",
+  "Installing…": "正在安装…",
+  "Could not install: {detail}": "无法安装:{detail}",
   "Move…": "迁移…",
   "Waiting…": "等待中…",
   "Moving…": "迁移中…",

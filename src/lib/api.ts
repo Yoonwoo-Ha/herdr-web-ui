@@ -235,6 +235,13 @@ export async function startMove(revision: string): Promise<void> {
   if (!response.ok) throw await errorFrom(url, response);
 }
 
+/** Installs herdr-core where the move offers it (`install` in the plan's answer); the move is offered once it is in. */
+export async function installHerdrCore(): Promise<void> {
+  const url = "/api/runtime/move/install";
+  const response = await apiFetch(url, { method: "POST", headers: { "x-herdr-update": "1" } });
+  if (!response.ok) throw await errorFrom(url, response);
+}
+
 /** Ends a wait for busy panes; a move under way is not stopped. */
 export async function cancelMove(): Promise<void> {
   const url = "/api/runtime/move";
