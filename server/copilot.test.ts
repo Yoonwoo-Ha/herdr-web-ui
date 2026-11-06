@@ -298,6 +298,46 @@ it.skipIf(process.platform !== "linux")("follows a second rotation that comes be
   } finally { await fixture.close(); }
 });
 
+for (const between of ["output", "another registration"] as const) {
+  it.skipIf(process.platform !== "linux")(`waits out a rotation moving its copies up after ${between}, then follows it`, async () => {
+    const fixture = await logFixture([session, other]);
+    const { environment, log, pid } = fixture;
+    const copy = (index: number) => log.replace(/\.log$/, `.${index}.log`);
+    const read = () => readCopilotProcessSession(environment, ["copilot"], pid);
+    try {
+      appendFileSync(log, register(session));
+      const before = fixture.binding();
+      expect(before?.sessionId).toBe(session);
+      appendFileSync(log, between === "output" ? "later output\n" : register(other));
+      writeFileSync(copy(1), readFileSync(log));
+      fs.truncateSync(log, 0);
+      appendFileSync(log, "after the first rotation\n");
+      // Copilot 1.0 moves the copies up before it renames the new one into place
+      fs.renameSync(copy(1), copy(2));
+      expect(read().diagnostic).toBe("copilot_log_read_raced");
+      expect(read().diagnostic).toBe("copilot_log_read_raced");
+      writeFileSync(copy(1), readFileSync(log));
+      fs.truncateSync(log, 0);
+      appendFileSync(log, "after the second rotation\n");
+      if (between === "output") expect(fixture.binding()).toEqual(before);
+      else expect(fixture.binding()?.sessionId).toBe(other);
+    } finally { await fixture.close(); }
+  });
+}
+
+it.skipIf(process.platform !== "linux")("binds a registration in the open log while a log copy stays missing", async () => {
+  const fixture = await logFixture([session, other]);
+  const { environment, log, pid } = fixture;
+  try {
+    appendFileSync(log, register(session));
+    expect(fixture.binding()?.sessionId).toBe(session);
+    writeFileSync(log.replace(/\.log$/, ".2.log"), readFileSync(log));
+    fs.truncateSync(log, 0);
+    appendFileSync(log, register(other));
+    expect(readCopilotProcessSession(environment, ["copilot"], pid).session?.sessionId).toBe(other);
+  } finally { await fixture.close(); }
+});
+
 it("parses persisted Copilot messages and tool rounds once, with failures and recorded metadata", () => {
   const text = start + prompt("Visible prompt")
     + line("assistant.message", { content: "Checking.", phase: "commentary", toolRequests: [{ toolCallId: "call-1", name: "shell", arguments: { command: "pwd" }, toolTitle: "Check directory" }], model: "fixture-model" })
