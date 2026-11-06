@@ -1,4 +1,4 @@
-import { constants, closeSync, fstatSync, lstatSync, openSync, opendirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
+import { constants, closeSync, fstatSync, lstatSync, openSync, opendirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, type BigIntStats } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { createHash, randomUUID, type Hash } from "node:crypto";
 import { readProcessBirth } from "./process-owner.ts";
@@ -172,6 +172,7 @@ function scanForegroundLog(pid: number, logDirectories: readonly string[]): Fore
   const directory = opendirSync(`/proc/${pid}/fd`);
   let found: ForegroundState = legacy;
   let logFound = false;
+  let logged: { target: string; dev: bigint; ino: bigint } | undefined;
   let count = 0;
   try {
     for (let descriptor = directory.readSync(); descriptor; descriptor = directory.readSync()) {
@@ -194,6 +195,14 @@ function scanForegroundLog(pid: number, logDirectories: readonly string[]): Fore
         return deny("copilot_log_missing");
       }
       if (!logDirectories.some((path) => dirname(target) === path) || LOG_NAME.exec(basename(target))?.[1] !== String(pid)) continue;
+      // Copilot opens its log a second time to copy it when it rotates: that is still the one log,
+      // when it reaches the very file read. A path renamed and reused meanwhile is another log.
+      if (logFound && target === logged?.target) {
+        let twin: BigIntStats | undefined;
+        try { twin = statSync(`/proc/${pid}/fd/${descriptor.name}`, { bigint: true }); }
+        catch { twin = undefined; }
+        if (twin?.dev === logged.dev && twin.ino === logged.ino) continue;
+      }
       observe();
       if (logFound) return deny("copilot_log_ambiguous");
       logFound = true;
@@ -203,6 +212,7 @@ function scanForegroundLog(pid: number, logDirectories: readonly string[]): Fore
         try {
           const checkedAtNs = BigInt(Date.now()) * 1_000_000n;
           const stat = fstatSync(fd, { bigint: true });
+          logged = { target, dev: stat.dev, ino: stat.ino };
           const named = statSync(target, { bigint: true });
           if (!stat.isFile() || stat.dev !== named.dev || stat.ino !== named.ino) return deny("copilot_log_replaced");
           if (stat.size > LOG_HASH_BYTES) return deny("copilot_log_limit");

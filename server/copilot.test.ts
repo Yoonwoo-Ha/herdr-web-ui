@@ -42,6 +42,7 @@ async function logFixture(held: readonly string[]) {
       if (command === "close") closeSync(fd);
       else if (command === "open") fd = openSync(log, "a");
       else if (command === "extra") openSync(root + "/logs/process-200-" + process.pid + ".log", "w");
+      else if (command === "reread") openSync(log, "r");
       else throw new Error("unexpected fixture command: " + command);
       console.log("ok");
     });
@@ -68,6 +69,32 @@ async function logFixture(held: readonly string[]) {
     },
   };
 }
+
+it.skipIf(process.platform !== "linux")("reads a log Copilot opens a second time to copy it as the one log", async () => {
+  const fixture = await logFixture([]);
+  const { environment, log, pid } = fixture;
+  try {
+    appendFileSync(log, register(session));
+    const before = fixture.binding();
+    expect(before?.sessionId).toBe(session);
+    // Copilot 1.0 reads its open log on a second descriptor while it copies it for a rotation
+    await fixture.command("reread");
+    expect(fixture.binding()).toEqual(before);
+    appendFileSync(log, register(other));
+    expect(fixture.binding()?.sessionId).toBe(other);
+    // another file under the same path, as after a rename between two looks, is another log
+    await fixture.command("extra");
+    const realLink = fs.readlinkSync;
+    const links = spyOn(fs, "readlinkSync").mockImplementation(((path: fs.PathLike) => {
+      const target = realLink(path, "utf8");
+      return target.endsWith(`/process-200-${pid}.log`) ? log : target;
+    }) as typeof fs.readlinkSync);
+    try { expect(readCopilotProcessSession(environment, ["copilot"], pid).diagnostic).toBe("copilot_log_ambiguous"); }
+    finally { links.mockRestore(); }
+    // as does another log of the same process
+    expect(readCopilotProcessSession(environment, ["copilot"], pid).diagnostic).toBe("copilot_log_ambiguous");
+  } finally { await fixture.close(); }
+});
 
 for (const revoked of [false, true]) {
   it.skipIf(process.platform !== "linux")(`keeps ${revoked ? "denied" : "registered"} Copilot ownership when epoch start time changes`, async () => {
