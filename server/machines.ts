@@ -29,7 +29,7 @@ import { offerFromCode, TypedCodeError } from "../shared/relay-code-offer.ts";
 import { TailnetPcError, TailnetPcs, type TailnetPcsOptions } from "./tailnet-pcs.ts";
 
 import type { RelaySocket } from "../shared/relay-channel.ts";
-import { openRelayPcTunnel, RelayPcKey, RelayPcRefused, relayPcLabel, removeRelayPcKey, type RelayPcTunnel } from "./relay-pc.ts";
+import { newRouteProbes, openRelayPcTunnel, RelayPcKey, RelayPcRefused, relayPcLabel, removeRelayPcKey, type RelayPcTunnel, type RouteProbes } from "./relay-pc.ts";
 import type { HcMachine, MachineBridge } from "./herdr-core/machine-bridge.ts";
 
 /** a PC keeps the six-digit code in its offer for 10 minutes at most (server/devices.ts) */
@@ -42,6 +42,8 @@ interface Runtime {
   ssh?: SshConnection;
   /** a PC added through the relay: its connection and loopback forward (server/relay-pc.ts) */
   tunnel?: RelayPcTunnel;
+  /** when its earlier routes were last probed, kept across its tunnels (relay-pc.ts RouteProbes) */
+  routeProbes?: RouteProbes;
   /** another machine of this PC's herdr-core (kind "hc"): what the core calls it, and its server once started (herdr-core/machine-bridge.ts) */
   hc?: { id: string; name: string; bridge?: MachineBridge };
   endpoint?: { url: string; token: string };
@@ -1473,6 +1475,7 @@ export class MachineManager {
       ...(this.relaySocket ? { socket: this.relaySocket } : {}), ...(this.relayDirectSocket ? { directSocket: this.relayDirectSocket } : {}),
       onLost: (error) => this.lost(runtime, generation, error),
       onMoved: () => this.moved(runtime, generation),
+      probes: runtime.routeProbes ??= newRouteProbes(),
     };
   }
   /**

@@ -7,8 +7,9 @@ import type { HerdrIdentity, Machine, MachineEvent } from "../shared/machines.ts
 import type { SessionSnapshot } from "../shared/protocol.ts";
 import { createServer } from "./index.ts";
 import { RelayService } from "./relay/service.ts";
-import { openRelayPcTunnel, RelayPcKey } from "./relay-pc.ts";
+import { newRouteProbes, openRelayPcTunnel, RelayPcKey } from "./relay-pc.ts";
 import { decodeOffer } from "../shared/relay-offer.ts";
+import type { RelayOffer } from "../shared/relay-offer.ts";
 import { bounded, deferred } from "./relay/test-helpers.ts";
 
 const cleanup: (() => void | Promise<void>)[] = [];
@@ -20,14 +21,20 @@ function stateDir(): string {
   return dir;
 }
 
-/** The private address B names for its direct carrier in these tests; A's dials to it reach B's loopback listener. */
+/**
+ * The private address B names for its direct carrier in these tests, on the direct listener's own port (the only one
+ * a PC server dials); A's dials to it reach B's loopback listener on whatever port that got.
+ */
 const LAN = "10.99.0.1";
+/** B's Tailscale address in the tests that name one */
+const TAILNET = "100.64.0.7";
+const listener = { port: 0 };
 
 /**
  * PC B with the relay on, PC A that adds it through the relay, and the local relay between them. `direct`: B also
  * listens on its network, and A reaches that address on the dials `reachable` lets through (else nothing answers).
  */
-async function twoPcs(options: { direct?: { reachable: (dial: number) => boolean; held?: (dial: number) => Promise<void> | undefined } } = {}) {
+async function twoPcs(options: { direct?: { reachable: (dial: number, host: string) => boolean; held?: (dial: number) => Promise<void> | undefined; named?: (port: number) => readonly string[] } } = {}) {
   const relay = startBunRelay({ port: 0, limiters: {
     perAddress: { async limit() { return { success: true }; } },
     global: { async limit() { return { success: true }; } },
@@ -52,7 +59,7 @@ async function twoPcs(options: { direct?: { reachable: (dial: number) => boolean
   };
   const bState = stateDir();
   const service = new RelayService({ stateDir: bState, relay: `wss://127.0.0.1:${relay.port}`, connect: local, pairCodeRelay: `wss://127.0.0.1:${relay.port}`,
-    ...(options.direct ? { direct: { addresses: () => ["127.0.0.1"], advertise: (port: number) => [`ws://${LAN}:${port}`], peerAllowed: () => true, preferredPort: 0 } } : {}) });
+    ...(options.direct ? { direct: { addresses: () => ["127.0.0.1"], advertise: (port: number) => { listener.port = port; return options.direct!.named?.(port) ?? [`ws://${LAN}:7319`]; }, peerAllowed: () => true, preferredPort: 0 } } : {}) });
   const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relay: service });
   cleanup.push(async () => { await service.shutdown(); b.stop(); });
   const bBase = `http://127.0.0.1:${b.port}`;
@@ -69,14 +76,17 @@ async function twoPcs(options: { direct?: { reachable: (dial: number) => boolean
   expect(approvals.localOnlyOpen()).toBe(true);
   const { url: link } = await offered.json() as { url: string };
   const aState = stateDir();
-  const lan = { dials: 0 };
+  const lan = { dials: 0, dialed: [] as string[], ended: [] as string[] };
   const onLan = (url: string): WebSocket => {
     const target = new URL(url);
-    expect(target.hostname).toBe(LAN);
+    lan.dialed.push(target.host);
+    // anything but B's own addresses goes nowhere (and is recorded)
+    if (target.hostname !== LAN && target.hostname !== TAILNET) return new WebSocket("ws://127.0.0.1:1/");
     // port 1 on loopback refuses at once, as an address of another network does
     const dial = ++lan.dials;
-    const port = options.direct?.reachable(dial) ? target.port : "1";
+    const port = options.direct?.reachable(dial, target.hostname) ? (target.port === "7319" ? String(listener.port) : target.port) : "1";
     const socket = new WebSocket(`ws://127.0.0.1:${port}${target.pathname}${target.search}`);
+    socket.addEventListener("close", () => lan.ended.push(target.hostname));
     const held = options.direct?.held?.(dial);
     if (!held) return socket;
     // what the PC answers on this dial reaches A only once `held` settles: a sign-in that takes its time
@@ -425,4 +435,135 @@ it("checks the direct route again when this PC's addresses change, and moves the
   await bounded(moved.promise);
   expect(tunnel.route).toBe("direct");
   expect(lost).toEqual([]);
+}, 60_000);
+
+it("dials none of the carriers a PC names off its listener's port family or on link-local, and uses the one it may", async () => {
+  // Given B naming, inside its AUTH_OK, a link-local address and a service port beside its real carrier
+  const { link, local, onLan, lan } = await twoPcs({ direct: { reachable: () => true,
+    named: (port) => ["ws://169.254.169.254:7319", `ws://${LAN}:80`, `ws://${LAN}:${port === 7319 ? 7320 : port}`, `ws://${LAN}:7319`] } });
+  const offer = decodeOffer(link)!;
+  const key = await RelayPcKey.create(join(stateDir(), "key.json"), offer, () => true);
+  const moved = deferred<void>();
+  // When A pairs and checks B's direct routes
+  const tunnel = await openRelayPcTunnel(offer, key, { socket: local as never, directSocket: onLan as never, onLost: () => {}, onMoved: () => moved.resolve() });
+  cleanup.push(() => tunnel.close());
+  await bounded(moved.promise);
+  // Then it only ever dialed B's listener on the direct port, and keeps only that one
+  expect([...new Set(lan.dialed)]).toEqual([`${LAN}:7319`]);
+  expect(key.direct).toEqual([`ws://${LAN}:7319`]);
+}, 60_000);
+
+/** Waits, bounded, until `done` holds. */
+async function until(done: () => boolean): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!done()) { if (Date.now() > deadline) throw new Error("condition not reached"); await Bun.sleep(10); }
+}
+
+it("keeps a PC's probe deadline across its tunnels, so reconnects dial its routes no more often", async () => {
+  // Given B's address that does not answer, and A's per-PC probe state
+  const { link, local, onLan, lan } = await twoPcs({ direct: { reachable: () => false } });
+  const offer = decodeOffer(link)!;
+  const key = await RelayPcKey.create(join(stateDir(), "key.json"), offer, () => true);
+  const probes = newRouteProbes();
+  const first = await openRelayPcTunnel(offer, key, { socket: local as never, directSocket: onLan as never, onLost: () => {}, probes });
+  // a check starts as its tunnel is handed over: its probe has dialed by now, and finds nothing
+  expect(lan.dials).toBe(1);
+  await until(() => probes.failed);
+  first.close();
+  // When the connection comes back right away, again and again (a relay that keeps dropping it, say)
+  const { code: _code, ...signIn } = offer;
+  for (let again = 0; again < 3; again++) {
+    const tunnel = await openRelayPcTunnel(signIn, key, { socket: local as never, directSocket: onLan as never, onLost: () => {}, probes });
+    tunnel.close();
+  }
+  // Then neither their sign-ins nor their checks dialed B's address again before the deadline
+  expect(lan.dials).toBe(1);
+}, 60_000);
+
+it("tries a PC's routes again on reconnect when this PC changed networks while away", async () => {
+  // Given a probe that found B's address silent on this PC's network
+  const { link, local, onLan, lan } = await twoPcs({ direct: { reachable: () => false } });
+  const offer = decodeOffer(link)!;
+  const key = await RelayPcKey.create(join(stateDir(), "key.json"), offer, () => true);
+  const probes = newRouteProbes();
+  const network = { now: "192.168.1.5" };
+  const first = await openRelayPcTunnel(offer, key, { socket: local as never, directSocket: onLan as never, onLost: () => {}, probes, network: () => network.now });
+  await until(() => probes.failed);
+  first.close();
+  const before = lan.dials;
+  // When this PC is on another network by the time it connects again
+  network.now = "10.99.0.20";
+  const { code: _code, ...signIn } = offer;
+  const second = await openRelayPcTunnel(signIn, key, { socket: local as never, directSocket: onLan as never, onLost: () => {}, probes, network: () => network.now });
+  cleanup.push(() => second.close());
+  // Then it tried B's address again at once
+  expect(lan.dials).toBeGreaterThan(before);
+}, 60_000);
+
+it("still signs in on a working Tailscale route after a check of its same-network route found that silent", async () => {
+  // Given B named on its network (not reachable from A) and on Tailscale (reachable), and A moved to Tailscale
+  const { link, local, onLan, lan } = await twoPcs({ direct: { reachable: (_dial, host) => host === TAILNET,
+    named: () => [`ws://${LAN}:7319`, `ws://${TAILNET}:7319`] } });
+  const offer = decodeOffer(link)!;
+  const key = await RelayPcKey.create(join(stateDir(), "key.json"), offer, () => true);
+  const probes = newRouteProbes();
+  const network = { now: "192.168.1.5" };
+  const open = (from: RelayOffer, moved?: () => void) => openRelayPcTunnel(from, key, { socket: local as never, directSocket: onLan as never,
+    onLost: () => {}, ...(moved ? { onMoved: moved } : {}), probes, network: () => network.now, networkCheckMs: 50 });
+  const moved = deferred<void>();
+  const first = await open(offer, () => moved.resolve());
+  await bounded(moved.promise);
+  first.close();
+  const { code: _code, ...signIn } = offer;
+  const second = await open(signIn);
+  expect(second.route).toBe("direct");
+  // When this PC's addresses change and the check of the earlier, same-network route finds it silent
+  const endedBefore = lan.ended.filter((host) => host === LAN).length;
+  network.now = "10.20.0.3";
+  await until(() => lan.ended.filter((host) => host === LAN).length > endedBefore);
+  // the check settles in the turn its probe's socket closed
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  second.close();
+  // Then a reconnect still signs in on Tailscale, the route that works
+  const third = await open(signIn);
+  cleanup.push(() => third.close());
+  expect(third.route).toBe("direct");
+}, 60_000);
+
+it("lets a sign-in try the direct routes again once a check found one answering, even if it could not move", async () => {
+  // Given a PC whose direct routes were found silent a while ago (the next check is due in a moment)
+  const { link, local, onLan, lan } = await twoPcs({ direct: { reachable: (dial) => dial === 1 } });
+  const offer = decodeOffer(link)!;
+  const key = await RelayPcKey.create(join(stateDir(), "key.json"), offer, () => true);
+  const probes = { ...newRouteProbes(), failed: true, at: performance.now() - 5 * 60_000 + 300 };
+  // When that check's probe finds B answering (dial 1) but the move's sign-in there fails (dial 2)
+  const tunnel = await openRelayPcTunnel(offer, key, { socket: local as never, directSocket: onLan as never, onLost: () => {}, probes });
+  cleanup.push(() => tunnel.close());
+  await until(() => lan.ended.length >= 2);
+  // the check settles in the turn the move's socket closed
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // Then the next sign-in is not held back from the route that answered
+  expect(tunnel.route).toBe("relay");
+  expect(probes.failed).toBe(false);
+}, 60_000);
+
+it("records nothing for a PC when its tunnel closes in the middle of a check", async () => {
+  // Given a check whose probe of B's address is under way (held there, dial 1)
+  const holding = deferred<void>();
+  const { link, local, onLan } = await twoPcs({ direct: { reachable: () => true, held: (dial) => {
+    if (dial !== 1) return undefined;
+    holding.resolve();
+    return new Promise<void>(() => {});
+  } } });
+  const offer = decodeOffer(link)!;
+  const key = await RelayPcKey.create(join(stateDir(), "key.json"), offer, () => true);
+  const probes = newRouteProbes();
+  const tunnel = await openRelayPcTunnel(offer, key, { socket: local as never, directSocket: onLan as never, onLost: () => {}, probes });
+  await bounded(holding.promise);
+  // When the tunnel closes (a relay that ends the connection, say) before the probe can answer
+  tunnel.close();
+  // the cut-off probe settles in this turn's microtasks; the check would record its result right after
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // Then the next sign-in is not held back from the PC's direct routes
+  expect(probes.failed).toBe(false);
 }, 60_000);

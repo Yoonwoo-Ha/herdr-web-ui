@@ -30,6 +30,36 @@ export class RelayPcRefused extends Error {
   }
 }
 
+/** The port a PC's direct listener asks for first (server/relay/direct.ts DIRECT_PORT, not imported: that module listens). */
+const DIRECT_LISTENER_PORT = 7319;
+
+/**
+ * Whether this server dials a carrier another PC named (docs/remote-pcs.md): an address on a private network (RFC
+ * 1918) or Tailscale's, on the port a direct listener asks for (7319). Never link-local, where a cloud's metadata
+ * service answers, and never another port: no other port can be told apart from some other service's, so a PC whose
+ * listener had to take another one is reached through the relay. The protocol takes more (shared/relay-mux.ts
+ * isDirectCarrier), so an AUTH_OK that names more is still read; only the dialing is narrower.
+ */
+export function serverDialable(carrier: string): boolean {
+  if (!isDirectCarrier(carrier)) return false;
+  const { hostname, port } = new URL(carrier);
+  return !hostname.startsWith("169.254.") && Number(port) === DIRECT_LISTENER_PORT;
+}
+
+/**
+ * What a PC's direct routes last showed, kept per PC across its tunnels by the caller, so a connection that keeps
+ * dropping (a relay that ends it, say) does not dial them again on each return: when they were last tried, how much
+ * longer the next try waits, whether that try found none answering, and the network this PC was on then.
+ */
+export interface RouteProbes { at: number; backoff: number; failed: boolean; network?: string; wallAt?: number }
+export function newRouteProbes(): RouteProbes { return { at: -Infinity, backoff: 1, failed: false }; }
+/** Notes a try now, on both clocks: the monotonic one may stand still while the PC sleeps. */
+function tried(probes: RouteProbes): void { probes.at = performance.now(); probes.wallAt = Date.now(); }
+/** Whether this PC slept since the last try: much more wall-clock time passed than monotonic time. */
+function sleptSince(probes: RouteProbes): boolean {
+  return probes.wallAt !== undefined && (Date.now() - probes.wallAt) - (performance.now() - probes.at) > 60_000;
+}
+
 export function relayPcLabel(): string { return `Ovis on ${hostname()}`.slice(0, 64); }
 
 interface SavedKey {
@@ -69,8 +99,8 @@ export class RelayPcKey implements RelayDeviceStore {
     if (saved?.v !== 1 || typeof saved.device_id !== "string" || typeof saved.private_pkcs8 !== "string"
       || typeof saved.public_spki !== "string" || typeof saved.label !== "string") throw new Error("Invalid relay PC key");
     const offer = validateOffer(saved.offer);
-    // only what an AUTH_OK could have named: anything else in the file is not an address to dial
-    const direct = Array.isArray(saved.direct) ? saved.direct.filter((carrier) => typeof carrier === "string" && isDirectCarrier(carrier)).slice(0, MAX_DIRECT_CARRIERS) : [];
+    // only carriers this server dials (serverDialable): anything else in the file is not an address to dial
+    const direct = Array.isArray(saved.direct) ? saved.direct.filter((carrier) => typeof carrier === "string" && serverDialable(carrier)).slice(0, MAX_DIRECT_CARRIERS) : [];
     return new RelayPcKey(path, {
       server_id: offer.server_id, server_public_key: offer.server_public_key, relay: offer.relay,
       ...(offer.name === undefined ? {} : { name: offer.name }),
@@ -104,12 +134,14 @@ export class RelayPcKey implements RelayDeviceStore {
     const { server_id, server_public_key, relay, name } = next;
     // the offer from `next`: a relay the PC named in AUTH_OK (relay-hints) is kept across a restart too
     const offer: RelayOffer = { v: 1, server_id, server_public_key, relay, ...(name === undefined ? {} : { name }) };
+    // what the PC named that this server would not dial is not kept either
+    const direct = next.direct?.filter(serverDialable) ?? [];
     writePrivateState(this.path, {
       v: 1, offer, device_id: next.device_id, label: next.label, public_spki: next.public_spki, private_pkcs8: this.pkcs8,
-      ...(next.direct?.length ? { direct: [...next.direct] } : {}),
+      ...(direct.length ? { direct } : {}),
     } satisfies SavedKey);
-    this.device = next;
-    return next;
+    this.device = { ...next, direct };
+    return this.device;
   }
 
   async list(): Promise<RelayDevice[]> { return [this.device]; }
@@ -196,9 +228,19 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
   /** this PC's own addresses as one string that changes with them (networkNow by default), and how often it is read */
   network?: () => string;
   networkCheckMs?: number;
+  /** this PC's probe deadline, kept by the caller across its tunnels; a tunnel of its own by default */
+  probes?: RouteProbes;
 }): Promise<RelayPcTunnel> {
   const readNetwork = options.network ?? networkNow;
   const networkCheckMs = options.networkCheckMs ?? NETWORK_CHECK_MS;
+  const probes = options.probes ?? newRouteProbes();
+  // this PC on another network than at the last try: the PC's routes may answer now, whatever that try found
+  const startNetwork = readNetwork();
+  // or after a sleep, which may end on another network with the same addresses
+  if ((probes.network !== undefined && probes.network !== startNetwork) || sleptSince(probes)) Object.assign(probes, newRouteProbes());
+  probes.network = startNetwork;
+  /** whether a sign-in tries the direct routes: none was found silent from the relay, or the wait after that is over */
+  const due = (): boolean => !probes.failed || probes.at + PROBE_EVERY_MS * probes.backoff <= performance.now();
   const directSocket = options.directSocket ?? ((url: string) => new WebSocket(url) as unknown as RelaySocket);
   // a pairing's one-time code is spent once admitted: every channel after the first signs in with the key
   const { code: _code, ...signIn } = offer;
@@ -253,16 +295,24 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
   /** The channel on the first direct carrier that admits this PC within DIRECT_BUDGET_MS; undefined when none does. */
   const openDirect = async (): Promise<RelayChannel | undefined> => {
     const carriers = routes();
+    if (carriers.length === 0 || !due()) return undefined;
     const ends = performance.now() + DIRECT_BUDGET_MS;
     for (const [index, direct] of carriers.entries()) {
       const left = ends - performance.now();
-      if (left <= 0) return undefined;
+      if (left <= 0) break;
       // a carrier that stays silent takes only its share, so the ones after it still get a turn
-      try { return await openOn(direct, Math.max(1, left / (carriers.length - index))); } catch (error) {
+      try {
+        const channel = await openOn(direct, Math.max(1, left / (carriers.length - index)));
+        probes.failed = false;
+        return channel;
+      } catch (error) {
         // the PC itself refused after Noise proved it: final here as through the relay
         if (fatal(error) && !(error instanceof DirectCarrierUnusableError)) throw error;
       }
     }
+    // none answered: this counts as the check, so the relay's admission does not probe them again at once
+    tried(probes);
+    probes.failed = true;
     return undefined;
   };
   try {
@@ -279,7 +329,7 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
   let sentAt = -Infinity;
   const install = (channel: RelayChannel): void => {
     current = channel;
-    learned = channel.directCarriers ?? learned;
+    learned = (channel.directCarriers ?? learned).filter(serverDialable);
     if (channel.direct !== undefined) worked = channel.direct;
     channel.mux.onStreamAvailable = () => { for (const wake of [...waiting]) wake(); };
   };
@@ -404,9 +454,7 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
   // Coming back to an earlier route. One check at a time; a network change while one runs asks for another after it.
   let checking = false;
   let recheck = false;
-  let probedAt = -Infinity;
   /** a move that came back unusable (a carrier that answers a probe but cannot carry a session) waits longer next time */
-  let backoff = 1;
   let nextCheck: ReturnType<typeof setTimeout> | undefined;
   /** The routes before the one carrying the channel now: every direct carrier while on the relay. */
   const earlier = (): string[] => {
@@ -451,7 +499,7 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
       // only streams waiting for this move may be under way, and no input since it began; else the old session stays
       if (!gone && (busy > waitingForMove || sentAt >= startedAt)) { next.close(); return "busy"; }
       install(next);
-      backoff = 1;
+      Object.assign(probes, { backoff: 1, failed: false });
       options.onMoved?.();
       from.close();
       return "moved";
@@ -463,20 +511,23 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
     if (closed || checking) return;
     const candidates = earlier();
     if (candidates.length === 0) return;
-    const wait = probedAt + PROBE_EVERY_MS * backoff - performance.now();
+    const wait = probes.at + PROBE_EVERY_MS * probes.backoff - performance.now();
     if (wait > 0) { if (nextCheck === undefined) later(wait); return; }
     checking = true;
     recheck = false;
-    probedAt = performance.now();
+    tried(probes);
     clearTimeout(nextCheck); nextCheck = undefined;
     const from = current;
     const still = (): boolean => !closed && current === from;
     void (async () => {
       /** a carrier that proved to be the PC but could not carry a session: the next check waits longer */
       let unusable = false;
+      /** some carrier proved to be the PC */
+      let answered = false;
       for (const direct of candidates) {
         if (!still()) return;
         if (!await probeDirect(signIn, direct, directSocket, DIRECT_BUDGET_MS, ending.signal)) continue;
+        answered = true;
         let outcome: "moved" | "busy" | "failed" = "busy";
         for (let round = 0; round < IDLE_CHECKS && still() && outcome === "busy"; round++) {
           // input a moment ago: only until it has been quiet long enough; a request under way: a while
@@ -486,15 +537,22 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
         if (outcome === "failed") unusable = true;
         if (outcome === "moved" || !still()) return;
       }
-      if (unusable) backoff = Math.min(backoff * 2, 12);
+      // from the relay, and no carrier answered at all: a sign-in skips them until the next check is due. Not when a
+      // later direct route carries the channel (it works), nor when one answered but the move had to wait.
+      // a check whose tunnel closed or moved meanwhile proves nothing (its probe was cut off): the state is not its to set
+      if (!still()) return;
+      if (from?.direct === undefined && !answered) probes.failed = true;
+      // a carrier that proved to be the PC is one a sign-in tries, whatever an earlier try found
+      if (answered) probes.failed = false;
+      if (unusable) probes.backoff = Math.min(probes.backoff * 2, 12);
     })().catch(() => { /* a probe that fails is a route that is not there: the current one stays */ }).finally(() => {
       checking = false;
       if (closed) return;
-      if (recheck || current !== from) { recheck = false; if (current === from) probedAt = -Infinity; check(); return; }
-      later(PROBE_EVERY_MS * backoff);
+      if (recheck || current !== from) { recheck = false; if (current === from) probes.at = -Infinity; check(); return; }
+      later(PROBE_EVERY_MS * probes.backoff);
     });
   };
-  let network = readNetwork();
+  let network = startNetwork;
   // the wall clock: the monotonic one may stand still while the PC sleeps, which would hide the wake
   let lastLook = Date.now();
   const watcher = setInterval(() => {
@@ -504,8 +562,7 @@ export async function openRelayPcTunnel(offer: RelayOffer, key: RelayPcKey, opti
     if (seen === network && now - lastLook < networkCheckMs * 2) { lastLook = now; return; }
     network = seen;
     lastLook = now;
-    probedAt = -Infinity;
-    backoff = 1;
+    Object.assign(probes, newRouteProbes(), { network: seen });
     if (checking) recheck = true; else check();
   }, networkCheckMs);
   watcher.unref?.();

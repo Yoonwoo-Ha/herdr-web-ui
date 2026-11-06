@@ -101,8 +101,14 @@ The connection takes the best route it can, as the phone apps do ([Direct on the
 network](relay.md#direct-on-the-same-network)): that PC's direct carriers first (addresses on its own
 network before Tailscale ones), then the relay. The carriers come from that PC inside the encrypted
 channel on each sign-in (this server always offers `direct-tailnet`, so a Tailscale address is named
-too) and are kept with the key, so they follow it to another network. A sign-in
-tries them within 1.5 s, then the relay. While a later route carries it, this server checks the
+too) and are kept with the key, so they follow it to another network. This server dials only those on
+a private network or Tailscale's, on the direct listener's port 7319: never link-local or another port,
+whatever that PC names (a PC whose listener had to take another port is reached through the relay). A sign-in
+tries them within 1.5 s, then the relay. A try through the relay that found none answering, at a sign-in or a
+check, holds the next one back for that PC across reconnects until the check is due again (5 minutes,
+longer after a carrier that answered but could not carry a session), unless this PC is on another
+network or slept meanwhile. A route that works (Tailscale, say, while the PC's own network does not
+answer from here) is always tried first. While a later route carries it, this server checks the
 earlier ones (a Noise handshake to the pinned key, no session) after each sign-in, then at most every
 5 minutes, and at once when its own addresses change or a read comes a minute or more late (it slept);
 it reads its addresses every 30 s and sends nothing for that. Once one proves to be that PC and no request or terminal input
