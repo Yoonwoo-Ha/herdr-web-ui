@@ -483,9 +483,11 @@ it("keeps background workspaces in place until this device turns their part on, 
 });
 
 it("ignores what was saved for the rows Settings no longer has", () => {
-  const settings = sanitizeSettings({ historyPrompts: 50, composerNewTabButton: true, markdownWidth: "full" });
-  for (const key of ["historyPrompts", "composerNewTabButton", "markdownWidth"]) expect(settings).not.toHaveProperty(key);
+  const settings = sanitizeSettings({ historyPrompts: 50, composerNewTabButton: true, markdownWidth: "full", alertInApp: false });
+  for (const key of ["historyPrompts", "composerNewTabButton", "markdownWidth", "alertInApp"]) expect(settings).not.toHaveProperty(key);
   expect(telemetrySettingsSnapshot(settings).markdownWidth).toBe("readable");
+  // in-app alerts always drop in now: an older version's stored "off" is not reported either
+  expect(telemetrySettingsSnapshot(settings).alertInApp).toBe(true);
 });
 
 it("shows each PC's load while two or more PCs are connected, until this device chooses", () => {

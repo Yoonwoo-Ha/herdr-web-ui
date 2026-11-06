@@ -111,7 +111,7 @@ export interface Settings {
   agentMarks: AgentMarks;
   /** Settings -> Lock pinned agents (experimental): the Agents list offers Lock agent, and the locks below hold; off, none does */
   agentLocks: boolean;
-  /** Settings -> Read OpenCode subagent ends from their session (experimental): the server ends an OpenCode subagent where its parent session's record does (server/opencode-subagents.ts); off, by its own rows */
+  /** Settings -> Experimental -> OpenCode: subagent ends from their session: the server ends an OpenCode subagent where its parent session's record does (server/opencode-subagents.ts); off, by its own rows */
   opencodeParentEnds: boolean;
   /** pinned agent rows this app does not close (lib/paneLocks.ts), by their pin key; a lock holds only while its row is pinned */
   lockedAgents: string[];
@@ -236,8 +236,6 @@ export interface Settings {
   alertInput: boolean;
   /** alert this device when a turn finishes: never, after a long one, or every one */
   alertDone: DoneAlerts;
-  /** while the app is on screen, the same alerts drop in from the top edge (components/Droplet.tsx) */
-  alertInApp: boolean;
   /** an open tab chimes for the same alerts (lib/alertSound.ts), heard also when a Focus silences notifications; off until chosen */
   alertSound: boolean;
   /** one-tap replies above the composer, in order; blank ones are kept while being typed, never shown */
@@ -344,7 +342,8 @@ export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings
     alertsOn: settings.alertsOn,
     alertInput: settings.alertInput,
     alertDone: settings.alertDone,
-    alertInApp: settings.alertInApp,
+    // Settings no longer has an In the app row: in-app alerts always drop in, and telemetry keeps the field
+    alertInApp: true,
     alertSound: settings.alertSound,
     showQuickReplies: settings.showQuickReplies,
     showUsage: settings.showUsage,
@@ -428,7 +427,7 @@ export const SETTING_SCOPE = {
   pcLoad: "device",
   // a phone may group its agents by state while a desk keeps herdr's order, as with the filter
   agentGroups: "device", agentGroupSort: "device",
-  keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertInApp: "device", alertSound: "device",
+  keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertSound: "device",
   paletteLight: "device", paletteDark: "device", statusIndicators: "device",
   voiceInput: "device", voiceLanguage: "device", voiceEngine: "device", voicePolishChat: "device", voicePolishTerminal: "device",
   // Viewer layout follows this screen, as chatWidth does.
@@ -512,7 +511,6 @@ export const DEFAULT_SETTINGS: Settings = {
   alertsOn: true,
   alertInput: true,
   alertDone: "long",
-  alertInApp: true,
   alertSound: false,
   quickReplies: ["continue", "yes", "no", "commit and push", "retry"],
   showQuickReplies: false,
@@ -747,7 +745,6 @@ export function sanitizeSettings(raw: unknown): Settings {
     alertsOn: typeof record["alertsOn"] === "boolean" ? record["alertsOn"] : DEFAULT_SETTINGS.alertsOn,
     alertInput: typeof record["alertInput"] === "boolean" ? record["alertInput"] : DEFAULT_SETTINGS.alertInput,
     alertDone: record["alertDone"] === "off" || record["alertDone"] === "long" || record["alertDone"] === "always" ? record["alertDone"] : DEFAULT_SETTINGS.alertDone,
-    alertInApp: typeof record["alertInApp"] === "boolean" ? record["alertInApp"] : DEFAULT_SETTINGS.alertInApp,
     alertSound: typeof record["alertSound"] === "boolean" ? record["alertSound"] : DEFAULT_SETTINGS.alertSound,
     // kept as typed (a trailing space is the next word being started), only bounded
     quickReplies: Array.isArray(record["quickReplies"])

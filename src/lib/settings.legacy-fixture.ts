@@ -12,6 +12,8 @@ import { CHAT_WIDTHS, DICTATION_LANGUAGES, DIFF_STYLES, VOICE_BUTTONS,
 type Settings = Omit<CurrentSettings, "opencodeParentEnds" | "keyBarExpanded" | "herdrPrefixKeys" | "darkTheme" | "lightTheme" | "fileOpen" | "filesPanel" | "filesDocuments" | "webLinks" | "reuseExternalLinkTab" | "claudeLaunchMode" | "codexLaunchMode" | "claudeLaunchModel" | "claudeLaunchEffort" | "codexLaunchModel" | "codexLaunchEffort" | "followHerdrFocus" | "sidebarPeek" | "sidebarBackgroundWorkspaces" | "splitGrid" | "codexDrag" | "composerNewTabButton" | "composerArtifacts" | "composerPasteSend" | "composerBtw" | "uiFontFamily" | "terminalMirrorWrap" | "sidebarFilter" | "sidebarContext" | "sidebarAgentTree" | "foldHelpers" | "pcLoad" | "historyPrompts" | "expandThinking" | "foldWork" | "chatRequestDetails" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort" | "terminalImages" | "terminalAttachButton" | "agentLocks" | "lockedAgents" | "terminalKeyboardOnRequest" | "terminalFoldKeyBar" | "markdownOutline" | "fileFontSize" | "fileFontBase" | "agentNamedGroups" | "agentGroupNames" | "agentGroupOf" | "editTextFiles"> & {
   /** Settings → Chat → Markdown width, which this pinned version still kept (removed from Settings since) */
   markdownWidth: "readable" | "full";
+  /** Settings → Alerts → In the app, which this pinned version still kept (removed from Settings since) */
+  alertInApp: boolean;
 };
 const MARKDOWN_WIDTHS = ["readable", "full"] as const;
 type Palette = "amber" | "charcoal" | "catppuccin";

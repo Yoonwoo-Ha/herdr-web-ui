@@ -51,6 +51,14 @@ import terminalFixture from "./fixtures/terminal.json";
  * any real server's. `older` answers without facts, `error` fails the bridge health and `loading`
  * never answers it.
  */
+/**
+ * `?demo_runtime=both`: the PC has herdr's TUI and the Herdr app's core (hc) both installed, serving
+ * herdr, so Settings > About offers the switch between them (scripts/settings-pages-demo-regression.ts).
+ */
+const DEMO_RUNTIME_FACTS = new URLSearchParams(location.search).get("demo_runtime") === "both" ? {
+  herdr_runtime: { serving: "herdr" as const, source: "detected" as const, tui: { installed: true, running: true }, app_installed: true, switch_to: "herdr-core" as const, locked: null },
+  herdr_core: { version: "0.1.17", session: "default", running: true },
+} : {};
 const DEMO_SECURITY_AT_LOAD = new URLSearchParams(location.search).get("demo_security") ?? "known";
 const demoSecurity = (): string => {
   try { return sessionStorage.getItem("ovis:demo-security") ?? DEMO_SECURITY_AT_LOAD; } catch { return DEMO_SECURITY_AT_LOAD; }
@@ -1280,11 +1288,11 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     if (query.get("scope") === "bridge") {
       if (variant === "loading") return await new Promise<Response>(() => undefined);
       if (variant === "error") return error("server_unavailable", "The demo server is not answering.", 503);
-      return json({ ok: true, auth, bridge_protocol: 1, relay: demoRelayStatus(), ...facts }, 200, { "cache-control": "no-store" });
+      return json({ ok: true, auth, bridge_protocol: 1, relay: demoRelayStatus(), ...facts, ...DEMO_RUNTIME_FACTS }, 200, { "cache-control": "no-store" });
     }
     // the LAN warning is drawn only where a real server would send it: an other-address bind, no token, nothing paired
     const lan = variant === "unknown" ? { lan_exposure: { host: "0.0.0.0" } } : {};
-    return json({ ok: true, herdr: { version: "0.9.0", protocol: 22, terminal_attach: true }, auth, relay: demoRelayStatus(), ...lan, ...facts, web_ui: { boot_id: orderOf(local.id).epoch, revision: null } }, 200, { "cache-control": "no-store" });
+    return json({ ok: true, herdr: { version: "0.9.0", protocol: 22, terminal_attach: true }, auth, relay: demoRelayStatus(), ...lan, ...facts, ...DEMO_RUNTIME_FACTS, web_ui: { boot_id: orderOf(local.id).epoch, revision: null } }, 200, { "cache-control": "no-store" });
   }
   // a code starts here from the Devices group or from the relay panel's New code; the fictional phone
   // enters it only where the demo has a device list to add it to

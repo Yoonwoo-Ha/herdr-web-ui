@@ -78,7 +78,7 @@ async function check(browser: Browser, origin: string, width: number, theme: "li
       localStorage.setItem("ovis:settings", settings!);
       localStorage.setItem(`ovis:view:${pane}`, "chat");
       if (details === "true") localStorage.setItem("ovis:chat-request-details", "true");
-    }, [JSON.stringify({ language: "en", alertInApp: false, theme }), PANE, String(on)]);
+    }, [JSON.stringify({ language: "en", alertsOn: false, theme }), PANE, String(on)]);
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));

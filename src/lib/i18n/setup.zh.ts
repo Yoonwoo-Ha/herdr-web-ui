@@ -78,7 +78,6 @@ export const SETUP_ZH: Record<string, string> = {
   "Its account needs attention": "账号需要处理",
   "A chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.": "输入框上方的标签会把 Claude Code 建议的下一条提示填入输入框。使用键盘时按 Tab 即可。",
   "A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.": "在 Claude Code 面板的输入框中显示一个标签，列出该会话用 Artifact 工具发布的页面。",
-  "A chip in an OMP pane's message box lists the side conversations its session saved with /btw.": "在 OMP 窗格的输入框中显示一个标签，列出该会话用 /btw 保存的旁支对话。",
   "New workspace and New tab fill it in, still changeable there; New worktree starts the agent on it. Empty: the agent's own model.": "新建工作区和新建标签页会预先填入，仍可在那里修改；新建工作树直接用它启动代理。留空则使用代理自身的模型。",
   "Filled in the same way. Agent default adds no flag; the levels a model takes depend on the model.": "以同样方式预先填入。代理默认不添加任何参数；可选的级别取决于模型。",
 };

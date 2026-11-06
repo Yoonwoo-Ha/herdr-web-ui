@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +21,7 @@ import { comboKey, LEGACY_COMBOS } from "./theme-baseline.ts";
 // HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
 const devApp = mkdtempSync(join(tmpdir(), "herdr-settings-dev-"));
-const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Agents", "Shortcuts", "Devices and PCs", "About"];
+const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Agents", "Shortcuts", "Devices and PCs", "Experimental", "About"];
 const SETTINGS = { language: "en", showUsage: true, voiceInput: true, showQuickReplies: true, fileOpen: "panel" };
 
 const dialogOf = (page: Page) => page.getByRole("dialog", { name: "Settings", exact: true });
@@ -614,6 +615,116 @@ async function foldedGroups(browser: import("playwright-core").Browser, url: str
  * row each with a hairline under it and a PC pill, after this PC; the Account group lists none of its own. The sign-in is a fixture in this page's IndexedDB and the account service a route
  * of this context: nothing reaches GitHub or account.ovis.sh.
  */
+/**
+ * About's first line names the runtime this PC serves with its version. With herdr's TUI and the
+ * Herdr app's core both installed (`?demo_runtime=both`) it is a choice between them, and picking
+ * the other asks before switching; with one installed it is a plain fact.
+ */
+async function runtimeInUse(browser: import("playwright-core").Browser, url: string): Promise<void> {
+  for (const width of [390, 1280]) {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 800 }, isMobile: width === 390, hasTouch: width === 390, locale: "en" });
+    try {
+      await context.addInitScript((settings) => localStorage.setItem("ovis:settings", settings), JSON.stringify(SETTINGS));
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(`${url}?settings=about`);
+      const panel = dialogOf(page).getByRole("tabpanel", { name: "About", exact: true });
+      const row = panel.locator(".settings-row").filter({ hasText: "In use" });
+      await row.getByText("herdr 0.9.0", { exact: true }).waitFor();
+      assert.equal(await row.getByRole("group", { name: "In use" }).count(), 0, `${width}px: one runtime installed, no switch`);
+      await page.goto(`${url}?demo_runtime=both&settings=about`);
+      const choice = row.getByRole("group", { name: "In use" });
+      await choice.getByRole("button", { name: "herdr-core 0.1.17", exact: true }).waitFor();
+      assert.equal(await choice.getByRole("button", { name: "herdr 0.9.0", exact: true }).getAttribute("aria-pressed"), "true", `${width}px: the runtime served is the one pressed`);
+      await choice.getByRole("button", { name: "herdr-core 0.1.17", exact: true }).click();
+      const confirm = page.getByRole("alertdialog", { name: "Show the Herdr app's terminals?" });
+      await confirm.waitFor();
+      await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
+      await confirm.waitFor({ state: "detached" });
+      assert.equal(await choice.getByRole("button", { name: "herdr 0.9.0", exact: true }).getAttribute("aria-pressed"), "true", `${width}px: cancelled, nothing switched`);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  }
+  console.log("PASS About names the runtime in use, and offers the switch only with two installed, asking first");
+}
+
+/**
+ * About after an update: its compact Updates line keeps the notes of what the update brought (the
+ * header's "What's new" opens them), the section's name and the running version.
+ */
+async function installedNotes(browser: import("playwright-core").Browser, url: string): Promise<void> {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en" });
+  try {
+    await context.addInitScript((settings) => localStorage.setItem("ovis:settings", settings), JSON.stringify(SETTINGS));
+    // the demo's transport answers /api in the page: these two answers go in over it. The running
+    // revision is the build's own, so the app reads no reload and the notes are this release's.
+    await context.addInitScript((revision) => {
+      const answers: Record<string, unknown> = {
+        "/api/updates": { managed: true, auto_update: false, phase: "idle", current_revision: revision, latest_revision: null, current_version: null, latest_version: null, available: false, checked_at: "2099-01-01T00:00:00Z", blocked_reason: null, error: null },
+        "/api/updates/installed": { revision, version: "99.0.0", previous_version: "98.0.0", installed_at: "2099-01-01T00:00:00Z", omitted: 0, releases: [{ version: "99.0.0", date: "2099-01-01", notes: "- A fixture release note." }] },
+      };
+      let inner = window.fetch;
+      const outer: typeof window.fetch = (input, init) => {
+        // the demo app is served under a path of its own: its requests end in the API's path
+        const path = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href).pathname;
+        const answer = Object.keys(answers).find((key) => path.endsWith(key));
+        return answer !== undefined ? Promise.resolve(new Response(JSON.stringify(answers[answer]), { headers: { "content-type": "application/json" } })) : inner(input, init);
+      };
+      // the transport's own assignment goes under these answers; a later wrapper (the file preview's)
+      // reads them as its fetch and replaces the property as a plain value
+      Object.defineProperty(window, "fetch", { configurable: true, get: () => outer, set: (next: typeof window.fetch) => {
+        inner = next;
+        Object.defineProperty(window, "fetch", { configurable: true, writable: true, value: outer });
+      } });
+    }, execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim());
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(`${url}?settings=about`);
+    const panel = dialogOf(page).getByRole("tabpanel", { name: "About", exact: true });
+    await panel.getByRole("region", { name: "What the last update brought", exact: true }).getByText("A fixture release note.").waitFor();
+    assert.equal(await panel.getByRole("heading", { name: "Updates", exact: true }).count(), 1, "the Updates section keeps its name");
+    await panel.getByText(/^Running v/).waitFor();
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+  console.log("PASS About's compact Updates line keeps what the last update brought, its name and the running version");
+}
+
+/**
+ * Alerts' one line of chips: Any turn finished lights Long turn finished too, and the row's ↺ puts
+ * back all five, the two kept in the alert filters' own store included.
+ */
+async function alertChipsReset(browser: import("playwright-core").Browser, url: string): Promise<void> {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en" });
+  try {
+    await context.addInitScript((settings) => {
+      localStorage.setItem("ovis:settings", settings);
+      localStorage.setItem("ovis:alert-filters", JSON.stringify({ permission: false, error: true, pcsOff: [] }));
+    }, JSON.stringify({ ...SETTINGS, alertDone: "always" }));
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(`${url}?settings=alerts`);
+    const chips = dialogOf(page).getByRole("group", { name: "Alert me when", exact: true });
+    const pressed = async () => Object.fromEntries(await Promise.all(["Needs input", "Needs permission", "Long turn finished", "Any turn finished", "Stopped on an error"]
+      .map(async (name) => [name, await chips.getByRole("button", { name, exact: true }).getAttribute("aria-pressed")])));
+    await chips.waitFor();
+    assert.deepEqual(await pressed(), { "Needs input": "true", "Needs permission": "false", "Long turn finished": "true", "Any turn finished": "true", "Stopped on an error": "true" }, "every turn lights the long turns too");
+    await dialogOf(page).getByRole("button", { name: "Restore defaults: Alert me when", exact: true }).click();
+    await dialogOf(page).getByRole("button", { name: "Restore defaults: Alert me when", exact: true }).waitFor({ state: "detached" });
+    assert.deepEqual(await pressed(), { "Needs input": "true", "Needs permission": "true", "Long turn finished": "true", "Any turn finished": "false", "Stopped on an error": "false" }, "↺ puts back all five");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+  console.log("PASS Alerts' chips: every turn lights the long turns, and ↺ restores all five");
+}
+
 async function accountPcList(browser: import("playwright-core").Browser, url: string): Promise<void> {
   const service = "https://account.ovis.sh";
   for (const [width, theme] of [[390, "light"], [390, "dark"], [1280, "light"], [1280, "dark"]] as const) {
@@ -1492,6 +1603,9 @@ try {
       await rowResets(browser, url);
       await accountPcList(browser, url);
       await accountGoogle(browser, url);
+      await runtimeInUse(browser, url);
+      await alertChipsReset(browser, url);
+      await installedNotes(browser, url);
       await heldGroupLanding(browser, devUrl);
     } finally {
       await browser.close();

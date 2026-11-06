@@ -131,11 +131,6 @@ function AgentOwnRows({ agentId }: { agentId: string }) {
       <LaunchDefaultRows agent="codex" model={settings.codexLaunchModel} effort={settings.codexLaunchEffort} efforts={CODEX_EFFORTS}
         onModel={(codexLaunchModel) => update({ codexLaunchModel })} onEffort={(effort) => update({ codexLaunchEffort: CODEX_EFFORTS.find((level) => level === effort) ?? "" })} />
     </>;
-    case "omp": return (
-      <SettingsRow label={t("Side conversations chip (experimental)")} description={t("A chip in an OMP pane's message box lists the side conversations its session saved with /btw.")}>
-        <Toggle label={t("Side conversations chip (experimental)")} checked={settings.composerBtw} onChange={(composerBtw) => update({ composerBtw })} />
-      </SettingsRow>
-    );
     default: return null;
   }
 }

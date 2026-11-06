@@ -1,6 +1,6 @@
 import type { Translate } from "./i18n.ts";
 
-export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "agents" | "shortcuts" | "devices" | "about";
+export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "agents" | "shortcuts" | "devices" | "experimental" | "about";
 
 /**
  * What the palette shows for one Settings page, or for one group on it: its name and the words a
@@ -30,9 +30,10 @@ export function settingsPageEntries(t: Translate): SettingsPageEntry[] {
     { id: "chat", label: t("Chat"), aliases: `${t("chat message width composer enter send thinking code")} ${t("Expand thinking")} ${t("Collapse work")}` },
     { id: "terminal", label: t("Terminal"), aliases: t("terminal key bar keyboard clipboard") },
     { id: "alerts", label: t("Alerts"), aliases: t("notifications sound push bell needs input finished") },
-    { id: "agents", label: t("Agents"), aliases: [t("agents hooks claude codex install"), t("plan limits quota meters"), t("Subscription usage"), t("Agent integrations"), t("Permission mode"), t("Sandbox and approvals"), t("Artifacts chip"), t("Suggestion chip"), t("Side conversations chip (experimental)")].join(" ") },
+    { id: "agents", label: t("Agents"), aliases: [t("agents hooks claude codex install"), t("plan limits quota meters"), t("Subscription usage"), t("Agent integrations"), t("Permission mode"), t("Sandbox and approvals"), t("Artifacts chip"), t("Suggestion chip")].join(" ") },
     { id: "shortcuts", label: t("Shortcuts"), aliases: t("keyboard keys bindings hotkeys") },
     { id: "devices", label: t("Devices and PCs"), aliases: t("phone install keep screen on app") },
+    { id: "experimental", label: t("Experimental"), aliases: `${t("Named agent groups")} ${t("Lock pinned agents")} ${t("Codex panes: let Codex select and scroll")} ${t("OMP: side conversations chip")}` },
     { id: "about", label: t("About"), aliases: t("version update release herdr") },
     { id: "chat", section: "voice", label: t("Voice input"), aliases: t("dictation microphone speech openai") },
     { id: "chat", section: "voice-more", label: t("Dictation language"), aliases: "" },

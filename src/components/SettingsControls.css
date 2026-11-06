@@ -657,3 +657,68 @@
     transition: none;
   }
 }
+
+/* several on/off choices of one decision on one line */
+.settings-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.settings-chip {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.92em;
+  cursor: pointer;
+}
+
+.settings-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--text-strong);
+}
+
+/* sections read as one card: herdr-app's About list */
+.settings-joined {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-joined > .settings-section:not(:first-child) > .settings-card {
+  border-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.settings-joined > .settings-section:not(:last-child) > .settings-card {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+
+.settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.settings-chip svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* a row of chips keeps its name on one line and wraps its chips beside it */
+.settings-row:has(> .settings-chips) > .settings-row-text {
+  flex: none;
+  white-space: nowrap;
+}
+
+.settings-row > .settings-chips {
+  flex: 1 1 0;
+}

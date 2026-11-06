@@ -70,14 +70,18 @@ export function SettingsFold({ kind, keys, elsewhere = 0, children }: { kind: "m
 }
 
 /** `section`: the group's name in a link to it (`?settings=<page>&section=<name>`, lib/deepLink.ts) */
-export function SettingsGroup({ title, note, className, section, children }: { title?: string; note?: ReactNode; className?: string; section?: string; children: ReactNode }) {
+/**
+ * `heading`: the title stays on a bare page too, as the one sub-heading a page like Experimental keeps.
+ * `keepNote`: the note stays on a bare page too, for a sentence the reader must see (what leaves this PC).
+ */
+export function SettingsGroup({ title, note, className, section, heading = false, keepNote = false, children }: { title?: string; note?: ReactNode; className?: string; section?: string; heading?: boolean; keepNote?: boolean; children: ReactNode }) {
   const words = useContext(SettingsQuery);
   const bare = useContext(SettingsBare);
   const titled = words.length > 0 && title !== undefined && matchesSettingsQuery(words, title);
   return (
     <section className={className ? `settings-section ${className}` : "settings-section"} data-section={section} data-found={titled ? "" : undefined} tabIndex={section ? -1 : undefined}>
-      {bare !== true && title !== undefined && <h3>{title}</h3>}
-      {!bare && note !== undefined && <p className="settings-description settings-note">{note}</p>}
+      {(bare !== true || heading) && title !== undefined && <h3>{title}</h3>}
+      {(!bare || keepNote) && note !== undefined && <p className="settings-description settings-note">{note}</p>}
       <div className="settings-card">{titled ? <SettingsQuery.Provider value={[]}>{children}</SettingsQuery.Provider> : children}</div>
     </section>
   );
@@ -89,7 +93,9 @@ export function SettingsGroup({ title, note, className, section, children }: { t
  * more words a search finds it by, for a row opened by another. `held`: a row in the middle of a
  * step (a recording, a confirmation) stays in a search whatever its words have become.
  */
-export function SettingsRow({ label, description, keywords, held = false, htmlFor, wide = false, reset, icon: Icon, preview, condition, children }: { label: string; description?: ReactNode; keywords?: string; held?: boolean; htmlFor?: string; wide?: boolean; reset?: readonly (keyof Settings)[];
+export function SettingsRow({ label, description, keywords, held = false, htmlFor, wide = false, reset, resetAlso, icon: Icon, preview, condition, children }: { label: string; description?: ReactNode; keywords?: string; held?: boolean; htmlFor?: string; wide?: boolean; reset?: readonly (keyof Settings)[];
+  /** what the row sets outside Settings (a store of its own): whether it moved off its default, and how ↺ puts it back */
+  resetAlso?: { changed: boolean; restore: () => void };
   /** a picture of what the row is about, before its name: shown, not told */
   icon?: LucideIcon;
   /** a tiny drawing of what the choice does, beside the control */
@@ -102,7 +108,11 @@ export function SettingsRow({ label, description, keywords, held = false, htmlFo
   const t = useT();
   if (!held && words.length > 0 && !matchesSettingsQuery(words, label, description, keywords)) return null;
   // `reset`: the keys this row sets; once any is off its default, a button beside the label puts them back
-  const changed = reset !== undefined && reset.some((key) => JSON.stringify(settings[key]) !== JSON.stringify(DEFAULT_SETTINGS[key]));
+  const changed = (reset !== undefined && reset.some((key) => JSON.stringify(settings[key]) !== JSON.stringify(DEFAULT_SETTINGS[key]))) || resetAlso?.changed === true;
+  const restore = () => {
+    if (reset !== undefined) update(Object.fromEntries(reset.map((key) => [key, DEFAULT_SETTINGS[key]])) as Partial<Settings>);
+    resetAlso?.restore();
+  };
   const label_ = htmlFor !== undefined ? <label className="settings-label" htmlFor={htmlFor}>{label}</label> : <span className="settings-label">{label}</span>;
   return (
     <div className={wide ? "settings-row is-wide" : "settings-row"} data-setting="">
@@ -114,7 +124,7 @@ export function SettingsRow({ label, description, keywords, held = false, htmlFo
             {changed && <button type="button" className="settings-reset" title={t("Restore defaults")} aria-label={`${t("Restore defaults")}: ${label}`} onClick={(event) => {
               // the button goes once the values are back: the row's own control takes the focus first
               event.currentTarget.closest(".settings-row")?.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled), [role='radio'], button:not(.settings-reset):not(:disabled)")?.focus();
-              update(Object.fromEntries(reset.map((key) => [key, DEFAULT_SETTINGS[key]])) as Partial<Settings>);
+              restore();
             }}>
               <RotateCcw aria-hidden="true" />
             </button>}
@@ -156,6 +166,17 @@ export function Segmented<T extends string>({ label, value, options, onChange, d
     <div className="segmented settings-segmented" role="group" aria-label={label}>
       {options.map((option) => (
         <button key={option.value} type="button" aria-pressed={value === option.value} aria-label={option.name} disabled={disabled} onClick={() => onChange(option.value)}>{option.label}</button>
+      ))}
+    </div>
+  );
+}
+
+/** Several on/off choices of one decision on one line, each a chip that is pressed while on. */
+export function ChipToggles({ label, chips }: { label: string; chips: readonly { label: string; icon?: LucideIcon; on: boolean; onChange: (on: boolean) => void }[] }) {
+  return (
+    <div className="settings-chips" role="group" aria-label={label}>
+      {chips.map((chip) => (
+        <button key={chip.label} type="button" className="settings-chip" aria-pressed={chip.on} onClick={() => chip.onChange(!chip.on)}>{chip.icon && <chip.icon aria-hidden="true" />}{chip.label}</button>
       ))}
     </div>
   );

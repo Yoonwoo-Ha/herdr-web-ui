@@ -1091,7 +1091,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Discord's per-channel mute, a checkbox item in the row's own menu, not a per-channel switch
   (Codex's and Claude's apps have no mute of their own); agent-of-empires has a per-channel
   override, which the shared, PC-keyed list replaces.
-  While Settings -> Appearance -> Lock pinned agents (experimental) is on (shared, off by default;
+  While Settings -> Experimental -> Lock pinned agents is on (shared, off by default;
   off, no item shows and no lock holds), a pinned agent row's menu also offers Lock agent (#2432): a locked row has no Unpin agent until
   Unlock agent, draws a lock beside its state (drawn as the muted bell is, named Locked), and this
   app offers no way to close it: no Close pane in the pane's menu, no Close tab (menu item,
@@ -1108,7 +1108,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   apps (the Codex and Claude apps, Paseo, T3 Code), whose session lists we follow for pin and
   archive but which give a session no lock: their sessions are not the pane a user drives the
   others from, which is what this guards.
-  While Settings -> Appearance -> Named agent groups is on (shared, off by default; off, nothing is
+  While Settings -> Experimental -> Named agent groups is on (shared, off by default; off, nothing is
   drawn or offered), the unpinned agent rows split into groups the user names (#2431), in the
   order Settings lists them, then the rows in no group under No group; with every row in no group
   the list draws no heading at all. A heading folds its group (kept on this device), and draws its
@@ -2839,8 +2839,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   saves each topic beside the session (`btw-history/`), not in its transcript. Chat therefore does
   not draw them as turns: an OMP pane's composer offers a **Side conversations** chip beside the
   background tasks chip, in its look (`.bg-tasks-toggle`, the messages glyph, the count; a narrow
-  card keeps the glyph and the number). It is off by default (Settings → Chat → Composer → Side
-  conversations chip (experimental), the device setting `composerBtw`), and shows only once the session saved a
+  card keeps the glyph and the number). It is off by default (Settings → Experimental → Agents → OMP: side
+  conversations chip, the device setting `composerBtw`), and shows only once the session saved a
   topic.
 - It opens one list above the card, newest topic first: each row is a disclosure (a chevron, OMP's
   title or else the first question, then a dim `when · N follow-ups · state` line, the state only
@@ -3618,7 +3618,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - **Agents** lists the agents on this PC, one row each that opens on its status (version, sign-in,
   accounts, session resume) and the settings that belong to that agent alone: Claude Code's
   permission mode, Artifacts chip and (on a touch screen) suggestion chip; Codex's sandbox and
-  approvals; OMP's side conversations chip (experimental). New workspace, New tab and New worktree
+  approvals (OMP's side conversations chip is on Experimental, under Agents). New workspace, New tab and New worktree
   start the agent in that mode; Ovis never writes the agent's own configuration. A search shows each
   installed agent's settings in a group of its own. An agent that is not on the PC offers none.
 - Every page is built from the same parts (`components/SettingsControls.tsx`). A group is an

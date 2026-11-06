@@ -78,7 +78,6 @@ export const SETUP_JA: Record<string, string> = {
   "Its account needs attention": "アカウントの確認が必要",
   "A chip above the message box puts the prompt Claude Code suggests next into the box. With a keyboard, Tab does it.": "入力欄の上のチップで、Claude Code が次に提案するプロンプトを入力欄に入れます。キーボードでは Tab で入れます。",
   "A chip in a Claude Code pane's message box lists the pages its session published with the Artifact tool.": "Claude Code のペインの入力欄に、セッションが Artifact ツールで公開したページの一覧を出すチップを表示します。",
-  "A chip in an OMP pane's message box lists the side conversations its session saved with /btw.": "OMP ペインの入力欄に、セッションが /btw で保存したサイド会話の一覧を開くチップを表示します。",
   "New workspace and New tab fill it in, still changeable there; New worktree starts the agent on it. Empty: the agent's own model.": "新しいワークスペースと新しいタブにあらかじめ入り、そこで変更できます。新しいワークツリーはこのモデルでエージェントを起動します。空のままならエージェント自身のモデルを使います。",
   "Filled in the same way. Agent default adds no flag; the levels a model takes depend on the model.": "同じようにあらかじめ入ります。エージェントの既定ではフラグを付けません。選べるレベルはモデルによって異なります。",
 };
