@@ -196,6 +196,7 @@ const BASE: Record<string, string> = {
   "{count} done": "완료 {count}개",
   "Open the next session waiting for you": "응답을 기다리는 다음 세션 열기",
   "Tab {index} of {count}": "탭 {count}개 중 {index}번째",
+  "Tabs of {workspace}": "{workspace}의 탭",
   "Reconnecting…": "재연결 중…",
   "Add PC": "PC 추가",
   "Connect": "연결",

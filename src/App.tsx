@@ -1,5 +1,5 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bell, CircleHelp, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, Target, X } from "lucide-react";
+import { Bell, ChevronDown, CircleHelp, Ellipsis, FolderOpen, Link, Menu, MessageSquare, PanelLeft, Search, SquareTerminal, Target, X } from "lucide-react";
 
 import type { HerdrPane, PaneDirection } from "../shared/protocol.ts";
 import { authenticate, createTab, movePaneBeside, moveTabToWorkspace, paneSessionKey, shareSeen, swapPaneWith } from "./lib/api.ts";
@@ -57,7 +57,8 @@ import { useHiddenMachines, useShownMachines } from "./lib/hiddenMachines.ts";
 import { formatKeys, shortcutDisplayKeys, useShortcuts } from "./lib/shortcuts.ts";
 import { useMediaQuery } from "./lib/useMediaQuery.ts";
 import { useAnnouncedText } from "./lib/useAnnouncedText.ts";
-import { CRAMPED_QUERY, loneTabHidden, paneContextPress } from "./lib/paneCanvas.ts";
+import { CRAMPED_QUERY, paneContextPress, tabRowHidden } from "./lib/paneCanvas.ts";
+import { useTabSheet } from "./lib/useTabSheet.ts";
 import type { AppActions, PaneView, PaneControls } from "./lib/actions.ts";
 import { removePushSubscription } from "./lib/push.ts";
 import { resetPushHealth } from "./lib/pushHealth.ts";
@@ -653,13 +654,16 @@ export function App() {
   // the palette's shortcut, said beside its item where a hardware keyboard is likely (a fine pointer)
   const keyboardLikely = useMediaQuery("(hover: hover) and (pointer: fine)");
   const paletteKeys = keyboardLikely ? formatKeys(shortcutDisplayKeys("palette", settings.shortcutOverrides)).join("+") : "";
-  // a lone tab on a cramped phone draws no row (TabStrip) and its pane no ellipsis (PaneCanvas): the
-  // header's own ellipsis is the one menu there, so it carries the pane's and the tab's actions too.
+  // a phone (the sheets' width) draws no tab row: the header's title lists the tabs (TabStrip's sheet),
+  // as the Codex and Claude apps title a thread and list the others from it
+  const { tabsInHeader, sheet: tabSheet, toggle: toggleTabSheet, close: closeTabSheet } = useTabSheet(selectedPane !== null && !guideShown ? JSON.stringify([selectedMachineId, selectedPane.workspace_id]) : null);
+  // there, and for a lone tab on a cramped phone, the row and its pane's ellipsis are not drawn (TabStrip,
+  // PaneCanvas): the header's own ellipsis is the one menu, so it carries the pane's and the tab's actions too.
   // They come from the canvas's last render; each runs as the canvas's latest one has it, and does
   // nothing when that one no longer offers it (the pane or the layout changed while the menu was open)
   const cramped = useMediaQuery(CRAMPED_QUERY);
   const paneMenuInMore = selectedPane !== null
-    && loneTabHidden(cramped, snapshot?.tabs.filter((tab) => tab.workspace_id === selectedPane.workspace_id).length ?? 0);
+    && tabRowHidden(cramped, snapshot?.tabs.filter((tab) => tab.workspace_id === selectedPane.workspace_id).length ?? 0, tabsInHeader);
   // on a phone the header's line is the title's: the sessions' one pill goes to the end of the tab row
   // under it. Where that row is not drawn (a lone tab on a cramped phone) More carries the jump instead,
   // its first item, with a waiting-coloured dot on its button
@@ -770,7 +774,7 @@ export function App() {
         </div>
         <HeaderNote note={note} />
         {note !== null ? null : selectedPane && crumb ? (
-          <div className={`context${headerConnection === null ? "" : " has-connection"}`} title={crumb.tooltip}>
+          <div className={`context${headerConnection === null ? "" : " has-connection"}${tabsInHeader && selectedWorkspace && !guideShown ? " has-tabs" : ""}`} title={crumb.tooltip}>
             <div className="context-title">
               {selectedAgent && <AgentMark agent={selectedAgent} size={18} />}
               <span className="context-title-text">{selectedTitle}</span>
@@ -778,6 +782,11 @@ export function App() {
                 <span aria-hidden="true">{position.index}/{position.count}</span>
                 <span className="visually-hidden">{position.words}</span>
               </span>}
+              {/* the whole title is its target (styles.css .context-tabs::after) */}
+              {tabsInHeader && selectedWorkspace && !guideShown && <button type="button" className="context-tabs" aria-label={t("Tabs of {workspace}", { workspace: selectedWorkspace.label })}
+                aria-haspopup="dialog" aria-expanded={tabSheet !== null} onClick={(event) => toggleTabSheet(event.currentTarget)}>
+                <ChevronDown aria-hidden="true" />
+              </button>}
             </div>
             {/* lost and back, the connection takes the crumb's place in words, in the same box: nothing moves */}
             <div className={`context-sub${headerConnection === null ? "" : ` context-connection is-${headerConnection}`}`}>
@@ -1005,7 +1014,8 @@ export function App() {
                 <CrashProbe region="pane" />
                 {!(slotSnapshot && pane && workspace) && slotBar}
                 {slotSnapshot && pane && workspace && (
-                  <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} onSelectPane={onSelect} end={slotEnd ?? (sessionsInStrip && active ? <div className="tab-strip-sessions">{sessionsPill}</div> : undefined)}
+                  <TabStrip snapshot={slotSnapshot} workspace={workspace} selectedPane={pane} panelId={slotPanelId} splitDrag={wideScreen} onSelectPane={onSelect}
+                    inHeader={tabsInHeader} sheet={active ? tabSheet : null} onSheetClose={closeTabSheet} end={slotEnd ?? (sessionsInStrip && active ? <div className="tab-strip-sessions">{sessionsPill}</div> : undefined)}
                     renameRequest={active && renameRequest?.machineId === machineId && renameRequest.paneId === pane.pane_id ? renameRequest : null}
                     onRenameHandled={clearRenameRequest}
                     onNewTab={() => actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
@@ -1032,6 +1042,7 @@ export function App() {
                     onNewTab={workspace ? () => actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }) : undefined}
                     onNewTerminal={workspace ? () => actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }) : undefined}
                     onMoveToWorkspace={(tabId, workspaceId) => actions.moveTabToWorkspace({ machineId, tabId, workspaceId })}
+                    tabsInHeader={tabsInHeader}
                     renameRequest={active && pane && renameRequest?.machineId === machineId && renameRequest.paneId === pane.pane_id ? renameRequest : null}
                     renderPane={(item, itemActive, herdrSplit) => <OpenFileContext.Provider value={item ? (path) => openFile({ path, paneId: item.pane_id, machineId }) : null}>
                       <PaneTerminal

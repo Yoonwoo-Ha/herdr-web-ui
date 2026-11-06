@@ -56,8 +56,8 @@ try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
     try {
       /** A phone on a slow link: every font file is held until `release`. `stall` names files that never come at all. */
-      const open = async (stall: RegExp | null, height = 844): Promise<{ page: Page; errors: string[]; held: () => number; release: () => void; close: () => Promise<void> }> => {
-        const context = await browser.newContext({ viewport: { width: 390, height }, locale: "en-US", hasTouch: true, isMobile: true });
+      const open = async (stall: RegExp | null, height = 844, width = 390): Promise<{ page: Page; errors: string[]; held: () => number; release: () => void; close: () => Promise<void> }> => {
+        const context = await browser.newContext({ viewport: { width, height }, locale: "en-US", hasTouch: true, isMobile: true });
         // the monospace fallback is also the Interface font: the app writes --font-ui on <html> from it (lib/typography.ts)
         await context.addInitScript(() => {
           localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
@@ -169,13 +169,15 @@ try {
         } finally { await close(); }
       }
 
-      // the tab strip: a workspace given more tabs than a phone's strip shows. The reader scrolls
-      // to the last one and opens it, all in the first drawing; `scrolled` is what they do next.
+      // the tab strip: a workspace given more tabs than a touch screen's strip shows (a tablet's: a
+      // phone's title lists the tabs instead). The reader scrolls to the last one and opens it, all
+      // in the first drawing; `scrolled` is what they do next.
+      const labels = ["second", "a long tab name for review", "deploy", "release notes draft", "perf investigation", "docs"];
       for (const scrolled of [false, true]) {
-        const { page, errors, release, close } = await open(null);
+        const { page, errors, release, close } = await open(null, 900, 700);
         try {
           const workspace = panes.web.split(":")[0]!;
-          for (const label of ["second", "a long tab name for review", "deploy", "docs"]) {
+          for (const label of labels) {
             const made = await page.evaluate(async (body) => (await fetch("/api/tab/create", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).status, { workspace_id: workspace, label });
             assert.equal(made, 200, `the demo makes the tab "${label}"`);
           }
@@ -187,11 +189,11 @@ try {
             return { left: node.scrollLeft, max: node.scrollWidth - node.clientWidth, open: item.left >= view.left - 1 && item.right <= end + 1 };
           });
           const tabs = strip.locator('[role="tab"]');
-          await tabs.nth(4).waitFor();
+          await tabs.nth(labels.length).waitFor();
           // a scroll the strip did not make, as each one below: the app sees only the scroll event
           await strip.evaluate((node) => { node.scrollLeft = node.scrollWidth; });
           await frames(page);
-          await tabs.nth(4).tap();
+          await tabs.nth(labels.length).tap();
           await strip.locator('[role="tab"][aria-selected="true"]', { hasText: "docs" }).waitFor();
           await frames(page);
           const opened = await stripOf();

@@ -1102,6 +1102,16 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   A lone pane beside such a `⋯` draws no second ellipsis (its actions are in the tab's menu), on a
   desktop as on touch. The pane's own context menu carries pane actions; it opens at the pointer
   without changing which pane is focused. The pane header's ellipsis opens the same menu on touch.
+  A phone (at most 640px wide, the sheets' width) draws no tab row for any tab, which gives the pane
+  the row's 44px (header 96 -> 52px). The header's title is the way to the tabs, as the Codex and
+  Claude apps title the open conversation and list the others from it: a `ChevronDown` follows it, and
+  the whole title and crumb, grown to `--touch-target` tall, is one button ("Tabs of {workspace}",
+  `aria-haspopup="dialog"`, `aria-expanded`) that opens the workspace's tabs as a bottom sheet: each
+  tab with its state dot (hollow at rest), its agent's mark and a Close of its own ("Close {tab}",
+  its own stop after the tab in the arrow order), the open tab marked current, its state word for a
+  state; then the open tab's Move tab left / right, then New terminal and New tab with agent…. A
+  pick opens the tab where it was left; Close asks first as the row's does. Such a phone's More
+  carries the open tab's other actions as below, less the two new-tab items its title's list holds.
   A lone tab with no row (a phone at most 700px tall, including the iPhone Duo's 678-point outer
   display, landscape or a screen made short by its keyboard) draws no pane ellipsis either: a second
   `⋯` below the glass header would repeat the header's own. The header's `⋯` is then the one menu,
@@ -1831,7 +1841,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   folder, and opens the new shell pane unless another pane was opened meanwhile; a refusal shows
   in the strip. An agent tab comes from the tab menu's New tab with agent…, which opens the dialog.
   Tabs retain their names, status dots, active underline, keyboard navigation, rename field and
-  close confirmation. A right-click opens tab actions at the pointer, including Move tab left/right
+  close confirmation. As the Herdr app's tabs show the program, each tab carries its agent's mark
+  (the pane it opens on, else its first agent) before its name, hidden from assistive tech so the
+  tab is named by its words; a working tab's dot is a ring with a gap that turns in 8 steps per
+  `--dur-spin`, the plain dot under reduced motion. A right-click opens tab actions at the pointer, including Move tab left/right
   when a neighbouring position exists. Tabs have no close buttons or chevrons. Touch and narrow layouts show a `⋯` beside
   the selected tab for a trimmed menu, and there a tab is at least `--touch-target` tall and wide, so a one- or
   two-character name (탭 1) is still a finger's target with the `⋯` a target of its own beside it; a desktop with a mouse draws the same `⋯` on the selected tab, hidden in its place
@@ -2369,10 +2382,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   At `<=480px` the header's line is the title's, as wide as without these: the figures become one
   pill (waiting, else running, else done, tinted with its state) at the end of the tab row under the
   header (`.tab-strip-sessions`), a full `--touch-target-header` target. Where that row is not drawn
-  (a lone tab on a cramped phone) More carries the jump: **Open the next session waiting for you** is
+  (a phone, whose title lists the tabs, or a lone tab on a cramped screen) More carries the jump: **Open the next session waiting for you** is
   its first item, and its button wears a `--status-blocked` dot (`.header-more-dot.is-waiting`, in
   place of the alerts-off dot) and says the count in its name. Below `420px` the tab's place leaves
-  the header: the tab row shows it.
+  the header: the title's list marks the open tab.
 
 ### Chat turn (`.chat-turn`)
 - Native conversation rows use LegendList 3.3.5, with the chat view as the single
