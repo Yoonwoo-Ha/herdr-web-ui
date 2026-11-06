@@ -1144,8 +1144,9 @@ Shift+F10 inside the terminal stays with the terminal program.
 
 **Settings → Shortcuts → Use herdr's prefix keys** (off by default) brings herdr's own prefix
 keys to the app. It reads `[keys]` in herdr's `config.toml` on the PC serving the page (read only,
-herdr's defaults when there is none): herdr's prefix (`ctrl+b` unless the config sets another),
-then a key herdr binds runs the same action here. These actions are taken: `new_tab` (a terminal
+herdr's defaults when there is none): herdr's prefix (`ctrl+b` unless the config sets another; any
+of them when `prefix` or `extra_prefixes` lists several), then a key herdr binds runs the same
+action here. These actions are taken: `new_tab` (a terminal
 tab, at once), `split_vertical` / `split_horizontal`, `zoom`, `previous_tab` / `next_tab`,
 `switch_tab` (`1..9`), `rename_tab`, `previous_workspace` / `next_workspace`, `new_workspace`,
 `toggle_sidebar`, `settings`, and `help` / `goto` / `workspace_picker` (the command palette).

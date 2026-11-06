@@ -37,9 +37,12 @@ describe("herdr's copy_on_select in the browser", () => {
   });
 
   it("keeps herdr's keys from a whole answer only, and none from an older server's", async () => {
-    const keys = { ...resolveHerdrKeys(undefined), prefix: "ctrl+a" };
+    const keys = { ...resolveHerdrKeys(undefined), prefix: "ctrl+a", prefixes: ["ctrl+a", "ctrl+b"] };
     await loadHerdrUi(answer(200, { copy_on_select: true, keys }));
     expect(herdrKeys()).toEqual(keys);
+    // a server from before prefix lists sends its one prefix
+    await loadHerdrUi(answer(200, { copy_on_select: true, keys: { prefix: "ctrl+a", bindings: keys.bindings } }));
+    expect(herdrKeys()?.prefixes).toEqual(["ctrl+a"]);
     await loadHerdrUi(answer(200, { copy_on_select: true, keys: { prefix: "ctrl+a", bindings: { ...keys.bindings, zoom: "prefix+z" } } }));
     expect(herdrKeys()).toBeNull();
     await loadHerdrUi(answer(200, { copy_on_select: true }));

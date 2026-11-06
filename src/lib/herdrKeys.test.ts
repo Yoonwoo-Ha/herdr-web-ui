@@ -23,10 +23,14 @@ describe("herdr's binding syntax", () => {
     expect(parseHerdrBinding("cmd+shift+tab")?.chord).toMatchObject({ meta: true, shift: true, key: "Tab" });
     expect(parseHerdrBinding("f12")?.chord.key).toBe("F12");
     expect(parseHerdrBinding("prefix+alt+1..9")).toMatchObject({ prefixed: true, range: true, chord: { alt: true } });
+    // a literal plus: alone, or after the last separator
+    expect(parseHerdrBinding("+")).toMatchObject({ prefixed: false, chord: { ctrl: false, key: "+" } });
+    expect(parseHerdrBinding("ctrl++")).toMatchObject({ prefixed: false, chord: { ctrl: true, key: "+" } });
+    expect(parseHerdrBinding("prefix++")).toMatchObject({ prefixed: true, chord: { key: "+" } });
   });
 
   it("reads nothing herdr does not: unknown names, two keys, empty parts, a modifier name inherited from Object", () => {
-    for (const text of ["", "prefix+", "prefix+pagedown", "ctrl++", "a+b", "constructor+b", "toString+b", "prefix+1..9+x"]) expect(parseHerdrBinding(text)).toBeNull();
+    for (const text of ["", "prefix+", "prefix+pagedown", "++", "a++", "a+b", "constructor+b", "toString+b", "prefix+1..9+x"]) expect(parseHerdrBinding(text)).toBeNull();
   });
 });
 
@@ -73,18 +77,30 @@ describe("the prefix's steps", () => {
   });
 
   it("follows the config: another prefix, a rebound or unbound action", () => {
-    const own = compileHerdrKeys({ prefix: "ctrl+a", bindings: { ...defaults.bindings, new_tab: ["prefix+t"], zoom: [] } })!;
+    const own = compileHerdrKeys({ prefix: "ctrl+a", prefixes: ["ctrl+a"], bindings: { ...defaults.bindings, new_tab: ["prefix+t"], zoom: [] } })!;
     expect(herdrKeyStep(own, false, ctrlB)).toEqual({ kind: "pass" });
     expect(herdrKeyStep(own, false, key("a", "KeyA", { ctrlKey: true }))).toEqual({ kind: "arm" });
     expect(herdrKeyStep(own, true, key("t", "KeyT"))).toEqual({ kind: "run", action: "new_tab", index: null });
     expect(herdrKeyStep(own, true, key("z", "KeyZ"))).toEqual({ kind: "pass" });
   });
 
+  it("arms on any of several prefixes, and leaves another prefix pressed once armed to the pane", () => {
+    const ctrlA = key("a", "KeyA", { ctrlKey: true });
+    const both = compileHerdrKeys(resolveHerdrKeys({ prefix: ["ctrl+a", "ctrl+b"], new_tab: "prefix+t" }))!;
+    expect(herdrKeyStep(both, false, ctrlA)).toEqual({ kind: "arm" });
+    expect(herdrKeyStep(both, false, ctrlB)).toEqual({ kind: "arm" });
+    expect(herdrKeyStep(both, true, key("t", "KeyT"))).toEqual({ kind: "run", action: "new_tab", index: null });
+    expect(herdrKeyStep(both, true, ctrlB)).toEqual({ kind: "pass" });
+    expect(herdrKeyStep(both, true, { ...ctrlB, repeat: true })).toEqual({ kind: "hold" });
+    expect(herdrKeyStep(compileHerdrKeys(resolveHerdrKeys({ prefix: ["ctrl+a"] }))!, false, ctrlB)).toEqual({ kind: "pass" });
+  });
+
   it("takes no prefix it cannot read, nor one with no prefix binding behind it", () => {
-    expect(compileHerdrKeys({ ...defaults, prefix: "" })).toBeNull();
-    expect(compileHerdrKeys({ ...defaults, prefix: "prefix+b" })).toBeNull();
+    expect(compileHerdrKeys({ ...defaults, prefixes: [""] })).toBeNull();
+    expect(compileHerdrKeys({ ...defaults, prefixes: ["prefix+b"] })).toBeNull();
+    expect(compileHerdrKeys({ ...defaults, prefixes: ["prefix+b", "ctrl+a"] })?.prefixes).toHaveLength(1);
     const direct = Object.fromEntries(Object.keys(defaults.bindings).map((action) => [action, ["ctrl+alt+n"]])) as HerdrKeys["bindings"];
-    expect(compileHerdrKeys({ prefix: "ctrl+b", bindings: direct })).toBeNull();
+    expect(compileHerdrKeys({ prefix: "ctrl+b", prefixes: ["ctrl+b"], bindings: direct })).toBeNull();
   });
 
   it("runs a lone digit of an indexed action as that index, and never a hyper chord", () => {

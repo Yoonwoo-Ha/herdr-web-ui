@@ -29,11 +29,17 @@ export function herdrKeys(): HerdrKeys | null {
 
 function readKeys(value: unknown): HerdrKeys | null {
   if (typeof value !== "object" || value === null) return null;
-  const { prefix, bindings } = value as { prefix?: unknown; bindings?: unknown };
+  const { prefix, prefixes, bindings } = value as { prefix?: unknown; prefixes?: unknown; bindings?: unknown };
   if (typeof prefix !== "string" || typeof bindings !== "object" || bindings === null) return null;
+  const strings = (list: unknown): list is string[] => Array.isArray(list) && list.every((key) => typeof key === "string");
   const read = bindings as Record<string, unknown>;
-  if (!HERDR_PREFIX_ACTIONS.every((action) => Array.isArray(read[action]) && (read[action] as unknown[]).every((key) => typeof key === "string"))) return null;
-  return { prefix, bindings: Object.fromEntries(HERDR_PREFIX_ACTIONS.map((action) => [action, read[action]])) as HerdrKeys["bindings"] };
+  if (!HERDR_PREFIX_ACTIONS.every((action) => strings(read[action]))) return null;
+  // a server from before prefix lists sends its one prefix
+  return {
+    prefix,
+    prefixes: strings(prefixes) && prefixes.length > 0 ? prefixes : [prefix],
+    bindings: Object.fromEntries(HERDR_PREFIX_ACTIONS.map((action) => [action, read[action]])) as HerdrKeys["bindings"],
+  };
 }
 
 /** Reads the preference again (a terminal mount picks up an edited config); one read at a time. */

@@ -27,22 +27,25 @@ export function chordMatches(chord: HerdrChord, event: ShortcutEventLike): boole
 }
 
 export interface HerdrKeyMap {
-  readonly prefix: HerdrChord;
+  readonly prefixes: readonly HerdrChord[];
   readonly bindings: readonly { readonly action: HerdrPrefixAction; readonly chord: HerdrChord; readonly index: number | null }[];
 }
 
 /**
- * The prefix and the prefix bindings the app can run, as the server resolved them
- * (shared/herdr-keys.ts resolveHerdrKeys), or null with no binding to take the prefix for.
+ * The prefixes and the prefix bindings the app can run, as the server resolved them
+ * (shared/herdr-keys.ts resolveHerdrKeys), or null with no readable prefix or no binding to take it for.
  */
 export function compileHerdrKeys(keys: HerdrKeys): HerdrKeyMap | null {
-  const prefix = parseHerdrBinding(keys.prefix);
-  if (prefix === null || prefix.prefixed || prefix.range) return null;
+  const prefixes = keys.prefixes.flatMap((text) => {
+    const prefix = parseHerdrBinding(text);
+    return prefix === null || prefix.prefixed || prefix.range ? [] : [prefix.chord];
+  });
+  if (prefixes.length === 0) return null;
   const bindings = Object.entries(keys.bindings).flatMap(([action, texts]) => texts.flatMap((text) => {
     const binding = parseHerdrBinding(text);
     return binding?.prefixed ? bindingChords(binding, action).map((item) => ({ action: action as HerdrPrefixAction, ...item })) : [];
   }));
-  return bindings.length === 0 ? null : { prefix: prefix.chord, bindings };
+  return bindings.length === 0 ? null : { prefixes, bindings };
 }
 
 export type HerdrKeyStep =
@@ -56,16 +59,17 @@ export type HerdrKeyStep =
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock", "Fn", "OS"]);
 
 /**
- * What one keydown does, `armed` after the prefix: a modifier alone changes nothing (Shift on its way
- * to Shift+N), nor does the held prefix repeating; the prefix arms; armed, a bound key runs its action
- * and Escape leaves; any other key (the prefix pressed again too) leaves and goes on to the pane as
+ * What one keydown does, `armed` after a prefix: a modifier alone changes nothing (Shift on its way
+ * to Shift+N), nor does a held prefix repeating; any prefix arms; armed, a bound key runs its action
+ * and Escape leaves; any other key (a prefix pressed again too) leaves and goes on to the pane as
  * typed. IME composition always goes on.
  */
 export function herdrKeyStep(map: HerdrKeyMap, armed: boolean, event: ShortcutEventLike & { readonly repeat?: boolean }): HerdrKeyStep {
   if (MODIFIER_KEYS.has(event.key)) return { kind: "ignore" };
-  if (armed && event.repeat === true && chordMatches(map.prefix, event)) return { kind: "hold" };
+  const isPrefix = map.prefixes.some((prefix) => chordMatches(prefix, event));
+  if (armed && event.repeat === true && isPrefix) return { kind: "hold" };
   if (event.isComposing || event.keyCode === 229) return { kind: "pass" };
-  if (!armed) return chordMatches(map.prefix, event) ? { kind: "arm" } : { kind: "pass" };
+  if (!armed) return isPrefix ? { kind: "arm" } : { kind: "pass" };
   const binding = map.bindings.find((candidate) => chordMatches(candidate.chord, event));
   if (binding !== undefined) return { kind: "run", action: binding.action, index: binding.index };
   return event.key === "Escape" ? { kind: "escape" } : { kind: "pass" };

@@ -1029,7 +1029,9 @@ function HerdrPrefixKeys() {
       </SettingsRow>
       {status !== null && <p className="settings-item settings-description" role="status">{status}</p>}
       {on && read !== null && map !== null && <>
-        <SettingsRow label={t("Prefix")}><kbd className="kbd">{read.prefix}</kbd></SettingsRow>
+        <SettingsRow label={t("Prefix")}>
+          <span className="settings-keys">{read.prefixes.map((prefix) => <kbd className="kbd" key={prefix}>{prefix}</kbd>)}</span>
+        </SettingsRow>
         {rows.map((row) => (
           <SettingsRow key={row.label} label={t(row.label)}>
             <span className="settings-keys">{row.keys.map((key) => <kbd className="kbd" key={key}>{key}</kbd>)}</span>

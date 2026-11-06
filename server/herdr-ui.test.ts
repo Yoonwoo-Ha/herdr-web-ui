@@ -97,4 +97,32 @@ describe("herdr's [keys] prefix bindings", () => {
     expect(keysOf('[keys]\nprefix = "ctrl+space"\n').prefix).toBe("ctrl+space");
     expect(keysOf('[keys]\nfullscreen = "prefix+f"\n').bindings.zoom).toEqual(["prefix+f"]);
   });
+
+  it("take every prefix a list or extra_prefixes writes, as herdr merges them", () => {
+    const both = keysOf('[keys]\nprefix = ["ctrl+a", "ctrl+b"]\nnew_tab = "prefix+t"\n');
+    expect([both.prefix, both.prefixes]).toEqual(["ctrl+a", ["ctrl+a", "ctrl+b"]]);
+    expect(both.bindings.new_tab).toEqual(["prefix+t"]);
+    expect(keysOf('[keys]\nprefix = ["ctrl+a"]\n').prefixes).toEqual(["ctrl+a"]);
+    expect(keysOf('[keys]\nprefix = "ctrl+a"\nextra_prefixes = ["ctrl+space"]\n').prefixes).toEqual(["ctrl+a", "ctrl+space"]);
+    // an entry herdr cannot read is skipped, a repeat kept once; with none left, herdr's ctrl+b
+    expect(keysOf('[keys]\nprefix = ["nonsense+key", "ctrl+a", "control+a"]\n').prefixes).toEqual(["ctrl+a"]);
+    expect(keysOf('[keys]\nprefix = []\n').prefixes).toEqual(["ctrl+b"]);
+    // a prefix binding on any of the prefixes sends that prefix: dropped
+    expect(keysOf('[keys]\nprefix = ["ctrl+a", "ctrl+b"]\nnew_tab = "prefix+ctrl+b"\n').bindings.new_tab).toEqual([]);
+    expect(keysOf('[keys]\nprefix = ["ctrl+a", 1]\nnew_tab = "prefix+t"\n').bindings.new_tab).toEqual(["prefix+c"]);
+    // nor are the indexed keys or commands of a config herdr does not read
+    const unread = keysOf('[keys]\nextra_prefixes = 1\n[keys.indexed]\ntabs = "ctrl"\n[[keys.command]]\nkey = "prefix+c"\ncommand = "echo hi"\n');
+    expect(unread.bindings).toMatchObject({ switch_tab: ["prefix+1..9"], new_tab: ["prefix+c"] });
+    // the plus key is a prefix, so a binding on it is dropped
+    const plus = keysOf('[keys]\nprefix = ["ctrl+a", "+"]\nnew_tab = "prefix+plus"\n');
+    expect([plus.prefixes, plus.bindings.new_tab]).toEqual([["ctrl+a", "+"], []]);
+    expect(keysOf('[keys]\nclear_pane = "prefix++"\nzoom = "prefix+plus"\n').bindings.zoom).toEqual([]);
+  });
+
+  it("let every action herdr registers take a default's key, those the app does not run included", () => {
+    expect(keysOf('[keys]\nclear_pane = "prefix+c"\n').bindings.new_tab).toEqual([]);
+    expect(keysOf('[keys]\nmove_tab_next = "prefix+n"\n').bindings.next_tab).toEqual([]);
+    expect(keysOf('[keys]\nresize_pane_left = "prefix+v"\n').bindings.split_vertical).toEqual([]);
+    expect(keysOf('[keys]\nclear_pane = 3\nnew_tab = "prefix+t"\n').bindings.new_tab).toEqual(["prefix+c"]);
+  });
 });
