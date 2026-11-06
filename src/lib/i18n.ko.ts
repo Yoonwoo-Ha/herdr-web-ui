@@ -426,6 +426,9 @@ const BASE: Record<string, string> = {
   "No group": "그룹 없음",
   "Context {percent}% left": "컨텍스트 {percent}% 남음",
   "{used} of {window} tokens": "{window} 토큰 중 {used}",
+  "New terminal": "새 터미널",
+  "New terminal failed: {reason}": "새 터미널 열기 실패: {reason}",
+  "herdr prefix: press a key": "herdr 접두키: 키를 누르세요",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

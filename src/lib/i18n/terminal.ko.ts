@@ -84,8 +84,6 @@ export const TERMINAL_KO: Record<string, string> = {
   "Not sent. Reconnect and try again.": "전송하지 못했습니다. 다시 연결한 후 시도하세요.",
   "The chat can't be shown. The terminal still works.": "채팅을 표시할 수 없습니다. 터미널은 계속 쓸 수 있습니다.",
   "New tab with agent…": "에이전트로 새 탭…",
-  "New terminal": "새 터미널",
-  "New terminal failed: {reason}": "새 터미널 열기 실패: {reason}",
   "Tab {n}": "탭 {n}",
   "Close tab": "탭 닫기",
   "Tab name": "탭 이름",

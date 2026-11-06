@@ -1,5 +1,5 @@
 /**
- * Korean for the settings keys of Settings → Chat → Composer's optional buttons and chips, of Settings → Chat → Compaction and failed requests, of Settings → Terminal → Split into rows and columns, and of Settings → Appearance → Background workspaces apart: the rest of the
+ * Korean for the settings keys of Settings → Chat → Composer's optional buttons and chips, of Settings → Chat → Compaction and failed requests, of Settings → Terminal → Split into rows and columns, of Settings → Appearance → Background workspaces apart, and of Settings → Shortcuts → herdr prefix keys: the rest of the
  * settings part (./settings.ko.ts), kept apart so each file stays short. Both files are the one settings part,
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
@@ -16,4 +16,11 @@ export const SETTINGS_COMPOSER_KO: Record<string, string> = {
   "On this device, a compaction names the token counts the agent recorded with it, and each run of back-to-back failed requests shows as one row that opens to their errors. OmO, omp and pi record them.": "이 기기에서 대화 압축에 에이전트가 함께 기록한 토큰 수를 보여 주고, 연달아 실패한 요청을 한 줄로 묶어 열면 오류를 볼 수 있게 합니다. OmO, omp, pi가 기록합니다.",
   "Background workspaces apart": "백그라운드 워크스페이스 따로 두기",
   "On this device, workspaces a tool tagged role=background (herdr workspace report-metadata --token role=background) stand after the others under a folded Background workspaces heading. The open one, and one whose agent asks a question, stay in sight.": "이 기기에서, 도구가 role=background 태그를 단 워크스페이스(herdr workspace report-metadata --token role=background)를 다른 워크스페이스 뒤의 접힌 백그라운드 워크스페이스 머리글 아래에 둡니다. 열려 있는 워크스페이스와 에이전트가 질문 중인 워크스페이스는 계속 보입니다.",
+  "Go to tab 1-9": "1~9번 탭으로 이동",
+  "Prefix": "접두키",
+  "This PC's server does not report herdr's keys yet.": "이 PC의 서버가 아직 herdr 키를 알려 주지 않습니다.",
+  "Use herdr's prefix keys": "herdr 접두키 사용",
+  "herdr prefix keys": "herdr 접두키",
+  "herdr's prefix in its config.toml cannot be used here, so no key is taken.": "config.toml의 herdr 접두키를 여기서 쓸 수 없어 어떤 키도 가로채지 않습니다.",
+  "herdr's prefix, then a key herdr's config.toml on this PC binds, runs that action here: the ones listed below. The prefix no longer reaches the pane: press it twice to send it. Fields, dialogs and IME input keep their keys.": "herdr 접두키에 이어 이 PC의 herdr config.toml이 지정한 키를 누르면 아래 동작이 여기서 실행됩니다. 접두키는 더 이상 패널로 가지 않으니, 보내려면 두 번 누르세요. 입력칸·대화상자·IME 입력은 키를 그대로 받습니다.",
 };

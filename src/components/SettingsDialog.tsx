@@ -13,6 +13,9 @@ import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
 import { SHORTCUTS, bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutDisplayKeys, shortcutKeys, shortcutConflict, type ShortcutId } from "../lib/shortcuts.ts";
 import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
 import { exactChordRisk, isReservedShortcutKey, parseExactChord } from "../lib/shortcutBindings.ts";
+import { compileHerdrKeys } from "../lib/herdrKeys.ts";
+import { herdrKeys, loadHerdrUi } from "../lib/herdrUi.ts";
+import { HERDR_PREFIX_ACTIONS, type HerdrKeys, type HerdrPrefixAction } from "../../shared/herdr-keys.ts";
 import { WEB_LINK_TARGETS } from "../lib/webPanel.ts";
 import { FILE_OPEN_TARGETS } from "../lib/filePresentation.ts";
 import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, VOICE_ENGINES, enterSendsOn, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
@@ -982,7 +985,67 @@ function ShortcutsPage() {
           update({ shortcutOverrides: {} });
         }}>{t("Reset shortcuts")}</button>
       </div>
+      <HerdrPrefixKeys />
     </>
+  );
+}
+
+/** What each herdr action runs here (lib/herdrKeys.ts runHerdrAction), named as the app names it. */
+const HERDR_ACTION_LABELS: Readonly<Record<HerdrPrefixAction, string>> = {
+  help: "Command palette",
+  settings: "Settings",
+  workspace_picker: "Command palette",
+  goto: "Command palette",
+  new_workspace: "New workspace",
+  previous_workspace: "Previous workspace",
+  next_workspace: "Next workspace",
+  new_tab: "New terminal",
+  rename_tab: "Rename tab",
+  previous_tab: "Previous tab",
+  next_tab: "Next tab",
+  switch_tab: "Go to tab 1-9",
+  split_vertical: "Split pane right",
+  split_horizontal: "Split pane down",
+  zoom: "Zoom or unzoom pane",
+  toggle_sidebar: "Toggle sidebar",
+};
+
+/** The opt-in to herdr's prefix keys, and the bindings it read from this PC's herdr config while on. */
+function HerdrPrefixKeys() {
+  const { settings, update } = useSettings();
+  const t = useT();
+  const on = settings.herdrPrefixKeys;
+  const [keys, setKeys] = useState<{ read: HerdrKeys | null } | null>(null);
+  useEffect(() => {
+    if (!on) return;
+    let live = true;
+    void loadHerdrUi().then(() => { if (live) setKeys({ read: herdrKeys() }); });
+    return () => { live = false; };
+  }, [on]);
+  const read = keys?.read ?? null;
+  const map = read ? compileHerdrKeys(read) : null;
+  const bound = read === null || map === null ? [] : HERDR_PREFIX_ACTIONS.filter((action) => read.bindings[action].length > 0);
+  const rows = [...new Set(bound.map((action) => HERDR_ACTION_LABELS[action]))]
+    .map((label) => ({ label, keys: bound.filter((action) => HERDR_ACTION_LABELS[action] === label).flatMap((action) => read?.bindings[action] ?? []) }));
+  const status = !on || keys === null ? null
+    : read === null ? t("This PC's server does not report herdr's keys yet.")
+    : map === null ? t("herdr's prefix in its config.toml cannot be used here, so no key is taken.")
+    : null;
+  return (
+    <SettingsGroup title={t("herdr prefix keys")} section="herdr-keys">
+      <SettingsRow label={t("Use herdr's prefix keys")} description={t("herdr's prefix, then a key herdr's config.toml on this PC binds, runs that action here: the ones listed below. The prefix no longer reaches the pane: press it twice to send it. Fields, dialogs and IME input keep their keys.")}>
+        <Toggle label={t("Use herdr's prefix keys")} checked={on} onChange={(herdrPrefixKeys) => update({ herdrPrefixKeys })} />
+      </SettingsRow>
+      {status !== null && <p className="settings-item settings-description" role="status">{status}</p>}
+      {on && read !== null && map !== null && <>
+        <SettingsRow label={t("Prefix")}><kbd className="kbd">{read.prefix}</kbd></SettingsRow>
+        {rows.map((row) => (
+          <SettingsRow key={row.label} label={t(row.label)}>
+            <span className="settings-keys">{row.keys.map((key) => <kbd className="kbd" key={key}>{key}</kbd>)}</span>
+          </SettingsRow>
+        ))}
+      </>}
+    </SettingsGroup>
   );
 }
 

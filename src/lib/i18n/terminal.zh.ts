@@ -84,8 +84,6 @@ export const TERMINAL_ZH: Record<string, string> = {
   "Not sent. Reconnect and try again.": "未发送。请重新连接后重试。",
   "The chat can't be shown. The terminal still works.": "无法显示聊天，终端仍可使用。",
   "New tab with agent…": "用 Agent 新建标签页…",
-  "New terminal": "新建终端",
-  "New terminal failed: {reason}": "新建终端失败：{reason}",
   "Tab {n}": "标签页 {n}",
   "Close tab": "关闭标签页",
   "Tab name": "标签页名称",

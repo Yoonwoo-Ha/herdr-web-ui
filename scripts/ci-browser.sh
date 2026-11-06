@@ -116,6 +116,7 @@ run_script scripts/pane-input-focus-demo-regression.ts
 run_script scripts/terminal-keyboard-demo-regression.ts
 run_script scripts/unconfirmed-input-demo-regression.ts
 run_script scripts/shortcut-exact-modifiers-demo-regression.ts
+run_script scripts/herdr-prefix-keys-demo-regression.ts
 run_script scripts/portal-regression.ts
 run_script scripts/deep-link-demo-regression.ts
 run_script scripts/chat-history-browser-qa.ts

@@ -68,6 +68,7 @@ function labelMapUses(): [key: string, file: string][] {
     ...grab("components/DevicesPanel.tsx", "VIA", value),
     ...grab("../shared/portal.ts", "PORTAL_AUTH_PROBLEMS", value),
     ...grab("components/SettingsDialog.tsx", "THEME_NAMES", /^\s+"?[\w-]+"?: "([^"]*)",?$/gm),
+    ...grab("components/SettingsDialog.tsx", "HERDR_ACTION_LABELS", value),
     ...grab("components/KeyBar.tsx", "ARROWS", /label: "([^"]+)"/g),
     ...grab("components/KeyBar.tsx", "KEY_SPOKEN_NAMES", /label: "([^"]+)"/g),
     ...grab("lib/shortcuts.ts", "SHORTCUTS", /label: "([^"]+)"/g),

@@ -1,5 +1,5 @@
 /**
- * Chinese for the settings keys of Settings → Chat → Composer's optional buttons and chips, of Settings → Chat → Compaction and failed requests, of Settings → Terminal → Split into rows and columns, and of Settings → Appearance → Background workspaces apart: the rest of the
+ * Chinese for the settings keys of Settings → Chat → Composer's optional buttons and chips, of Settings → Chat → Compaction and failed requests, of Settings → Terminal → Split into rows and columns, of Settings → Appearance → Background workspaces apart, and of Settings → Shortcuts → herdr prefix keys: the rest of the
  * settings part (./settings.zh.ts), kept apart so each file stays short. Both files are the one settings part,
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
@@ -16,4 +16,11 @@ export const SETTINGS_COMPOSER_ZH: Record<string, string> = {
   "On this device, a compaction names the token counts the agent recorded with it, and each run of back-to-back failed requests shows as one row that opens to their errors. OmO, omp and pi record them.": "在此设备上，对话压缩会显示代理随之记录的 token 数，连续失败的请求合并为一行，展开可查看错误。OmO、omp 和 pi 会记录这些信息。",
   "Background workspaces apart": "单独放置后台工作区",
   "On this device, workspaces a tool tagged role=background (herdr workspace report-metadata --token role=background) stand after the others under a folded Background workspaces heading. The open one, and one whose agent asks a question, stay in sight.": "在此设备上,工具标记了 role=background 的工作区(herdr workspace report-metadata --token role=background)会排在其他工作区之后,放在折叠的“后台工作区”标题下。打开的工作区和代理正在提问的工作区仍然可见。",
+  "Go to tab 1-9": "转到第 1-9 个标签页",
+  "Prefix": "前缀键",
+  "This PC's server does not report herdr's keys yet.": "此 PC 的服务器尚未报告 herdr 的按键。",
+  "Use herdr's prefix keys": "使用 herdr 前缀键",
+  "herdr prefix keys": "herdr 前缀键",
+  "herdr's prefix in its config.toml cannot be used here, so no key is taken.": "config.toml 中的 herdr 前缀键无法在此使用，因此不会占用任何按键。",
+  "herdr's prefix, then a key herdr's config.toml on this PC binds, runs that action here: the ones listed below. The prefix no longer reaches the pane: press it twice to send it. Fields, dialogs and IME input keep their keys.": "按下 herdr 前缀键后，再按此 PC 的 herdr config.toml 绑定的键，即可在这里执行下方列出的操作。前缀键将不再发送到窗格：按两次即可发送。输入框、对话框和输入法输入保留其按键。",
 };

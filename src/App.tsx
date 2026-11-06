@@ -47,7 +47,7 @@ import { shellMode } from "./lib/shellMode.ts";
 import { usePairedNotices } from "./lib/usePairedNotices.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { rosterPanes } from "./lib/dagPane.ts";
-import { adjacentTabPane, adjacentWorkspacePane, drawnWorkspaceRows, sidebarWorkspaceSteps, type ViewedPane } from "./lib/adjacentTarget.ts";
+import { adjacentTabPane, adjacentWorkspacePane, numberedTabPane, drawnWorkspaceRows, sidebarWorkspaceSteps, type ViewedPane } from "./lib/adjacentTarget.ts";
 import { lastViewedPane } from "./lib/lastViewedPane.ts";
 import { currentSidebarPins, movedSidebarPins, pinnedWorkspaceIds } from "./lib/sidebarPins.ts";
 import { liveGroupKeys, movedAgentGroup } from "./lib/namedAgentGroups.ts";
@@ -55,6 +55,7 @@ import { ReorderContext } from "./lib/machineContext.tsx";
 import { loadSettings, pcLoadOn, useSettings } from "./lib/settings.ts";
 import { useHiddenMachines, useShownMachines } from "./lib/hiddenMachines.ts";
 import { formatKeys, shortcutDisplayKeys, useShortcuts } from "./lib/shortcuts.ts";
+import { useHerdrPrefixKeys } from "./lib/herdrKeys.ts";
 import { useMediaQuery } from "./lib/useMediaQuery.ts";
 import { useAnnouncedText } from "./lib/useAnnouncedText.ts";
 import { CRAMPED_QUERY, paneContextPress, tabRowHidden } from "./lib/paneCanvas.ts";
@@ -489,6 +490,12 @@ export function App() {
         const next = roster ? adjacentTabPane(roster, selectedPaneId, direction, viewed) : null;
         if (next) selectPane(next);
       },
+      selectTabNumber: (number) => {
+        const roster = snapshotRef.current;
+        const viewed: ViewedPane = (scope, id) => lastViewedPane(scope, selectedMachineId, id);
+        const next = roster ? numberedTabPane(roster, selectedPaneId, number, viewed) : null;
+        if (next) selectPane(next);
+      },
       selectAdjacentWorkspace: (direction) => {
         const roster = snapshotRef.current;
         if (!roster) return;
@@ -620,6 +627,7 @@ export function App() {
   );
 
   useShortcuts(actions, locked === false);
+  const herdrPrefixWaiting = useHerdrPrefixKeys(actions, locked === false, setLayoutNotice);
 
   // The header's More menu: what used to be three buttons of its own. Each item is there under
   // the condition its button had. At phone width the palette's button gives its room to the
@@ -772,7 +780,7 @@ export function App() {
             <Search />
           </button>
         </div>
-        <HeaderNote note={note} />
+        <HeaderNote note={herdrPrefixWaiting ? t("herdr prefix: press a key") : note} />
         {note !== null ? null : selectedPane && crumb ? (
           <div className={`context${headerConnection === null ? "" : " has-connection"}${tabsInHeader && selectedWorkspace && !guideShown ? " has-tabs" : ""}`} title={crumb.tooltip}>
             <div className="context-title">

@@ -6,9 +6,11 @@
  * on the first frame after a reconnect. Only an older server, which has no such route (404
  * not_found), stands for herdr's default (on).
  */
+import { HERDR_PREFIX_ACTIONS, type HerdrKeys } from "../../shared/herdr-keys.ts";
 import { apiFetch } from "./api-request-id.ts";
 
 let known: boolean | null = null;
+let keys: HerdrKeys | null = null;
 let loading: Promise<void> | null = null;
 
 /** Whether letting go of a drag copies: herdr's copy_on_select, off until it is known. */
@@ -18,6 +20,20 @@ export function copyOnSelect(): boolean {
 
 export function herdrUiKnown(): boolean {
   return known !== null;
+}
+
+/** herdr's `[keys]` prefix bindings as the last read answered them (lib/herdrKeys.ts); null before one, or from an older server. */
+export function herdrKeys(): HerdrKeys | null {
+  return keys;
+}
+
+function readKeys(value: unknown): HerdrKeys | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { prefix, bindings } = value as { prefix?: unknown; bindings?: unknown };
+  if (typeof prefix !== "string" || typeof bindings !== "object" || bindings === null) return null;
+  const read = bindings as Record<string, unknown>;
+  if (!HERDR_PREFIX_ACTIONS.every((action) => Array.isArray(read[action]) && (read[action] as unknown[]).every((key) => typeof key === "string"))) return null;
+  return { prefix, bindings: Object.fromEntries(HERDR_PREFIX_ACTIONS.map((action) => [action, read[action]])) as HerdrKeys["bindings"] };
 }
 
 /** Reads the preference again (a terminal mount picks up an edited config); one read at a time. */
@@ -34,6 +50,7 @@ export function loadHerdrUi(read: (url: string, init?: RequestInit) => Promise<R
       if (response.ok) {
         const value = typeof body === "object" && body !== null ? (body as { copy_on_select?: unknown }).copy_on_select : undefined;
         if (typeof value === "boolean") known = value;
+        keys = readKeys((body as { keys?: unknown } | null)?.keys);
       } else if (response.status === 404 && (body as { error?: { code?: unknown } } | null)?.error?.code === "not_found") {
         known = true;
       }
@@ -46,5 +63,6 @@ export function loadHerdrUi(read: (url: string, init?: RequestInit) => Promise<R
 /** For tests: forget what was read. */
 export function forgetHerdrUi(): void {
   known = null;
+  keys = null;
   loading = null;
 }

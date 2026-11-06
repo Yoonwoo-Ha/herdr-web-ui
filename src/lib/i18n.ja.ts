@@ -428,6 +428,9 @@ const BASE: Record<string, string> = {
   "No group": "グループなし",
   "Context {percent}% left": "コンテキスト残り {percent}%",
   "{used} of {window} tokens": "{used} / {window} トークン",
+  "New terminal": "新しいターミナル",
+  "New terminal failed: {reason}": "新しいターミナルを開けませんでした: {reason}",
+  "herdr prefix: press a key": "herdrプレフィックス: キーを押してください",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

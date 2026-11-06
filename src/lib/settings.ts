@@ -82,6 +82,9 @@ export interface Settings {
   /** the touch key bar's second row (Esc, Tab, | ~ / -) and its arrow pad, opened from the bar's own toggle */
   keyBarExpanded: boolean;
   shortcutOverrides: ShortcutOverrides;
+  /** herdr's prefix, then a key its config.toml binds, runs the app's action for it (lib/herdrKeys.ts); off until chosen,
+   *  since the prefix (Ctrl+B by default) then no longer reaches the pane */
+  herdrPrefixKeys: boolean;
   theme: ThemeSetting;
   density: Density;
   /** How much a workspace row says: its name, or its pane's title over its place. */
@@ -283,11 +286,11 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
 
 /** Raw custom text, key combinations and account keys are never copied. Requiring every other
  * Settings field in the projection makes a new field require an explicit collection decision.
- * keyBarExpanded, agentLocks, lockedAgents, the named agent groups, fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, sidebarPeek, sidebarBackgroundWorkspaces, splitGrid, autoTabNames, composerArtifacts, composerPasteSend, composerBtw, terminalMirrorWrap, terminalImages, terminalAttachButton, terminalKeyboardOnRequest, terminalFoldKeyBar, markdownOutline, sidebarFilter, sidebarContext, sidebarAgentTree, foldHelpers, pcLoad, chatRequestDetails, voiceEngine, the agent groups, the
+ * keyBarExpanded, herdrPrefixKeys, agentLocks, lockedAgents, the named agent groups, fileOpen, webLinks, reuseExternalLinkTab, the launch modes, followHerdrFocus, sidebarPeek, sidebarBackgroundWorkspaces, splitGrid, autoTabNames, composerArtifacts, composerPasteSend, composerBtw, terminalMirrorWrap, terminalImages, terminalAttachButton, terminalKeyboardOnRequest, terminalFoldKeyBar, markdownOutline, sidebarFilter, sidebarContext, sidebarAgentTree, foldHelpers, pcLoad, chatRequestDetails, voiceEngine, the agent groups, the
  * interface font, the file text size and the folds its blocks start in are not collected: the telemetry schema
  * (shared/telemetry.ts) does not carry them. */
 type TelemetrySourceSettings = Omit<Settings,
-  "keyBarExtras" | "keyBarItems" | "keyBarExpanded" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily"
+  "keyBarExtras" | "keyBarItems" | "keyBarExpanded" | "shortcutOverrides" | "herdrPrefixKeys" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily"
   | "quickReplies" | "agentLocks" | "lockedAgents" | "agentNamedGroups" | "agentGroupNames" | "agentGroupOf" | "usageOrder" | "usageHidden" | "fileOpen" | "filesPanel" | "filesDocuments" | "webLinks" | "reuseExternalLinkTab" | "claudeLaunchMode" | "codexLaunchMode"
   | "followHerdrFocus" | "sidebarPeek" | "sidebarBackgroundWorkspaces" | "splitGrid" | "composerArtifacts" | "composerPasteSend" | "composerBtw" | "terminalMirrorWrap" | "sidebarFilter" | "sidebarContext" | "sidebarAgentTree" | "foldHelpers" | "pcLoad"
   | "expandThinking" | "foldWork" | "chatRequestDetails" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort" | "terminalImages" | "terminalAttachButton"
@@ -366,7 +369,7 @@ export const SETTING_SCOPE = {
   agentMarks: "shared", agentLocks: "shared", lockedAgents: "shared", agentNamedGroups: "shared", agentGroupNames: "shared", agentGroupOf: "shared", autoSendQueued: "shared", autoTabNames: "shared", showThinking: "shared", quickReplies: "shared",
   showQuickReplies: "shared", showUsage: "shared", usageCount: "shared",
   usageGlance: "shared", usageOrder: "shared", usageHidden: "shared", defaultView: "device", suggestionChip: "device",
-  terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", keyBarExpanded: "device", shortcutOverrides: "device", density: "device",
+  terminalInputMode: "device", keyBarExtras: "device", keyBarItems: "device", keyBarExpanded: "device", shortcutOverrides: "device", herdrPrefixKeys: "device", density: "device",
   terminalFontSize: "device",
   terminalWheelSpeed: "device", terminalFontFamily: "device", paneClipboard: "device", releasePaneAway: "device",
   // a phone has less memory for decoded pictures than a desk
@@ -429,6 +432,7 @@ export const DEFAULT_SETTINGS: Settings = {
   keyBarItems: DEFAULT_KEY_BAR_ITEMS,
   keyBarExpanded: false,
   shortcutOverrides: {},
+  herdrPrefixKeys: false,
   theme: "dark",
   density: "comfortable",
   sidebarRows: "one",
@@ -643,6 +647,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     keyBarItems: sanitizeKeyBarItems(record["keyBarItems"], keyBarFallback),
     keyBarExpanded: typeof record["keyBarExpanded"] === "boolean" ? record["keyBarExpanded"] : DEFAULT_SETTINGS.keyBarExpanded,
     shortcutOverrides: sanitizeShortcutOverrides(record["shortcutOverrides"]),
+    herdrPrefixKeys: typeof record["herdrPrefixKeys"] === "boolean" ? record["herdrPrefixKeys"] : DEFAULT_SETTINGS.herdrPrefixKeys,
     theme,
     density: density === "compact" || density === "comfortable" ? density : DEFAULT_SETTINGS.density,
     sidebarRows: record["sidebarRows"] === "one" || record["sidebarRows"] === "two" ? record["sidebarRows"] : DEFAULT_SETTINGS.sidebarRows,

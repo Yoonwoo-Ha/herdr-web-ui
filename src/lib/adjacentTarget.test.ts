@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { HerdrPane, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/protocol.ts";
-import { adjacentTabPane, adjacentWorkspacePane, sidebarWorkspaceSteps } from "./adjacentTarget.ts";
+import { adjacentTabPane, adjacentWorkspacePane, numberedTabPane, sidebarWorkspaceSteps } from "./adjacentTarget.ts";
 
 function workspace(id: string, overrides: Partial<WorkspaceInfo> = {}): WorkspaceInfo {
   return { workspace_id: id, active_tab_id: `${id}:t1`, label: id, number: 1, tab_count: 1, pane_count: 1, focused: false, agent_status: "idle", ...overrides };
@@ -54,6 +54,14 @@ describe("adjacentTabPane", () => {
     const withViewer = roster([workspace("w1")], [tab("w1:t1", "w1"), tab("w1:t3", "w1")], [pane("p1", "w1:t1"), viewer, pane("omo", "w1:t3", { agent: "omo" })],
       [{ tab_id: "w1:t3", focused_pane_id: "dag" }] as SessionSnapshot["layouts"]);
     expect(adjacentTabPane(withViewer, "p1", 1, nothingViewed)).toBe("omo");
+  });
+
+  it("numberedTabPane opens the tab at a place in the strip's order, as herdr's prefix+1..9, and nothing past the last", () => {
+    expect(numberedTabPane(snapshot, "p1", 1, nothingViewed)).toBe("p2");
+    expect(numberedTabPane(snapshot, "p2", 3, nothingViewed)).toBe("p3a");
+    expect(numberedTabPane(snapshot, "p1", 4, nothingViewed)).toBeNull();
+    expect(numberedTabPane(snapshot, "q1", 1, nothingViewed)).toBe("q1");
+    expect(numberedTabPane(snapshot, null, 1, nothingViewed)).toBeNull();
   });
 });
 

@@ -21,6 +21,8 @@ export interface AppActions {
   selectAdjacentPane: (direction: -1 | 1) => void;
   /** the previous/next tab of the selected pane's workspace in tab strip order; wraps around */
   selectAdjacentTab: (direction: -1 | 1) => void;
+  /** the selected pane's workspace's tab at `number` (1-based) in tab strip order, as herdr's prefix+1..9; nothing past the last */
+  selectTabNumber: (number: number) => void;
   /** the previous/next workspace of the selected PC in sidebar order (pins, worktree groups); wraps around */
   selectAdjacentWorkspace: (direction: -1 | 1) => void;
   setView: (view: PaneView) => void;

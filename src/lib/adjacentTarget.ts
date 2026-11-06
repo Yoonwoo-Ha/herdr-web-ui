@@ -32,15 +32,31 @@ function step<T>(items: readonly T[], index: number, direction: -1 | 1): T | und
  * click. Null without a selected pane or another tab with a pane.
  */
 export function adjacentTabPane(roster: Roster, selectedPaneId: string | null, direction: -1 | 1, viewed: ViewedPane): string | null {
+  const strip = tabStrip(roster, selectedPaneId);
+  if (!strip || strip.tabs.length < 2) return null;
+  const next = step(strip.tabs, strip.tabs.findIndex((tab) => tab.tab_id === strip.selected.tab_id), direction);
+  return next ? tabPane(roster, strip.panes, next.tab_id, viewed) : null;
+}
+
+/** The pane the tab at `number` (1-based) of the selected pane's tab strip opens, as adjacentTabPane's; null past the last tab. */
+export function numberedTabPane(roster: Roster, selectedPaneId: string | null, number: number, viewed: ViewedPane): string | null {
+  const strip = tabStrip(roster, selectedPaneId);
+  const tab = strip?.tabs[number - 1];
+  return strip && tab ? tabPane(roster, strip.panes, tab.tab_id, viewed) : null;
+}
+
+/** The selected pane's workspace's tabs that have a pane the strip lists, in herdr's order. */
+function tabStrip(roster: Roster, selectedPaneId: string | null) {
   const selected = roster.panes.find((pane) => pane.pane_id === selectedPaneId);
   if (!selected) return null;
   const panes = rosterPanes(roster.panes.filter((pane) => pane.workspace_id === selected.workspace_id), selectedPaneId);
   const tabs = roster.tabs.filter((tab) => tab.workspace_id === selected.workspace_id && panes.some((pane) => pane.tab_id === tab.tab_id));
-  if (tabs.length < 2) return null;
-  const next = step(tabs, tabs.findIndex((tab) => tab.tab_id === selected.tab_id), direction);
-  if (!next) return null;
-  const own = panes.filter((pane) => pane.tab_id === next.tab_id);
-  return firstPane(own, viewed("tab", next.tab_id), roster.layouts?.find((layout) => layout.tab_id === next.tab_id)?.focused_pane_id)?.pane_id ?? null;
+  return { selected, panes, tabs };
+}
+
+function tabPane(roster: Roster, panes: readonly PaneInfo[], tabId: string, viewed: ViewedPane): string | null {
+  const own = panes.filter((pane) => pane.tab_id === tabId);
+  return firstPane(own, viewed("tab", tabId), roster.layouts?.find((layout) => layout.tab_id === tabId)?.focused_pane_id)?.pane_id ?? null;
 }
 
 /**

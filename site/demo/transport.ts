@@ -15,6 +15,7 @@
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
 import { NO_AGENT_MESSAGE } from "../../shared/submit-outcome.ts";
+import { resolveHerdrKeys } from "../../shared/herdr-keys.ts";
 import type { AgentIntegration, AgentStatus, CommandForm, CommandOutcome, ConversationTurn, DevicePairedEvent, DevicesRevokedAll, HealthAuth, IntegrationsResponse, Machine, MachineEvent, OmoActivity, OmoTask, PairedDevice, PairingCode, PaneBackgroundAgentDetail, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, RelayStatus, SecuritySummary, ServerMessage, SessionSnapshot, SlashCommand, TabMoved, TabMovedToWorkspace, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import type { PushSubscriptionStatus, RepoBranchComparison, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRefs, RepoDiffRepository, RepoDiffScope, SessionHistoryAgent, SessionHistoryResponse, SessionResumeResponse } from "../../shared/protocol.ts";
 import { nextTabLabels, normalizeThemeChange, sharedPreferencesBody, type SharedPreferences } from "../../shared/preferences.ts";
@@ -1375,7 +1376,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     return json(demoRelayStatus(), 200, { "cache-control": "no-store" });
   }
   if (path === "/api/portal/start" || path === "/api/portal/stop" || path === "/api/portal/invite") return error("portal_unsupported", "The demo opens no public address.", 409);
-  if (path === "/api/herdr-ui") return json({ copy_on_select: true }, 200, { "cache-control": "no-store" });
+  if (path === "/api/herdr-ui") return json({ copy_on_select: true, keys: resolveHerdrKeys(undefined) }, 200, { "cache-control": "no-store" });
   if (path === "/api/access") return json({ port: 7317, relay: demoRelayStatus(), tailscale: { state: "running", dns_name: "workstation.example.ts.net", serving_url: "https://workstation.example.ts.net", serve_command: null, serve_url: null } });
   if (path === "/api/system") return json(systemReport(), 200, { "cache-control": "no-store" });
   if (path === "/api/usage") {

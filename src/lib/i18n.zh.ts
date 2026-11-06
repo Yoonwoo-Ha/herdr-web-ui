@@ -430,6 +430,9 @@ const BASE: Record<string, string> = {
   "No group": "无分组",
   "Context {percent}% left": "上下文剩余 {percent}%",
   "{used} of {window} tokens": "{used} / {window} Token",
+  "New terminal": "新建终端",
+  "New terminal failed: {reason}": "新建终端失败：{reason}",
+  "herdr prefix: press a key": "herdr 前缀键：请按一个键",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

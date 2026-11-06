@@ -1,3 +1,4 @@
+import type { HerdrKeys } from "./herdr-keys.ts";
 import type { MachineEvent } from "./machines.ts";
 /**
  * Ovis's own HTTP/WebSocket contract, shared by the Bun server and the React client.
@@ -37,6 +38,8 @@ import type { AgentStatus, PaneInfo, SessionSnapshot as HerdrSnapshot, TabInfo, 
 /** GET /api/herdr-ui: the herdr client preferences of the PC serving the web UI, never the rest of its config. */
 export interface HerdrUiConfig {
   copy_on_select: boolean;
+  /** its `[keys]` prefix bindings the app can run (shared/herdr-keys.ts); absent from an older server */
+  keys?: HerdrKeys;
 }
 
 /** Friendly aliases used across the UI. */
@@ -141,8 +144,8 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *         a driving owner only (not watch, not an open install's stranger): saves the choice (runtime-<port>.json) and has
  *         the launcher restart the server on it (server/herdr-core/runtime-choice.ts); 409 runtime_locked (OVIS_RUNTIME,
  *         no launcher, the OS), runtime_unavailable (this PC lacks it, or serves it already), runtime_switching
- *  GET    /api/herdr-ui                  -> HerdrUiConfig (this server PC's herdr [ui] copy_on_select,
- *         for local and remote panes alike), no-store
+ *  GET    /api/herdr-ui                  -> HerdrUiConfig (this server PC's herdr [ui] copy_on_select and
+ *         [keys] prefix bindings, for local and remote panes alike), no-store
  *  GET    /api/access                    -> RemoteAccess (how a phone can reach this server: what
  *         Tailscale on this PC already serves, or the command to run), no-store
  *  GET    /api/portal                    -> PortalStatus (an optional public HTTPS address through

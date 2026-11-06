@@ -457,6 +457,13 @@ it("keeps the sidebar's hover peek off until this device turns it on, and keeps 
   expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("sidebarPeek");
 });
 
+it("keeps herdr's prefix keys off until this device turns them on, and keeps that choice its own", () => {
+  expect(sanitizeSettings({}).herdrPrefixKeys).toBe(false);
+  expect(sanitizeSettings({ herdrPrefixKeys: true }).herdrPrefixKeys).toBe(true);
+  expect(sanitizeSettings({ herdrPrefixKeys: "true" }).herdrPrefixKeys).toBe(false);
+  expect(SHARED_SETTING_KEYS as readonly string[]).not.toContain("herdrPrefixKeys");
+});
+
 it("keeps background workspaces in place until this device turns their part on, and keeps that choice its own", () => {
   expect(DEFAULT_SETTINGS.sidebarBackgroundWorkspaces).toBe(false);
   expect(sanitizeSettings({}).sidebarBackgroundWorkspaces).toBe(false);
