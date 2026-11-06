@@ -343,4 +343,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Follow its focus": "跟随焦点",
   "Don't open the keyboard when tapping the terminal": "点击终端时不打开键盘",
   "Hide the key bar in the input line": "在输入框中隐藏按键栏",
+  "Reopen files on return": "返回时重新打开文件",
+  "A file open when you switch to another tab shows again when you come back to that tab. Back to the tab shows it too.": "切换到其他标签页时打开的文件，在回到该标签页时会再次显示。通过“返回”回到该标签页时也会显示。",
 };

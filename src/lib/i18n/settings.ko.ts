@@ -343,4 +343,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Follow its focus": "포커스 따라",
   "Don't open the keyboard when tapping the terminal": "터미널을 눌러도 키보드 안 열기",
   "Hide the key bar in the input line": "입력창에서는 키 바 숨기기",
+  "Reopen files on return": "돌아오면 파일 다시 열기",
+  "A file open when you switch to another tab shows again when you come back to that tab. Back to the tab shows it too.": "다른 탭으로 전환할 때 열려 있던 파일이 그 탭으로 돌아오면 다시 표시됩니다. 뒤로 가기로 그 탭에 돌아와도 표시됩니다.",
 };

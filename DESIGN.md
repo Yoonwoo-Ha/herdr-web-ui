@@ -2584,6 +2584,11 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   popup toggle and Close alone. The panel is its pane's (its paths are read from the pane's
   folder): selecting another pane or PC closes it (a file in the popup too), and the move takes the
   file's history entry over, so Back returns to the pane the file was open on, without the file.
+  With Settings → Chat → Reopen files on return (`reopenFileOnReturn`, per device,
+  off by default) the file's entry keeps it and the move is pushed over it: Back to that pane
+  shows the file again, and so does a later switch back to the pane from the tab strip, the
+  sidebar or a shortcut, the file opening over the move's entry as its own (Close and Back drop
+  just the file). A file closed on its pane is not shown again; the ten panes left last are kept.
   Closed from inside itself (Close file, Escape) the panel gives the focus back to what opened the
   file, as the dialog does; a focus already elsewhere (the composer, a sidebar row) stays there.
   A link keeps `--accent` and a file chip reads in `--text-strong` with a dotted underline; both

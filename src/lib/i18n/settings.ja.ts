@@ -343,4 +343,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Follow its focus": "フォーカスに追従",
   "Don't open the keyboard when tapping the terminal": "ターミナルをタップしてもキーボードを開かない",
   "Hide the key bar in the input line": "入力欄ではキーバーを隠す",
+  "Reopen files on return": "戻ったときにファイルを再表示",
+  "A file open when you switch to another tab shows again when you come back to that tab. Back to the tab shows it too.": "別のタブに切り替えたときに開いていたファイルは、そのタブに戻ると再び表示されます。「戻る」でそのタブに戻ったときも表示されます。",
 };
