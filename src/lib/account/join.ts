@@ -158,6 +158,20 @@ export class UnverifiedJoinError extends Error {
   }
 }
 
+/** The device asking changed what it says (or where it asks from) after the approval card was drawn. */
+export class AdmissionChangedError extends Error {
+  constructor() {
+    super("The device asked again with other details");
+    this.name = "AdmissionChangedError";
+  }
+}
+
+const sameAdmission = (a: Admission, b: Admission): boolean => a.key === b.key && a.server_id === b.server_id
+  && a.at === b.at && a.label === b.label && a.os === b.os && a.country === b.country && a.city === b.city;
+
+/** What breaks a same-millisecond tie: the details themselves, so the pick never depends on listing order. */
+const tieKey = (admission: Admission): string => [admission.label, admission.os, admission.country, admission.city].join("\u0000");
+
 /** An admission counts for this long after the device rang (docs/account.md, "Joining through the account"). */
 export const ADMISSION_MS = 10 * 60_000;
 
@@ -172,6 +186,8 @@ export async function approveJoin(options: {
   decide: (decision: "approve" | "decline", digits?: string) => Promise<void>;
   /** with the admission that vouched for the device: its name is the one the device gave the account service, not the PC's */
   admit: (admission: Admission) => Promise<unknown>; now?: () => number;
+  /** the admission the card showed, null when it showed none: approval goes ahead only for exactly that one */
+  shown?: Admission | null;
 }): Promise<void> {
   const { request } = options;
   if (request.intent !== "account") { await options.decide("approve", options.digits); return; }
@@ -180,6 +196,9 @@ export async function approveJoin(options: {
     await options.decide("decline");
     throw new UnverifiedJoinError();
   }
+  // the device asked again with another name, system or place since the card was drawn: nothing is
+  // answered, and the card shows the new details before anyone approves them
+  if (options.shown !== undefined && (options.shown === null || !sameAdmission(options.shown, vouched))) throw new AdmissionChangedError();
   await options.decide("approve", options.digits);
   await options.admit(vouched);
 }
@@ -193,7 +212,8 @@ export function vouchedAdmission(admissions: readonly Admission[], through: stri
   for (const admission of admissions) {
     const at = Date.parse(admission.at);
     if (admission.server_id !== through || admission.key !== key || !(now - at <= ADMISSION_MS)) continue;
-    if (newest === undefined || at > Date.parse(newest.at)) newest = admission;
+    const newestAt = newest === undefined ? -Infinity : Date.parse(newest.at);
+    if (newest === undefined || at > newestAt || (at === newestAt && tieKey(admission) > tieKey(newest))) newest = admission;
   }
   return newest;
 }

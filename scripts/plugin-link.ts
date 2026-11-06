@@ -274,7 +274,7 @@ async function linkToAccount(options: LinkOptions, api: Api, forced: DeviceProvi
   // the link page shows who is asking (docs/account.md, "Who is asking"): this PC's name and system
   const requester = { label: hostname(), os: accountOsOfPlatform(process.platform) };
   const startOptions = { service: options.accountService, store, lock, fetch: serviceFetch, now, wait, requester };
-  const signIn = offer !== null && offer.page.length > 0 ? await startLinkPageSignIn(startOptions, offer.device[0] ?? "github") : await startDeviceSignIn({ ...startOptions, provider: forced ?? "github" });
+  const signIn = offer !== null && offer.page.length > 0 ? await startLinkPageSignIn(startOptions, offer.device[0] ?? "github") : await startDeviceSignIn({ ...startOptions, provider: forced ?? offer?.device[0] ?? "github" });
   const provider = signIn.provider;
   out((provider === "ovis"
     ? [

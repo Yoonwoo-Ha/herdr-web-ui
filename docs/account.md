@@ -632,9 +632,14 @@ row's ten minutes and deleted with it by the daily cleanup, so kept at most abou
 privacy policy ([ovis.sh/privacy](https://ovis.sh/privacy/#account)) lists them with everything
 else the service stores.
 
-The approval card (`AccountApprovalPrompt`) shows the admission's (`GET /v1/admissions`, the one
-for this PC and key, read from the account service and not from the PC) as "iOS · Near Seoul,
-South Korea", or "Location unknown", above "approve only if you started this yourself just now".
+The approval card (`AccountApprovalPrompt`) shows the admission's (`GET /v1/admissions`, the newest
+one for this PC and key, read from the account service and not from the PC) as "iOS · Network near
+Seoul, South Korea", or "Network location unknown", says that the name and system are what the
+device says and the place is where its network connects from, and asks to approve only a request
+the person started. Names are read as one plain line (no control or bidi characters, single spaces,
+48 UTF-16 units: the form a signed `add` takes). Approval goes ahead only for the admission the card
+showed: when the device asked again with another name, system or place, nothing is answered and the
+card shows the new details first.
 The link page's confirmation shows the PC's ("Asked by Desk (Linux), near Seoul, South Korea")
 with "continue only if you started this on your own PC".
 

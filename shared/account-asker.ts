@@ -35,10 +35,17 @@ export function placeName(language: string, place: AccountPlace): string | null 
   return place.city === null ? country : `${place.city}, ${country}`;
 }
 
-/** At most 48 UTF-16 units and no control characters, as the account service takes a label; whole characters only. */
+/** Unicode's bidirectional formatting controls: in a name they could reorder what is shown after it. */
+const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * A device's name as one plain line, the form a signed `add` takes (shared/account-records.ts): no
+ * control or bidi characters, single spaces, trimmed, at most 48 UTF-16 units of whole characters.
+ * Used for names this device sends and for names it shows or signs.
+ */
 export function accountLabel(text: string): string {
   let label = "";
-  for (const char of text.replace(/[\p{Cc}\p{Cs}]/gu, "")) {
+  for (const char of text.replace(/[\p{Cc}\p{Cs}]/gu, " ").replace(BIDI_CONTROLS, "").replace(/\s+/g, " ").trim()) {
     if (label.length + char.length > 48) break;
     label += char;
   }

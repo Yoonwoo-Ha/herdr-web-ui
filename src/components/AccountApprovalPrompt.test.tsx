@@ -40,7 +40,7 @@ describe("who is asking, on the approval card", () => {
 describe("approving a device that asks to join the account", () => {
   const request: RemotePairingRequest = { id: "r1", label: "Hako's iPhone", intent: "account", choices: ["111111", "222222", "333333"], expires_at: "", key: "k" };
 
-  async function approveButton(asker: Asker | undefined): Promise<{ disabled: boolean }> {
+  async function approveButton(asker: Asker | undefined): Promise<{ disabled: boolean; numbersDisabled: boolean }> {
     const keys = ["window", "document", "navigator", "getComputedStyle", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"];
     const saved = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
     const events = new EventTarget();
@@ -67,8 +67,9 @@ describe("approving a device that asks to join the account", () => {
       await act(async () => { root.findAll((node) => node.props.role === "radio")[0]!.props.onClick(); });
       const approve = root.findAll((node) => node.type === "button" && node.props.className === "btn btn-primary")[0]!;
       const disabled = approve.props.disabled === true;
+      const numbersDisabled = root.findAll((node) => node.props.role === "radio").every((node) => node.props.disabled === true);
       await act(async () => { renderer!.unmount(); });
-      return { disabled };
+      return { disabled, numbersDisabled };
     } finally {
       for (const [key, descriptor] of saved) {
         if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -78,7 +79,7 @@ describe("approving a device that asks to join the account", () => {
   }
 
   it("waits to approve until it knows who is asking, then lets a picked number approve", async () => {
-    expect((await approveButton(undefined)).disabled).toBe(true);
-    expect((await approveButton({ os: null, country: null, city: null })).disabled).toBe(false);
+    expect(await approveButton(undefined)).toEqual({ disabled: true, numbersDisabled: true });
+    expect(await approveButton({ os: null, country: null, city: null })).toEqual({ disabled: false, numbersDisabled: false });
   });
 });

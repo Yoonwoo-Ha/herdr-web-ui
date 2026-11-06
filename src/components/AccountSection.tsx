@@ -110,6 +110,8 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
   /** a change to the ways in that waits for a fresh sign-in (403 reauth_required) */
   const [reauth, setReauth] = useState<{ action: "add" | "remove"; provider: AccountProvider } | null>(null);
   const deviceSignIn = useRef<AbortController | null>(null);
+  // the sign-in a device code actually started: the link page's, or a provider's own when it fell back
+  const startedProvider = useRef<DeviceSignInProvider | null>(null);
   const service = bridge?.service ?? pcService;
   const fallbackKey = fallback.join(",");
   useEffect(() => {
@@ -163,15 +165,18 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
     deviceSignIn.current = null;
   };
 
-  const failureText = (error: unknown, provider: AccountProvider): string => {
-    const name = PROVIDER_NAMES[provider];
-    if (error instanceof AccountServiceError && error.code === "identity_exists") return t("Your account already signs in with {provider}.", { provider: name });
+  /** `provider` null: the link page, where the person picked GitHub or Google themselves, so the text names neither */
+  const failureText = (error: unknown, provider: AccountProvider | null): string => {
+    const name = provider === null ? null : PROVIDER_NAMES[provider];
+    if (error instanceof AccountServiceError && error.code === "identity_exists" && name !== null) return t("Your account already signs in with {provider}.", { provider: name });
     if (!(error instanceof SignInError)) return t("The sign-in did not finish. Try again.");
     switch (error.code) {
-      case "denied": return t("{provider} refused the sign-in.", { provider: name });
+      case "denied": return name === null ? t("The sign-in was refused.") : t("{provider} refused the sign-in.", { provider: name });
       case "expired": return t("The code expired. Sign in again to get a new one.");
       case "unsupported": return t("This account service can't sign in a browser on this PC yet.");
-      case "in_use": return t("This {provider} sign-in already belongs to another Ovis account. Nothing was changed.", { provider: name });
+      case "in_use": return name === null
+        ? t("This sign-in already belongs to another Ovis account. Nothing was changed.")
+        : t("This {provider} sign-in already belongs to another Ovis account. Nothing was changed.", { provider: name });
       case "no_sign_in": return t("The sign-in did not finish. Try again.");
     }
   };
@@ -182,6 +187,7 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
     const controller = new AbortController();
     deviceSignIn.current = controller;
     setView({ kind: "device-code", provider, userCode: null, verificationUri: "", verificationUriComplete: null });
+    startedProvider.current = null;
     return (async () => {
       const requester = { label: deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0), os: deviceOs(navigator.userAgent, navigator.maxTouchPoints ?? 0) };
       const started = provider === "ovis"
@@ -189,6 +195,7 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
         ? await startLinkPageSignIn({ service: pcServiceOrigin, store: indexedAccountStore, requester }, offer?.device[0] ?? "github")
         : await startDeviceSignIn({ service: pcServiceOrigin, store: indexedAccountStore, provider, requester });
       controller.signal.throwIfAborted();
+      startedProvider.current = started.provider;
       setView({ kind: "device-code", provider: started.provider, userCode: started.userCode, verificationUri: started.verificationUri, verificationUriComplete: started.verificationUriComplete });
       return started.finish(controller.signal);
     })().finally(() => { if (deviceSignIn.current === controller) deviceSignIn.current = null; });
@@ -212,7 +219,10 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
       // cancelled, or Settings closed: the page already moved on
       if (error instanceof DOMException && error.name === "AbortError") return;
       console.warn("Ovis: the sign-in did not finish", error instanceof SignInError ? error.code : error instanceof Error ? error.name : error);
-      setView({ kind: "signed-out", error: failureText(error, provider) });
+      // the link page named no provider (the person picked one there); its fallback to a provider's own page did
+      const started = startedProvider.current;
+      const named = bridge === null && pcService !== null && linkPage ? (started === null || started === "ovis" ? null : started) : provider;
+      setView({ kind: "signed-out", error: failureText(error, named) });
     });
   };
 

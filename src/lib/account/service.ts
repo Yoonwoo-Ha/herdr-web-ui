@@ -3,7 +3,7 @@
  * directory of the account's PCs, and the tokens a sign-in gives. Answers are parsed here, at the
  * edge; a token is never logged or put in an error's text.
  */
-import { accountOsOf, type AccountAsker, type AccountOs } from "../../../shared/account-asker.ts";
+import { accountLabel, accountOsOf, type AccountAsker, type AccountOs } from "../../../shared/account-asker.ts";
 import type { AccountRecord } from "../../../shared/account-records.ts";
 import { isWssOrigin } from "../../../shared/relay-offer.ts";
 import { GLOBAL_APP } from "../../../shared/relay-regions.ts";
@@ -131,6 +131,9 @@ export class SignedOutError extends Error {
     this.name = "SignedOutError";
   }
 }
+
+/** The name an admission is shown and signed under when its own has nothing left once made plain. */
+export const UNNAMED_DEVICE = "Device";
 
 /** A device of the account waiting at a PC (`GET /v1/admissions`), and who is asking. */
 export interface Admission extends AccountAsker { readonly key: string; readonly label: string; readonly server_id: string; readonly at: string }
@@ -260,14 +263,17 @@ export class AccountService {
   async recentAdmissions(): Promise<Admission[]> {
     const body = await this.call("GET", "/v1/admissions");
     const list = isRecord(body) && Array.isArray(body.admissions) ? body.admissions : [];
-    return list.flatMap((entry) => isRecord(entry) && typeof entry.key === "string" && typeof entry.label === "string" && typeof entry.server_id === "string" && typeof entry.at === "string"
-      ? [{
-        key: entry.key, label: entry.label, server_id: entry.server_id, at: entry.at, os: accountOsOf(entry.os),
-        ...(typeof entry.country === "string" && /^[A-Z]{2}$/.test(entry.country)
-          ? { country: entry.country, city: typeof entry.city === "string" && entry.city !== "" ? entry.city : null }
-          : { country: null, city: null }),
-      }]
-      : []);
+    return list.flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry.key !== "string" || typeof entry.label !== "string" || typeof entry.server_id !== "string" || typeof entry.at !== "string") return [];
+      // shown on the approval card and signed into the add: one plain line; a name with nothing left
+      // keeps its row (it may be the newest) under a plain stand-in
+      const label = accountLabel(entry.label) || UNNAMED_DEVICE;
+      const city = typeof entry.city === "string" ? accountLabel(entry.city) : "";
+      const place = typeof entry.country === "string" && /^[A-Z]{2}$/.test(entry.country)
+        ? { country: entry.country, city: city === "" ? null : city }
+        : { country: null, city: null };
+      return [{ key: entry.key, label, server_id: entry.server_id, at: entry.at, os: accountOsOf(entry.os), ...place }];
+    });
   }
 
   /** The account's sign-in methods, one per provider. */

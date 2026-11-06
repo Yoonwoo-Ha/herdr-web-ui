@@ -41,7 +41,7 @@ const grouped = (digits: string): string => `${digits.slice(0, 3)} ${digits.slic
 export function AccountAsker({ asker, language }: { asker: Asker; language: string }) {
   const t = useT();
   const place = placeName(language, asker);
-  const parts = [asker.os === null ? null : ACCOUNT_OS_NAMES[asker.os], place === null ? t("Location unknown") : t("Near {place}", { place })];
+  const parts = [asker.os === null ? null : ACCOUNT_OS_NAMES[asker.os], place === null ? t("Network location unknown") : t("Network near {place}", { place })];
   return (
     <p className="account-approval-asker" data-place={place === null ? "unknown" : "known"}>
       <MapPin aria-hidden="true" />
@@ -62,6 +62,12 @@ export function AccountApprovalCard({ request, pcName, pcCount, asker, onDecide 
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // who-is-asking is read again (the device asked anew): a number picked against the old details goes
+  const [readFor, setReadFor] = useState(asker);
+  if (readFor !== asker) {
+    setReadFor(asker);
+    if (asker === undefined) setPicked(null);
+  }
 
   const decide = async (decision: "approve" | "decline"): Promise<void> => {
     setBusy(true);
@@ -87,11 +93,13 @@ export function AccountApprovalCard({ request, pcName, pcCount, asker, onDecide 
         <h2 className="account-approval-title" id={`${id}-title`}>{t("Add {device}?", { device: asObject })}</h2>
         <p className="account-approval-via">{request.intent === "account" ? t("Through {pc} · joins your {n} PCs", { pc: pcName, n: pcCount }) : t("Only for {pc}", { pc: pcName })}</p>
         {asker != null && <AccountAsker asker={asker} language={resolvedLanguage} />}
+        {/* the name and the system are the device's own word, the place only its network's: said, so neither reads as checked */}
+        {asker != null && <p className="account-approval-hint">{t("The name and system are what the device says. The place is where its network connects from.")}</p>}
         <p className="account-approval-ask" id={`${id}-ask`}>{t("Pick the number on {device}", { device: request.label })}</p>
         <div className="account-approval-choices" role="radiogroup" aria-labelledby={`${id}-ask`}>
           {request.choices.map((choice) => (
             <button key={choice} type="button" role="radio" aria-checked={picked === choice} aria-label={choice.split("").join(" ")}
-              className="account-approval-choice" disabled={busy} onClick={() => setPicked(choice)}>{grouped(choice)}</button>
+              className="account-approval-choice" disabled={busy || asker === undefined} onClick={() => setPicked(choice)}>{grouped(choice)}</button>
           ))}
         </div>
         {error !== null && <p className="account-approval-error" role="alert">{error}</p>}

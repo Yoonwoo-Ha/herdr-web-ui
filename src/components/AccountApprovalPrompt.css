@@ -57,6 +57,16 @@
   overflow-wrap: anywhere;
 }
 
+.account-approval-asker:has(+ .account-approval-hint) {
+  margin-bottom: var(--space-1);
+}
+
+.account-approval-hint {
+  margin: 0 0 var(--space-5);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+
 .account-approval-asker svg {
   flex: none;
   width: var(--icon-size);

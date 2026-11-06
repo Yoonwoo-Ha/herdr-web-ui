@@ -282,6 +282,15 @@ describe("ovis link, on the PC itself", () => {
     expect(text).toContain("https://www.google.com/device");
   });
 
+  it("uses the device page the service offers when it has no link page", async () => {
+    const { code, text } = await linkToAccount({
+      prepare: (service) => service.offer(["google"], ["google"]),
+      approve: (service, shown) => service.approveDevice(shown, "acct_1"),
+    });
+    expect(code).toBe(0);
+    expect(text).toContain("https://www.google.com/device");
+  });
+
   it("does not sign in when this PC is already in an account, or when the account service is off", async () => {
     let account: string | null = "acct_1";
     const local = localPc((_request, path) => path === "/api/account/status" ? Response.json({ account, unlinked: [], removals: [], adds: [], blocked: [] }) : undefined);

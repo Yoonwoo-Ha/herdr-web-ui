@@ -9,8 +9,8 @@ import { generateKeyPair, importPublicKey } from "../../../shared/relay-e2ee.ts"
 import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import type { RelayDevice } from "../relay/device.ts";
 import { MemoryDeviceStore } from "../relay/device.test.ts";
-import { newRecordId, signAccountRecord } from "../../../shared/account-records.ts";
-import { admitToAccount, approveJoin, enrollOnPc, vouchedAdmission, enrollPc, keepRemovals, linkThisDevice, rememberDevice, needsLink, pcAccountStatus, planEnroll, takeIntroduction, UnverifiedJoinError, sendQueuedAdds } from "./join.ts";
+import { newRecordId, readAccountRecord, signAccountRecord } from "../../../shared/account-records.ts";
+import { AdmissionChangedError, admitToAccount, approveJoin, enrollOnPc, vouchedAdmission, enrollPc, keepRemovals, linkThisDevice, rememberDevice, needsLink, pcAccountStatus, planEnroll, takeIntroduction, UnverifiedJoinError, sendQueuedAdds } from "./join.ts";
 import { leaveAccount, removeFromAccount } from "./leave.ts";
 import { myPcs } from "./myPcs.ts";
 import { AccountService } from "./service.ts";
@@ -604,8 +604,11 @@ describe("enrolling a PC this device brings into the account", () => {
 });
 
 describe("approving a device that asks to join the account", () => {
+  // the service's clock: a test moves it on so a second admission is really the newer one
+  let clock = Date.now();
   async function setUp() {
-    const fake = new FakeAccountService();
+    clock = Date.now();
+    const fake = new FakeAccountService(() => clock);
     const store = memoryAccountStore();
     await store.set("session", { service: SERVICE, account: ACCOUNT, provider: "github", access_token: fake.issueToken(ACCOUNT), refresh_token: "r", expires_at: Date.now() + 3600_000 });
     const service = new AccountService({ store, fetch: fake.fetch });
@@ -668,6 +671,64 @@ describe("approving a device that asks to join the account", () => {
     expect(joining).toBe("Mac app");
   });
 
+  it("refuses to approve when the device asked again with other details after the card was shown", async () => {
+    const { service, mac, X } = await setUp();
+    const shown = vouchedAdmission(await service.recentAdmissions(), X, mac.public_spki, Date.now())!;
+    clock += 1_000;
+    await service.postAdmission(X, "Other name", mac.public_spki, "windows");
+    const decisions: string[] = [];
+    const outcome = approveJoin({
+      request: { id: "r1", label: "Mac app", intent: "account", choices: ["111111", "222222", "333333"], expires_at: "", key: mac.public_spki },
+      digits: "111111", through: X, service, shown, decide: async (decision) => { decisions.push(decision); }, admit: async () => {},
+    });
+    await expect(outcome).rejects.toBeInstanceOf(AdmissionChangedError);
+    expect(decisions).toEqual([]);
+  });
+
+  it("refuses to approve when the card showed no admission but one turned up since", async () => {
+    const { service, mac, X } = await setUp();
+    const decisions: string[] = [];
+    const outcome = approveJoin({
+      request: { id: "r1", label: "Mac app", intent: "account", choices: ["111111", "222222", "333333"], expires_at: "", key: mac.public_spki },
+      digits: "111111", through: X, service, shown: null, decide: async (decision) => { decisions.push(decision); }, admit: async () => {},
+    });
+    await expect(outcome).rejects.toBeInstanceOf(AdmissionChangedError);
+    expect(decisions).toEqual([]);
+  });
+
+  it("refuses an admission shown for another key or PC, even with the same details", async () => {
+    const { service, mac, X } = await setUp();
+    const vouched = vouchedAdmission(await service.recentAdmissions(), X, mac.public_spki, Date.now())!;
+    for (const shown of [{ ...vouched, key: "other-key" }, { ...vouched, server_id: "f".repeat(32) }]) {
+      const outcome = approveJoin({
+        request: { id: "r1", label: "Mac app", intent: "account", choices: ["111111", "222222", "333333"], expires_at: "", key: mac.public_spki },
+        digits: "111111", through: X, service, shown, decide: async () => {}, admit: async () => {},
+      });
+      await expect(outcome).rejects.toBeInstanceOf(AdmissionChangedError);
+    }
+  });
+
+  it("keeps the newest admission even when its name has nothing left once made plain", async () => {
+    const { service, mac, X } = await setUp();
+    clock += 1_000;
+    await service.postAdmission(X, "\u202E\u2066", mac.public_spki, "windows");
+    const newest = vouchedAdmission(await service.recentAdmissions(), X, mac.public_spki, clock);
+    expect(newest?.os).toBe("windows");
+    expect(newest?.label).toBe("Device");
+  });
+
+  it("reads a device's name as one plain line a signed add takes: no bidi or control characters, single spaces", async () => {
+    const { service, X } = await setUp();
+    const phone = await accountKey();
+    await service.postAdmission(X, "  Hako\u202E's   iPhone\u2066 ", phone.public_spki);
+    const label = (await service.recentAdmissions()).find((admission) => admission.key === phone.public_spki)!.label;
+    expect(label).toBe("Hako's iPhone");
+    const member = await accountKey();
+    expect(await readAccountRecord(await signAccountRecord({
+      v: 1, kind: "add", account: ACCOUNT, key: phone.public_spki, label, role: "drive", issued_at: new Date().toISOString(), id: newRecordId(), signer: member.public_spki,
+    }, member.private_key))).not.toBeNull();
+  });
+
   it("vouches with the newest fresh admission of that key at that PC, whatever order the service lists them in", () => {
     const now = Date.parse("2026-11-07T00:10:00.000Z");
     const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
@@ -676,6 +737,9 @@ describe("approving a device that asks to join the account", () => {
     expect(vouchedAdmission(listed, "pc-x", "k", now)?.label).toBe("newest");
     expect(vouchedAdmission([...listed].reverse(), "pc-x", "k", now)?.label).toBe("newest");
     expect(vouchedAdmission([admission("stale", 11)], "pc-x", "k", now)).toBeUndefined();
+    // the same millisecond: one pick whatever order the service lists them in
+    const tied = [admission("first", 2), admission("second", 2)];
+    expect(vouchedAdmission(tied, "pc-x", "k", now)?.label).toBe(vouchedAdmission([...tied].reverse(), "pc-x", "k", now)?.label);
   });
 
   it("approves a request for this PC only without adding the device to the account", async () => {
