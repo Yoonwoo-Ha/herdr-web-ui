@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { chromium, devices, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
+import { openSettingsFolds } from "./settings-page.ts";
 import { DEMO_FILE_PREVIEW_SCRIPT } from "./demo-file-preview.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
 
@@ -119,6 +120,9 @@ async function open(context: BrowserContext, variant: string, settings = true, l
   await page.locator(".conn-live").waitFor({ state: "attached" });
   assert.equal(await page.evaluate(() => (window as unknown as { heldOpeningTurn: boolean }).heldOpeningTurn), true, `${variant}: the demo's opening turn is held`);
   if (!settings) return page;
+  // the Access facts sit in the page's More settings fold
+  await page.locator(".settings-body:not([hidden])").waitFor();
+  await openSettingsFolds(page);
   await page.locator(SECTION).waitFor();
   await page.locator(SECTION).scrollIntoViewIfNeeded();
   if (variant in STATUS) await page.locator(`${SECTION} [role='status']`, { hasText: label(STATUS[variant]!) }).waitFor();

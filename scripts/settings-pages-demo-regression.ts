@@ -77,8 +77,8 @@ const MATRIX: readonly (readonly ["en" | "ko" | "ja" | "zh", string, string, str
   ["en", "phone", "devices", "-"],
   ["en", "OpenAI API key", "voice", "openai-key"],
   ["en", "Return inserts a new line", "chat", "composer"],
-  ["en", "Send queued messages automatically", "chat", "composer"],
-  ["en", "Suggestion chip", "chat", "composer"],
+  ["en", "Send queued messages automatically", "chat", "composer-more"],
+  ["en", "Suggestion chip", "chat", "composer-more"],
   ["en", "Show above the message box", "chat", "quick-replies"],
   ["ko", "인터페이스 글자 크기", "appearance", "typography"],
   ["ko", "채팅 글자 크기", "chat", "-"],
@@ -88,7 +88,7 @@ const MATRIX: readonly (readonly ["en" | "ko" | "ja" | "zh", string, string, str
   ["ko", "OpenAI API 키", "voice", "openai-key"],
   ["ko", "단축키", "shortcuts", "-"],
   ["ko", "알림", "alerts", "-"],
-  ["ko", "대기 메시지 자동 전송", "chat", "composer"],
+  ["ko", "대기 메시지 자동 전송", "chat", "composer-more"],
   ["ko", "입력창 위에 표시", "chat", "quick-replies"],
   ["ja", "インターフェースの文字サイズ", "appearance", "typography"],
   ["ja", "チャットのフォントサイズ", "chat", "-"],
@@ -98,7 +98,7 @@ const MATRIX: readonly (readonly ["en" | "ko" | "ja" | "zh", string, string, str
   ["ja", "OpenAI API キー", "voice", "openai-key"],
   ["ja", "ショートカット", "shortcuts", "-"],
   ["ja", "通知", "alerts", "-"],
-  ["ja", "送信待ちメッセージを自動で送信", "chat", "composer"],
+  ["ja", "送信待ちメッセージを自動で送信", "chat", "composer-more"],
   ["ja", "入力欄の上に表示", "chat", "quick-replies"],
   ["zh", "界面字号", "appearance", "typography"],
   ["zh", "聊天字号", "chat", "-"],
@@ -108,7 +108,7 @@ const MATRIX: readonly (readonly ["en" | "ko" | "ja" | "zh", string, string, str
   ["zh", "OpenAI API 密钥", "voice", "openai-key"],
   ["zh", "快捷键", "shortcuts", "-"],
   ["zh", "提醒", "alerts", "-"],
-  ["zh", "自动发送排队消息", "chat", "composer"],
+  ["zh", "自动发送排队消息", "chat", "composer-more"],
   ["zh", "显示在输入框上方", "chat", "quick-replies"],
 ];
 
@@ -383,7 +383,8 @@ interface HeldVoice { voiceAsked: () => number; releaseVoice: () => void; groupO
  * they scrolled.
  */
 async function heldGroupLanding(browser: import("playwright-core").Browser, url: string): Promise<void> {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, locale: "en" });
+  // short enough that the OpenAI key's group starts below the fold, so a landing has to scroll to it
+  const context = await browser.newContext({ viewport: { width: 390, height: 480 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true, locale: "en" });
   try {
     await context.addInitScript((settings) => localStorage.setItem("ovis:settings", settings), JSON.stringify(SETTINGS));
     const page = await context.newPage();
@@ -550,6 +551,51 @@ async function dialogSearch(browser: import("playwright-core").Browser, url: str
     }
   }
   console.log("PASS Settings' search at 1440 and 390px: settings of every page found and changed in place, groups by name, pages opened, nothing matching said, Escape empties first");
+}
+
+/**
+ * The folded part of a page (SettingsFold), at 1440 and 390: closed on opening, with the count of what this
+ * device changed in it on its line; a link to a group inside opens it on that group; a search finds its rows.
+ */
+async function foldedGroups(browser: import("playwright-core").Browser, url: string): Promise<void> {
+  for (const width of [1440, 390] as const) {
+    const context = await browser.newContext(width === 390 ? { viewport: { width, height: 844 }, isMobile: true, hasTouch: true, locale: "en" } : { viewport: { width, height: 900 }, locale: "en" });
+    try {
+      await context.addInitScript((settings) => localStorage.setItem("ovis:settings", settings), JSON.stringify({ ...SETTINGS, sidebarPeek: true }));
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(url);
+      await page.locator(".conn-live").waitFor({ state: "attached" });
+      await openSettings(page);
+      const dialog = dialogOf(page);
+      await dialog.getByRole("tab", { name: "Appearance", exact: true }).click();
+      const panel = dialog.getByRole("tabpanel", { name: "Appearance", exact: true });
+      const more = panel.locator("details.settings-fold[data-fold='more']");
+      assert.equal(await more.evaluate((fold) => (fold as HTMLDetailsElement).open), false, `${width}px: More settings starts folded`);
+      assert.equal(await panel.getByRole("switch", { name: "Show the sidebar on hover", exact: true }).isVisible(), false, `${width}px: its rows are out of the first view`);
+      assert.equal(await more.locator(".settings-fold-changed").textContent(), "1 changed", `${width}px: the line counts what this device changed inside`);
+      await more.locator("> summary").click();
+      await panel.getByRole("switch", { name: "Show the sidebar on hover", exact: true }).waitFor();
+
+      // a search finds a folded row with the rest
+      await closeSettings(page);
+      await openSettings(page);
+      await dialog.getByRole("searchbox", { name: "Search settings", exact: true }).fill("sidebar on hover");
+      await dialog.getByRole("region", { name: "Search results", exact: true }).getByRole("switch", { name: "Show the sidebar on hover", exact: true }).waitFor();
+      await closeSettings(page);
+
+      // a link to a group inside a fold opens it on that group
+      await page.goto(`${url}?settings=chat&section=composer-more`);
+      const queued = page.getByRole("switch", { name: "Send queued messages automatically", exact: true });
+      await queued.waitFor();
+      assert.equal(await page.locator(".settings-body:not([hidden]) [data-section='composer-more']").evaluate((group) => group.closest("details")?.open === true && document.activeElement === group), true, `${width}px: the link opened the fold and focused its group`);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  }
+  console.log("PASS folded groups at 1440 and 390px: closed on opening with a count of what changed, opened by a click, a link to a group inside and a search");
 }
 
 try {
@@ -1136,6 +1182,7 @@ try {
       await lateCloseStep(browser, url);
       await settingsSearch(browser, url);
       await dialogSearch(browser, url);
+      await foldedGroups(browser, url);
       await heldGroupLanding(browser, devUrl);
     } finally {
       await browser.close();

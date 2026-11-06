@@ -14,6 +14,7 @@ import { chromium, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
+import { openSettingsFolds } from "./settings-page.ts";
 import { shownRows } from "./shown-rows.ts";
 
 interface ImagesFixture { print(data: string): void }
@@ -92,6 +93,7 @@ const print = async (page: Page, data: string, marker: string) => {
 const setPictures = async (page: Page, on: boolean) => {
   await page.getByRole("button", { name: "Settings", exact: true }).first().click();
   await page.getByRole("navigation", { name: "Settings" }).getByText("Terminal", { exact: true }).click();
+  await openSettingsFolds(page);
   const toggle = page.getByRole("switch", { name: "Pictures in the terminal" });
   if ((await toggle.getAttribute("aria-checked")) !== String(on)) await toggle.click();
   assert.equal(await toggle.getAttribute("aria-checked"), String(on));

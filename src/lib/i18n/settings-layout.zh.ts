@@ -8,4 +8,8 @@ export const SETTINGS_LAYOUT_ZH: Record<string, string> = {
   "No settings match.": "没有匹配的设置。",
   "Search results": "搜索结果",
   "Open {page}": "打开 {page}",
+  "Sidebar": "侧边栏",
+  "More settings": "更多设置",
+  "Experimental": "实验功能",
+  "{count} changed": "已更改 {count} 项",
 };

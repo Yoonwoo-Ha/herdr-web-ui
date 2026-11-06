@@ -3511,6 +3511,14 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   replaces it under a Back to settings control. The dialog's accessible name stays **Settings**
   on every page; the list is a vertical `tablist` with one Tab stop, and the arrows walk it
   (beside an open page they turn the page too). Escape closes the dialog from any page.
+- Each page shows first what people change (set by the install counts of which settings differ
+  from their defaults) and folds the rest under one quiet line at its end, as herdr-app keeps its
+  Settings to a dozen rows and leaves the rest to its settings file: **More settings**, and
+  **Experimental** for what is still being shaped (`SettingsFold`, a native `details`). The line
+  counts the settings in it that this device moved off their defaults ("2 changed", in `--accent`),
+  so a choice never hides without a trace. A search shows the rows inside as if unfolded, a link or
+  the palette naming a group inside opens the fold, and a group there keeps its own name
+  (`typography-more`, `composer-more`, `file-viewer-more`, `chat-experimental`, ...).
 - A search field (`Search settings`) sits over the list of pages, as Zed's and VS Code's settings
   searches do: typed words (case and full-width forms folded) keep only the settings whose label
   and description hold every word, or every setting of a group whose title holds them, from all

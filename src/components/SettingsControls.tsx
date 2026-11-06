@@ -1,5 +1,8 @@
 import { createContext, isValidElement, useContext, type ComponentProps, type ReactNode } from "react";
-import { ChevronDown, Minus, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Minus, Plus } from "lucide-react";
+
+import { DEFAULT_SETTINGS, useSettings, type Settings } from "../lib/settings.ts";
+import { useT } from "../lib/i18n.ts";
 
 import "./SettingsControls.css";
 
@@ -32,6 +35,31 @@ function textOf(node: ReactNode): string {
 export function matchesSettingsQuery(words: readonly string[], ...texts: ReactNode[]): boolean {
   const shown = folded(texts.map(textOf).join(" "));
   return words.every((word) => shown.includes(word));
+}
+
+/**
+ * The groups a page keeps out of its first view, folded under one line at its end: **More settings**
+ * for what few people change, **Experimental** for what is still being shaped. The line counts the
+ * `keys` this device has moved off their defaults, so a choice is never hidden without a trace. A
+ * search shows what it finds inside as if unfolded; a link to a group inside opens it
+ * (SettingsDialog.tsx). Native details, so the browser's find-in-page opens it too.
+ */
+export function SettingsFold({ kind, keys, children }: { kind: "more" | "experimental"; keys: readonly (keyof Settings)[]; children: ReactNode }) {
+  const t = useT();
+  const words = useContext(SettingsQuery);
+  const { settings } = useSettings();
+  if (words.length > 0) return <>{children}</>;
+  const changed = keys.filter((key) => JSON.stringify(settings[key]) !== JSON.stringify(DEFAULT_SETTINGS[key])).length;
+  return (
+    <details className="settings-fold" data-fold={kind}>
+      <summary>
+        <ChevronRight className="settings-fold-chevron" aria-hidden="true" />
+        <span className="settings-fold-title">{kind === "more" ? t("More settings") : t("Experimental")}</span>
+        {changed > 0 && <span className="settings-fold-changed">{t("{count} changed", { count: changed })}</span>}
+      </summary>
+      <div className="settings-fold-body">{children}</div>
+    </details>
+  );
 }
 
 /** `section`: the group's name in a link to it (`?settings=<page>&section=<name>`, lib/deepLink.ts) */

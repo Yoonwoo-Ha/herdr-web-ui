@@ -8,4 +8,8 @@ export const SETTINGS_LAYOUT_KO: Record<string, string> = {
   "No settings match.": "일치하는 설정이 없습니다.",
   "Search results": "검색 결과",
   "Open {page}": "{page} 열기",
+  "Sidebar": "사이드바",
+  "More settings": "설정 더 보기",
+  "Experimental": "실험 기능",
+  "{count} changed": "{count}개 바꿈",
 };
