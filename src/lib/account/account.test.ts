@@ -5,7 +5,7 @@ import { DEVICE_CODE_TTL_S, FakeAccountService, WEB_REDIRECT } from "../../../sh
 import { startDeviceSignIn, startLinkPageSignIn } from "./deviceSignIn.ts";
 import type { RelayDevice } from "../relay/device.ts";
 import { myPcs, OFFLINE_AFTER_MS } from "./myPcs.ts";
-import { accountProvidersOf, AccountService, AccountServiceError, accountServiceOf, pcAccountServiceOf, SignedOutError } from "./service.ts";
+import { accountProvidersOf, AccountService, AccountServiceError, accountServiceOf, pcAccountServiceOf, shellAccountServiceOf, SignedOutError } from "./service.ts";
 import { beginSignIn, finishOwnSignIn, finishSignIn, SignInError, signInReturn } from "./signin.ts";
 import { memoryAccountStore, memoryLock } from "./store.ts";
 import { desktopProviders } from "./desktop.ts";
@@ -405,6 +405,16 @@ describe("which account service a page signs in with", () => {
   it("takes an https origin, or http on loopback, without its path", () => {
     expect(accountServiceOf(page("https://account.example/v1/"))).toBe("https://account.example");
     expect(accountServiceOf(page("http://127.0.0.1:8787"))).toBe("http://127.0.0.1:8787");
+  });
+
+  it("signs a browser in from app.ovis.sh alone, the one page the service sends it back to, and the phone app anywhere", () => {
+    const hosted = page("https://account.ovis.sh");
+    expect(shellAccountServiceOf(hosted, "https://app.ovis.sh", false)).toBe("https://account.ovis.sh");
+    for (const copy of ["https://app-ap.ovis.sh", "https://preview.ovis-app.pages.dev", "http://127.0.0.1:7421"]) {
+      expect(shellAccountServiceOf(hosted, copy, false)).toBeNull();
+      expect(shellAccountServiceOf(hosted, copy, true)).toBe("https://account.ovis.sh");
+    }
+    expect(shellAccountServiceOf(page(null), "https://app.ovis.sh", true)).toBeNull();
   });
   it("offers GitHub alone unless the page names Apple too", () => {
     const named = (content: string | null) => ({ querySelector: () => (content === null ? null : { getAttribute: () => content }) });

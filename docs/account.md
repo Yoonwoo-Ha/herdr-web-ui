@@ -33,7 +33,8 @@ are ([Ovis Mux v1](relay.md#ovis-mux-v1)).
 6. **A signer adds only keys it checked itself**, by comparing digits or from a QR code, never a key
    the account service handed it.
 7. **The account service can hide records, never forge them.** It stores the PC directory
-   (`server_id` and a name, no keys), a mailbox of signed records per PC, and admission requests.
+   (`server_id`, a name, the PC's relay public key and the relay it is reached through; no account
+   or device keys), a mailbox of signed records per PC, and admission requests.
 8. **Tailscale is not membership.** **PCs on your Tailscale** ([remote-pcs.md](remote-pcs.md#through-the-relay))
    adds a PC through the relay with a code that PC hands over to your own Tailscale login. That makes
    it a paired device of that PC, never an account member by itself: membership comes only from the
@@ -544,7 +545,7 @@ not the one it sent.
 `redirect_uri` is compared exactly against three forms: `https://app.ovis.sh/`,
 `ovis://account/callback`, and `http://127.0.0.1:<port>/callback` on any port (a loopback redirect
 for the desktop app, RFC 8252). Anything else answers 400 `invalid_redirect_uri` before any
-sign-in. The hosted shell's Content-Security-Policy lets it reach `https://account.ovis.sh` (`connect-src`), and no other account service yet. The PC's own pages may reach `https://account.ovis.sh` when `OVIS_ACCOUNT_SERVICE_URL` is unset, exactly the origin it names when it is https with a host name or IPv4 address, and no account service when it is `off` or not https.
+sign-in. The hosted shell is built with `https://account.ovis.sh` unless `OVIS_ACCOUNT_SERVICE_URL` names another https service (none when it is `off`), and its Content-Security-Policy lets it reach `https://account.ovis.sh` (`connect-src`), and no other account service yet. In a browser it offers sign-in only on `https://app.ovis.sh`, the one page the service sends a browser back to: the regional copy beside a relay, a preview or a local run offers none, and the phone app signs in through its own scheme anywhere. The PC's own pages may reach `https://account.ovis.sh` when `OVIS_ACCOUNT_SERVICE_URL` is unset, exactly the origin it names when it is https with a host name or IPv4 address, and no account service when it is `off` or not https.
 
 The desktop app offers sign-in in **Settings → Phone & devices** with `https://account.ovis.sh`
 unless `OVIS_ACCOUNT_SERVICE_URL` names another https service. `OVIS_ACCOUNT_SERVICE_URL=off`

@@ -4389,8 +4389,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   phone that pairs through the relay and one that pairs with a code see the same room. Neither
   the Codex nor the Claude app has a hosted relay shell to follow.
 - Account part (components/AccountPcs.tsx, lib/account/), only on the front page and only when
-  the page names an account service (`<meta name="ovis-account-service">`); without one the front
-  page is the saved-PC list above, unchanged. Signed out: **Continue with GitHub** and **Continue
+  the page names an account service (`<meta name="ovis-account-service">`, account.ovis.sh unless
+  the build names another) and, in a browser, it is app.ovis.sh, the one page a sign-in comes back
+  to; otherwise the front page is the saved-PC list above, unchanged. Signed out: **Continue with GitHub** and **Continue
   with Apple**, two equal neutral `.btn`s (App Review 4.8 wants Apple wherever another provider
   is, and neither is the one to pick), a `--fs-xs` dim line on what the account service learns,
   then the QR route under a hairline (an `h2`, the page keeps one `h1`). With saved PCs the list

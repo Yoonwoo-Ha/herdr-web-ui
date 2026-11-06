@@ -6,6 +6,7 @@
 import { accountOsOf, type AccountAsker, type AccountOs } from "../../../shared/account-asker.ts";
 import type { AccountRecord } from "../../../shared/account-records.ts";
 import { isWssOrigin } from "../../../shared/relay-offer.ts";
+import { GLOBAL_APP } from "../../../shared/relay-regions.ts";
 import type { AccountLock, AccountProvider, AccountSession, AccountStore } from "./store.ts";
 import { ACCOUNT_PROVIDERS, accountLock } from "./store.ts";
 
@@ -24,6 +25,16 @@ export function accountServiceOf(document: { querySelector(selector: string): { 
   }
   const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]";
   return url.protocol === "https:" || (url.protocol === "http:" && loopback) ? url.origin : null;
+}
+
+/**
+ * The account service the hosted shell signs in with: the page's (accountServiceOf), but in a browser
+ * only on app.ovis.sh. The service sends a browser back to `<origin>/` for that origin alone, so a
+ * copy served anywhere else (the regional app beside a relay, a preview, a local test run) offers
+ * no sign-in rather than one the service refuses; the phone app comes back through its own scheme.
+ */
+export function shellAccountServiceOf(document: { querySelector(selector: string): { getAttribute(name: string): string | null } | null }, origin: string, nativeApp: boolean): string | null {
+  return nativeApp || origin === GLOBAL_APP ? accountServiceOf(document) : null;
 }
 
 /**

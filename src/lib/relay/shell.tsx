@@ -13,7 +13,7 @@ import type { UpdateStatus } from "../../../shared/update.ts";
 import { RelayShell } from "../../components/RelayShell.tsx";
 import { myPcs } from "../account/myPcs.ts";
 import type { MyPc } from "../account/myPcs.ts";
-import { accountProvidersOf, accountServiceOf, AccountService, offeredProviders, SignedOutError } from "../account/service.ts";
+import { accountProvidersOf, AccountService, offeredProviders, shellAccountServiceOf, SignedOutError } from "../account/service.ts";
 import { beginSignIn, finishSignIn, SignInError, signInReturn } from "../account/signin.ts";
 import { enrollOnPc, keepRemovals, PEER_STATUS_MS, linkThisDevice, needsLink, pcAccountStatus, planEnroll, sendQueuedAdds, takeIntroduction } from "../account/join.ts";
 import { leaveAccount } from "../account/leave.ts";
@@ -68,7 +68,7 @@ export interface RelayShellMount {
   findByCode?: typeof offerFromCode;
   /** this client's account key and sign-in; the `ovis-account` database by default */
   accountStore?: AccountStore;
-  /** the account service's origin; the page's `ovis-account-service` meta by default, and no sign-in without one */
+  /** the account service's origin; the page's `ovis-account-service` meta by default (shellAccountServiceOf), and no sign-in without one */
   accountService?: string | null;
   /** the sign-ins offered; the page's `ovis-account-providers` meta by default */
   accountProviders?: readonly AccountProvider[];
@@ -159,7 +159,7 @@ function localStorageSet(key: string, value: string): void {
 export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const store = mount.store ?? indexedDeviceStore;
   const accountStore = mount.accountStore ?? indexedAccountStore;
-  const accountService = mount.accountService === undefined ? accountServiceOf(document) : mount.accountService;
+  const accountService = mount.accountService === undefined ? shellAccountServiceOf(document, window.location.origin, nativeSignInAvailable()) : mount.accountService;
   let accountProviders = mount.accountProviders ?? accountProvidersOf(document);
   const account = new AccountService({ store: accountStore, ...(mount.accountFetch ? { fetch: mount.accountFetch } : {}) });
   const openSignIn = mount.openSignIn ?? ((url: string) => { window.location.assign(url); });
