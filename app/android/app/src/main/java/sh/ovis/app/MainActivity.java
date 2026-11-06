@@ -82,8 +82,11 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(HerdrShellPlugin.class);
         registerPlugin(OvisAuthPlugin.class);
-        // the PC's key: its origin, or its scope on the hosted shell's origin for a relay PC
-        String pc = PCStore.current(this);
+        String link = takeAppLink(getIntent(), savedInstanceState == null);
+        if (link != null) openAppLink(link);
+        // the PC's key: its origin, or its scope on the hosted shell's origin for a relay PC. An
+        // app link waiting for the connect screen shows that screen first
+        String pc = PCStore.link != null ? null : PCStore.current(this);
         String origin = pc == null ? null : PCStore.origin(pc);
         String host = origin == null ? null : Uri.parse(origin).getHost();
         if (host != null) {
@@ -421,6 +424,52 @@ public class MainActivity extends BridgeActivity {
         PCStore.failure = "The sign-in went over plain http to " + insecure + ", which the app does not follow on its own.";
         runOnUiThread(() -> bridge.getWebView().loadUrl(bridge.getErrorUrl()));
         return true;
+    }
+
+    /** An app link while the app runs: the connect screen opens it, whatever page is showing. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        String link = takeAppLink(intent, true);
+        if (link != null && openAppLink(link)) {
+            reopen();
+            return;
+        }
+        super.onNewIntent(intent);
+    }
+
+    /**
+     * Readies an app link for the next first load, or answers false and leaves the open page alone. A
+     * link to pair from waits for the connect screen (PCStore.link); a view of a PC (a file, a pane)
+     * opens that PC at that view when the app has it saved, as the browser would have; for any other
+     * PC the app has nothing to show.
+     */
+    private boolean openAppLink(String link) {
+        if (PCStore.pairingLink(link)) {
+            PCStore.link = link;
+            return true;
+        }
+        String scope = PCStore.appScope(link);
+        if (!PCStore.saved(this).contains(scope)) return false;
+        PCStore.open(this, scope, link);
+        PCStore.failure = null;
+        PCStore.redirects = 0;
+        return true;
+    }
+
+    /**
+     * The app link (PCStore.appLink) `intent` carries, taken out of it so it is opened once: Capacitor's
+     * load() passes the starting intent to onNewIntent again. Null for any other intent, and for a
+     * link the system hands back with the activity restored or started again from Recents, which the
+     * user opened before.
+     */
+    private static String takeAppLink(Intent intent, boolean fresh) {
+        if (intent == null) return null;
+        Uri data = intent.getData();
+        String link = PCStore.appLink(intent.getAction(), data == null ? null : data.toString());
+        if (link == null) return null;
+        intent.setData(null);
+        boolean fromRecents = (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0;
+        return fresh && !fromRecents ? link : null;
     }
 
     /** Opens the current PC again from its first page. */
