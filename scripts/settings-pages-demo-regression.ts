@@ -606,6 +606,69 @@ async function foldedGroups(browser: import("playwright-core").Browser, url: str
  * (and shows Within a state), Show thinking's Expanded opens reasoning, and Tidy dictated text's Terminal tidies
  * the terminal alone; each choice is kept through a reload.
  */
+/**
+ * Signed in on a PC's own page, Settings > Devices and PCs lists the account's PCs as the relay
+ * shell does: one row each with a hairline under it, though the relay shell's own styles are not
+ * loaded there. The sign-in is a fixture in this page's IndexedDB and the account service a route
+ * of this context: nothing reaches GitHub or account.ovis.sh.
+ */
+async function accountPcList(browser: import("playwright-core").Browser, url: string): Promise<void> {
+  const service = "https://account.ovis.sh";
+  for (const [width, theme] of [[390, "light"], [390, "dark"], [1280, "light"], [1280, "dark"]] as const) {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 800 }, isMobile: width === 390, hasTouch: width === 390, locale: "en" });
+    try {
+      await context.addInitScript((settings) => localStorage.setItem("ovis:settings", settings), JSON.stringify({ ...SETTINGS, theme }));
+      // the PC's server names the account service its page signs in with (server/static.ts)
+      await context.route((address) => address.href.startsWith(url) && (address.pathname.endsWith("/") || address.pathname.endsWith("/index.html")), async (route) => {
+        const response = await route.fetch();
+        await route.fulfill({ response, body: (await response.text()).replace("</head>", `<meta name="ovis-pc-account-service" content="${service}" />\n</head>`) });
+      });
+      await context.route(`${service}/**`, (route) => {
+        const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, PUT, DELETE" };
+        if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+        if (new URL(route.request().url()).pathname !== "/v1/pcs") return route.fulfill({ status: 404, headers: cors, json: { error: { code: "not_found" } } });
+        return route.fulfill({ headers: cors, json: { pcs: [
+          { server_id: "a".repeat(32), label: "home-server", added_at: "2026-11-01T00:00:00Z", last_seen_at: new Date().toISOString() },
+          { server_id: "b".repeat(32), label: "office-mac", added_at: "2026-11-01T00:00:00Z", last_seen_at: "2026-11-01T00:00:00Z" },
+        ] } });
+      });
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(url);
+      await page.locator(".conn-live").waitFor({ state: "attached" });
+      await page.evaluate((service) => new Promise<void>((resolve, reject) => {
+        const request = indexedDB.open("ovis-account", 1);
+        request.onupgradeneeded = () => { request.result.createObjectStore("account"); };
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const tx = request.result.transaction("account", "readwrite");
+          tx.objectStore("account").put({ service, account: "fixture", provider: "github", access_token: "fixture-access", refresh_token: "fixture-refresh", expires_at: Date.now() + 3_600_000 }, "session");
+          tx.oncomplete = () => { request.result.close(); resolve(); };
+          tx.onabort = () => reject(tx.error);
+        };
+      }), service);
+      await openSettings(page);
+      await openSettingsPage(page, "Devices and PCs");
+      const list = page.locator("[data-section='account'] .relay-shell-pcs");
+      await list.locator(".relay-shell-pc").nth(1).waitFor();
+      const style = await list.evaluate((node) => {
+        const row = node.querySelector(".relay-shell-pc")!;
+        return { listStyle: getComputedStyle(node).listStyleType, display: getComputedStyle(row).display, border: getComputedStyle(row).borderBottomStyle };
+      });
+      assert.deepEqual(style, { listStyle: "none", display: "flex", border: "solid" }, `the account's PCs are styled rows in Settings (${width}px, ${theme})`);
+      if (process.env.UI_EVIDENCE_DIR) {
+        await list.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `account-pcs-${width}-${theme}.png`), animations: "disabled" });
+      }
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  }
+  console.log("PASS the account's PCs in Settings are styled rows at 390 and 1280px, light and dark");
+}
+
 async function mergedRows(browser: import("playwright-core").Browser, url: string): Promise<void> {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en" });
   try {
@@ -1249,6 +1312,7 @@ try {
       await dialogSearch(browser, url);
       await foldedGroups(browser, url);
       await mergedRows(browser, url);
+      await accountPcList(browser, url);
       await heldGroupLanding(browser, devUrl);
     } finally {
       await browser.close();

@@ -1,3 +1,5 @@
+// the list's rows are the relay shell's (.relay-shell-pc*), also in Settings, where RelayShell.tsx is not loaded
+import "./RelayShell.css";
 import "./AccountPcs.css";
 
 import { useState } from "react";
