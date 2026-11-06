@@ -1282,8 +1282,11 @@ export type ServerMessage =
    * `typed_now`: on a queued send, this request typed the message at once (the turn had ended
    * before it arrived); on a held copy's resend (`resend_id`), this request typed it. A replayed id, a
    * row sent or discarded since, or a copy another connection sent answers ok without it; an older
-   * server never sends it. */
-  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; typed_now?: true; code?: string; message?: string; draft?: string; box?: string }
+   * server never sends it.
+   * `sending_at`: on an ok for a message this request typed (an immediate send, or one with
+   * `typed_now`), the PC's clock (ISO 8601) before it typed anything, as a queued row's `sending_at`:
+   * the message's turn is written after it on that clock. An older server never sends it. */
+  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; typed_now?: true; sending_at?: string; code?: string; message?: string; draft?: string; box?: string }
   | { type: "pending-result"; id: number; pane_id: string; pending_id: string; ok: boolean; code?: string; message?: string }
   /** ok once herdr accepted the inserted bytes (`pane.send_text` answered), never that the program
    * took or ran them; a refusal names why and nothing was typed, except `insert_failed`, whose bytes
