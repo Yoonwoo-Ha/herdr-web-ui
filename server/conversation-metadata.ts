@@ -26,7 +26,7 @@ const CLAUDE_LONG_WINDOW = 1_000_000;
  * `piProvider` is passed only for pi, and its presence is what asks the catalog: the one in
  * `piAgentDir`, the pane's own, or the bridge's when it is not given. A null dir resolves nothing.
  */
-function contextOf(used: number, model: string | null, window: number | null, before: ConversationMetadata["context"], piProvider?: string | null, piAgentDir?: string | null): ConversationMetadata["context"] {
+export function contextOf(used: number, model: string | null, window: number | null, before: ConversationMetadata["context"], piProvider?: string | null, piAgentDir?: string | null): ConversationMetadata["context"] {
   if (used === 0) return before;
   if (window !== null) return { used, window };
   if (piProvider !== undefined) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { appendFileSync, chmodSync } from "node:fs";
+import { appendFileSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
 import type { HerdrPane, PaneContext, PlanSummary } from "../shared/protocol.ts";
+import { transcriptPage } from "./conversation.ts";
 import { paneAfterStatus } from "./machines.ts";
 import { readPlan, SessionPlans } from "./session-plan.ts";
 import { at, claude, file } from "./session-plan.fixture.ts";
@@ -200,6 +201,88 @@ describe("SessionPlans", () => {
     await plans.refresh([pane("p1", "claude", "B")]);
     expect(plans.contextOf("p1")).toBeNull();
     expect(changes.at(-1)).toEqual(["p1", null]);
+  });
+
+  it("follows a Claude rewind on the recorded fork as the chat does: the abandoned answers' figure goes", async () => {
+    // Given Claude Code 2.1.304's recorded restore: apple and banana answered, then "cherry" sent from before apple.
+    const lines = readFileSync(new URL("./fixtures/claude-rewind-2.1.304-fork.jsonl", import.meta.url), "utf8").split("\n").filter(Boolean);
+    const fork = lines.findIndex((line) => line.includes('"content":"cherry"'));
+    const f = file();
+    writeFileSync(f.path, `${lines.slice(0, fork).join("\n")}\n`);
+    const changes: [string, PaneContext | null][] = [];
+    const plans = new SessionPlans({ claudePath: () => f.path, codexPath: async () => null, onChange: () => {}, onContext: (id, context) => changes.push([id, context]), claudeWindow: () => 200_000 });
+    await plans.refresh([pane("p1", "claude")]);
+    plans.poll();
+    expect(plans.contextOf("p1")).toEqual({ used: 3, window: 200_000 });
+    // When the fork is written, the row's figure goes, as the chat's does.
+    appendFileSync(f.path, `${lines.slice(fork).join("\n")}\n`);
+    plans.poll();
+    expect(changes.at(-1)).toEqual(["p1", null]);
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toBeUndefined();
+  });
+
+  it("tells no figure after a Claude rewind until the next answer, then that answer's", async () => {
+    // Given two answered prompts.
+    const f = file();
+    const user = (uuid: string, parentUuid: string | null, content: string) => f.add({ type: "user", uuid, parentUuid, isSidechain: false, message: { role: "user", content } });
+    const answer = (uuid: string, parentUuid: string, input: number) => f.add({ type: "assistant", uuid, parentUuid, isSidechain: false, message: { role: "assistant", model: "claude-opus-5-5", content: [{ type: "text", text: "ok" }], usage: { input_tokens: input } } });
+    user("u1", null, "one");
+    answer("a1", "u1", 10_000);
+    user("u2", "a1", "two");
+    answer("a2", "u2", 50_000);
+    f.add({ type: "system", subtype: "turn_duration", uuid: "s2", parentUuid: "a2", isSidechain: false });
+    const plans = new SessionPlans({ claudePath: () => f.path, codexPath: async () => null, onChange: () => {}, claudeWindow: () => 200_000 });
+    await plans.refresh([pane("p1", "claude")]);
+    plans.poll();
+    expect(plans.contextOf("p1")).toEqual({ used: 50_000, window: 200_000 });
+    // A prompt sent on from the last record forks nothing.
+    user("u3", "s2", "three");
+    plans.poll();
+    expect(plans.contextOf("p1")).toEqual({ used: 50_000, window: 200_000 });
+    // When a prompt is sent again from the first answer, the second answer's figure goes.
+    user("u4", "a1", "two again");
+    plans.poll();
+    expect(plans.contextOf("p1")).toBeNull();
+    // Then its own answer is the figure.
+    answer("a4", "u4", 12_000);
+    plans.poll();
+    expect(plans.contextOf("p1")).toEqual({ used: 12_000, window: 200_000 });
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toEqual({ used: 12_000, window: null });
+  });
+
+  it("does not carry the 1M window of an answer a Claude rewind left", async () => {
+    // Given a request past 200k (so in the 1M window), then a prompt sent again from before it, and its answer.
+    const f = file();
+    f.add({ type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "one" } });
+    f.add({ type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", model: "claude-opus-5-5", content: [], usage: { input_tokens: 250_000 } } });
+    f.add({ type: "user", uuid: "u2", parentUuid: null, message: { role: "user", content: "again" } });
+    f.add({ type: "assistant", uuid: "a2", parentUuid: "u2", message: { role: "assistant", model: "claude-opus-5-5", content: [], usage: { input_tokens: 10_000 } } });
+    const plans = new SessionPlans({ claudePath: () => f.path, codexPath: async () => null, onChange: () => {} });
+    await plans.refresh([pane("p1", "claude")]);
+    plans.poll();
+    // Then the window is not known, as the chat does not know it.
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toEqual({ used: 10_000, window: null });
+    expect(plans.contextOf("p1")).toEqual({ used: 10_000, window: null });
+  });
+
+  it("tells no Claude figure after a line too long to read, until the next request", async () => {
+    // Given an answered prompt, then a prompt sent again from before it, too long for the reader (a picture).
+    const f = file();
+    f.add({ type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "one" } });
+    f.add({ type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", model: "claude-opus-5-5", content: [], usage: { input_tokens: 30_000 } } });
+    const plans = new SessionPlans({ claudePath: () => f.path, codexPath: async () => null, onChange: () => {}, claudeWindow: () => 200_000 });
+    await plans.refresh([pane("p1", "claude")]);
+    plans.poll();
+    expect(plans.contextOf("p1")).toEqual({ used: 30_000, window: 200_000 });
+    f.add({ type: "user", uuid: "u2", parentUuid: null, message: { role: "user", content: [{ type: "text", text: "again" }, { type: "image", source: { type: "base64", media_type: "image/png", data: `iVBORw0KGgo${"A".repeat(9 * 1024 * 1024)}` } }] } });
+    plans.poll();
+    // Then the figure goes, as the chat drops the answer the prompt forked away from.
+    expect(transcriptPage("claude-transcript", f.path).metadata.context).toBeUndefined();
+    expect(plans.contextOf("p1")).toBeNull();
+    // When the next request is answered, it is told.
+    f.add({ type: "assistant", uuid: "a2", parentUuid: "u2", message: { role: "assistant", model: "claude-opus-5-5", content: [], usage: { input_tokens: 12_000 } } });
+    plans.poll();
+    expect(plans.contextOf("p1")).toEqual({ used: 12_000, window: 200_000 });
   });
 
   it("reads a Codex pane's context with the window Codex states", async () => {
