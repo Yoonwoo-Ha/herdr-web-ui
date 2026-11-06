@@ -8,7 +8,6 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Pin agent": "エージェントを固定",
   "Unpin agent": "エージェントの固定を解除",
   "Lock agent": "エージェントをロック",
-  "Unlock agent": "エージェントのロックを解除",
   "Locked": "ロック中",
   "Mute alerts": "通知をミュート",
   "Unmute alerts": "通知のミュートを解除",

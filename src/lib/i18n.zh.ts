@@ -227,6 +227,7 @@ const BASE: Record<string, string> = {
   "No matching folders": "没有匹配的文件夹",
   "This folder cannot be opened.": "无法打开此文件夹。",
   "Folders could not be loaded.": "无法加载文件夹。",
+  "Unlock agent": "解锁 Agent",
 
   // ---- files ----
   "Files": "文件",

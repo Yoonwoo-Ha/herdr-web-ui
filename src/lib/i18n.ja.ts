@@ -225,6 +225,7 @@ const BASE: Record<string, string> = {
   "No matching folders": "一致するフォルダーはありません",
   "This folder cannot be opened.": "このフォルダーは開けません。",
   "Folders could not be loaded.": "フォルダーを読み込めませんでした。",
+  "Unlock agent": "エージェントのロックを解除",
 
   // ---- files ----
   "Files": "ファイル",

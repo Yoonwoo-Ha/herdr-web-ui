@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from "react";
-import { ArchiveRestore, Bot, Columns2, Ellipsis, Eraser, Folder, FolderInput, Maximize2, Minimize2, MoveHorizontal, Pencil, Plus, Rows2, ArrowLeftRight, Terminal, TextSearch, TextWrap, X } from "lucide-react";
+import { ArchiveRestore, Bot, Columns2, Ellipsis, Eraser, Folder, FolderInput, LockOpen, Maximize2, Minimize2, MoveHorizontal, Pencil, Plus, Rows2, ArrowLeftRight, Terminal, TextSearch, TextWrap, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { HerdrPane, HerdrTab, PaneLayoutSnapshot, SessionSnapshot } from "../../shared/protocol.ts";
 import { MAX_LABEL_CHARS } from "../../shared/labels.ts";
@@ -25,6 +25,7 @@ import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import type { RenameRequest } from "../lib/useRenameRequest.ts";
 import { paneLifetimes } from "../lib/paneLifetime.ts";
 import { usePaneLocked } from "../lib/paneLocks.ts";
+import { sidebarPinKey } from "../lib/sidebarPins.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
@@ -59,6 +60,8 @@ interface Props {
   renameRequest?: RenameRequest | null;
   /** a phone's header title lists the tabs (App): no row is drawn, and its sheet holds New terminal and New tab with agent… */
   tabsInHeader?: boolean;
+  /** a watching device sends no settings: it sees a locked pane's Unlock and cannot use it, as in the Agents list */
+  watching?: boolean;
 }
 type Menu = { paneId: string; anchor: HTMLElement; point?: { x: number; y: number }; previousFocus: HTMLElement | null };
 interface Drag {
@@ -81,7 +84,7 @@ interface Drag {
 }
 
 /** The active tab, drawn from herdr's rectangles. No browser-owned layout or PTY state. */
-export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged, renderPane, actionsRef, onOpenInHalf, mirrored = false, onRecoverUnsent, onSearchConversation, onNewTab, onNewTerminal, onMoveToWorkspace, renameRequest = null, tabsInHeader = false }: Props) {
+export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged, renderPane, actionsRef, onOpenInHalf, mirrored = false, onRecoverUnsent, onSearchConversation, onNewTab, onNewTerminal, onMoveToWorkspace, renameRequest = null, tabsInHeader = false, watching = false }: Props) {
   const t = useT();
   const { settings, update: updateSettings } = useSettings();
   const narrowScreen = useMediaQuery(MIRROR_WRAP_QUERY);
@@ -287,7 +290,13 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         icon: mirrorWraps ? MoveHorizontal : TextWrap,
         run: () => updateSettings({ terminalMirrorWrap: !mirrorWraps }) }] : []),
       ...(onRecoverUnsent && paneLifetimes.unsent().length > 0 ? [{ id: "recover-unsent", label: t("Recover unsent text"), icon: ArchiveRestore, run: () => onRecoverUnsent(target) }] : []),
-      ...(paneLocked(target.pane_id) ? [] : [{ id: "close", label: t("Close pane"), icon: X, danger: true, run: () => requestClose(target) }]),
+      // a locked pane is unlocked here in place of its Close: an agent that exited leaves the Agents list, and its Unlock with it (#2977)
+      ...(paneLocked(target.pane_id)
+        ? [{ id: "unlock", label: t("Unlock agent"), icon: LockOpen, disabled: watching, run: () => {
+          const key = sidebarPinKey(machineId, target.pane_id);
+          updateSettings(({ lockedAgents }) => ({ lockedAgents: lockedAgents.filter((held) => held !== key) }));
+        } }]
+        : [{ id: "close", label: t("Close pane"), icon: X, danger: true, run: () => requestClose(target) }]),
     ];
   };
   const items = target ? itemsFor(target) : [];

@@ -223,6 +223,7 @@ const BASE: Record<string, string> = {
   "No matching folders": "일치하는 폴더가 없습니다",
   "This folder cannot be opened.": "이 폴더를 열 수 없습니다.",
   "Folders could not be loaded.": "폴더를 불러올 수 없습니다.",
+  "Unlock agent": "에이전트 잠금 해제",
 
   // ---- files ----
   "Files": "파일",
