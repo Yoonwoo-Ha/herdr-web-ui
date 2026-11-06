@@ -1563,6 +1563,12 @@ export const addRelayPc = (link: string) => machineRequest<{ machine: Machine }>
  */
 export const findRelayPc = (code: string) => machineRequest<{ ticket: string; server_id: string; name: string | null }>("/relay/code", "POST", { code });
 export const addFoundRelayPc = (ticket: string) => machineRequest<{ machine: Machine }>("/relay", "POST", { found: ticket });
+/** A PC of this PC's Tailscale login whose Ovis lets this PC in as its owner (server/tailnet-pcs.ts). */
+export interface TailnetPc { readonly name: string; readonly url: string; readonly relay: string | null }
+/** GET /api/machines/tailnet: the PCs on this PC's Tailscale that one tap adds through the relay. */
+export const findTailnetPcs = () => machineRequest<{ pcs: TailnetPc[] }>("/tailnet");
+/** POST /api/machines/tailnet: asks that PC for its code over Tailscale and adds it through the relay. */
+export const addTailnetPc = (url: string) => machineRequest<{ machine: Machine }>("/tailnet", "POST", { url });
 export const startMachineSetup = (request: SetupRequest) => machineRequest<SetupJob>("/setup", "POST", request);
 export const fetchMachineSetup = (id: string) => machineRequest<SetupJob>(`/setup/${encodeURIComponent(id)}`);
 export const answerMachineSetup = (id: string, action: SetupAction) => machineRequest<SetupJob>(`/setup/${encodeURIComponent(id)}`, "POST", action);

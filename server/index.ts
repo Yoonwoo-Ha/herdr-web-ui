@@ -1,3 +1,4 @@
+import type { TailnetPcsOptions } from "./tailnet-pcs.ts";
 import "./adopt-legacy-env.ts";
 import type { RelaySocket } from "../shared/relay-channel.ts";
 import { createCore, type SocketData } from "./core/index.ts";
@@ -185,6 +186,8 @@ export function createServer(
     machines?: boolean;
     /** how PCs added through the relay reach it (server/relay-pc.ts); tests point it at a local relay */
     relayPcSocket?: (url: string) => RelaySocket;
+    /** how other PCs on this PC's Tailscale are found (server/tailnet-pcs.ts); tests give their own */
+    tailnetPcs?: TailnetPcsOptions;
     /** a bridge this app starts on a PC (server/remote-entry.ts): its token is the credential its connection server holds, and no browser reaches it, so its snapshots go whole (#2160) */
     bridgeOnly?: boolean;
     /** false: the panes' files are on another machine (server/herdr-core/machine-entry.ts), so no route reads or makes files on this disk for them */
