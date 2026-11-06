@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { WEB_PANEL_BELOW_KEY } from "./historyKeys.ts";
+import { WEB_PANEL_BELOW_KEY, webPagesBelow } from "./historyKeys.ts";
+import { backUnderCurrentEntry } from "./historyNavigation.ts";
 import { diffTargetFromState, diffTargetState, type RepoDiffTarget } from "./repoDiff.ts";
 
 /**
@@ -38,7 +39,8 @@ export function useRepoDiffViewer() {
     if (closing.current) return;
     if (diffTargetFromState(window.history.state)) {
       closing.current = true;
-      window.history.back();
+      // past a copy of the diff's entry a phone sheet left (a reload under it) too (#3101)
+      backUnderCurrentEntry(1 + webPagesBelow(window.history.state))?.catch(() => { closing.current = false; });
     } else setViewing(null);
   }, []);
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { outsideSettings } from "./settingsHistory.ts";
-import { WEB_PANEL_BELOW_KEY, webPagesBelow, withoutWebPanel } from "./historyKeys.ts";
+import { FILE_PREVIEW_KEY, WEB_PANEL_BELOW_KEY, webPagesBelow, withoutWebPanel } from "./historyKeys.ts";
 import type { FilePresentation } from "./filePresentation.ts";
 import { backUnderCurrentEntry } from "./historyNavigation.ts";
 
@@ -10,7 +10,7 @@ interface FilePreview {
   machineId: string;
   presentation?: FilePresentation;
 }
-const HISTORY_KEY = "ovis:file-preview";
+const HISTORY_KEY = FILE_PREVIEW_KEY;
 
 function previewFromState(state: unknown): FilePreview | null {
   if (state === null || typeof state !== "object") return null;

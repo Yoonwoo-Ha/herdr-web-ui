@@ -137,14 +137,30 @@ async function phone(browser: Browser, theme: "light" | "dark"): Promise<void> {
   }
   const { page, errors, close } = await open(browser, 390, { theme, filesDocuments: true });
   try {
+    const at = () => page.evaluate(() => (window as unknown as { navigation: { currentEntry: { index: number } } }).navigation.currentEntry.index);
+    // the pane's own entry: a close that leaves a copy of the file's entry behind lands above it
+    const paneEntry = await at();
     await page.locator(".header-more-button").click();
     await page.getByText("Browse files", { exact: true }).click();
     await page.locator(".modal-scrim .files-dialog").waitFor();
     // the menu's sheet drops while the Files sheet rises: the picture waits for both to land
     await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
     await exercise(page, "390", theme);
+    // a reload with the palette open over the file: the palette's entry, a copy of the file's, is one
+    // more of the file's, and closing the file goes back past it too (#3101)
+    await page.keyboard.press("ControlOrMeta+Shift+K");
+    await page.getByRole("dialog", { name: "Command palette" }).waitFor();
+    await page.waitForFunction(() => typeof window.history.state?.["ovis:sheet"] === "string");
+    await page.reload();
+    await page.locator(".conn-live").waitFor({ state: "attached" });
+    await page.getByRole("heading", { name: "HANDOFF.md" }).waitFor();
+    await page.getByRole("button", { name: "Close file" }).click();
+    await page.waitForFunction((index) => (window as unknown as { navigation: { currentEntry: { index: number } } }).navigation.currentEntry.index <= index, paneEntry, { timeout: 5_000 })
+      .catch(async () => assert.fail(`closing the file after a reload under the palette goes back to the pane's entry (${paneEntry}), not ${await at()}`));
+    await page.getByRole("heading", { name: "HANDOFF.md" }).waitFor({ state: "detached" });
+    assert.equal(await page.evaluate(() => window.history.state?.["ovis:file-preview"]), undefined, "no entry of the file is left under the pane");
     assert.deepEqual(errors, []);
-    console.log(`PASS 390px ${theme}: the setting is off by default; on, the four tabs fit and the list works on the sheet`);
+    console.log(`PASS 390px ${theme}: the setting is off by default; on, the four tabs fit and the list works on the sheet; closing a file after a reload under the palette goes back to the pane`);
   } finally { await close(); }
 }
 

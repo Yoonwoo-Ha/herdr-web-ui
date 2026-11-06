@@ -71,6 +71,39 @@ it("closes a diff's file docked over a file that holds the page count onto that 
   expect(traverseTo).toHaveBeenCalledWith("a");
 });
 
+it("closes a diff over a copy of its entry (a sheet's, after a reload) back past both (#3101)", async () => {
+  // Given a diff's entry and, over it, the copy a phone sheet left on reload, which counts one more under it.
+  const diff = {
+    machineId: "local", paneId: "p1", directory: "/r", path: "b.md", oldPath: null,
+    scope: "workspace" as const, base: null, head: null, comparison: null,
+  };
+  const entries: Array<{ key: string; state: unknown }> = [
+    { key: "pane", state: null },
+    { key: "diff", state: { "ovis:repo-diff": diff } },
+    { key: "copy", state: { "ovis:repo-diff": diff, "ovis:web-panel-below": 1 } },
+  ];
+  const events = new EventTarget();
+  const traverseTo = mock((_key: string) => ({ committed: Promise.resolve(undefined) }));
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {
+    location: new URL("http://localhost:7317/"),
+    history: { get state() { return entries[2]!.state; }, replaceState: () => {}, pushState: () => {}, back: () => { traverseTo(entries[1]!.key); } },
+    navigation: { currentEntry: { index: 2 }, entries: () => entries, traverseTo },
+    addEventListener: events.addEventListener.bind(events),
+    removeEventListener: events.removeEventListener.bind(events),
+  } });
+  function Probe() {
+    panels = useFilePanels({ settings: DEFAULT_SETTINGS, filePanelAvailable: false, selectedPaneId: "p1", selectedMachineId: "local" });
+    return null;
+  }
+  await act(async () => { renderer = create(createElement(Probe)); });
+
+  // When the diff closes.
+  await act(async () => { panels.closeDiff(); });
+
+  // Then the close goes back to the pane, not onto the diff's own entry.
+  expect(traverseTo).toHaveBeenCalledWith("pane");
+});
+
 it("keeps Files and the diff open without replacing history when the traversal rejects", async () => {
   // Given a docked report owning an entry, with Files and a diff opened over it.
   const events = new EventTarget();
