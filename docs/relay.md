@@ -280,14 +280,17 @@ plugin, run the plugin's script as in [In a terminal](guide.md#in-a-terminal); f
 
 ```bash
 bun scripts/plugin.ts link            # sign in to your account, then approve the device that adds this PC
-bun scripts/plugin.ts link --google   # the same, signed in with Google
+bun scripts/plugin.ts link --google   # the same, at Google's own device page (--github: GitHub's)
 bun scripts/plugin.ts link --code     # a code to type and the relay QR code, renewed until Ctrl+C
 ```
 
 Both turn the relay on first when it is off, and wait until it is online.
 
-- **`link`** signs in with the provider's device flow, the way a PC's own page does: it prints the
-  provider's device page and a code to enter there, on any device. Then it lists this PC in your
+- **`link`** signs in the way a PC's own page does: it prints the Ovis sign-in page
+  (`https://account.ovis.sh/link`), a code and a QR code of the page with the code filled in. On any
+  device, open it, check the code, choose **Continue with GitHub** or **Continue with Google**, sign
+  in, and confirm. An account service without that page, or `--github` / `--google`, uses the
+  provider's own device page and its code instead. Signing in adds nothing by itself. Then it lists this PC in your
   account ([Adding a PC](account.md#adding-a-pc)) and waits. On a phone already in your account,
   tap **Add** on this PC; the terminal shows the request with its six digits
   (**… wants to join your account. Approve it only if its screen shows 123 456**) and asks

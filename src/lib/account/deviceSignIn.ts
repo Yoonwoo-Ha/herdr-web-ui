@@ -5,9 +5,12 @@
  * (github.com/login/device, google.com/device), and the page polls the service until it says yes. The sign-in is bound to a verifier that never leaves this page's
  * memory, so the device code alone redeems nothing, and a service that does not say it bound the
  * sign-in is not used.
+ *
+ * With `provider: "ovis"` the code is the service's own, typed at its link page (<service>/link),
+ * where the person picks GitHub or Google; the polls are the same.
  */
 import { toBase64Url } from "../../../shared/relay-pair-sas.ts";
-import { failure, sessionOf, type DeviceProvider } from "./service.ts";
+import { AccountServiceError, failure, sessionOf, type DeviceProvider } from "./service.ts";
 import { SignInError } from "./signin.ts";
 import { accountLock } from "./store.ts";
 import type { AccountLock, AccountSession, AccountStore } from "./store.ts";
@@ -21,11 +24,18 @@ export const GITHUB_DEVICE_PAGE = "https://github.com/login/device";
 /** Each provider's own device page: the only address the page links to for typing the code. */
 export const DEVICE_PAGES: Readonly<Record<DeviceProvider, string>> = { github: GITHUB_DEVICE_PAGE, google: "https://www.google.com/device" };
 
+/** Where a device sign-in's code is typed: a provider's device page, or the account service's own link page. */
+export type DeviceSignInProvider = DeviceProvider | "ovis";
+
 export interface DeviceSignIn {
+  /** where the code is typed: the link page, or that provider's own device page */
+  readonly provider: DeviceSignInProvider;
   /** the code the person types at GitHub */
   readonly userCode: string;
-  /** the provider's device page, and never another address */
+  /** the provider's device page, or the service's link page, and never another address */
   readonly verificationUri: string;
+  /** the link page with this code filled in, for a QR code; null for a provider's page, or a link carrying another code */
+  readonly verificationUriComplete: string | null;
   /** when the code runs out, in ms since the epoch */
   readonly expiresAt: number;
   /** Polls until GitHub answers; the session is kept only if `signal` was not aborted by then. */
@@ -41,7 +51,7 @@ export interface DeviceSignInOptions {
   readonly wait?: (ms: number, signal: AbortSignal) => Promise<void>;
   readonly lock?: AccountLock;
   /** GitHub unless named */
-  readonly provider?: DeviceProvider;
+  readonly provider?: DeviceSignInProvider;
 }
 
 function waitFor(ms: number, signal: AbortSignal): Promise<void> {
@@ -85,8 +95,9 @@ export async function startDeviceSignIn(options: DeviceSignInOptions): Promise<D
   const provider = options.provider ?? "github";
   const verifier = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
   const challenge = toBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  // redirect "manual": a redirect is a failure here, never a way to carry the challenge, the device code or the verifier to another address
   const response = await fetchImpl(new URL(`/v1/signin/${provider}/device`, options.service), {
-    method: "POST", headers: { "content-type": "application/json" },
+    method: "POST", headers: { "content-type": "application/json" }, redirect: "manual",
     body: JSON.stringify({ code_challenge: challenge, code_challenge_method: "S256" }),
   });
   if (!response.ok) throw await failure(response);
@@ -101,9 +112,25 @@ export async function startDeviceSignIn(options: DeviceSignInOptions): Promise<D
   const expiresAt = now() + seconds(body["expires_in"], 900) * 1000;
   const firstInterval = seconds(body["interval"], 5) * 1000;
 
+  let verificationUri: string;
+  let verificationUriComplete: string | null = null;
+  if (provider === "ovis") {
+    // the link page is the service's own, exactly: an answer naming any other address is not followed
+    const page = new URL("/link", options.service);
+    if (body["verification_uri"] !== page.href) throw new SignInError("unsupported", "The account service named another sign-in page");
+    verificationUri = page.href;
+    const complete = new URL(page);
+    complete.searchParams.set("code", userCode);
+    if (body["verification_uri_complete"] === complete.href) verificationUriComplete = complete.href;
+  } else {
+    verificationUri = devicePage(body["verification_uri"], provider);
+  }
+
   return {
+    provider,
     userCode,
-    verificationUri: devicePage(body["verification_uri"], provider),
+    verificationUri,
+    verificationUriComplete,
     expiresAt,
     async finish(signal) {
       let interval = firstInterval;
@@ -117,7 +144,7 @@ export async function startDeviceSignIn(options: DeviceSignInOptions): Promise<D
         try {
           answer = await fetchImpl(new URL("/v1/token", options.service), {
             method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ grant_type: DEVICE_GRANT, device_code: deviceCode, code_verifier: verifier }),
-            signal,
+            redirect: "manual", signal,
           });
         } catch (error) {
           // offline for a moment: the code is still good, so the next poll tries again
@@ -137,7 +164,7 @@ export async function startDeviceSignIn(options: DeviceSignInOptions): Promise<D
           });
           if (kept) return session;
           // a sign-in nobody keeps ends at the service too, so its tokens do not outlive the page
-          await fetchImpl(new URL("/v1/signout", options.service), { method: "POST", headers: { authorization: `Bearer ${session.access_token}` } })
+          await fetchImpl(new URL("/v1/signout", options.service), { method: "POST", headers: { authorization: `Bearer ${session.access_token}` }, redirect: "manual" })
             .catch((error: unknown) => console.warn("Ovis: a cancelled sign-in was not ended at the account service", error instanceof Error ? error.name : error));
           signal.throwIfAborted();
           return session;
@@ -154,4 +181,22 @@ export async function startDeviceSignIn(options: DeviceSignInOptions): Promise<D
       }
     },
   };
+}
+
+/**
+ * The link page's sign-in, or `fallback`'s own device flow when the link page cannot start one: busy
+ * (429, its global attempt budget can be spent by others), missing (404), down (5xx) or unreachable.
+ * An answer the client does not take (another page, no S256 binding, a redirect) is a failure, not a
+ * reason to fall back, so a bad answer cannot push the sign-in off the link page.
+ */
+export async function startLinkPageSignIn(options: DeviceSignInOptions, fallback: DeviceProvider): Promise<DeviceSignIn> {
+  try {
+    return await startDeviceSignIn({ ...options, provider: "ovis" });
+  } catch (error) {
+    const unusable = error instanceof TypeError
+      || (error instanceof AccountServiceError && (error.status === 429 || error.status === 404 || error.status >= 500));
+    if (!unusable) throw error;
+    console.warn("Ovis: the link page could not start a sign-in; using the provider's device page", error instanceof AccountServiceError ? error.status : error.name);
+    return await startDeviceSignIn({ ...options, provider: fallback });
+  }
 }

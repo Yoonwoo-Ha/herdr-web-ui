@@ -878,7 +878,7 @@ async function approvePairings(): Promise<number> {
 }
 
 /**
- * `link [--code] [--google]`: this PC joins the relay from its own terminal (scripts/plugin-link.ts),
+ * `link [--code] [--github | --google]`: this PC joins the relay from its own terminal (scripts/plugin-link.ts),
  * signed in to the account by a device code, or with a code to type and a QR code.
  */
 async function linkCommand(): Promise<number> {

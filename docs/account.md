@@ -479,11 +479,20 @@ OAuth's authorization code flow with PKCE, `S256` only:
    `https://www.google.com/device`), waits `Retry-After` on a
    429, and keeps no session from a sign-in cancelled meanwhile (it is stored under the same
    lock as a refresh or a sign-out).
+   Where the service has the Ovis link page (`device_page` below), the page and `link` start with
+   `POST /v1/signin/ovis/device` instead (the S256 challenge is required): the answer's `user_code`
+   is the service's own (`XXXX-XXXX`), `verification_uri` is exactly `<service>/link`, and
+   `verification_uri_complete` that page with `?code=` filled in, shown as a QR code. The person
+   types or scans it on any device, chooses GitHub or Google there, signs in, and confirms on the
+   page in the same browser; the polls are the same. A client refuses an answer naming any other
+   page, and shows no QR code for a link carrying another code. Signing in this way adds no PC and
+   no device: adding still needs an approval on a device already in the account.
 6. `POST /v1/signout` (Bearer) answers 204 and ends that sign-in's family.
 
 `GET /v1/providers` (no sign-in) answers `{ "providers": ["github", "google"], "device": ["github",
-"google"] }`: the sign-ins this service is set up for, and those of them a PC's own page can start
-(step 5). A provider that is not listed has no button anywhere; a client that cannot read the answer
+"google"], "device_page": ["github", "google"] }`: the sign-ins this service is set up for, those of
+them a PC's own page can start at the provider (step 5), and those its Ovis link page offers (an
+empty or missing `device_page`: no link page). A provider that is not listed has no button anywhere; a client that cannot read the answer
 keeps the sign-ins its build names (GitHub alone by default), so a Google button never leads to a
 service that has no Google client.
 

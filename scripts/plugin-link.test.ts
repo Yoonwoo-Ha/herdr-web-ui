@@ -193,10 +193,12 @@ describe("ovis link, on the PC itself", () => {
     expect(cancelled).toBe(1);
   });
 
-  it("signs in with the device flow, lists this PC in the account and approves the device that adds it after a number compare", async () => {
+  /** `link` against a PC that a phone adds once the PC is signed in; `approve` plays the person finishing the sign-in shown. */
+  async function linkToAccount(options: { args?: string[]; prepare?: (service: FakeAccountService) => void; approve: (service: FakeAccountService, code: string) => void }) {
     const pc = identity();
     const time = clock();
     const service = new FakeAccountService(time.now);
+    options.prepare?.(service);
     let account: string | null = null;
     let linkAsked = 0;
     const decisions: unknown[] = [];
@@ -218,23 +220,66 @@ describe("ovis link, on the PC itself", () => {
       return undefined;
     });
     const out: string[] = [];
-    const code = await link([], {
+    const code = await link(options.args ?? [], {
       origin: ORIGIN, headers: {}, fetch: local.fetch, now: time.now, wait: time.wait, signal: new AbortController().signal,
       accountService: SERVICE, serviceFetch: (input, init) => service.fetch(new Request(input, init)), lines: answers("y"),
       out: (text) => {
         out.push(text);
         const shown = /code:? ([A-Z0-9-]{4,16})\b/.exec(text);
-        if (shown) service.approveDevice(shown[1]!, "acct_1");
+        if (shown) options.approve(service, shown[1]!);
       },
     });
+    return { code, text: out.join(""), service, pc, decisions };
+  }
+
+  it("signs in with the device flow, lists this PC in the account and approves the device that adds it after a number compare", async () => {
+    const { code, text, service, pc, decisions } = await linkToAccount({ approve: (service, shown) => service.approveDevice(shown, "acct_1") });
     expect(code).toBe(0);
-    const text = out.join("");
     expect(text).toContain("https://github.com/login/device");
     expect(service.pcs("acct_1").map((entry) => [entry.server_id, entry.label])).toEqual([[pc.server_id, "old-desktop"]]);
     expect(text).toContain("Hako's iPhone wants to join your account");
     expect(text).toContain("123 456");
     expect(decisions).toEqual([{ id: "p1", decision: "approve" }]);
     expect(text).toContain("This PC is in your account");
+  });
+
+  it("shows the Ovis link page and its code, with a QR code, when the account service has it", async () => {
+    const { code, text, service } = await linkToAccount({
+      prepare: (service) => service.offerLinkPage(["github", "google"]),
+      approve: (service, shown) => service.approveOnLinkPage(shown, "acct_1", "google"),
+    });
+    expect(code).toBe(0);
+    expect(text).toContain(`${SERVICE}/link`);
+    expect(text).not.toContain("github.com/login/device");
+    expect(text).toMatch(/█{4,}/);
+    expect(service.pcs("acct_1")).toHaveLength(1);
+  });
+
+  it("uses GitHub's device page when the link page refuses with 429", async () => {
+    const { code, text } = await linkToAccount({
+      prepare: (service) => {
+        service.offerLinkPage(["github", "google"]);
+        const answer = service.fetch;
+        Object.defineProperty(service, "fetch", { value: async (input: Request | string | URL, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          return new URL(request.url).pathname === "/v1/signin/ovis/device"
+            ? Response.json({ error: { code: "rate_limited", message: "" } }, { status: 429 }) : answer(request);
+        } });
+      },
+      approve: (service, shown) => service.approveDevice(shown, "acct_1"),
+    });
+    expect(code).toBe(0);
+    expect(text).toContain("https://github.com/login/device");
+  });
+
+  it("--github and --google keep the provider's own device page, even where the link page exists", async () => {
+    const { code, text } = await linkToAccount({
+      args: ["--google"],
+      prepare: (service) => service.offerLinkPage(["github", "google"]),
+      approve: (service, shown) => service.approveDevice(shown, "acct_1"),
+    });
+    expect(code).toBe(0);
+    expect(text).toContain("https://www.google.com/device");
   });
 
   it("does not sign in when this PC is already in an account, or when the account service is off", async () => {

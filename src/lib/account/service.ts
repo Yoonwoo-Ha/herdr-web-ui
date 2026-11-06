@@ -62,6 +62,8 @@ export type DeviceProvider = (typeof DEVICE_PROVIDERS)[number];
 export interface OfferedProviders {
   readonly providers: AccountProvider[];
   readonly device: DeviceProvider[];
+  /** the sign-ins the Ovis link page finishes (`device_page`); empty when the service has no link page */
+  readonly page: DeviceProvider[];
 }
 
 /**
@@ -70,7 +72,7 @@ export interface OfferedProviders {
  * page GitHub alone, as before the service could be asked.
  */
 export async function offeredProviders(service: string, fallback: readonly AccountProvider[], options: { fetch?: Fetch } = {}): Promise<OfferedProviders> {
-  const before: OfferedProviders = { providers: [...fallback], device: ["github"] };
+  const before: OfferedProviders = { providers: [...fallback], device: ["github"], page: [] };
   let body: unknown;
   try {
     const response = await (options.fetch ?? fetch)(new URL("/v1/providers", service));
@@ -85,7 +87,12 @@ export async function offeredProviders(service: string, fallback: readonly Accou
   const providers = ACCOUNT_PROVIDERS.filter((provider) => named.has(provider));
   if (providers.length === 0) return before;
   const device = new Set<unknown>(body.device);
-  return { providers, device: DEVICE_PROVIDERS.filter((provider) => device.has(provider) && named.has(provider)) };
+  const page = new Set<unknown>(Array.isArray(body.device_page) ? body.device_page : []);
+  return {
+    providers,
+    device: DEVICE_PROVIDERS.filter((provider) => device.has(provider) && named.has(provider)),
+    page: DEVICE_PROVIDERS.filter((provider) => page.has(provider) && named.has(provider)),
+  };
 }
 
 /** One way the account signs in (`GET /v1/identities`); the service keeps no email or login to name it by. */

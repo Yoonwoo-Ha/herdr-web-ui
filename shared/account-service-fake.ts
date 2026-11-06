@@ -78,13 +78,13 @@ export class FakeAccountService {
   private readonly revokedFamilies = new Set<string>();
   private readonly appleTokens = new Map<string, { account: string; nonce: string }>();
   private readonly signIns = new Map<SignInProvider, string>();
-  private readonly deviceSignIns = new Map<string, { provider: SignInProvider; userCode: string; account: string | null; denied: boolean; interval: number; nextPoll: number; expires: number; challenge: string | null }>();
+  private readonly deviceSignIns = new Map<string, { provider: SignInProvider; userCode: string; account: string | null; denied: boolean; interval: number; nextPoll: number; expires: number; challenge: string | null; page?: boolean }>();
   /** by account: its sign-in methods, one per provider */
   private readonly identityList = new Map<string, Map<SignInProvider, { added_at: string }>>();
   private readonly linkTokens = new Map<string, { account: string; family: string; provider: SignInProvider; expires: number }>();
   /** by refresh family: when that sign-in was made (a refresh keeps it), for what needs a recent one */
   private readonly signedInAt = new Map<string, number>();
-  private offered: { providers: SignInProvider[]; device: SignInProvider[] } = { providers: ["github", "google", "apple"], device: ["github", "google"] };
+  private offered: { providers: SignInProvider[]; device: SignInProvider[]; device_page?: SignInProvider[] } = { providers: ["github", "google", "apple"], device: ["github", "google"] };
   private readonly pushes = new Map<string, { account: string; endpoint: string }>();
   private readonly counters = new Map<string, { start: number; count: number }>();
   private readonly ringList: FakeRing[] = [];
@@ -112,6 +112,17 @@ export class FakeAccountService {
 
   /** What `GET /v1/providers` answers: the sign-ins this service is set up for. */
   offer(providers: SignInProvider[], device: SignInProvider[]): void { this.offered = { providers, device }; }
+
+  /** Says the service has the link page (`device_page`), finishing `/v1/signin/ovis/device` with these sign-ins. */
+  offerLinkPage(providers: SignInProvider[]): void { this.offered = { ...this.offered, device_page: providers }; }
+
+  /** The person typed `userCode` on the link page and confirmed a sign-in with `provider`. */
+  approveOnLinkPage(userCode: string, account: string, provider: SignInProvider): void {
+    // one approval, as the service: an approved request's code names nothing any more
+    for (const entry of this.deviceSignIns.values()) {
+      if (entry.userCode === userCode && entry.page && entry.account === null && this.now() < entry.expires) { entry.account = account; entry.provider = provider; entry.userCode = ""; }
+    }
+  }
 
 
   private addIdentity(account: string, provider: SignInProvider): void {
@@ -288,6 +299,21 @@ export class FakeAccountService {
       if (provider !== undefined && request.method === "GET") return this.signIn(url, provider);
       if (url.pathname === "/v1/token" && request.method === "POST") return await this.token(request);
       if (url.pathname === "/v1/providers" && request.method === "GET") return json(this.offered);
+      if (url.pathname === "/v1/signin/ovis/device" && request.method === "POST" && (this.offered.device_page ?? []).length > 0) {
+        const body = JSON.parse(await request.text()) as Record<string, unknown>;
+        if (body.code_challenge_method !== "S256" || typeof body.code_challenge !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(body.code_challenge)) {
+          return problem(400, "invalid_request", "Start a sign-in on the link page with an S256 code_challenge");
+        }
+        const deviceCode = randomHex(32);
+        const letters = "BCDFGHJKLMNPQRSTVWXZ";
+        const pick = () => Array.from(crypto.getRandomValues(new Uint8Array(4)), (byte) => letters[byte % letters.length]).join("");
+        const userCode = `${pick()}-${pick()}`;
+        this.deviceSignIns.set(deviceCode, { provider: "github", userCode, account: null, denied: false, interval: DEVICE_POLL_S, nextPoll: this.now(), expires: this.now() + 600_000, challenge: body.code_challenge, page: true });
+        const page = new URL("/link", url.origin);
+        const complete = new URL(page);
+        complete.searchParams.set("code", userCode);
+        return json({ device_code: deviceCode, user_code: userCode, verification_uri: page.href, verification_uri_complete: complete.href, expires_in: 600, interval: DEVICE_POLL_S, code_challenge_method: "S256" });
+      }
       const deviceProvider = /^\/v1\/signin\/([a-z]+)\/device$/.exec(url.pathname)?.[1];
       if (deviceProvider !== undefined && DEVICE_PAGES[deviceProvider] !== undefined && request.method === "POST") {
         const text = await request.text();

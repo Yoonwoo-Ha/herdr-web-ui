@@ -2,7 +2,8 @@
  * Settings → Phone & devices → Account: sign in with GitHub, Google or Apple, see the account's PCs,
  * add or remove a sign-in method, sign out. The desktop app signs in through the system browser
  * (lib/account/desktop.ts); a browser on the PC's own secure address, which no sign-in can be sent
- * back to, signs in with the provider's device flow and a code (lib/account/deviceSignIn.ts). Only
+ * back to, signs in with a code (lib/account/deviceSignIn.ts): one button and the Ovis link page
+ * where the service has it, else the provider's device flow. Only
  * the providers the service says it offers get a button. Elsewhere, and with the account off, none
  * of this.
  */
@@ -11,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listThisPc, thisPcInNoAccount } from "../lib/account/addThisPc.ts";
 import { desktopAccount, desktopProviders, desktopSignIn } from "../lib/account/desktop.ts";
 import { ApiError } from "../lib/api.ts";
-import { startDeviceSignIn } from "../lib/account/deviceSignIn.ts";
+import { startDeviceSignIn, startLinkPageSignIn, type DeviceSignInProvider } from "../lib/account/deviceSignIn.ts";
 import { myPcs, type MyPc } from "../lib/account/myPcs.ts";
 import { AccountService, AccountServiceError, DEVICE_PROVIDERS, offeredProviders, pcAccountServiceOf, SignedOutError, type AccountIdentity, type DeviceProvider, type OfferedProviders } from "../lib/account/service.ts";
 import { SignInError } from "../lib/account/signin.ts";
@@ -19,16 +20,20 @@ import { indexedAccountStore, type AccountProvider, type AccountSession } from "
 import { currentLocale, useT } from "../lib/i18n.ts";
 import { inMacApp, inNativeApp } from "../lib/nativeApp.ts";
 import { AccountPcList, AccountSignIn, PROVIDER_NAMES, ProviderMark } from "./AccountPcs.tsx";
+import { QrCode } from "./QrCode.tsx";
 import { SettingsGroup, SettingsRow } from "./SettingsControls.tsx";
 
 type View =
   | { kind: "loading" }
   | { kind: "signed-out"; error: string | null }
   | { kind: "signing-in" }
-  | { kind: "device-code"; provider: DeviceProvider; userCode: string | null; verificationUri: string }
+  | { kind: "device-code"; provider: DeviceSignInProvider; userCode: string | null; verificationUri: string; verificationUriComplete: string | null }
   | { kind: "signed-in"; provider: AccountProvider; account: string; pcs: MyPc[] | null; methods: AccountIdentity[] | null; error: string | null };
 
 const isDeviceProvider = (provider: AccountProvider): provider is DeviceProvider => (DEVICE_PROVIDERS as readonly string[]).includes(provider);
+
+/** The link page as a person reads it off the screen: account.ovis.sh/link. */
+const linkAddress = (uri: string): string => { const url = new URL(uri); return url.host + url.pathname; };
 
 /** The pairing window this screen keeps open is reopened a minute before its ten minutes end. */
 const RELIST_MS = 9 * 60_000;
@@ -114,6 +119,8 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
   }, [service, fallbackKey]);
   /** the desktop app comes back over loopback with any provider; a PC's page only through a device flow */
   const providers: AccountProvider[] = bridge !== null ? offer?.providers ?? fallback : offer?.device ?? ["github"];
+  /** a PC's page whose service has the Ovis link page: one button, GitHub or Google chosen on the link page */
+  const linkPage = bridge === null && pcService !== null && (offer?.page.length ?? 0) > 0;
   // bumped by a sign-out and on unmount: a load still waiting for the account's PCs then shows nothing
   const loads = useRef(0);
 
@@ -168,24 +175,33 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
     }
   };
 
-  /** A device sign-in on a PC's own page: shows the provider's code until it is approved. */
-  const signInWithCode = (pcServiceOrigin: string, provider: DeviceProvider): Promise<AccountSession> => {
+  /** A device sign-in on a PC's own page: shows the link page's or the provider's code until it is approved. */
+  const signInWithCode = (pcServiceOrigin: string, provider: DeviceSignInProvider): Promise<AccountSession> => {
     cancelDeviceSignIn();
     const controller = new AbortController();
     deviceSignIn.current = controller;
-    setView({ kind: "device-code", provider, userCode: null, verificationUri: "" });
+    setView({ kind: "device-code", provider, userCode: null, verificationUri: "", verificationUriComplete: null });
     return (async () => {
-      const started = await startDeviceSignIn({ service: pcServiceOrigin, store: indexedAccountStore, provider });
+      const started = provider === "ovis"
+        // the link page busy or down: the provider's own device page instead, GitHub's where the service has it
+        ? await startLinkPageSignIn({ service: pcServiceOrigin, store: indexedAccountStore }, offer?.device[0] ?? "github")
+        : await startDeviceSignIn({ service: pcServiceOrigin, store: indexedAccountStore, provider });
       controller.signal.throwIfAborted();
-      setView({ kind: "device-code", provider, userCode: started.userCode, verificationUri: started.verificationUri });
+      setView({ kind: "device-code", provider: started.provider, userCode: started.userCode, verificationUri: started.verificationUri, verificationUriComplete: started.verificationUriComplete });
       return started.finish(controller.signal);
     })().finally(() => { if (deviceSignIn.current === controller) deviceSignIn.current = null; });
   };
 
-  /** Runs one provider's sign-in the way this page can; null when it cannot here. */
-  const runSignIn = (provider: AccountProvider): Promise<AccountSession> | null => {
+  /**
+   * Runs one provider's sign-in the way this page can; null when it cannot here. `viaLinkPage`: the
+   * link page, where the person picks GitHub or Google; a sign-in again for this same account passes
+   * false, so it stays with the provider the account signed in with.
+   */
+  const runSignIn = (provider: AccountProvider, viaLinkPage = linkPage): Promise<AccountSession> | null => {
     if (bridge !== null) return desktopSignIn(provider, bridge, indexedAccountStore);
-    return pcService !== null && isDeviceProvider(provider) ? signInWithCode(pcService, provider) : null;
+    if (pcService === null) return null;
+    if (viaLinkPage) return signInWithCode(pcService, "ovis");
+    return isDeviceProvider(provider) ? signInWithCode(pcService, provider) : null;
   };
 
   const signIn = (provider: AccountProvider): void => {
@@ -237,7 +253,7 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
     const { action, provider } = reauth;
     const { account, provider: current } = view;
     setReauth(null);
-    runSignIn(current)?.then(async (session) => {
+    runSignIn(current, false)?.then(async (session) => {
       await load();
       if (session.account !== account) return;
       if (action === "add") addMethod(provider);
@@ -260,21 +276,45 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
 
   return (
     <SettingsGroup title={t("Account")} section="account">
-      {view.kind === "signed-out" && <div className="settings-item" data-offer={offer === null ? "build" : "service"}><AccountSignIn onSignIn={signIn} error={view.error} providers={providers} /></div>}
+      {view.kind === "signed-out" && (
+        <div className="settings-item" data-offer={offer === null ? "build" : "service"}>
+          {linkPage
+            ? (
+              <div className="account-sign-in">
+                <button type="button" className="btn btn-primary account-provider" data-provider="ovis" onClick={() => signIn("github")}>{t("Sign in")}</button>
+                {view.error !== null && <p className="account-error" role="alert">{view.error}</p>}
+              </div>
+            )
+            : <AccountSignIn onSignIn={signIn} error={view.error} providers={providers} />}
+        </div>
+      )}
       {view.kind === "signing-in" && <SettingsRow label={t("Signing in…")} description={t("Finish signing in in your browser.")}>{null}</SettingsRow>}
       {view.kind === "device-code" && (
         <div className="settings-item account-device">
           {view.userCode === null
             ? <p className="settings-description" role="status">{t("Signing in…")}</p>
-            : (
-              <>
-                <p className="settings-description">{t("Open {provider} and enter this code. Enter it only if you started this sign-in on this page.", { provider: PROVIDER_NAMES[view.provider] })}</p>
-                <output className="account-device-code" aria-live="polite">{view.userCode}</output>
-                <p className="settings-description" role="status">{t("Waiting for {provider}…", { provider: PROVIDER_NAMES[view.provider] })}</p>
-              </>
-            )}
+            : view.provider === "ovis"
+              ? (
+                <>
+                  <p className="settings-description">{t("On any device, open {address} and enter this code, then continue with GitHub or Google. Enter it only if you started this sign-in on this page.", { address: linkAddress(view.verificationUri) })}</p>
+                  {view.verificationUriComplete !== null && <QrCode value={view.verificationUriComplete} label={t("QR code of the sign-in page with this code filled in")} />}
+                  <output className="account-device-code" aria-live="polite">{view.userCode}</output>
+                  <p className="settings-description" role="status">{t("Waiting for the sign-in…")}</p>
+                </>
+              )
+              : (
+                <>
+                  <p className="settings-description">{t("Open {provider} and enter this code. Enter it only if you started this sign-in on this page.", { provider: PROVIDER_NAMES[view.provider] })}</p>
+                  <output className="account-device-code" aria-live="polite">{view.userCode}</output>
+                  <p className="settings-description" role="status">{t("Waiting for {provider}…", { provider: PROVIDER_NAMES[view.provider] })}</p>
+                </>
+              )}
           <div className="account-device-actions">
-            {view.userCode !== null && <a className="btn btn-primary" href={view.verificationUri} target="_blank" rel="noopener noreferrer">{t("Open {provider}", { provider: PROVIDER_NAMES[view.provider] })}</a>}
+            {view.userCode !== null && (
+              <a className="btn btn-primary" href={view.verificationUri} target="_blank" rel="noopener noreferrer">
+                {view.provider === "ovis" ? t("Open the sign-in page") : t("Open {provider}", { provider: PROVIDER_NAMES[view.provider] })}
+              </a>
+            )}
             <button type="button" className="btn" onClick={() => { cancelDeviceSignIn(); void load(); }}>{t("Cancel")}</button>
           </div>
         </div>
@@ -304,7 +344,10 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
               </ul>
               {reauth !== null && (
                 <div className="account-reauth" role="alert">
-                  <p className="settings-description">{t("To change how you sign in, sign in again with {provider} first.", { provider: PROVIDER_NAMES[view.provider] })}</p>
+                  <p className="settings-description">{bridge === null
+                      // a sign-in again stays with this account's provider, at its own device page, never the link page's choice
+                      ? t("To change how you sign in, sign in again with {provider} on its own sign-in page first.", { provider: PROVIDER_NAMES[view.provider] })
+                      : t("To change how you sign in, sign in again with {provider} first.", { provider: PROVIDER_NAMES[view.provider] })}</p>
                   {(bridge !== null || isDeviceProvider(view.provider)) && <button type="button" className="btn btn-primary" onClick={signInAgain}>{t("Sign in again")}</button>}
                 </div>
               )}
