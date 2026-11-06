@@ -2316,7 +2316,7 @@ try {
   await until(async () => await mobileComposer.getAttribute("placeholder") === "run the tests", "a phone shows the suggestion as the placeholder");
   assert.equal(await mobilePage.locator(".voice-mic").count(), 0, "a phone's chat has no mic until Settings asks for it");
   assert.equal(await mobilePage.getByTitle("Use the suggestion", { exact: true }).count(), 0, "a phone shows no suggestion chip by default");
-  await mobilePage.goto(`${origin}/?pane=${encodeURIComponent(paneB)}&settings=chat&section=composer`);
+  await mobilePage.goto(`${origin}/?pane=${encodeURIComponent(paneB)}&settings=chat&section=composer-more`);
   await mobilePage.getByRole("switch", { name: "Suggestion chip", exact: true }).setChecked(true);
   await mobilePage.getByRole("button", { name: "Close settings", exact: true }).click();
   await mobileComposer.fill("");

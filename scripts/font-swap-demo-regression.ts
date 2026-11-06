@@ -35,15 +35,10 @@ try {
   writeFileSync(index, html
     .replace(/<html\b/, () => `<html style='--font-ui: "Pretendard Variable", monospace'`)
     .replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    <script type="module"`));
-  // fonts.css takes an installed JetBrains Mono before the file; a request this script holds must
-  // be the only way to the face, on a developer's desktop that has the font as on CI that has not
-  let fileOnly = 0;
-  for (const name of readdirSync(join(app, "assets")).filter((entry) => entry.endsWith(".css"))) {
-    const css = readFileSync(join(app, "assets", name), "utf8");
-    const stripped = css.replace(/local\((?:"[^"]*"|'[^']*'|[^)]*)\)\s*,\s*/g, () => { fileOnly += 1; return ""; });
-    if (stripped !== css) writeFileSync(join(app, "assets", name), stripped);
-  }
-  assert.ok(fileOnly > 0, "the built stylesheet names an installed face, and this copy of it no longer does");
+  // a request this script holds must be the only way to the face, on a developer's desktop that
+  // has the font as on CI that has not: the built faces name their files alone, no installed copy
+  const installed = readdirSync(join(app, "assets")).filter((entry) => entry.endsWith(".css") && /local\(/.test(readFileSync(join(app, "assets", entry), "utf8")));
+  assert.deepEqual(installed, [], "the built stylesheet names no installed face before a file");
 
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
