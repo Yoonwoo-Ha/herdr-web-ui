@@ -429,7 +429,10 @@ export class DeviceStore {
     }));
   }
 
-  /** Hears of every new six-digit code, which replaces the one pending (a typed relay code bound to it goes: server/relay/pair-code.ts). */
+  /**
+   * Hears of every new six-digit code, which replaces the one pending, and of a code ended (endPairing):
+   * either way a typed relay code bound to the old one goes (server/relay/pair-code.ts).
+   */
   onPairingStarted(listener: () => void): () => void {
     this.codeStarts.add(listener);
     return () => { this.codeStarts.delete(listener); };
@@ -454,6 +457,12 @@ export class DeviceStore {
     const started = { code, expires_at: new Date(this.pending.expires).toISOString() };
     for (const listener of this.codeStarts) listener();
     return started;
+  }
+
+  /** Takes the pending six-digit code back, and the typed relay code bound to it: nothing it was shown as pairs any more. */
+  endPairing(): void {
+    this.pending = null;
+    for (const listener of this.codeStarts) listener();
   }
 
   /** `{ token }` when the code is right; null when it is wrong, spent or expired. */
@@ -1009,6 +1018,16 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
       if (error instanceof PairingRateLimitedError) return jsonResponse({ error: { code: error.code, message: error.message } }, 429, { "retry-after": String(error.retryAfter), "cache-control": "no-store" });
       throw error;
     }
+  }
+  if (pathname === "/api/devices/pair/cancel") {
+    setRequestRoute(pathname);
+    if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    // whoever may start a code may take it back (the same rule as /pair/start)
+    if (access.level === "full" && access.via === "relay" && store.account() !== null && !(access.device && store.isAccountApproverSession(access.device.id, relayKey ?? ""))) {
+      return jsonResponse({ error: { code: "account_required", message: "End a pairing on this PC, or from a device linked to your account" } }, 403);
+    }
+    store.endPairing();
+    return jsonResponse({ ok: true }, 200, { "cache-control": "no-store" });
   }
   if (pathname === "/api/devices/revoke-all") {
     setRequestRoute("/api/devices/revoke-all");

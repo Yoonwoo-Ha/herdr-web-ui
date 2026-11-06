@@ -1307,3 +1307,20 @@ it("a key re-paired on a PC in no account with a code another device started sta
     rmSync(stateDir, { recursive: true, force: true });
   }
 });
+
+it("POST /api/devices/pair/cancel takes back the pending code, so it pairs nothing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "herdr-device-cancel-"));
+  const server = createServer({ port: 0, stateDir: root, token: "test-device-cancel", tailscaleOwner: null });
+  const base = `http://127.0.0.1:${server.port}`;
+  const admin = { ...guard, authorization: "Bearer test-device-cancel" };
+  try {
+    const { code } = await (await fetch(`${base}/api/devices/pair/start`, { method: "POST", headers: admin })).json() as { code: string };
+    expect((await fetch(`${base}/api/devices/pair/cancel`, { method: "POST", headers: { authorization: admin.authorization } })).status).toBe(403);
+    expect((await fetch(`${base}/api/devices/pair/cancel`, { method: "POST", headers: admin })).status).toBe(200);
+    const late = await fetch(`${base}/api/devices/pair`, { method: "POST", headers: guard, body: JSON.stringify({ code, label: "Too late" }) });
+    expect(late.status).not.toBe(204);
+  } finally {
+    server.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
