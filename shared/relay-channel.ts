@@ -424,17 +424,40 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
  * HELLO, so the PC holds no session for it. False for anything else within `ms`, a host at the
  * address that is not the PC included.
  */
-export function probeDirect(offer: RelayOffer, direct: string, socketFor: (url: string) => RelaySocket, ms: number, signal?: AbortSignal): Promise<boolean> {
-  if (!isDirectCarrier(direct) || signal?.aborted) return Promise.resolve(false);
-  return new Promise<boolean>((resolve) => {
-    const url = new URL("/v1/ws", direct);
+export async function probeDirect(offer: RelayOffer, direct: string, socketFor: (url: string) => RelaySocket, ms: number, signal?: AbortSignal): Promise<boolean> {
+  return (await probePc(offer, { direct }, socketFor, ms, signal)).kind === "answered";
+}
+
+/**
+ * What a probe of the PC found: it `answered` (the Noise handshake to its pinned key completed, `ms`
+ * from the carrier's `assigned` frame, so one round trip to the PC and back), the carrier assigned the
+ * connection and no PC answered in time (`silent`: offline, for a relay), or nothing assigned it (`unreachable`).
+ */
+export type PcProbe = { readonly kind: "answered"; readonly ms: number } | { readonly kind: "silent" } | { readonly kind: "unreachable" };
+
+/**
+ * probeDirect's check, on one of the PC's direct carriers or through a relay (`wss://`, the PC named by
+ * the offer's server_id): the PC holds no session for it either way, as it is closed before HELLO.
+ */
+export function probePc(offer: RelayOffer, via: { readonly direct: string } | { readonly relay: string }, socketFor: (url: string) => RelaySocket, ms: number, signal?: AbortSignal): Promise<PcProbe> {
+  const unreachable: PcProbe = { kind: "unreachable" };
+  if (signal?.aborted) return Promise.resolve(unreachable);
+  if ("direct" in via ? !isDirectCarrier(via.direct) : !isWssOrigin(via.relay) || typeof offer.server_id !== "string" || !SERVER_ID_PATTERN.test(offer.server_id)) return Promise.resolve(unreachable);
+  return new Promise<PcProbe>((resolve) => {
+    const url = new URL("/v1/ws", "direct" in via ? via.direct : via.relay);
+    if ("relay" in via) {
+      url.searchParams.set("server_id", offer.server_id);
+      url.searchParams.set("role", "client");
+    }
     url.searchParams.set("v", "1");
     let socket: RelaySocket;
-    try { socket = socketFor(url.href); } catch { resolve(false); return; }
+    try { socket = socketFor(url.href); } catch { resolve(unreachable); return; }
     socket.binaryType = "arraybuffer";
     let secure: SecureChannel | undefined;
     let settled = false;
-    const settle = (answer: boolean): void => {
+    /** when the carrier assigned the connection: from then on, only the PC can answer */
+    let assignedAt: number | undefined;
+    const settle = (answer: PcProbe): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -445,32 +468,37 @@ export function probeDirect(offer: RelayOffer, direct: string, socketFor: (url: 
       socket.close(4000, "probe done");
       resolve(answer);
     };
-    const timer = setTimeout(() => settle(false), ms);
-    const aborted = (): void => settle(false);
+    // past the carrier's assignment, a probe that ends without the PC's answer met a silent PC
+    const failed = (): void => settle(assignedAt === undefined ? unreachable : { kind: "silent" });
+    const timer = setTimeout(failed, ms);
+    const aborted = (): void => settle(unreachable);
     signal?.addEventListener("abort", aborted, { once: true });
     const transport: Transport = {
       // a send that throws ends the probe from a later turn, once the handshake's retry exists to be stopped
       send: (data) => {
         if (socket.readyState !== OPEN) return;
-        try { socket.send(data); } catch { queueMicrotask(() => settle(false)); }
+        try { socket.send(data); } catch { queueMicrotask(failed); }
       },
-      close: () => settle(false),
+      close: failed,
       onmessage: null, onclose: null, onerror: null,
     };
     let assigned = false;
-    socket.onerror = () => settle(false);
-    socket.onclose = () => settle(false);
+    socket.onerror = failed;
+    socket.onclose = failed;
     socket.onmessage = (event) => {
       if (settled) return;
       if (assigned) { transport.onmessage?.({ data: event.data, isBinary: typeof event.data !== "string" }); return; }
       assigned = true;
       let value: unknown;
       try { value = typeof event.data === "string" ? JSON.parse(event.data) : null; } catch { value = null; }
-      if (typeof value !== "object" || value === null || !("type" in value) || value.type !== "assigned") { settle(false); return; }
+      if (typeof value !== "object" || value === null || !("type" in value) || value.type !== "assigned") { settle(unreachable); return; }
+      const started = performance.now();
+      assignedAt = started;
+      // a handshake to another key is no answer from the PC: nothing is known of it
       void openClientSecureChannel(transport, {
         daemonPublicKeyB64: offer.server_public_key,
-        events: { onopen: () => settle(true), onmessage: () => {}, onerror: () => settle(false), onclose: () => settle(false) },
-      }).then((channel) => { secure = channel; if (settled) channel.close(4000, "probe done"); }, () => settle(false));
+        events: { onopen: () => settle({ kind: "answered", ms: Math.round(performance.now() - started) }), onmessage: () => {}, onerror: () => settle(unreachable), onclose: failed },
+      }).then((channel) => { secure = channel; if (settled) channel.close(4000, "probe done"); }, () => settle(unreachable));
     };
   });
 }

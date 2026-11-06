@@ -469,7 +469,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
           // and every page media address its renders were given
           forgetPageMedia({ device: id });
         }
-      }, ctx.lanHttps === true);
+      }, ctx.lanHttps === true, { list: () => ctx.services.relay.connections(), check: (ms) => ctx.services.relay.checkConnections(ms) });
     } catch (error) { return errorResponse(error); }
   }
 

@@ -42,6 +42,8 @@ import { failureOf, forgedOffer, forgetsDevice, iosBrowserTab, keyMismatch, offe
 import type { AccountView, PcUpdate, RelayShellState } from "./shellState.ts";
 import { relaySkew, reloadOnce } from "./skew.ts";
 import type { ReloadMemory } from "./skew.ts";
+import { checkPc, sweepOf } from "./pcStatus.ts";
+import type { PcStatus } from "./pcStatus.ts";
 import { openRelayTransport } from "./transport.ts";
 import { offerFromCode, TypedCodeError } from "./pairCode.ts";
 import type { RelayTransport } from "./transport.ts";
@@ -73,6 +75,8 @@ export interface RelayShellMount {
   accountFetch?: (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
   /** takes the page to the provider's sign-in; the return comes back to the front page */
   openSignIn?: (url: string) => void;
+  /** probes a saved PC for the front page's list (pcStatus.ts); tests hand in their own */
+  checkPc?: typeof checkPc;
 }
 
 declare const __APP_VERSION__: string;
@@ -135,6 +139,21 @@ export async function forgetSavedPc(serverId: string, store: RelayDeviceStore = 
 function signInFailure(error: unknown): string {
   if (error instanceof SignInError && error.code === "denied") return t("The sign-in was cancelled.");
   return t("The sign-in did not finish. Try again.");
+}
+
+/** The front page's checks of saved PCs (checkPcs): how many PCs, how many at once, how often, and where the last one is noted. */
+const CHECK_PCS = 8;
+const CHECK_AT_ONCE = 2;
+/** a minute: one sweep's CHECK_PCS connections (up to two each, with the global relay's fallback) stay well under the relay's 30 a minute */
+const CHECK_GAP_MS = 60_000;
+const CHECK_KEY = "ovis-pc-check-at";
+const CHECK_CURSOR_KEY = "ovis-pc-check-cursor";
+
+function localStorageGet(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function localStorageSet(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { /* no storage: lastCheck keeps the gap for this page */ }
 }
 
 export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
@@ -206,6 +225,57 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const toFront = (): void => navigate("/");
 
   let shown: RelayShellState | null = null;
+  /** how each saved PC answered the front page's latest check, by server id */
+  const pcStatus = new Map<string, PcStatus>();
+  const probe = mount.checkPc ?? checkPc;
+  /** the front page checks its PCs once when first shown, then on Check now */
+  let checked = false;
+  /**
+   * Each probe is a relay connection, which the relay limits per address (30 a minute, shared with
+   * everything else this network opens): a sweep probes at most CHECK_PCS PCs, CHECK_AT_ONCE at a time,
+   * and not again within CHECK_GAP_MS of the last, a reload included.
+   */
+  let lastCheck = -Infinity;
+  let deferred: ReturnType<typeof setTimeout> | undefined;
+  /** the sweep under way: another waits for it, so CHECK_AT_ONCE holds across sweeps */
+  let sweeping: Promise<void> | undefined;
+  const redraw = (): void => { if (shown?.kind === "list") show(shown); };
+  const cursorNow = (): number => Number(localStorageGet(CHECK_CURSOR_KEY) ?? "0");
+  const checkPcs = async (): Promise<void> => {
+    if (sweeping) return;
+    const stored = Number(localStorageGet(CHECK_KEY) ?? "");
+    const wait = CHECK_GAP_MS - (Date.now() - Math.max(lastCheck, Number.isFinite(stored) ? stored : -Infinity));
+    // too soon after the last sweep (a reload, or Check now again): this one runs once the gap is over,
+    // and the rows say a check is on its way meanwhile
+    if (wait > 0) {
+      deferred ??= setTimeout(() => { deferred = undefined; if (shown?.kind === "list") void checkPcs(); }, wait);
+      for (const device of sweepOf(await store.list(), cursorNow(), CHECK_PCS)) pcStatus.set(device.server_id, { kind: "checking" });
+      redraw();
+      return;
+    }
+    lastCheck = Date.now();
+    localStorageSet(CHECK_KEY, String(lastCheck));
+    sweeping = sweepPcs().finally(() => { sweeping = undefined; });
+    await sweeping;
+  };
+  const sweepPcs = async (): Promise<void> => {
+    // past CHECK_PCS, each sweep starts where the last one stopped (kept across reloads), so every saved PC gets its turn
+    const cursor = cursorNow();
+    const saved = sweepOf(await store.list(), cursor, CHECK_PCS);
+    localStorageSet(CHECK_CURSOR_KEY, String(cursor + CHECK_PCS));
+    for (const device of saved) pcStatus.set(device.server_id, { kind: "checking" });
+    redraw();
+    const sockets = { relay: (url: string) => new WebSocket(url), ...(directSocket ? { direct: directSocket } : {}) };
+    const queue = [...saved];
+    await Promise.all(Array.from({ length: CHECK_AT_ONCE }, async () => {
+      for (let device = queue.shift(); device; device = queue.shift()) {
+        // a check that throws knows nothing more of the PC than that no relay answered
+        const found = await probe(device, sockets).catch((): PcStatus => ({ kind: "offline", reason: "relay" }));
+        pcStatus.set(device.server_id, found);
+        redraw();
+      }
+    }));
+  };
   // the build's list shows at once; the service's own answer replaces it, so a Google button
   // appears only once the service says it is set up for Google
   if (accountService !== null && mount.accountProviders === undefined) {
@@ -220,13 +290,17 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     shown = state;
     shell ??= createRoot(mount.container);
     shell.render(createElement(StrictMode, null, createElement(SettingsProvider, null,
-      createElement(RelayShell, { state, scoped, iosTab, onPair: pair, onRetry: retry, onCancel: cancel, onBack: toFront, onForget: forget, onUpdate: update, onMatch: match, onCodeStart: codeStart, onCodeSubmit: codeSubmit, onCodeMatch: codeMatch, ...(accountService === null ? {} : { onSignIn: signIn, accountProviders, onJoin: joinPc, onSignOut: signOut, onLeave: leave }) }))));
+      createElement(RelayShell, { state, scoped, iosTab, pcStatus: new Map(pcStatus), onCheckPcs: () => void checkPcs(), onPair: pair, onRetry: retry, onCancel: cancel, onBack: toFront, onForget: forget, onUpdate: update, onMatch: match, onCodeStart: codeStart, onCodeSubmit: codeSubmit, onCodeMatch: codeMatch, ...(accountService === null ? {} : { onSignIn: signIn, accountProviders, onJoin: joinPc, onSignOut: signOut, onLeave: leave }) }))));
   };
 
   /** The front page: the saved PCs, or the account's once signed in. */
   const showFront = async (): Promise<void> => {
     const devices = await store.list();
     show(devices.length === 0 ? { kind: "empty", account: accountView } : { kind: "list", devices, account: accountView });
+    if (devices.length > 0 && !checked) {
+      checked = true;
+      void checkPcs();
+    }
   };
 
   /** The account's directory merged with the PCs this device is paired with; the pairings work whatever the service says. */

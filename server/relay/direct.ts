@@ -393,7 +393,8 @@ export class DirectCarrier {
     if (this.carriers.get(id) !== carrier) return;
     carrier.cancelTimeout();
     carrier.deviceId = deviceId;
-    carrier.release = this.signedIn.admit(deviceId, () => carrier.session?.close("resource_exhausted"));
+    const line = carrier.session ? { route: inTailnet(carrier.source) ? "tailscale" as const : "lan" as const, since: Date.now(), mux: carrier.session.mux } : undefined;
+    carrier.release = this.signedIn.admit(deviceId, () => carrier.session?.close("resource_exhausted"), line);
   }
 
   /** Stops listening and ends every carrier, signed in or not. */

@@ -359,13 +359,17 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     await net.closeSheet();
     await tailnetContext.close();
 
-    // a device paired through the relay wears the pill: My devices of the PC's page lists one (the
-    // real pairing of a phone through the relay is relay-shell-browser-qa.ts's)
-    const paired: PairedDevice = { id: "0123456789abcdef", label: "Pixel 9", role: "drive", created_at: new Date().toISOString(), last_seen_at: null, current: false, via_relay: true };
-    await page.route("**/api/devices", (route) => route.request().method() === "GET" ? route.fulfill({ json: { devices: [paired] } }) : route.continue());
+    // a device paired through the relay says how it reaches the PC now, or that it is offline: My devices
+    // of the PC's page lists two (the real pairing of a phone through the relay is relay-shell-browser-qa.ts's)
+    const paired: PairedDevice = { id: "0123456789abcdef", label: "Pixel 9", role: "drive", created_at: new Date().toISOString(), last_seen_at: null, current: false, via_relay: true,
+      connection: { route: "relay", relay: "wss://relay-ap.ovis.sh", rtt_ms: 148, since: new Date().toISOString() } };
+    const away: PairedDevice = { id: "0123456789abcdee", label: "iPad", role: "drive", created_at: paired.created_at, last_seen_at: null, current: false, via_relay: true };
+    await page.route("**/api/devices", (route) => route.request().method() === "GET" ? route.fulfill({ json: { devices: [paired, away] } }) : route.continue());
     await openPhoneSettings(page, fixture.origin);
     const row = page.locator(".devices-panel .devices-row").filter({ hasText: "Pixel 9" });
-    await row.locator(".devices-via-relay", { hasText: "via relay" }).waitFor();
+    await row.locator("[data-connection='connected']", { hasText: "Connected · Seoul relay · 148 ms" }).waitFor();
+    await row.locator(".connection-slow", { hasText: "148 ms" }).waitFor();
+    await page.locator(".devices-panel .devices-row").filter({ hasText: "iPad" }).locator("[data-connection='offline']", { hasText: "The app is closed, or its network is off." }).waitFor();
 
     // a start that fails before the link exists (the saved choice cannot be written): the switch stays off,
     // the reason shows, and Try again starts it once the cause is gone
@@ -412,7 +416,7 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     assert.equal(await blocked.sheet.getByRole("button", { name: /^Reset/ }).count(), 0, "nor a reset in the dialog");
     assert.equal(await blocked.sheet.locator(".connect-phone-gate").count(), 0, "a relay that cannot be turned on carries no note about turning it on");
     assert.deepEqual(pageErrors, [], "the relay panel raises no page error");
-    console.log("PASS the relay turns on from Connect a device and off from More settings, offers a QR code and a code to type, and resets the identity; a relay-paired device wears the pill and serve-only blocks the switch");
+    console.log("PASS the relay turns on from Connect a device and off from More settings, offers a QR code and a code to type, and resets the identity; a relay-paired device says how it reaches the PC now, or that it is offline, and serve-only blocks the switch");
   } finally {
     for (const context of contexts) await context.close();
     for (const fixture of fixtures) await fixture.stop();

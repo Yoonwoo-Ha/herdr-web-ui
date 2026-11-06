@@ -14,7 +14,7 @@ import { createHash, createPublicKey, randomBytes, randomInt, timingSafeEqual } 
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { AccountRecordError, parseAccountRecord, type AddRecord, type RemoveRecord } from "../shared/account-records.ts";
-import { type DevicePairedEvent, type DeviceRemovedEvent, type DevicePairToken, type DeviceRole, type DevicesRevokedAll, type PairedDevice, STREAM_COOKIE_PREFIX } from "../shared/protocol.ts";
+import { type DevicePairedEvent, type DeviceRemovedEvent, type DevicePairToken, type DeviceRole, type DevicesRevokedAll, type PairedDevice, type DeviceConnection, STREAM_COOKIE_PREFIX } from "../shared/protocol.ts";
 import type { Access } from "./access.ts";
 import { CLEAR_LEGACY_DEVICE_COOKIE, COOKIE_MAX_AGE_SECONDS, DEVICE_COOKIE_CLEARED, deviceCookie, isSecureRequest, noContent, parseCookies } from "./auth.ts";
 import { badRequest, isJsonObject, jsonResponse, setRequestRoute } from "./http.ts";
@@ -958,8 +958,17 @@ export class DeviceStore {
  * `onRevoked` is told the id of every device a request revoked, once the registry says so: the
  * cleanup that follows (push subscriptions, page media) works from those ids, never from the path.
  */
+/** The devices' encrypted sessions up now (RelayService.connections), named in GET /api/devices. */
+export interface DeviceConnections {
+  list(): Map<string, DeviceConnection>;
+  check(timeoutMs: number): Promise<void>;
+}
+
+/** How long GET /api/devices?check=1 waits for the sessions' answers: one that is slower keeps its last round trip. */
+const CHECK_MS = 3_000;
+
 /** `relayKey`: the key a relayed session proved (empty when it never signed in with one), null off the relay. */
-export async function handleDeviceRequest(request: Request, pathname: string, store: DeviceStore, access: Access, relayKey: string | null, onRevoked?: (ids: string[]) => void, lanHttps = false): Promise<Response> {
+export async function handleDeviceRequest(request: Request, pathname: string, store: DeviceStore, access: Access, relayKey: string | null, onRevoked?: (ids: string[]) => void, lanHttps = false, connections?: DeviceConnections): Promise<Response> {
   if (store.error !== null) return jsonResponse({ error: { code: "device_store_unavailable", message: access.level === "full" ? store.error : "Device pairing is unavailable; ask the owner to check Settings → Devices on the host." } }, 503);
   const json = async (): Promise<Record<string, unknown> | Response> => {
     try {
@@ -1002,7 +1011,15 @@ export async function handleDeviceRequest(request: Request, pathname: string, st
     setRequestRoute(pathname);
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
     const drive = access.level === "full" && access.role === "drive";
-    return jsonResponse({ devices: store.list(access.level === "full" ? access.device?.id ?? null : null, drive) }, 200, { "cache-control": "no-store" });
+    // how the other devices are connected, and pinging them all, is for a caller that may manage them:
+    // not a watching device, nor a Portal visitor, who see the list as before
+    const manager = drive && access.via !== "portal";
+    // `?check=1` ("Check now"): every session's round trip is measured before the answer, within CHECK_MS
+    if (manager && connections && new URL(request.url).searchParams.get("check") === "1") await connections.check(CHECK_MS);
+    const live = manager ? connections?.list() ?? new Map<string, DeviceConnection>() : new Map<string, DeviceConnection>();
+    const devices = store.list(access.level === "full" ? access.device?.id ?? null : null, drive)
+      .map((device) => { const connection = live.get(device.id); return connection ? { ...device, connection } : device; });
+    return jsonResponse({ devices }, 200, { "cache-control": "no-store" });
   }
   if (!sameOrigin(request) || request.headers.get("x-herdr-machine") !== "1") return jsonResponse({ error: { code: "invalid_origin", message: "Manage devices from this app" } }, 403);
   if (access.level === "full" && access.role === "watch") return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
+import type { DeviceConnection } from "../../shared/access.ts";
 import { encodeOffer } from "../../shared/relay-offer.ts";
 import type { RelayOffer } from "../../shared/relay-offer.ts";
 import { GLOBAL_RELAY, REGIONAL_RELAYS } from "../../shared/relay-regions.ts";
@@ -161,6 +162,12 @@ export class RelayService {
     if (this.saved === undefined) this.saved = savedServerId(this.options.stateDir) ?? null;
     return this.saved ?? undefined;
   }
+
+  /** How each device with an encrypted session up reaches this PC, over the relays and the direct carriers alike. */
+  connections(): Map<string, DeviceConnection> { return this.signedIn.connections(); }
+
+  /** Measures every session's round trip now (GET /api/devices?check=1), waiting at most `timeoutMs`. */
+  checkConnections(timeoutMs: number): Promise<void> { return this.signedIn.check(timeoutMs); }
 
   /** Phase and error are the global link's: every phone can reach the PC there. */
   status(): RelayStatus {

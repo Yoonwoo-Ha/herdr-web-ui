@@ -911,8 +911,9 @@ export async function pairDevice(code: string, label: string): Promise<void> {
   resumeConnectionTraces();
 }
 
-export async function fetchDevices(): Promise<PairedDevice[]> {
-  return (await getJson<{ devices: PairedDevice[] }>("/api/devices")).devices;
+/** `check`: the PC measures every connected device's round trip first (Check now), within a few seconds */
+export async function fetchDevices(check = false): Promise<PairedDevice[]> {
+  return (await getJson<{ devices: PairedDevice[] }>(check ? "/api/devices?check=1" : "/api/devices")).devices;
 }
 
 export async function startPairing(): Promise<PairingCode> {

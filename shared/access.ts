@@ -85,6 +85,24 @@ export interface PairedDevice {
   readonly account_key?: string;
   /** the member on this PC that added it */
   readonly added_by?: string;
+  /** how it reaches this PC right now, while one of its encrypted sessions is up; absent while none is */
+  readonly connection?: DeviceConnection;
+}
+
+/**
+ * Which way a device's session reaches the PC: straight on the same network (`lan`), straight over
+ * Tailscale, or through a relay. A matter of speed only: every way carries the same end-to-end channel.
+ */
+export type DeviceRoute = "lan" | "tailscale" | "relay";
+
+export interface DeviceConnection {
+  readonly route: DeviceRoute;
+  /** the relay's address (`wss://…`), for `relay` only: Ovis's regional ones are named by place */
+  readonly relay?: string;
+  /** the latest keepalive's round trip, PC to device and back; null until one came back */
+  readonly rtt_ms: number | null;
+  /** when this session signed in */
+  readonly since: string;
 }
 
 /** POST /api/devices/pair/start */

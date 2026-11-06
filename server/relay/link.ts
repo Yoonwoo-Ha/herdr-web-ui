@@ -353,7 +353,8 @@ export class RelayLink {
     if (this.data.get(id) !== entry) return;
     entry.cancelTimeout();
     entry.deviceId = deviceId;
-    entry.release = this.signedIn.admit(deviceId, () => entry.session?.close("resource_exhausted"));
+    const line = entry.session ? { route: "relay" as const, relay: this.options.relay, since: Date.now(), mux: entry.session.mux } : undefined;
+    entry.release = this.signedIn.admit(deviceId, () => entry.session?.close("resource_exhausted"), line);
   }
 
   /** Cancel retries synchronously; finish queued policy closes before ending protected carriers. */

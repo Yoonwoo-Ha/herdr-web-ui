@@ -462,7 +462,8 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *         dirty_worktree_requires_force)
  *  POST   /api/auth        { token }     -> 204 + Set-Cookie ovis_token (401 invalid_token on mismatch)
  *  DELETE /api/auth                      -> 204, clears the token and the device cookies
- *  GET    /api/devices                   -> { devices: PairedDevice[] } (the paired devices; `current` marks the caller's)
+ *  GET    /api/devices                   -> { devices: PairedDevice[] } (the paired devices; `current` marks the caller's,
+ *         `connection` how one with an encrypted session up reaches the PC; `?check=1` measures their round trips first, within 3 s)
  *  POST   /api/devices/pair/start        -> PairingCode: a six-digit code good for ten minutes, replacing any pending one
  *         (X-Herdr-Machine: 1 + same origin, from a client with full access)
  *  POST   /api/devices/pair { code, label? } -> 204 + Set-Cookie ovis_device (public, like /api/auth;
@@ -516,7 +517,7 @@ export type { UsageProviderId, UsageWindow, UsageResets, UsageCredits, UsageProb
 
 export type { CLIProxyStatus, CLIProxyProvider, CLIProxyLogin, CLIProxyLoginStatus } from "./cliproxy.ts";
 
-export type { AccessVia, AccessRefusal, DeviceRole, HealthAuth, LanExposure, BindScope, ObservedIngress, SecuritySummary, PairedDevice, PairingCode, PortalLogin, TailscaleAccess } from "./access.ts";
+export type { AccessVia, AccessRefusal, DeviceRole, HealthAuth, LanExposure, BindScope, ObservedIngress, SecuritySummary, PairedDevice, DeviceConnection, DeviceRoute, PairingCode, PortalLogin, TailscaleAccess } from "./access.ts";
 /** Older servers and the Tailscale-only builder omit relay state. */
 export type RemoteAccess = import("./access.ts").RemoteAccess & { readonly relay?: RelayStatus };
 
