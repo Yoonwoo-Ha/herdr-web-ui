@@ -333,6 +333,9 @@ export class RelaySession {
     // an answer that lands after the deadline, before its timer ran, makes no device either
     if (Date.now() > sas.expiresAt) { this.close("timeout"); return; }
     this.state = "verifying";
+    // a member's remote approval never lets in a key this PC holds back (removed elsewhere, or a remove for it waits here);
+    // only a pairing approved on this PC itself does
+    if (sas.approvedBy !== undefined && this.options.services.accountMailbox.gates().held(sas.publicKey)) { this.close("auth_failed"); return; }
     let device: DeviceMatch | undefined;
     try { device = this.options.services.devices.pairRelayApproved(sas.label, sas.publicKey, { path: this.path, id: accountDeviceId(this.options.serverId, sas.publicKey), ...(sas.approvedBy === undefined ? {} : { addedBy: sas.approvedBy }) })?.device; }
     catch (error) {

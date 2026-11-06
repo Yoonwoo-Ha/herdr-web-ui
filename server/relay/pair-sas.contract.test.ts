@@ -608,6 +608,17 @@ test("a drive account member through the relay admits a device by picking its di
   expect(registry.kind === "ok" && registry.devices.find((device) => device.label === "New phone")?.added_by).toBe(member.id);
 });
 
+test("a member's remote approval never lets in a key this PC holds back", async () => {
+  const { f, member } = await accountFixture();
+  const link = await signedIn(f, member);
+  const { p, digits, request } = await accountComparison(f);
+  f.app.context.services.accountHolds.hold([p.publicKey]);
+  await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", digits });
+  await confirm(p);
+  expect(await sessionError(p)).toBe("auth_failed");
+  expect(f.app.context.services.devices.hasKey(p.publicKey)).toBe(false);
+});
+
 test("every connected device hears of the admission and of the member that approved it", async () => {
   const { f, member } = await accountFixture();
   const approver = await signedIn(f, member);

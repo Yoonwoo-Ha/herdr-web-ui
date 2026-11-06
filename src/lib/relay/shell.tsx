@@ -15,7 +15,7 @@ import { myPcs } from "../account/myPcs.ts";
 import type { MyPc } from "../account/myPcs.ts";
 import { accountProvidersOf, accountServiceOf, AccountService, SignedOutError } from "../account/service.ts";
 import { beginSignIn, finishSignIn, SignInError, signInReturn } from "../account/signin.ts";
-import { enrollOnPc, keepRemovals, linkThisDevice, needsLink, pcAccountStatus, planEnroll, sendQueuedAdds, takeIntroduction } from "../account/join.ts";
+import { enrollOnPc, keepRemovals, PEER_STATUS_MS, linkThisDevice, needsLink, pcAccountStatus, planEnroll, sendQueuedAdds, takeIntroduction } from "../account/join.ts";
 import { leaveAccount } from "../account/leave.ts";
 import { nativeSignIn, nativeSignInAvailable } from "../account/native.ts";
 import { indexedAccountStore } from "../account/store.ts";
@@ -384,8 +384,9 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       const fetch = (path: string, init?: RequestInit) => through.fetch(path, init);
       const status = await pcAccountStatus(fetch);
       const linking = needsLink(status, device, session.account);
-      // a PC this link brings into the account gets the removals this client signed (enrollPc)
-      if (linking && status.account === null) await planEnroll(accountStore, serverId, session.account);
+      // a PC this link brings into the account, or one still waiting for the member that linked it (who may be gone),
+      // gets this client's enrollment: the account's removals first, read from its other PCs
+      if (linking && (status.account === null || status.enrolling === true)) await planEnroll(accountStore, serverId, session.account);
       if (linking) device = await linkThisDevice({ fetch, device, key, account: session.account, store });
       // the app's session proved the old key, or none: it signs in again with the account key, so this device can approve
       if (linking || fresh) {
@@ -408,11 +409,33 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       if ((await accountStore.get("enrolls"))?.[serverId] !== undefined) {
         // the PC takes an enrollment only from a session that signed in with the account key, which the ones above did not
         let signedIn = opened;
+        // the account's other PCs this device is in, read first for what they keep out (docs/account.md, "Enrolling a PC")
+        const peers: RelayTransport[] = [];
         try {
           if (linking || fresh) signedIn = await open(offerOf(device), { store, label });
-          await enrollOnPc({ fetch: (path, init) => signedIn.fetch(path, init), store: accountStore, account: session.account, serverId });
+          const others = (await store.list()).filter((other) => other.server_id !== serverId && other.device_id !== null && other.account === session.account && other.public_spki === key.public_spki);
+          const reached = await Promise.allSettled(others.map(async (other) => {
+            const controller = new AbortController();
+            // fixed wait: a PC that does not open within the deadline counts as not checked, as one that does not answer
+            const timer = setTimeout(() => controller.abort(), PEER_STATUS_MS);
+            const peer = await open(offerOf(other), { store, label, signal: controller.signal }).finally(() => clearTimeout(timer));
+            peers.push(peer);
+            return { serverId: other.server_id, fetch: (path: string, init?: RequestInit) => peer.fetch(path, init) };
+          }));
+          const pc = { server_id: serverId, server_public_key: device.server_public_key, relay: device.relay, name: (device.name ?? serverId.slice(0, 8)).slice(0, 48) };
+          // PCs the directory lists that this device cannot read: their removals are unknown here
+          // the directory unread counts as one more PC this device cannot read
+          const listed = await account.listPcs().then((pcs) => pcs.filter((entry) => entry.server_id !== serverId).length, () => 1);
+          await enrollOnPc({
+            fetch: (path, init) => signedIn.fetch(path, init), store: accountStore, account: session.account, serverId, pc, listed,
+            // a PC that could not be opened is one more that was not checked
+            others: reached.map((result) => result.status === "fulfilled" ? result.value : { serverId: "", fetch: () => Promise.reject(result.reason) }),
+          });
         } catch (error) { console.warn("Ovis: this PC did not get the account's devices yet", error instanceof Error ? error.name : error); }
-        finally { if (signedIn !== opened) signedIn.close(); }
+        finally {
+          if (signedIn !== opened) signedIn.close();
+          for (const peer of peers) peer.close();
+        }
       }
       // the approver hands the introduction over once this device's row exists, which may be a moment after it
       const deadline = Date.now() + (fresh ? INTRODUCTION_WAIT_MS : 0);
