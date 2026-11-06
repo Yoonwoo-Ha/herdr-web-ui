@@ -26,6 +26,8 @@ interface Case {
   sent?: string;
   /** herdr's answer waits until the keys are typed */
   holdCreate?: boolean;
+  /** the keys typed on once the new tab takes input: the tab came while the user was still typing */
+  typeOn?: (page: Page) => Promise<void>;
 }
 
 const desktop = { width: 1280, height: 800 };
@@ -110,6 +112,7 @@ async function typeAhead(browser: Browser, origin: string, item: Case): Promise<
     let second: string | undefined;
     await until(async () => (second = (await sessionSnapshot()).panes.find((pane) => pane.workspace_id === workspaceId && pane.pane_id !== first)?.pane_id) !== undefined, "herdr has the new tab");
     await until(() => ready.has(second!), "the new terminal accepts input");
+    if (item.typeOn) await item.typeOn(page);
     const lines = async () => (await paneRead({ paneId: second!, source: "recent", lines: 30, stripAnsi: true })).text.split("\n").map((line) => line.trim());
     if (item.ran !== null) {
       const ran = item.ran;
@@ -143,6 +146,12 @@ const CASES: Case[] = [
   { name: "plus", way: "plus", viewport: desktop, type: typed("echo ahead-plus"), ran: "ahead-plus", sent: "echo ahead-plus\r" },
   { name: "sheet", way: "sheet", viewport: phone, type: typed("echo ahead-sheet"), ran: "ahead-sheet", sent: "echo ahead-sheet\r" },
   { name: "touch", way: "sheet", viewport: phone, touch: true, type: typed("echo ahead-touch"), ran: "ahead-touch", sent: "echo ahead-touch\r" },
+  // a keyboard on a touch screen: the keys typed after the new tab came go on to it, not lost
+  {
+    name: "touch-midway", way: "sheet", viewport: phone, touch: true, holdCreate: true, ran: "ahead-midway", sent: "echo ahead-midway\r",
+    type: async (page) => { await page.keyboard.type("echo ahead-"); },
+    typeOn: typed("midway"),
+  },
   // slower, so the keys go on while the dialog closes over the old tab
   { name: "dialog", way: "dialog", viewport: desktop, type: typed("echo ahead-dialog", 15), ran: "ahead-dialog", sent: "echo ahead-dialog\r" },
   {
