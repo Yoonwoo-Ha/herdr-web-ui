@@ -39,6 +39,7 @@ import { userInputTracker } from "./terminalReplies.ts";
 import { visibleTerminalInputBounds } from "./terminalViewport.ts";
 import type { PaneSubmitRetention } from "./paneSubmitRetention.ts";
 import type { ShortcutOverrides } from "./shortcutBindings.ts";
+import { takeTypeAhead, type TypeAheadItem } from "./typeAhead.ts";
 import { RESIZE_SETTLE_MS, RELEASE_AFTER_MS, IDLE_RELEASE_MS, RESUME_INPUT_WAIT_MS, VIEW_BUFFER_MAX, afterSwitch, dropViewChange, holdViews, inUse, connectedSockets, plainError, releaseViews, CONTROL_CHARACTER } from "./paneTerminalShared.ts";
 import { copyOnSelect, herdrUiKnown, loadHerdrUi } from "./herdrUi.ts";
 import { captureForGhostty } from "./ghostty/capture.ts";
@@ -94,6 +95,7 @@ export interface TerminalMountDeps {
   keyboardHoldsRef: RefObject<(force: boolean) => boolean>;
   keyboardToggleFocusRef: RefObject<boolean>;
   leaveRef: RefObject<() => void>;
+  typeAheadRef: RefObject<(pane: string) => void>;
   lineScroll: RefObject<((lines: number) => void) | null>;
   machineId: string;
   machineSessions: MachineSessionRegistry | null;
@@ -184,7 +186,7 @@ export interface TerminalMountDeps {
 }
 
 export function useTerminalMount(deps: TerminalMountDeps): void {
-  const { activeRef, agentRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, watchedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, consumeModifiers, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, reuseExternalLinkTabRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setViewHeld, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, attachFilesRef, watchingRef, wheelStateRef } = deps;
+  const { typeAheadRef, activeRef, agentRef, barKeyRef, baseFontRef, pinchingRef, cachedRef, watchedRef, cachedReleaseRef, cancelLeaveRef, cancelTouchRef, chatMountedRef, chatOutputRef, chatViewRef, clearModifiers, clipboardTimerRef, coarseRef, commitPendingText, composingRef, compositionCommitPendingRef, consumeModifiers, deferAttachRef, draftHeldForRef, draftPaneRef, endedRef, findOpenRef, fitRef, fittedRef, fixedGridRef, followCursorRef, followRef, frameGateRef, heldRef, hostRef, hyperlinksRef, keyboardHoldsRef, keyboardToggleFocusRef, leaveRef, lineScroll, machineId, machineSessions, mirroredRef, mirrorWrapRef, modifiersRef, modifyOtherKeysRef, narrowFontRef, noteClipboard, observeRef, onChatSuggestion, onInputRowFrameRef, onRoleAckRef, onServerMessageRef, openFileRef, openWebRef, reuseExternalLinkTabRef, osc52AllowedRef, outputTargetRef, palette, paneRef, pendingEpochRef, pendingScopeRef, pendingSubmissionsRef, pinchBadgeRef, pinchStatusRef, presentationRef, presentedRef, reassertIfStaleRef, reattachRef, redrawGreeting, releaseAwayRef, idleReleaseRef, setIdleView, releaseRef, releasedRef, retireOutputRef, secretRef, sessionRef, setChatInvalidation, setChatRefresh, setChatSent, setComposing, setConnected, setConnectedBefore, setConversationPushes, setDraft, setEnded, setHeld, setInputError, setInputReady, setObserving, setOutputError, setOutputReady, setParsedTarget, setReleased, setSecret, setSelectionQuote, setTerminal, setUnsupported, setViewHeld, setWatching, sharedGridRef, shortcutSettings, shownRef, sizesPty, socketRef, stackRef, stalledRef, stopKeyRef, submitRetention, t, tRef, termRef, terminalFontSize, theme, updateSettings, uploadFileRef, attachFilesRef, watchingRef, wheelStateRef } = deps;
 
     // Where this terminal is: its pane, and whether it is active, presented, shown and not the chat view.
     // Counted on every commit that changes it: an explicit copy still waiting for herdr's text is
@@ -1170,11 +1172,45 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           else sendTyped(resumed.pane, typed);
         }
       };
-      const startResume = (pane: string): void => {
+      const startResume = (pane: string, since = performance.now()): void => {
         failResume();
-        resumeInput = { pane, items: [], since: performance.now() };
-        resumeTimer = window.setTimeout(() => { resumeTimer = null; failResume(); }, RESUME_INPUT_WAIT_MS);
+        resumeInput = { pane, items: [], since };
+        resumeTimer = window.setTimeout(() => { resumeTimer = null; failResume(); }, Math.max(0, RESUME_INPUT_WAIT_MS - (performance.now() - since)));
       };
+      // What was typed for a new tab before it existed (lib/typeAhead.ts) waits with the keys typed here after it, as
+      // a pane taken back does, and goes ahead of them: taken before the attach and before any key reaches this pane.
+      // It is held for review instead, never sent by itself, when it holds a paste, when the user went elsewhere
+      // meanwhile, or when the PC's connection was not open all along since it was typed (nothing goes after a disconnect).
+      const adoptTypeAhead = (pane: string): void => {
+        let at = 0;
+        let held = false;
+        const take = (items: TypeAheadItem[], heldNow: boolean): void => {
+          held ||= heldNow || !socket.connected || (socket.connectedSince ?? Infinity) > at;
+          for (const item of items) {
+            // as typing here: a masked prompt on screen now makes it secret (never held, never kept for a receipt),
+            // and a draft held for this pane (a late attach held what came first) takes what follows it
+            const secret = secretRef.current !== null;
+            const arrow = item.arrow !== undefined ? terminalChord(item.arrow, NO_STICKY_MODIFIERS) : null;
+            const typed: Typed = { input: item.input, keys: arrow !== null ? [arrow] : null, chord: false, stop: false, secret };
+            if (held || draftHeldForRef.current === pane) retainTyped(pane, typed, secret);
+            else if (!secret && resumeInput !== null && resumeInput.pane === pane) resumeInput.items.push(typed);
+            else if (paneRef.current === pane) sendTyped(pane, typed);
+          }
+        };
+        const takeKeyboard = (focused: boolean): void => {
+          if (focused && paneRef.current === pane && activeRef.current && !chatViewRef.current && !coarseRef.current) term.focus();
+        };
+        const ahead = takeTypeAhead(paneStorageId(machineId, pane), { more: take, done: takeKeyboard });
+        if (ahead === null) return;
+        at = ahead.at;
+        held = ahead.held || !socket.connected || (socket.connectedSince ?? Infinity) > at;
+        if (ahead.pasteRefused) setInputError(tRef.current("Not sent: the terminal is not ready for keys."));
+        if (!held) startResume(pane, ahead.since);
+        take(ahead.items, ahead.held);
+        takeKeyboard(ahead.focused);
+        if (!held && socket.canInput(pane)) flushResume();
+      };
+      typeAheadRef.current = adoptTypeAhead;
       // the masked prompt the screen shows now, if any (shared/secret-prompt.ts)
       const screenSecret = (): string | null => {
         const lines: string[] = [];
@@ -1695,6 +1731,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         const arrow = chord === null && !pasting && !composingRef.current && !compositionCommitPendingRef.current && key?.startsWith("Arrow")
           ? terminalChord(key, NO_STICKY_MODIFIERS) : null;
         const typed: Typed = { input, keys: arrow !== null ? [arrow] : chord !== null ? [chord] : null, chord: chord !== null, stop: stopKey && input === "\u001b", secret, ...(automatic ? { automatic } : {}) };
+        adoptTypeAhead(current);
         // typed into a tab taking its pane back from idleness: it waits for the new attach (never a password)
         if (resumeInput !== null && resumeInput.pane !== current) takeResume();
         // a mouse report is for the grid it was pressed on: the attach redraws the pane at another, so it is not kept
@@ -2297,6 +2334,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
           }
         }
         const away = !inUse();
+        adoptTypeAhead(current);
         // under the keyboard the attach adopts the pane's size (keep_size) and the catch-up fit takes it
         socket.attach(current, term.cols, term.rows, chatViewRef.current || away || !shownRef.current || followRef.current || keyboardHeld);
         if (away) leave();
@@ -2472,6 +2510,7 @@ export function useTerminalMount(deps: TerminalMountDeps): void {
         releaseRef.current = () => {};
         presentationRef.current = () => {};
         leaveRef.current = () => {};
+        typeAheadRef.current = () => {};
         cancelLeaveRef.current = () => {};
         reattachRef.current = () => {};
         attachFilesRef.current = () => {};

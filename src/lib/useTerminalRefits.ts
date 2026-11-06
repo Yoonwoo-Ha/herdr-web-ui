@@ -9,6 +9,7 @@ import type { TerminalPeek } from "./terminalPeek.ts";
 import type { HerdrSocket } from "./ws.ts";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
+import { typeAheadFocused } from "./typeAhead.ts";
 
 export interface TerminalRefitsDeps {
   activeRef: RefObject<boolean>;
@@ -145,7 +146,8 @@ export function useTerminalRefits(deps: TerminalRefitsDeps): void {
     const pane = paneRef.current;
     if (pane && term && sizesPty() && inUse()) socketRef.current?.resize(pane, term.cols, term.rows, true);
     // a peek opened from what the reader just sent or pressed: its keys (Escape above all) go to the agent
-    if (activeRef.current && (!autoSelected || peekRef.current !== null) && !coarseRef.current && !modalOpen() && !findOpenRef.current) term?.focus();
+    // keys typed ahead for a new tab hold the keyboard until its hand-over gives it to the terminal (lib/typeAhead.ts)
+    if (activeRef.current && (!autoSelected || peekRef.current !== null) && !coarseRef.current && !modalOpen() && !findOpenRef.current && !typeAheadFocused()) term?.focus();
   }, [chatView]);
 
   // hidden behind another pane of its split, the pane keeps the size the pty has; shown again, it

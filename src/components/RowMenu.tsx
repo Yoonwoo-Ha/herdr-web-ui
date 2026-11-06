@@ -18,6 +18,7 @@ import { useT } from "../lib/i18n.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { SHEET_QUERY, useSheetSwipe } from "../lib/sheets.ts";
 import { useSheetHistory } from "../lib/sheetHistory.ts";
+import { typeAheadFocused } from "../lib/typeAhead.ts";
 import { safeAreaInsets } from "../lib/safeArea.ts";
 
 export interface RowMenuItem {
@@ -98,6 +99,8 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, detail
   }, [anchor, sheet]);
 
   useLayoutEffect(() => () => {
+    // New terminal handed the keyboard to the tab it opens (lib/typeAhead.ts): it stays there
+    if (typeAheadFocused()) return;
     const target = restoreFocusTo === undefined ? anchor : restoreFocusTo;
     if (target?.isConnected) target.focus({ preventScroll: true });
   }, [anchor, restoreFocusTo]);

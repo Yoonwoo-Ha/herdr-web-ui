@@ -29,6 +29,7 @@ import { paneStorageId } from "../../shared/machines.ts";
 import { inFlightGuard } from "../lib/sessionHistory.ts";
 import { userErrorMessage, type UserError } from "../lib/userError.ts";
 import { focusInOtherModal, nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+import { catchTypeAhead } from "../lib/typeAhead.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { passingFolder, recentDirectories } from "../lib/recent-directories.ts";
 
@@ -155,7 +156,10 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
   useLayoutEffect(() => {
     if (open && document.activeElement !== cwdField.current) showPathEnd();
   }, [open, cwd]);
-  const surface = useFocusTrap<HTMLFormElement>(open, { initialFocus: firstFieldRef });
+  // once the tab is made the keyboard is the new tab's: never handed back to the tab the dialog was opened over
+  const made = useRef(false);
+  useEffect(() => { if (open) made.current = false; }, [open]);
+  const surface = useFocusTrap<HTMLFormElement>(open, { initialFocus: firstFieldRef, shouldRestore: () => !made.current });
   useSheetSwipe(surface, pending ? null : onClose);
   const defaultCwdRef = useRef(defaultCwd);
   defaultCwdRef.current = defaultCwd;
@@ -367,6 +371,8 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
       return tab ? await createTab({ ...body, workspace_id: tab.workspaceId }) : await createWorkspace(body);
     });
     if (started === null) { setPending(false); return; }
+    // a plain terminal takes what is typed while it starts (lib/typeAhead.ts); an agent's first words go in its message
+    const ahead = agentKind === "" ? catchTypeAhead() : null;
     try {
       const result = await started;
       // the pane is made, whatever came of its agent: it goes in the group picked, from the groups as last saved
@@ -381,6 +387,7 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
         if (next !== null && JSON.stringify(next) !== JSON.stringify(held)) updateSettings({ agentGroupOf: next });
       }
       if (agentKind && !result.agent_started && result.error?.message) {
+        ahead?.drop();
         setPending(false);
         // the workspace exists: say so plainly, keep the PC's own words beneath, and Open it rather than make another
         setError({ message: t("The workspace opened, but {agent} did not start. Check that it is installed on the PC, then open it again.", { agent: agentLabel }), detail: result.error.message });
@@ -412,8 +419,11 @@ export function NewSessionDialog({ open, defaultCwd, tab = null, onClose, onCrea
       // the dialog closes on this: left pending, its next opening would start a frame with the
       // fields disabled and Escape ignored, until the open effect's reset has rendered
       setPending(false);
+      ahead?.handTo(machineId, result.pane_id);
+      made.current = true;
       onCreated(result.pane_id, agentKind !== "" && result.agent_started !== false, messageWaits);
     } catch (reason: unknown) {
+      ahead?.drop();
       setPending(false);
       if (reason instanceof ApiError && reason.code === "invalid_cwd") setError({ message: t("Directory not found"), detail: null });
       else setError(userErrorMessage(reason));
