@@ -666,6 +666,13 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
   agent's row shows what New tab starts it with (model and effort), as T3 Code's provider rows show
   their state, herdr's integrations for other agents fold under one line, and Plan limits is one row
   (Off, Used, Remaining).
+- Every page shares one grid, as Apple's System Settings and herdr-app lay their lists out: a row is
+  at least one control tall (a row of words alone too), a row's picture takes a column of its own so
+  every name of a card starts on one line and its sentence starts under the name, every control ends
+  on the card's inner edge (a switch's track, not its finger-sized box), and a group's caption, its
+  note and a page's More settings line start where the rows' content does. On a phone a stacked
+  stepper ends on that edge and a row's drawing stays at the end of its name's line
+  (`SettingsControls.css`).
 - `theme`: `dark`, `light`, or `system`; default `dark`.
 - `palette`: the legacy mirror of the drawn side's theme for older app versions; default `codex`.
   A record with no palette (saved before palettes) or a removed one (`report`, `lilac`, `forest`)
