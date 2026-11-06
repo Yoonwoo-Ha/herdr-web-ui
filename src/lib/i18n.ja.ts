@@ -1,5 +1,6 @@
 import { SETTINGS_JA } from "./i18n/settings.ja.ts";
 import { SETTINGS_ACCESS_JA } from "./i18n/settings-access.ja.ts";
+import { SETTINGS_AGENTS_JA } from "./i18n/settings-agents.ja.ts";
 import { SETTINGS_COMPOSER_JA } from "./i18n/settings-composer.ja.ts";
 import { SETTINGS_LAYOUT_JA } from "./i18n/settings-layout.ja.ts";
 import { TERMINAL_JA } from "./i18n/terminal.ja.ts";
@@ -468,7 +469,7 @@ const BASE: Record<string, string> = {
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
 export const JA_PARTS: Record<string, Record<string, string>> = {
   base: BASE,
-  settings: { ...SETTINGS_JA, ...SETTINGS_ACCESS_JA, ...SETTINGS_COMPOSER_JA, ...SETTINGS_LAYOUT_JA },
+  settings: { ...SETTINGS_JA, ...SETTINGS_ACCESS_JA, ...SETTINGS_COMPOSER_JA, ...SETTINGS_LAYOUT_JA, ...SETTINGS_AGENTS_JA },
   terminal: TERMINAL_JA,
   composer: COMPOSER_JA,
   chat: CHAT_JA,
