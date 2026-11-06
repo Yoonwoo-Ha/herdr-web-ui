@@ -1,3 +1,4 @@
+import { isTailnetAddress } from "../../shared/relay-mux.ts";
 import { useT } from "../lib/i18n.ts";
 
 import "./LanExposureNotice.css";
@@ -16,7 +17,8 @@ export function LanExposureNotice({ host, direct = false, onOpen }: { host: stri
   return (
     <div className={direct ? "update-notice" : "update-notice is-exposed"} role="status" data-testid="lan-exposure-notice">
       <span>{direct
-        ? t("This PC takes connections at {host} on your home network. Only devices paired through the relay can sign in there; nothing new pairs.", { host })
+        ? isTailnetAddress(host) ? t("This PC takes connections at {host} on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs.", { host })
+          : t("This PC takes connections at {host} on your home network. Only devices paired through the relay can sign in there; nothing new pairs.", { host })
         : t("Anyone who can reach {host} on your network can type into every pane: no access token is set and no device is paired yet.", { host })}</span>
       <button type="button" className="btn" onClick={onOpen}>{t("Devices and PCs")}</button>
     </div>

@@ -21,6 +21,8 @@ export interface RelayTransportOptions extends RelayChannelOptions {
    * relay only.
    */
   readonly directSocket?: (url: string) => RelaySocket;
+  /** Whether `directSocket` also opens the PC's Tailscale address (100.64.0.0/10), read at each connect: then the PC names that one too. */
+  readonly directTailnet?: () => boolean;
 }
 
 /** How long a connection tries the PC's direct carriers before going through the relay. */
@@ -227,7 +229,7 @@ export class RelayTransport implements Transport {
     const direct = generation === 1 && this.offer.code !== undefined ? undefined : await this.openDirect(offer, options);
     if (generation !== this.generation || this.stopped) { direct?.close(); return; }
     const { channel, relay } = direct ? { channel: direct, relay: this.relay }
-      : await openRelayChannelWithFallback(offer, { ...options, offerDirect: this.options.directSocket !== undefined }, this.options.openChannel ?? openRelayChannel, this.relay);
+      : await openRelayChannelWithFallback(offer, { ...options, offerDirect: this.options.directSocket !== undefined, offerTailnet: this.options.directTailnet?.() === true }, this.options.openChannel ?? openRelayChannel, this.relay);
     this.relay = relay;
     if (generation !== this.generation || this.stopped) { channel.close(); return; }
     if (!channel.mux.active) throw new TypeError("Relay carrier lost during admission");
@@ -271,7 +273,7 @@ export class RelayTransport implements Transport {
       try {
         // closing the transport ends an admitted channel too; the budget only an attempt under way
         const signal = AbortSignal.any([this.abort.signal, attempt.signal]);
-        const channel = await (this.options.openChannel ?? openRelayChannel)(offer, { ...options, signal, direct, socket, offerDirect: true });
+        const channel = await (this.options.openChannel ?? openRelayChannel)(offer, { ...options, signal, direct, socket, offerDirect: true, offerTailnet: this.options.directTailnet?.() === true });
         clearTimeout(timer);
         return channel;
       } catch (error) {

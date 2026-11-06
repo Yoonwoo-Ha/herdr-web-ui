@@ -9,6 +9,7 @@ import { useT } from "../lib/i18n.ts";
 import { callNative, hasNativePlugin } from "../lib/nativeApp.ts";
 import { announcePairingCode, PAIRING_CODE_EVENT, type RelayState } from "../lib/useRelay.ts";
 import type { PairingCode, RelayStatus } from "../../shared/protocol.ts";
+import { isTailnetCarrier } from "../../shared/relay-mux.ts";
 import { decodeOffer } from "../../shared/relay-offer.ts";
 import { QrReveal, ShareLink } from "./PhonePanel.tsx";
 import { KeyId } from "./KeyId.tsx";
@@ -65,7 +66,9 @@ export function RelayDirectRow({ relay, readOnly }: { relay: RelayState; readOnl
   return (
     <SettingsRow label={direct.on ? t("Same Wi-Fi direct connection on") : t("Same Wi-Fi direct connection off")} description={<>
       {!direct.on ? t("Phones paired through the relay always go through the relay.")
-        : direct.carriers.length > 0 ? t("This PC takes connections on your home network. Only devices paired through the relay can sign in there; nothing new pairs.")
+        : direct.carriers.length > 0 ? (!direct.carriers.some(isTailnetCarrier) ? t("This PC takes connections on your home network. Only devices paired through the relay can sign in there; nothing new pairs.")
+          : direct.carriers.every(isTailnetCarrier) ? t("This PC takes connections on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs.")
+          : t("This PC takes connections on your home network and on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs."))
         : t("On, but this PC has no home network address to listen on right now.")}
       {failure !== null && <span className="settings-hint relay-error" role="alert">{failure}</span>}
     </>}>

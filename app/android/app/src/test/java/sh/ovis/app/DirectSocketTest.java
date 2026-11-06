@@ -93,10 +93,14 @@ public class DirectSocketTest {
         assertArrayEquals(new String[] { "10.1.2.3", "40000" }, DirectSocket.carrier("ws://10.1.2.3:40000/v1/ws?v=1"));
         assertArrayEquals(new String[] { "172.31.0.1", "7319" }, DirectSocket.carrier("ws://172.31.0.1:7319/v1/ws?v=1"));
         assertArrayEquals(new String[] { "169.254.9.9", "7319" }, DirectSocket.carrier("ws://169.254.9.9:7319/v1/ws?v=1"));
+        assertArrayEquals(new String[] { "100.64.0.2", "7319" }, DirectSocket.carrier("ws://100.64.0.2:7319/v1/ws?v=1"));
+        assertArrayEquals(new String[] { "100.127.255.255", "7319" }, DirectSocket.carrier("ws://100.127.255.255:7319/v1/ws?v=1"));
         String[] refused = {
             null,
             "ws://8.8.8.8:7319/v1/ws?v=1",
             "ws://172.32.0.1:7319/v1/ws?v=1",
+            "ws://100.63.255.255:7319/v1/ws?v=1",
+            "ws://100.128.0.1:7319/v1/ws?v=1",
             "ws://127.0.0.1:7319/v1/ws?v=1",
             "ws://192.168.0.256:7319/v1/ws?v=1",
             "ws://192.168.00.1:7319/v1/ws?v=1",

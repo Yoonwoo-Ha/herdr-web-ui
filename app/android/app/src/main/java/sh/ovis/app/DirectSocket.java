@@ -62,7 +62,8 @@ final class DirectSocket {
         int b = Integer.parseInt(octets[1]);
         for (String octet : octets) if (Integer.parseInt(octet) > 255) return null;
         if (Integer.parseInt(match.group(2)) > 65535) return null;
-        boolean privateAddress = a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || (a == 169 && b == 254);
+        // RFC 1918, link-local, and Tailscale's 100.64/10 (the PC's Tailscale address, which only its tailnet reaches)
+        boolean privateAddress = a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || (a == 169 && b == 254) || (a == 100 && b >= 64 && b <= 127);
         return privateAddress ? new String[] { match.group(1), match.group(2) } : null;
     }
 

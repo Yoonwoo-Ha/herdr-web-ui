@@ -212,4 +212,7 @@ export const DEVICES_JA: Record<string, string> = {
   "Phones paired through the relay always go through the relay.": "リレーでペアリングしたスマホは常にリレーを経由します。",
   "Same Wi-Fi direct connection": "同じWi-Fiで直接接続",
   "This PC takes connections at {host} on your home network. Only devices paired through the relay can sign in there; nothing new pairs.": "このPCは自宅のネットワークの {host} で接続を受け付けます。ここでサインインできるのはリレーでペアリングしたデバイスだけで、新しいペアリングはできません。",
+  "This PC takes connections on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs.": "このPCはTailscaleで接続を受け付けます。ここでサインインできるのはリレーでペアリングしたデバイスだけで、新しいペアリングはできません。",
+  "This PC takes connections on your home network and on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs.": "このPCは自宅のネットワークとTailscaleで接続を受け付けます。ここでサインインできるのはリレーでペアリングしたデバイスだけで、新しいペアリングはできません。",
+  "This PC takes connections at {host} on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs.": "このPCはTailscaleの{host}で接続を受け付けます。ここでサインインできるのはリレーでペアリングしたデバイスだけで、新しいペアリングはできません。",
 };

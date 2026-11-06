@@ -35,7 +35,7 @@ export interface RelayLinkOptions {
   /** The relays a phone is told to reach this PC through (RelaySession relayHints). */
   readonly relayHints?: () => readonly string[];
   /** This PC's direct carriers (RelaySession directCarriers). */
-  readonly directCarriers?: () => readonly string[];
+  readonly directCarriers?: (tailnet: boolean) => readonly string[];
   /** The PC's signed-in sessions over every way in (admissions.ts); this link's own when not given. */
   readonly sessions?: SignedInSessions;
 }

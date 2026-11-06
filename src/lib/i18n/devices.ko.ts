@@ -212,4 +212,7 @@ export const DEVICES_KO: Record<string, string> = {
   "Phones paired through the relay always go through the relay.": "릴레이로 연결한 폰은 항상 릴레이를 거칩니다.",
   "Same Wi-Fi direct connection": "같은 Wi-Fi 직접 연결",
   "This PC takes connections at {host} on your home network. Only devices paired through the relay can sign in there; nothing new pairs.": "이 PC가 집 네트워크의 {host}에서 연결을 받음 · 릴레이로 연결한 기기만 여기서 로그인할 수 있고, 새 기기는 여기서 연결할 수 없습니다.",
+  "This PC takes connections on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs.": "이 PC가 Tailscale에서 연결을 받음 · 릴레이로 연결한 기기만 여기서 로그인할 수 있고, 새 기기는 여기서 연결할 수 없습니다.",
+  "This PC takes connections on your home network and on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs.": "이 PC가 집 네트워크와 Tailscale에서 연결을 받음 · 릴레이로 연결한 기기만 여기서 로그인할 수 있고, 새 기기는 여기서 연결할 수 없습니다.",
+  "This PC takes connections at {host} on Tailscale. Only devices paired through the relay can sign in there; nothing new pairs.": "이 PC가 Tailscale의 {host}에서 연결을 받음 · 릴레이로 연결한 기기만 여기서 로그인할 수 있고, 새 기기는 여기서 연결할 수 없습니다.",
 };

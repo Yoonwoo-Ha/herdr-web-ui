@@ -17,7 +17,7 @@ import java.util.UUID;
 /**
  * The PC's direct carriers for the hosted shell (src/lib/relay/directSocket.ts; docs/relay.md, "Direct on
  * the same network"): a page on https cannot open plain `ws://`. Only the app's own origin may call it
- * (allowed), only `ws://<private IPv4>:<port>/v1/ws?v=1` opens (DirectSocket.carrier), at most two at once.
+ * (allowed), only `ws://<private or Tailscale IPv4>:<port>/v1/ws?v=1` opens (DirectSocket.carrier), at most two at once.
  * Frames go to the page in order as `{ id, kind, data }` (binary as base64); a socket whose messages the page
  * has not acknowledged pass 4 MiB or 16,384 is closed with 1009. Noise inside the channel proves the PC: the
  * address is only a hint. The iOS twin: app/ios/App/App/OvisDirectPlugin.swift.
@@ -98,6 +98,15 @@ public class OvisDirectPlugin extends Plugin {
             return false;
         }
         return true;
+    }
+
+    /** What this build opens beyond the home network: the page offers the PC's Tailscale address only when it says so. */
+    @PluginMethod
+    public void features(PluginCall call) {
+        if (!allowed(call)) return;
+        JSObject result = new JSObject();
+        result.put("tailnet", true);
+        call.resolve(result);
     }
 
     @PluginMethod

@@ -1,6 +1,6 @@
 /**
- * The PC's direct carriers (`ws://<private IPv4>:<port>/v1/ws?v=1`, docs/relay.md "Direct on the same
- * network") through the phone apps' OvisDirect plugin (app/ios/App/App/OvisDirectPlugin.swift,
+ * The PC's direct carriers (`ws://<private or Tailscale IPv4>:<port>/v1/ws?v=1`, docs/relay.md "Direct on
+ * the same network") through the phone apps' OvisDirect plugin (app/ios/App/App/OvisDirectPlugin.swift,
  * app/android/app/src/main/java/sh/ovis/app/OvisDirectPlugin.java): a page on https cannot open plain
  * `ws://`. Frames cross the bridge in an envelope `{ id, kind, data }`, a binary one as base64, so text
  * and binary stay apart; the plugin delivers them in order and keeps at most 4 MiB or 16,384 messages
@@ -229,6 +229,29 @@ export function directSocketFactory(bridge: DirectBridge): (url: string) => Rela
 }
 
 let shared: ((url: string) => RelaySocket) | undefined;
+let tailnet: (() => boolean) | undefined;
+
+/**
+ * Whether the plugin behind `call` also opens a carrier on the PC's Tailscale address (100.64.0.0/10): false
+ * until its `features` answers `tailnet: true`, so nobody waits on it. Asked once; an app built before that
+ * has no `features` and may never answer, which leaves it false.
+ */
+export function directTailnetSupport(call: (plugin: string, method: string) => Promise<unknown>): () => boolean {
+  let supported = false;
+  call(DIRECT_PLUGIN, "features").then(
+    (answer) => { supported = (answer as { tailnet?: unknown } | null)?.tailnet === true; },
+    () => { /* an app without `features`: home-network carriers only */ },
+  );
+  return () => supported;
+}
+
+/** directTailnetSupport for the app's own plugin, asked when the shell starts; always false without the app. */
+export function nativeDirectTailnet(): () => boolean {
+  const call = (globalThis as { Capacitor?: CapacitorEvents }).Capacitor?.nativePromise;
+  if (!call) return () => false;
+  tailnet ??= directTailnetSupport(call);
+  return tailnet;
+}
 
 /**
  * The direct socket factory for the relay transport, or undefined where the PC is reached through

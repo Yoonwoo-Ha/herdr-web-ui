@@ -112,6 +112,23 @@ describe("direct carriers in the relay transport", () => {
     expect(transport.route).toBe("direct");
   });
 
+  it("is told the PC's Tailscale carrier only once the app's socket says it opens one", async () => {
+    // Given a PC that also listens on a Tailscale address, and an app whose plugin has not said yet
+    const pc = await pcFixture(["ws://100.64.0.7:7319"]);
+    const store = new MemoryStore();
+    let tailnet = false;
+    const lan = (): string => `ws://${LAN}:${pc.service.status().direct!.carriers.at(-1)!.split(":").at(-1)}`;
+    const first = await transportFor(pc, store, pc.offer, { directTailnet: () => tailnet });
+    expect(store.saved?.direct).toEqual([lan()]);
+    first.close();
+    // When the plugin has said it opens Tailscale addresses and the app connects again
+    tailnet = true;
+    const { code: _code, ...saved } = pc.offer;
+    await transportFor(pc, store, saved, { directTailnet: () => tailnet });
+    // Then the PC named its Tailscale carrier too
+    expect(store.saved?.direct).toEqual(["ws://100.64.0.7:7319", lan()]);
+  });
+
   it("goes through the relay when the direct carrier does not answer", async () => {
     // Given a phone whose saved direct carrier leads nowhere (it left the PC's network)
     const pc = await pcFixture();

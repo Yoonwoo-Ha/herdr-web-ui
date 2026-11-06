@@ -1,6 +1,7 @@
 /**
  * The relay's channel without the relay (docs/relay.md, "Direct on the same network"): a plain
- * WebSocket listener on this PC's private IPv4 addresses that a phone, told them in AUTH_OK
+ * WebSocket listener on this PC's private IPv4 addresses, and on its Tailscale one for a phone that
+ * can open that (DIRECT_TAILNET), that a phone, told them in AUTH_OK
  * (DIRECT_CARRIER), opens instead of relay.ovis.sh. It speaks what the relay speaks to a client
  * (`/v1/ws`, an `assigned` frame, then the client's Noise records) and hands the socket to the same
  * RelaySession a relay data socket gets. No TLS: Noise against the PC key the phone pinned at pairing
@@ -19,7 +20,8 @@ import type { NetworkInterfaceInfo } from "node:os";
 import { importPublicKey, importSecretKey, MAX_CARRIER_TEXT_BYTES, openDaemonSecureChannel } from "../../shared/relay-e2ee.ts";
 import type { Transport } from "../../shared/relay-e2ee.ts";
 import type { MuxClock } from "../../shared/relay-mux-engine.ts";
-import { isDirectCarrier, MAX_DIRECT_CARRIERS } from "../../shared/relay-mux.ts";
+import { isDirectCarrier, isTailnetCarrier, MAX_DIRECT_CARRIERS } from "../../shared/relay-mux.ts";
+import { inTailnet } from "../access.ts";
 import type { RequestServices } from "../dispatch.ts";
 import { privateLanPeer } from "../lan-https.ts";
 import { SignedInSessions } from "./admissions.ts";
@@ -69,8 +71,37 @@ function routedAddress(): Promise<string | null> {
   });
 }
 
-async function lanAddresses(): Promise<string[]> {
-  return rankLanAddresses(networkInterfaces(), await routedAddress());
+/** Tailscale's own adapter by name: tailscale0 on Linux, "Tailscale" on Windows. */
+const TAILSCALE_INTERFACE = /^tailscale/i;
+/** macOS gives Tailscale a utun, as it does every other VPN: one counts only with the address tailscale names. */
+const TUNNEL_INTERFACE = /^utun\d*$/i;
+
+/** A Tailscale IPv4 address (100.64.0.0/10), in any spelling a socket gives it. */
+export function tailnetPeer(address: string | null | undefined): boolean {
+  const plain = address?.startsWith("::ffff:") ? address.slice("::ffff:".length) : address ?? "";
+  return /^\d+\.\d+\.\d+\.\d+$/.test(plain) && inTailnet(plain);
+}
+
+/**
+ * This PC's Tailscale IPv4 address to listen on: an address in Tailscale's range on Tailscale's own adapter,
+ * or on a macOS utun only when it is the one `tailscale status` names (`named`); with a named address on an
+ * adapter, only that one. Never one on a real adapter (an ISP's shared address space) or another VPN's tunnel, whatever a
+ * stale status says. At most one.
+ */
+export function tailnetAddresses(interfaces: NodeJS.Dict<NetworkInterfaceInfo[]>, named: string | null): string[] {
+  // an address the status named that is on no adapter is stale (Tailscale moved it): Tailscale's own adapter still counts
+  const known = Object.values(interfaces).some((list) => list?.some((entry) => entry.address === named)) ? named : null;
+  const found = Object.entries(interfaces).flatMap(([name, list]) => (list ?? [])
+    .filter((entry) => entry.family === "IPv4" && !entry.internal && tailnetPeer(entry.address)
+      && (known === null || entry.address === known)
+      && (TAILSCALE_INTERFACE.test(name) || (TUNNEL_INTERFACE.test(name) && entry.address === known)))
+    .map((entry) => entry.address));
+  return found.slice(0, 1);
+}
+
+/** Who may connect to a listener on `listening`: a Tailscale peer on the Tailscale address, a private one elsewhere. */
+export function directPeerAllowed(listening: string, source: string | undefined): boolean {
+  return tailnetPeer(listening) ? tailnetPeer(source) : privateLanPeer(source);
 }
 
 export interface DirectCarrierOptions {
@@ -91,6 +122,10 @@ export interface DirectCarrierOptions {
   readonly refreshMs?: number;
   /** What AUTH_OK names for the port listened on, in place of the addresses: tests on loopback name a private one. */
   readonly advertise?: (port: number) => readonly string[];
+  /** This PC's Tailscale address as `tailscale status` says it (tailnetAddresses), or null when unknown. */
+  readonly tailnetIp?: () => string | null;
+  /** The Tailscale addresses to listen on; this PC's own by default (tailnetAddresses), none when `addresses` is given. */
+  readonly tailnetAddresses?: () => readonly string[];
 }
 
 interface SocketData {
@@ -178,16 +213,23 @@ export class DirectCarrier {
   }
 
   private async refresh(): Promise<void> {
-    const addresses = this.options.addresses?.() ?? await lanAddresses();
-    if (!this.stopped) this.bind(addresses);
+    // addresses named (tests) name every one: nothing of this PC's own is looked up beside them
+    const tailnet = this.options.tailnetAddresses?.()
+      ?? (this.options.addresses ? [] : tailnetAddresses(networkInterfaces(), this.options.tailnetIp?.() ?? null));
+    const lan = this.options.addresses?.() ?? rankLanAddresses(networkInterfaces(), await routedAddress());
+    // the Tailscale one keeps a place: the home network's first ones fill the rest
+    if (!this.stopped) this.bind([...lan.slice(0, MAX_DIRECT_CARRIERS - Math.min(tailnet.length, 1)), ...tailnet.slice(0, 1)]);
   }
 
-  /** What AUTH_OK tells a phone: `ws://<address>:<port>` for each address listened on, at most MAX_DIRECT_CARRIERS. */
-  advertised(): readonly string[] {
+  /**
+   * What AUTH_OK tells a phone: `ws://<address>:<port>` for each address listened on, at most
+   * MAX_DIRECT_CARRIERS, the Tailscale one only with `tailnet` (the phone offered DIRECT_TAILNET).
+   */
+  advertised(tailnet: boolean): readonly string[] {
     if (!this.bound) return [];
     const { addresses, port } = this.bound;
     const named = this.options.advertise?.(port) ?? addresses.map((address) => `ws://${address}:${port}`);
-    return named.filter(isDirectCarrier).slice(0, MAX_DIRECT_CARRIERS);
+    return named.filter((carrier) => isDirectCarrier(carrier) && (tailnet || !isTailnetCarrier(carrier))).slice(0, MAX_DIRECT_CARRIERS);
   }
 
   /** The port listened on, or null while nothing is. */
@@ -230,7 +272,7 @@ export class DirectCarrier {
   private listen(address: string, port: number): TCPSocketListener<unknown> {
     this.upstream ??= this.serveUpstream();
     return openGate({ hostname: address, port, upstreamPort: this.upstream.port!, secret: this.secret,
-      allowed: (source) => (this.options.peerAllowed ?? privateLanPeer)(source), counts: this.connections }) as TCPSocketListener<unknown>;
+      allowed: (source) => this.options.peerAllowed ? this.options.peerAllowed(source) : directPeerAllowed(address, source), counts: this.connections }) as TCPSocketListener<unknown>;
   }
 
   /** The carrier's HTTP server: on loopback, answering only what a gate of this carrier forwarded. */
@@ -244,7 +286,8 @@ export class DirectCarrier {
         const expected = Buffer.from(this.secret);
         const vouched = given.length === expected.length && timingSafeEqual(given, expected) && (loopback === "127.0.0.1" || loopback === "::ffff:127.0.0.1");
         const source = vouched ? request.headers.get(PEER_HEADER) ?? undefined : undefined;
-        if (!vouched || !(this.options.peerAllowed ?? privateLanPeer)(source) || source === undefined) return new Response(null, { status: 403 });
+        // each gate let through only its own network's peers (directPeerAllowed); this checks again for either
+        if (!vouched || !(this.options.peerAllowed ?? ((peer) => privateLanPeer(peer) || tailnetPeer(peer)))(source) || source === undefined) return new Response(null, { status: 403 });
         if (new URL(request.url).pathname !== "/v1/ws") return new Response(null, { status: 404 });
         // a browser page always names its origin; the apps' sockets name none. No web page on the network opens this.
         if (request.headers.has("origin")) return new Response(null, { status: 403 });
@@ -319,7 +362,7 @@ export class DirectCarrier {
         channel, services, port: this.options.port, serverId: identity.server_id,
         serverVersion: this.options.serverVersion ?? version, minSupportedClient: "0.4.20",
         routingOverhead: 0, maxWireMessageBytes: 64 * 1024, signInOnly: true,
-        directCarriers: () => this.advertised(),
+        directCarriers: (tailnet) => this.advertised(tailnet),
         onAuthenticated: (deviceId) => this.authenticated(id, carrier, deviceId),
         websocket: {
           ...handlers,

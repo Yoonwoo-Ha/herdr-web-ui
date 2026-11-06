@@ -3,10 +3,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openRelayChannel } from "../../shared/relay-channel.ts";
 import type { RelayDevice, RelayDeviceStore } from "../../shared/relay-device.ts";
-import { DIRECT_CARRIER, FrameType, MuxProtocolError } from "../../shared/relay-mux.ts";
+import { DIRECT_CARRIER, DIRECT_TAILNET, FrameType, MuxProtocolError } from "../../shared/relay-mux.ts";
 import type { RelayOffer } from "../../shared/relay-offer.ts";
 import { SignedInSessions } from "./admissions.ts";
-import { admissionDrops, DirectCarrier, rankLanAddresses } from "./direct.ts";
+import { admissionDrops, directPeerAllowed, DirectCarrier, rankLanAddresses, tailnetAddresses } from "./direct.ts";
 import { openGate } from "./direct-gate.ts";
 import type { NetworkInterfaceInfo } from "node:os";
 import { loadRelayIdentity } from "./identity.ts";
@@ -267,6 +267,20 @@ describe("direct carriers in AUTH_OK", () => {
     expect(await plain.auth(device)).not.toHaveProperty("direct");
   });
 
+  it("name the Tailscale one only to a phone that also offered DIRECT_TAILNET", async () => {
+    // Given a PC whose carriers depend on whether the phone can open a Tailscale address
+    const fixture = relayFixture();
+    cleanup.push(() => fixture.close());
+    const device = await relayDevice(fixture);
+    const carriers = (tailnet: boolean): string[] => ["ws://192.168.0.10:7319", ...tailnet ? ["ws://100.64.0.7:7319"] : []];
+    // When one phone offers both features and another DIRECT_CARRIER alone
+    const both = await relayConnection(fixture, { directCarriers: carriers });
+    const lanOnly = await relayConnection(fixture, { directCarriers: carriers });
+    // Then only the first hears of the Tailscale address
+    expect((await both.auth(device, [DIRECT_CARRIER, DIRECT_TAILNET])).direct).toEqual(["ws://192.168.0.10:7319", "ws://100.64.0.7:7319"]);
+    expect((await lanOnly.auth(device, [DIRECT_CARRIER])).direct).toEqual(["ws://192.168.0.10:7319"]);
+  });
+
   it("are left out when there are none", async () => {
     const fixture = relayFixture();
     cleanup.push(() => fixture.close());
@@ -305,6 +319,31 @@ describe("addresses listened on", () => {
       eth1: [nic("10.0.0.2")], eth2: [nic("10.0.1.2")], eth3: [nic("10.0.2.2")], eth4: [nic("10.0.3.2")], wlan0: [nic("192.168.0.10")],
       tailscale0: [nic("100.100.1.1")], lo: [{ ...nic("127.0.0.1"), internal: true }] };
     expect(rankLanAddresses(interfaces, "192.168.0.10")).toEqual(["192.168.0.10", "10.0.0.2", "10.0.1.2", "10.0.2.2"]);
+  });
+
+  it("takes the Tailscale address only on Tailscale's adapter, never a shared address on a real adapter or another VPN's tunnel", () => {
+    const cases: [string, NodeJS.Dict<NetworkInterfaceInfo[]>, string | null, string[]][] = [
+      ["Linux tailscale0", { eth0: [nic("192.168.0.10")], tailscale0: [nic("100.101.102.103")] }, null, ["100.101.102.103"]],
+      ["Windows adapter", { Tailscale: [nic("100.64.0.2")] }, null, ["100.64.0.2"]],
+      ["macOS utun with the address tailscale names", { utun4: [nic("100.127.255.254")] }, "100.127.255.254", ["100.127.255.254"]],
+      ["a utun while tailscale names none (another VPN's, maybe)", { utun4: [nic("100.72.1.2")] }, null, []],
+      ["another utun than the one tailscale names", { utun3: [nic("100.70.0.1")], utun5: [nic("100.80.0.9")] }, "100.80.0.9", ["100.80.0.9"]],
+      ["ISP shared address space on a real adapter", { eth0: [nic("100.72.1.2")] }, null, []],
+      ["a stale status naming a real adapter's shared address", { eth0: [nic("100.72.1.2")] }, "100.72.1.2", []],
+      ["outside Tailscale's range", { tailscale0: [nic("100.128.0.1")] }, null, []],
+      ["tailscale names an address no adapter has (it moved): Tailscale's adapter still counts", { tailscale0: [nic("100.90.0.1")] }, "100.90.0.2", ["100.90.0.1"]],
+      ["tailscale names an address no adapter has, and only another VPN's utun is up", { utun4: [nic("100.96.0.3")] }, "100.90.0.2", []],
+    ];
+    for (const [name, interfaces, known, expected] of cases) expect(tailnetAddresses(interfaces, known), name).toEqual(expected);
+  });
+
+  it("lets only Tailscale peers reach the Tailscale listener, and only private peers the others", () => {
+    expect(directPeerAllowed("100.64.0.7", "100.101.102.103")).toBe(true);
+    expect(directPeerAllowed("100.64.0.7", "::ffff:100.101.102.103")).toBe(true);
+    expect(directPeerAllowed("100.64.0.7", "192.168.0.20")).toBe(false);
+    expect(directPeerAllowed("100.64.0.7", "8.8.8.8")).toBe(false);
+    expect(directPeerAllowed("192.168.0.10", "192.168.0.20")).toBe(true);
+    expect(directPeerAllowed("192.168.0.10", "100.101.102.103")).toBe(false);
   });
 
   it("keeps a virtual adapter the default route leaves from", () => {
@@ -379,7 +418,7 @@ describe("direct connections setting, read back", () => {
 
 describe("direct connections with the relay", () => {
   /** A PC on a local relay, direct connections on loopback named as a private address. */
-  async function liveFixture() {
+  async function liveFixture(advertise: (port: number) => readonly string[] = (port) => [`ws://10.0.0.7:${port}`]) {
     const relay = startBunRelay({ port: 0 });
     const holder = relayFixture();
     holder.close();
@@ -392,7 +431,7 @@ describe("direct connections with the relay", () => {
         socket.addEventListener("message", (event) => { if (typeof event.data === "string" && JSON.parse(event.data).type === "sync") synced.resolve(); });
         return socket;
       },
-      direct: { addresses: () => ["127.0.0.1"], peerAllowed: () => true, preferredPort: 0, advertise: (port) => [`ws://10.0.0.7:${port}`] },
+      direct: { addresses: () => ["127.0.0.1"], peerAllowed: () => true, preferredPort: 0, advertise },
     });
     const fixture = relayFixture(false, { stateDir: holder.stateDir, relay: service });
     cleanup.push(() => relay.stop(), () => fixture.close(), () => service.shutdown());
@@ -421,6 +460,22 @@ describe("direct connections with the relay", () => {
     // When they are turned on again, the listener is back
     await service.setDirect(true);
     expect(service.status().direct?.carriers).toHaveLength(1);
+  });
+
+  it("name the PC's Tailscale address in AUTH_OK only to an app that can open it", async () => {
+    // Given a PC listening on a home network address and a Tailscale one
+    const { fixture, offer, port } = await liveFixture((listened) => [`ws://10.0.0.7:${listened}`, `ws://100.64.0.7:${listened}`]);
+    const device = await relayDevice(fixture);
+    const open = (offerTailnet: boolean) => bounded(openRelayChannel(offer, { store: savedStore(device, offer),
+      socket: () => new WebSocket(`ws://127.0.0.1:${port()}/v1/ws?v=1`), offerDirect: true, offerTailnet }));
+    // When an app that opens Tailscale addresses signs in, and then one that does not
+    const tailnet = await open(true);
+    cleanup.push(() => tailnet.close());
+    const lan = await open(false);
+    cleanup.push(() => lan.close());
+    // Then only the first is told the Tailscale carrier
+    expect(tailnet.directCarriers).toEqual([`ws://10.0.0.7:${port()}`, `ws://100.64.0.7:${port()}`]);
+    expect(lan.directCarriers).toEqual([`ws://10.0.0.7:${port()}`]);
   });
 
   it("are told to a client that got in, in /api/health, even with the gate closed", async () => {
