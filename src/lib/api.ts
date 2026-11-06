@@ -274,6 +274,11 @@ export async function requestRelay(action: "start" | "stop" | "reset-identity"):
   return (await response.json()) as RelayStatus;
 }
 
+/** POST /api/relay/direct: whether paired phones may connect straight to this PC on its networks while the relay is on. */
+export function requestRelayDirect(on: boolean): Promise<RelayStatus> {
+  return getJson<RelayStatus>("/api/relay/direct", { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ on }) });
+}
+
 export function requestRelayOffer(): Promise<RelayOffer> {
   return getJson<RelayOffer>("/api/relay/offer", { method: "POST", headers: { "x-herdr-update": "1" } });
 }

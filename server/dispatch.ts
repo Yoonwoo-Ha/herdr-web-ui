@@ -533,8 +533,11 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     // this server is open to the network with no token and nothing paired, told to a client
     // that got in and to nobody else: naming it to an anonymous caller would be
     // reconnaissance, not help. Nothing here changes who is let in (server/access.ts).
-    const lan_exposure = access.level === "full" && lanExposed({ hostname, tokenConfigured: token !== "", gated: devices.gated })
-      ? { host: hostname } : undefined;
+    const directCarriers = ctx.services.relay.status().direct?.carriers ?? [];
+    const lan_exposure = access.level !== "full" ? undefined
+      : lanExposed({ hostname, tokenConfigured: token !== "", gated: devices.gated }) ? { host: hostname }
+      // the relay's direct carrier: on the network, but for devices paired through the relay only, and said in those words
+      : directCarriers.length > 0 ? { host: new URL(directCarriers[0]!.replace(/^ws:/, "http:")).hostname, direct: true as const } : undefined;
     // what protects this server, for a client that got in (a watching one too) and nobody else;
     // per request, so never stored. The ingress is this request's, proven or `unknown`.
     // Portal's proof says how the request came even when the token or a paired device signed it in.
@@ -570,7 +573,11 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       return jsonResponse({ ok: true, herdr, auth, ...relay, ...(lan_exposure ? { lan_exposure } : {}), ...(security ? { security } : {}), ...(herdr_core ? { herdr_core } : {}), ...(herdr_runtime ? { herdr_runtime } : {}),
         web_ui: { boot_id: bootId, revision: process.env["OVIS_REVISION"] ?? null, ...(serverId ? { server_id: serverId } : {}) } }, 200, securityHeaders);
     } catch (error) {
-      return errorResponse(error);
+      const failed = errorResponse(error);
+      if (!lan_exposure) return failed;
+      // herdr away says nothing of this PC's network listeners: they are told all the same
+      const body: unknown = await failed.json();
+      return jsonResponse({ ...(body !== null && typeof body === "object" ? body : {}), lan_exposure }, failed.status, { "cache-control": "no-store" });
     }
   }
 

@@ -211,6 +211,7 @@ export class RelayTransport implements Transport {
         this.switching = undefined;
         this.endUpgrade();
         this.channel = undefined;
+        this.routeChanged();
         this.failWaitingHttp(new TypeError("Relay carrier is disconnected"));
         // a switch to a direct carrier is no lost carrier: nobody is told of it
         if (!switching) this.options.onClose?.(error);
@@ -231,6 +232,7 @@ export class RelayTransport implements Transport {
     if (generation !== this.generation || this.stopped) { channel.close(); return; }
     if (!channel.mux.active) throw new TypeError("Relay carrier lost during admission");
     this.channel = channel;
+    this.routeChanged();
     channel.mux.onStreamAvailable = () => {
       for (const pending of this.waitingHttp) if (!pending.run()) break;
     };
@@ -354,6 +356,16 @@ export class RelayTransport implements Transport {
 
   /** How the channel up now reaches the PC: through the relay, or on one of its direct carriers. */
   get route(): "relay" | "direct" | undefined { return this.channel ? this.channel.direct === undefined ? "relay" : "direct" : undefined; }
+
+  private readonly routeListeners = new Set<() => void>();
+
+  /** Called whenever `route` may have changed (a channel came up or went); returns the unsubscribe. */
+  onRouteChange(listener: () => void): () => void {
+    this.routeListeners.add(listener);
+    return () => { this.routeListeners.delete(listener); };
+  }
+
+  private routeChanged(): void { for (const listener of [...this.routeListeners]) listener(); }
 
   /**
    * Ends this carrier and connects again, signing in with the key the saved pairing holds now: after
@@ -550,6 +562,7 @@ export class RelayTransport implements Transport {
     this.abort.abort();
     this.channel?.close();
     this.channel = undefined;
+    this.routeChanged();
     this.options.signal?.removeEventListener("abort", this.aborted);
     globalThis.removeEventListener?.("online", this.wake);
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", this.wake);

@@ -198,6 +198,7 @@ const BASE: Record<string, string> = {
   "local": "ローカル",
   "Via a loopback address: this PC, or a tunnel to it": "ループバックアドレス経由: このPC、またはそこへのトンネル",
   "Via the Ovis relay": "Ovis リレー経由",
+  "Directly on the same network, not through the relay": "同じネットワークでリレーを通さず直接接続",
   "Via the Portal relay": "Portal リレー経由",
   "Via Tailscale": "Tailscale 経由",
   "Via Tailscale, or Funnel from the internet": "Tailscale 経由、またはインターネットから Funnel 経由",

@@ -196,6 +196,7 @@ const BASE: Record<string, string> = {
   "local": "로컬",
   "Via a loopback address: this PC, or a tunnel to it": "루프백 주소로 연결: 이 PC, 또는 이 PC로 오는 터널",
   "Via the Ovis relay": "Ovis 릴레이를 거쳐 연결",
+  "Directly on the same network, not through the relay": "같은 네트워크에서 릴레이 없이 바로 연결",
   "Via the Portal relay": "Portal 릴레이를 거쳐 연결",
   "Via Tailscale": "Tailscale을 거쳐 연결",
   "Via Tailscale, or Funnel from the internet": "Tailscale을 거쳐 연결, 또는 인터넷에서 Funnel로 연결",

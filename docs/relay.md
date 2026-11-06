@@ -770,8 +770,8 @@ While the relay is on, the PC also listens on its private IPv4 addresses (RFC 19
 port 7319, or another one when that is taken): the one its default route leaves from first, then the
 others, leaving out container, VM and VPN adapters, at most four for the same channel without the relay
 ([`server/relay/direct.ts`](../server/relay/direct.ts)). A phone that can reach one of them opens
-it there instead of through `relay.ovis.sh`. Not yet started by `bun run server`: it is turned on together
-with the apps that open it.
+it there instead of through `relay.ovis.sh`. The iOS and Android apps open it through their OvisDirect
+plugin ([native-app.md](native-app.md#direct-on-the-same-network)); a browser stays on the relay.
 
 - **Same channel, same trust.** The listener speaks to a phone what the relay does (`/v1/ws`, an
   `assigned` frame, then the phone's Noise records) and hands the socket to the same session a
@@ -785,8 +785,15 @@ with the apps that open it.
   `AUTH_OK` `direct`: up to four `ws://<private IPv4>:<port>` addresses, checked on both ends. It
   comes from the PC the phone authenticated, so the relay cannot add an address. An older phone or
   PC offers or answers nothing, and nothing changes for it.
-- **Bounded.** At most two clients that have not signed in per source address and eight in all,
-  refused at upgrade beyond that, apart from the relay's places; 5 s to finish the handshake and
+- **Bounded, and never locked out.** A socket that names an `Origin` (any browser page, on the network
+  or not) is refused: the apps' sockets name none. A gate in front ([`direct-gate.ts`](../server/relay/direct-gate.ts))
+  counts connections before reading a byte (8 per address, 128 in all) and gives a request head 5 s
+  and 8 KiB; only a WebSocket upgrade of `/v1/ws` gets past it, to the carrier's own server on
+  loopback. At most two clients that have not signed in per address, whose places only that
+  address's clients take, and 64 in all. A client keeps its place for 1 s; after that a newer one
+  from the same address may take it, and only once its upgrade has happened. A phone at an address of
+  its own gets in unless dozens of hosts flood together; then it stays on the relay, where it falls
+  back by itself; 5 s to finish the handshake and
   15 s to sign in, and no message larger than one protected mux frame. Signed-in sessions count
   against one set of limits whichever way they came (relay links and direct carriers together):
   eight at once and four per device key, whose oldest gives way. Peers outside private IPv4 are refused before upgrade. Removing a device, stopping
@@ -803,6 +810,11 @@ with the apps that open it.
   falls back to the relay silently; a refusal by the PC (a removed device) is final as over the
   relay. The carriers are saved with the pairing for the next start. A browser has no such socket
   and always uses the relay.
+- **Said where it is.** While the relay is on, Settings → Devices and PCs → My devices shows "Same
+  Wi-Fi direct connection on" (who can sign in there) with its switch. `/api/health` names the
+  listener to a client that got in (`lan_exposure` with `direct: true`), and the app's banner
+  says it in paired-only words. The open-server warning (`lanExposed`) is about the main listener
+  only; starting the relay closes the pairing gate, so it never applies while this listener runs.
 - **On unless turned off.** `POST /api/relay/direct` with `{ "on": false }` turns it off (kept in
   `relay/direct.json`; a file that cannot be read counts as off); `GET /api/relay` says whether it is on and where it listens. Addresses are
   read again every 30 s, and the listener follows them on the same port. On Windows the first

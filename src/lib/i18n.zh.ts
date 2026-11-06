@@ -200,6 +200,7 @@ const BASE: Record<string, string> = {
   "local": "本地",
   "Via a loopback address: this PC, or a tunnel to it": "经由回环地址：本机，或通往它的隧道",
   "Via the Ovis relay": "经由 Ovis 中继",
+  "Directly on the same network, not through the relay": "在同一网络上直接连接，不经过中继",
   "Via the Portal relay": "经由 Portal 中继",
   "Via Tailscale": "经由 Tailscale",
   "Via Tailscale, or Funnel from the internet": "经由 Tailscale，或经由 Funnel 从互联网连接",

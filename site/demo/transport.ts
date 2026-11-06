@@ -1249,10 +1249,10 @@ const DEMO_RELAY_PUBLIC_KEY = btoa(String.fromCharCode(...Array.from({ length: 3
 let demoRelayOnline = new URLSearchParams(location.search).get("demo_relay") === "on";
 let demoRelayIdentities = 1;
 const demoRelayServerId = (): string => `${demoRelayIdentities.toString(16).padStart(4, "0")}5e1f1d0ff3ab1e0ff3ab1e5e1f1d`;
-/** direct connections on the PC's network: on by default; the demo listens nowhere, so it names no carrier */
+/** direct connections on the PC's network: on by default; the demo listens nowhere, and names a made-up home address while the relay is on */
 let demoRelayDirect = true;
 const demoRelayStatus = (): RelayStatus => ({ phase: demoRelayOnline ? "online" : "off", relay: DEMO_RELAY, app: DEMO_RELAY_APP, sessions: 0, blocked: null, error: null,
-  direct: { on: demoRelayDirect, carriers: [] } });
+  direct: { on: demoRelayDirect, carriers: demoRelayDirect && demoRelayOnline ? ["ws://192.168.0.10:7319"] : [] } });
 /** POST /api/relay/offer: the pending code inside an offer for the fictional identity, as the server reuses it */
 function demoRelayOffer(): Response {
   if (!demoRelayOnline) return error("relay_off", "Start the relay before pairing.", 409);
