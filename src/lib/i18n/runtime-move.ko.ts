@@ -29,7 +29,15 @@ export const RUNTIME_MOVE_KO: Record<string, string> = {
 
   "One pane is at work. Everything moves at once when it is done.": "패널 1개가 작업 중입니다. 끝나면 한꺼번에 옮깁니다.",
   "{n} panes are at work. Everything moves at once when they are done.": "패널 {n}개가 작업 중입니다. 모두 끝나면 한꺼번에 옮깁니다.",
-  "End a program in a shell (Ctrl+C) or an agent marked above yourself; the move then goes on by itself.": "셸에서 도는 프로그램(Ctrl+C)이나 위에 표시된 에이전트는 직접 끝내 주세요. 끝나면 자동으로 진행합니다.",
+  "End an agent marked above yourself; the move goes on by itself once nothing runs.": "에이전트는 직접 끝내 주세요. 모두 끝나면 자동으로 옮깁니다.",
+  "End": "끄기",
+  "Ending…": "끄는 중…",
+  "Force end": "강제로 끄기",
+  "Open the agent's pane": "에이전트 창 열기",
+  "End all and move now": "전부 끄고 지금 옮기기",
+  "End and move": "끄고 옮기기",
+  "Ends 1 running command. Unsaved work may be lost.": "실행 중인 명령 1개를 끕니다. 저장 안 된 작업은 사라질 수 있어요.",
+  "Ends {n} running commands. Unsaved work may be lost.": "실행 중인 명령 {n}개를 끕니다. 저장 안 된 작업은 사라질 수 있어요.",
   "Waiting for work to finish…": "작업이 끝나기를 기다리는 중…",
 
   "Ending the agents in herdr": "herdr의 에이전트 종료 중",

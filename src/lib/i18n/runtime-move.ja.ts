@@ -29,7 +29,15 @@ export const RUNTIME_MOVE_JA: Record<string, string> = {
 
   "One pane is at work. Everything moves at once when it is done.": "1 つのペインが作業中です。終わったら一度に移します。",
   "{n} panes are at work. Everything moves at once when they are done.": "{n} 個のペインが作業中です。すべて終わったら一度に移します。",
-  "End a program in a shell (Ctrl+C) or an agent marked above yourself; the move then goes on by itself.": "シェルのプログラム（Ctrl+C）や上に示したエージェントは手動で終了してください。終わると自動で進みます。",
+  "End an agent marked above yourself; the move goes on by itself once nothing runs.": "上に示したエージェントは手動で終了してください。すべて終わると自動で進みます。",
+  "End": "終了",
+  "Ending…": "終了中…",
+  "Force end": "強制終了",
+  "Open the agent's pane": "エージェントのペインを開く",
+  "End all and move now": "すべて終了して今すぐ移動",
+  "End and move": "終了して移動",
+  "Ends 1 running command. Unsaved work may be lost.": "実行中のコマンドを1つ終了します。保存していない作業は失われることがあります。",
+  "Ends {n} running commands. Unsaved work may be lost.": "実行中のコマンドを{n}個終了します。保存していない作業は失われることがあります。",
   "Waiting for work to finish…": "作業の終了を待っています…",
 
   "Ending the agents in herdr": "herdr のエージェントを終了中",

@@ -102,6 +102,29 @@
   white-space: nowrap;
 }
 
+.runtime-move-pane > .btn {
+  flex: 0 0 auto;
+}
+
+/* End all and move now, asked once more: the danger button's own tint and ink */
+.runtime-move-confirm {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--danger-tint);
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+}
+
+.runtime-move-confirm-list {
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
 .runtime-move-why {
   color: var(--text-dim);
   font-size: var(--fs-xs);

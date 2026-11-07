@@ -60,6 +60,11 @@ export function blockingPanes(plan: MovePlan): MovePane[] {
   return plan.panes.filter((pane) => pane.verdict.kind === "busy" || pane.verdict.kind === "needs_you");
 }
 
+/** The shells running a command that hold the move up: the ones the wait can end. */
+export function runningCommands(plan: MovePlan): MovePane[] {
+  return plan.panes.filter((pane) => pane.verdict.kind === "busy" && pane.verdict.reason === "command_running");
+}
+
 /** A tab's pane ids in reading order: a split's left or top side first, then the other. */
 export function tabPaneIds(node: MoveNode): string[] {
   return "pane" in node ? [node.pane] : [...tabPaneIds(node.first), ...tabPaneIds(node.second)];

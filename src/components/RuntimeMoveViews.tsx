@@ -1,17 +1,19 @@
 /**
  * What the move dialog (RuntimeMove.tsx) shows in each state: the plan as a workspace > tab > pane
  * tree with a tag per pane, the panes holding a move up, the steps of a move under way, and a
- * rollback's result. Read-only: every action stays in the dialog's footer.
+ * rollback's result. The wait's rows carry their own pane's action (end its command, open an agent);
+ * every other action stays in the dialog's footer.
  */
+import type { ReactNode } from "react";
 import { Check } from "lucide-react";
 
-import type { MovePane, MovePlan, MoveStatus } from "../../shared/runtime-move.ts";
+import type { MovePane, MovePlan, MoveStatus, MoveStopAllOffer, MoveStopping } from "../../shared/runtime-move.ts";
 import type { Translate } from "../lib/i18n.ts";
-import { agentName, blockingPanes, moveReasonText, moveStepText, moveWhyText, paneTitle, tabPaneIds, verdictTag } from "../lib/runtimeMove.ts";
+import { agentName, blockingPanes, moveReasonText, moveStepText, moveWhyText, paneAgent, paneTitle, tabPaneIds, verdictTag } from "../lib/runtimeMove.ts";
 
 const STEPS = ["ending_agents", "building", "starting_agents", "switching"] as const;
 
-function PaneLine({ t, pane }: { t: Translate; pane: MovePane }) {
+function PaneLine({ t, pane, action }: { t: Translate; pane: MovePane; action?: ReactNode }) {
   const tag = verdictTag(t, pane.verdict);
   return (
     <>
@@ -20,8 +22,33 @@ function PaneLine({ t, pane }: { t: Translate; pane: MovePane }) {
         {pane.cwd !== null && <span className="runtime-move-cwd">{pane.cwd}</span>}
       </span>
       <span className="runtime-move-tag" data-tone={tag.tone}>{tag.text}</span>
+      {action}
     </>
   );
+}
+
+interface WaitActions {
+  stopping: readonly MoveStopping[];
+  pending: boolean;
+  onStop: (pane: MovePane, force: boolean) => void;
+  /** null: this page cannot open a pane (no app around the dialog) */
+  onOpenPane: ((paneId: string) => void) | null;
+}
+
+/**
+ * A shell's command: End sends it Ctrl+C; while it still runs, Ending… until the server offers Force end.
+ * An agent is never ended from here: its pane opens, and the person ends it there.
+ */
+function PaneAction({ t, pane, stopping, pending, onStop, onOpenPane }: WaitActions & { t: Translate; pane: MovePane }) {
+  const { verdict } = pane;
+  if (verdict.kind === "busy" && verdict.reason === "command_running") {
+    const tried = stopping.find((entry) => entry.pane_id === pane.pane_id);
+    if (tried?.force) return <button type="button" className="btn btn-danger" disabled={pending} onClick={() => onStop(pane, true)}>{t("Force end")}</button>;
+    if (tried) return <button type="button" className="btn" disabled>{t("Ending…")}</button>;
+    return <button type="button" className="btn" disabled={pending} onClick={() => onStop(pane, false)}>{t("End")}</button>;
+  }
+  if (paneAgent(pane) === null || onOpenPane === null) return null;
+  return <button type="button" className="btn" onClick={() => onOpenPane(pane.pane_id)}>{t("Open the agent's pane")}</button>;
 }
 
 export function PlanView({ t, plan, leadId }: { t: Translate; plan: MovePlan; leadId: string }) {
@@ -50,15 +77,27 @@ export function PlanView({ t, plan, leadId }: { t: Translate; plan: MovePlan; le
   );
 }
 
-export function WaitingView({ t, plan, leadId }: { t: Translate; plan: MovePlan; leadId: string }) {
+export function WaitingView({ t, plan, leadId, confirming, ...actions }: WaitActions & { t: Translate; plan: MovePlan; leadId: string; confirming: MoveStopAllOffer["panes"] | null }) {
   const held = blockingPanes(plan);
   return (
     <>
       <p className="runtime-move-lead" id={leadId} role="status">{held.length === 1 ? t("One pane is at work. Everything moves at once when it is done.") : t("{n} panes are at work. Everything moves at once when they are done.", { n: held.length })}</p>
       <ul className="runtime-move-list">
-        {held.map((pane) => <li key={pane.pane_id} className="runtime-move-pane"><PaneLine t={t} pane={pane} /></li>)}
+        {held.map((pane) => <li key={pane.pane_id} className="runtime-move-pane"><PaneLine t={t} pane={pane} action={<PaneAction t={t} pane={pane} {...actions} />} /></li>)}
       </ul>
-      <p className="runtime-move-note">{t("End a program in a shell (Ctrl+C) or an agent marked above yourself; the move then goes on by itself.")}</p>
+      {confirming === null
+        ? <p className="runtime-move-note">{t("End an agent marked above yourself; the move goes on by itself once nothing runs.")}</p>
+        : <div className="runtime-move-confirm" role="alert">
+            {confirming.length === 1 ? t("Ends 1 running command. Unsaved work may be lost.") : t("Ends {n} running commands. Unsaved work may be lost.", { n: confirming.length })}
+            {/* each pane the server's token covers, which may differ from the last poll's rows: its command and where */}
+            <ul className="runtime-move-confirm-list">
+              {confirming.map((covered) => {
+                const pane = plan.panes.find((entry) => entry.pane_id === covered.pane_id);
+                const where = pane?.name ?? pane?.cwd ?? null;
+                return <li key={covered.pane_id}>{where === null ? covered.command : `${covered.command} · ${where}`}</li>;
+              })}
+            </ul>
+          </div>}
     </>
   );
 }

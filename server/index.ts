@@ -447,6 +447,7 @@ export function createServer(
       holdsPending: core.holdsPending,
       inputEmpty: core.inputEmpty,
       lane: core.serialize,
+      settleAfterTyping: core.settleAfterTyping,
       accepted: () => options.launchAccepted?.() ?? true,
       switching: () => options.runtimeService?.switching?.() ?? false,
       switchRuntime: () => { const answer = options.runtimeService!.request("herdr-core"); return answer.ok ? null : answer.message; },

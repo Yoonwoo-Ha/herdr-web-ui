@@ -1573,7 +1573,7 @@ function PluginsGroup() {
  * one quiet line says why, or how to switch by hand. The move of the whole herdr session to herdr-core
  * (RuntimeMove) is one more row, whose dialog outlives the restart its own switch starts.
  */
-function RuntimeFacts({ version, runtime, core, facts: healthFacts, bootId, onServerRestarted }: { version: string | null; runtime: "herdr" | "herdr-core" | null; core: HerdrCoreFacts | null; facts: HerdrRuntimeFacts | null; bootId: string | null; onServerRestarted?: () => void }) {
+function RuntimeFacts({ version, runtime, core, facts: healthFacts, bootId, onServerRestarted, onOpenPane }: { version: string | null; runtime: "herdr" | "herdr-core" | null; core: HerdrCoreFacts | null; facts: HerdrRuntimeFacts | null; bootId: string | null; onServerRestarted?: () => void; onOpenPane: (machineId: string, paneId: string) => void }) {
   const t = useT();
   const [confirming, setConfirming] = useState(false);
   // the wait for the restarted server outlives this page of Settings (lib/runtimeSwitch.ts)
@@ -1596,7 +1596,7 @@ function RuntimeFacts({ version, runtime, core, facts: healthFacts, bootId, onSe
   const known = served === runtime ? version : null;
   // the move's row goes with the rows while the page waits for the restarted server; its dialog stays:
   // the key keeps the one element across both lists below
-  const move = <RuntimeMove key="move" bootId={bootId} hidden={restarting !== null} onServerRestarted={onServerRestarted} />;
+  const move = <RuntimeMove key="move" bootId={bootId} hidden={restarting !== null} onServerRestarted={onServerRestarted} onOpenPane={onOpenPane} />;
   if (restarting !== null) {
     return (
       <SettingsGroup title={t("Terminals")} section="runtime">
@@ -1671,14 +1671,14 @@ function RuntimeFacts({ version, runtime, core, facts: healthFacts, bootId, onSe
   );
 }
 
-function AboutPage({ updates, herdrVersion, herdrRuntime, herdrCore, herdrRuntimeFacts, bootId, onServerRestarted, bridgesFollow }: { updates: UpdatesModel; herdrVersion: string | null; herdrRuntime: "herdr" | "herdr-core" | null; herdrCore: HerdrCoreFacts | null; herdrRuntimeFacts: HerdrRuntimeFacts | null; bootId: string | null; onServerRestarted?: () => void; bridgesFollow: boolean }) {
+function AboutPage({ updates, herdrVersion, herdrRuntime, herdrCore, herdrRuntimeFacts, bootId, onServerRestarted, onOpenPane, bridgesFollow }: { updates: UpdatesModel; herdrVersion: string | null; herdrRuntime: "herdr" | "herdr-core" | null; herdrCore: HerdrCoreFacts | null; herdrRuntimeFacts: HerdrRuntimeFacts | null; bootId: string | null; onServerRestarted?: () => void; onOpenPane: (machineId: string, paneId: string) => void; bridgesFollow: boolean }) {
   const t = useT();
   // herdr-app's About: each line a name and its value or action, no group captions or sentences
   return (
     <SettingsBare.Provider value={true}>
       {/* the facts read as one list, as herdr-app's About */}
       <div className="settings-joined">
-      <RuntimeFacts version={herdrVersion} runtime={herdrRuntime} core={herdrCore} facts={herdrRuntimeFacts} bootId={bootId} onServerRestarted={onServerRestarted} />
+      <RuntimeFacts version={herdrVersion} runtime={herdrRuntime} core={herdrCore} facts={herdrRuntimeFacts} bootId={bootId} onServerRestarted={onServerRestarted} onOpenPane={onOpenPane} />
       <UpdateControls updates={updates} bridgesFollow={bridgesFollow} />
       {/* herdr's own version and update: on herdr-core there is no herdr TUI here, and Terminals names the core */}
       {herdrRuntime !== "herdr-core" && <HerdrUpdateControls enabled herdrVersion={herdrVersion} showVersion={(herdrRuntimeFacts?.serving ?? herdrRuntime) === null} />}
@@ -1946,7 +1946,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} openAddPc={actions.openAddPc}
         machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;
       case "experimental": return <ExperimentalPage />;
-      case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} herdrRuntime={herdrRuntime} herdrCore={herdrCore} herdrRuntimeFacts={herdrRuntimeFacts} bootId={bootId} onServerRestarted={onServerRestarted} bridgesFollow={pcSettings?.auto_update_bridges === true} />;
+      case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} herdrRuntime={herdrRuntime} herdrCore={herdrCore} herdrRuntimeFacts={herdrRuntimeFacts} bootId={bootId} onServerRestarted={onServerRestarted} onOpenPane={onOpenPane} bridgesFollow={pcSettings?.auto_update_bridges === true} />;
       default: return null;
     }
   };

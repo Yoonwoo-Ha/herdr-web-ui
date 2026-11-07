@@ -7,7 +7,7 @@ import type { ConversationSearchResponse } from "../../shared/conversation-searc
 import { resumeConnectionTraces } from "./connectionTrace.ts";
 import type { PullRequestCheckLog, PullRequestMergeRequest, PullRequestView } from "../../shared/pull-request.ts";
 import type { SystemReport } from "../../shared/system.ts";
-import type { MovePlanResponse, MoveStartRequest } from "../../shared/runtime-move.ts";
+import type { MovePlanResponse, MoveStartRequest, MoveStopAllOffer, MoveStopAllRequest, MoveStopRequest } from "../../shared/runtime-move.ts";
 import type { EditableText, PaneDocuments, TextSaved, TextSaveRequest } from "../../shared/files.ts";
 import { parseSystemReport } from "./systemReport.ts";
 import { machinePath, type BridgeHealth, type HerdrCoreFacts, type HerdrIdentity, type HerdrRuntimeFacts, type Machine, type MachineRoster, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
@@ -233,6 +233,29 @@ export function fetchMovePlan(): Promise<MovePlanResponse> {
 export async function startMove(revision: string): Promise<void> {
   const url = "/api/runtime/move";
   const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ revision } satisfies MoveStartRequest) });
+  if (!response.ok) throw await errorFrom(url, response);
+}
+
+/** While the move waits: Ctrl+C to a shell pane running the command shown, or once the wait offers it, `force` (SIGTERM to its command). */
+export async function stopMovePane(paneId: string, command: string | null, force = false): Promise<void> {
+  const url = "/api/runtime/move/stop";
+  const body: MoveStopRequest = { pane_id: paneId, ...(command === null ? {} : { command }), ...(force ? { force: true } : {}) };
+  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify(body) });
+  if (!response.ok) throw await errorFrom(url, response);
+}
+
+/** End all and move now, asked: the running commands it would end, under a token for exactly that list. */
+export async function prepareStopAll(): Promise<MoveStopAllOffer> {
+  const url = "/api/runtime/move/stop-all";
+  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({} satisfies MoveStopAllRequest) });
+  if (!response.ok) throw await errorFrom(url, response);
+  return (await response.json()) as MoveStopAllOffer;
+}
+
+/** End all and move now, confirmed: refused when the panes changed since the offer, so the person is asked again. */
+export async function confirmStopAll(token: string): Promise<void> {
+  const url = "/api/runtime/move/stop-all";
+  const response = await apiFetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify({ token } satisfies MoveStopAllRequest) });
   if (!response.ok) throw await errorFrom(url, response);
 }
 
