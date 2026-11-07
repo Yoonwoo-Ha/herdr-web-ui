@@ -227,6 +227,16 @@ try {
         assert.deepEqual(zwj.wide, ["\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"], "core: the ZWJ family is one wide cell");
         assert.ok(Math.abs(zwj.column - 5) < 0.1, `core: the text after a ZWJ family starts at xterm's column 5 (${zwj.column})`);
 
+        // an arrow key moves the cursor and changes no row: the drawn cursor follows it (#3266)
+        const cursorLeft = () => page.evaluate(() => parseFloat(document.querySelector<HTMLElement>(".pane-frame.is-current .ghostty-cursor")!.style.left));
+        await page.evaluate(() => window.ghosttyFixture.print("ab"));
+        await page.waitForFunction(() => parseFloat(document.querySelector<HTMLElement>(".pane-frame.is-current .ghostty-cursor")!.style.left) > 0);
+        const afterText = await cursorLeft();
+        await page.evaluate(() => window.ghosttyFixture.print("\x1b[D"));
+        await page.waitForFunction((left) => parseFloat(document.querySelector<HTMLElement>(".pane-frame.is-current .ghostty-cursor")!.style.left) < left, afterText);
+        assert.ok(Math.abs(await cursorLeft() - afterText / 2) < 0.5, `core: a Left arrow moves the drawn cursor back one cell (${afterText} -> ${await cursorLeft()})`);
+        await print(page, "\r\n", "ARROWS");
+
         // glyphs fit their cells as xterm's rows fit them (terminalGlyphs.ts): an underlined Hangul syllable fills its two
         // cells and keeps its underline, and a Nerd Font icon stays in its one cell, so the text after both keeps its column
         await print(page, "\x1b[4m\uD55C\x1b[24m\ue0a0Q|\ue0b0\r\nPLAIN-Q\r\n", "GLYPHS");
