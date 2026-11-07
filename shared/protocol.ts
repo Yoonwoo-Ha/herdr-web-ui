@@ -562,6 +562,18 @@ export interface RelayStatus {
    * listened on now (none while the relay is off). Absent from a server without them.
    */
   readonly direct?: { readonly on: boolean; readonly carriers: readonly string[] };
+  /**
+   * This PC's relay pass, on Ovis's own relays only (docs/relay.md, "Relay pass"): `state` is where
+   * getting one stands (server/relay/pass.ts), `relay` what the relay last said of it (null before it
+   * said anything, or on a relay that asks for none) and `enforce_at` from when it will be needed.
+   */
+  readonly pass?: {
+    readonly state: "ok" | "no_account" | "not_listed" | "limit" | "unavailable";
+    readonly relay: "ok" | "missing" | "invalid" | "expired" | null;
+    readonly enforce_at: string | null;
+    /** the relay refused this PC for its pass (4402) and it has not been let in since */
+    readonly refused: boolean;
+  };
 }
 
 /** POST /api/devices/pair's answer to a request that accepts JSON: the device's own credential. */

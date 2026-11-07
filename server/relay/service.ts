@@ -18,6 +18,11 @@ import { RelayLink } from "./link.ts";
 import type { RelayLinkOptions } from "./link.ts";
 import { RelayPairingApprovals } from "./pairing-approvals.ts";
 import { RelayPairCodes } from "./pair-code.ts";
+import { RelayPassKeeper, type RelayPassClock } from "./pass.ts";
+import type { RelayPassNotice } from "./link.ts";
+
+/** An account id as the account service gives it (docs/account.md, Records). */
+const ACCOUNT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export interface RelayServiceOptions {
   readonly stateDir: string;
@@ -46,6 +51,12 @@ export interface RelayServiceOptions {
    * turned off: the real entrypoint passes `{}`; without it (tests) nothing listens on the network.
    */
   readonly direct?: Pick<DirectCarrierOptions, "addresses" | "peerAllowed" | "preferredPort" | "refreshMs" | "advertise" | "tailnetIp" | "tailnetAddresses">;
+  /** The account service a relay pass comes from (server/relay/pass.ts), or why none can be used; none is asked without it. */
+  readonly accountService?: string | Error;
+  readonly accountFetch?: (request: Request) => Promise<Response>;
+  readonly passClock?: RelayPassClock;
+  /** The relays that count as Ovis's own, the only ones a pass goes to: GLOBAL_RELAY and REGIONAL_RELAYS unless tests name theirs. */
+  readonly ovisRelays?: readonly string[];
 }
 
 /** A regional relay is advertised only when it answers in at most this share of the global one's round trip. */
@@ -111,6 +122,10 @@ export class RelayService {
   /** Phones that compared digits with this PC and wait for the owner's approval. */
   readonly approvals = new RelayPairingApprovals();
   private pairCodes: RelayPairCodes | undefined;
+  /** This PC's relay pass, kept while the relay is on and is one of Ovis's. */
+  private passKeeper: RelayPassKeeper | undefined;
+  private passNotice: RelayPassNotice | null = null;
+  private passRefused = false;
   private directCarrier: DirectCarrier | undefined;
   /** the current direct carrier's first bind */
   private directStarting: Promise<void> = Promise.resolve();
@@ -174,7 +189,64 @@ export class RelayService {
     return { phase: this.phase, relay: this.advertised, app: this.app,
       sessions: (this.link?.sessions ?? 0) + (this.regionalLink?.sessions ?? 0) + (this.directCarrier?.sessions ?? 0),
       blocked: this.blocked, error: this.error,
-      ...(this.options.direct ? { direct: { on: this.directEnabled(), carriers: this.directCarrier?.advertised(true) ?? [] } } : {}) };
+      ...(this.options.direct ? { direct: { on: this.directEnabled(), carriers: this.directCarrier?.advertised(true) ?? [] } } : {}),
+      ...(this.passKeeper ? { pass: { state: this.passKeeper.state, relay: this.passNotice?.state ?? null, enforce_at: this.passNotice?.enforce_at ?? null, refused: this.passRefused } } : {}) };
+  }
+
+  private relayAccountPath(): string { return join(this.options.stateDir, "relay", "account.json"); }
+
+  /** The account a relay pass is asked for under: this PC's members' account, else the one its signed-in owner named. */
+  private passAccount(): string | null {
+    const members = this.services?.devices.account() ?? null;
+    if (members !== null) return members;
+    try {
+      const saved: unknown = JSON.parse(readFileSync(this.relayAccountPath(), "utf8"));
+      return isJsonObject(saved) && typeof saved.account === "string" && ACCOUNT_ID.test(saved.account) ? saved.account : null;
+    } catch { return null; }
+  }
+
+  /** The account a signed-in owner listed this PC under: a relay pass is asked for under it while the PC has no members. */
+  setRelayAccount(account: string): boolean {
+    if (!ACCOUNT_ID.test(account)) return false;
+    writePrivateState(this.relayAccountPath(), { account });
+    void this.passKeeper?.refresh();
+    return true;
+  }
+
+  /** Whether `relay` is one of Ovis's own: the only relays a pass goes to. */
+  private isOvisRelay(relay: string | null): boolean {
+    return relay !== null && (this.options.ovisRelays ?? [GLOBAL_RELAY, ...REGIONAL_RELAYS]).includes(relay);
+  }
+
+  private startPass(identity: RelayIdentity): void {
+    const service = this.options.accountService;
+    // a pass goes only to Ovis's own relays, and only from an account service that can be used
+    if (service === undefined || !this.isOvisRelay(this.relay)) return;
+    this.passKeeper = new RelayPassKeeper({
+      stateDir: this.options.stateDir, identity: () => this.identity ?? identity, account: () => this.passAccount(), service,
+      ...(this.options.accountFetch ? { fetch: this.options.accountFetch } : {}), ...(this.options.passClock ? { clock: this.options.passClock } : {}),
+      onPass: (pass) => {
+        // the relay takes a renewal on the open control socket without a word: a notice that the pass was missing is over
+        if (this.passNotice !== null && this.passNotice.state !== "ok") this.passNotice = { state: "ok", enforce_at: this.passNotice.enforce_at };
+        this.link?.renewPass(pass); if (this.isOvisRelay(this.regionalRelay)) this.regionalLink?.renewPass(pass); },
+    });
+    this.passKeeper.start();
+  }
+
+  /** What every link of this service sends and hears of the relay pass. */
+  private passOptions(relay: string, global: boolean): Pick<RelayLinkOptions, "pass" | "onPassNotice" | "onPassRefused"> {
+    // a relay that is not Ovis's (a regional one named otherwise) never gets the pass
+    if (!this.isOvisRelay(relay)) return {};
+    return {
+      pass: () => this.passKeeper?.current() ?? null,
+      onPassNotice: (notice) => {
+        // the status is the global link's, so only its relay's word is shown
+        if (global) { this.passNotice = notice; this.passRefused = false; }
+        // the relay does not take the pass this PC sent (in grace it still lets the PC in): ask for a new one
+        if (notice?.state === "invalid" || notice?.state === "expired") void this.passKeeper?.rejected();
+      },
+      onPassRefused: () => { this.passRefused = true; void this.passKeeper?.rejected(); },
+    };
   }
 
   private directPath(): string { return join(this.options.stateDir, "relay", "direct.json"); }
@@ -258,7 +330,7 @@ export class RelayService {
       // An unsaved choice only means measuring again at the next start; the link opens either way.
       if (choice.save) try { writePrivateState(this.regionPath(), { relay }); } catch { /* measured again next start */ }
       const regional = new RelayLink({
-        relay, identity, services, port: this.port,
+        relay, identity, services, port: this.port, ...this.passOptions(relay, false),
         connect: this.options.connect, clock: this.options.clock, random: this.options.random, serverVersion: this.options.serverVersion,
         relayHints: () => this.relayHints(), directCarriers: (tailnet) => this.directCarriers(tailnet), sessions: this.signedIn,
         onState: (phase) => { if (this.regionalLink === regional) this.regionalPhase = phase; },
@@ -309,8 +381,9 @@ export class RelayService {
       this.blocked = null;
       this.error = null;
       this.phase = "connecting";
+      this.startPass(this.identity);
       const link = new RelayLink({
-        relay: this.relay, identity: this.identity, services, port: this.port,
+        relay: this.relay, identity: this.identity, services, port: this.port, ...this.passOptions(this.relay, true),
         connect: this.options.connect, clock: this.options.clock, random: this.options.random, serverVersion: this.options.serverVersion,
         relayHints: () => this.relayHints(), directCarriers: (tailnet) => this.directCarriers(tailnet), sessions: this.signedIn,
         onState: (phase, error) => { if (this.link === link) { this.phase = phase; this.error = error; } },
@@ -337,6 +410,10 @@ export class RelayService {
     this.measuring = undefined;
     this.phase = "off";
     this.error = null;
+    this.passKeeper?.stop();
+    this.passKeeper = undefined;
+    this.passNotice = null;
+    this.passRefused = false;
     // a code names this PC's key: it goes with the link
     this.pairCodes?.cancel();
     this.ending = Promise.all([this.ending, link?.stop(), regional?.stop(), this.stopDirect()]).then(() => undefined);

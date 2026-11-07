@@ -232,12 +232,22 @@ async function listThisPc(api: Api, service: AccountService, now: () => number, 
   if (listed === undefined || now() - Date.parse(listed.added_at) < NEW_PC_MS - RELIST_MS) {
     await service.putPc(listing.serverId, listing.entry);
     unlisted.listing = null;
+    await nameRelayAccount(api, service);
     return listing;
   }
   unlisted.listing = listing;
   await service.deletePc(offer.server_id);
   if (await putListing(service, listing)) unlisted.listing = null;
   return listing;
+}
+
+/**
+ * Tells this PC the account it is listed under, which its relay pass is asked under (docs/relay.md,
+ * "Relay pass"). An Ovis from before relay passes has no such route; this runs again with every relist.
+ */
+async function nameRelayAccount(api: Api, service: AccountService): Promise<void> {
+  const session = await service.session();
+  if (session) await api("POST", "/api/account/relay-account", { body: { account: session.account } }).catch(() => undefined);
 }
 
 /** Puts the entry back; false when the service did not take it (it stays pending). */

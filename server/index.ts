@@ -43,7 +43,7 @@ import { connectUpdater, type UpdateService } from "./update-api.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
 import { PortalService } from "./portal.ts";
 import { RelayService } from "./relay/service.ts";
-import { AccountMailbox, accountServiceUrl } from "./account/mailbox.ts";
+import { AccountMailbox, accountServiceUrl, passAccountService } from "./account/mailbox.ts";
 import { AccountHolds } from "./account/holds.ts";
 import { AccountIntroductions } from "./account/introductions.ts";
 import { Telemetry } from "./telemetry.ts";
@@ -277,7 +277,7 @@ export function createServer(
   /** paired devices (server/devices.ts) and the PC's Tailscale login: the two ways in besides the token and this PC itself */
   // resolved once: a merge can give the old dir files of its own, after which resolving again could name the other dir
   const stateDir = options.stateDir ?? defaultStateDir();
-  const ovisRelay = options.relay ?? new RelayService({ stateDir });
+  const ovisRelay = options.relay ?? new RelayService({ stateDir, accountService: passAccountService(options.accountService?.url), ...(options.accountService?.fetch ? { accountFetch: options.accountService.fetch } : {}) });
   const merge = options.siblingStateDir ? mergeSiblingState(stateDir, options.siblingStateDir) : null;
   let accountBlocked: string | null = null;
   if (options.siblingStateDir) {
@@ -608,7 +608,7 @@ if (import.meta.main) {
   const portal = new PortalService({ stateDir });
   // the direct carrier on this PC's private and Tailscale addresses, which the phone apps' OvisDirect plugin opens (docs/relay.md)
   const tailnet = new TailnetIdentitySource();
-  const relay = new RelayService({ stateDir, direct: { tailnetIp: () => tailnet.identity().tailnetIp } });
+  const relay = new RelayService({ stateDir, direct: { tailnetIp: () => tailnet.identity().tailnetIp }, accountService: passAccountService() });
   const lanConfig = lanHttpsConfig(process.env);
   if (lanConfig !== null && "error" in lanConfig) console.error(`LAN HTTPS is off: ${lanConfig.error}.`);
   let instance: ReturnType<typeof createServer>;

@@ -219,6 +219,13 @@ waiting there is counted, and adds `fresh`: true only when that pull read the wh
 without an error, for the PC's current account and relay identity. A PC whose account service is
 turned off (`off`) has no mailbox and answers `fresh: true`; one whose address is unusable does not.
 
+`POST /api/account/relay-account` `{ "account" }`: the account this PC asks its relay pass under while it
+has no members ([relay.md](relay.md#relay-pass)): over a direct connection with drive access (the PC's own
+screen, after it listed the PC), or through the relay only from a drive account member of that same
+account (`account_required` otherwise). Kept in `relay/account.json`; a
+name that is not an account id answers 400 `invalid_account`. Answers 204. Naming an account grants
+nothing: the service gives a pass only when that account lists the PC.
+
 `POST /api/account/link` `{ "record": <link> }`: the request's own device must be the record's
 `device_id`, with `old_key` its current key, `server_id` this PC's. The row's key becomes `key` and it
 becomes a member, in one write. `old_key` equal to `key` makes a row whose key already is the account
