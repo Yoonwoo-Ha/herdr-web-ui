@@ -113,18 +113,22 @@ describe("saved theme migration", () => {
     expect(sanitizeSettings({ terminalMirrorWrap: "yes" }).terminalMirrorWrap).toBeNull();
   });
 
-  it("shows the sidebar filter until it is turned off, kept in its own key, out of an old tab's whole-record save", () => {
-    expect(loadSettings().sidebarFilter).toBe(true);
-    saveSettings(sanitizeSettings({ sidebarFilter: false }));
+  it("leaves the sidebar filter out until it is turned on, kept in its own key, out of an old tab's whole-record save", () => {
+    expect(loadSettings().sidebarFilter).toBe(false);
+    saveSettings(sanitizeSettings({ sidebarFilter: true }));
     expect(JSON.parse(records.get(main) ?? "{}")).not.toHaveProperty("sidebarFilter");
     oldSaveSettings({ ...readOld(), terminalFontSize: 18 });
-    expect(loadSettings().sidebarFilter).toBe(false);
+    expect(loadSettings().sidebarFilter).toBe(true);
     expect(loadSettings().terminalFontSize).toBe(18);
-    saveSettings({ ...loadSettings(), sidebarFilter: true });
-    expect(loadSettings().sidebarFilter).toBe(true);
-    expect(sanitizeSettings({ sidebarFilter: "off" }).sidebarFilter).toBe(true);
-    records.set("ovis:sidebar-filter", "not json");
-    expect(loadSettings().sidebarFilter).toBe(true);
+    saveSettings({ ...loadSettings(), sidebarFilter: false });
+    expect(loadSettings().sidebarFilter).toBe(false);
+    expect(sanitizeSettings({ sidebarFilter: "on" }).sidebarFilter).toBe(false);
+    records.set("ovis:sidebar-filter-shown", "not json");
+    expect(loadSettings().sidebarFilter).toBe(false);
+    // the earlier key held the old default (on) on every device that saved any setting: it is not read
+    records.delete("ovis:sidebar-filter-shown");
+    records.set("ovis:sidebar-filter", "true");
+    expect(loadSettings().sidebarFilter).toBe(false);
   });
 
   it("keeps the PC load choice in its own key, out of an old tab's whole-record save, and unchosen until chosen", () => {

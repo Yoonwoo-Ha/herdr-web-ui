@@ -1265,8 +1265,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   drawer closing. Escape in a field with words clears them and leaves the drawer open; the empty
   field's Escape is the drawer's. Nothing focuses the field by itself, and nothing typed elsewhere reaches it, so a
   terminal keeps every keystroke; the command palette's **Filter workspaces and agents** opens the drawer or the
-  sidebar and focuses it. Settings → Appearance → **Sidebar filter** (on by default, this device's choice, kept in its own
-  `ovis:sidebar-filter` key as the PC fold is) leaves the row out, so the lists start at the top, as the Codex and
+  sidebar and focuses it. Settings → Appearance → **Sidebar filter** (off by default, this device's choice, kept in its own
+  `ovis:sidebar-filter-shown` key, a new one: the earlier `ovis:sidebar-filter` held the old default on every device that saved any setting, so it is not read) leaves the row out, so the lists start at the top, as the Codex and
   Claude apps keep search in the palette alone; that palette entry then draws the row, focused, for the filter's time.
   It stays while it holds words, and goes on its **Close filter** (its X while it is empty), Escape in it empty (that
   Escape goes no further), leaving the sidebar while it is empty: a press outside it, or the keyboard's focus going
@@ -1328,15 +1328,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   (`ovis:agents-collapsed`) and wins over that default on the next launch; a filter's fold does
   not persist. Until the PCs are in and each connected PC's panes have come, an empty list says
   **Loading agents…**, never "No agents running".
-- The resize line needs a fixed target to fold PCs to, so their roster gets a **PCs** head, also
-  for a lone Host. It folds only this section, not its Agents, and keeps the fold on this device
-  (`ovis:pcs-collapsed`); under a filter the fold is temporary. Its rows stay mounted while hidden
-  so their branch labels remain searchable. This head comes out of the PCs' allocation; it does
-  not shrink Agents' default allocation. The **PCs** and **Agents** heads are drawn alike
-  (`.sidebar-section-label`): the fold's caret in the leading cell, always in view, open or
-  folded, so a head reads as a fold at rest; the dim words; and in the trailing cell how many PCs
-  this device shows or how many agents run, open or folded, as VS Code's view heads count theirs. The PCs count says its words (**2 PCs shown**) to a screen
-  reader and in its tooltip, never a bare number. The first PC starts right under the head.
+- The PCs' list has no head of its own: it starts right under the logo, as the Codex and Claude
+  apps' sidebars start with their threads, and with two PCs or more each PC's own header names it.
+  So the PCs never fold as a section (each PC still folds by its header); the resize line stops at
+  their minimum instead (below). The **Agents** head (`.sidebar-section-label`) keeps the fold's
+  caret in the leading cell, always in view, open or folded, so it reads as a fold at rest; the dim
+  words; and in the trailing cell how many agents run, open or folded, as VS Code's view heads count theirs.
 - Between the lists is a resize line (`SidebarSplit.tsx`, `role="separator"`): a `--border`
   hairline in its own hit area, `--border-strong` on hover, `--accent` while held or focused.
   A grip shows on hover and always under a finger. Dragging gives the upper section its chosen
@@ -1344,10 +1341,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   The default layout and saved-split clamp share measured minimums: both sections keep a heading
   and a row when they fit. In a very short window they share the available room instead, with
   overflow clipped inside each section so neither its controls nor its rows cover the divider
-  or footer. A drag-to-fold preview can still shrink either section to its heading.
-  Double-click or Enter resets to today's default split. ↑/↓ moves the line a row; Home folds
-  the upper section and End the lower. Dragging a section below about one row snaps it to its
-  heading and dims it; release folds it with the same fold as its caret. Reopening restores its
+  or footer. A drag-to-fold preview can still shrink Agents to its heading.
+  Double-click or Enter resets to today's default split. ↑/↓ moves the line a row; Home and End fold
+  Agents on its side, and on the PCs' side take the PCs to their minimum. Dragging Agents below about one row snaps it to its
+  heading and dims it; release folds it with the same fold as its caret. The PCs, with no heading, stop at a row and never snap. Reopening restores its
   saved height. A drag opens a folded section first. The reset follows [Zed's Agent panel](https://zed.dev/docs/reference/all-settings#flexible-sizing),
   whose resize handle restores the default proportion on double-click. The fold follows VS Code's
   resizable sidebar views and macOS split views (Mail, Finder); Ovis's width divider is the local
@@ -1387,15 +1384,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   its own `ovis:hidden-pcs` key, like the fold): it leaves the PC groups, the Agents list and the
   command palette, stays connected, and a link or an alert to its pane still opens that pane. The
   list shows when there are two PCs or more, the Host first; the last PC shown cannot be hidden, and
-  hiding the PC the selection is on moves it to the Host, else the first PC shown. The PCs head says
-  how many are hidden here, after its words: a quiet `--text-dim` pill (`.sidebar-hidden-pcs`), an eye
-  crossed out and the count, named in words (**1 PC hidden on this device**), a touch target on a phone.
-  It opens a menu, a sheet on a phone, headed **Hidden on this device** with a note that a hidden PC
-  stays connected, that shows each PC again in place (**Show Work PC**), in the roster's order, or goes
-  to that Settings group (**Choose PCs in Settings…**). Showing one follows the switch's rules and moves
-  no selection; showing the last takes the pill away, and the focus it held goes to the PCs head's fold,
-  not the page; so does the focus of an open menu whose last PC the roster or another tab takes away.
-  VS Code's view heads list the views hidden there to show again the same way. The banner of
+  hiding the PC the selection is on moves it to the Host, else the first PC shown. The sidebar says
+  nothing of the PCs hidden here (it has no PCs head to say it in): that Settings group lists them, switched off,
+  and shows one again in place. Showing one moves no selection. The banner of
   a PC that needs setup or a bridge update still shows for a hidden PC: it asks for an action. herdr's
   TUI shows one session at a time and Orca hides other clients' workspaces; Ovis shows every PC of
   the roster, so the choice is per PC and per device, not a sidebar switch.
@@ -1711,8 +1702,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   for a field (up to 100 characters, its text selected): Enter saves, and Escape or a click away keeps the old name;
   Enter and Escape give the focus back to the manage button, and on a phone that Escape leaves the drawer out. Remove PC… asks in the dialog a workspace's Close asks
   in (`ConfirmDialog`), which says only the registration goes and shows a failure in place. Hide on this device
-  follows Show in sidebar's rules: the last PC shown has no such item, and the focus goes to the line under the PCs
-  that says how many are hidden. A PC herdr manages keeps herdr's limits: no Rename…, Disconnect or Remove PC…, and
+  follows Show in sidebar's rules: the last PC shown has no such item, and the focus goes to the PC list's first row
+  that takes it, not the page. A PC herdr manages keeps herdr's limits: no Rename…, Disconnect or Remove PC…, and
   the head says to do those in herdr. A machine of herdr-core (`kind: "hc"`) offers only Hide on this device, and its
   head says to add, rename or remove it with `hc machine` or in the Herdr app. A PC added through the relay has no Reconnect / setup or Update bridge…, and its
   Remove PC… dialog says to revoke its access under Phone & devices on that PC too. Reconnect / setup is left out while the PC's own notice offers setup or

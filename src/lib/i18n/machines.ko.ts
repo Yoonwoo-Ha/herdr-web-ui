@@ -6,8 +6,6 @@
  */
 export const MACHINES_KO: Record<string, string> = {
   "PCs": "PC",
-  "1 PC shown": "표시된 PC 1대",
-  "{n} PCs shown": "표시된 PC {n}대",
   "1 agent running": "실행 중인 에이전트 1개",
   "{n} agents running": "실행 중인 에이전트 {n}개",
   "Keep this dialog open until the PC connects.": "PC가 연결될 때까지 이 대화 상자를 열어 두세요.",
@@ -102,12 +100,6 @@ export const MACHINES_KO: Record<string, string> = {
   "Settings (⌘⇧,)": "설정 (⌘⇧,)",
   "The computer this app runs on": "이 앱이 실행되는 컴퓨터",
   "Host": "호스트",
-  "1 PC hidden on this device": "이 기기에서 숨긴 PC 1대",
-  "{n} PCs hidden on this device": "이 기기에서 숨긴 PC {n}대",
-  "Hidden on this device": "이 기기에서 숨김",
-  "A hidden PC stays connected. A link or an alert still opens its panes.": "숨긴 PC는 연결된 채로 유지됩니다. 링크나 알림으로 해당 창을 계속 열 수 있습니다.",
-  "Show {name} in the sidebar": "사이드바에 {name} 표시",
-  "Choose PCs in Settings…": "설정에서 PC 선택…",
   "Clear filter": "필터 지우기",
   "Close filter": "필터 닫기",
   "No workspaces or agents match": "일치하는 워크스페이스나 에이전트가 없습니다",

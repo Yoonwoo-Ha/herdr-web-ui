@@ -1,6 +1,7 @@
 /**
  * The PCs/Agents height divider on the real demo, never a live herdr session: default, drag,
- * persistence, reset, keyboard, snap-fold, scrolling, a short window and both section orders.
+ * persistence, reset, keyboard, snap-fold (Agents only: the PCs have no head to fold to), scrolling, a short
+ * window and both section orders.
  * UI_EVIDENCE_DIR saves synthetic screenshots at 390 and 1280 in light and dark.
  */
 import assert from "node:assert/strict";
@@ -23,9 +24,9 @@ const metrics = (page: Page) => page.evaluate(() => {
   const grouped = document.querySelector(".sidebar-shell")!.classList.contains("is-agents-first");
   return { pcs, agents, top: grouped ? agents : pcs, bottom: grouped ? pcs : agents,
     shell: box(".sidebar-shell"), footer: box(".sidebar-footer"), line: box(".sidebar-split"),
-    topHead: box(grouped ? ".agent-section-toggle" : ".sidebar-section-head").height + 8,
-    bottomHead: box(grouped ? ".sidebar-section-head" : ".agent-section-toggle").height + 8,
-    pcsFolded: document.querySelector(".pcs-sidebar .sidebar-section-toggle")!.getAttribute("aria-expanded") === "false",
+    // the PCs have no head: their side of the line stops at a row, and never folds
+    topHead: grouped ? box(".agent-section-toggle").height + 8 : 0,
+    bottomHead: grouped ? 0 : box(".agent-section-toggle").height + 8,
     agentsFolded: document.querySelector(".agent-section-toggle")!.getAttribute("aria-expanded") === "false",
   };
 });
@@ -140,13 +141,22 @@ try {
           await page.keyboard.press("ArrowDown");
           await page.waitForFunction(({ key, stored }) => localStorage.getItem(key) !== stored, { key, stored });
           assert.ok((await metrics(page)).top.height > dragged.top.height, `${label} ArrowDown grows the upper section`);
-          await page.keyboard.press("Home");
-          await page.waitForFunction((grouped) => document.querySelector(grouped ? ".agents-sidebar" : ".pcs-sidebar")!.classList.contains("is-collapsed"), grouped);
+          // Home and End fold Agents on its side; on the PCs' side they take the PCs to their minimum instead
+          const foldsAgents = async (press: "Home" | "End") => {
+            const before = await page.evaluate((key) => localStorage.getItem(key), key);
+            await page.keyboard.press(press);
+            if ((press === "Home") === grouped) await page.waitForFunction(() => document.querySelector(".agents-sidebar")!.classList.contains("is-collapsed"));
+            else {
+              await page.waitForFunction(({ key, before }) => localStorage.getItem(key) !== before, { key, before });
+              assert.equal(await page.locator(".pcs-sidebar.is-collapsed, .agents-sidebar.is-collapsed").count(), 0, `${label} ${press} on the PCs' side folds nothing`);
+              assert.ok(await page.locator(".machine-list .workspace-group").first().isVisible(), `${label} ${press} keeps a PC row in view`);
+            }
+          };
+          await foldsAgents("Home");
           await footerVisible();
           await page.keyboard.press("ArrowDown");
           await page.waitForFunction(() => !document.querySelector(".pcs-sidebar.is-collapsed, .agents-sidebar.is-collapsed"));
-          await page.keyboard.press("End");
-          await page.waitForFunction((grouped) => document.querySelector(grouped ? ".pcs-sidebar" : ".agents-sidebar")!.classList.contains("is-collapsed"), grouped);
+          await foldsAgents("End");
           await footerVisible();
           await page.keyboard.press("Enter");
           await page.waitForFunction((key) => localStorage.getItem(key) === null && !document.querySelector(".pcs-sidebar.is-collapsed, .agents-sidebar.is-collapsed"), key);
@@ -162,21 +172,26 @@ try {
             assert.equal(grip.action, "none");
             assert.notEqual(await page.locator(".machine-list").evaluate((list) => getComputedStyle(list).touchAction), "none", `${label} only the divider suppresses touch scrolling`);
           }
-          // Drag into each snap zone: both orders fold the section on that side, not a fixed name.
+          // Drag into each snap zone: Agents' side snaps to its heading and folds; the PCs' side has no heading, so
+          // the line stops at their minimum and nothing folds
           let m = await metrics(page);
-          await drag(m.top.top + m.topHead / 2, async () => {
+          await drag(m.top.top + (grouped ? m.topHead / 2 : 2), async () => {
             const preview = await metrics(page);
-            assert.ok(Math.abs(preview.top.height - preview.topHead) <= 1, `${label} the upper snap preview reaches its heading before release`);
+            if (grouped) assert.ok(Math.abs(preview.top.height - preview.topHead) <= 1, `${label} the upper snap preview reaches its heading before release`);
+            else assert.equal(await page.locator(".sidebar-split.is-snapping, .will-fold").count(), 0, `${label} no snap preview over the PCs`);
           });
-          await page.waitForFunction((grouped) => document.querySelector(grouped ? ".agents-sidebar" : ".pcs-sidebar")!.classList.contains("is-collapsed"), grouped);
+          if (grouped) await page.waitForFunction(() => document.querySelector(".agents-sidebar")!.classList.contains("is-collapsed"));
+          else assert.equal(await page.locator(".pcs-sidebar.is-collapsed, .agents-sidebar.is-collapsed").count(), 0, `${label} a drag to the PCs' top folds nothing`);
           await line.focus(); await page.keyboard.press("Enter");
           await page.waitForFunction(() => !document.querySelector(".pcs-sidebar.is-collapsed, .agents-sidebar.is-collapsed"));
           m = await metrics(page);
-          await drag(m.footer.top - m.bottomHead / 2, async () => {
+          await drag(m.footer.top - (grouped ? 2 : m.bottomHead / 2), async () => {
             const preview = await metrics(page);
-            assert.ok(Math.abs(preview.bottom.height - preview.bottomHead) <= 1, `${label} the lower snap preview reaches its heading before release`);
+            if (!grouped) assert.ok(Math.abs(preview.bottom.height - preview.bottomHead) <= 1, `${label} the lower snap preview reaches its heading before release`);
+            else assert.equal(await page.locator(".sidebar-split.is-snapping, .will-fold").count(), 0, `${label} no snap preview over the PCs`);
           });
-          await page.waitForFunction((grouped) => document.querySelector(grouped ? ".pcs-sidebar" : ".agents-sidebar")!.classList.contains("is-collapsed"), grouped);
+          if (!grouped) await page.waitForFunction(() => document.querySelector(".agents-sidebar")!.classList.contains("is-collapsed"));
+          else assert.equal(await page.locator(".pcs-sidebar.is-collapsed, .agents-sidebar.is-collapsed").count(), 0, `${label} a drag to the PCs' foot folds nothing`);
           await line.focus(); await page.keyboard.press("Enter");
           await page.waitForFunction(() => !document.querySelector(".pcs-sidebar.is-collapsed, .agents-sidebar.is-collapsed"));
           // A caret can override the divider's last fold request. Reordering must not replay that old request.

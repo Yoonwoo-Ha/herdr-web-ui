@@ -81,8 +81,7 @@
   .sidebar-split-grip { opacity: 1; }
 }
 
-/* the section a drag is about to fold dims as it would go */
-.pcs-sidebar.will-fold,
+/* the section a drag is about to fold dims as it would go (Agents: the PCs have no head to fold to) */
 .agents-sidebar.will-fold { opacity: 0.4; }
 
 .pcs-sidebar,
@@ -96,15 +95,15 @@
 .sidebar-shell.is-splitting > .agents-sidebar { min-height: 0; }
 
 /* A kept split, with both lists open, gives the upper list its height (clamped to the window, SidebarSplit.tsx)
-   and the lower one the rest; so does a drag in progress. Folded or empty, a section takes its head alone (Sidebar.css). */
-.sidebar-shell.has-split:not(:has(> .pcs-sidebar.is-collapsed)):not(:has(> .agents-sidebar:is(.is-collapsed, .is-empty))),
+   and the lower one the rest; so does a drag in progress. Folded or empty, Agents takes its head alone (Sidebar.css). */
+.sidebar-shell.has-split:not(:has(> .agents-sidebar:is(.is-collapsed, .is-empty))),
 .sidebar-shell.is-splitting {
   --pcs-flex: 0 0 var(--split-top);
   --agents-flex: 1 1 0;
   --section-max: none;
 }
 
-.sidebar-shell.is-agents-first.has-split:not(:has(> .pcs-sidebar.is-collapsed)):not(:has(> .agents-sidebar:is(.is-collapsed, .is-empty))),
+.sidebar-shell.is-agents-first.has-split:not(:has(> .agents-sidebar:is(.is-collapsed, .is-empty))),
 .sidebar-shell.is-agents-first.is-splitting {
   --pcs-flex: 1 1 0;
   --agents-flex: 0 0 var(--split-top);

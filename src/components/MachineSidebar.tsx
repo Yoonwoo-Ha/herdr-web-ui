@@ -24,12 +24,11 @@ import "./Machines.css";
 import "./SidebarSections.css";
 import { useT } from "../lib/i18n.ts";
 import { useSettings } from "../lib/settings.ts";
-import { requestSettingsPage } from "../lib/paletteSettings.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { machineErrorText, saysHerdrAway } from "../lib/userError.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
-import { canHideMachine, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
+import { canHideMachine, HIDDEN_MACHINES_MAX, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
 
 /**
  * Which list of PCs this page goes back to, when it shows one PC of a phone's list: the phone app's
@@ -53,8 +52,8 @@ export const STATE_WORD: Readonly<Record<MachineState, string>> = {
 };
 
 /** `activity`: App's live counters per PC and finishes looked at here; both sidebar lists draw from it.
- *  `machines` are the PCs this device shows; `hiddenCount` says how many it keeps out (Settings → Devices and PCs) */
-interface Props { machines: Machine[]; hiddenCount?: number; /** every PC of the roster, the hidden ones too: Manage PC's Hide on this device keeps those hidden, and the PCs head's hidden menu names them (lib/hiddenMachines.ts) */ allMachines?: Machine[]; selectedMachineId: string; selectedPaneId: string | null; activity: SidebarActivity; actions: AppActions; watching?: boolean; /** whether the Herdr app's window owns a PC's workspaces (lib/machineContext.tsx AppLayoutContext); none without it */ appLayout?: (machineId: string) => LayoutOffer; /** a phone's drawer is out: closing it clears the filter */ drawerOpen?: boolean; /** counts the command palette's Filter workspaces and agents: each new count shows the field and focuses it */ filterRequest?: number;/** each open, connected PC shows its CPU, memory and disk (lib/settings.ts pcLoadOn) */ pcLoad?: boolean; /** the sidebar is on screen (a wide window's that is not hidden, a phone's open drawer): the PC load is asked for only then */ shown?: boolean; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void; /** a sign-in tab the usage popover opened */ onUsageLogin(paneId: string): void }
+ *  `machines` are the PCs this device shows (Settings → Devices and PCs chooses them) */
+interface Props { machines: Machine[]; /** every PC of the roster, the hidden ones too: Manage PC's Hide on this device keeps those hidden (lib/hiddenMachines.ts) */ allMachines?: Machine[]; selectedMachineId: string; selectedPaneId: string | null; activity: SidebarActivity; actions: AppActions; watching?: boolean; /** whether the Herdr app's window owns a PC's workspaces (lib/machineContext.tsx AppLayoutContext); none without it */ appLayout?: (machineId: string) => LayoutOffer; /** a phone's drawer is out: closing it clears the filter */ drawerOpen?: boolean; /** counts the command palette's Filter workspaces and agents: each new count shows the field and focuses it */ filterRequest?: number;/** each open, connected PC shows its CPU, memory and disk (lib/settings.ts pcLoadOn) */ pcLoad?: boolean; /** the sidebar is on screen (a wide window's that is not hidden, a phone's open drawer): the PC load is asked for only then */ shown?: boolean; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void; /** a sign-in tab the usage popover opened */ onUsageLogin(paneId: string): void }
 export function MachineSidebar(props: Props) {
   const t = useT();
   const activity = props.activity;
@@ -124,8 +123,9 @@ export function MachineSidebar(props: Props) {
       const active = document.activeElement;
       if (active !== null && active !== document.body) return;
       const rows = sidebar?.querySelectorAll<HTMLElement>('.machine-list :is(button:not([disabled]), [role="button"][tabindex="0"])') ?? [];
-      const pcsToggle = sidebar?.querySelector<HTMLElement>(".sidebar-section-toggle") ?? null;
-      for (const back of [opener, ...rows, pcsToggle]) {
+      // no row may take it (a lone offline Host's roster is inert): the Settings gear, still the sidebar's
+      const gear = sidebar?.querySelector<HTMLElement>(".sidebar-footer-settings") ?? null;
+      for (const back of [opener, ...rows, gear]) {
         if (back === null || !back.isConnected || back.closest(".sidebar-filter, [inert]") !== null || back.getClientRects().length === 0) continue;
         back.focus({ preventScroll: true });
         if (document.activeElement === back) return;
@@ -183,53 +183,11 @@ export function MachineSidebar(props: Props) {
     settleFrame.current = requestAnimationFrame(() => { if (emptyField.current && !insideSidebar(document.activeElement)) closeFilter(); });
   };
   const drawerOpen = props.drawerOpen === true;
-  const hiddenCount = props.hiddenCount ?? 0;
-  // The PCs this device keeps out (Settings → Devices and PCs → Show in sidebar) are said in the PCs head: an eye
-  // crossed out and their count, which opens a menu that shows each again in place or goes to that setting.
-  // Showing one follows the setting's rules (lib/hiddenMachines.ts): ids of PCs gone from the roster drop
-  // out, and a selection stays where it is.
+  // The PCs this device keeps out are chosen in Settings → Devices and PCs → Show in sidebar
+  // (lib/hiddenMachines.ts); the list has no head of its own, so it starts right under the logo.
   const hiddenIds = useHiddenMachines();
   const roster = props.allMachines ?? props.machines;
-  const hiddenList = roster.filter((machine) => !props.machines.some((shown) => shown.id === machine.id));
-  const hiddenWords = hiddenCount === 1 ? t("1 PC hidden on this device") : t("{n} PCs hidden on this device", { n: hiddenCount });
-  const [hiddenMenu, setHiddenMenu] = useState<HTMLButtonElement | null>(null);
-  const closeHiddenMenu = useCallback(() => setHiddenMenu(null), []);
-  const pcsToggle = useRef<HTMLButtonElement>(null);
-  // showing the last one takes the count out of the head, with the focus the menu gave back to it: the focus
-  // stays in the head, on the PCs fold, rather than falling to the page. So does a last one taken from outside
-  // (the roster dropping it, another tab showing it) while the menu or the count itself held the focus and it
-  // fell with them; a focus anywhere else is left where it is
-  const focusPcsHead = useRef(false);
-  useEffect(() => {
-    const refocus = focusPcsHead.current;
-    focusPcsHead.current = false;
-    if (hiddenCount > 0) return;
-    const menuWasOpen = hiddenMenu !== null;
-    setHiddenMenu(null);
-    const focusLost = document.activeElement === null || document.activeElement === document.body;
-    if (refocus || ((menuWasOpen || hiddenHeldFocus) && focusLost)) pcsToggle.current?.focus({ preventScroll: true });
-  }, [hiddenCount]);
-  const showMachine = (id: string) => {
-    focusPcsHead.current = hiddenList.length === 1 && hiddenList[0]!.id === id;
-    setHiddenMachines(withMachineHidden(roster, hiddenIds, id, false));
-  };
-  const openRemoteSettings = () => { requestSettingsPage({ page: "devices", section: "sidebar-pcs" }); props.actions.openSettings(); };
-  // the PCs section folds to its head as Agents does (AgentSidebar.tsx), kept on this device; while the
-  // filter keeps rows in it, it stands open and its caret folds it for the filter's time only
   const listId = useId();
-  const [pcsCollapsed, setPcsCollapsed] = useState(() => { try { return localStorage.getItem(PCS_FOLD_KEY) === "1"; } catch { return false; } });
-  const [pcsFilterFold, setPcsFilterFold] = useState<boolean | null>(null);
-  useEffect(() => { if (!filter.active) setPcsFilterFold(null); }, [filter.active]);
-  const pcsKept = [...filter.machines.values()].some((machine) => machine.matched || machine.workspaces.size > 0 || machine.panes.size > 0);
-  const pcsFolded = filter.active ? pcsFilterFold ?? (pcsCollapsed && !pcsKept) : pcsCollapsed;
-  // A drag can open both and then restore folds before React renders. Each request must queue;
-  // a render-time equality check would drop the restore.
-  const setPcsFold = (fold: boolean) => {
-    if (filter.active) { setPcsFilterFold(fold); return; }
-    setPcsCollapsed(fold);
-    try { localStorage.setItem(PCS_FOLD_KEY, fold ? "1" : "0"); } catch { /* private mode: this page keeps it */ }
-  };
-  const togglePcs = () => setPcsFold(!pcsFolded);
   // the list fades at an edge only while rows lie past it (lib/useEdgeFades.ts)
   const machineList = useRef<HTMLDivElement>(null);
   useEdgeFades(machineList);
@@ -242,25 +200,31 @@ export function MachineSidebar(props: Props) {
   const [agentsFold, setAgentsFold] = useState<{ folded: boolean; seq: number } | null>(null);
   const agentsListId = useId();
   const changeSplit = useCallback((height: number | null) => { setSplits((last) => ({ ...last, [order]: height })); storeSidebarSplit(order, height); }, [order]);
+  // the PCs have no head to fold to (SidebarSplit.tsx never snaps them), so only Agents folds
   const foldSections = (sections: readonly SplitFold[]) => {
-    setPcsFold(sections.includes("pcs"));
     setAgentsFold((last) => ({ folded: sections.includes("agents"), seq: (last?.seq ?? 0) + 1 }));
   };
   // Manage PC's Hide on this device is Settings → Devices and PCs → Show in sidebar turned off, with its rules: the last
   // PC shown is not offered, and App moves a selection off the PC. The PC's header goes with it, so the focus goes
-  // to the PCs head's count of the PCs hidden here, whose menu shows them again
-  const hiddenButton = useRef<HTMLButtonElement>(null);
-  // read as this render starts, while the count is still in the page: its focus falls to the page once it goes
-  const hiddenHeldFocus = hiddenButton.current !== null && document.activeElement === hiddenButton.current;
-  const focusHiddenButton = useRef(false);
+  // to the list's first row that takes it (one a filter or an offline PC's inert roster leaves out is skipped), else
+  // the Settings gear, rather than falling to the page
+  const focusListAfterHide = useRef(false);
   useEffect(() => {
-    if (!focusHiddenButton.current || hiddenButton.current === null) return;
-    focusHiddenButton.current = false;
-    hiddenButton.current.focus({ preventScroll: true });
+    if (!focusListAfterHide.current) return;
+    focusListAfterHide.current = false;
+    const rows = machineList.current?.querySelectorAll<HTMLElement>(':is(button:not([disabled]), [role="button"][tabindex="0"])') ?? [];
+    const gear = shell.current?.querySelector<HTMLElement>(".sidebar-footer-settings") ?? null;
+    for (const target of [...rows, gear]) {
+      if (target === null || target.closest("[inert], [hidden]") !== null || target.getClientRects().length === 0) continue;
+      target.focus({ preventScroll: true });
+      if (document.activeElement === target) return;
+    }
   });
   const hideMachine = (id: string) => {
-    focusHiddenButton.current = true;
-    setHiddenMachines(withMachineHidden(roster, hiddenIds, id, true));
+    const next = withMachineHidden(roster, hiddenIds, id, true);
+    // a hide the stored list's cap drops changes nothing: no render follows, so no focus is asked for either
+    focusListAfterHide.current = next.indexOf(id) < HIDDEN_MACHINES_MAX;
+    setHiddenMachines(next);
   };
   useEffect(() => { if (!drawerOpen) { setQuery(""); setFilterAsked(false); } }, [drawerOpen]);
   // the roster's wait is a live region that is in the list from its first render, clipped while empty (never
@@ -285,32 +249,14 @@ export function MachineSidebar(props: Props) {
     {/* Settings → Group agents by state: the agents come first on this device, the PCs under them */}
     {settings.agentGroups && agentList}
     {settings.agentGroups && <SidebarSplit shell={shell} order={order} split={splits[order]} controls={agentsListId} onSplit={changeSplit} onFold={foldSections} />}
-    <section className={`pcs-sidebar${pcsFolded ? " is-collapsed" : ""}`} aria-label={t("PCs")}>
-      {/* the section's head, as Agents' is, also for a lone Host (the resize line's fold target): its caret in
-          the leading cell, its words, and in the trailing cell how many PCs this device shows, open or folded */}
-      <div className="sidebar-section-head">
-        <button ref={pcsToggle} type="button" className="sidebar-section-toggle sidebar-section-label" aria-expanded={!pcsFolded} aria-controls={listId} onClick={togglePcs}>
-          {pcsFolded ? <ChevronRight className="sidebar-section-caret" aria-hidden="true" /> : <ChevronDown className="sidebar-section-caret" aria-hidden="true" />}
-          <span>{t("PCs")}</span>
-        </button>
-        {props.machines.length > 0 && <SidebarCount className="sidebar-section-count" n={props.machines.length} words={props.machines.length === 1 ? t("1 PC shown") : t("{n} PCs shown", { n: props.machines.length })} />}
-        {hiddenCount > 0 && <button ref={hiddenButton} type="button" className="sidebar-hidden-pcs" aria-label={hiddenWords} title={hiddenWords} aria-haspopup="menu" aria-expanded={hiddenMenu !== null} onClick={(event) => setHiddenMenu(hiddenMenu === null ? event.currentTarget : null)}>
-          <EyeOff aria-hidden="true" /><span aria-hidden="true">{hiddenCount}</span>
-        </button>}
-      </div>
-      {/* folded, the list stays mounted, hidden, so the branches its rosters read stay findable to the filter */}
-      <div ref={machineList} className="machine-list" id={listId} hidden={pcsFolded} aria-label={t("PCs and workspaces")}>
+    {/* the PCs' list has no head: it starts right under the logo, and with several PCs each PC's own header
+        names it (MachineGroup); a lone Host is drawn without one */}
+    <section className="pcs-sidebar" aria-label={t("PCs")}>
+      <div ref={machineList} className="machine-list" id={listId} aria-label={t("PCs and workspaces")}>
         <p className={noMatchWords === null ? "visually-hidden" : "tree-state sidebar-filter-empty"} role="status">{noMatchWords}</p>
-        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={machine.id === loneHost} canHide={canHideMachine(roster, hiddenIds, machine.id)} onHide={() => hideMachine(machine.id)} listShown={!pcsFolded} />)}
+        {props.machines.map((machine) => <MachineGroup key={machine.id} {...props} machine={machine} headerless={machine.id === loneHost} canHide={canHideMachine(roster, hiddenIds, machine.id)} onHide={() => hideMachine(machine.id)} />)}
         <p className={loadingWords === null ? "visually-hidden" : "tree-state"} role="status">{loadingWords}</p>
       </div>
-      {hiddenMenu !== null && hiddenCount > 0 && <RowMenu anchor={hiddenMenu} title={t("Hidden on this device")} onClose={closeHiddenMenu} header={<span className="machine-menu-head">
-        <span className="machine-menu-name">{t("Hidden on this device")}</span>
-        <span className="machine-menu-note">{t("A hidden PC stays connected. A link or an alert still opens its panes.")}</span>
-      </span>} items={[
-        ...hiddenList.map((machine) => ({ id: `show:${machine.id}`, label: t("Show {name}", { name: machine.name }), title: t("Show {name} in the sidebar", { name: machine.name }), icon: Monitor, run: () => showMachine(machine.id) })),
-        { id: "settings", label: t("Choose PCs in Settings…"), icon: SlidersHorizontal, divider: hiddenList.length > 0, run: openRemoteSettings },
-      ]} />}
     </section>
     {!settings.agentGroups && <SidebarSplit shell={shell} order={order} split={splits[order]} controls={listId} onSplit={changeSplit} onFold={foldSections} />}
     {!settings.agentGroups && agentList}
@@ -342,9 +288,6 @@ function SidebarCount({ className, n, words, tooltip = true }: { className: stri
   return <span className={className} title={tooltip ? words : undefined}><span aria-hidden="true">{n}</span><span className="visually-hidden">{words}</span></span>;
 }
 
-/** the reader's fold of the PCs section, kept on this device as Agents' is (`ovis:agents-collapsed`) */
-const PCS_FOLD_KEY = "ovis:pcs-collapsed";
-
 /** What Manage PC offers, in its menu's order. */
 export type ManageAction = "rename" | "toggle" | "setup" | "update" | "hide" | "remove";
 
@@ -375,7 +318,7 @@ export function manageActions(machine: Pick<Machine, "kind" | "herdr_profile_id"
  *  and its notice are lines of their own, the + is the New workspace row under the workspaces, and nothing is
  *  folded with no caret to open it. A Host has no Manage PC menu; Add PC is in Settings and the palette.
  *  `canHide`/`onHide`: the menu's Hide on this device, under MachineSidebar's rules. */
-function MachineGroup({ machine, headerless = false, canHide, onHide, listShown, ...props }: Props & { machine: Machine; headerless?: boolean; canHide: boolean; onHide(): void; listShown: boolean }) {
+function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }: Props & { machine: Machine; headerless?: boolean; canHide: boolean; onHide(): void }) {
   const t = useT();
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`ovis:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
   // Manage PC is a row menu (RowMenu: a popover, a sheet on a phone), as a workspace's ⋯ is. Rename… swaps the
@@ -511,7 +454,7 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, listShown,
       {nextStep !== null && <span className="machine-state-next">{nextStep}</span>}
     </p>
     {/* a herdr-core machine's server runs on this PC, which cannot read that machine's load (server/system-stats.ts) */}
-    {props.pcLoad && online && !folded && !noticed && machine.kind !== "hc" && <MachineStats machine={machine} active={props.shown !== false && listShown && !hidden} />}
+    {props.pcLoad && online && !folded && !noticed && machine.kind !== "hc" && <MachineStats machine={machine} active={props.shown !== false && !hidden} />}
     {/* the menu's head names the PC and how it is reached; a PC herdr or herdr-core manages says where the rest is done */}
     {menu && <RowMenu anchor={menu} title={machine.name} items={manageItems()} onClose={closeMenu} header={<span className="machine-menu-head">
       <span className="machine-menu-name">{machine.name}</span>
