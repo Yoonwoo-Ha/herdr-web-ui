@@ -1055,12 +1055,14 @@ The [CI workflow](../.github/workflows/ci.yml) runs on every PR and `main` push:
     Missing herdr fails the run. Its herdr servers are stopped even on failure.
     Integration tests have a 15-second default timeout so their bounded process-startup
     probes can finish; individual tests can still specify a longer timeout.
-  - **Browser regression (ui-regression)** runs `scripts/ui-regression.ts` and
-    `scripts/ui-contexts-regression.ts` concurrently. The core's stateful flow stays serial;
-    the extracted feature checks own a separate temporary herdr config/session, Chromium
-    process, server and fixture panes. Those helpers stay sequential within their own fixture.
-    The context suite prints each helper's elapsed time and stops its owned daemon on exit.
-    `bun run test:ui` also runs both suites.
+  - **Browser regression (ui-regression)** runs `scripts/ui-regression.ts`,
+    `scripts/ui-contexts-regression.ts` and `scripts/ui-contexts-layout-regression.ts`, two at a
+    time. The core's stateful flow stays serial; the extracted feature checks own a separate
+    temporary herdr config/session, Chromium process, server and fixture panes. Those helpers stay
+    sequential within their own fixture. The two slowest (split view, a background tab's terminal
+    size) run in the layout script, on a fixture of their own, so neither context script nears
+    the per-script cap. Each context script prints each helper's elapsed time and stops its owned
+    daemon on exit. `bun run test:ui` also runs all three.
   - **Browser regression (other scripts)** runs every other browser script: six at a time in
     one job on self-hosted CI, and on hosted CI split over four jobs (`BROWSER_SHARD=k/4`,
     balanced by `scripts/ci-browser-timings.json`) that run three at a time each.

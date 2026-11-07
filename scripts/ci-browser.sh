@@ -28,7 +28,7 @@ run_script() {
   if [ -n "${CI:-}${CHECK_DIR:-}" ]; then
     # These evidence branches add viewport changes, assertions or font waits, not just captures.
     case "$1" in
-      scripts/ui-regression.ts|scripts/ui-contexts-regression.ts|scripts/key-bar-customization-demo-regression.ts) evidence="";;
+      scripts/ui-regression.ts|scripts/ui-contexts-regression.ts|scripts/ui-contexts-layout-regression.ts|scripts/key-bar-customization-demo-regression.ts) evidence="";;
     esac
   fi
   UI_EVIDENCE_DIR="$evidence" bun "$@" 2>&1 | while IFS= read -r line || [ -n "$line" ]; do
@@ -60,6 +60,7 @@ export HERDR_DEMO_BUILD
 run_script scripts/demo-build.ts "$HERDR_DEMO_BUILD"
 run_script scripts/ui-regression.ts
 run_script scripts/ui-contexts-regression.ts
+run_script scripts/ui-contexts-layout-regression.ts
 run_script scripts/machine-events-browser-regression.ts
 run_script scripts/workspace-rows-regression.ts
 run_script scripts/pending-pane-switch-regression.ts
