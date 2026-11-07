@@ -213,7 +213,10 @@ export class RelayService {
     // asked again only when the account a pass is asked under changed (a PC's members' account wins), or none is held
     const before = this.passAccount();
     writePrivateState(this.relayAccountPath(), { account });
-    if (before !== this.passAccount() || this.passKeeper?.current() === null) void this.passKeeper?.refresh();
+    // the same account named again asks only when the last answer was that it does not list this PC, which the
+    // add-me screen's relisting can change; a refusal for the account's limit keeps its scheduled retry
+    const unlisted = this.passKeeper?.current() === null && this.passKeeper.refusal === "not_listed";
+    if (before !== this.passAccount() || unlisted) void this.passKeeper?.refresh();
     return true;
   }
 

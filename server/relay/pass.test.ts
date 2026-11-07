@@ -215,6 +215,20 @@ test("neither a local limit nor a queued refresh shortens the service's Retry-Af
   k.made.stop();
 });
 
+test("a refusal while a pass still holds is kept apart from the state it shows", async () => {
+  let answer: () => Promise<Response> = async () => Response.json({ pass: await k.signed(), expires_in: 172_800, refresh_in: 43_200 });
+  const k = await keeper(() => answer());
+  k.made.start();
+  await k.made.refresh();
+  answer = async () => Response.json({ error: { code: "not_listed" } }, { status: 403 });
+  await k.made.refresh();
+  expect([k.made.state, k.made.refusal]).toEqual(["ok", "not_listed"]);
+  answer = async () => Response.json({ pass: await k.signed(), expires_in: 172_800, refresh_in: 43_200 });
+  await k.made.refresh();
+  expect([k.made.state, k.made.refusal]).toEqual(["ok", null]);
+  k.made.stop();
+});
+
 test("a pass for another PC is not kept", async () => {
   const other = await keeper(async () => Response.json({ pass: await other.signed(), expires_in: 172_800, refresh_in: 43_200 }));
   const k = await keeper(async () => Response.json({ pass: await other.signed(), expires_in: 172_800, refresh_in: 43_200 }));

@@ -32,7 +32,9 @@ async function fixture(mode: "grace" | "enforce" = "enforce") {
   const asked: string[] = [];
   /** the accounts that list this PC */
   const listed = new Set(["acct_1"]);
-  const hooks: { refused?: () => void } = {};
+  const hooks: { refused?: () => void; limited?: () => void } = {};
+  /** the accounts that have as many PCs on the relay as they may */
+  const limited = new Set<string>();
   const accountFetch = async (request: Request): Promise<Response> => {
     const path = new URL(request.url).pathname;
     const body = await request.json() as Record<string, string>;
@@ -47,6 +49,7 @@ async function fixture(mode: "grace" | "enforce" = "enforce") {
     challenges.delete(body["challenge_id"] ?? "");
     if (!expected || !verifyServerProof(body["proof"], expected)) return Response.json({ error: { code: "proof_invalid" } }, { status: 401 });
     if (!listed.has(body["account"] ?? "")) { hooks.refused?.(); return Response.json({ error: { code: "not_listed" } }, { status: 403 }); }
+    if (limited.has(body["account"] ?? "")) { hooks.limited?.(); return Response.json({ error: { code: "relay_limit" } }, { status: 409 }); }
     return Response.json({ pass: await signRelayPass(pair.privateKey, KID, body["server_id"]!, Math.floor(Date.now() / 1000)), expires_in: 172_800, refresh_in: 43_200 });
   };
   /** what each control socket heard first after its proof, and how it closed */
@@ -81,7 +84,7 @@ async function fixture(mode: "grace" | "enforce" = "enforce") {
   cleanup.push(async () => { await service.shutdown(); app.stop(); });
   const base = () => `http://127.0.0.1:${app.port}`;
   return {
-    stateDir, asked, headers, syncs, listed, hooks, sentOnControl, renewal: renewal.promise,
+    stateDir, asked, headers, syncs, listed, hooks, limited, sentOnControl, renewal: renewal.promise,
     get service() { return service; },
     get synced() { return synced.promise; },
     get refused() { return refused.promise; },
@@ -205,4 +208,20 @@ test("naming the same account again asks again while this PC holds no pass (it w
   // the screen names the same account again: with no pass held, the PC asks again and renews on the open socket
   expect((await f.nameAccount("acct_1")).status).toBe(204);
   expect(JSON.parse(await bounded(f.renewal))).toEqual({ type: "relay_pass", pass: expect.stringMatching(/^ovp1\./) });
+});
+
+test("naming the same account again keeps the scheduled retry after a refusal for the account's limit", async () => {
+  const f = await fixture("grace");
+  const answered = deferred<void>();
+  f.hooks.limited = () => answered.resolve();
+  f.limited.add("acct_1");
+  expect((await f.nameAccount("acct_1")).status).toBe(204);
+  await f.start();
+  await bounded(f.synced);
+  // the limit answer lands; the add-me screen relists and names the same account, twice
+  await bounded(answered.promise);
+  const asked = f.asked.length;
+  expect((await f.nameAccount("acct_1")).status).toBe(204);
+  expect((await f.nameAccount("acct_1")).status).toBe(204);
+  expect(f.asked).toHaveLength(asked);
 });

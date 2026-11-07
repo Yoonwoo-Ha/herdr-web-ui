@@ -33,9 +33,12 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
   // the account this PC now asks its relay pass under (docs/relay.md, "Relay pass"); an older PC has no such route
   const session = await service.session();
   if (session) {
-    // never in the way of pairing: the relay status says when this PC has no pass (404: an Ovis from before relay passes)
-    const named = await apiFetch("/api/account/relay-account", { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ account: session.account }) }).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)));
-    if (named instanceof Error || (!named.ok && named.status !== 404)) console.warn("Ovis: this PC did not take the account for its relay pass", named instanceof Error ? named.name : named.status);
+    // never in the way of pairing, so not awaited: a failing or hanging setup never holds the pairing wait, and the
+    // relay status says when this PC has no pass (404: an Ovis from before relay passes)
+    void apiFetch("/api/account/relay-account", { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ account: session.account }) }).then(
+      (named) => { if (!named.ok && named.status !== 404) console.warn("Ovis: this PC did not take the account for its relay pass", named.status); },
+      (error: unknown) => console.warn("Ovis: this PC did not take the account for its relay pass", error instanceof Error ? error.name : error),
+    );
   }
   return name;
 }

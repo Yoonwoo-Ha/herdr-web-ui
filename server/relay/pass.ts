@@ -81,6 +81,8 @@ export class RelayPassKeeper {
   get state(): RelayPassState { return this.reported === "ok" && this.current() === null ? "unavailable" : this.reported; }
   set state(value: RelayPassState) { this.reported = value; }
   private saved: Saved | null;
+  /** The service's last refusal (kept while a pass still holds, when `state` says `ok`); null after a pass came. */
+  refusal: "not_listed" | "limit" | null = null;
   /** A refresh asked for while a request was out (the account changed, say): asked again once it ends. */
   private again = false;
   private inflight: AbortController | undefined;
@@ -210,6 +212,7 @@ export class RelayPassKeeper {
       if (response.status === 403 || response.status === 409) {
         const code = ((await response.json().catch(() => null)) as { error?: { code?: unknown } } | null)?.error?.code;
         this.state = code === "relay_limit" ? "limit" : "not_listed";
+        this.refusal = this.state;
         if (this.current() !== null) this.state = "ok";
         this.schedule(WAIT_ACCOUNT_MS);
         return;
@@ -232,6 +235,7 @@ export class RelayPassKeeper {
       try { writePrivateState(this.path, saved); } catch { /* kept in memory; asked again after a restart */ }
       this.failures = 0;
       this.notBefore = 0;
+      this.refusal = null;
       this.replacement = this.replacing ? saved.pass : null;
       this.state = "ok";
       this.options.onPass(saved.pass);
