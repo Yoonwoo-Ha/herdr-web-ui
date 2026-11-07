@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PairedDevice } from "../../shared/access.ts";
 import { openRelayChannel, probePc } from "../../shared/relay-channel.ts";
+import type { RelayChannel } from "../../shared/relay-channel.ts";
 import type { RelayDevice, RelayDeviceStore } from "../../shared/relay-device.ts";
 import { DIRECT_CARRIER, DIRECT_TAILNET, FrameType, MuxProtocolError } from "../../shared/relay-mux.ts";
 import type { RelayOffer } from "../../shared/relay-offer.ts";
@@ -386,6 +387,52 @@ describe("signed-in sessions over every way in", () => {
     expect(sessions.size).toBe(8);
   });
 
+  it("let a carrier an app may still drop make none of its device's sessions give way until it is used", () => {
+    // Given a device with three sessions, and an app racing two more carriers that both sign in
+    const sessions = new SignedInSessions(8, 4);
+    const closed: string[] = [];
+    for (const name of ["s1", "s2", "s3"]) sessions.admit("phone", () => closed.push(name));
+    const lanCarrier = sessions.candidate("phone", () => closed.push("lan"));
+    const tailnetCarrier = sessions.candidate("phone", () => closed.push("tailnet"));
+    // Then neither makes an older session give way
+    expect(closed).toEqual([]);
+    // When the app drops one and uses the other
+    lanCarrier.release();
+    tailnetCarrier.chosen();
+    // Then the device holds its four, and only a fifth it uses makes the oldest give way
+    expect(closed).toEqual([]);
+    sessions.admit("phone", () => closed.push("s5"));
+    expect(closed).toEqual(["s1"]);
+  });
+
+  it("close the oldest carrier past a device's racing ones, never a session it uses", () => {
+    const sessions = new SignedInSessions(8, 4, 3);
+    const closed: string[] = [];
+    sessions.admit("phone", () => closed.push("s1"));
+    for (const name of ["c1", "c2", "c3", "c4"]) sessions.candidate("phone", () => closed.push(name));
+    expect(closed).toEqual(["c1"]);
+  });
+
+  it("name a device's connection by the session it uses, not a racing carrier it may drop", () => {
+    const sessions = new SignedInSessions(8, 4);
+    const mux = { active: true, rttMs: 40, measure: async () => 40 };
+    sessions.admit("phone", () => {}, { route: "relay", relay: "wss://relay-ap.ovis.sh", since: 1_000, mux });
+    sessions.candidate("phone", () => {}, { route: "lan", since: 2_000, mux });
+    expect(sessions.connections().get("phone")?.route).toBe("relay");
+  });
+
+  it("hold never-used carriers past every place to one device's racing ones", () => {
+    // Given every place taken by two devices at their share
+    const sessions = new SignedInSessions(8, 4, 3);
+    const closed: string[] = [];
+    for (const device of ["a", "b"]) for (let index = 1; index <= 4; index++) sessions.admit(device, () => closed.push(`${device}${index}`));
+    // When both sign in three carriers each and never use them
+    for (const device of ["a", "b"]) for (let index = 1; index <= 3; index++) sessions.candidate(device, () => closed.push(`${device}-c${index}`));
+    // Then only three get past every place
+    expect(sessions.size).toBe(11);
+    expect(closed).toEqual(["b-c1", "b-c2", "b-c3"]);
+  });
+
   it("name each device's connection: its nearest way in, with the latest round trip, until released", () => {
     const sessions = new SignedInSessions(8, 4);
     const mux = (rttMs: number | undefined, active = true) => ({ active, rttMs, measure: async () => rttMs });
@@ -500,6 +547,35 @@ describe("direct connections with the relay", () => {
     const port = (): string => service.status().direct!.carriers[0]!.split(":").at(-1)!;
     return { fixture, service, offer, port, relay };
   }
+
+  it("let a direct carrier signed in but never used close none of its device's sessions, until it opens a stream", async () => {
+    // Given a phone with four sessions in use on the PC
+    const { fixture, offer, port } = await liveFixture();
+    const device = await relayDevice(fixture);
+    const open = () => bounded(openRelayChannel(offer, { store: savedStore(device, offer), socket: () => new WebSocket(`ws://127.0.0.1:${port()}/v1/ws?v=1`) }));
+    const use = (channel: RelayChannel) => bounded(new Promise<number>((resolve, reject) => {
+      const stream = channel.mux.openHttp({ target: "/api/relay", method: "GET", headers: [], body: "none" });
+      stream.onHeaders = ({ status }) => { if (status >= 200) { resolve(status); void stream.body.cancel(); } };
+      stream.onDispose = (failure) => { if (failure) reject(failure); };
+    }));
+    const firstClosed = deferred<void>();
+    const first = await bounded(openRelayChannel(offer, { store: savedStore(device, offer), socket: () => new WebSocket(`ws://127.0.0.1:${port()}/v1/ws?v=1`), onClose: () => firstClosed.resolve() }));
+    // each used as it opens: an unused one is a carrier the app may still drop
+    expect(await use(first)).toBe(200);
+    const inUse = [first];
+    for (let index = 0; index < 3; index += 1) {
+      inUse.push(await open());
+      expect(await use(inUse.at(-1)!)).toBe(200);
+    }
+    // When a fifth carrier signs in, as one an app races and may drop
+    const racing = await open();
+    cleanup.push(...[...inUse, racing].map((channel) => () => channel.close()));
+    // Then every session in use is still served
+    for (const channel of inUse) expect(await use(channel)).toBe(200);
+    // and once the app uses it, the device's oldest gives way
+    expect(await use(racing)).toBe(200);
+    await bounded(firstClosed.promise);
+  });
 
   it("answer a probe through the relay with no session, and tell a silent PC from an unreachable relay", async () => {
     // Given a PC on a local relay

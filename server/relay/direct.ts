@@ -147,6 +147,8 @@ interface Carrier {
   deviceId?: string;
   /** Gives its signed-in place back (SignedInSessions.admit). */
   release?: () => void;
+  /** counts the session as its device's for good: its client opened a stream on it */
+  chosen?: () => void;
 }
 
 /**
@@ -364,6 +366,7 @@ export class DirectCarrier {
         routingOverhead: 0, maxWireMessageBytes: 64 * 1024, signInOnly: true,
         directCarriers: (tailnet) => this.advertised(tailnet),
         onAuthenticated: (deviceId) => this.authenticated(id, carrier, deviceId),
+        onChosen: () => carrier.chosen?.(),
         websocket: {
           ...handlers,
           open: (peer) => { carrier.sockets.add(peer); return handlers.open(peer); },
@@ -394,7 +397,10 @@ export class DirectCarrier {
     carrier.cancelTimeout();
     carrier.deviceId = deviceId;
     const line = carrier.session ? { route: inTailnet(carrier.source) ? "tailscale" as const : "lan" as const, since: Date.now(), mux: carrier.session.mux } : undefined;
-    carrier.release = this.signedIn.admit(deviceId, () => carrier.session?.close("resource_exhausted"), line);
+    // an app racing its carriers drops all but one: only the one it uses makes its device's older sessions give way
+    const admission = this.signedIn.candidate(deviceId, () => carrier.session?.close("resource_exhausted"), line);
+    carrier.release = admission.release;
+    carrier.chosen = admission.chosen;
   }
 
   /** Stops listening and ends every carrier, signed in or not. */

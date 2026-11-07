@@ -50,6 +50,8 @@ interface DataConnection {
   deviceId?: string;
   /** Gives its signed-in place back (SignedInSessions.admit). */
   release?: () => void;
+  /** counts the session as its device's for good: its client opened a stream on it */
+  chosen?: () => void;
 }
 
 /** The relay's word on a warm socket that a client took: `{"type":"bound","connection_id":"<32 hex>"}`. */
@@ -338,6 +340,7 @@ export class RelayLink {
         serverVersion: this.options.serverVersion ?? version, minSupportedClient: "0.4.20",
         routingOverhead: 0, maxWireMessageBytes: 64 * 1024,
         onAuthenticated: (deviceId) => this.authenticated(id, entry, deviceId),
+        onChosen: () => entry.chosen?.(),
         ...(this.options.relayHints ? { relayHints: this.options.relayHints } : {}),
         ...(this.options.directCarriers ? { directCarriers: this.options.directCarriers } : {}),
         websocket: {
@@ -354,7 +357,10 @@ export class RelayLink {
     entry.cancelTimeout();
     entry.deviceId = deviceId;
     const line = entry.session ? { route: "relay" as const, relay: this.options.relay, since: Date.now(), mux: entry.session.mux } : undefined;
-    entry.release = this.signedIn.admit(deviceId, () => entry.session?.close("resource_exhausted"), line);
+    // an app racing its carriers drops all but one: only the one it uses makes its device's older sessions give way
+    const admission = this.signedIn.candidate(deviceId, () => entry.session?.close("resource_exhausted"), line);
+    entry.release = admission.release;
+    entry.chosen = admission.chosen;
   }
 
   /** Cancel retries synchronously; finish queued policy closes before ending protected carriers. */

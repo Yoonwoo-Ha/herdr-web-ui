@@ -6,7 +6,7 @@ import { startBunRelay } from "../../../relay/bun.ts";
 import { createServer } from "../../../server/index.ts";
 import { RelayService } from "../../../server/relay/service.ts";
 import { bounded, deferred, TestClock } from "../../../server/relay/test-helpers.ts";
-import { openRelayChannel } from "./channel.ts";
+import { openRelayChannel, RelayUnreachableError } from "./channel.ts";
 import { DirectCarrierUnusableError, probeDirect } from "../../../shared/relay-channel.ts";
 import { exportPublicKey, generateKeyPair } from "../../../shared/relay-e2ee.ts";
 import type { RelayChannel, RelayChannelOptions } from "./channel.ts";
@@ -255,6 +255,111 @@ describe("racing the relay at the start", () => {
     // Then the Tailscale carrier carries the channel, not the relay
     expect(transport.route).toBe("direct");
     expect(pc.channels.at(-1)!.direct).toBe(tailscale);
+  });
+
+  it("keeps a native socket for the PC's Tailscale carrier behind two silent LAN addresses", async () => {
+    // Given a phone away from home whose plugin opens two sockets at most (OvisDirectPlugin MAX_SOCKETS), and a PC
+    // that names two LAN addresses, silent from here, before its Tailscale one
+    const silent = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request, server) => server.upgrade(request) ? undefined : new Response(null, { status: 426 }),
+      websocket: { open: (socket) => { socket.send(JSON.stringify({ type: "assigned", connection_id: "ab".repeat(16) })); }, message() {} } });
+    cleanup.push(() => silent.stop(true));
+    const { pc, store, saved } = await paired();
+    const port = pc.service.status().direct!.carriers.at(-1)!.split(":").at(-1);
+    const tailscale = `ws://100.64.0.7:${port}`;
+    store.saved = { ...store.saved!, direct: [`ws://${LAN}:9`, "ws://10.0.0.8:9", tailscale] };
+    let open = 0;
+    const refused: string[] = [];
+    const socketFor = (url: string): WebSocket => {
+      // a third socket at once is refused, as the plugin answers too_many
+      if (open >= 2) { refused.push(url); return new WebSocket("ws://127.0.0.1:1/v1/ws?v=1"); }
+      open++;
+      const socket = new WebSocket(url.startsWith(tailscale) ? url.replace("ws://100.64.0.7:", "ws://127.0.0.1:") : `ws://127.0.0.1:${silent.port}/v1/ws?v=1`);
+      socket.addEventListener("close", () => { open--; }, { once: true });
+      return socket;
+    };
+    // When it opens the PC
+    const transport = await transportFor(pc, store, saved, { directTailnet: () => true, directSocket: socketFor });
+    // Then the Tailscale carrier got a socket and carries the channel
+    expect(refused).toEqual([]);
+    expect(transport.route).toBe("direct");
+    expect(pc.channels.at(-1)!.direct).toBe(tailscale);
+  });
+
+  it("gives the PC's Tailscale carrier its whole budget while LAN carriers queue in the other socket", async () => {
+    // Given a phone away from home: two silent LAN addresses, then a Tailscale one that answers late, and no relay
+    const silent = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request, server) => server.upgrade(request) ? undefined : new Response(null, { status: 426 }),
+      websocket: { open: (socket) => { socket.send(JSON.stringify({ type: "assigned", connection_id: "ab".repeat(16) })); }, message() {} } });
+    cleanup.push(() => silent.stop(true));
+    const { pc, store, saved } = await paired();
+    const port = pc.service.status().direct!.carriers.at(-1)!.split(":").at(-1);
+    const tailscale = `ws://100.64.0.7:${port}`;
+    store.saved = { ...store.saved!, direct: ["ws://10.0.0.8:9", "ws://10.0.0.9:9", tailscale] };
+    const secondLan = deferred<void>();
+    const openChannel = async (channelOffer: RelayOffer, options?: RelayChannelOptions): Promise<RelayChannel> => {
+      if (options?.direct === undefined) throw new RelayUnreachableError(null, true);
+      if (options.direct === "ws://10.0.0.9:9") secondLan.resolve();
+      // the Tailscale carrier answers only once the first LAN one has used up its share and the second began
+      if (options.direct === tailscale) await secondLan.promise;
+      return pc.openChannel(channelOffer, options);
+    };
+    const socketFor = (url: string): WebSocket => new WebSocket(url.startsWith(tailscale) ? url.replace("ws://100.64.0.7:", "ws://127.0.0.1:") : `ws://127.0.0.1:${silent.port}/v1/ws?v=1`);
+    // When it opens the PC
+    const transport = await transportFor(pc, store, saved, { openChannel, directTailnet: () => true, directSocket: socketFor });
+    // Then the Tailscale carrier was still in time
+    expect(transport.route).toBe("direct");
+    expect(pc.channels.at(-1)!.direct).toBe(tailscale);
+  });
+
+  it("gives the carrier a probe proved its whole budget on the switch, past two silent LAN addresses", async () => {
+    // Given a phone pairing through the relay with a PC that names two LAN addresses silent from here before its own
+    const silent = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request, server) => server.upgrade(request) ? undefined : new Response(null, { status: 426 }),
+      websocket: { open: (socket) => { socket.send(JSON.stringify({ type: "assigned", connection_id: "ab".repeat(16) })); }, message() {} } });
+    cleanup.push(() => silent.stop(true));
+    const pc = await pcFixture(["ws://10.0.0.8:9", "ws://10.0.0.9:9"]);
+    const lan = `ws://${LAN}:${pc.service.status().direct!.carriers.at(-1)!.split(":").at(-1)}`;
+    const socketFor = (url: string): WebSocket => url.startsWith(lan) ? pc.directSocket(url) : new WebSocket(`ws://127.0.0.1:${silent.port}/v1/ws?v=1`);
+    let paired = false;
+    const third = deferred<void>();
+    const openChannel = async (channelOffer: RelayOffer, options?: RelayChannelOptions): Promise<RelayChannel> => {
+      if (paired && options?.direct === "ws://10.0.0.9:9") third.resolve();
+      // the proven carrier answers only once the others used up their share: a PC slow to admit
+      if (paired && options?.direct === lan) await third.promise;
+      return pc.openChannel(channelOffer, options);
+    };
+    const transport = await transportFor(pc, new MemoryStore(), pc.offer, { openChannel, directSocket: socketFor });
+    paired = true;
+    // When the probe proves the PC's own carrier and the relay channel closes for the switch
+    // Then the switch lands on that carrier
+    await routeBecomes(transport, "direct");
+    expect(pc.channels.at(-1)!.direct).toBe(lan);
+  }, 20_000);
+
+  it("still tries a third LAN carrier behind two silent ones within the budget", async () => {
+    // Given a phone whose PC names two LAN addresses that assign and stay silent, then its reachable one, and no relay
+    const silent = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request, server) => server.upgrade(request) ? undefined : new Response(null, { status: 426 }),
+      websocket: { open: (socket) => { socket.send(JSON.stringify({ type: "assigned", connection_id: "ab".repeat(16) })); }, message() {} } });
+    cleanup.push(() => silent.stop(true));
+    const { pc, store, saved } = await paired();
+    const reachable = store.saved!.direct!.at(-1)!;
+    store.saved = { ...store.saved!, direct: ["ws://10.0.0.8:9", "ws://10.0.0.9:9", reachable] };
+    const openChannel = (channelOffer: RelayOffer, options?: RelayChannelOptions): Promise<RelayChannel> =>
+      options?.direct === undefined ? Promise.reject(new RelayUnreachableError(null, true)) : pc.openChannel(channelOffer, options);
+    // the plugin's count, as iOS keeps it: a socket holds its place until its close event, and a third at once is refused
+    let open = 0;
+    const refused: string[] = [];
+    const socketFor = (url: string): WebSocket => {
+      if (open >= 2) { refused.push(url); return new WebSocket("ws://127.0.0.1:1/v1/ws?v=1"); }
+      open++;
+      const socket = url.startsWith(reachable) ? pc.directSocket(url) : new WebSocket(`ws://127.0.0.1:${silent.port}/v1/ws?v=1`);
+      socket.addEventListener("close", () => { open--; }, { once: true });
+      return socket;
+    };
+    // When it opens the PC
+    const transport = await transportFor(pc, store, saved, { openChannel, directSocket: socketFor });
+    // Then the third carrier got its turn, never refused, and carries the channel
+    expect(refused).toEqual([]);
+    expect(transport.route).toBe("direct");
+    expect(pc.channels.at(-1)!.direct).toBe(reachable);
   });
 
   it("gives a switch a probe just earned the direct carriers' whole budget, without racing the relay again", async () => {

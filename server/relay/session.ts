@@ -55,6 +55,8 @@ export interface RelaySessionOptions {
   readonly onClose?: (code: SessionError) => void;
   /** The client signed in or paired: from here on the carrier counts as a device's session. */
   readonly onAuthenticated?: (deviceId: string) => void;
+  /** The signed-in client opened its first stream: this carrier is the one it kept, not a racing one it drops (server/relay/admissions.ts). */
+  readonly onChosen?: () => void;
   /** The relays a phone that offered RELAY_HINTS is told in AUTH_OK, the preferred one first. */
   readonly relayHints?: () => readonly string[];
   /**
@@ -113,6 +115,7 @@ export class RelaySession {
   private readonly activity = new Map<number, () => void>();
   private readonly sockets = new Map<WsStream, VirtualSocket | undefined>();
   private readonly requests = new Set<HttpStream>();
+  private chosen = false;
 
   constructor(private readonly options: RelaySessionOptions) {
     if (!options.channel.isOpen() || options.channel.securityMode() !== "protected") {
@@ -144,10 +147,11 @@ export class RelaySession {
           else this.close("internal_error");
         });
       },
-      onHttp: (stream) => { void this.http(stream); },
+      onHttp: (stream) => { this.choose(); void this.http(stream); },
       onWs: (stream) => {
         const device = this.principal();
         if (!device) { stream.reset("refused"); return; }
+        this.choose();
         if (!options.onWs && !options.websocket) { stream.reset("refused"); return; }
         this.sockets.set(stream, undefined);
         const abort = new AbortController();
@@ -429,6 +433,13 @@ export class RelaySession {
       this.state = "ready";
       this.options.onAuthenticated?.(device.id);
     });
+  }
+
+  /** HTTP and WebSocket are every stream a signed-in client opens (SSE rides HTTP): the first of either marks this carrier as the one kept. */
+  private choose(): void {
+    if (this.chosen || this.state !== "ready") return;
+    this.chosen = true;
+    this.options.onChosen?.();
   }
 
   private principal(): DeviceMatch | undefined {
