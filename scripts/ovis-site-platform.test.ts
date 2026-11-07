@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { downloadPlatform, linuxArch, macArch } from "../ovis-site/assets/platform.js";
+import { downloadPlatform, guessedCpuLabel, linuxArch, macArch } from "../ovis-site/assets/platform.js";
 
 const UA = {
   mac: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
@@ -47,6 +47,24 @@ describe("macArch", () => {
     expect(macArch()).toBe("arm64");
     expect(macArch("arm")).toBe("arm64");
     expect(macArch("x86")).toBe("x64");
+  });
+});
+
+describe("guessedCpuLabel", () => {
+  const hint = { getHighEntropyValues: async () => ({}) };
+
+  it("names the CPU on the button where no architecture hint can correct the guess (Safari, Firefox)", () => {
+    expect(guessedCpuLabel("mac", { userAgent: UA.mac })).toBe("Download for Mac (Apple silicon)");
+    expect(guessedCpuLabel("linux", { userAgent: UA.firefoxLinux })).toBe("Download for Linux (x64)");
+    expect(guessedCpuLabel("linux", { userAgent: "Mozilla/5.0 (X11; Linux aarch64; rv:131.0) Gecko/20100101 Firefox/131.0" })).toBe("Download for Linux (arm64)");
+  });
+
+  it("leaves the label alone where Chromium's hint will pick the build, and off the desktops", () => {
+    expect(guessedCpuLabel("mac", { userAgentData: { platform: "macOS", ...hint }, userAgent: UA.mac })).toBeUndefined();
+    expect(guessedCpuLabel("linux", { userAgentData: { platform: "Linux", ...hint }, userAgent: UA.linux })).toBeUndefined();
+    expect(guessedCpuLabel("windows", { userAgent: UA.windows })).toBeUndefined();
+    expect(guessedCpuLabel("ios", { userAgent: UA.iphone })).toBeUndefined();
+    expect(guessedCpuLabel("unknown", {})).toBeUndefined();
   });
 });
 

@@ -55,8 +55,24 @@
     return /aarch64|arm64/i.test(nav.userAgent ?? "") ? "arm64" : "x64";
   }
 
+  /**
+   * The download button's label on a desktop whose CPU is a guess: without Chromium's architecture
+   * hint (Safari, Firefox) nothing corrects the build later, so the button names the CPU it
+   * downloads, and an Intel Mac or arm64 Linux visitor looks to the other builds under it.
+   * Undefined where the hint will pick the build, or off a Mac or Linux.
+   * @param {ReturnType<typeof downloadPlatform>} platform
+   * @param {{ userAgentData?: { getHighEntropyValues?: unknown }, userAgent?: string }} nav
+   * @returns {string | undefined}
+   */
+  function guessedCpuLabel(platform, nav) {
+    if (nav.userAgentData?.getHighEntropyValues) return undefined;
+    if (platform === "mac") return "Download for Mac (Apple silicon)";
+    if (platform === "linux") return `Download for Linux (${linuxArch(nav)})`;
+    return undefined;
+  }
+
   if (typeof module === "object" && module.exports) {
-    module.exports = { downloadPlatform, linuxArch, macArch };
+    module.exports = { downloadPlatform, guessedCpuLabel, linuxArch, macArch };
     return;
   }
 
@@ -85,6 +101,7 @@
   }
 
   const button = BUTTONS[platform];
+  const guessed = guessedCpuLabel(platform, navigator);
   if (button) {
     for (const shipped of document.querySelectorAll(".dl-primary")) {
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -103,6 +120,16 @@
       else delete shipped.dataset.tip;
       shipped.setAttribute("aria-label", button.aria);
       shipped.replaceChildren(svg, label);
+    }
+  }
+  // the shipped Mac button and the Linux one above, named for their CPU where it is a guess, on
+  // screen and for screen readers (its aria-label is its accessible name); the page's language
+  // script, which runs next, translates both
+  if (guessed) {
+    for (const shipped of document.querySelectorAll(".dl-primary")) {
+      shipped.setAttribute("aria-label", guessed);
+      const label = shipped.querySelector("span");
+      if (label) label.textContent = guessed;
     }
   }
 
