@@ -314,10 +314,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Ovis restarts and shows herdr TUI's terminals instead of the Herdr app's; this page reconnects by itself. The app's terminals keep running.": "Ovis 会重启并显示 herdr TUI 的终端而不是 Herdr 应用的，本页会自动重新连接。应用的终端继续运行。",
   "Switch and restart": "切换并重启",
   "Ovis has not answered since the restart. Reload this page in a moment; if it stays away, start Ovis again on this PC.": "重启后 Ovis 一直没有响应。请稍后重新加载本页；如果仍无响应，请在这台电脑上重新启动 Ovis。",
-  "Add a PC through the relay": "通过中继添加 PC",
-  "Pairing link or code": "配对链接或代码",
-  "Link or code": "链接或代码",
-  "{name} was added. Its workspaces join the sidebar.": "已添加 {name}。它的工作区会显示在侧栏中。",
   "A pinned agent's menu in the Agents list offers Lock agent. This app then offers no way to close a locked agent's pane, tab or workspace, in every browser. Closing from herdr itself or a script still works.": "在 Agent 列表中，已固定 Agent 的菜单会提供“锁定 Agent”。之后在所有浏览器中，本应用都无法关闭已锁定 Agent 的面板、标签页或工作区。通过 herdr 本身或脚本关闭不受影响。",
   "Only those words are kept, on this server, until the tab closes; turning this off deletes them.": "只保存这几个词，存于此服务器，直到标签页关闭；关闭此设置会将其删除。",
   "Within a state": "同一状态内",
@@ -345,4 +341,5 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Hide the key bar in the input line": "在输入框中隐藏按键栏",
   "Reopen files on return": "返回时重新打开文件",
   "A file open when you switch to another tab shows again when you come back to that tab. Back to the tab shows it too.": "切换到其他标签页时打开的文件，在回到该标签页时会再次显示。通过“返回”回到该标签页时也会显示。",
+  "Remove PC {name}": "移除 PC {name}",
 };

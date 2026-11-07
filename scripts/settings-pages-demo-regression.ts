@@ -1166,7 +1166,7 @@ try {
             await openSettingsPage(page, label(name), label("Back to settings"));
             // what a page asks the server for (devices, the phone address, the accounts) has arrived
             await page.waitForFunction((loading) => ![...document.querySelectorAll(".settings-body [role='status']")].some((node) => loading.includes(node.textContent?.trim() ?? "")),
-              [label("Loading…"), label("Asking this PC about Tailscale…")]);
+              [label("Loading…")]);
             if (name === "Appearance" && process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `select-arrows-${width}-${language}.png`), animations: "disabled" });
             await checkSelectArrows(page);
             if (name === "Agents") await page.locator(".usage-accounts-row").first().waitFor();

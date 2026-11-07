@@ -58,7 +58,8 @@ export function tailnetPeers(status: string | null): { name: string; dnsName: st
     });
 }
 
-const readCli = async (): Promise<string | null> => {
+/** `tailscale status --json` from this PC's own CLI, or null when Tailscale is not here or does not answer in time */
+export const readTailscaleStatus = async (): Promise<string | null> => {
   const binary = tailscaleBinary();
   if (binary === null) return null;
   const proc = Bun.spawn([binary, "status", "--json"], { windowsHide: true, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
@@ -100,7 +101,7 @@ export class TailnetPcs {
   private readonly origin: (dnsName: string, port: number) => string;
 
   constructor(options: TailnetPcsOptions = {}) {
-    this.readStatus = options.readStatus ?? readCli;
+    this.readStatus = options.readStatus ?? readTailscaleStatus;
     this.ports = options.ports ?? HTTPS_PORTS;
     this.origin = options.origin ?? httpsOrigin;
   }

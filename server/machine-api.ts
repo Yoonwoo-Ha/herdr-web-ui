@@ -283,6 +283,13 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
         return fail(`typed_code_${error.failure}`, message, status);
       }
     }
+    if (parts[0] === "ssh-candidates" && parts.length === 1) {
+      setRequestRoute("/api/machines/ssh-candidates");
+      // adding a PC is a driving device's; a watching one is not told which hosts this PC knows either
+      if (readOnly) return fail("read_only", "this device can only watch", 403);
+      if (request.method !== "GET") return fail("method_not_allowed", "Use GET", 405);
+      return jsonResponse({ pcs: await manager.listSshCandidates() }, 200, { "cache-control": "no-store" });
+    }
     if (parts[0] === "tailnet" && parts.length === 1) {
       setRequestRoute("/api/machines/tailnet");
       // adding a PC is a driving device's; a watching one is not told which PCs are there either

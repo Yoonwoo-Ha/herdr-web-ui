@@ -91,7 +91,11 @@ function AddThisPc({ relayAbove = true }: { /** Settings has the relay's switch 
 }
 
 /** What Settings → Devices and PCs needs of the account: signed in or not, and the account's PCs for My devices. */
-export interface AccountState { signedIn: boolean; account: string | null; pcs: MyPc[] | null }
+export interface AccountState {
+  signedIn: boolean; account: string | null; pcs: MyPc[] | null;
+  /** false once the account service did not answer: the relay tab then offers the relay's own pairing (ConnectPhoneDialog) */
+  reachable: boolean;
+}
 
 /** the phone and Mac apps sign in their own way, never with a code from a PC's page */
 const pcServiceHere = (): string | null => desktopAccount() === null && !inNativeApp() && !inMacApp() ? pcAccountServiceOf(document, window.isSecureContext) : null;
@@ -114,6 +118,7 @@ export function AccountSection({ onAccount, welcome }: { onAccount?: (state: Acc
   const [view, setView] = useState<View>({ kind: "loading" });
   const fallback: AccountProvider[] = bridge ? desktopProviders(bridge) : ["github"];
   const [offer, setOffer] = useState<OfferedProviders | null>(null);
+  const [unreachable, setUnreachable] = useState(false);
   /** a change to the ways in that waits for a fresh sign-in (403 reauth_required) */
   const [reauth, setReauth] = useState<{ action: "add" | "remove"; provider: AccountProvider } | null>(null);
   const deviceSignIn = useRef<AbortController | null>(null);
@@ -124,7 +129,18 @@ export function AccountSection({ onAccount, welcome }: { onAccount?: (state: Acc
   useEffect(() => {
     if (service === null) return;
     let live = true;
-    offeredProviders(service, fallbackKey.split(",") as AccountProvider[]).then((offered) => { if (live) setOffer(offered); }, (error: unknown) => console.warn("Ovis: the account service's sign-ins could not be read", error instanceof Error ? error.name : error));
+    // the service answering at all, whatever it answers, is what tells it can be reached (offeredProviders falls back quietly)
+    const probe = async (input: Request | string | URL, init?: RequestInit): Promise<Response> => {
+      try {
+        const response = await fetch(input, init);
+        if (live) setUnreachable(false);
+        return response;
+      } catch (error) {
+        if (live) setUnreachable(true);
+        throw error;
+      }
+    };
+    offeredProviders(service, fallbackKey.split(",") as AccountProvider[], { fetch: probe }).then((offered) => { if (live) setOffer(offered); }, (error: unknown) => console.warn("Ovis: the account service's sign-ins could not be read", error instanceof Error ? error.name : error));
     return () => { live = false; };
   }, [service, fallbackKey]);
   /** the desktop app comes back over loopback with any provider; a PC's page only through a device flow */
@@ -157,8 +173,8 @@ export function AccountSection({ onAccount, welcome }: { onAccount?: (state: Acc
 
   useEffect(() => { if (offered) void load(); }, [offered, load]);
   useEffect(() => {
-    onAccount?.({ signedIn: view.kind === "signed-in", account: view.kind === "signed-in" ? view.account : null, pcs: view.kind === "signed-in" ? view.pcs : null });
-  }, [onAccount, view]);
+    onAccount?.({ signedIn: view.kind === "signed-in", account: view.kind === "signed-in" ? view.account : null, pcs: view.kind === "signed-in" ? view.pcs : null, reachable: !unreachable });
+  }, [onAccount, view, unreachable]);
   // closing Settings ends a device sign-in still waiting: its session is then never kept
   useEffect(() => () => { deviceSignIn.current?.abort(); loads.current++; }, []);
 

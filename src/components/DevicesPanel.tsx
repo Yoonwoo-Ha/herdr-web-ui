@@ -304,7 +304,7 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
         )}
         <ul className="devices-list">
           {[...devices].sort((a, b) => Number(b.current) - Number(a.current)).map((d) => (
-            <li key={d.id} className="devices-row">
+            <li key={d.id} className={!d.connection && d.via_relay && !watching && !guest && !seenLately(d.last_seen_at) ? "devices-row is-away" : "devices-row"}>
               {renaming?.id === d.id ? (
                 <form className="devices-rename" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
                   <input className="input" value={renaming.label} maxLength={48} autoFocus aria-label={t("Device name")} onChange={(e) => setRenaming({ id: d.id, label: e.target.value })} />

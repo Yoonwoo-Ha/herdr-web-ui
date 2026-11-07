@@ -1,9 +1,9 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { AppWindow, ArrowLeft, AudioLines, Bell, Bot, Box, Brain, CheckCheck, ChevronLeft, ChevronRight, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink, FileClock, FilePen, FlaskConical, Globe, Image as ImageIcon, Info, Keyboard, Languages, Layers, ListCollapse, Lock, MessageCircleQuestionMark, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, OctagonX, Palette, PanelRight, Plus, Puzzle, Search, Send, ShieldAlert, Smartphone, Sparkles, SquareTerminal, Star, Tags, TextCursorInput, Timer, Volume2, WandSparkles, WrapText, X, ALargeSmall, ArrowDownUp, CircleDot, Filter, Gauge, ListTree, PanelLeft, Rows3, Shapes, SunMoon, Tag, Type, type LucideIcon } from "lucide-react";
+import { AppWindow, ArrowLeft, AudioLines, Bell, Bot, Box, Brain, CheckCheck, ChevronLeft, ChevronRight, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink, FileClock, FilePen, FlaskConical, Globe, Image as ImageIcon, Info, Keyboard, Languages, Layers, ListCollapse, Lock, MessageCircleQuestionMark, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, OctagonX, Palette, PanelRight, Plus, Puzzle, Trash2, Search, Send, ShieldAlert, Smartphone, Sparkles, SquareTerminal, Star, Tags, TextCursorInput, Timer, Volume2, WandSparkles, WrapText, X, ALargeSmall, ArrowDownUp, CircleDot, Filter, Gauge, ListTree, PanelLeft, Rows3, Shapes, SunMoon, Tag, Type, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
-import type { AppActions } from "../lib/actions.ts";
+import type { AddPcPreset, AppActions } from "../lib/actions.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { canReuseExternalLinkTab } from "../lib/terminalFileLinks.ts";
@@ -1215,9 +1215,9 @@ const groupedId = (id: string): string => id.match(/.{1,4}/g)?.join(" ") ?? id;
  * then the paired phones and browsers), with one Connect a device whose dialog holds every way in. What few
  * people change waits in More settings.
  */
-function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSettings, pcSettingsError, onPcSettings, openAddPc }: {
+function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSettings, pcSettingsError, onPcSettings, openAddPc, connectPc }: {
   auth: HealthAuth | null; security: SecurityFacts; onSignOut: (() => Promise<void>) | null; onRevokedAll: () => void;
-  machines: readonly Machine[]; pcSettings: MachineSettings | null; pcSettingsError: string | null; onPcSettings: (patch: Partial<MachineSettings>) => void; openAddPc: () => void;
+  machines: readonly Machine[]; pcSettings: MachineSettings | null; pcSettingsError: string | null; onPcSettings: (patch: Partial<MachineSettings>) => void; openAddPc: (preset?: AddPcPreset) => void; connectPc: (machine: Machine) => void;
 }) {
   const { settings, update } = useSettings();
   const t = useT();
@@ -1251,7 +1251,7 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   // a reset relay identity is a new ID for this PC: My devices reads it again
   const [identityResets, setIdentityResets] = useState(0);
   // the account as AccountSection reads it: signed in or not, and the account's PCs for the list
-  const [account, setAccount] = useState<AccountState>({ signedIn: false, account: null, pcs: null });
+  const [account, setAccount] = useState<AccountState>({ signedIn: false, account: null, pcs: null, reachable: true });
   // a new device joins by signing in only to a PC in the account this browser is signed in to (docs/account.md
   // "Joining through the account"): read again each time the dialog opens, since this PC may have joined meanwhile
   const [pcAccount, setPcAccount] = useState<string | null>(null);
@@ -1278,9 +1278,9 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   return (
     <>
       {/* what is connected to this PC: its name atop one list of the other PCs, phones and browsers, the one in use first */}
-      <SettingsGroup title={t("Connected to this PC")} section="devices">
+      <SettingsGroup section="devices">
         <div className="settings-item my-devices">
-          <MyPcRows machines={machines} accountPcs={account.pcs} relayKey={`${relay.status?.phase ?? ""}:${identityResets}`}>
+          <MyPcRows machines={machines} accountPcs={account.pcs} watching={auth?.role === "watch"} relayKey={`${relay.status?.phase ?? ""}:${identityResets}`}>
             <DevicesPanel onDevicePaired={closeConnect} auth={auth} onRevokedAll={onRevokedAll} kindOf={(label) => deviceKind(label, t)} currentAction={selfRelay} more={devicesMore} />
           </MyPcRows>
         </div>
@@ -1347,10 +1347,11 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
       </SettingsFold>
 
       {connecting && (
-        <ConnectPhoneDialog plan={plan} loading={access === undefined} onRefresh={loadAccess} pairUrl={pairUrl}
+        <ConnectPhoneDialog plan={plan} pairUrl={pairUrl}
           relay={relay} readOnly={relayReadOnly} closesGate={closesGate} canPair={auth?.via !== "portal"}
-          joinBySignIn={joinBySignIn} onSignIn={accountOffered() && !account.signedIn ? signIn : null}
-          onAddPcSsh={() => { setConnecting(false); openAddPc(); }} onClose={closeConnect} />
+          signedIn={account.signedIn} joinBySignIn={joinBySignIn} onAccount={accountOffered() && account.reachable ? signIn : null}
+          onAddPc={(preset) => { setConnecting(false); openAddPc(preset); }} machines={machines}
+          onConnectMachine={(machine) => { setConnecting(false); connectPc(machine); }} onClose={closeConnect} />
       )}
     </>
   );
@@ -1413,6 +1414,9 @@ function RelayControls({ relay, closesGate, onReset }: { relay: RelayState; clos
   );
 }
 
+/** a PC this app added (over SSH or the relay) that is not connected now: removable from the list; herdr's and herdr-core's own are managed there */
+const removablePc = (machine: Machine): boolean => machine.state !== "connected" && machine.herdr_profile_id === undefined && (machine.kind === "ssh" || machine.kind === "relay");
+
 /**
  * The PCs at the top of My devices: this PC with its relay ID (what a device that typed this PC's code compares,
  * AddRelayPc and the hosted app's code screen), the PCs this app shows (SSH, relay, herdr-core machines), and,
@@ -1422,10 +1426,14 @@ function RelayControls({ relay, closesGate, onReset }: { relay: RelayState; clos
  * (a reset in another window) is read again too. Removing a PC stays
  * in the sidebar's PC menu, which moves the selection off it first and knows the PCs herdr manages.
  */
-function MyPcRows({ machines, accountPcs, relayKey, children }: { machines: readonly Machine[]; accountPcs: readonly MyPc[] | null; relayKey: string;
+function MyPcRows({ machines, accountPcs, relayKey, watching, children }: { machines: readonly Machine[]; accountPcs: readonly MyPc[] | null; relayKey: string;
+  /** a watching device: the server refuses it the removal, so it is not offered */
+  watching: boolean;
   /** the paired phones and browsers, the one in use first: right under this PC, above the other PCs */
   children?: ReactNode }) {
   const t = useT();
+  // a PC that is not connected, offered for removal from its own row (the sidebar's PC menu removes it too)
+  const [removing, setRemoving] = useState<Machine | null>(null);
   const local = machines.find((machine) => machine.kind === "local");
   const [ownId, setOwnId] = useState<string | null>(null);
   useEffect(() => {
@@ -1452,15 +1460,20 @@ function MyPcRows({ machines, accountPcs, relayKey, children }: { machines: read
     {children}
     <ul className="devices-list my-pcs">
       {others.map((machine) => (
-        <li key={machine.id} className="devices-row">
+        <li key={machine.id} className={machine.state === "connected" ? "devices-row" : "devices-row is-away"}>
           <div className="devices-name">
             <span className="settings-label">{machine.name}<span className="devices-kind">PC</span></span>
             <span className="settings-description">{t(STATE_WORD[machine.state])}</span>
           </div>
+          {!watching && removablePc(machine) && (
+            <div className="devices-actions">
+              <button type="button" className="icon-button" aria-label={t("Remove PC {name}", { name: machine.name })} onClick={() => setRemoving(machine)}><Trash2 aria-hidden="true" /></button>
+            </div>
+          )}
         </li>
       ))}
       {fromAccount.map((pc) => (
-        <li key={pc.server_id} className="devices-row" data-pc-state={pc.state}>
+        <li key={pc.server_id} className={pc.state === "paired" ? "devices-row" : "devices-row is-away"} data-pc-state={pc.state}>
           <div className="devices-name">
             <span className="settings-label">{pc.name}<span className="devices-kind">PC</span></span>
             <span className="settings-description">{accountPcStateText(pc, t)}</span>
@@ -1468,6 +1481,8 @@ function MyPcRows({ machines, accountPcs, relayKey, children }: { machines: read
         </li>
       ))}
     </ul>
+    {removing !== null && <ConfirmDialog title={t("Remove PC {name}?", { name: removing.name })} body={t(removing.kind === "relay" ? "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC." : "Removes this registration. Remote sessions keep running.")} confirmLabel={t("Remove PC")}
+      onConfirm={async () => { await machineRequest(`/${encodeURIComponent(removing.id)}`, "DELETE"); setRemoving(null); }} onClose={() => setRemoving(null)} />}
     </>
   );
 }
@@ -1943,7 +1958,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
       case "agents": return <AgentsSettings watching={auth?.role === "watch"} onLocalLogin={onUsageLogin} onOpenPane={onOpenPane} onOpenGuide={onClose} />;
       case "shortcuts": return <ShortcutsPage />;
       // after every device went, its own pairing included, a browser asks the server where it stands: the roster answers, or the gate does
-      case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} openAddPc={actions.openAddPc}
+      case "devices": return <DevicesPage auth={auth} security={security} onSignOut={actions.lock} onRevokedAll={actions.refresh} openAddPc={actions.openAddPc} connectPc={actions.connectPc}
         machines={machines} pcSettings={pcSettings} pcSettingsError={pcSettingsError} onPcSettings={(patch) => void updatePcSettings(patch)} />;
       case "experimental": return <ExperimentalPage />;
       case "about": return <AboutPage updates={updates} herdrVersion={herdrVersion} herdrRuntime={herdrRuntime} herdrCore={herdrCore} herdrRuntimeFacts={herdrRuntimeFacts} bootId={bootId} onServerRestarted={onServerRestarted} onOpenPane={onOpenPane} bridgesFollow={pcSettings?.auto_update_bridges === true} />;

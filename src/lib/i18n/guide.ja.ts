@@ -39,4 +39,5 @@ export const GUIDE_JA: Record<string, string> = {
   "The workspace opened, but {agent} did not start. Open it to see why in its terminal.": "ワークスペースは開きましたが、{agent} が起動しませんでした。開いてターミナルで理由を確認してください。",
   "Open the workspace": "ワークスペースを開く",
   "{agent} is not signed in yet.": "{agent} はまだログインしていません。",
+  "Open this address on your phone": "スマートフォンでこのアドレスを開いてください",
 };

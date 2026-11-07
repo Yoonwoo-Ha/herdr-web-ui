@@ -1588,27 +1588,10 @@ export async function machineRequest<T>(path: string, method = "GET", body?: unk
   if (!response.ok) throw await errorFrom("/api/machines", response);
   return response.json();
 }
-/** POST /api/machines/relay: pairs with the PC whose relay pairing link this is and adds it (server/relay-pc.ts). */
-export const addRelayPc = (link: string) => machineRequest<{ machine: Machine }>("/relay", "POST", { link });
-/**
- * POST /api/machines/relay/code: finds the PC that shows this typed code. This PC's server keeps what it found, the
- * one-time pairing code in it, under a ticket only this window gets, and answers the ID to compare; addFoundRelayPc then adds that PC.
- * ApiError code `typed_code_<failure>` (shared/relay-code-offer.ts) when it finds none.
- */
-export const findRelayPc = (code: string) => machineRequest<{ ticket: string; server_id: string; name: string | null }>("/relay/code", "POST", { code });
-export const addFoundRelayPc = (ticket: string) => machineRequest<{ machine: Machine }>("/relay", "POST", { found: ticket });
-/** A PC of this PC's Tailscale login whose Ovis lets this PC in as its owner (server/tailnet-pcs.ts). */
-export interface TailnetPc {
-  readonly name: string;
-  readonly url: string;
-  readonly relay: string | null;
-  /** its Ovis predates typed codes: updated to 0.5, one tap adds it */
-  readonly outdated: boolean;
-}
-/** GET /api/machines/tailnet: the PCs on this PC's Tailscale that one tap adds through the relay. */
-export const findTailnetPcs = () => machineRequest<{ pcs: TailnetPc[] }>("/tailnet");
-/** POST /api/machines/tailnet: asks that PC for its code over Tailscale and adds it through the relay. */
-export const addTailnetPc = (url: string) => machineRequest<{ machine: Machine }>("/tailnet", "POST", { url });
+/** A PC this PC's server could reach over SSH: a host of its ssh config, or a PC of its Tailscale login (server/ssh-candidates.ts). */
+export interface SshCandidate { readonly name: string; readonly destination: string; readonly detail: string | null; readonly source: "ssh_config" | "tailscale" }
+/** GET /api/machines/ssh-candidates: Add a connection → SSH's list, each added through the Add PC dialog. */
+export const findSshCandidates = () => machineRequest<{ pcs: SshCandidate[] }>("/ssh-candidates");
 export const startMachineSetup = (request: SetupRequest) => machineRequest<SetupJob>("/setup", "POST", request);
 export const fetchMachineSetup = (id: string) => machineRequest<SetupJob>(`/setup/${encodeURIComponent(id)}`);
 export const answerMachineSetup = (id: string, action: SetupAction) => machineRequest<SetupJob>(`/setup/${encodeURIComponent(id)}`, "POST", action);

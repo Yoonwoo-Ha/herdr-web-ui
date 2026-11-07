@@ -274,14 +274,12 @@ const BASE: Record<string, string> = {
   "Submit": "제출",
   "Recommended": "추천",
   "Agents": "에이전트",
-  "Check again": "다시 확인",
   "Setup guide": "설정 안내",
   "Could not confirm this browser is paired. Check that cookies are enabled, then try again.": "이 브라우저의 페어링을 확인할 수 없습니다. 쿠키가 허용되어 있는지 확인한 뒤 다시 시도하세요.",
   "New code": "새 코드",
   "Paired: {name}.": "페어링됨: {name}.",
   "QR code that pairs a phone with code {code}": "코드 {code}로 폰을 페어링하는 QR 코드",
   "Pairing code": "페어링 코드",
-  "Open this address on your phone": "폰에서 이 주소를 여세요",
   "{agent} is ready": "{agent} 준비 완료",
 
 
@@ -436,10 +434,6 @@ const BASE: Record<string, string> = {
   "{name} wants to pair through the relay. Approve it only if its screen shows": "{name}이(가) 릴레이로 연결하려고 합니다. 그 화면에 다음 숫자가 보일 때만 승인하세요:",
   "Decline": "거절",
   "differs": "다름",
-  "this PC": "이 PC",
-  "It matches": "같습니다",
-  "Does {name}'s screen show this ID?": "{name} 화면에 이 ID가 보이나요?",
-  "ID of the PC this code found": "이 코드로 찾은 PC의 ID",
   "A code has ten letters and digits, like 7K3QD-M2XHA.": "코드는 7K3QD-M2XHA처럼 영문과 숫자 열 자입니다.",
   "No PC shows this code. Check it, or show a new one on the PC.": "이 코드를 보여 주는 PC가 없습니다. 코드를 확인하거나 PC에서 새 코드를 띄우세요.",
   "That code did not work. Check it and try again; after three wrong tries the PC needs a new code.": "그 코드가 맞지 않습니다. 확인하고 다시 시도하세요. 세 번 틀리면 PC에서 새 코드가 필요합니다.",
@@ -483,6 +477,12 @@ const BASE: Record<string, string> = {
   "Conversation": "대화",
   "Off": "끄기",
   "Not now": "나중에",
+  "Remove PC": "PC 제거",
+  "Remove PC {name}?": "{name} PC를 제거할까요?",
+  "Removes this registration. Remote sessions keep running.": "이 등록만 지웁니다. 원격 세션은 계속 돕니다.",
+  "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "이 PC에서만 지웁니다. 접근까지 끊으려면 그 PC의 폰 및 기기에서 취소하세요.",
+  "Added": "추가됨",
+  "Sign in to Ovis": "Ovis에 로그인",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

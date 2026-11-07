@@ -276,14 +276,12 @@ const BASE: Record<string, string> = {
   "Submit": "送信",
   "Recommended": "推奨",
   "Agents": "エージェント",
-  "Check again": "再確認",
   "Setup guide": "セットアップガイド",
   "Could not confirm this browser is paired. Check that cookies are enabled, then try again.": "このブラウザーがペアリング済みであることを確認できませんでした。Cookie が有効か確認して、もう一度お試しください。",
   "New code": "新しいコード",
   "Paired: {name}.": "ペアリングしました: {name}。",
   "QR code that pairs a phone with code {code}": "コード {code} でスマートフォンをペアリングする QR コード",
   "Pairing code": "ペアリングコード",
-  "Open this address on your phone": "スマートフォンでこのアドレスを開いてください",
   "{agent} is ready": "{agent} の準備ができました",
 
 
@@ -438,10 +436,6 @@ const BASE: Record<string, string> = {
   "{name} wants to pair through the relay. Approve it only if its screen shows": "{name} がリレー経由でペアリングしようとしています。その画面に次の数字が表示されている場合だけ承認してください:",
   "Decline": "拒否",
   "differs": "不一致",
-  "this PC": "このPC",
-  "It matches": "一致しています",
-  "Does {name}'s screen show this ID?": "{name} の画面にこの ID が表示されていますか？",
-  "ID of the PC this code found": "このコードで見つかった PC の ID",
   "A code has ten letters and digits, like 7K3QD-M2XHA.": "コードは 7K3QD-M2XHA のような英数字 10 文字です。",
   "No PC shows this code. Check it, or show a new one on the PC.": "このコードを表示している PC はありません。確認するか、PC で新しいコードを表示してください。",
   "That code did not work. Check it and try again; after three wrong tries the PC needs a new code.": "そのコードでは接続できませんでした。確認してもう一度お試しください。3 回間違えると PC で新しいコードが必要です。",
@@ -485,6 +479,12 @@ const BASE: Record<string, string> = {
   "Conversation": "会話",
   "Off": "オフ",
   "Not now": "今はしない",
+  "Remove PC": "PC を削除",
+  "Remove PC {name}?": "PC {name} を削除しますか？",
+  "Removes this registration. Remote sessions keep running.": "この登録のみを削除します。リモートのセッションは実行されたままです。",
+  "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "この PC からだけ削除します。アクセスも止めるには、その PC の スマートフォンとデバイス で取り消してください。",
+  "Added": "追加",
+  "Sign in to Ovis": "Ovis にサインイン",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

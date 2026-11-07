@@ -314,10 +314,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "Ovis restarts and shows herdr TUI's terminals instead of the Herdr app's; this page reconnects by itself. The app's terminals keep running.": "Ovis가 다시 시작해 Herdr 앱 대신 herdr TUI의 터미널을 보여 주고, 이 페이지는 저절로 다시 연결됩니다. 앱의 터미널은 계속 실행됩니다.",
   "Switch and restart": "전환하고 다시 시작",
   "Ovis has not answered since the restart. Reload this page in a moment; if it stays away, start Ovis again on this PC.": "다시 시작한 뒤로 Ovis가 응답하지 않습니다. 잠시 뒤 이 페이지를 새로 고치고, 그래도 응답이 없으면 이 PC에서 Ovis를 다시 실행하세요.",
-  "Add a PC through the relay": "릴레이로 PC 추가",
-  "Pairing link or code": "페어링 링크 또는 코드",
-  "Link or code": "링크 또는 코드",
-  "{name} was added. Its workspaces join the sidebar.": "{name}을(를) 추가했습니다. 워크스페이스가 사이드바에 함께 보입니다.",
   "A pinned agent's menu in the Agents list offers Lock agent. This app then offers no way to close a locked agent's pane, tab or workspace, in every browser. Closing from herdr itself or a script still works.": "에이전트 목록에서 고정한 에이전트의 메뉴에 '에이전트 잠금'이 생깁니다. 잠긴 에이전트의 패널, 탭, 워크스페이스는 모든 브라우저에서 이 앱으로 닫을 수 없습니다. herdr 자체나 스크립트로는 여전히 닫을 수 있습니다.",
   "Only those words are kept, on this server, until the tab closes; turning this off deletes them.": "그 몇 단어만 탭이 닫힐 때까지 이 서버에 보관하며, 끄면 삭제됩니다.",
   "Within a state": "같은 상태 안에서",
@@ -345,4 +341,5 @@ export const SETTINGS_KO: Record<string, string> = {
   "Hide the key bar in the input line": "입력창에서는 키 바 숨기기",
   "Reopen files on return": "돌아오면 파일 다시 열기",
   "A file open when you switch to another tab shows again when you come back to that tab. Back to the tab shows it too.": "다른 탭으로 전환할 때 열려 있던 파일이 그 탭으로 돌아오면 다시 표시됩니다. 뒤로 가기로 그 탭에 돌아와도 표시됩니다.",
+  "Remove PC {name}": "{name} PC 제거",
 };

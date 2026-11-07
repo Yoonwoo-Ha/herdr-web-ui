@@ -314,10 +314,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Ovis restarts and shows herdr TUI's terminals instead of the Herdr app's; this page reconnects by itself. The app's terminals keep running.": "Ovis が再起動し、Herdr アプリの代わりに herdr TUI のターミナルを表示して、このページは自動で再接続します。アプリのターミナルは動き続けます。",
   "Switch and restart": "切り替えて再起動",
   "Ovis has not answered since the restart. Reload this page in a moment; if it stays away, start Ovis again on this PC.": "再起動してから Ovis が応答しません。少ししてからこのページを再読み込みし、それでも応答がなければこの PC で Ovis を起動し直してください。",
-  "Add a PC through the relay": "リレー経由で PC を追加",
-  "Pairing link or code": "ペアリングリンクまたはコード",
-  "Link or code": "リンクまたはコード",
-  "{name} was added. Its workspaces join the sidebar.": "{name} を追加しました。ワークスペースはサイドバーに並びます。",
   "A pinned agent's menu in the Agents list offers Lock agent. This app then offers no way to close a locked agent's pane, tab or workspace, in every browser. Closing from herdr itself or a script still works.": "エージェント一覧で固定したエージェントのメニューに「エージェントをロック」が加わります。ロックしたエージェントのペイン、タブ、ワークスペースは、どのブラウザでもこのアプリから閉じられません。herdr 本体やスクリプトからは閉じられます。",
   "Only those words are kept, on this server, until the tab closes; turning this off deletes them.": "保存するのはその数語だけで、タブを閉じるまでこのサーバーに残り、オフにすると削除されます。",
   "Within a state": "同じ状態の中で",
@@ -345,4 +341,5 @@ export const SETTINGS_JA: Record<string, string> = {
   "Hide the key bar in the input line": "入力欄ではキーバーを隠す",
   "Reopen files on return": "戻ったときにファイルを再表示",
   "A file open when you switch to another tab shows again when you come back to that tab. Back to the tab shows it too.": "別のタブに切り替えたときに開いていたファイルは、そのタブに戻ると再び表示されます。「戻る」でそのタブに戻ったときも表示されます。",
+  "Remove PC {name}": "PC {name} を削除",
 };

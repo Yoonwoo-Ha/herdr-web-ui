@@ -1,6 +1,8 @@
 # Remote PCs over SSH
 
-Use **Add a PC over SSH**, under **Other ways to connect** in Settings → Devices and PCs → Connect (the command palette has **Add PC** too), to connect a Linux or macOS computer (x64 or arm64) or a Windows PC (x64) running OpenSSH Server. Enter an SSH alias or `user@hostname`; the name defaults to that address. Advanced settings accept a port, a key path on the **web server**, and a named herdr session. Each registration selects one herdr socket. The sidebar groups PC → workspace → pane, and the header and new-session dialog show the destination PC. **Settings → Remote PCs → Show in sidebar** keeps a PC out of this device's sidebar, Agents list and command palette; it stays connected, and links and alerts still open its panes. The sidebar's PCs head counts the PCs hidden there; its menu shows each one again.
+Use **Settings → Devices and PCs → Add a connection → SSH** (the command palette has **Add PC** too) to connect a Linux or macOS computer (x64 or arm64) or a Windows PC (x64) running OpenSSH Server. Enter an SSH alias or `user@hostname`; the name defaults to that address. Advanced settings accept a port, a key path on the **web server**, and a named herdr session. Each registration selects one herdr socket. The sidebar groups PC → workspace → pane, and the header and new-session dialog show the destination PC. **Settings → Remote PCs → Show in sidebar** keeps a PC out of this device's sidebar, Agents list and command palette; it stays connected, and links and alerts still open its panes. The sidebar's PCs head counts the PCs hidden there; its menu shows each one again.
+
+The **SSH** tab lists the PCs it can find, each with **Add**, which opens the setup dialog with that address filled in: the PCs saved in herdr that wait for **Connect**, the hosts of the connection server's own ssh config (`~/.ssh/config` and the files its `Include` lines name; hosts named only by a pattern and everything under `Match` are left out, and only the first 200 are listed), and the other online, untagged PCs of its own Tailscale login, by their MagicDNS name. A Tailscale PC is reached over SSH like any other address, never through the relay, and a PC a config host already names (by alias or HostName) is listed once. A PC already added shows **Added**. Below the list, type any other SSH address. The list is read from `GET /api/machines/ssh-candidates`, which reads both sources and connects to nothing; a watching device, an open LAN window, a Portal visitor and a device on the relay are refused (`read_only`, `owner_only`), and then see only the field.
 
 **Machines already saved in herdr appear automatically.** The connection server reads its account's
 `herdr machine list --json` at startup and every five seconds after the previous read finishes. Failed reads back off up to five minutes and
@@ -67,8 +69,9 @@ headless server into the desktop session, and Ovis never restarts it or its pane
 An initial connection can be cancelled while waiting; already-started work stays running.
 ## Through the relay
 
-**Settings → Devices and PCs → Connect → Enter a code from another device** adds another PC with no
-SSH and no open port: both PCs only connect out to the [Ovis relay](relay.md). On the other PC, open
+Add a connection no longer offers adding a PC through the relay: the relay is used through the Ovis
+account ([relay.md](relay.md)), and a PC on your Tailscale is added over SSH (above). A PC added through
+the relay before keeps working as described here. Such a PC was added with no SSH and no open port: both PCs only connect out to the [Ovis relay](relay.md). On the other PC, open
 **Settings → Devices and PCs → Connect** (with the relay on) and type the ten-character code it shows
 beside its QR code here (an older Ovis names it **Show a code to type**; its pairing link works too):
 this PC's server finds that PC through the relay as a phone does ([Pairing with a typed code](relay.md)),
@@ -79,7 +82,7 @@ end-to-end encryption and the same device key, kept on this server in
 `Ovis on <this PC's name>`, with the access any paired device has. The PC itself is saved in
 `<stateDir>/relay-pcs.json`, apart from `machines.json`, so going back to an older release still starts.
 
-**PCs on your Tailscale**, in the same **Connect a device** dialog, saves typing the code: it lists
+**PCs on your Tailscale**, in the dialog of an older Ovis, saved typing the code: it lists
 the other PCs of this PC's own Tailscale login whose Ovis already lets this PC in as you (served by
 `tailscale serve`, no token), and **Add PC** adds one through the relay in one tap. This PC reads
 `tailscale status`, asks only online, untagged peers of its own login that do not report iOS or

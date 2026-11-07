@@ -3687,33 +3687,30 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - My devices (`MyPcRows` in SettingsDialog.tsx, then `components/DevicesPanel.tsx`): this PC
   first (its name, a **This PC** pill in the accent and its relay ID in `--font-mono` under it: the
   ID a device that typed this PC's code compares, so it is shown here and not in the dialog), then
-  the PCs this app shows (a neutral **PC** pill and their state; removing an eligible PC stays in
-  the sidebar's PC menu), then signed in the account's other PCs (their
-  account state, no action), then the paired phones and browsers with a neutral kind pill (Phone,
+  the PCs this app shows (a neutral **PC** pill and their state; one that is not connected is
+  dimmed, and one this app added over SSH or the relay carries a **Remove PC** trash button that asks
+  once, as the sidebar's PC menu does), then signed in the account's other PCs (their
+  account state, dimmed unless ready, no action), then the paired phones and browsers with a neutral kind pill (Phone,
   Tablet or Browser, read from the name the app first gave the device), Rename and Revoke as
   before, then **Revoke every device**. On a touch phone on this PC's own address, with the relay
   online, the phone's own row carries **Use the relay** (its own offer opens there). **Sign out of
   this PC** (the browser's own pairing) and the account's **Sign out of GitHub** are named apart.
-- Connect a device (`components/ConnectPhoneDialog.tsx`, a `.modal`, a bottom sheet on a phone):
-  signed in to the account, with this PC in it and the relay online, it asks the new device to
-  sign in with GitHub and be approved once on a device already in the account (the approval is
-  the account's own prompt, picking the number out of three, on that device: never on the PC's
-  own windows) and shows no code until **Connect with a code (no sign-in)**. Otherwise one way
-  first: the Ovis relay's QR code and the code to type side by side (`components/CompactPair.tsx`,
-  132px QR, the code in `--font-mono`), with only **Refresh** and **Copy**; signed out where the
-  account is offered, one bordered line above it says signing in skips the code. While the relay
-  is not online its state sentence shows instead, with its switch for the PC's owner (and the gate
-  condition), a failed start's reason and **Try again**; a watching device or Portal visitor reads
-  the state and that only the owner controls the relay. **Enter a code from another device** opens
-  the typed-code form for a PC that shows its own code (the ID match step as before). **Other ways
-  to connect** folds the rest, one bordered line each that opens under itself: **Same Wi-Fi** (the
-  six-digit pairing code and its QR code, Refresh and Copy), **Tailscale** (the address and QR
-  code, or the command to run), **Portal** (where the server offers it: the whole Portal group as
-  before) and **Add a PC over SSH** (closes Settings and opens the PC setup dialog). With no relay
-  offered the six-digit code is the first way. The dialog closes by itself once My devices sees the
-  device a code let in. A six-digit code started anywhere ends the relay's typed code on the PC,
-  so that code goes and Refresh makes another; it is never asked for on its own, or the two would
-  keep ending each other.
+- Add a connection (`components/ConnectPhoneDialog.tsx`, a `.modal`, a bottom sheet on a phone) follows
+  herdr's own **Add a machine** sheet: one tab per way across the top (the `.segmented` primitive,
+  as FilesDialog's tabs), and under each the things that way found, each with one action, then a
+  field to type one. **SSH** (only for the PC's owner on its own page) lists the PCs saved in herdr
+  (**Connect**), the server's ssh config hosts and its Tailscale login's PCs, one row each: the name,
+  the address dim and ellipsized (under the name on a phone), a neutral pill for where it was found
+  (herdr, ssh config, Tailscale), then **Add** or a quiet **Added** in the done green; **Add** and the
+  typed address close Settings and open the PC setup dialog with the address filled in. **Phones and
+  devices** stacks, under a hairline each, the Tailscale address and QR code, the six-digit pairing
+  code (`components/CompactPair.tsx`, started when the tab first opens) and Portal where the server
+  offers it. **Ovis relay** is the account's: signed out one sentence and **Sign in to Ovis** (which
+  opens the account's sign-in in More settings), signed in how a new device joins, or the relay's
+  switch and **Open the account** while this PC cannot admit one yet. Relay pairing without the
+  account, a code from another PC and Tailscale PCs added through the relay are gone from it. A phone
+  opens on Phones and devices, a PC's window on SSH; a tab once opened stays mounted, so its code
+  is not minted again. The dialog closes by itself once My devices sees the device a code let in.
 - The Ovis relay's own group in More settings: its state as the row's sentence with the switch,
   then **Reset relay identity** (confirmed in the shared `ConfirmDialog`; none for a serve-only
   install, which refuses it). Not shown in the hosted shell or to a read-only device.
@@ -3725,7 +3722,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   and **Forget this PC** (a neutral button that asks once in a `ConfirmDialog`, **Forget**, then
   deletes this phone's key for the PC and leaves for the front page). Neither is destructive on the
   PC, which keeps listing the phone until it is revoked there, so neither is a `.btn-danger`.
-- Portal, under Connect a device's Other ways to connect where the server offers it: while it runs,
+- Portal, in Add a connection's Phones and devices tab where the server offers it: while it runs,
   the address and QR code as the Tailscale way draws them over a Relay row with Stop; otherwise one
   hint for what blocks it (no token, serve-only, no `portal` or an old one, with a link to get it)
   or a wide Relay row whose text field and Start stack on a phone. Starting and stopping are one

@@ -118,7 +118,7 @@ try {
   }
   const [paneA, paneB] = panes as [string, string];
   // no provider is asked with the test machine's own sign-ins
-  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), usage: new UsageService({ ...systemUsageContext(), home: root, env: {} }, []) });
+  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), usage: new UsageService({ ...systemUsageContext(), home: root, env: {} }, []), sshCandidates: { sshDir: join(root, "no-ssh"), readStatus: async () => null } });
   const origin = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({
     executablePath: chromePath(),
@@ -759,14 +759,21 @@ try {
   await page.getByRole("button", { name: "Close settings", exact: true }).click();
   console.log("PASS settings shortcut and theme");
 
-  // Add PC lives in Settings → Devices and PCs → Connect → Other ways to connect, not in the sidebar; opening it closes Settings behind it
+  // Add PC lives in Settings → Devices and PCs → Add a connection → SSH, not in the sidebar: a typed address opens it
+  // filled in, and opening it closes Settings behind it
   assert.equal(await page.locator(".sidebar").getByRole("button", { name: "Add PC", exact: true }).count(), 0, "the sidebar has no Add PC button");
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(page, "Devices and PCs");
   await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Add a connection", exact: true }).click();
-  await page.getByRole("dialog", { name: "Add a connection", exact: true }).locator(".connect-other > summary").click();
-  await page.getByRole("dialog", { name: "Add a connection", exact: true }).getByRole("button", { name: "Add a PC over SSH", exact: true }).click();
+  const connectSheet = page.getByRole("dialog", { name: "Add a connection", exact: true });
+  await connectSheet.locator('.connect-tabs [data-tab="ssh"]').click();
+  const sshAdd = connectSheet.locator(".connect-ssh-form").getByRole("button", { name: "Add", exact: true });
+  assert.equal(await sshAdd.isDisabled(), true, "Add waits for an SSH address");
+  await connectSheet.getByLabel("Or type an SSH address", { exact: true }).fill("qa@pc.invalid");
+  await sshAdd.click();
   await page.getByRole("dialog", { name: "Add PC", exact: true }).waitFor();
+  assert.equal(await page.getByRole("dialog", { name: "Add PC", exact: true }).getByLabel("SSH alias or user@address", { exact: true }).inputValue(), "qa@pc.invalid", "Add PC opens with the typed address");
+  assert.equal(await connectSheet.count(), 0, "Add PC closes the Add a connection sheet");
   assert.equal(await page.getByRole("dialog", { name: "Settings" }).count(), 0, "Add PC closes Settings");
   await page.getByRole("button", { name: "Close PC setup", exact: true }).click();
   await page.getByRole("dialog", { name: "Add PC", exact: true }).waitFor({ state: "hidden" });
@@ -2489,7 +2496,7 @@ try {
   if (pageEvidence) await pageEvidence.finish();
   await page.close();
 
-  const secured = createServer({ port: 0, hostname: "127.0.0.1", token: "browser-test-token", stateDir: join(root, "secured"), tailscaleOwner: null });
+  const secured = createServer({ port: 0, hostname: "127.0.0.1", token: "browser-test-token", stateDir: join(root, "secured"), tailscaleOwner: null, sshCandidates: { sshDir: join(root, "no-ssh"), readStatus: async () => null } });
   releases.push(() => secured.stop());
   const securedOrigin = `http://127.0.0.1:${secured.port}`;
   const securedContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });

@@ -185,3 +185,8 @@
   width: 100%;
   justify-content: center;
 }
+
+/* a PC, phone or browser that is not connected now stays in the list, its name dimmed (its state stays readable), with its remove button */
+.devices-row.is-away > .devices-name > .settings-label {
+  opacity: 0.55;
+}

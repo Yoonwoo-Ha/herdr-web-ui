@@ -278,14 +278,12 @@ const BASE: Record<string, string> = {
   "Submit": "提交",
   "Recommended": "推荐",
   "Agents": "代理",
-  "Check again": "重新检查",
   "Setup guide": "设置向导",
   "Could not confirm this browser is paired. Check that cookies are enabled, then try again.": "无法确认此浏览器已配对。请检查是否允许 Cookie，然后重试。",
   "New code": "新代码",
   "Paired: {name}.": "已配对：{name}。",
   "QR code that pairs a phone with code {code}": "使用代码 {code} 配对手机的二维码",
   "Pairing code": "配对码",
-  "Open this address on your phone": "在手机上打开此地址",
   "{agent} is ready": "{agent} 已就绪",
 
 
@@ -440,10 +438,6 @@ const BASE: Record<string, string> = {
   "{name} wants to pair through the relay. Approve it only if its screen shows": "{name} 想通过中继配对。只有它的屏幕显示以下数字时才批准:",
   "Decline": "拒绝",
   "differs": "不同",
-  "this PC": "这台电脑",
-  "It matches": "一致",
-  "Does {name}'s screen show this ID?": "{name} 的屏幕上显示的是这个 ID 吗？",
-  "ID of the PC this code found": "此代码找到的电脑的 ID",
   "A code has ten letters and digits, like 7K3QD-M2XHA.": "代码由十个字母和数字组成，例如 7K3QD-M2XHA。",
   "No PC shows this code. Check it, or show a new one on the PC.": "没有电脑显示这个代码。请检查，或在电脑上显示新代码。",
   "That code did not work. Check it and try again; after three wrong tries the PC needs a new code.": "该代码无效。请检查后重试；输错三次后需要在电脑上生成新代码。",
@@ -487,6 +481,12 @@ const BASE: Record<string, string> = {
   "Conversation": "对话",
   "Off": "关闭",
   "Not now": "暂不",
+  "Remove PC": "移除 PC",
+  "Remove PC {name}?": "移除 PC {name}？",
+  "Removes this registration. Remote sessions keep running.": "仅移除此注册。远程会话会继续运行。",
+  "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "仅从这台 PC 移除。要同时取消它的访问权限，请在那台 PC 的 手机和设备 中撤销。",
+  "Added": "新增",
+  "Sign in to Ovis": "登录 Ovis",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
