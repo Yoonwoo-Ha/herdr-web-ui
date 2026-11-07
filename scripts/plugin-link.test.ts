@@ -56,6 +56,22 @@ function clock() {
 
 async function* answers(...lines: string[]): AsyncGenerator<string> { for (const line of lines) yield line; }
 
+/**
+ * A QR code drawn in the terminal, whatever it carries: its three finder squares, top left, top right and
+ * bottom left. The rest of the code follows its random payload, so no other run of blocks is certain.
+ */
+function expectQrCode(text: string): void {
+  const rows = text.split("\n");
+  const finder = ["█ █▀▀▀█ █", "█ █   █ █", "█ ▀▀▀▀▀ █"];
+  const top = rows.findIndex((row) => row.startsWith(finder[0]!));
+  // the quiet zone under the code: two module rows to a line, so its last line is all upper halves
+  const bottom = rows.findIndex((row, index) => index > top && /^▀+$/.test(row));
+  expect(top).toBeGreaterThan(0);
+  expect(bottom).toBeGreaterThan(top);
+  expect(rows.slice(top, top + 3).map((row) => [row.slice(0, 9), row.slice(-9)])).toEqual(finder.map((line) => [line, line]));
+  expect(rows.slice(bottom - 3, bottom).map((row) => row.slice(0, 9))).toEqual(finder);
+}
+
 describe("ovis link, on the PC itself", () => {
   it("refuses a server that is not on this machine, before asking it anything", async () => {
     const pc = localPc(() => Response.json({}));
@@ -99,8 +115,8 @@ describe("ovis link, on the PC itself", () => {
     expect(text).toContain("ABCD-EFGH-JK");
     expect(text).toContain("MNPQ-RSTV-WX");
     expect(text).toContain(pc.server_id.match(/.{4}/g)!.join(" "));
-    // drawn as a QR code in the terminal: block characters, one line per module row
-    expect(text).toMatch(/█{4,}/);
+    // drawn as a QR code in the terminal: block characters, two module rows to a line
+    expectQrCode(text);
     // renewed when the pair ran out, as the Settings view does, and the code taken back on the way out
     expect(time.waits).toEqual([600_000]);
     expect(cancelled).toBe(1);
@@ -187,7 +203,7 @@ describe("ovis link, on the PC itself", () => {
     expect(await link(["--code"], { origin: ORIGIN, headers: {}, fetch: local.fetch, out: (text) => out.push(text), signal: stop.signal, lines: answers(), accountService: SERVICE })).toBe(0);
     const text = out.join("");
     expect(text).toContain("No code to type");
-    expect(text).toMatch(/█{4,}/);
+    expectQrCode(text);
     expect(text).toContain(pc.server_id.match(/.{4}/g)!.join(" "));
     // the QR code's own six-digit code is taken back too
     expect(cancelled).toBe(1);
@@ -251,7 +267,7 @@ describe("ovis link, on the PC itself", () => {
     expect(code).toBe(0);
     expect(text).toContain(`${SERVICE}/link`);
     expect(text).not.toContain("github.com/login/device");
-    expect(text).toMatch(/█{4,}/);
+    expectQrCode(text);
     expect(service.pcs("acct_1")).toHaveLength(1);
   });
 
