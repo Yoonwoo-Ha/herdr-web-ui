@@ -30,6 +30,24 @@ const metrics = (page: Page) => page.evaluate(() => {
     agentsFolded: document.querySelector(".agent-section-toggle")!.getAttribute("aria-expanded") === "false",
   };
 });
+// The PCs' list holds its rows, or as many as the room up to the line (or the footer) leaves it (issue 3267)
+const pcListLayout = (page: Page) => page.evaluate(() => {
+  const pcs = document.querySelector<HTMLElement>(".pcs-sidebar")!;
+  const list = document.querySelector<HTMLElement>(".machine-list")!;
+  const grouped = document.querySelector(".sidebar-shell")!.classList.contains("is-agents-first");
+  const end = document.querySelector<HTMLElement>(grouped ? ".sidebar-footer" : ".sidebar-split")!.getBoundingClientRect().top;
+  const style = getComputedStyle(pcs);
+  const room = Math.max(0, end - pcs.getBoundingClientRect().top - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom));
+  list.scrollTop = 0;
+  const viewport = list.getBoundingClientRect();
+  const first = list.querySelector(".workspace-group")?.getBoundingClientRect();
+  return {
+    clientHeight: list.clientHeight,
+    expectedHeight: Math.min(list.scrollHeight, room),
+    firstVisible: first !== undefined && first.top >= viewport.top - 1 && first.bottom <= viewport.bottom + 1,
+    display: style.display,
+  };
+});
 
 try {
   await buildDemoApp(app);
@@ -77,6 +95,11 @@ try {
           await open();
           const line = page.getByRole("separator", { name: "Resize PCs and Agents", exact: true });
           const original = await metrics(page);
+          const defaultPcs = await pcListLayout(page);
+          // Chromium shows the rows with a column flexbox too; Safari caps its list at one row, so pin the grid
+          assert.equal(defaultPcs.display, "grid", `${label} the PCs section stays a grid, or Safari draws its list one row tall`);
+          assert.ok(Math.abs(defaultPcs.clientHeight - defaultPcs.expectedHeight) <= 1, `${label} the PCs' list takes its rows' height or the room it has (${defaultPcs.clientHeight}/${defaultPcs.expectedHeight}px)`);
+          assert.ok(defaultPcs.firstVisible, `${label} the first PC row is in view by default`);
           assert.equal(await page.evaluate((key) => localStorage.getItem(key), key), null, `${label} opening the sidebar does not save a split`);
           assert.ok(original.agents.height <= original.shell.height / 2 + 1, `${label} the default starts at no more than today's half-shell allocation`);
           const controls = await line.getAttribute("aria-controls");
@@ -190,8 +213,11 @@ try {
             if (!grouped) assert.ok(Math.abs(preview.bottom.height - preview.bottomHead) <= 1, `${label} the lower snap preview reaches its heading before release`);
             else assert.equal(await page.locator(".sidebar-split.is-snapping, .will-fold").count(), 0, `${label} no snap preview over the PCs`);
           });
-          if (!grouped) await page.waitForFunction(() => document.querySelector(".agents-sidebar")!.classList.contains("is-collapsed"));
-          else assert.equal(await page.locator(".pcs-sidebar.is-collapsed, .agents-sidebar.is-collapsed").count(), 0, `${label} a drag to the PCs' foot folds nothing`);
+          if (!grouped) {
+            await page.waitForFunction(() => document.querySelector(".agents-sidebar")!.classList.contains("is-collapsed"));
+            const folded = await pcListLayout(page);
+            assert.ok(Math.abs(folded.clientHeight - folded.expectedHeight) <= 1, `${label} with Agents folded the PCs' list takes its rows' height or the room it has (${folded.clientHeight}/${folded.expectedHeight}px)`);
+          } else assert.equal(await page.locator(".pcs-sidebar.is-collapsed, .agents-sidebar.is-collapsed").count(), 0, `${label} a drag to the PCs' foot folds nothing`);
           await line.focus(); await page.keyboard.press("Enter");
           await page.waitForFunction(() => !document.querySelector(".pcs-sidebar.is-collapsed, .agents-sidebar.is-collapsed"));
           // A caret can override the divider's last fold request. Reordering must not replay that old request.
