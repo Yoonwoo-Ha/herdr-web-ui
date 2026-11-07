@@ -93,7 +93,7 @@ function CodeEntry({ failure, onSubmit, back }: { failure: TypedCodeFailure | nu
   return (
     <>
       <h1 className="relay-shell-title">{t("Pair with a code")}</h1>
-      <p className="relay-shell-copy">{t("On the PC, open Settings → Devices and PCs and choose Connect (Show a code to type on an older Ovis). Type the code it shows here.")}</p>
+      <p className="relay-shell-copy">{t("On the PC, open Settings → Devices and PCs and choose Add a connection (Connect, or Show a code to type, on an older Ovis). Type the code it shows here.")}</p>
       <form className="relay-shell-code-form" onSubmit={submit}>
         <input name="code" className="relay-shell-code-input" aria-label={t("Code from the PC")} placeholder="XXXXX-XXXXX"
           autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} maxLength={32} required autoFocus />
@@ -128,7 +128,7 @@ function KeyIds({ mismatch, named }: { mismatch: KeyMismatch; named: "link" | "p
           : <KeyId id={mismatch.received} against={mismatch.expected} label={received} />}
       </dd>
     </dl>
-    <p className="relay-shell-detail">{t("Only the PC itself shows its ID, at the top of My devices in Settings → Devices and PCs (under the code on an older Ovis). Marked groups differ.")}</p>
+    <p className="relay-shell-detail">{t("Only the PC itself shows its ID, at the top of Connected to this PC in Settings → Devices and PCs (My devices, or under the code, on an older Ovis). Marked groups differ.")}</p>
     </>
   );
 }
@@ -231,7 +231,7 @@ export function RelayShell({ state, pcStatus, onCheckPcs, scoped, iosTab, onPair
         {state.kind === "code-compare" && (
           <>
             <h1 className="relay-shell-title">{t("Does {name}'s screen show this ID?", { name: pc })}</h1>
-            <p className="relay-shell-copy">{t("The PC shows its ID at the top of My devices in Settings → Devices and PCs (under the code on an older Ovis). Pair only if every group matches.")}</p>
+            <p className="relay-shell-copy">{t("The PC shows its ID at the top of Connected to this PC in Settings → Devices and PCs (My devices, or under the code, on an older Ovis). Pair only if every group matches.")}</p>
             <p className="relay-shell-code-id"><KeyId id={state.offer.server_id} label={t("ID of the PC this code found")} /></p>
             <div className="relay-shell-actions">
               <button type="button" className="btn btn-primary" onClick={onCodeMatch}>{t("It matches")}</button>

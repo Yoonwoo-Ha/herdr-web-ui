@@ -140,9 +140,9 @@ try {
   // Add PC lives in Settings → Devices and PCs → Connect → Other ways to connect; opening it closes Settings
   await page.locator(".sidebar-footer").getByRole("button", { name: "Settings", exact: true }).click();
   await openSettingsPage(page, "Devices and PCs");
-  await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Connect", exact: true }).click();
-  await page.getByRole("dialog", { name: "Connect a device", exact: true }).locator(".connect-other > summary").click();
-  await page.getByRole("dialog", { name: "Connect a device", exact: true }).getByRole("button", { name: "Add a PC over SSH", exact: true }).click();
+  await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Add a connection", exact: true }).click();
+  await page.getByRole("dialog", { name: "Add a connection", exact: true }).locator(".connect-other > summary").click();
+  await page.getByRole("dialog", { name: "Add a connection", exact: true }).getByRole("button", { name: "Add a PC over SSH", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Add PC", exact: true }); await dialog.waitFor();
   await page.screenshot({ path: join(evidence, "desktop-add-pc-dark.png") });
   await dialog.getByRole("button", { name: "Close PC setup" }).click();
@@ -157,9 +157,9 @@ try {
   await page.screenshot({ path: join(evidence, "mobile-light.png") });
   await page.locator(".sidebar-footer").getByRole("button", { name: "Settings", exact: true }).click();
   await openSettingsPage(page, "Devices and PCs");
-  await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Connect", exact: true }).click();
-  await page.getByRole("dialog", { name: "Connect a device", exact: true }).locator(".connect-other > summary").click();
-  await page.getByRole("dialog", { name: "Connect a device", exact: true }).getByRole("button", { name: "Add a PC over SSH", exact: true }).click();
+  await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Add a connection", exact: true }).click();
+  await page.getByRole("dialog", { name: "Add a connection", exact: true }).locator(".connect-other > summary").click();
+  await page.getByRole("dialog", { name: "Add a connection", exact: true }).getByRole("button", { name: "Add a PC over SSH", exact: true }).click();
   await page.getByRole("dialog", { name: "Add PC", exact: true }).waitFor();
   await page.screenshot({ path: join(evidence, "mobile-add-pc-light.png") });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);

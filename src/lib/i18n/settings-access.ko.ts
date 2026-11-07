@@ -5,6 +5,9 @@
  */
 export const SETTINGS_ACCESS_KO: Record<string, string> = {
   "Access": "접근",
+  "Connected to this PC": "이 PC에 연결된 것",
+"phone browser PC pair pairing code QR relay Tailscale Wi-Fi SSH Portal add PC remote PCs": "폰 브라우저 PC 페어링 코드 QR 릴레이 Tailscale Wi-Fi SSH Portal PC 추가 원격 PC",
+  "Devices and access": "기기와 접속",
   "The server did not answer, so these facts are unavailable. Nothing from an earlier check is shown. This page asks again by itself; if this message stays, check that the server is running and that this device can reach it.": "서버가 응답하지\u00a0않아 이 정보를 볼\u00a0수\u00a0없습니다. 이전 확인 결과는 숨깁니다. 이 페이지가 알아서 다시 확인합니다. 이 메시지가 계속 보이면 서버가 켜져\u00a0있는지, 이 기기에서 서버에 접속되는지 확인하세요.",
   "This server does not report these facts. Updating it adds them.": "이 서버는 이 정보를 알려\u00a0주지\u00a0않습니다. 서버를 업데이트하면 표시됩니다.",
   "What this server reports about how it is reached. Each line is one fact, not a safety rating.": "이 서버에 어떻게 접속하는지 서버가 알려\u00a0주는 정보입니다. 각 줄은 하나의 사실이며 안전 등급이 아닙니다.",
@@ -44,15 +47,13 @@ export const SETTINGS_ACCESS_KO: Record<string, string> = {
   "Turn the relay on on that PC first.": "먼저 그 PC에서 릴레이를 켜세요.",
   "Add {name} through the relay": "{name}을(를) 릴레이로 추가",
   "Code from another PC": "다른 PC의 코드",
-  "Compare it with the ID at the top of My devices on {name}. Pair only if every group matches.": "{name}의 내 기기 맨 위 ID와 비교하세요. 모든 묶음이 같을 때만 페어링하세요.",
-  "The code that PC shows under Connect a device.": "그 PC의 기기 연결에 보이는 코드입니다.",
+  "Compare it with the ID at the top of Connected to this PC on {name} (My devices on an older Ovis). Pair only if every group matches.": "{name}의 '이 PC에 연결된 것' 맨 위 ID와 비교하세요(이전 Ovis에서는 내 기기). 모든 묶음이 같을 때만 페어링하세요.",
+  "The code that PC shows under Add a connection (Connect a device on an older Ovis).": "그 PC의 연결 추가에 보이는 코드입니다(이전 Ovis에서는 기기 연결).",
   "ID {id}": "ID {id}",
-  "My devices": "내 기기",
   "Sign out of this PC": "이 PC에서 로그아웃",
   "This app": "이 앱",
   "Use the relay": "릴레이 사용",
   "Tablet": "태블릿",
-  "phone browser PC pair pairing code QR relay Tailscale Wi-Fi SSH Portal add PC remote PCs": "폰 브라우저 PC 페어링 코드 QR 릴레이 Tailscale Wi-Fi SSH Portal PC 추가 원격 PC",
   "machines computers ssh bridge plugins phone pair relay QR code Remote PCs": "기기 컴퓨터 ssh 브리지 플러그인 폰 페어링 릴레이 QR 코드 원격 PC",
 "While a terminal or chat pane is open.": "터미널이나 채팅 패널을 보는 동안 화면을 켜 둡니다.",
 };

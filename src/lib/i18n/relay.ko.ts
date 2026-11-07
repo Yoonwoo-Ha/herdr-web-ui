@@ -75,7 +75,7 @@ export const RELAY_KO: Record<string, string> = {
   "{name} is not taking new phones right now": "{name}이(가) 지금은 새 휴대폰을 받지 않습니다",
   "Its link may have run out (it works for 10 minutes), or it may be paused after too many tries or busy with other phones. Copy a new link on the PC, or wait a few minutes.": "링크가 만료됐거나(10분 동안 쓸 수 있음), 시도가 너무 많아 잠시 멈췄거나, 다른 휴대폰을 처리하는 중일 수 있습니다. PC에서 새 링크를 복사하거나 몇 분 기다리세요.",
   "Pair with a code": "코드로 페어링",
-  "On the PC, open Settings → Devices and PCs and choose Connect (Show a code to type on an older Ovis). Type the code it shows here.": "PC에서 설정 → 기기와 PC를 열고 연결을 누르세요(이전 Ovis에서는 입력할 코드 보기). 거기 보이는 코드를 여기에 입력하세요.",
+  "On the PC, open Settings → Devices and PCs and choose Add a connection (Connect, or Show a code to type, on an older Ovis). Type the code it shows here.": "PC에서 설정 → 기기와 PC를 열고 연결 추가를 누르세요(이전 Ovis에서는 연결 또는 입력할 코드 보기). 거기 보이는 코드를 여기에 입력하세요.",
   "Code from the PC": "PC에 표시된 코드",
   "Looking for the PC…": "PC를 찾는 중…",
   "Every PC of the account removes this device. You can pair it again later.": "계정의 모든 PC에서 이 기기가 빠집니다. 나중에 다시 연결할 수 있습니다.",
@@ -98,6 +98,6 @@ export const RELAY_KO: Record<string, string> = {
   "You type the number {name} shows on its own screen, then approve there. Every device of your account can then use it.": "{name} 화면에 나온 숫자를 입력하고 그 PC에서 승인하세요. 그러면 계정의 모든 기기가 쓸 수 있습니다.",
   "{name} shows six digits on its own screen now. Type them here, then approve on {name}.": "지금 {name} 화면에 여섯 자리 숫자가 나옵니다. 여기에 입력한 뒤 {name}에서 승인하세요.",
   "No number on {name}? Cancel, then tap {name} in your list.": "{name}에 숫자가 없나요? 취소한 뒤 목록에서 {name}을(를) 누르세요.",
-  "Only the PC itself shows its ID, at the top of My devices in Settings → Devices and PCs (under the code on an older Ovis). Marked groups differ.": "PC 자신만 자기 ID를 보여 줍니다. 설정 → 기기와 PC의 내 기기 맨 위에 있습니다(이전 Ovis에서는 코드 아래). 표시된 묶음이 다릅니다.",
-  "The PC shows its ID at the top of My devices in Settings → Devices and PCs (under the code on an older Ovis). Pair only if every group matches.": "PC는 설정 → 기기와 PC의 내 기기 맨 위에 자기 ID를 보여 줍니다(이전 Ovis에서는 코드 아래). 모든 묶음이 같을 때만 페어링하세요.",
+  "Only the PC itself shows its ID, at the top of Connected to this PC in Settings → Devices and PCs (My devices, or under the code, on an older Ovis). Marked groups differ.": "PC 자신만 자기 ID를 보여 줍니다. 설정 → 기기와 PC의 '이 PC에 연결된 것' 맨 위에 있습니다(이전 Ovis에서는 내 기기 또는 코드 아래). 표시된 묶음이 다릅니다.",
+  "The PC shows its ID at the top of Connected to this PC in Settings → Devices and PCs (My devices, or under the code, on an older Ovis). Pair only if every group matches.": "PC는 설정 → 기기와 PC의 '이 PC에 연결된 것' 맨 위에 자기 ID를 보여 줍니다(이전 Ovis에서는 내 기기 또는 코드 아래). 모든 묶음이 같을 때만 페어링하세요.",
 };

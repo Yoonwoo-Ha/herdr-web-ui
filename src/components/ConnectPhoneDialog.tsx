@@ -87,7 +87,7 @@ export interface ConnectPhoneDialogProps {
   onClose: () => void;
 }
 
-type OtherWay = "wifi" | "tailscale" | "portal" | "typed";
+type OtherWay = "wifi" | "tailscale" | "portal" | "typed" | "headless";
 
 /**
  * Settings → Devices and PCs → Connect a device, as WhatsApp's Link a device: one way first, the rest folded.
@@ -149,6 +149,8 @@ export function ConnectPhoneDialog({ plan, loading, onRefresh, pairUrl, relay, r
     ...(canPair && !readOnly && !wifiFirst ? [{ way: "wifi" as const, label: t("Same Wi-Fi"), body: <CodeRoute pairUrl={inRelayShell() ? null : pairUrl} startAtOnce phone={phone} compact /> }] : []),
     { way: "tailscale", label: "Tailscale", body: <PhonePanel plan={plan} loading={loading} onRefresh={onRefresh} phone={phone} /> },
     ...(portal?.supported ? [{ way: "portal" as const, label: "Portal", body: <PortalPanel readOnly={readOnly} /> }] : []),
+    // a PC reached only over SSH links itself from its own terminal (docs/relay.md, "A PC with no screen")
+    ...(!readOnly && !inRelayShell() ? [{ way: "headless" as const, label: t("A PC with no screen"), body: <HeadlessPc /> }] : []),
   ];
 
   return createPortal(
@@ -157,7 +159,7 @@ export function ConnectPhoneDialog({ plan, loading, onRefresh, pairUrl, relay, r
     <div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div ref={surface} className="modal connect-phone-dialog" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} tabIndex={-1}>
         <header className="modal-header">
-          <h2 className="modal-title" id={`${id}-title`}>{t("Connect a device")}</h2>
+          <h2 className="modal-title" id={`${id}-title`}>{t("Add a connection")}</h2>
           <button type="button" className="icon-button" aria-label={t("Close")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body connect-phone-body">
@@ -219,6 +221,19 @@ export function ConnectPhoneDialog({ plan, loading, onRefresh, pairUrl, relay, r
     </div>
     </SettingsQuery.Provider>,
     document.body,
+  );
+}
+
+/** The way for a PC with no screen of its own: the terminal command that signs it in and approves the device adding it. */
+function HeadlessPc() {
+  const t = useT();
+  return (
+    <div className="connect-headless">
+      <p className="settings-hint">{t("In that PC's terminal, in Ovis's folder, run:")}</p>
+      <code className="connect-command">bun scripts/plugin.ts link</code>
+      <p className="settings-hint">{t("It signs that PC in to your account. Then tap Add on it in Ovis on a device already in your account, and approve it in that PC's terminal.")}{" "}
+        <a href="https://github.com/devswha/ovis/blob/main/docs/relay.md#a-pc-with-no-screen" target="_blank" rel="noreferrer">{t("Details")}</a></p>
+    </div>
   );
 }
 

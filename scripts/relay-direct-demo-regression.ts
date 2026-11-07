@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { chromium, type Browser } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
-import { openSettingsPage } from "./settings-page.ts";
+import { openSettingsFolds, openSettingsPage } from "./settings-page.ts";
 
 const EVIDENCE = process.env.UI_EVIDENCE_DIR;
 
@@ -28,7 +28,9 @@ async function run(browser: Browser, origin: string, width: number, theme: "ligh
   await page.locator(".conn-live").waitFor();
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(page, "Devices and PCs");
-  const group = page.locator('[data-section="devices"]');
+  // the switch waits in More settings, under what is connected
+  await openSettingsFolds(page);
+  const group = page.locator('[data-section="devices-more"]');
   await group.getByText("Same Wi-Fi direct connection on", { exact: true }).waitFor();
   await group.getByText("Only devices paired through the relay can sign in there; nothing new pairs.", { exact: false }).waitFor();
   const toggle = group.getByRole("switch", { name: "Same Wi-Fi direct connection" });

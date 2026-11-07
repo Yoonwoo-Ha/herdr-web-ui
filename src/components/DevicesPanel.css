@@ -168,22 +168,20 @@
   overflow-wrap: anywhere;
 }
 
-/* My devices: the PCs, then the phones and browsers, as one list */
+/* Connected to this PC: this PC, the phones and browsers (the one in use first), then the other PCs, as one list */
 .my-devices {
   display: flex;
   flex-direction: column;
 }
 
 .my-devices > .my-pcs,
+.my-devices > .my-pc-self,
 .my-devices .devices-panel > .devices-list {
   border-top: 0;
 }
 
-/* the paired devices follow the PCs as one list; what pairing means waits at its end */
-.my-devices .devices-panel > .settings-details {
-  order: 1;
-}
-
-.my-devices .devices-panel > .devices-revoke-all {
-  order: 2;
+/* Add a connection: the page's one way to connect anything, under the list it adds to */
+.devices-add .btn {
+  width: 100%;
+  justify-content: center;
 }

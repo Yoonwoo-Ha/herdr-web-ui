@@ -29,7 +29,7 @@ import { checkPaletteKeys } from "./palette-keys-regression.ts";
 import { checkFollowHerdrFocus } from "./follow-focus-regression.ts";
 import { checkRelayPanel } from "./relay-panel-regression.ts";
 import { systemUsageContext, UsageService } from "../server/usage.ts";
-import { openSettingsPage } from "./settings-page.ts";
+import { openSettingsFolds, openSettingsPage } from "./settings-page.ts";
 import { assertCspClean, watchCsp } from "./csp-violations.ts";
 import type { CspWatch } from "./csp-violations.ts";
 import { browserEvidencePage, browserEvidenceTracing, startBrowserEvidence } from "./browser-evidence.ts";
@@ -763,9 +763,9 @@ try {
   assert.equal(await page.locator(".sidebar").getByRole("button", { name: "Add PC", exact: true }).count(), 0, "the sidebar has no Add PC button");
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(page, "Devices and PCs");
-  await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Connect", exact: true }).click();
-  await page.getByRole("dialog", { name: "Connect a device", exact: true }).locator(".connect-other > summary").click();
-  await page.getByRole("dialog", { name: "Connect a device", exact: true }).getByRole("button", { name: "Add a PC over SSH", exact: true }).click();
+  await page.getByRole("dialog", { name: "Settings" }).getByRole("button", { name: "Add a connection", exact: true }).click();
+  await page.getByRole("dialog", { name: "Add a connection", exact: true }).locator(".connect-other > summary").click();
+  await page.getByRole("dialog", { name: "Add a connection", exact: true }).getByRole("button", { name: "Add a PC over SSH", exact: true }).click();
   await page.getByRole("dialog", { name: "Add PC", exact: true }).waitFor();
   assert.equal(await page.getByRole("dialog", { name: "Settings" }).count(), 0, "Add PC closes Settings");
   await page.getByRole("button", { name: "Close PC setup", exact: true }).click();
@@ -2512,6 +2512,8 @@ try {
   await securedPage.getByRole("dialog", { name: "Command palette", exact: true }).waitFor({ state: "hidden" });
   await securedPage.keyboard.press("ControlOrMeta+Shift+Comma");
   await openSettingsPage(securedPage, "Devices and PCs");
+  // sign out of this PC waits in More settings, under what is connected
+  await openSettingsFolds(securedPage);
   const settingsSignOut = securedPage.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Sign out of this PC", exact: true });
   const signOutConfirm = securedPage.getByRole("alertdialog", { name: "Sign out of this browser?", exact: true });
   await settingsSignOut.click();

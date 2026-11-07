@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Check, Pencil, Trash2, X } from "lucide-react";
 
 import "./DevicesPanel.css";
@@ -41,6 +42,11 @@ export interface DevicesPanelProps {
   kindOf?: (label: string) => string | null;
   /** an action for this device's own row (Use the relay); without such a row, a row of its own */
   currentAction?: ReactNode;
+  /**
+   * More settings' place for what is not the list itself (how this browser got in, what pairing means,
+   * revoking every device): drawn there, kept here with the list it acts on. Without one, under the list.
+   */
+  more?: HTMLElement | null;
 }
 
 export const VIA: Record<NonNullable<HealthAuth["via"]>, string> = {
@@ -65,7 +71,7 @@ export function offersAccountRemove(devices: readonly PairedDevice[], row: Paire
 }
 
 /** Settings → Devices and PCs → My devices: the paired phones and browsers; Connect a device above it pairs one more. */
-export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kindOf, currentAction = null }: DevicesPanelProps) {
+export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kindOf, currentAction = null, more = null }: DevicesPanelProps) {
   const t = useT();
   const [devices, setDevices] = useState<PairedDevice[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -262,19 +268,31 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
   /** so does a visitor Portal's own sign-in let in: the server refuses it every change here */
   const guest = auth?.via === "portal";
 
-  return (
-    <div className="devices-panel">
-      {auth?.via !== undefined && <p className={auth.via === "open" ? "settings-hint devices-open" : "settings-description"}>{t(VIA[auth.via])}</p>}
+  // what is not the list itself: how this browser got in, what pairing means, and revoking every device (More settings)
+  const elsewhere = (
+    <div className="devices-more">
+      {auth?.via !== undefined && auth.via !== "open" && <p className="settings-description">{t(VIA[auth.via])}</p>}
       {auth?.portal !== undefined && <p className="settings-description devices-portal">{t("Signed in as {name} with {method}.", { name: auth.portal.user, method: methodName(auth.portal.method) })}</p>}
       {guest && <p className="settings-hint">{t("A sign-in through Portal can read this list. Pairing and revoking devices are for the access token or a paired device.")}</p>}
-      {auth?.via === "open" && <>
-        <p className="settings-hint">{t("Pairing a device turns on the app's own sign-in, on top of any proxy sign-in: other browsers then need pairing or the access token. If your proxy already signs people in, set OVIS_TOKEN and have the proxy send it instead.")}</p>
-        <div className="phone-actions"><button type="button" className="btn btn-primary" onClick={() => void pairSelf()} disabled={pairingSelf}>{t("Pair this device now")}</button></div>
-      </>}
       <details className="settings-details">
         <summary>{t("A paired device gets in on its own until you revoke it here.")}<span className="settings-details-toggle">{t("Details")}</span></summary>
         <p className="settings-hint">{t("It gets in from anywhere it can reach this server. A code comes from this screen on the PC or on a device already paired, or from the pair command in the PC's terminal.")}</p>
       </details>
+      {revokedAll && <p className="settings-hint" role="status">{t("Every paired device was revoked. The access token, this PC and its Tailscale login get in as before.")}</p>}
+      {devices !== null && devices.length > 0 && !guest && (
+        <div className="devices-revoke-all">
+          <SettingsRow label={t("Revoke every device")} description={t(watching
+            ? "Every paired device, this one included, would lose its pairing access at once. A device that only watches cannot do it: use the PC or a device that can drive."
+            : "Every paired device, this one included, loses its pairing access at once. The access token, this PC and its Tailscale login are not affected.")}>
+            {/* a watching device reads why and has no button: a dead control would only be a fainter one */}
+            {!watching && <button type="button" className="btn" onClick={() => setConfirmingAll(true)}>{t("Revoke all")}</button>}
+          </SettingsRow>
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <div className="devices-panel">
       {devices === null ? <p className="settings-hint" role="status">{t("Loading…")}</p> : devices.length === 0 ? (
         <p className="settings-hint">{t("No devices paired yet.")}</p>
       ) : (
@@ -285,7 +303,7 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
           </div>
         )}
         <ul className="devices-list">
-          {devices.map((d) => (
+          {[...devices].sort((a, b) => Number(b.current) - Number(a.current)).map((d) => (
             <li key={d.id} className="devices-row">
               {renaming?.id === d.id ? (
                 <form className="devices-rename" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
@@ -296,7 +314,7 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
               ) : (
                 <>
                   <div className="devices-name">
-                    <span className="settings-label">{d.label}{kindOf?.(d.label) != null && <span className="devices-kind">{kindOf(d.label)}</span>}{d.current && <span className="devices-current">{t("this device")}</span>}</span>
+                    <span className="settings-label">{d.label}{kindOf?.(d.label) != null && <span className="devices-kind">{kindOf(d.label)}</span>}{d.current && <span className="devices-current">{t("This device now")}</span>}</span>
                     {d.connection
                       ? <ConnectionLine state={{ kind: "connected", route: d.connection.route, ...(d.connection.relay === undefined ? {} : { relay: d.connection.relay }), rttMs: d.connection.rtt_ms }} />
                       // a device with a relay key connects through an encrypted session, which the PC sees come and go; a browser's cookie does not
@@ -329,23 +347,19 @@ export function DevicesPanel({ onDevicePaired, auth, onPaired, onRevokedAll, kin
         </>
       )}
       {justPaired !== null && <p className="settings-hint" role="status">{t("Paired: {name}.", { name: justPaired })}</p>}
-      {revokedAll && <p className="settings-hint" role="status">{t("Every paired device was revoked. The access token, this PC and its Tailscale login get in as before.")}</p>}
       {currentAction !== null && devices !== null && !devices.some((d) => d.current) && (
         <div className="devices-row devices-self">
           <div className="devices-name"><span className="settings-label">{t("This device")}</span></div>
           {currentAction}
         </div>
       )}
-      {devices !== null && devices.length > 0 && !guest && (
-        <div className="devices-revoke-all">
-          <SettingsRow label={t("Revoke every device")} description={t(watching
-            ? "Every paired device, this one included, would lose its pairing access at once. A device that only watches cannot do it: use the PC or a device that can drive."
-            : "Every paired device, this one included, loses its pairing access at once. The access token, this PC and its Tailscale login are not affected.")}>
-            {/* a watching device reads why and has no button: a dead control would only be a fainter one */}
-            {!watching && <button type="button" className="btn" onClick={() => setConfirmingAll(true)}>{t("Revoke all")}</button>}
-          </SettingsRow>
-        </div>
-      )}
+      {/* an open gate is a warning about this page itself: it stays beside the list, with its fix */}
+      {auth?.via === "open" && <>
+        <p className="settings-hint devices-open">{t(VIA.open)}</p>
+        <p className="settings-hint">{t("Pairing a device turns on the app's own sign-in, on top of any proxy sign-in: other browsers then need pairing or the access token. If your proxy already signs people in, set OVIS_TOKEN and have the proxy send it instead.")}</p>
+        <div className="phone-actions"><button type="button" className="btn btn-primary" onClick={() => void pairSelf()} disabled={pairingSelf}>{t("Pair this device now")}</button></div>
+      </>}
+      {more !== null ? createPortal(elsewhere, more) : elsewhere}
       {confirmingAll && (
         <ConfirmDialog title={t("Revoke every paired device?")}
           body={t("Every paired device loses its pairing access, this one included, and needs a new code to get back in. The access token, this PC and its Tailscale login still get in.")}

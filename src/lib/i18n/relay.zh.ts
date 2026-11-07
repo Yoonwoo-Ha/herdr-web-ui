@@ -75,7 +75,7 @@ export const RELAY_ZH: Record<string, string> = {
   "{name} is not taking new phones right now": "{name} 现在不接受新手机",
   "Its link may have run out (it works for 10 minutes), or it may be paused after too many tries or busy with other phones. Copy a new link on the PC, or wait a few minutes.": "链接可能已过期（有效 10 分钟），或因尝试次数过多而暂停，或正在处理其他手机。请在电脑上复制新链接，或等几分钟。",
   "Pair with a code": "用代码配对",
-  "On the PC, open Settings → Devices and PCs and choose Connect (Show a code to type on an older Ovis). Type the code it shows here.": "在电脑上打开“设置 → 设备和电脑”，选择“连接”（旧版 Ovis 中为“显示要输入的代码”）。在这里输入显示的代码。",
+  "On the PC, open Settings → Devices and PCs and choose Add a connection (Connect, or Show a code to type, on an older Ovis). Type the code it shows here.": "在电脑上打开“设置 → 设备和电脑”，选择“添加连接”（旧版 Ovis 中为“连接”或“显示要输入的代码”）。在这里输入显示的代码。",
   "Code from the PC": "电脑上显示的代码",
   "Looking for the PC…": "正在查找电脑…",
   "Every PC of the account removes this device. You can pair it again later.": "账户中的所有 PC 都会移除此设备。之后可以再次配对。",
@@ -98,6 +98,6 @@ export const RELAY_ZH: Record<string, string> = {
   "You type the number {name} shows on its own screen, then approve there. Every device of your account can then use it.": "输入 {name} 自己屏幕上显示的数字，然后在那台电脑上批准。之后账号的所有设备都能使用它。",
   "{name} shows six digits on its own screen now. Type them here, then approve on {name}.": "{name} 的屏幕上现在显示六位数字。请在此输入，然后在 {name} 上批准。",
   "No number on {name}? Cancel, then tap {name} in your list.": "{name} 上没有数字？请取消，然后在列表中点按 {name}。",
-  "Only the PC itself shows its ID, at the top of My devices in Settings → Devices and PCs (under the code on an older Ovis). Marked groups differ.": "只有电脑本身会显示它的 ID，在“设置 → 设备和电脑”中“我的设备”的顶部（旧版 Ovis 在代码下方）。标记的组不一致。",
-  "The PC shows its ID at the top of My devices in Settings → Devices and PCs (under the code on an older Ovis). Pair only if every group matches.": "电脑会在“设置 → 设备和电脑”中“我的设备”的顶部显示它的 ID（旧版 Ovis 在代码下方）。只有每一组都一致时才配对。",
+  "Only the PC itself shows its ID, at the top of Connected to this PC in Settings → Devices and PCs (My devices, or under the code, on an older Ovis). Marked groups differ.": "只有电脑本身会显示它的 ID，在“设置 → 设备和电脑”中“已连接到此电脑的设备”的顶部（旧版 Ovis 为“我的设备”或代码下方）。标记的组不一致。",
+  "The PC shows its ID at the top of Connected to this PC in Settings → Devices and PCs (My devices, or under the code, on an older Ovis). Pair only if every group matches.": "电脑会在“设置 → 设备和电脑”中“已连接到此电脑的设备”的顶部显示它的 ID（旧版 Ovis 为“我的设备”或代码下方）。只有每一组都一致时才配对。",
 };

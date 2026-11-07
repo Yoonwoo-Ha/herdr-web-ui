@@ -48,7 +48,7 @@ export function AddRelayPc() {
   if (found !== null) {
     const pc = found.name ?? t("this PC");
     return (
-      <SettingsRow label={t("Does {name}'s screen show this ID?", { name: pc })} description={t("Compare it with the ID at the top of My devices on {name}. Pair only if every group matches.", { name: pc })} held wide>
+      <SettingsRow label={t("Does {name}'s screen show this ID?", { name: pc })} description={t("Compare it with the ID at the top of Connected to this PC on {name} (My devices on an older Ovis). Pair only if every group matches.", { name: pc })} held wide>
         <div className="relay-pc-found">
           <KeyId id={found.server_id} label={t("ID of the PC this code found")} />
           <div className="relay-pc-actions">
@@ -61,7 +61,7 @@ export function AddRelayPc() {
   }
   return (
     <>
-      <SettingsRow label={t("Code from another PC")} description={t("The code that PC shows under Connect a device.")} wide>
+      <SettingsRow label={t("Code from another PC")} description={t("The code that PC shows under Add a connection (Connect a device on an older Ovis).")} wide>
         <form className="relay-pc-form" onSubmit={(event) => { event.preventDefault(); submit(); }}>
           <input ref={input} className="input relay-pc-input" type="text" placeholder={t("Link or code")} aria-label={t("Pairing link or code")}
             autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={busy} />

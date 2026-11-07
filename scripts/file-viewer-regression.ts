@@ -464,8 +464,8 @@ try {
   await settingsOverPreview.waitFor();
   await openSettingsPage(page, "Devices and PCs");
   // Add PC over SSH is one of Connect a device's other ways
-  await settingsOverPreview.getByRole("button", { name: "Connect", exact: true }).click();
-  const connectDevice = page.getByRole("dialog", { name: "Connect a device", exact: true });
+  await settingsOverPreview.getByRole("button", { name: "Add a connection", exact: true }).click();
+  const connectDevice = page.getByRole("dialog", { name: "Add a connection", exact: true });
   await connectDevice.locator(".connect-other > summary").click();
   await connectDevice.getByRole("button", { name: "Add a PC over SSH", exact: true }).click();
   const addPc = page.locator("dialog.machine-dialog");

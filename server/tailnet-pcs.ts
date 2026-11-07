@@ -158,7 +158,7 @@ export class TailnetPcs {
     const health = await this.probe(url);
     if (health === null || !TailnetPcs.drivable(health)) throw new TailnetPcError("not_owner", "That PC no longer lets this PC in as its owner over Tailscale. Add it with its code instead.");
     if (health.web_ui?.server_id !== undefined && added.has(health.web_ui.server_id)) throw new TailnetPcError("already_added", "That PC is already added.");
-    if (health.relay?.phase !== "online") throw new TailnetPcError("relay_off", "Turn the relay on on that PC first, under Connect a device.");
+    if (health.relay?.phase !== "online") throw new TailnetPcError("relay_off", "Turn the relay on on that PC first, under Add a connection.");
     let response: Response;
     try {
       response = await fetch(`${url}/api/relay/code`, { method: "POST", headers: { "x-herdr-update": "1" }, signal: AbortSignal.timeout(15_000), redirect: "error" });

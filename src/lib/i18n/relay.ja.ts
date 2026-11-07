@@ -75,7 +75,7 @@ export const RELAY_JA: Record<string, string> = {
   "{name} is not taking new phones right now": "{name} は今は新しいスマートフォンを受け付けていません",
   "Its link may have run out (it works for 10 minutes), or it may be paused after too many tries or busy with other phones. Copy a new link on the PC, or wait a few minutes.": "リンクの有効期限が切れた(10 分間有効)か、試行が多すぎて一時停止しているか、ほかのスマートフォンの対応中かもしれません。PC で新しいリンクをコピーするか、数分待ってください。",
   "Pair with a code": "コードでペアリング",
-  "On the PC, open Settings → Devices and PCs and choose Connect (Show a code to type on an older Ovis). Type the code it shows here.": "PC で「設定 → デバイスと PC」を開き、「接続」を選んでください（古い Ovis では「入力するコードを表示」）。表示されたコードをここに入力してください。",
+  "On the PC, open Settings → Devices and PCs and choose Add a connection (Connect, or Show a code to type, on an older Ovis). Type the code it shows here.": "PC で「設定 → デバイスと PC」を開き、「接続を追加」を選んでください（古い Ovis では「接続」または「入力するコードを表示」）。表示されたコードをここに入力してください。",
   "Code from the PC": "PC に表示されたコード",
   "Looking for the PC…": "PC を探しています…",
   "Every PC of the account removes this device. You can pair it again later.": "アカウントのすべての PC からこのデバイスが外れます。あとでまたペアリングできます。",
@@ -98,6 +98,6 @@ export const RELAY_JA: Record<string, string> = {
   "You type the number {name} shows on its own screen, then approve there. Every device of your account can then use it.": "{name} 自身の画面に出ている番号を入力し、そのPCで承認します。その後はアカウントのすべてのデバイスから使えます。",
   "{name} shows six digits on its own screen now. Type them here, then approve on {name}.": "{name} の画面に6桁の番号が表示されています。ここに入力してから {name} で承認してください。",
   "No number on {name}? Cancel, then tap {name} in your list.": "{name} に番号が出ていませんか？キャンセルして、一覧の {name} をタップしてください。",
-  "Only the PC itself shows its ID, at the top of My devices in Settings → Devices and PCs (under the code on an older Ovis). Marked groups differ.": "ID を表示するのは PC 自身だけです。設定 → デバイスと PC の「マイデバイス」の一番上にあります（古い Ovis ではコードの下）。印の付いたまとまりが異なります。",
-  "The PC shows its ID at the top of My devices in Settings → Devices and PCs (under the code on an older Ovis). Pair only if every group matches.": "PC は「設定 → デバイスと PC」の「マイデバイス」の一番上に自分の ID を表示します（古い Ovis ではコードの下）。すべてのまとまりが一致する場合だけペアリングしてください。",
+  "Only the PC itself shows its ID, at the top of Connected to this PC in Settings → Devices and PCs (My devices, or under the code, on an older Ovis). Marked groups differ.": "ID を表示するのは PC 自身だけです。設定 → デバイスと PC の「このPCにつながっているもの」の一番上にあります（古い Ovis では「マイデバイス」またはコードの下）。印の付いたまとまりが異なります。",
+  "The PC shows its ID at the top of Connected to this PC in Settings → Devices and PCs (My devices, or under the code, on an older Ovis). Pair only if every group matches.": "PC は「設定 → デバイスと PC」の「このPCにつながっているもの」の一番上に自分の ID を表示します（古い Ovis では「マイデバイス」またはコードの下）。すべてのまとまりが一致する場合だけペアリングしてください。",
 };

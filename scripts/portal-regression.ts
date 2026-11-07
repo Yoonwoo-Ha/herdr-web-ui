@@ -60,13 +60,13 @@ const openPhoneSettings = async (page: Page, { portal = true } = {}): Promise<vo
   await page.keyboard.press("ControlOrMeta+Shift+Comma");
   await page.locator(".settings-dialog").waitFor({ timeout: 10_000 });
   await openSettingsPage(page, "Devices and PCs");
-  await page.locator('.settings-dialog [data-section="devices"]').getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator('.settings-dialog [data-section="devices"]').getByRole("button", { name: "Add a connection", exact: true }).click();
   const connect = settingsOf(page);
   await connect.waitFor({ timeout: 10_000 });
   await connect.locator(".connect-other > summary").click();
   if (portal) await connect.getByRole("button", { name: "Portal", exact: true }).click();
 };
-const settingsOf = (page: Page) => page.getByRole("dialog", { name: "Connect a device", exact: true });
+const settingsOf = (page: Page) => page.getByRole("dialog", { name: "Add a connection", exact: true });
 const reopenPhoneSettings = async (page: Page, options: { portal?: boolean } = {}): Promise<void> => {
   await settingsOf(page).getByRole("button", { name: "Close", exact: true }).click();
   await settingsOf(page).waitFor({ state: "detached", timeout: 10_000 });

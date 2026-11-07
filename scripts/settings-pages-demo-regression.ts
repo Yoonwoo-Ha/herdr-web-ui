@@ -848,6 +848,8 @@ async function accountGoogle(browser: import("playwright-core").Browser, url: st
           }
           await openSettings(page);
           await openSettingsPage(page, "Devices and PCs");
+          // the account waits in More settings
+          await openSettingsFolds(page);
           const account = page.locator("[data-section='account']");
           const shot = async (name: string) => {
             if (!process.env.UI_EVIDENCE_DIR) return;
