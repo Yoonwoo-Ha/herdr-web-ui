@@ -396,7 +396,10 @@ it("a lookup that sees the file rewritten drops the boundary it kept, even when 
     const at = args as unknown as [number, Uint8Array, number, number, number];
     if (!changed && at[4] === 0) {
       changed = true;
-      writeFileSync(path, broken + same + padding);
+      // a coarse file clock (WSL2 ticks at 250 Hz) can stamp a rewrite within the same tick with the old
+      // times; rewrite until the change time moves, as it has for any later real rewrite
+      const before = fs.statSync(path, { bigint: true }).ctimeNs;
+      do writeFileSync(path, broken + same + padding); while (fs.statSync(path, { bigint: true }).ctimeNs === before);
     }
     return value;
   }) as typeof fs.readSync);
@@ -455,7 +458,11 @@ it("rejects an image when the path's last check sees a same-size rewrite that pu
   let checks = 0;
   const stat = fs.statSync;
   const watch = spyOn(fs, "statSync").mockImplementation(((...args: Parameters<typeof fs.statSync>) => {
-    if (args[0] === path && ++checks === 3) { writeFileSync(path, text(other)); utimesSync(path, time, time); }
+    if (args[0] === path && ++checks === 3) {
+      // a coarse file clock (WSL2 ticks at 250 Hz) can leave the change time where it was; rewrite until it moves
+      const before = stat(path, { bigint: true }).ctimeNs;
+      do { writeFileSync(path, text(other)); utimesSync(path, time, time); } while (stat(path, { bigint: true }).ctimeNs === before);
+    }
     return stat(...args);
   }) as typeof fs.statSync);
   try { expect(await transcriptImageAsync(path, `${id(1)}:0`)).toBeNull(); } finally { watch.mockRestore(); }
