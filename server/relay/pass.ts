@@ -132,35 +132,48 @@ export class RelayPassKeeper {
    */
   rejected(): Promise<void> {
     // a fresh pass refused as well (the relay does not trust the service's key yet, say): keep it and back off
-    if (this.saved !== null && this.saved.pass === this.replacement) { if (!this.stopped) this.failed(null); return Promise.resolve(); }
+    if (this.saved !== null && this.saved.pass === this.replacement) { if (!this.stopped) this.failed(null, false); return Promise.resolve(); }
     this.saved = null;
     try { rmSync(this.path, { force: true }); } catch { /* gone from memory either way */ }
     if (this.stopped) return Promise.resolve();
     const now = this.clock.now();
-    if (now - this.lastRejected < RETRY_MS) { this.failed(null); return Promise.resolve(); }
+    if (now - this.lastRejected < RETRY_MS) { this.failed(null, false); return Promise.resolve(); }
     this.lastRejected = now;
+    // read by the request this starts, now or once the backoff allows it
     this.replacing = true;
-    return this.refresh().finally(() => { this.replacing = false; });
+    return this.refresh();
   }
 
-  /** Asks now (the account or the relay changed its mind): a pass may come at once. */
+  /** Not before this (ms): the backoff or Retry-After of the last failure, which an early refresh waits out too. */
+  private notBefore = 0;
+
+  /** Asks now (the account or the relay changed its mind), unless the service asked to wait: then when it may. */
   refresh(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     this.cancel?.();
     this.cancel = undefined;
+    return this.askWhenAllowed();
+  }
+
+  /** Asks now, or once the service's backoff or Retry-After allows it: every ask goes through here. */
+  private askWhenAllowed(): Promise<void> {
+    const wait = this.notBefore - this.clock.now();
+    if (wait > 0) { this.schedule(wait); return Promise.resolve(); }
     return this.ask();
   }
 
   private schedule(ms: number): void {
     this.cancel?.();
-    this.cancel = this.clock.setTimeout(() => { void this.ask(); }, ms);
+    this.cancel = this.clock.setTimeout(() => { void this.askWhenAllowed(); }, ms);
   }
 
   private ask(): Promise<void> {
     if (this.asking) { this.again = true; return this.asking; }
     this.asking = this.request().finally(() => {
       this.asking = undefined;
-      if (this.again && !this.stopped) { this.again = false; void this.ask(); }
+      // whichever way the request ended (an early return included), the replacement it was for is settled
+      this.replacing = false;
+      if (this.again && !this.stopped) { this.again = false; void this.askWhenAllowed(); }
     });
     return this.asking;
   }
@@ -182,7 +195,8 @@ export class RelayPassKeeper {
     this.inflight = inflight;
     const signal = AbortSignal.any([inflight.signal, AbortSignal.timeout(REQUEST_MS)]);
     const post = (path: string, body: unknown) => fetcher(new Request(`${service}${path}`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal,
+      // never followed: a redirect would carry the proof and the account to another origin
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal, redirect: "manual",
     }));
     try {
       const publicKey = bytesToHex(importPublicKey(identity.public_key));
@@ -217,6 +231,7 @@ export class RelayPassKeeper {
       this.saved = saved;
       try { writePrivateState(this.path, saved); } catch { /* kept in memory; asked again after a restart */ }
       this.failures = 0;
+      this.notBefore = 0;
       this.replacement = this.replacing ? saved.pass : null;
       this.state = "ok";
       this.options.onPass(saved.pass);
@@ -225,11 +240,19 @@ export class RelayPassKeeper {
     finally { if (this.inflight === inflight) this.inflight = undefined; }
   }
 
-  /** The service did not answer as it should: keep any pass that holds, and ask again later (Retry-After when it says). */
-  private failed(response: Response | null): void {
+  /**
+   * The service did not answer as it should, or (`gate` false) a local limit held a request back:
+   * keep any pass that holds, and ask again later (Retry-After when it says). Only the service's own
+   * failures hold back an early refresh; a local limit never delays one.
+   */
+  private failed(response: Response | null, gate = true): void {
     if (this.stopped) return;
-    if (this.current() === null) this.state = "unavailable";
+    // a local limit says nothing about the service: where getting a pass stands is unchanged
+    if (gate && this.current() === null) this.state = "unavailable";
     const backoff = Math.min(RETRY_CAP_MS, RETRY_MS * 2 ** this.failures++);
-    this.schedule(Math.max(retryAfterMs(response?.headers.get("retry-after") ?? null), backoff));
+    const delay = Math.max(retryAfterMs(response?.headers.get("retry-after") ?? null), backoff);
+    if (gate) this.notBefore = this.clock.now() + delay;
+    // a local limit never shortens a wait the service asked for
+    this.schedule(Math.max(delay, this.notBefore - this.clock.now()));
   }
 }

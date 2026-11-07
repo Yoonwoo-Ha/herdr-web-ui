@@ -30,6 +30,9 @@ async function fixture(mode: "grace" | "enforce" = "enforce") {
   const origin = `wss://127.0.0.1:${relay.port}`;
   const challenges = new Map<string, string>();
   const asked: string[] = [];
+  /** the accounts that list this PC */
+  const listed = new Set(["acct_1"]);
+  const hooks: { refused?: () => void } = {};
   const accountFetch = async (request: Request): Promise<Response> => {
     const path = new URL(request.url).pathname;
     const body = await request.json() as Record<string, string>;
@@ -43,7 +46,7 @@ async function fixture(mode: "grace" | "enforce" = "enforce") {
     const expected = challenges.get(body["challenge_id"] ?? "");
     challenges.delete(body["challenge_id"] ?? "");
     if (!expected || !verifyServerProof(body["proof"], expected)) return Response.json({ error: { code: "proof_invalid" } }, { status: 401 });
-    if (body["account"] !== "acct_1") return Response.json({ error: { code: "not_listed" } }, { status: 403 });
+    if (!listed.has(body["account"] ?? "")) { hooks.refused?.(); return Response.json({ error: { code: "not_listed" } }, { status: 403 }); }
     return Response.json({ pass: await signRelayPass(pair.privateKey, KID, body["server_id"]!, Math.floor(Date.now() / 1000)), expires_in: 172_800, refresh_in: 43_200 });
   };
   /** what each control socket heard first after its proof, and how it closed */
@@ -78,7 +81,7 @@ async function fixture(mode: "grace" | "enforce" = "enforce") {
   cleanup.push(async () => { await service.shutdown(); app.stop(); });
   const base = () => `http://127.0.0.1:${app.port}`;
   return {
-    stateDir, asked, headers, syncs, sentOnControl, renewal: renewal.promise,
+    stateDir, asked, headers, syncs, listed, hooks, sentOnControl, renewal: renewal.promise,
     get service() { return service; },
     get synced() { return synced.promise; },
     get refused() { return refused.promise; },
@@ -164,6 +167,8 @@ test("a pass renewed while online goes to the relay on the open control socket",
   expect((await f.nameAccount("acct_1")).status).toBe(204);
   await f.start();
   await bounded(f.synced);
+  // another account (which does not list this PC), then back: the PC asks again and renews on the open socket
+  expect((await f.nameAccount("acct_2")).status).toBe(204);
   expect((await f.nameAccount("acct_1")).status).toBe(204);
   expect(JSON.parse(await bounded(f.renewal))).toEqual({ type: "relay_pass", pass: expect.stringMatching(/^ovp1\./) });
 });
@@ -176,4 +181,28 @@ test("in grace, a PC that signs in sends its pass on the open control socket and
   expect((await f.nameAccount("acct_1")).status).toBe(204);
   await bounded(f.renewal);
   expect(f.service.status().pass).toEqual({ state: "ok", relay: "ok", enforce_at: "2099-01-01T00:00:00.000Z", refused: false });
+});
+
+test("naming the same account again asks the account service nothing more", async () => {
+  const f = await fixture();
+  expect((await f.nameAccount("acct_1")).status).toBe(204);
+  await f.start();
+  await bounded(f.synced);
+  const asked = f.asked.length;
+  expect((await f.nameAccount("acct_1")).status).toBe(204);
+  expect((await f.nameAccount("acct_1")).status).toBe(204);
+  expect(f.asked).toHaveLength(asked);
+});
+
+test("naming the same account again asks again while this PC holds no pass (it was not listed a moment ago)", async () => {
+  const f = await fixture("grace");
+  // the account does not list the PC when it first asks; the add-me screen puts it back right after
+  f.listed.clear();
+  f.hooks.refused = () => f.listed.add("acct_1");
+  expect((await f.nameAccount("acct_1")).status).toBe(204);
+  await f.start();
+  await bounded(f.synced);
+  // the screen names the same account again: with no pass held, the PC asks again and renews on the open socket
+  expect((await f.nameAccount("acct_1")).status).toBe(204);
+  expect(JSON.parse(await bounded(f.renewal))).toEqual({ type: "relay_pass", pass: expect.stringMatching(/^ovp1\./) });
 });

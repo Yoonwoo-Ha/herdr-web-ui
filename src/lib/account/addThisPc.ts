@@ -33,9 +33,9 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
   // the account this PC now asks its relay pass under (docs/relay.md, "Relay pass"); an older PC has no such route
   const session = await service.session();
   if (session) {
-    const named = await apiFetch("/api/account/relay-account", { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ account: session.account }) });
-    // 404: an Ovis from before relay passes, which asks for none; any other refusal shows, and Add tries again
-    if (!named.ok && named.status !== 404) throw new Error(`This PC did not take the account for its relay pass (${named.status})`);
+    // never in the way of pairing: the relay status says when this PC has no pass (404: an Ovis from before relay passes)
+    const named = await apiFetch("/api/account/relay-account", { method: "POST", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ account: session.account }) }).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)));
+    if (named instanceof Error || (!named.ok && named.status !== 404)) console.warn("Ovis: this PC did not take the account for its relay pass", named instanceof Error ? named.name : named.status);
   }
   return name;
 }

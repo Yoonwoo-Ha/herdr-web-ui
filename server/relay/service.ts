@@ -208,8 +208,12 @@ export class RelayService {
   /** The account a signed-in owner listed this PC under: a relay pass is asked for under it while the PC has no members. */
   setRelayAccount(account: string): boolean {
     if (!ACCOUNT_ID.test(account)) return false;
+    // the same account named again (the add-me screen repeats it) asks nothing while this PC holds a pass:
+    // the keeper renews on its own time. Without one (not listed a moment ago, say) it asks, within the service's backoff
+    // asked again only when the account a pass is asked under changed (a PC's members' account wins), or none is held
+    const before = this.passAccount();
     writePrivateState(this.relayAccountPath(), { account });
-    void this.passKeeper?.refresh();
+    if (before !== this.passAccount() || this.passKeeper?.current() === null) void this.passKeeper?.refresh();
     return true;
   }
 

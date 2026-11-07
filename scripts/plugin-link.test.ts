@@ -210,17 +210,20 @@ describe("ovis link, on the PC itself", () => {
   });
 
   /** `link` against a PC that a phone adds once the PC is signed in; `approve` plays the person finishing the sign-in shown. */
-  async function linkToAccount(options: { args?: string[]; prepare?: (service: FakeAccountService) => void; approve: (service: FakeAccountService, code: string) => void }) {
+  async function linkToAccount(options: { args?: string[]; prepare?: (service: FakeAccountService) => void; approve: (service: FakeAccountService, code: string) => void; enforcing?: boolean }) {
     const pc = identity();
     const time = clock();
     const service = new FakeAccountService(time.now);
     options.prepare?.(service);
     let account: string | null = null;
     let linkAsked = 0;
+    let named: string | null = null;
     const decisions: unknown[] = [];
     const local = localPc(async (request, path) => {
       if (path === "/api/account/status") return Response.json({ account, unlinked: [], removals: [], adds: [], blocked: [] });
-      if (path === "/api/relay" && request.method === "GET") return Response.json({ phase: "online", blocked: null });
+      // a relay asking for a pass refuses this PC until it named its account
+      if (path === "/api/relay" && request.method === "GET") return Response.json({ phase: options.enforcing && named === null ? "error" : "online", blocked: null });
+      if (path === "/api/account/relay-account") { named = (await request.json() as { account: string }).account; return new Response(null, { status: 204 }); }
       if (path === "/api/relay/link") {
         // approved on this PC only, as the add-me screen asks
         expect(request.headers.get("x-ovis-local-only")).toBe("1");
@@ -245,7 +248,7 @@ describe("ovis link, on the PC itself", () => {
         if (shown) options.approve(service, shown[1]!);
       },
     });
-    return { code, text: out.join(""), service, pc, decisions };
+    return { code, text: out.join(""), service, pc, decisions, named };
   }
 
   it("signs in with the device flow, lists this PC in the account and approves the device that adds it after a number compare", async () => {
@@ -255,6 +258,13 @@ describe("ovis link, on the PC itself", () => {
     expect(service.pcs("acct_1").map((entry) => [entry.server_id, entry.label])).toEqual([[pc.server_id, "old-desktop"]]);
     expect(text).toContain("Hako's iPhone wants to join your account");
     expect(text).toContain("123 456");
+    expect(decisions).toEqual([{ id: "p1", decision: "approve" }]);
+    expect(text).toContain("This PC is in your account");
+  });
+
+  it("links a PC whose Ovis relay asks for a pass: it signs in and names its account before waiting for the relay", async () => {
+    const { code, text, named, decisions } = await linkToAccount({ enforcing: true, approve: (service, shown) => service.approveDevice(shown, "acct_1") });
+    expect([code, named]).toEqual([0, "acct_1"]);
     expect(decisions).toEqual([{ id: "p1", decision: "approve" }]);
     expect(text).toContain("This PC is in your account");
   });

@@ -131,6 +131,90 @@ test("a refresh asked for while a request is out is asked again once it ends", a
   k.made.stop();
 });
 
+test("the account proof is never sent on to the origin a redirect names", async () => {
+  const elsewhere: string[] = [];
+  const other = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async (request) => { elsewhere.push(await request.text()); return Response.json({}); } });
+  const service = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => new URL(request.url).pathname === "/v1/pc/challenge"
+    ? Response.json({ challenge_id: "0".repeat(32), frame: JSON.stringify({ type: "server_challenge", public_key: "9".repeat(64), nonce: "1".repeat(64) }) })
+    : new Response(null, { status: 307, headers: { location: `http://127.0.0.1:${other.port}/steal` } }) });
+  try {
+    const stateDir = mkdtempSync(join(tmpdir(), "ovis-relay-pass-keeper-"));
+    dirs.push(stateDir);
+    const identity = loadRelayIdentity(stateDir);
+    const made = new RelayPassKeeper({ stateDir, identity: () => identity, account: () => "acct_1", service: `http://127.0.0.1:${service.port}`, clock: new TestClock(), onPass: () => {} });
+    made.start();
+    await made.refresh();
+    expect(elsewhere).toEqual([]);
+    expect(made.state).toBe("unavailable");
+    made.stop();
+  } finally { await service.stop(true); await other.stop(true); }
+});
+
+test("an early refresh waits out the service's Retry-After", async () => {
+  let asked = 0;
+  const k = await keeper(() => { asked++; return new Response("busy", { status: 429, headers: { "retry-after": "600" } }); });
+  k.made.start();
+  await k.made.refresh();
+  expect(asked).toBe(1);
+  await k.made.refresh();
+  expect(asked).toBe(1);
+  expect([...k.clock.tasks.values()].map((task) => task.at)).toEqual([600_000]);
+  k.made.stop();
+});
+
+test("a refusal held back by the keeper's own limit never delays the ask a newly named account makes", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "ovis-relay-pass-keeper-"));
+  dirs.push(stateDir);
+  const identity = loadRelayIdentity(stateDir);
+  const clock = new TestClock();
+  let account: string | null = null;
+  let asked = 0;
+  const keys = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
+  const fetch = async (request: Request) => {
+    if (new URL(request.url).pathname === "/v1/pc/challenge") return Response.json({ challenge_id: "0".repeat(32), frame: JSON.stringify({ type: "server_challenge", public_key: "9".repeat(64), nonce: "1".repeat(64) }) });
+    asked++;
+    return Response.json({ pass: await signRelayPass(keys.privateKey, "0badc0de", identity.server_id, Math.floor(clock.now() / 1000)), expires_in: 172_800, refresh_in: 43_200 });
+  };
+  const made = new RelayPassKeeper({ stateDir, identity: () => identity, account: () => account, service: "https://account.test", fetch, clock, onPass: () => {} });
+  made.start();
+  // the global and the regional relay refuse this PC at once, before it names any account
+  await made.rejected();
+  await made.rejected();
+  expect(made.state).toBe("no_account");
+  account = "acct_1";
+  await made.refresh();
+  expect(asked).toBe(1);
+  expect(made.state).toBe("ok");
+  made.stop();
+});
+
+test("neither a local limit nor a queued refresh shortens the service's Retry-After", async () => {
+  let asked = 0;
+  const entered = deferred<void>();
+  const gate = deferred<void>();
+  const k = await keeper(async () => {
+    asked++;
+    entered.resolve();
+    await gate.promise;
+    return new Response("busy", { status: 429, headers: { "retry-after": "600" } });
+  });
+  k.made.start();
+  const first = k.made.refresh();
+  await entered.promise;
+  // the account changes while the request is out: queued
+  void k.made.refresh();
+  gate.resolve();
+  await first;
+  await Promise.resolve();
+  expect(asked).toBe(1);
+  // the global and the regional relay refuse within the minute
+  await k.made.rejected();
+  await k.made.rejected();
+  expect(asked).toBe(1);
+  expect([...k.clock.tasks.values()].map((task) => task.at)).toEqual([600_000]);
+  k.made.stop();
+});
+
 test("a pass for another PC is not kept", async () => {
   const other = await keeper(async () => Response.json({ pass: await other.signed(), expires_in: 172_800, refresh_in: 43_200 }));
   const k = await keeper(async () => Response.json({ pass: await other.signed(), expires_in: 172_800, refresh_in: 43_200 }));
