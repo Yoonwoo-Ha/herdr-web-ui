@@ -207,6 +207,7 @@ const BASE: Record<string, string> = {
   "Connecting…": "接続しています…",
   "Connected": "接続済み",
   "Add a connection": "接続を追加",
+  "Answers": "応答あり",
   "Same Wi-Fi, direct": "同じWi-Fiで直接",
   "Tailscale, direct": "Tailscaleで直接",
   "Seoul relay": "ソウルのリレー",

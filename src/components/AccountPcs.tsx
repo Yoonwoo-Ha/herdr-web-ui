@@ -81,7 +81,7 @@ export function accountPcStateText(pc: MyPc, t: ReturnType<typeof useT>): string
 /** How a saved PC answered the latest check (pcStatus.ts): its way and round trip, or why it did not. */
 export function PcStatusLine({ status, lastSeenAt = null }: { status: PcStatus; lastSeenAt?: string | null }) {
   const t = useT();
-  if (status.kind === "connected") return <ConnectionLine state={{ kind: "connected", route: status.route, ...(status.relay === undefined ? {} : { relay: status.relay }), rttMs: status.rttMs }} />;
+  if (status.kind === "answered") return <ConnectionLine state={{ kind: "answered", route: status.route, ...(status.relay === undefined ? {} : { relay: status.relay }), rttMs: status.rttMs }} />;
   if (status.kind === "checking") return <ConnectionLine state={{ kind: "checking" }} />;
   return <ConnectionLine state={{ kind: "offline", text: lastSeenAt === null ? t("Offline") : t("Offline · {when}", { when: lastSeen(lastSeenAt) }) }}
     reason={status.reason === "pc" ? t("The PC is off, or Ovis is not running on it.") : t("The relay did not answer. Check this device's network.")} />;

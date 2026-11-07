@@ -14,7 +14,8 @@ import { keyIdOf } from "./shellState.ts";
 
 export type PcStatus =
   | { readonly kind: "checking" }
-  | { readonly kind: "connected"; readonly route: DeviceRoute; readonly relay?: string; readonly rttMs: number }
+  /** the PC finished the encrypted handshake on `route`; the check stops before signing in, so this device's own admission is not known */
+  | { readonly kind: "answered"; readonly route: DeviceRoute; readonly relay?: string; readonly rttMs: number }
   /** `pc`: the relay has nobody for it (off, or Ovis not running); `relay`: no relay answered this device */
   | { readonly kind: "offline"; readonly reason: "pc" | "relay" };
 
@@ -48,7 +49,7 @@ export async function checkPc(device: RelayDevice, sockets: PcCheckSockets, prob
   const deadline = Date.now() + DIRECT_PROBE_MS;
   for (const [index, direct] of carriers.entries()) {
     const found = await probe(offer, { direct }, sockets.direct!, Math.max(0, deadline - Date.now()) / (carriers.length - index));
-    if (found.kind === "answered") return { kind: "connected", route: isTailnetCarrier(direct) ? "tailscale" : "lan", rttMs: found.ms };
+    if (found.kind === "answered") return { kind: "answered", route: isTailnetCarrier(direct) ? "tailscale" : "lan", rttMs: found.ms };
   }
   let relay = device.relay;
   let found: PcProbe = await probe(offer, { relay }, sockets.relay, RELAY_PROBE_MS);
@@ -62,6 +63,6 @@ export async function checkPc(device: RelayDevice, sockets: PcCheckSockets, prob
     // silent on both: the PC is on neither; a global relay this device cannot reach leaves the PC unknown, so the relay is the reason
     else if (first.kind === "silent" && found.kind === "silent") found = first;
   }
-  return found.kind === "answered" ? { kind: "connected", route: "relay", relay, rttMs: found.ms }
+  return found.kind === "answered" ? { kind: "answered", route: "relay", relay, rttMs: found.ms }
     : { kind: "offline", reason: found.kind === "silent" ? "pc" : "relay" };
 }

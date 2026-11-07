@@ -209,6 +209,7 @@ const BASE: Record<string, string> = {
   "Connecting…": "正在连接…",
   "Connected": "已连接",
   "Add a connection": "添加连接",
+  "Answers": "有响应",
   "Same Wi-Fi, direct": "同一 Wi-Fi 直连",
   "Tailscale, direct": "Tailscale 直连",
   "Seoul relay": "首尔中继",

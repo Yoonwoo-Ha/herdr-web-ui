@@ -27,24 +27,24 @@ describe("checking a saved PC", () => {
   it("names the first direct carrier that answers, a Tailscale address as Tailscale", async () => {
     const { asked, probe } = probes({ "ws://100.101.1.2:7319": { kind: "answered", ms: 21 } });
     const found = await checkPc(device({ direct: ["ws://192.168.0.9:7319", "ws://100.101.1.2:7319"] }), { relay: socket, direct: socket }, probe);
-    expect(found).toEqual({ kind: "connected", route: "tailscale", rttMs: 21 });
+    expect(found).toEqual({ kind: "answered", route: "tailscale", rttMs: 21 });
     expect(asked).toEqual(["ws://192.168.0.9:7319", "ws://100.101.1.2:7319"]);
   });
 
   it("goes through the relay where it has no direct socket (a browser), and names the relay", async () => {
     const { asked, probe } = probes({ "wss://relay-ap.ovis.sh": { kind: "answered", ms: 48 } });
-    expect(await checkPc(device({ direct: ["ws://192.168.0.9:7319"] }), { relay: socket }, probe)).toEqual({ kind: "connected", route: "relay", relay: "wss://relay-ap.ovis.sh", rttMs: 48 });
+    expect(await checkPc(device({ direct: ["ws://192.168.0.9:7319"] }), { relay: socket }, probe)).toEqual({ kind: "answered", route: "relay", relay: "wss://relay-ap.ovis.sh", rttMs: 48 });
     expect(asked).toEqual(["wss://relay-ap.ovis.sh"]);
   });
 
   it("falls back from a regional relay that does not answer to the global one", async () => {
     const { probe } = probes({ "wss://relay.ovis.sh": { kind: "answered", ms: 140 } });
-    expect(await checkPc(device(), { relay: socket }, probe)).toEqual({ kind: "connected", route: "relay", relay: "wss://relay.ovis.sh", rttMs: 140 });
+    expect(await checkPc(device(), { relay: socket }, probe)).toEqual({ kind: "answered", route: "relay", relay: "wss://relay.ovis.sh", rttMs: 140 });
   });
 
   it("falls back to the global relay from a regional one with nobody for the PC, as opening it does", async () => {
     const { probe } = probes({ "wss://relay-ap.ovis.sh": { kind: "silent" }, "wss://relay.ovis.sh": { kind: "answered", ms: 140 } });
-    expect(await checkPc(device(), { relay: socket }, probe)).toEqual({ kind: "connected", route: "relay", relay: "wss://relay.ovis.sh", rttMs: 140 });
+    expect(await checkPc(device(), { relay: socket }, probe)).toEqual({ kind: "answered", route: "relay", relay: "wss://relay.ovis.sh", rttMs: 140 });
   });
 
   it("calls the PC offline when the relay has nobody for it, and the relay unreachable when none answers", async () => {

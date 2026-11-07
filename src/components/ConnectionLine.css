@@ -21,7 +21,8 @@
   background: var(--status-idle);
 }
 
-[data-connection="connected"] .connection-dot { background: var(--status-done); }
+[data-connection="connected"] .connection-dot,
+[data-connection="answered"] .connection-dot { background: var(--status-done); }
 [data-connection="checking"] .connection-dot { background: var(--notice); }
 
 .connection-slow {
