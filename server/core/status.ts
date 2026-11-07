@@ -8,7 +8,7 @@ import { createAlertWebhook } from "../alert-webhook.ts";
 import { basename, join } from "node:path";
 import type { RelaySocket } from "../../shared/relay-channel.ts";
 import type { AgentStatus, HerdrPane, PaneContext, PlanSummary, ServerMessage, SessionSnapshot } from "../../shared/protocol.ts";
-import { alertStatus, paneAlertsMuted, paneTitle } from "../../shared/notify-policy.ts";
+import { alertStatus, paneAlertsMuted, pushPaneTitle } from "../../shared/notify-policy.ts";
 import { BackgroundWait } from "../background-wait.ts";
 import { busyPanes, DESKTOP_ACTIVITY_FILE, trackDesktopActivity } from "../desktop-activity.ts";
 import { ClaudeSubagentStatus } from "../claude-subagents.ts";
@@ -116,8 +116,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     muted: (machineId, paneId) => paneAlertsMuted(preferences.get().muted_panes, machineId, paneId),
     // on herdr-core the pane carries what a blocked agent waits for (server/herdr-core/snapshot.ts reportedFacts)
     lookupPane: async (paneId) => {
-      const pane: Pick<HerdrPane, "agent_kind"> & Parameters<typeof paneTitle>[0] = await paneGet(paneId);
-      return { title: paneTitle(pane), ...(pane.agent_kind ? { agent_kind: pane.agent_kind } : {}) };
+      const pane: Pick<HerdrPane, "agent_kind"> & Parameters<typeof pushPaneTitle>[0] = await paneGet(paneId);
+      return { title: pushPaneTitle(pane), ...(pane.agent_kind ? { agent_kind: pane.agent_kind } : {}) };
     },
     // each pane alert that reached a device, for the daily active message's usage
     onAlertDelivered: () => options.telemetry?.tally("alerts_delivered"),
