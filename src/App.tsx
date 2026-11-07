@@ -43,7 +43,7 @@ import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { headerCrumb, showsChat } from "./lib/headerCrumb.ts";
 import { LOCAL_MACHINE, paneStorageId } from "../shared/machines.ts";
-import { shellMode } from "./lib/shellMode.ts";
+import { serverIdOfPath, shellMode } from "./lib/shellMode.ts";
 import { usePairedNotices } from "./lib/usePairedNotices.ts";
 import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { rosterPanes } from "./lib/dagPane.ts";
@@ -79,6 +79,7 @@ import { WebPanel } from "./components/WebPanel.tsx";
 import { WebPanelContext } from "./lib/webPanel.ts";
 import { RepoDiffViewer } from "./components/RepoDiffViewer.tsx";
 import { noteBlock, noteBlockWord } from "./lib/diffLineNotes.ts";
+import { directHostOf, useDirectNotice } from "./lib/directNotice.ts";
 import { usePaneObserving } from "./lib/paneObserving.ts";
 import { OpenFileContext } from "./lib/filePaths.ts";
 import { useAccessState, useLockedRef, usePairFromAddress } from "./lib/useAccess.ts";
@@ -215,6 +216,9 @@ export function App() {
   const { machineDialog, setMachineDialog, addPcFocusReturn, closeMachineDialog } = useMachineDialog();
   const { newSessionMachineId, setNewSessionMachineId } = useNewSessionMachine();
   const { health, localFreshness, shownHealth, readLocalHealth } = useLocalHealth();
+  const exposure = health?.lan_exposure ?? health?.direct_exposure;
+  const exposureDirect = !health?.lan_exposure || health.lan_exposure.direct === true;
+  const directNotice = useDirectNotice(serverIdOfPath(window.location.pathname) ?? "", directHostOf(health));
   const { error, setError } = useRosterError();
   const { layoutNotice, setLayoutNotice } = useLayoutNotice();
   const { locked, setLocked, lockReason, pairCode, consumePairCode, pairingUnconfirmed, onPaired, auth, canSignOut, security, readBridgeHealth } = useAccessState({ ui: settings.uiFontFamily, chat: settings.chatFontFamily });
@@ -982,7 +986,7 @@ export function App() {
         <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />
         {layoutNotice && <p className="pane-notice" role="alert">{layoutNotice}</p>}
         {/* the last answer that got through: a listener does not stop because herdr's ping failed */}
-        {(health?.lan_exposure ?? health?.direct_exposure) && <LanExposureNotice host={(health.lan_exposure ?? health.direct_exposure)!.host} direct={!health.lan_exposure || health.lan_exposure.direct === true} onOpen={() => { setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
+        {exposure && !(exposureDirect && directNotice.dismissed) && <LanExposureNotice host={exposure.host} direct={exposureDirect} onOpen={() => { setSettingsLinkPage("devices"); setSettingsOpen(true); }} onDismiss={directNotice.dismiss} />}
         <PushHealthNotice onRepair={repairNotifications} onOpen={() => { setSettingsLinkPage("alerts"); setSettingsOpen(true); }} />
         <InstallHint />
         {setupGuide.guide !== null && setupGuide.paused && <SetupGuideResume onResume={setupGuide.resume} />}
