@@ -205,7 +205,7 @@ try {
     await Bun.sleep(50);
   }
   await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent: "codex", state: "idle", agent_session_path: transcript });
-  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), codexHome, sshCandidates: { sshDir: join(root, "no-ssh"), readStatus: async () => null } });
+  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state"), codexHome, tailnetPcs: { readStatus: async () => null }, sshCandidates: { sshDir: join(root, "no-ssh"), readStatus: async () => null } });
   const origin = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });

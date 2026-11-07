@@ -196,6 +196,7 @@ export const DEVICES_ZH: Record<string, string> = {
   "Add {name}": "添加 {name}",
   "How to connect": "连接方式",
   "Looking for PCs…": "正在查找 PC…",
+  "Update Ovis on that PC to 0.5 first.": "请先把那台电脑上的 Ovis 更新到 0.5。",
   "Open Ovis on the PC itself to add a connection.": "要添加连接，请在那台电脑上打开 Ovis。",
   "Add another PC over SSH.": "通过 SSH 添加另一台电脑。",
   "Connect from anywhere through your Ovis account.": "通过 Ovis 账户随处连接。",

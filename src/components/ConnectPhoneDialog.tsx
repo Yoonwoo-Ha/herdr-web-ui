@@ -7,7 +7,7 @@ import "./DevicesPanel.css";
 
 import type { Machine } from "../../shared/machines.ts";
 import type { AddPcPreset } from "../lib/actions.ts";
-import { ApiError, findSshCandidates, requestRelayOffer, startPairing, type SshCandidate } from "../lib/api.ts";
+import { ApiError, findSshCandidates, findTailnetPcs, requestRelayOffer, startPairing, type SshCandidate } from "../lib/api.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { useT } from "../lib/i18n.ts";
 import type { PhonePlan } from "../lib/phone.ts";
@@ -179,6 +179,19 @@ export function SshTab({ machines, onAddPc, onConnectMachine }: { machines: read
   const [failed, setFailed] = useState(false);
   const [reads, setReads] = useState(0);
   const [typed, setTyped] = useState("");
+  // the Tailscale PCs whose Ovis is older than 0.5 (#3253), by MagicDNS name: told to update it there instead of Add
+  const [outdated, setOutdated] = useState<ReadonlySet<string>>(new Set());
+  // until that answer is in (it asks each PC, a few seconds), a Tailscale PC's Add waits (its own row, or the config
+  // host that names it), so an older one is not added
+  const [tailnetRead, setTailnetRead] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setTailnetRead(false);
+    findTailnetPcs().then(({ pcs }) => {
+      if (live) setOutdated(new Set(pcs.filter((pc) => pc.outdated).map((pc) => new URL(pc.url).hostname.toLowerCase())));
+    }, () => undefined).finally(() => { if (live) setTailnetRead(true); });
+    return () => { live = false; };
+  }, [reads]);
   useEffect(() => {
     let live = true;
     setFailed(false);
@@ -218,7 +231,9 @@ export function SshTab({ machines, onAddPc, onConnectMachine }: { machines: read
               <button type="button" className="btn" onClick={() => onConnectMachine(machine)}>{t("Connect")}</button>))}
             {found.map((pc) => row(`${pc.source}:${pc.destination}`, pc.name, pc.detail, pc.source, added(pc.destination)
               ? <span className="connect-found-added"><Check aria-hidden="true" />{t("Added")}</span>
-              : <button type="button" className="btn" aria-label={t("Add {name}", { name: pc.name })} onClick={() => onAddPc({ destination: pc.destination, name: pc.name })}>{t("Add")}</button>))}
+              : pc.tailnet !== undefined && outdated.has(pc.tailnet.toLowerCase())
+              ? <span className="settings-hint">{t("Update Ovis on that PC to 0.5 first.")}</span>
+              : <button type="button" className="btn" disabled={pc.tailnet !== undefined && !tailnetRead} aria-label={t("Add {name}", { name: pc.name })} onClick={() => onAddPc({ destination: pc.destination, name: pc.name })}>{t("Add")}</button>))}
           </ul>
         </div>
       )}

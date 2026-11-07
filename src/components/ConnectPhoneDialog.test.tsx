@@ -27,6 +27,11 @@ describe("Connect a phone on a phone", () => {
   let requests: string[];
   let assigned: string[];
   let shellMeta: boolean;
+  /** GET /api/machines/tailnet answers once this settles, with winvm older (`outdated`) or not */
+  let tailnetAnswer: Promise<void>;
+  let tailnetOutdated: boolean;
+  /** more rows GET /api/machines/ssh-candidates answers */
+  let extraCandidates: object[];
   /** the server's pending six-digit code; minting a typed code starts a new one, as server/relay/pair-code.ts does */
   let pending: string;
 
@@ -35,6 +40,9 @@ describe("Connect a phone on a phone", () => {
     requests = [];
     assigned = [];
     shellMeta = false;
+    tailnetAnswer = Promise.resolve();
+    tailnetOutdated = true;
+    extraCandidates = [];
     for (const key of ["window", "document", "navigator", "getComputedStyle", "Capacitor", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
     Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, value: () => ({ getPropertyValue: () => "" }) });
@@ -57,9 +65,11 @@ describe("Connect a phone on a phone", () => {
       const expires_at = new Date(Date.now() + 600_000).toISOString();
       if (path === "/api/relay/offer") return Response.json({ url: pending === "482913" ? OFFER_URL : encodeOffer({ ...decodeOffer(OFFER_URL)!, code: pending }, APP), expires_at });
       if (path === "/api/devices/pair/start") return Response.json({ code: pending, expires_at });
+      if (path === "/api/machines/tailnet") { await tailnetAnswer; return Response.json({ pcs: [{ name: "winvm", url: "https://winvm.tail.ts.net:8443", relay: "online", outdated: tailnetOutdated }] }); }
       if (path === "/api/machines/ssh-candidates") return Response.json({ pcs: [
         { name: "nuc12", destination: "nuc12", detail: "rise@100.127.218.1", source: "ssh_config" },
-        { name: "winvm", destination: "winvm.tail.ts.net", detail: "winvm.tail.ts.net", source: "tailscale" },
+        { name: "winvm", destination: "winvm.tail.ts.net", detail: "winvm.tail.ts.net", source: "tailscale", tailnet: "winvm.tail.ts.net" },
+        ...extraCandidates,
       ] });
       if (path === "/api/relay/code") { pending = "777111"; return Response.json({ code: "7K3QD-M2XHA", expires_at, server_id: SERVER_ID }); }
       return Response.json({ error: { code: "not_found", message: "no" } }, { status: 404 });
@@ -213,6 +223,35 @@ describe("Connect a phone on a phone", () => {
     // off, the switch turns it on
     await act(async () => { renderer!.update(<SettingsProvider>{tab(relayState({ ...ONLINE, phase: "off" }))}</SettingsProvider>); });
     expect(renderer!.root.findAllByProps({ label: "Ovis relay", checked: false })).toHaveLength(1);
+  });
+
+  it("holds a Tailscale PC's Add until its Ovis is known, so an older one is not added meanwhile", async () => {
+    let answer = () => undefined as void;
+    tailnetAnswer = new Promise((resolve) => { answer = resolve; });
+    tailnetOutdated = false;
+    await mount(<SshTab machines={[]} onAddPc={() => undefined} onConnectMachine={() => undefined} />);
+    for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
+    expect(renderer!.root.findByProps({ "aria-label": "Add winvm" }).props.disabled).toBe(true);
+    expect(renderer!.root.findByProps({ "aria-label": "Add nuc12" }).props.disabled).toBe(false);
+    await act(async () => { answer(); });
+    for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
+    expect(renderer!.root.findByProps({ "aria-label": "Add winvm" }).props.disabled).toBe(false);
+  });
+
+  it("tells an ssh config host that is an older-Ovis Tailscale PC to update it there too", async () => {
+    extraCandidates = [{ name: "lab", destination: "lab", detail: "rise@winvm.tail.ts.net", source: "ssh_config", tailnet: "winvm.tail.ts.net" }];
+    await mount(<SshTab machines={[]} onAddPc={() => undefined} onConnectMachine={() => undefined} />);
+    for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
+    expect(renderer!.root.findAllByProps({ "aria-label": "Add lab" })).toHaveLength(0);
+    expect(renderer!.root.findAll((node) => node.type === "span" && text(node) === "Update Ovis on that PC to 0.5 first.")).toHaveLength(2);
+  });
+
+  it("tells a Tailscale PC with an older Ovis to update it there, in one line, instead of offering Add", async () => {
+    await mount(<SshTab machines={[]} onAddPc={() => undefined} onConnectMachine={() => undefined} />);
+    for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
+    expect(renderer!.root.findAllByProps({ "aria-label": "Add winvm" })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ "aria-label": "Add nuc12" })).toHaveLength(1);
+    expect(text(renderer!.root)).toContain("Update Ovis on that PC to 0.5 first.");
   });
 
   it("keeps the desktop's relay QR code up front, with no self-pairing", async () => {

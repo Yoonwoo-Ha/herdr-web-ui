@@ -130,7 +130,7 @@ try {
     portal,
     usage: new UsageService(undefined, []),
     registerBridge: false,
-    sshCandidates: { sshDir: join(stateDir, "no-ssh"), readStatus: async () => null },
+    tailnetPcs: { readStatus: async () => null }, sshCandidates: { sshDir: join(stateDir, "no-ssh"), readStatus: async () => null },
   });
   servers.push(server);
   const origin = `http://127.0.0.1:${server.port}`;
@@ -375,7 +375,7 @@ try {
     portal: blockedPortal,
     usage: new UsageService(undefined, []),
     registerBridge: false,
-    sshCandidates: { sshDir: join(blockedState, "no-ssh"), readStatus: async () => null },
+    tailnetPcs: { readStatus: async () => null }, sshCandidates: { sshDir: join(blockedState, "no-ssh"), readStatus: async () => null },
   });
   servers.push(blockedServer);
   const blockedContext = await browser.newContext({ viewport: { width: 1100, height: 800 }, locale: "en-US" });

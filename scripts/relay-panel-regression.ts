@@ -54,7 +54,7 @@ export function startRelayFixture(options: { serveOnly?: boolean } = {}): RelayF
     port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false,
     tailscaleServeOnly: options.serveOnly ?? false, relay: service, usage: new UsageService(undefined, []), registerBridge: false,
     // the SSH tab reads a fixture, never the runner's own ssh config or Tailscale
-    sshCandidates: { sshDir: join(stateDir, "no-ssh"), readStatus: async () => null },
+    tailnetPcs: { readStatus: async () => null }, sshCandidates: { sshDir: join(stateDir, "no-ssh"), readStatus: async () => null },
   });
   return {
     origin: `http://127.0.0.1:${server.port}`,

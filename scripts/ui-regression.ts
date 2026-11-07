@@ -118,7 +118,7 @@ try {
   }
   const [paneA, paneB] = panes as [string, string];
   // no provider is asked with the test machine's own sign-ins
-  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), usage: new UsageService({ ...systemUsageContext(), home: root, env: {} }, []), sshCandidates: { sshDir: join(root, "no-ssh"), readStatus: async () => null } });
+  server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), usage: new UsageService({ ...systemUsageContext(), home: root, env: {} }, []), tailnetPcs: { readStatus: async () => null }, sshCandidates: { sshDir: join(root, "no-ssh"), readStatus: async () => null } });
   const origin = `http://127.0.0.1:${server.port}`;
   browser = await chromium.launch({
     executablePath: chromePath(),
@@ -2496,7 +2496,7 @@ try {
   if (pageEvidence) await pageEvidence.finish();
   await page.close();
 
-  const secured = createServer({ port: 0, hostname: "127.0.0.1", token: "browser-test-token", stateDir: join(root, "secured"), tailscaleOwner: null, sshCandidates: { sshDir: join(root, "no-ssh"), readStatus: async () => null } });
+  const secured = createServer({ port: 0, hostname: "127.0.0.1", token: "browser-test-token", stateDir: join(root, "secured"), tailscaleOwner: null, tailnetPcs: { readStatus: async () => null }, sshCandidates: { sshDir: join(root, "no-ssh"), readStatus: async () => null } });
   releases.push(() => secured.stop());
   const securedOrigin = `http://127.0.0.1:${secured.port}`;
   const securedContext = await browser.newContext({ viewport: { width: 1280, height: 800 } });

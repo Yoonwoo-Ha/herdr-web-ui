@@ -30,6 +30,8 @@ export interface SshCandidate {
   /** user@hostname as the config resolves it, or the MagicDNS name; null when the alias says nothing more */
   detail: string | null;
   source: "ssh_config" | "tailscale";
+  /** the MagicDNS name of the PC of this PC's Tailscale login it is, when it is one (a config host may name one) */
+  tailnet?: string;
 }
 
 export interface SshCandidatesOptions {
@@ -39,6 +41,28 @@ export interface SshCandidatesOptions {
   home?: string;
   /** `tailscale status --json`; null when Tailscale is not here */
   readStatus?: () => Promise<string | null>;
+}
+
+/**
+ * Whether `text` matches an ssh Host pattern (`*` any run, `?` one character), in lowercase as ssh compares host
+ * names. One pass that steps back only to the last `*`: a RegExp built from `*a*a*a…b` backtracks for seconds on a
+ * long alias and would hold the server.
+ */
+function globMatch(pattern: string, text: string): boolean {
+  const glob = pattern.toLowerCase();
+  const name = text.toLowerCase();
+  let at = 0;
+  let next = 0;
+  let star = -1;
+  let resume = 0;
+  while (at < name.length) {
+    if (next < glob.length && (glob[next] === "?" || glob[next] === name[at])) { at += 1; next += 1; }
+    else if (next < glob.length && glob[next] === "*") { star = next; next += 1; resume = at; }
+    else if (star >= 0) { next = star + 1; resume += 1; at = resume; }
+    else return false;
+  }
+  while (next < glob.length && glob[next] === "*") next += 1;
+  return next === glob.length;
 }
 
 /** a Host pattern that names one host, not a set of them */
@@ -78,8 +102,10 @@ export async function sshConfigHosts(text: string, include: (pattern: string) =>
       if (parsed === null) continue;
       if (parsed.key === "host") {
         inMatch = false;
-        // `Host valid server-*` still names `valid`; `Host a !a` names nothing
-        current = { aliases: parsed.values.filter((value) => plainAlias(value) && !parsed.values.includes(`!${value}`)) };
+        // `Host valid server-*` still names `valid`; a negated pattern on the line leaves out each alias it matches
+        // (`Host web01 !web*` names nothing), as ssh never applies the block to that host
+        const negated = parsed.values.filter((value) => value.startsWith("!")).map((value) => value.slice(1));
+        current = { aliases: parsed.values.filter((value) => plainAlias(value) && !negated.some((pattern) => globMatch(pattern, value))) };
         blocks.push(current);
       } else if (parsed.key === "match") {
         inMatch = true;
@@ -89,7 +115,11 @@ export async function sshConfigHosts(text: string, include: (pattern: string) =>
         // before a Host line of its own are that block's), and the including file's block goes on after it
         const [outer, outerMatch] = [current, inMatch];
         for (const pattern of parsed.values) {
-          for (const included of await include(pattern)) await walk(included, depth + 1);
+          // each file starts in the Include's own block: a Host line in one file does not carry into the next
+          for (const included of await include(pattern)) {
+            [current, inMatch] = [outer, outerMatch];
+            await walk(included, depth + 1);
+          }
         }
         [current, inMatch] = [outer, outerMatch];
       } else if (current !== null && !inMatch) {
@@ -182,15 +212,26 @@ export async function sshCandidates(options: SshCandidatesOptions = {}): Promise
   const sshDir = options.sshDir ?? join(homedir(), ".ssh");
   const [config, status] = await Promise.all([readCapped(join(sshDir, "config"), MAX_FILE_BYTES), (options.readStatus ?? readTailscaleStatus)()]);
   const hosts = config === null ? [] : await sshConfigHosts(config, includer(sshDir, options.home ?? homedir()));
-  const fromConfig: SshCandidate[] = hosts.map(({ alias, hostname, user }) => ({
-    name: alias,
-    destination: alias,
-    detail: hostname === null ? (user === null ? null : `${user}@${alias}`) : user === null ? hostname : `${user}@${hostname}`,
-    source: "ssh_config",
-  }));
-  const named = new Set(hosts.flatMap(({ alias, hostname }) => [alias.toLowerCase(), ...(hostname === null ? [] : [hostname.toLowerCase().replace(/\.$/, "")])]));
-  const fromTailnet: SshCandidate[] = tailnetPeers(status)
-    .filter(({ name, dnsName }) => !named.has(name.toLowerCase()) && !named.has(dnsName.toLowerCase()))
-    .map(({ name, dnsName }) => ({ name, destination: dnsName, detail: dnsName, source: "tailscale" }));
+  const peers = tailnetPeers(status);
+  // a config host names a Tailscale PC by its machine or MagicDNS name, as alias or HostName: that row stands for it
+  const peerOf = (alias: string, hostname: string | null) => {
+    const names = [alias, ...(hostname === null ? [] : [hostname])].map((value) => value.toLowerCase().replace(/\.$/, ""));
+    return peers.find(({ name, dnsName }) => names.includes(name.toLowerCase()) || names.includes(dnsName.toLowerCase()));
+  };
+  const claimed = new Set<string>();
+  const fromConfig: SshCandidate[] = hosts.map(({ alias, hostname, user }) => {
+    const peer = peerOf(alias, hostname);
+    if (peer !== undefined) claimed.add(peer.dnsName);
+    return {
+      name: alias,
+      destination: alias,
+      detail: hostname === null ? (user === null ? null : `${user}@${alias}`) : user === null ? hostname : `${user}@${hostname}`,
+      source: "ssh_config",
+      ...(peer === undefined ? {} : { tailnet: peer.dnsName }),
+    };
+  });
+  const fromTailnet: SshCandidate[] = peers
+    .filter(({ dnsName }) => !claimed.has(dnsName))
+    .map(({ name, dnsName }) => ({ name, destination: dnsName, detail: dnsName, source: "tailscale", tailnet: dnsName }));
   return [...fromConfig, ...fromTailnet].slice(0, MAX_HOSTS);
 }

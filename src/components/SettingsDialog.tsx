@@ -1244,6 +1244,8 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   const relayReadOnly = auth?.role === "watch" || auth?.via === "portal";
   const closesGate = security.state === "known" && security.summary.pairing_gate === "open" && !security.summary.token_configured;
   const [connecting, setConnecting] = useState(false);
+  // each opening of Add a connection asks the account service again, so a service back from an outage signs in there
+  const [connectOpens, setConnectOpens] = useState(0);
   const searching = useContext(SettingsQuery).length > 0;
   /** More settings' place for the device list's notes and Revoke every device (DevicesPanel `more`) */
   const [devicesMore, setDevicesMore] = useState<HTMLDivElement | null>(null);
@@ -1287,11 +1289,11 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
         {/* how anything else gets connected: one button, its sheet picks the way; a search finds it as a row by every way it holds */}
         {searching ? (
           <SettingsRow label={t("Add a connection")} keywords={t("phone browser PC pair pairing code QR relay Tailscale Wi-Fi SSH Portal add PC remote PCs")}>
-            <button type="button" className="btn btn-primary" onClick={() => setConnecting(true)}><Plus aria-hidden="true" />{t("Add a connection")}</button>
+            <button type="button" className="btn btn-primary" onClick={() => { setConnecting(true); setConnectOpens((count) => count + 1); }}><Plus aria-hidden="true" />{t("Add a connection")}</button>
           </SettingsRow>
         ) : (
           <div className="settings-item devices-add">
-            <button type="button" className="btn btn-primary" onClick={() => setConnecting(true)}><Plus aria-hidden="true" />{t("Add a connection")}</button>
+            <button type="button" className="btn btn-primary" onClick={() => { setConnecting(true); setConnectOpens((count) => count + 1); }}><Plus aria-hidden="true" />{t("Add a connection")}</button>
           </div>
         )}
         <DamagedPcFiles pcSettings={pcSettings} />
@@ -1324,7 +1326,7 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
           </SettingsGroup>
         )}
 
-        <AccountSection onAccount={setAccount} />
+        <AccountSection onAccount={setAccount} recheck={connectOpens} />
         <SettingsGroup title={t("Devices and access")} section="devices-more">
           {/* in the hosted shell too (a phone reaching this PC through the relay or directly), there without the switch */}
           {(relayOffered(relay) || inRelayShell()) && <RelayDirectRow relay={relay} readOnly={relayReadOnly || inRelayShell()} />}

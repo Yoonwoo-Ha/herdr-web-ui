@@ -56,6 +56,24 @@ it("lists the hosts a config names with their first HostName and User, leaving o
   ]);
 });
 
+it("leaves out an alias a negated pattern on its own Host line matches, as ssh does", async () => {
+  expect(await sshConfigHosts("Host web01 !web*\n  User skipped\nHost db01 !web*\n  User kept\n")).toEqual([{ alias: "db01", hostname: null, user: "kept" }]);
+});
+
+it("matches a negated pattern in linear time, so a crafted one cannot hold the server", async () => {
+  const alias = "a".repeat(45);
+  const started = performance.now();
+  const hosts = await sshConfigHosts(`Host ${alias} !${"*a".repeat(12)}b\nHost w0b01 !w?b*\nHost web02 !*0?\n`);
+  expect(performance.now() - started).toBeLessThan(250);
+  expect(hosts.map((host) => host.alias)).toEqual([alias]);
+});
+
+it("starts each file one Include names in the Host block of the Include", async () => {
+  const dir = sshDir({ config: "Host lab\n  Include a b\n", a: "Host other\n", b: "User alice\n" });
+  const candidates = await sshCandidates({ sshDir: dir, readStatus: async () => null });
+  expect(candidates.map((candidate) => [candidate.name, candidate.detail])).toEqual([["lab", "alice@lab"], ["other", null]]);
+});
+
 it("stops a line at a word that starts a comment", async () => {
   expect(await sshConfigHosts("Host lab # work machine\n  HostName lab.example # the desk\n")).toEqual([{ alias: "lab", hostname: "lab.example", user: null }]);
 });
@@ -117,13 +135,14 @@ it("lists 200 PCs at most, Tailscale PCs included", async () => {
   expect(candidates.some((candidate) => candidate.source === "tailscale")).toBe(false);
 });
 
-it("adds the Tailscale PCs no config host already names, by their MagicDNS name", async () => {
-  const dir = sshDir({ config: "Host lab\n  HostName lab-pc.tail.ts.net\nHost eamac\n" });
+it("adds the Tailscale PCs no config host already names, and names the Tailscale PC a config host is", async () => {
+  const dir = sshDir({ config: "Host lab\n  HostName lab-pc.tail.ts.net\nHost eamac\nHost build\n  HostName build.example\n" });
   const candidates = await sshCandidates({ sshDir: dir, readStatus: async () => status(["lab-pc", "eamac", "winvm"]) });
   expect(candidates).toEqual([
-    { name: "lab", destination: "lab", detail: "lab-pc.tail.ts.net", source: "ssh_config" },
-    { name: "eamac", destination: "eamac", detail: null, source: "ssh_config" },
-    { name: "winvm", destination: "winvm.tail.ts.net", detail: "winvm.tail.ts.net", source: "tailscale" },
+    { name: "lab", destination: "lab", detail: "lab-pc.tail.ts.net", source: "ssh_config", tailnet: "lab-pc.tail.ts.net" },
+    { name: "eamac", destination: "eamac", detail: null, source: "ssh_config", tailnet: "eamac.tail.ts.net" },
+    { name: "build", destination: "build", detail: "build.example", source: "ssh_config" },
+    { name: "winvm", destination: "winvm.tail.ts.net", detail: "winvm.tail.ts.net", source: "tailscale", tailnet: "winvm.tail.ts.net" },
   ]);
 });
 
