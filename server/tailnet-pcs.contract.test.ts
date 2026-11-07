@@ -11,7 +11,7 @@ import { MachineManager } from "./machines.ts";
 import type { PushService } from "./push.ts";
 import { RelayService } from "./relay/service.ts";
 import { bounded, deferred } from "./relay/test-helpers.ts";
-import { tailnetPeers } from "./tailnet-pcs.ts";
+import { TailnetPcError, TailnetPcs, tailnetPeers } from "./tailnet-pcs.ts";
 
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -102,7 +102,7 @@ async function pcA(initial: Parameters<typeof status>[0], origins: Record<string
   return { ask, probed, base, setPeers: (next: Parameters<typeof status>[0]) => { peers = next; } };
 }
 
-type Found = { pcs: { name: string; url: string; relay: string | null }[] };
+type Found = { pcs: { name: string; url: string; relay: string | null; outdated: boolean }[] };
 
 it("adds a PC of the same Tailscale login through the relay with one tap, after the IDs match by themselves", async () => {
   const { b, serveUrl, local } = await pcB("me@example.com");
@@ -111,7 +111,7 @@ it("adds a PC of the same Tailscale login through the relay with one tap, after 
   const listed = await ask("GET");
   expect(listed.status).toBe(200);
   const { pcs } = await listed.json() as Found;
-  expect(pcs).toEqual([{ name: "pc-b", url: serveUrl, relay: "online" }]);
+  expect(pcs).toEqual([{ name: "pc-b", url: serveUrl, relay: "online", outdated: false }]);
   // a node of another login is never asked anything
   expect(probed).toEqual(["pc-b.tail.ts.net"]);
 
@@ -141,7 +141,7 @@ it("asks no code of a PC whose relay is off", async () => {
   const { bBase, serveUrl, local, asked } = await pcB("me@example.com");
   expect((await fetch(`${bBase}/api/relay/stop`, { method: "POST", headers: { origin: bBase, "x-herdr-update": "1" } })).status).toBe(200);
   const { ask } = await pcA([{ name: "pc-b", user: "9007199254740993" }], { "pc-b.tail.ts.net": serveUrl }, local);
-  expect((await (await ask("GET")).json() as Found).pcs).toEqual([{ name: "pc-b", url: serveUrl, relay: "off" }]);
+  expect((await (await ask("GET")).json() as Found).pcs).toEqual([{ name: "pc-b", url: serveUrl, relay: "off", outdated: false }]);
   const added = await ask("POST", { url: serveUrl });
   expect((await added.json() as { error: { code: string } }).error.code).toBe("tailnet_relay_off");
   expect(asked).not.toContain("POST /api/relay/code");
@@ -184,4 +184,70 @@ it("does not list a PC that does not let this PC's login drive it", async () => 
   const { ask } = await pcA([{ name: "pc-b", user: "9007199254740993" }], { "pc-b.tail.ts.net": serveUrl }, local);
   expect(await (await ask("GET")).json()).toEqual({ pcs: [] });
   expect((await ask("POST", { url: serveUrl })).status).toBe(404);
+});
+
+/**
+ * A PC whose Ovis predates typed codes (0.4.22 and before), answering as that release does: its health names no
+ * relay ID, and it refuses `POST /api/relay/code` as an unknown relay action.
+ */
+function olderOvis(options: { serverId?: string; phase?: string; refusal?: { status: number; code: string } } = {}) {
+  const asked: string[] = [];
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+    const { pathname } = new URL(request.url);
+    asked.push(`${request.method} ${pathname}`);
+    if (pathname === "/api/health") return Response.json({ ok: true, auth: { required: false, authenticated: true, via: "tailscale", role: "drive" },
+      relay: { phase: options.phase ?? "online", relay: "wss://relay.example", app: "https://app.ovis.sh", sessions: 0, blocked: null, error: null },
+      web_ui: { boot_id: "b", revision: null, ...(options.serverId ? { server_id: options.serverId } : {}) } });
+    const refusal = options.refusal ?? { status: 405, code: "method_not_allowed" };
+    return Response.json({ error: { code: refusal.code, message: "Unknown relay action." } }, { status: refusal.status });
+  } });
+  cleanup.push(() => server.stop(true));
+  return { url: `http://127.0.0.1:${server.port}`, asked };
+}
+
+const onePeer = async () => status([{ name: "pc-b", user: "9007199254740993" }]);
+
+it("lists a PC with an older Ovis as one to update, and asks it for no code", async () => {
+  const old = olderOvis();
+  const pcs = new TailnetPcs({ readStatus: onePeer, ports: [443], origin: () => old.url });
+  expect(await pcs.list(new Set())).toEqual([{ name: "pc-b", url: old.url, relay: "online", outdated: true }]);
+  const failure = await pcs.code(old.url, new Set()).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(TailnetPcError);
+  expect((failure as TailnetPcError).failure).toBe("outdated");
+  expect(old.asked).not.toContain("POST /api/relay/code");
+});
+
+it("lists the current Ovis of a PC that also runs an older one on another port", async () => {
+  const old = olderOvis();
+  const current = olderOvis({ serverId: "a".repeat(43) });
+  const pcs = new TailnetPcs({ readStatus: onePeer, ports: [443, 8443], origin: (_dnsName, port) => port === 443 ? old.url : current.url });
+  expect(await pcs.list(new Set())).toEqual([{ name: "pc-b", url: current.url, relay: "online", outdated: false }]);
+});
+
+it("lists an Ovis whose relay is off, which may be a current one, over an older one", async () => {
+  const older = olderOvis();
+  // a current Ovis that never started its relay names no relay ID either
+  const relayOff = olderOvis({ phase: "off" });
+  const pcs = new TailnetPcs({ readStatus: onePeer, ports: [443, 8443], origin: (_dnsName, port) => port === 443 ? older.url : relayOff.url });
+  expect(await pcs.list(new Set())).toEqual([{ name: "pc-b", url: relayOff.url, relay: "off", outdated: false }]);
+});
+
+it("tells each refusal of the code request in its own failure, never with that PC's own words", async () => {
+  const cases: [{ status: number; code: string }, string][] = [
+    // its health named its relay ID: a current Ovis, so a missing route is something in between, not its version
+    [{ status: 405, code: "method_not_allowed" }, "no_code"],
+    [{ status: 404, code: "not_found" }, "no_code"],
+    [{ status: 409, code: "relay_off" }, "relay_off"],
+    [{ status: 409, code: "relay_offline" }, "relay_offline"],
+    [{ status: 409, code: "code_unavailable" }, "code_unavailable"],
+    [{ status: 500, code: "internal" }, "no_code"],
+  ];
+  for (const [refusal, expected] of cases) {
+    const refusing = olderOvis({ serverId: "a".repeat(43), refusal });
+    const pcs = new TailnetPcs({ readStatus: onePeer, ports: [443], origin: () => refusing.url });
+    await pcs.list(new Set());
+    const failure = await pcs.code(refusing.url, new Set()).catch((error: unknown) => error) as TailnetPcError;
+    expect([refusal.code, failure.failure]).toEqual([refusal.code, expected]);
+    expect(failure.message).not.toContain("Unknown relay action");
+  }
 });

@@ -1598,7 +1598,13 @@ export const addRelayPc = (link: string) => machineRequest<{ machine: Machine }>
 export const findRelayPc = (code: string) => machineRequest<{ ticket: string; server_id: string; name: string | null }>("/relay/code", "POST", { code });
 export const addFoundRelayPc = (ticket: string) => machineRequest<{ machine: Machine }>("/relay", "POST", { found: ticket });
 /** A PC of this PC's Tailscale login whose Ovis lets this PC in as its owner (server/tailnet-pcs.ts). */
-export interface TailnetPc { readonly name: string; readonly url: string; readonly relay: string | null }
+export interface TailnetPc {
+  readonly name: string;
+  readonly url: string;
+  readonly relay: string | null;
+  /** its Ovis predates typed codes: updated to 0.5, one tap adds it */
+  readonly outdated: boolean;
+}
 /** GET /api/machines/tailnet: the PCs on this PC's Tailscale that one tap adds through the relay. */
 export const findTailnetPcs = () => machineRequest<{ pcs: TailnetPc[] }>("/tailnet");
 /** POST /api/machines/tailnet: asks that PC for its code over Tailscale and adds it through the relay. */

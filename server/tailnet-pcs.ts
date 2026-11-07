@@ -32,6 +32,8 @@ export interface TailnetPc {
   url: string;
   /** that PC's relay phase: a code is asked only while it is online */
   relay: string | null;
+  /** that PC's Ovis predates typed codes (before 0.5): it is updated before one tap can add it */
+  outdated: boolean;
 }
 
 interface PeerJson { DNSName?: string; UserID?: string; Online?: boolean; OS?: string; Tags?: string[] }
@@ -108,6 +110,14 @@ export class TailnetPcs {
     return health.auth?.authenticated === true && health.auth.via === "tailscale" && health.auth.role === "drive";
   }
 
+  /**
+   * An Ovis before typed codes: its health names no relay ID while its relay is online. Both came in the same
+   * release (0.4.23), and an online relay always has its ID, so a current Ovis never looks like this.
+   */
+  private static outdated(health: Health): boolean {
+    return health.relay?.phase === "online" && health.web_ui?.server_id === undefined;
+  }
+
   private async probe(url: string): Promise<Health | null> {
     try {
       const response = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(PROBE_MS), redirect: "error" });
@@ -121,7 +131,7 @@ export class TailnetPcs {
   async list(added: ReadonlySet<string>): Promise<TailnetPc[]> {
     this.listing ??= this.discover().finally(() => { this.listing = null; });
     // filtered after the shared round: a PC added while it ran is left out for every window
-    return (await this.listing).filter((pc) => pc.server_id === null || !added.has(pc.server_id)).map(({ name, url, relay }) => ({ name, url, relay }));
+    return (await this.listing).filter((pc) => pc.server_id === null || !added.has(pc.server_id)).map(({ name, url, relay, outdated }) => ({ name, url, relay, outdated }));
   }
 
   private async discover(): Promise<(TailnetPc & { server_id: string | null })[]> {
@@ -130,14 +140,20 @@ export class TailnetPcs {
       const answers = await Promise.all(this.ports.map(async (port) => {
         const url = this.origin(dnsName, port);
         const health = await this.probe(url);
-        return health !== null && TailnetPcs.drivable(health) ? { name, dnsName, url, relay: health.relay?.phase ?? null, server_id: health.web_ui?.server_id ?? null } : null;
+        return health !== null && TailnetPcs.drivable(health)
+          ? { name, dnsName, url, relay: health.relay?.phase ?? null, outdated: TailnetPcs.outdated(health), server_id: health.web_ui?.server_id ?? null } : null;
       }));
-      return answers.find((answer) => answer !== null) ?? null;
+      // a PC may run an older Ovis on one port and a current one on another: a current one (it names its relay ID)
+      // is the one to add, one whose relay is online first; then one whose relay is off, which may be a current one
+      // that never started its relay; an Ovis known to be older last
+      const found = answers.filter((answer) => answer !== null);
+      return found.find((answer) => answer.server_id !== null && answer.relay === "online") ?? found.find((answer) => answer.server_id !== null)
+        ?? found.find((answer) => !answer.outdated) ?? found[0] ?? null;
     }));
     const listed = pcs.filter((pc) => pc !== null);
     // a fresh list replaces the last: a PC gone from it is no longer addable
     this.found = new Map(listed.map((pc) => [pc.url, { name: pc.name, dnsName: pc.dnsName, at: Date.now() }]));
-    return listed.map(({ name, url, relay, server_id }) => ({ name, url, relay, server_id }));
+    return listed.map(({ name, url, relay, outdated, server_id }) => ({ name, url, relay, outdated, server_id }));
   }
 
   /** the name a recent list found at this address, or null: no other address is ever asked for a code */
@@ -159,21 +175,30 @@ export class TailnetPcs {
     if (health === null || !TailnetPcs.drivable(health)) throw new TailnetPcError("not_owner", "That PC no longer lets this PC in as its owner over Tailscale. Add it with its code instead.");
     if (health.web_ui?.server_id !== undefined && added.has(health.web_ui.server_id)) throw new TailnetPcError("already_added", "That PC is already added.");
     if (health.relay?.phase !== "online") throw new TailnetPcError("relay_off", "Turn the relay on on that PC first, under Add a connection.");
+    if (TailnetPcs.outdated(health)) throw new TailnetPcError("outdated", OUTDATED);
     let response: Response;
     try {
       response = await fetch(`${url}/api/relay/code`, { method: "POST", headers: { "x-herdr-update": "1" }, signal: AbortSignal.timeout(15_000), redirect: "error" });
-    } catch (error) {
-      throw new TailnetPcError("unreachable", `That PC did not answer: ${error instanceof Error ? error.message : String(error)}`);
+    } catch {
+      throw new TailnetPcError("unreachable", "That PC did not answer. Check that it is on, then try again.");
     }
-    const body = await boundedJson(response) as { code?: unknown; server_id?: unknown; error?: { message?: unknown } } | null;
+    const body = await boundedJson(response) as { code?: unknown; server_id?: unknown; error?: { code?: unknown } } | null;
     if (!response.ok || typeof body?.code !== "string" || typeof body.server_id !== "string") {
-      const message = typeof body?.error?.message === "string" ? body.error.message : `HTTP ${response.status}`;
-      throw new TailnetPcError("no_code", `That PC gave no code: ${message}`);
+      // that PC's own words never reach the person. Its health named its relay ID, so it is a current Ovis: a 404 or
+      // 405 here comes from something in between, not from its version
+      const refusal = body?.error?.code;
+      if (refusal === "relay_off") throw new TailnetPcError("relay_off", "Turn the relay on on that PC first, under Add a connection.");
+      if (refusal === "relay_offline") throw new TailnetPcError("relay_offline", "That PC's relay cannot be reached right now. Try again in a moment.");
+      // that PC uses a relay of its own, where typed codes do not work: asking again never changes that
+      if (refusal === "code_unavailable") throw new TailnetPcError("code_unavailable", "That PC uses its own relay, which cannot give a code. Add it with its QR code instead.");
+      throw new TailnetPcError("no_code", "That PC could not give a code just now. Try again in a moment.");
     }
     return { code: body.code, server_id: body.server_id };
   }
 }
 
+const OUTDATED = "That PC runs an older Ovis. Update it to 0.5 to add it here in one tap.";
+
 export class TailnetPcError extends Error {
-  constructor(readonly failure: "not_found" | "not_owner" | "already_added" | "relay_off" | "unreachable" | "no_code" | "mismatch", message: string) { super(message); }
+  constructor(readonly failure: "not_found" | "not_owner" | "already_added" | "relay_off" | "relay_offline" | "code_unavailable" | "outdated" | "unreachable" | "no_code" | "mismatch", message: string) { super(message); }
 }
