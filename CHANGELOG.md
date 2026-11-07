@@ -7,6 +7,104 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-08
+
+### Added
+- A PC asks the Ovis account service for a relay pass while it uses Ovis's own relays, keeps it
+  across restarts and renews it, and says in its relay status when it has none.
+  ([#3270](https://github.com/devswha/ovis/pull/3270))
+- ovis.sh and the README offer the desktop app: on a Mac the download button gets its dmg (Apple
+  silicon, with the Intel build one line below), and on Linux the .deb for Debian and Ubuntu, with
+  the AppImage below it for other distributions; on Windows the desktop app, with a line on
+  getting past SmartScreen (the app is not code-signed yet). The install command stays a second way.
+  ([#2796](https://github.com/devswha/ovis/pull/2796))
+- The first-run welcome offers the account sign-in under its two choices: **Continue with GitHub**
+  or **Google** (only what the account service offers, nothing when it is off), **Not now** to
+  skip it, and once signed in on a new PC, **Add this PC to my account**.
+  ([#3247](https://github.com/devswha/ovis/pull/3247))
+
+### Changed
+- Settings → Devices and PCs → Add a connection is three tabs, as herdr's Add a machine: SSH lists the
+  PCs saved in herdr, the hosts of the PC's ssh config and the other PCs of its Tailscale login, and
+  Add opens the PC setup with the address filled in; Phones and devices holds the Tailscale address,
+  the pairing code and Portal; Ovis relay signs in to the Ovis account. A Tailscale PC is added over
+  SSH, never through the relay.
+  ([#3258](https://github.com/devswha/ovis/pull/3258))
+- The devices list drops its "Connected to this PC" title; what is not connected now is dimmed, and a
+  PC added here that is not connected can be removed from its row.
+  ([#3258](https://github.com/devswha/ovis/pull/3258))
+- The line saying this PC takes same-Wi-Fi direct connections from relay-paired devices can be
+  dismissed; it comes back when the address changes or direct is turned off and on again, and
+  Settings, Devices and PCs still shows it. The warning for a server open to the network with no
+  token and nothing paired still cannot be dismissed.
+  ([#3248](https://github.com/devswha/ovis/pull/3248))
+- ovis.sh and the README say less: a one-line pitch, short captions under the screenshots and
+  cards, one row of quotes, and a shorter README intro.
+  ([#2796](https://github.com/devswha/ovis/pull/2796))
+
+### Removed
+- Add a connection no longer pairs through the relay without the Ovis account, takes a code from
+  another PC, or adds Tailscale PCs through the relay. PCs added that way before keep working.
+  ([#3258](https://github.com/devswha/ovis/pull/3258))
+
+### Fixed
+- Add a connection → SSH tells a Tailscale PC that runs an Ovis older than 0.5 to update it there,
+  instead of offering Add.
+  ([#3279](https://github.com/devswha/ovis/pull/3279))
+- The SSH list reads each file an Include names in the Host block the Include is in, and leaves
+  out a host that a negated pattern on its own Host line excludes, as ssh does.
+  ([#3279](https://github.com/devswha/ovis/pull/3279))
+- The Ovis relay tab offers the relay's own pairing also while the account service answers with a
+  server error.
+  ([#3279](https://github.com/devswha/ovis/pull/3279))
+- On Android, a tap on a terminal key-bar key (arrows, Esc, Tab, Ctrl) no longer brings back a
+  keyboard that Back put away.
+  ([#3297](https://github.com/devswha/ovis/pull/3297) reported by @Shunamxiao)
+- A Claude pane's chat no longer shows "Conversation unavailable", or an empty new chat, when a
+  Claude started inside the pane (`claude -p` from a hook or a script) took herdr's report of the
+  pane's session: the chat reads the session the pane's own Claude names in its PID record.
+  ([#3264](https://github.com/devswha/ovis/pull/3264) by @vibewriter-hand)
+- A new Codex pane whose model comes from a custom model provider (a proxy names it in Codex's
+  footer, such as `gpt-6.1-terra high`) opens on an empty new chat before its first message, not
+  on "Conversation unavailable".
+  ([#3265](https://github.com/devswha/ovis/pull/3265) by @vibewriter-hand)
+- A push notification for a pane named by its working directory shows the folder (`api`), as the
+  sidebar and in-app alerts do, instead of the whole path.
+  ([#3291](https://github.com/devswha/ovis/pull/3291))
+- Setting up the relay pass never keeps Add this PC from its pairing wait, and `link` on a PC with no
+  screen works when the Ovis relay asks for a pass.
+  ([#3272](https://github.com/devswha/ovis/pull/3272))
+- Add this PC no longer waits on the relay pass setup when that setup does not answer.
+  ([#3278](https://github.com/devswha/ovis/pull/3278))
+- In Safari, the sidebar's workspace list shows its workspaces again instead of a single row with a
+  scrollbar beside it.
+  ([#3295](https://github.com/devswha/ovis/pull/3295) reported by @mxst4 and @odfalik, following [#3255](https://github.com/devswha/ovis/pull/3255) by @Haeminway1 and [#3218](https://github.com/devswha/ovis/pull/3218) by @odfalik)
+- On a phone, a swipe begun on a table, a code block or a formula in an opened file scrolls the
+  file again, instead of doing nothing.
+  ([#3294](https://github.com/devswha/ovis/pull/3294) reported by @obriedan)
+- On ovis.sh in Safari or Firefox, which cannot tell the computer's CPU, the download button now
+  names the build it gives ("Download for Mac (Apple silicon)", "Download for Linux (x64)"), so an
+  Intel Mac or arm64 Linux visitor picks the right build from the line below it.
+  ([#3292](https://github.com/devswha/ovis/pull/3292))
+- PCs on your Tailscale no longer fails with "Unknown relay action" for a PC that runs an Ovis
+  older than 0.5: that PC is listed with a hint to update it, its Add PC button stays off, and a
+  PC that runs both an older and a current Ovis is added through the current one. Every refusal
+  is now said in plain words in the app's language.
+  ([#3253](https://github.com/devswha/ovis/pull/3253))
+- The terminal's cursor moves again with the arrow keys and after a typed space: since 0.5.0 it
+  stayed where the last typed letter left it until the next letter, although the program's cursor
+  had moved.
+  ([#3293](https://github.com/devswha/ovis/pull/3293) reported by @sommio and @mxst4)
+
+### Maintenance
+- A Mac desktop release build no longer fails when Apple's ticket service drops the connection
+  while the app or dmg is stapled: it tries again, waiting up to 8 minutes in all, and only on
+  that error.
+  ([#3250](https://github.com/devswha/ovis/pull/3250))
+- The relay can ask PCs for a relay pass signed by the Ovis account service before it lets them in.
+  It is off unless the relay's operator turns it on, and phones never need one.
+  ([#3254](https://github.com/devswha/ovis/pull/3254))
+
 ## [0.5.0] - 2026-11-07
 
 ### Added
@@ -9318,7 +9416,8 @@ First public version.
 - Installable PWA, a mobile key bar, web push alerts and optional token auth.
 - Distribution as a herdr plugin.
 
-[Unreleased]: https://github.com/devswha/ovis/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/devswha/ovis/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/devswha/ovis/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/devswha/ovis/compare/v0.4.22...v0.5.0
 [0.4.22]: https://github.com/devswha/ovis/compare/v0.4.21...v0.4.22
 [0.4.21]: https://github.com/devswha/ovis/compare/v0.4.20...v0.4.21
