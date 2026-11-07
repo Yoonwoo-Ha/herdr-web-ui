@@ -7,7 +7,7 @@
  * the providers the service says it offers get a button. Elsewhere, and with the account off, none
  * of this.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { listThisPc, thisPcInNoAccount } from "../lib/account/addThisPc.ts";
 import { desktopAccount, desktopProviders, desktopSignIn } from "../lib/account/desktop.ts";
@@ -43,7 +43,7 @@ const RELIST_MS = 9 * 60_000;
  * This PC, signed in and in no account yet: listed in the account with one tap, then it waits for a
  * device already in the account to add it, which the owner approves here (docs/account.md, "Adding a PC").
  */
-function AddThisPc() {
+function AddThisPc({ relayAbove = true }: { /** Settings has the relay's switch above; the welcome does not */ relayAbove?: boolean } = {}) {
   const t = useT();
   const [state, setState] = useState<{ kind: "hidden" } | { kind: "offer" } | { kind: "waiting"; name: string } | { kind: "error"; message: string }>({ kind: "hidden" });
   /** Reopens the window while this PC still waits; once a device added it, the screen is done and stops. */
@@ -67,7 +67,8 @@ function AddThisPc() {
     listThisPc(new AccountService({ store: indexedAccountStore }), { relistMs: RELIST_MS }).then((name) => setState({ kind: "waiting", name }), (error: unknown) => {
       console.warn("Ovis: this PC was not listed in the account", error instanceof Error ? error.name : error);
       setState({ kind: "error", message: error instanceof ApiError && error.code === "relay_off"
-        ? t("Turn on remote access through the Ovis relay above first.") : t("This PC could not be listed in your account. Try again.") });
+        ? relayAbove ? t("Turn on remote access through the Ovis relay above first.") : t("Turn on remote access through the Ovis relay in Settings → Devices and PCs first.")
+        : t("This PC could not be listed in your account. Try again.") });
     });
   };
   if (state.kind === "hidden") return null;
@@ -98,8 +99,14 @@ const pcServiceHere = (): string | null => desktopAccount() === null && !inNativ
 /** whether this page can sign in to the account: the desktop app's bridge, or the account service a PC's page names */
 export const accountOffered = (): boolean => desktopAccount() !== null || pcServiceHere() !== null;
 
+/**
+ * The first-run welcome's sign-in (components/SetupGuide.tsx): the same sign-in in a box of its own,
+ * with the guide's own line above it and its Not now below; once signed in, Add this PC.
+ */
+export interface WelcomeAccount { lead: ReactNode; later: ReactNode }
+
 /** `onAccount`: the page lists the account's PCs itself (My devices), so this group does not */
-export function AccountSection({ onAccount }: { onAccount?: (state: AccountState) => void } = {}) {
+export function AccountSection({ onAccount, welcome }: { onAccount?: (state: AccountState) => void; welcome?: WelcomeAccount } = {}) {
   const t = useT();
   const bridge = desktopAccount();
   const pcService = pcServiceHere();
@@ -286,8 +293,8 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
       .finally(() => setView({ kind: "signed-out", error: null }));
   };
 
-  return (
-    <SettingsGroup title={t("Account")} section="account">
+  const signInParts = (
+    <>
       {view.kind === "signed-out" && (
         <div className="settings-item" data-offer={offer === null ? "build" : "service"}>
           {linkPage
@@ -331,6 +338,26 @@ export function AccountSection({ onAccount }: { onAccount?: (state: AccountState
           </div>
         </div>
       )}
+    </>
+  );
+
+  if (welcome !== undefined) {
+    // signed out, the buttons wait for the service's own list: the build's fallback could offer one it lacks
+    if (view.kind === "loading" || (view.kind === "signed-out" && offer === null)) return null;
+    return (
+      <div className="setup-signin">
+        {view.kind === "signed-in"
+          ? <><p className="setup-signin-done" role="status">{t("Signed in with {provider}", { provider: PROVIDER_NAMES[view.provider] })}</p><AddThisPc relayAbove={false} /></>
+          : <>{welcome.lead}{signInParts}</>}
+        {/* signed out only: a sign-in under way ends with its own Cancel, never folded away unnoticed by Not now */}
+        {view.kind === "signed-out" && welcome.later}
+      </div>
+    );
+  }
+
+  return (
+    <SettingsGroup title={t("Account")} section="account">
+      {signInParts}
       {view.kind === "signed-in" && (
         <>
           <SettingsRow label={t("Signed in with {provider}", { provider: PROVIDER_NAMES[view.provider] })}>

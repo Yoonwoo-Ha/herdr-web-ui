@@ -466,6 +466,7 @@ const BASE: Record<string, string> = {
   "On a phone already in your account, open the Ovis app and tap Add on {name}. Then approve it here.": "이미 계정에 있는 폰에서 Ovis 앱을 열고 {name}의 추가를 누르세요. 그런 다음 여기서 승인하세요.",
   "This PC could not be listed in your account. Try again.": "이 PC를 계정에 올리지 못했습니다. 다시 시도하세요.",
   "Turn on remote access through the Ovis relay above first.": "먼저 위에서 Ovis 릴레이를 통한 원격 접속을 켜세요.",
+  "Turn on remote access through the Ovis relay in Settings → Devices and PCs first.": "먼저 설정 → 기기와 PC에서 Ovis 릴레이를 통한 원격 접속을 켜세요.",
   "New terminal": "새 터미널",
   "New terminal failed: {reason}": "새 터미널 열기 실패: {reason}",
   "herdr prefix: press a key": "herdr 접두키: 키를 누르세요",
@@ -481,6 +482,7 @@ const BASE: Record<string, string> = {
   "Paste and send": "붙여넣고 보내기",
   "Conversation": "대화",
   "Off": "끄기",
+  "Not now": "나중에",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

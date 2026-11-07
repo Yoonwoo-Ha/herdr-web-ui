@@ -11,7 +11,6 @@ export const RELAY_ZH: Record<string, string> = {
   "Pair with {name}?": "与 {name} 配对？",
   "This phone gets a key of its own for {name}. The PC lists it under Devices and PCs (Phone & devices on an older Ovis), where it can be removed.": "此手机将获得一把专用于 {name} 的密钥。电脑会在“手机与设备”中列出它，并可在那里移除。",
   "Pair": "配对",
-  "Not now": "暂不",
   "Connecting to {name}…": "正在连接 {name}…",
   "{name} is offline": "{name} 已离线",
   "Its Ovis is not connected to the relay right now. Start Ovis on the PC, or check its connection, then try again.": "该电脑的 Ovis 当前未连接到中继。请在电脑上启动 Ovis 或检查其网络连接，然后重试。",

@@ -8,6 +8,7 @@ export const GUIDE_KO: Record<string, string> = {
   "I'm new to Ovis": "처음이에요",
   "I've used Ovis before": "써 본 적 있어요",
   "Skip the setup and go straight in": "안내 없이 바로 시작해요",
+  "Sign in to use this PC from your phone and your other PCs.": "로그인하면 폰과 다른 PC에서도 이 PC를 쓸 수 있어요.",
   "You can open this again any time from Settings → Agents.": "설정 → 에이전트에서 언제든 다시 열 수 있어요.",
   "Skip setup": "안내 건너뛰기",
   "Already installed one?": "이미 설치하셨나요?",

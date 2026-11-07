@@ -11,7 +11,6 @@ export const RELAY_KO: Record<string, string> = {
   "Pair with {name}?": "{name}와(과) 페어링할까요?",
   "This phone gets a key of its own for {name}. The PC lists it under Devices and PCs (Phone & devices on an older Ovis), where it can be removed.": "이 폰은 {name} 전용 키를 받습니다. PC의 기기와 PC(이전 Ovis에서는 폰 및 기기) 목록에 나타나며 거기서 삭제할 수 있습니다.",
   "Pair": "페어링",
-  "Not now": "나중에",
   "Connecting to {name}…": "{name}에 연결하는 중…",
   "{name} is offline": "{name}이(가) 오프라인입니다",
   "Its Ovis is not connected to the relay right now. Start Ovis on the PC, or check its connection, then try again.": "그 PC의 Ovis가 지금 릴레이에 연결되어 있지 않습니다. PC에서 Ovis를 시작하거나 연결 상태를 확인한 뒤 다시 시도하세요.",

@@ -468,6 +468,7 @@ const BASE: Record<string, string> = {
   "On a phone already in your account, open the Ovis app and tap Add on {name}. Then approve it here.": "すでにアカウントにあるスマホでOvisアプリを開き、{name} の「追加」をタップしてください。そのあとここで承認します。",
   "This PC could not be listed in your account. Try again.": "このPCをアカウントに登録できませんでした。もう一度お試しください。",
   "Turn on remote access through the Ovis relay above first.": "まず上でOvisリレー経由のリモートアクセスをオンにしてください。",
+  "Turn on remote access through the Ovis relay in Settings → Devices and PCs first.": "まず設定 → デバイスと PC で Ovis リレー経由のリモートアクセスをオンにしてください。",
   "New terminal": "新しいターミナル",
   "New terminal failed: {reason}": "新しいターミナルを開けませんでした: {reason}",
   "herdr prefix: press a key": "herdrプレフィックス: キーを押してください",
@@ -483,6 +484,7 @@ const BASE: Record<string, string> = {
   "Paste and send": "貼り付けて送信",
   "Conversation": "会話",
   "Off": "オフ",
+  "Not now": "今はしない",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

@@ -11,7 +11,6 @@ export const RELAY_JA: Record<string, string> = {
   "Pair with {name}?": "{name}とペアリングしますか？",
   "This phone gets a key of its own for {name}. The PC lists it under Devices and PCs (Phone & devices on an older Ovis), where it can be removed.": "このスマホは{name}専用のキーを受け取ります。PCの「スマホとデバイス」に表示され、そこから削除できます。",
   "Pair": "ペアリング",
-  "Not now": "今はしない",
   "Connecting to {name}…": "{name}に接続中…",
   "{name} is offline": "{name}はオフラインです",
   "Its Ovis is not connected to the relay right now. Start Ovis on the PC, or check its connection, then try again.": "そのPCのOvisは今リレーに接続していません。PCでOvisを起動するか接続を確認してから、もう一度お試しください。",
