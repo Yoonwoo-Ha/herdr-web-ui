@@ -3168,6 +3168,14 @@ button {
     overscroll-behavior: contain;
   }
 
+  /* A box that scrolls only sideways (a table, code, a formula, a row of cards or chips) is a
+     scroll container on both axes, always at its vertical ends: contained, it would swallow a
+     vertical stroke begun on it, so the list around it never scrolls. Its vertical overscroll
+     goes on (#3287). */
+  .modal-scrim :is(.markdown-table-wrap, .markdown-math-display, .hl-code, .theme-cards, .new-session-folder-chips) {
+    overscroll-behavior-y: auto;
+  }
+
   .modal-scrim.is-leaving {
     pointer-events: none;
     animation: scrim-out var(--dur-sheet-out) var(--ease-out) forwards;
