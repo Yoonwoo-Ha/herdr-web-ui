@@ -1837,7 +1837,7 @@ export async function claudePanePid(pane: HerdrPane): Promise<number | null> {
  * finds it, names the session it shows, never the hook's. `onProcess` learns that process, and
  * whether it is such an attach client.
  */
-async function claudeTranscriptPath(paneId: string, cwds: readonly (string | null | undefined)[], onProcess?: (pid: number, attach: boolean) => void, known?: KnownProcesses): Promise<string> {
+async function claudeTranscriptPath(paneId: string, cwds: readonly (string | null | undefined)[], onProcess?: (pid: number, attach: boolean) => void, known?: KnownProcesses, proofs?: Map<string, string>): Promise<string> {
   const info = await herdrRpc<{ agent: { agent_session?: { value?: unknown } } }>("agent.get", { target: paneId });
   let session = info.agent.agent_session?.value;
   const home = userHome();
@@ -1868,7 +1868,7 @@ async function claudeTranscriptPath(paneId: string, cwds: readonly (string | nul
     session = live;
   }
   if (typeof session !== "string" || !SESSION_ID.test(session)) throw new ConversationUnavailable("no_session_id");
-  const path = await claudeTranscriptFile(home, session, cwds, configDir, live);
+  const path = await claudeTranscriptFile(home, session, cwds, configDir, live, proofs);
   // Claude writes the file with its first message: until then the session it reports holds nothing
   if (!path) throw new ConversationNotStarted(session, "claude-transcript");
   return path;
@@ -2127,7 +2127,11 @@ type ResolvedTranscript =
     /** gjc: the exact dev:ino of the file whose header its resolver read (gjcTranscriptFileForPane) */
     gjcFile?: string;
     /** omo: the exact dev:ino of the session file its lookup read (omoSessionForPane) */
-    omoFile?: string; letta?: { store: string; agent: string; conversation: string } } & (
+    omoFile?: string;
+    /** claude: the exact dev:ino of the file whose tail its resolver read (claudeTranscriptFile, #3402) */
+    claudeFile?: string;
+    /** codex: the exact dev:ino of the rollout its process holds open, where its resolver proved one (#3402) */
+    codexFile?: string; letta?: { store: string; agent: string; conversation: string } } & (
     | { source: Exclude<StreamSource, "copilot-transcript"> }
     | { source: "copilot-transcript"; binding: string; peerClaims: ReadonlySet<string> }
   ))
@@ -2226,14 +2230,18 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
       // the pane's own store: the rollout, its history and its images are all read from there
       const { home, placed } = await paneCodexHomePlaced(paneId, codexHome, known);
       // a store chosen while no Codex process of the pane was seen is checked against the one the lookup proves
-      const path = await codexTranscriptPath(paneId, cwd, home, panes, !placed, placed && !codexHome);
+      const proofs = new Map<string, string>();
+      const path = await codexTranscriptPath(paneId, cwd, home, panes, !placed, placed && !codexHome, proofs);
       if (!path) throw new ConversationUnavailable("no_session_path");
-      return { source: "codex-transcript", path, codexHome: home };
+      const codexFile = proofs.get(path);
+      return { source: "codex-transcript", path, codexHome: home, ...(codexFile === undefined ? {} : { codexFile }) };
     }
     // Claude's project is the directory it started in, the process's own cwd more often than the pane's
     if (agent === "claude") {
-      const path = await claudeTranscriptPath(paneId, [cwd, pane.foreground_cwd], undefined, known);
-      return { source: "claude-transcript", path };
+      const proofs = new Map<string, string>();
+      const path = await claudeTranscriptPath(paneId, [cwd, pane.foreground_cwd], undefined, known, proofs);
+      const claudeFile = proofs.get(path);
+      return { source: "claude-transcript", path, ...(claudeFile === undefined ? {} : { claudeFile }) };
     }
     if (agent === "omp") {
       const authorized = await ompTranscriptPath(paneId, sessionCwd, known);
@@ -2684,7 +2692,11 @@ export async function readCommandTranscript(paneId: string, codexHome?: string, 
   // The read below is held to this stat's exact file (#3398)
   const exact = statSync(path, { bigint: true });
   const authorized = resolved.source === "omp-transcript" ? resolved.ompFile : resolved.source === "pi-transcript" ? resolved.piFile
-    : resolved.source === "gjc-transcript" ? resolved.gjcFile : resolved.source === "omo-transcript" ? resolved.omoFile : undefined;
+    : resolved.source === "gjc-transcript" ? resolved.gjcFile : resolved.source === "omo-transcript" ? resolved.omoFile
+    // claude and codex: checked only where the resolver proved one (a non-branch tail; a held-open rollout). A
+    // branch, a screen match, or a remembered, reported or resumed rollout keeps the exact stat below (#3402)
+    : resolved.source === "claude-transcript" ? resolved.claudeFile
+    : resolved.source === "codex-transcript" ? resolved.codexFile : undefined;
   if ((authorized !== undefined || source === "omp-transcript") && authorized !== `${exact.dev}:${exact.ino}`) return null;
   const stat = { dev: exact.dev, ino: exact.ino, size: Number(exact.size), mtimeMs: Number(exact.mtimeNs) / 1e6 };
   const file = `${source}:${stat.dev}:${stat.ino}`;

@@ -2982,9 +2982,12 @@ async function freshReportedThread(
 }
 
 /** The pane's Codex processes, and the rollouts they hold open (lsof on macOS, /proc elsewhere): one alone is the pane's. */
-async function openRollouts(paneId: string, home: string, known?: ProcessInfo | null): Promise<{ codexProcesses: Awaited<ReturnType<typeof codexProcessesOf>>["list"]; processes: string; open: Set<string> }> {
+async function openRollouts(paneId: string, home: string, known?: ProcessInfo | null): Promise<{ codexProcesses: Awaited<ReturnType<typeof codexProcessesOf>>["list"]; processes: string; open: Set<string>; held: Map<string, string> }> {
   const { list: codexProcesses, key: processes } = await codexProcessesOf(paneId, known);
   const open = new Set<string>();
+  // the exact dev:ino of the file each held rollout is, as the process holds it: a rename over its path cannot change it (#3402)
+  const held = new Map<string, string>();
+  const conflicted = new Set<string>();
   if (globalThis.process.platform === "darwin" && codexProcesses.length > 0) {
     // lsof is available on macOS, where /proc does not exist. Keep the same
     // canonical-store and unambiguous-open-file checks as the Linux path. One run
@@ -2992,15 +2995,31 @@ async function openRollouts(paneId: string, home: string, known?: ProcessInfo | 
     // -b keeps lsof off the stat calls it does not need for a name: a chat reads this up
     // to every 2 s while its transcript changes, the conversation monitor every 5 s, and
     // each run costs about 20 ms of process start and kernel walk
-    const child = Bun.spawn(["/usr/sbin/lsof", "-nPbw", "-a", "-p", codexProcesses.map((process) => process.pid).join(","), "-Fn"], { stdout: "pipe", stderr: "ignore" });
+    // D and i (device and inode of each file) come from the open file itself, as with -b lsof makes no stat call (#3402)
+    const child = Bun.spawn(["/usr/sbin/lsof", "-nPbw", "-a", "-p", codexProcesses.map((process) => process.pid).join(","), "-FfnDi"], { stdout: "pipe", stderr: "ignore" });
     const timer = setTimeout(() => child.kill(), 3000);
     try {
       const text = await new Response(child.stdout).text();
       await child.exited;
+      // each file's D and i lines come before its name; a new descriptor or process starts a new file
+      let device: bigint | null = null;
+      let inode: bigint | null = null;
       for (const line of text.split("\n")) {
-        if (!line.startsWith("n") || !line.endsWith(".jsonl")) continue;
+        if (line.startsWith("f") || line.startsWith("p")) { device = null; inode = null; continue; }
+        if (line.startsWith("D")) { try { device = BigInt(line.slice(1)); } catch { device = null; } continue; }
+        if (line.startsWith("i")) { try { inode = BigInt(line.slice(1)); } catch { inode = null; } continue; }
+        if (!line.startsWith("n")) continue;
+        // a name ends its file: its D and i never carry over to the next one
+        const identity = device !== null && inode !== null ? `${device}:${inode}` : null;
+        device = null;
+        inode = null;
+        if (!line.endsWith(".jsonl")) continue;
         const path = codexRolloutPath(line.slice(1), home);
-        if (path) open.add(path);
+        if (!path) continue;
+        open.add(path);
+        // a file lsof named without both, or two files under one path, prove nothing
+        if (identity === null || conflicted.has(path) || (held.has(path) && held.get(path) !== identity)) { held.delete(path); conflicted.add(path); }
+        else held.set(path, identity);
       }
     } finally { clearTimeout(timer); }
   }
@@ -3010,14 +3029,26 @@ async function openRollouts(paneId: string, home: string, known?: ProcessInfo | 
     try { descriptors = readdirSync(`/proc/${process.pid}/fd`); } catch { continue; }
     for (const descriptor of descriptors.slice(0, 512)) {
       try {
-        const target = readlinkSync(`/proc/${process.pid}/fd/${descriptor}`);
+        const link = `/proc/${process.pid}/fd/${descriptor}`;
+        const target = readlinkSync(link);
         if (!target.endsWith(".jsonl")) continue;
         const path = codexRolloutPath(target, home);
-        if (path) open.add(path);
+        if (!path) continue;
+        open.add(path);
+        // stat through the descriptor link names the open file itself, not what its path names now; the name read
+        // again after it must be the same, or the descriptor was closed and reused in between and proves nothing
+        let identity: string | null = null;
+        try {
+          const proven = statSync(link, { bigint: true });
+          if (readlinkSync(link) === target) identity = `${proven.dev}:${proven.ino}`;
+        } catch { /* closed meanwhile: no proof */ }
+        // two files held under one path, or one whose identity could not be read, prove nothing
+        if (identity === null || conflicted.has(path) || (held.has(path) && held.get(path) !== identity)) { held.delete(path); conflicted.add(path); }
+        else held.set(path, identity);
       } catch { /* A descriptor may close while enumerating it. */ }
     }
   }
-  return { codexProcesses, processes, open };
+  return { codexProcesses, processes, open, held };
 }
 
 /**
@@ -3077,7 +3108,9 @@ export async function codexOpenRollout(paneId: string, cwd: string | null | unde
  * conversation a TUI shows: when nothing of this folder tells, the screen is matched against
  * all of them (loadedConversation).
  */
-export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[], homeUnplaced = false, homeFromEarlierRead = false): Promise<string | null> {
+export async function codexTranscriptPath(paneId: string, cwd: string, home = defaultCodexHome(), panes?: HerdrPane[], homeUnplaced = false, homeFromEarlierRead = false,
+  /** filled with the exact identity a returned rollout was proven through, where one is (#3402) */
+  proofs?: Map<string, string>): Promise<string | null> {
   if (panes !== undefined) {
     const open = new Set(panes.map((pane) => pane.pane_id));
     for (const pane of [...boundRollouts.keys()]) if (!open.has(pane)) boundRollouts.delete(pane);
@@ -3091,7 +3124,7 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   // binds the rollout to these processes, and one read before a Codex left (or before its pid came back) would
   // bind a conversation to the wrong one
   // (an answer without process facts is asked again, as before: a nested Codex may yet be proven from the next one)
-  const { codexProcesses, processes, open } = await openRollouts(paneId, home, agent.processRead?.info);
+  const { codexProcesses, processes, open, held } = await openRollouts(paneId, home, agent.processRead?.info);
   // no Codex process of the pane proven now: what its screen still shows (an earlier occupant's, or
   // a Codex gone since) ties it to no conversation, and the terminal stands in
   if (codexProcesses.length === 0) return null;
@@ -3103,7 +3136,13 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
   // now must write there too, or another Codex started since with a store of its own would be shown this store's
   // conversation (#2774)
   if (homeFromEarlierRead && first !== undefined && ((await processCodexHome(first.pid, first.argv)) ?? defaultCodexHome()) !== home) return null;
-  if (open.size === 1) return [...open][0]!;
+  if (open.size === 1) {
+    const only = [...open][0]!;
+    // held, but its file not provable (a conflict, a closed descriptor, lsof without D or i): an empty proof, which
+    // the outcome read never matches, rather than the unchecked read a rollout chosen by other means keeps (#3402)
+    proofs?.set(only, held.get(only) ?? "");
+    return only;
+  }
   const resumed = resumedThread(codexProcesses.map((process) => process.argv ?? []));
 
   let db: Database | undefined;

@@ -10,12 +10,19 @@ import { processStartedAtAsync } from "./process-start.ts";
 import { GJC_NATIVE_DIRECTORY } from "../shared/gjc-native.ts";
 import type { HerdrPane, PanePromptResponse, SessionSnapshot, SlashCommand } from "../shared/protocol.ts";
 
+// taken before any test spies on fs: a Claude resolver proves the file its path names when it is asked (#3402)
+const realStat = fs.statSync;
+const claudeAt = (path: string) => async () => {
+  const proven = realStat(path, { bigint: true });
+  return { source: "claude-transcript" as const, path, claudeFile: `${proven.dev}:${proven.ino}` };
+};
+
 it("shares unchanged snapshots and parses only verified appends within the read budget", async () => {
   const root = fs.mkdtempSync(join(tmpdir(), "command-transcript-cache-"));
   const path = join(root, "session.jsonl");
   const record = (modelId: string) => JSON.stringify({ type: "model_change", timestamp: "2026-10-20T00:00:00Z", modelId }) + "\n";
   fs.writeFileSync(path, record("old").repeat(10_000));
-  const binding = spyOn(conversation, "paneTranscript").mockResolvedValue({ source: "claude-transcript", path });
+  const binding = spyOn(conversation, "paneTranscript").mockImplementation(claudeAt(path));
   const reads = spyOn(fs, "readSync");
   const parses = spyOn(JSON, "parse");
   try {
@@ -58,7 +65,7 @@ it("invalidates rewritten and replaced transcripts and completes a torn tail onl
   const path = join(root, "session.jsonl");
   const record = (modelId: string) => JSON.stringify({ type: "model_change", timestamp: "2026-10-20T00:00:00Z", modelId }) + "\n";
   fs.writeFileSync(path, record("old"));
-  const binding = spyOn(conversation, "paneTranscript").mockResolvedValue({ source: "claude-transcript", path });
+  const binding = spyOn(conversation, "paneTranscript").mockImplementation(claudeAt(path));
   try {
     const first = await conversation.readCommandTranscript("viewer");
     const next = record("new");
@@ -95,7 +102,7 @@ it.each(["claude-transcript", "omp-transcript"] as const)("reads clear boundarie
     .map((entry) => JSON.stringify(entry)).join("\n"));
   // omp's resolver names the file it authorized
   const written = fs.statSync(path, { bigint: true });
-  const binding = spyOn(conversation, "paneTranscript").mockResolvedValue(source === "omp-transcript" ? { source, path, ompFile: `${written.dev}:${written.ino}` } : { source, path });
+  const binding = spyOn(conversation, "paneTranscript").mockImplementation(source === "omp-transcript" ? async () => ({ source, path, ompFile: `${written.dev}:${written.ino}` }) : claudeAt(path));
   const reads = spyOn(fs, "readSync");
   try {
     const snapshot = await conversation.readCommandTranscript("viewer");
@@ -126,7 +133,7 @@ it.each(["plain", "unchanged-row", "reserved-echo"] as const)("does not complete
   const pane = { pane_id: root, terminal_id: "term", workspace_id: "w", tab_id: "t", focused: false, revision: 0,
     agent: "claude", agent_status: "idle", cwd: root };
   const clock = spyOn(Date, "now").mockReturnValue(at + 30);
-  const binding = spyOn(conversation, "paneTranscript").mockResolvedValue({ source: "claude-transcript", path });
+  const binding = spyOn(conversation, "paneTranscript").mockImplementation(claudeAt(path));
   const snapshot = spyOn(client, "sessionSnapshot").mockResolvedValue({
     panes: [pane], layouts: [], agents: [], workspaces: [], tabs: [], protocol: 22, version: "fixture",
   });
@@ -182,7 +189,7 @@ it.each(["foreign", "fifo"] as const)("does not observe /context from a file swa
   const pane = { pane_id: root, terminal_id: "term", workspace_id: "w", tab_id: "t", focused: false, revision: 0,
     agent: "claude", agent_status: "idle", cwd: root };
   const clock = spyOn(Date, "now").mockReturnValue(at + 30);
-  const binding = spyOn(conversation, "paneTranscript").mockResolvedValue({ source: "claude-transcript", path });
+  const binding = spyOn(conversation, "paneTranscript").mockImplementation(claudeAt(path));
   const snapshot = spyOn(client, "sessionSnapshot").mockResolvedValue({
     panes: [pane], layouts: [], agents: [], workspaces: [], tabs: [], protocol: 22, version: "fixture",
   });
@@ -351,7 +358,8 @@ it("does not observe /context from an opened file whose exact identity only roun
   const stat = fs.statSync;
   const fstat = fs.fstatSync;
   let swappedFd: number | null = null;
-  const binding = spyOn(conversation, "paneTranscript").mockResolvedValue({ source: "claude-transcript", path });
+  // the resolver proved the file this test's stat names: dev 7, index 2^60
+  const binding = spyOn(conversation, "paneTranscript").mockResolvedValue({ source: "claude-transcript", path, claudeFile: `7:${own}` });
   const opens = spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
     if (args[0] !== path) return open(...args);
     swappedFd = open(foreign, ...args.slice(1) as [fs.OpenMode]);
@@ -497,7 +505,7 @@ it("discards the old echo when a transcript is rewritten after a torn append", a
     content: `<command-name>${name}</command-name>\n<command-message>command</command-message>` }) + "\n";
   const stdout = JSON.stringify({ type: "system", subtype: "local_command", timestamp: new Date(at + 20).toISOString(),
     content: "<local-command-stdout>fixture-output</local-command-stdout>" }) + "\n";
-  const binding = spyOn(conversation, "paneTranscript").mockResolvedValue({ source: "claude-transcript", path });
+  const binding = spyOn(conversation, "paneTranscript").mockImplementation(claudeAt(path));
   try {
     fs.writeFileSync(path, echo("/context"));
     await conversation.readCommandTranscript("one");
@@ -511,6 +519,64 @@ it("discards the old echo when a transcript is rewritten after a torn append", a
   } finally {
     binding.mockRestore();
     conversation.forgetTranscriptState();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("does not read a claude transcript renamed over the one its resolver proved (#3402)", async () => {
+  const root = fs.mkdtempSync(join(tmpdir(), "command-claude-proof-"));
+  const path = join(root, "session.jsonl");
+  const foreign = join(root, "foreign.jsonl");
+  const at = Date.parse("2026-10-20T00:00:00Z");
+  const row = (content: string, offset: number) => JSON.stringify({ type: "system", subtype: "local_command",
+    timestamp: new Date(at + offset).toISOString(), content }) + "\n";
+  fs.writeFileSync(path, row("<command-name>/version</command-name>", 5));
+  fs.writeFileSync(foreign, row("<command-name>/context</command-name>", 10) + row("<local-command-stdout>foreign</local-command-stdout>", 20));
+  const foreignIno = realStat(foreign).ino;
+  // the resolver proves the pane's own file, then another one is renamed over that path before the outcome read
+  const binding = spyOn(conversation, "paneTranscript").mockImplementation(async () => {
+    const proven = await claudeAt(path)();
+    fs.renameSync(foreign, path);
+    return proven;
+  });
+  try {
+    expect(await conversation.readCommandTranscript("pane-claude")).toBeNull();
+    expect(realStat(path).ino).toBe(foreignIno);
+  } finally {
+    binding.mockRestore();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("does not read a codex rollout renamed over the one its process was proven to hold (#3402)", async () => {
+  const root = fs.mkdtempSync(join(tmpdir(), "command-codex-proof-"));
+  const path = join(root, "rollout.jsonl");
+  const foreign = join(root, "foreign.jsonl");
+  fs.writeFileSync(path, JSON.stringify({ type: "session_meta", payload: { id: "own" } }) + "\n");
+  fs.writeFileSync(foreign, JSON.stringify({ type: "session_meta", payload: { id: "foreign" } }) + "\n");
+  const binding = spyOn(conversation, "paneTranscript").mockImplementation(async () => {
+    const proven = realStat(path, { bigint: true });
+    fs.renameSync(foreign, path);
+    return { source: "codex-transcript" as const, path, codexHome: root, codexFile: `${proven.dev}:${proven.ino}` };
+  });
+  try {
+    expect(await conversation.readCommandTranscript("pane-codex")).toBeNull();
+  } finally {
+    binding.mockRestore();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("keeps reading a codex rollout its resolver proved no identity for, by the exact stat alone (#3402)", async () => {
+  const root = fs.mkdtempSync(join(tmpdir(), "command-codex-unproven-"));
+  const path = join(root, "rollout.jsonl");
+  fs.writeFileSync(path, JSON.stringify({ type: "session_meta", payload: { id: "own" } }) + "\n");
+  // a remembered, reported or resumed rollout: chosen without its process holding it or a read through one descriptor
+  const binding = spyOn(conversation, "paneTranscript").mockResolvedValue({ source: "codex-transcript", path, codexHome: root });
+  try {
+    expect(await conversation.readCommandTranscript("pane-codex")).not.toBeNull();
+  } finally {
+    binding.mockRestore();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

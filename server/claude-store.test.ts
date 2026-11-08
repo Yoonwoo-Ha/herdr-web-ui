@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
@@ -572,6 +572,15 @@ describe("claudeTranscriptFile", () => {
     }
   });
 
+  it("records the exact identity of the transcript whose tail it read, for the file it returns (#3402)", async () => {
+    const { home: dir, projects } = home();
+    const path = transcript(projects, claudeProjectDir("/w/project"));
+    const proofs = new Map<string, string>();
+    expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"], undefined, null, proofs)).toBe(path);
+    const proven = statSync(path, { bigint: true });
+    expect(proofs.get(path)).toBe(`${proven.dev}:${proven.ino}`);
+  });
+
   it("tries each cwd in turn, then finds the session in whichever project holds it", async () => {
     const { home: dir, projects } = home();
     const started = transcript(projects, claudeProjectDir("/w/started-here"));
@@ -778,6 +787,18 @@ describe("claudeTranscriptFile", () => {
       // a branch of that branch, as a second /branch writes it
       const deeper = branched(folder, DEEPER, BRANCH);
       expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"], join(dir, ".claude"), DEEPER)).toBe(deeper);
+    });
+
+    it("gives a branch it follows no proof, while the session it was copied from keeps its own (#3402)", async () => {
+      const { dir, folder, original } = setup();
+      const plain = new Map<string, string>();
+      expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"], join(dir, ".claude"), null, plain)).toBe(original);
+      expect(plain.has(original)).toBe(true);
+      const branch = branched(folder, BRANCH, SESSION);
+      const proofs = new Map<string, string>();
+      expect(await claudeTranscriptFile(dir, SESSION, ["/w/project"], join(dir, ".claude"), BRANCH, proofs)).toBe(branch);
+      // the branch was told by its own head, read apart from any tail: it falls back to the outcome read's exact stat
+      expect(proofs.has(branch)).toBe(false);
     });
 
     it("keeps the reported session when the live one is no branch of it (control)", async () => {
