@@ -166,7 +166,7 @@ it("tells a held session omo has not written yet from an older one", async () =>
   expect(await omoSessionForPane(started, root, panes, root)).toEqual({ path: null, pending: "unwritten-first" });
   expect(await omoSessionForPane(afterNew, root, panes, root)).toEqual({ path: null, pending: "unwritten-after-new" });
   const written = session("unwritten-first");
-  expect(await omoSessionForPane(started, root, panes, root)).toEqual({ path: realpathSync(written), pending: null });
+  expect(await omoSessionForPane(started, root, panes, root)).toEqual({ path: realpathSync(written), pending: null, identity: expect.any(String) });
 });
 
 it("serves a held omo session as an empty conversation until its file is written", async () => {

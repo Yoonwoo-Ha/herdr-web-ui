@@ -56,8 +56,17 @@ export class ConversationReadPending extends Error {
   }
 }
 
-/** A file as it was authorized: its device and inode. */
-export interface FileIdentity { dev: number; ino: number }
+/**
+ * A file as it was authorized: its device and inode, exact (bigint, as a bigint stat gives them) or as numbers,
+ * which round 64-bit file indexes (Windows') and so tell only as much as a number stat does.
+ */
+export interface FileIdentity { dev: number | bigint; ino: number | bigint }
+
+/** Whether `opened` is the file `identity` names: exactly where both are bigint, else as numbers. */
+function sameFile(identity: FileIdentity, opened: FileIdentity): boolean {
+  const same = (a: number | bigint, b: number | bigint) => typeof a === "bigint" && typeof b === "bigint" ? a === b : Number(a) === Number(b);
+  return same(identity.dev, opened.dev) && same(identity.ino, opened.ino);
+}
 
 /**
  * The files the synchronous read in progress is bound to, by path, each as it was authorized. An open of
@@ -102,13 +111,13 @@ export function bindFile(path: string, identity: FileIdentity): void {
 
 /** Refuses `fd`, opened from `path`, when `path` is bound to another file: the read is pending. */
 export function checkBound(path: string, fd: number): void {
-  if (boundFiles?.has(path) === true) checkBoundFile(path, fstatSync(fd));
+  if (boundFiles?.has(path) === true) checkBoundFile(path, fstatSync(fd, { bigint: true }));
 }
 
 /** Refuses `opened`, a file opened from `path` (its stats), when `path` is bound to another file: the read is pending. */
 export function checkBoundFile(path: string, opened: FileIdentity): void {
   const identity = boundFiles?.get(path);
-  if (identity !== undefined && (opened.dev !== identity.dev || opened.ino !== identity.ino)) throw new ConversationReadPending();
+  if (identity !== undefined && !sameFile(identity, opened)) throw new ConversationReadPending();
 }
 
 /**

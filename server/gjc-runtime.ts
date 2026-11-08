@@ -3,7 +3,7 @@
 import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import nodePath, { join, type PlatformPath } from "node:path";
 
-import { readGjcNativeBinding, validateGjcNativeTranscript } from "./gjc-native.ts";
+import { readGjcNativeBinding, validatedGjcNativeTranscript } from "./gjc-native.ts";
 import { darwinTerminal } from "./darwin-process.ts";
 import { herdrRpc } from "./herdr/client.ts";
 import { processStartedAt, processStartedAtAsync } from "./process-start.ts";
@@ -407,6 +407,16 @@ export function gjcTranscriptForPane(
   home = userHome(),
   options: GjcTranscriptOptions = {},
 ): Promise<string | null> {
+  return gjcTranscriptFileForPane(paneId, cwd, home, options).then((found) => found?.path ?? null);
+}
+
+/** gjcTranscriptForPane, with the exact dev:ino of the file its last proof read (`identity`). */
+export function gjcTranscriptFileForPane(
+  paneId: string,
+  cwd: string,
+  home = userHome(),
+  options: GjcTranscriptOptions = {},
+): Promise<{ path: string; identity: string } | null> {
   const token: LookupToken = { cancelled: false };
   const lookups = lookupsInFlight.get(paneId) ?? new Set<LookupToken>();
   lookups.add(token);
@@ -423,7 +433,7 @@ async function lookupNativeTranscript(
   home: string,
   options: GjcTranscriptOptions,
   token: LookupToken,
-): Promise<string | null> {
+): Promise<{ path: string; identity: string } | null> {
   try {
     if (!nodePath.isAbsolute(cwd) || !nodePath.isAbsolute(home) || token.cancelled) return null;
     const platform = options.platform ?? process.platform;
@@ -439,8 +449,8 @@ async function lookupNativeTranscript(
 
     const binding = readGjcNativeBinding(home, owner.pid, options.now?.());
     if (!binding || !sameBirth(binding.processStartedAt, owner.birth, platform) || !binding.session || token.cancelled) return null;
-    const path = validateGjcNativeTranscript(binding, cwd, home, platform);
-    if (!path || token.cancelled) return null;
+    const proof = validatedGjcNativeTranscript(binding, cwd, home, platform);
+    if (!proof || token.cancelled) return null;
 
     const finalInfo = await readProcessInfo(paneId);
     if (!finalInfo || token.cancelled) return null;
@@ -449,9 +459,10 @@ async function lookupNativeTranscript(
 
     const current = readGjcNativeBinding(home, owner.pid, options.now?.());
     if (!current || !sameBirth(current.processStartedAt, final[0]!.birth, platform) || !sameNativeVersion(binding, current) || token.cancelled) return null;
-    const currentPath = validateGjcNativeTranscript(current, cwd, home, platform);
-    if (currentPath !== path || token.cancelled) return null;
-    return currentPath;
+    // the same file both times, not only the same path
+    const currentProof = validatedGjcNativeTranscript(current, cwd, home, platform);
+    if (currentProof?.path !== proof.path || currentProof.identity !== proof.identity || token.cancelled) return null;
+    return currentProof;
   } catch {
     return null;
   }
