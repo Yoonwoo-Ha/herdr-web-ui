@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { startBunRelay } from "../../relay/bun.ts";
 import { passPolicy } from "../../relay/pass.ts";
 import { RELAY_PASS_HEADER, signRelayPass } from "../../shared/relay-pass.ts";
+import { offerFromCode } from "../../shared/relay-code-offer.ts";
 import { proofKey, serverChallenge, verifyServerProof } from "../../shared/relay-server-proof.ts";
 import type { RelayStatus } from "../../shared/protocol.ts";
 import { createServer } from "../index.ts";
@@ -64,7 +65,7 @@ async function fixture(mode: "grace" | "enforce" = "enforce") {
     const target = new URL(url);
     headers.push(extra);
     const socket = new WebSocket(`ws://127.0.0.1:${relay.port}${target.pathname}${target.search}`, (extra ? { headers: extra } : undefined) as unknown as string[]);
-    if (!target.searchParams.has("connection_id") && !target.searchParams.has("warm")) {
+    if (target.pathname === "/v1/ws" && !target.searchParams.has("connection_id") && !target.searchParams.has("warm")) {
       const send = socket.send.bind(socket);
       socket.send = (data) => {
         if (typeof data === "string") { sentOnControl.push(data); if (data.includes('"relay_pass"')) renewal.resolve(data); }
@@ -78,13 +79,13 @@ async function fixture(mode: "grace" | "enforce" = "enforce") {
     }
     return socket;
   };
-  const options = { stateDir, relay: origin, regionalRelays: [], connect, accountService: "https://account.test", accountFetch, ovisRelays: [origin] };
+  const options = { stateDir, relay: origin, regionalRelays: [], connect, accountService: "https://account.test", accountFetch, ovisRelays: [origin], pairCodeRelay: origin };
   let service = new RelayService(options);
   let app = createServer({ port: 0, hostname: "127.0.0.1", stateDir, token: "", tailscaleOwner: null, sidecar: false, relay: service });
   cleanup.push(async () => { await service.shutdown(); app.stop(); });
   const base = () => `http://127.0.0.1:${app.port}`;
   return {
-    stateDir, asked, headers, syncs, listed, hooks, limited, sentOnControl, renewal: renewal.promise,
+    stateDir, origin, relayPort: relay.port, asked, headers, syncs, listed, hooks, limited, sentOnControl, renewal: renewal.promise,
     get service() { return service; },
     get synced() { return synced.promise; },
     get refused() { return refused.promise; },
@@ -149,6 +150,16 @@ test("a relay that is not Ovis's gets no pass, and the account service is never 
   expect(f.headers.every((sent) => sent === undefined)).toBe(true);
   expect(f.asked).toEqual([]);
   expect(f.service.status().pass).toBeUndefined();
+});
+
+test("on an enforcing relay, a PC with its pass holds its typed code's nameplate by proving its key, and a device finds the PC there", async () => {
+  const f = await fixture();
+  expect((await f.nameAccount("acct_1")).status).toBe(204);
+  await f.start();
+  await bounded(f.synced);
+  const minted = await bounded(f.service.pairCode());
+  const offer = await bounded(offerFromCode(minted!.code, { relay: f.origin, connect: (address) => new WebSocket(address.replace(f.origin, `ws://127.0.0.1:${f.relayPort}`)) }));
+  expect(offer.server_id).toBe(minted!.server_id);
 });
 
 test("a pass the relay refuses is dropped and a new one asked for at once", async () => {

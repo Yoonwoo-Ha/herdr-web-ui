@@ -456,7 +456,8 @@ export class RelayService {
     if (!this.enabled || !this.identity || !this.services || this.blocked) throw new Error("Start the relay before pairing.");
     const relay = this.options.pairCodeRelay ?? (this.relay === GLOBAL_RELAY ? GLOBAL_RELAY : null);
     if (relay === null) return null;
-    this.pairCodes ??= new RelayPairCodes({ relay, devices: this.services.devices, offer: (code) => this.offerFor(code), connect: this.options.connect });
+    this.pairCodes ??= new RelayPairCodes({ relay, devices: this.services.devices, offer: (code) => this.offerFor(code), identity: () => this.identity!, connect: this.options.connect,
+      ...(this.isOvisRelay(relay) ? { pass: () => this.passKeeper?.current() ?? null } : {}) });
     return { ...await this.pairCodes.mint(), server_id: this.identity.server_id };
   }
 

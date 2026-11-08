@@ -237,16 +237,17 @@ export async function admit(request: Request, address: string, limiters?: Limite
     if (!(await limiters.perAddress.limit({ key: address })).success) return text(429, "too many connections", { "retry-after": "60" });
     if (!(await limiters.global.limit({ key: "all" })).success) return text(429, "too many connections", { "retry-after": "60" });
   }
-  // checked after the limits, so a flood of requests costs no signature checks
-  if (policy && policy.mode !== "off" && !("kind" in socket) && socket.role !== "client") {
-    return { ...socket, pass: await checkPass(policy, request.headers.get(RELAY_PASS_HEADER), socket.server_id, Date.now()) };
+  // checked after the limits, so a flood of requests costs no signature checks; a pairing host's pass, for the key it offers
+  const serverId = "kind" in socket ? socket.key?.server_id : socket.role === "client" ? undefined : socket.server_id;
+  if (policy && policy.mode !== "off" && serverId !== undefined) {
+    return { ...socket, pass: await checkPass(policy, request.headers.get(RELAY_PASS_HEADER), serverId, Date.now()) };
   }
   return socket;
 }
 
-/** Why a PC socket must close at once for its pass (`enforce` and no pass that holds), or null. */
+/** Why a PC socket or a pairing host must close at once for its pass (`enforce` and no pass that holds), or null. */
 export function passRefusal(socket: Pick<SocketRequest, "role" | "pass"> | PairSocketRequest, policy: PassPolicy | undefined, now: number): string | null {
-  if (!policy || "kind" in socket || socket.role === "client" || passMode(policy, now) !== "enforce") return null;
+  if (!policy || socket.role === "client" || socket.role === "guest" || passMode(policy, now) !== "enforce") return null;
   return socket.pass?.state === "ok" ? null : socket.pass?.reason ?? RELAY_PASS_REQUIRED;
 }
 

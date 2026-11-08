@@ -27,7 +27,10 @@ upgrade, and a request that is not an upgrade is `426`.
 
 `GET /v1/pair?nameplate=<3 Crockford base32>&role=host|guest&v=1`, a WebSocket upgrade: the
 rendezvous for pairing with a typed code (`pair-room.ts`, [docs/relay.md](../docs/relay.md#who-gets-in), "Pairing with a typed code").
-The PC holds a nameplate (`host`, one per nameplate, else `4409`; at most 11 minutes); a device
+The PC holds a nameplate (`host`, one per nameplate, else `4409`; at most 11 minutes). A host that
+adds its PC's key (`&server_id=<id>&public_key=<64 hex>`) answers a server challenge for it first
+(role `pair-host`, `connection_id` the nameplate; `4401` otherwise) and holds the nameplate only
+once it has; while it proves, another host gets `4409` and a device `4404`. A device
 joins it (`guest`: `4404` with no host, `1013` while another guest is there, past 12 guests in the
 room's life or within 2 seconds of the last). Each guest gets a random attempt id the host hears in
 `{"type":"guest","attempt"}` and `{"type":"gone","attempt"}`; a guest's binary frames reach the
@@ -101,8 +104,8 @@ yourself stays open.
 
 **Keep it off on Ovis's relays for now.** Nothing issues passes yet and no PC sends one: turning on
 `grace` would only add a notice, but `enforce` would refuse every PC. It stays `off` until the
-account service issues passes, PCs fetch and renew them in a release most PCs run, and typed-code
-pairing hosts (`/v1/pair`, which take no pass yet: see below) are bound to the PC's key.
+account service issues passes, and PCs fetch and renew them, and send them with their typed-code
+pairing hosts, in a release most PCs run.
 
 - **The pass.** `ovp1.<payload>.<signature>`, base64url. The payload is JSON with exactly `v` (1),
   `kid`, `aud` (`ovis-relay`), `sid` (the PC's `server_id`), `iat` and `exp` (seconds; 48 hours
@@ -132,10 +135,15 @@ pairing hosts (`/v1/pair`, which take no pass yet: see below) are bound to the P
   `RELAY_PASS_REVOKED` (`--pass-revoked`) lists `server_id`s refused whatever their pass. An unknown
   mode is `off`, with a log line. Other settings that do not parse stop the Bun relay from starting;
   the Worker logs them and runs with passes off, so it never stops routing.
-- **Not covered yet: typed-code pairing hosts.** A `/v1/pair` host takes no pass and proves no PC
-  key, so even `enforce` leaves the typed-code rendezvous open (it carries only the pairing exchange,
-  at most 11 minutes a nameplate). Binding the host to a proven PC key with a pass comes before any
-  Ovis relay enforces passes.
+- **Typed-code pairing hosts.** A `/v1/pair` host offers the PC's key and sends the pass in the same
+  header. The pass is checked as a PC socket's is, for the `server_id` of that key, and the host
+  proves the key for its nameplate before it holds it, so a pass alone holds no nameplate and a proof
+  opens no other nameplate or PC socket. While enforced, a host without a pass that holds for the key
+  it offers (or offering none) closes `4402`, on Cloudflare in the Worker; a device that types a code
+  never needs one. A host keeps its nameplate only while that holds: once enforcement begins, or its
+  pass runs out (5 minutes allowed for clocks), it closes `4402` with its device, at the alarm set for
+  that moment or at the next frame or arrival in the room, whichever comes first. The PC then opens
+  the nameplate again with the pass it holds now.
 - **Storage.** With passes off, and for pairing rooms always, the Durable Object never reads its
   storage.
 
@@ -165,8 +173,8 @@ pairing hosts (`/v1/pair`, which take no pass yet: see below) are bound to the P
 | `1009` | a frame over 64 KiB |
 | `1012` | to a client: its data socket (the PC's side) went away, or the relay lost the frames it held (a Durable Object evicted mid-wait, noticed when the data socket attaches or the client sends again; each such close is counted in the room's `heldFramesLost`); reconnect |
 | `1013` | a limit above; try again later |
-| `4401` | to a PC socket: proof missing, a key that does not derive the `server_id`, or a wrong or late answer |
-| `4402` | to a PC socket: no relay pass that holds while the relay asks for one (`relay pass required`, `relay pass expired`, `relay pass invalid`) |
+| `4401` | to a PC socket, or a pairing host that offers a key: proof missing, a key that does not derive the `server_id`, or a wrong or late answer |
+| `4402` | to a PC socket or a pairing host: no relay pass that holds while the relay asks for one (`relay pass required`, `relay pass expired`, `relay pass invalid`) |
 
 A socket that closes itself has its close answered at once, with its own code when that is `1000`
 or `3000`-`4999` (`1000` otherwise, such as for `1001` or `1005`), and its partner is closed as above. On Cloudflare the

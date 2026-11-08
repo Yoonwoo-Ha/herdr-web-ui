@@ -199,7 +199,8 @@ device pairs with the six-digit code in it as a scanned QR code does: nothing el
 
 1. Its first three characters are a public **nameplate**: the PC holds a rendezvous for it on
    `relay.ovis.sh` (`/v1/pair`, [relay/README.md](../relay/README.md#what-it-answers)), and the
-   device joins it. The other seven (35 bits) are the **password**, which never leaves either end.
+   device joins it. The PC proves its relay key for that nameplate before the relay lets it hold
+   one, and sends its [relay pass](#relay-pass) there as on its other sockets. The other seven (35 bits) are the **password**, which never leaves either end.
 2. The two run CPace ([draft-irtf-cfrg-cpace-21](https://datatracker.ietf.org/doc/draft-irtf-cfrg-cpace/),
    `CPACE-RISTR255-SHA512`, the PC as initiator) with the password, `CI = lv_cat("ovis-pair-code/1",
    nameplate)`, a fresh 16-byte `sid` per try and role labels as associated data. The device answers

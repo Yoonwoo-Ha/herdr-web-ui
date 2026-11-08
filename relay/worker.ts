@@ -222,6 +222,7 @@ export class RelayRoom {
       wake: host.wake,
       keepaliveAt: host.keepaliveAt,
       now: host.now,
+      get pass() { return room.policy; },
     });
   }
 
@@ -231,12 +232,13 @@ export class RelayRoom {
     if ("error" in socket) return new Response(socket.error, { status: 400 });
     const pair = new (runtime().WebSocketPair)();
     this.state.acceptWebSocket(pair[1]);
-    if ("kind" in socket) this.pairRoom.open(pair[1], socket);
+    let pass: unknown;
+    try { pass = JSON.parse(request.headers.get(PASS_CHECKED) ?? "null"); } catch { pass = null; }
+    const checked = isPassResult(pass) ? { pass } : {};
+    if ("kind" in socket) this.pairRoom.open(pair[1], { ...socket, ...checked });
     else {
       await this.loadPass();
-      let pass: unknown;
-      try { pass = JSON.parse(request.headers.get(PASS_CHECKED) ?? "null"); } catch { pass = null; }
-      this.room.open(pair[1], isPassResult(pass) ? { ...socket, pass } : socket);
+      this.room.open(pair[1], { ...socket, ...checked });
     }
     await this.armBy(Date.now() + IDLE_MS);
     return new Response(null, { status: 101, webSocket: pair[0] } as ResponseInit);
@@ -302,7 +304,7 @@ export async function handle(request: Request, env: Env): Promise<Response> {
   }
   const headers = new Headers(request.headers);
   headers.delete(PASS_CHECKED);
-  if (!("kind" in admitted) && admitted.pass) headers.set(PASS_CHECKED, JSON.stringify(admitted.pass));
+  if (admitted.pass) headers.set(PASS_CHECKED, JSON.stringify(admitted.pass));
   // a pairing room's name cannot be a server_id, which is 32 hex digits
   return env.RELAY.get(env.RELAY.idFromName("kind" in admitted ? `pair:${admitted.nameplate}` : admitted.server_id)).fetch(new Request(request, { headers }));
 }

@@ -3,7 +3,7 @@ import { startBunRelay, type BunRelay } from "./bun.ts";
 import { passPolicy } from "./pass.ts";
 import { RELAY_PASS_HEADER, signRelayPass } from "../shared/relay-pass.ts";
 import { relayPassFromArgs } from "./bun-limits.ts";
-import { SERVER_PROOF_CLOSE } from "../shared/relay-server-proof.ts";
+import { SERVER_PROOF_CLOSE, answerServerChallenge } from "../shared/relay-server-proof.ts";
 import { BUFFER_FRAMES, CLOSE, KEEPALIVE_PING, KEEPALIVE_PONG, MAX_CLIENTS, MAX_MESSAGE_BYTES, MAX_PENDING } from "./core.ts";
 import { Peer, answerChallenge, equalBytes, establish, newServer, openPair, openServer, randomServerId, relayUrls } from "./relay-test-client.ts";
 
@@ -322,6 +322,33 @@ describe("relay pass on the Bun relay", () => {
       control.socket.send(answer!);
       expect((await control.json("sync"))["relay_pass"]).toEqual({ state: "ok", enforce_at: null });
       control.socket.close();
+    } finally { await enforced.stop(); }
+  });
+
+  test("enforced: a pairing host needs a pass for the PC key it proves; the device that joins needs none", async () => {
+    const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
+    const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    const pass = await passPolicy(relayPassFromArgs(["--pass-mode", "enforce", "--pass-keys", `0badc0de:${Array.from(raw, (byte) => byte.toString(16).padStart(2, "0")).join("")}`], {}));
+    const enforced = startBunRelay({ port: 0, pass });
+    try {
+      const server = newServer();
+      const pairUrl = (key: string) => `ws://127.0.0.1:${enforced.port}/v1/pair?nameplate=AB1&v=1&${key}`;
+      const keyed = `role=host&server_id=${server.serverId}&public_key=${server.publicKey}`;
+      const token = await signRelayPass(pair.privateKey, "0badc0de", server.serverId, Math.floor(Date.now() / 1000));
+      const withPass = (key: string, header: string) => new Peer(new WebSocket(pairUrl(key), { headers: { [RELAY_PASS_HEADER]: header } } as unknown as string[]));
+      expect(await (await Peer.open(pairUrl("role=host"))).closed).toEqual({ code: 4402, reason: "relay pass required" });
+      expect(await (await Peer.open(pairUrl(keyed))).closed).toEqual({ code: 4402, reason: "relay pass required" });
+      // a pass alone, for a key the host does not offer, opens nothing
+      expect(await withPass("role=host", token).closed).toEqual({ code: 4402, reason: "relay pass required" });
+      const other = newServer();
+      expect(await withPass(`role=host&server_id=${other.serverId}&public_key=${other.publicKey}`, token).closed).toEqual({ code: 4402, reason: "relay pass invalid" });
+      const host = withPass(keyed, token);
+      await host.ready;
+      host.socket.send(answerServerChallenge(await host.next("server_challenge"), server.secretKey, { server_id: server.serverId, role: "pair-host", connection_id: "AB1" })!);
+      expect(await host.json("waiting")).toEqual({ type: "waiting" });
+      await Peer.open(pairUrl("role=guest"));
+      expect((await host.json("guest")).type).toBe("guest");
+      host.socket.close();
     } finally { await enforced.stop(); }
   });
 

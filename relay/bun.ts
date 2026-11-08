@@ -61,7 +61,7 @@ export function startBunRelay(options: BunRelayOptions = {}): BunRelay {
       // a room's pass authorization lives as long as the room, which a reconnecting PC opens again with its pass
       let until: RoomAuthorization | null = null;
       const room = "kind" in request
-        ? new PairRoom<Socket>({ ...common, info: (socket) => socket.data.info as PairInfo | null, setInfo: (socket, info) => { socket.data.info = info; } }, options.pairGuestGapMs ?? PAIR_GUEST_GAP_MS)
+        ? new PairRoom<Socket>({ ...common, info: (socket) => socket.data.info as PairInfo | null, setInfo: (socket, info) => { socket.data.info = info; }, ...(pass ? { pass } : {}) }, options.pairGuestGapMs ?? PAIR_GUEST_GAP_MS)
         : new Room<Socket>({ ...common, info: (socket) => socket.data.info as SocketInfo | null, setInfo: (socket, info) => { socket.data.info = info; },
           ...(pass ? { pass: { policy: pass, until: () => until, setUntil: (value: RoomAuthorization) => { until = value; } } } : {}) });
       entry = { room, sockets, pending: 0 };
