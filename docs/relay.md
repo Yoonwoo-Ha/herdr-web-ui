@@ -715,7 +715,28 @@ run yourself need no account and no pass.
   says where it stands in `pass`: `state` (`ok`, `no_account`, `not_listed`, `limit` or
   `unavailable`), what the relay last said of it (`relay`), and from when the relay will need it
   (`enforce_at`). `pass` is absent on a relay that is not Ovis's, and with
-  `OVIS_ACCOUNT_SERVICE_URL=off`.
+  `OVIS_ACCOUNT_SERVICE_URL=off`. `error_code` says which of the reasons below it is.
+
+## Why it is not online
+
+Whenever `GET /api/relay` has an `error`, it also has an `error_code`, one of a fixed set, so an app
+can put the reason in its own words (`error` stays English for logs) and know whether to wait or
+ask the user to act (`RelayErrorCode` in [`shared/protocol.ts`](../shared/protocol.ts)):
+
+| `error_code` | What happened | Tries again by itself |
+|---|---|---|
+| `start_failed` | the relay did not start | no: start it again |
+| `identity_unreadable` | this PC's relay identity cannot be read (`blocked` says so too) | no |
+| `relay_unreachable` | the relay did not answer, or the connection dropped | yes |
+| `server_key_refused` | the relay refused this PC's key for good | no |
+| `pass_required` | an Ovis relay needs a [relay pass](#relay-pass) and no account names this PC: sign in on it and add it | when a pass comes |
+| `pass_not_listed` | the account this PC names does not list it: add it there | when a pass comes |
+| `pass_limit` | that account has as many PCs on the Ovis relay as it may: remove one | when a pass comes |
+| `pass_unavailable` | the account service has not given a pass yet | yes |
+| `pass_refused` | the relay refused the pass this PC holds (a key it does not trust, a PC it revoked) | asks for another now and then |
+| `pass_unsupported` | the relay needs a pass and this PC asks no account service for one (`OVIS_ACCOUNT_SERVICE_URL=off` or unusable, or a relay that is not Ovis's) | no: connect over the same Wi-Fi, Tailscale or another relay |
+
+It is null while nothing is wrong, and absent from a server older than this field.
 
 ## Operations
 

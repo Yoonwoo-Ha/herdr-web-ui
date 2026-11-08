@@ -474,11 +474,11 @@ it("fails closed on corrupt saved state and on an unreadable identity", async ()
   writeFileSync(join(f.stateDir, "relay", "state.json"), "{bad");
   await f.restart();
   // nothing goes through the relay: off, with the reason
-  expect(f.service.status()).toMatchObject({ phase: "off", error: "Could not start the relay." });
+  expect(f.service.status()).toMatchObject({ phase: "off", error: "Could not start the relay.", error_code: "start_failed" });
   expect(f.attempts).toBe(0);
   writeFileSync(relayIdentityPath(f.stateDir), "{bad");
   expect((await f.request("/start", "POST")).status).toBe(409);
-  expect(f.service.status().blocked).toBe("identity_unreadable");
+  expect(f.service.status()).toMatchObject({ blocked: "identity_unreadable", error_code: "identity_unreadable" });
   expect(readFileSync(relayIdentityPath(f.stateDir), "utf8")).toBe("{bad");
   expect(f.attempts).toBe(0);
 });

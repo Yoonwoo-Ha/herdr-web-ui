@@ -11,6 +11,10 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import { answerServerChallenge, PERMANENT_SERVER_PROOF_REFUSALS, SERVER_PROOF_CLOSE } from "../../shared/relay-server-proof.ts";
 import { RELAY_PASS_CLOSE, RELAY_PASS_HEADER } from "../../shared/relay-pass.ts";
 import { SignedInSessions } from "./admissions.ts";
+import type { RelayErrorCode } from "../../shared/protocol.ts";
+
+/** The fixed codes a link's own errors carry. */
+export type LinkErrorCode = Extract<RelayErrorCode, "relay_unreachable" | "server_key_refused" | "pass_required">;
 
 /** Signed-in sessions this PC serves at once, as many as the relay lets in (relay/core.ts MAX_CLIENTS). */
 const MAX_SESSIONS = 8;
@@ -42,7 +46,8 @@ export interface RelayLinkOptions {
   readonly random?: () => number;
   /** The version WELCOME tells the shell (src/lib/relay/skew.ts); package.json's by default. */
   readonly serverVersion?: string;
-  readonly onState: (phase: "connecting" | "online" | "error", error: string | null) => void;
+  /** `code` is the error as a fixed code (shared/protocol.ts RelayErrorCode); a pass refusal is `pass_required`, which the service makes more exact */
+  readonly onState: (phase: "connecting" | "online" | "error", error: string | null, code?: LinkErrorCode) => void;
   /** The relays a phone is told to reach this PC through (RelaySession relayHints). */
   readonly relayHints?: () => readonly string[];
   /** This PC's direct carriers (RelaySession directCarriers). */
@@ -209,7 +214,7 @@ export class RelayLink {
       // The relay also uses 4401 for late answers. Only an explicit key mismatch is permanent.
       if (event.code === SERVER_PROOF_CLOSE && PERMANENT_SERVER_PROOF_REFUSALS.includes(event.reason)) {
         console.error(JSON.stringify({ event: "relay.server_proof.failed", code: event.code, reason: event.reason }));
-        this.options.onState("error", `Relay refused the server proof (${event.code}): ${event.reason}`);
+        this.options.onState("error", `Relay refused the server proof (${event.code}): ${event.reason}`, "server_key_refused");
         return;
       }
       // refused for the pass: asking again without a new one would be refused again (renewPass reopens)
@@ -221,7 +226,7 @@ export class RelayLink {
         this.options.onPassRefused?.();
         // a relay moved back to grace or off lets the PC in without a pass: look again now and then
         this.cancelRetry = this.clock.setTimeout(() => { if (this.passRefused && !this.control) { this.passRefused = false; this.openControl(); } }, PASS_REFUSED_RETRY_MS);
-        this.options.onState("error", `The Ovis relay needs a signed-in account (${event.reason || "relay pass required"}).`);
+        this.options.onState("error", `The Ovis relay needs a signed-in account (${event.reason || "relay pass required"}).`, "pass_required");
         return;
       }
       if (!this.stopped) this.retry();
@@ -239,7 +244,7 @@ export class RelayLink {
 
   private retry(): void {
     if (this.stopped) return;
-    this.options.onState("error", "Relay connection lost; reconnecting.");
+    this.options.onState("error", "Relay connection lost; reconnecting.", "relay_unreachable");
     const delay = Math.round(Math.min(++this.attempts, 30) * 1000 * (0.8 + (this.options.random ?? Math.random)() * 0.4));
     this.cancelRetry = this.clock.setTimeout(() => this.openControl(), delay);
   }

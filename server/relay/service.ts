@@ -5,7 +5,7 @@ import type { DeviceConnection } from "../../shared/access.ts";
 import { encodeOffer } from "../../shared/relay-offer.ts";
 import type { RelayOffer } from "../../shared/relay-offer.ts";
 import { GLOBAL_RELAY, REGIONAL_RELAYS } from "../../shared/relay-regions.ts";
-import type { RelayStatus } from "../../shared/protocol.ts";
+import type { RelayErrorCode, RelayStatus } from "../../shared/protocol.ts";
 import type { RequestServices } from "../dispatch.ts";
 import { isJsonObject } from "../http.ts";
 import { writePrivateState } from "../private-state.ts";
@@ -97,6 +97,8 @@ export function relayEndpoint(input: string, protocol: "wss:" | "https:"): strin
 export class RelayService {
   private phase: RelayStatus["phase"] = "off";
   private error: string | null = null;
+  /** `error` as a fixed code; a pass refusal is made more exact from the pass keeper's state in `status` */
+  private errorCode: RelayErrorCode | null = null;
   private blocked: RelayStatus["blocked"] = null;
   private link: RelayLink | undefined;
   /** The regional relay's link, besides the global one, once it was chosen. */
@@ -188,9 +190,25 @@ export class RelayService {
   status(): RelayStatus {
     return { phase: this.phase, relay: this.advertised, app: this.app,
       sessions: (this.link?.sessions ?? 0) + (this.regionalLink?.sessions ?? 0) + (this.directCarrier?.sessions ?? 0),
-      blocked: this.blocked, error: this.error,
+      blocked: this.blocked, error: this.error, error_code: this.exactErrorCode(),
       ...(this.options.direct ? { direct: { on: this.directEnabled(), carriers: this.directCarrier?.advertised(true) ?? [] } } : {}),
       ...(this.passKeeper ? { pass: { state: this.passKeeper.state, relay: this.passNotice?.state ?? null, enforce_at: this.passNotice?.enforce_at ?? null, refused: this.passRefused } } : {}) };
+  }
+
+  /** The error's code; a refusal for the pass says why the PC has none that the relay takes. */
+  private exactErrorCode(): RelayErrorCode | null {
+    if (this.error === null) return null;
+    if (this.errorCode !== "pass_required") return this.errorCode;
+    // no account service to ask (turned off or unusable), or a relay that is not Ovis's: waiting brings no pass
+    if (!this.passKeeper || this.options.accountService instanceof Error) return "pass_unsupported";
+    switch (this.passKeeper.state) {
+      case "no_account": return "pass_required";
+      case "not_listed": return "pass_not_listed";
+      case "limit": return "pass_limit";
+      case "unavailable": return "pass_unavailable";
+      // a pass is held and the relay refused it: a key it does not trust, a PC it revoked, clocks far apart
+      case "ok": return "pass_refused";
+    }
   }
 
   private relayAccountPath(): string { return join(this.options.stateDir, "relay", "account.json"); }
@@ -370,6 +388,7 @@ export class RelayService {
     // without a link nothing retries: the relay is off, and the error says why
     this.phase = this.link ? "error" : "off";
     this.error = error instanceof RelayIdentityError ? error.message : "Could not start the relay.";
+    this.errorCode = error instanceof RelayIdentityError ? "identity_unreadable" : "start_failed";
     if (error instanceof RelayIdentityError) this.blocked = "identity_unreadable";
   }
 
@@ -393,7 +412,7 @@ export class RelayService {
         relay: this.relay, identity: this.identity, services, port: this.port, ...this.passOptions(this.relay, true),
         connect: this.options.connect, clock: this.options.clock, random: this.options.random, serverVersion: this.options.serverVersion,
         relayHints: () => this.relayHints(), directCarriers: (tailnet) => this.directCarriers(tailnet), sessions: this.signedIn,
-        onState: (phase, error) => { if (this.link === link) { this.phase = phase; this.error = error; } },
+        onState: (phase, error, code) => { if (this.link === link) { this.phase = phase; this.error = error; this.errorCode = code ?? null; } },
       });
       this.link = link;
       link.start();

@@ -549,6 +549,25 @@ export const STREAM_COOKIE_PREFIX = "ovis_stream_";
 
 export type { PortalAuth, PortalAuthMethod, PortalInvite, PortalSignIn, PortalStatus } from "./portal.ts";
 
+/**
+ * Why the relay is not online, as a fixed code a client puts in its own words (RelayStatus.error_code;
+ * docs/relay.md, "Why it is not online"). Each says whether the PC tries again by itself:
+ * - `start_failed`: the relay did not start; starting it again may work.
+ * - `identity_unreadable`: this PC's relay identity cannot be read (`blocked` says so too); nothing retries.
+ * - `relay_unreachable`: the relay did not answer or the connection dropped; the PC tries again.
+ * - `server_key_refused`: the relay refused this PC's key for good; the PC does not try again.
+ * - `pass_required`: an Ovis relay needs a relay pass and no account names this PC: sign in on it and add it.
+ * - `pass_not_listed`: the account this PC names does not list it: add it to that account.
+ * - `pass_limit`: that account has as many PCs on the Ovis relay as it may: remove one from it.
+ * - `pass_unavailable`: the relay needs a pass the account service has not given yet; the PC keeps asking.
+ * - `pass_refused`: the relay refused the pass this PC holds (a key it does not trust, a PC it revoked); the PC asks
+ *   for another now and then.
+ * - `pass_unsupported`: the relay needs a pass and this PC asks no account service for one (turned off or
+ *   unusable, or a relay that is not Ovis's): waiting brings none; use the same Wi-Fi, Tailscale or another relay.
+ */
+export type RelayErrorCode = "start_failed" | "identity_unreadable" | "relay_unreachable" | "server_key_refused"
+  | "pass_required" | "pass_not_listed" | "pass_limit" | "pass_unavailable" | "pass_refused" | "pass_unsupported";
+
 /** GET /api/relay; relay and app are configured secure origins, never pairing credentials. */
 export interface RelayStatus {
   readonly phase: "off" | "connecting" | "online" | "error";
@@ -557,6 +576,8 @@ export interface RelayStatus {
   readonly sessions: number;
   readonly blocked: null | "serve_only" | "identity_unreadable";
   readonly error: string | null;
+  /** why, as a fixed code, whenever `error` says something (null otherwise); absent from an older server */
+  readonly error_code?: RelayErrorCode | null;
   /**
    * Direct connections on this PC's networks (docs/relay.md): whether they are on, and the carriers
    * listened on now (none while the relay is off). Absent from a server without them.
