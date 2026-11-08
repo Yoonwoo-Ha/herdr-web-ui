@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { paneAgent, paneSession, reportedStatus } from "./agent-identity.ts";
+import { paneAgent, paneSession, reportedStatus, titleStatus } from "./agent-identity.ts";
 
 describe("which agent a pane runs", () => {
   it("takes the app the program reported, in herdr's names", () => {
@@ -48,6 +48,15 @@ describe("which agent a pane runs", () => {
   it("reads a reported status in herdr's words, an error or an unknown word as none", () => {
     expect(["working", "blocked", "idle", "done", "error", "thinking", "", null, undefined].map(reportedStatus))
       .toEqual(["working", "blocked", "idle", "done", "unknown", "unknown", "unknown", "unknown", "unknown"]);
+  });
+
+  // letta-code 0.34.44's own titles on old-desktop, 2026-11-08: a spinner frame while a turn runs
+  it("reads Letta's spinner title as work and its plain title as rest, and no other agent's title", () => {
+    expect(["⠋ Tutor", "⠹ Tutor", "Tutor", "", null].map((title) => titleStatus("letta", title))).toEqual(["working", "working", "idle", null, null]);
+    expect(titleStatus("claude", "⠋ Claude Code")).toBeNull();
+    // while a tool call waits for the user's approval (standard permission mode), the title says so, blinking
+    expect(titleStatus("letta", "[ . ] Action Required | Tutor")).toBe("blocked");
+    expect(titleStatus("letta", "[ ! ] Action Required | Tutor")).toBe("blocked");
   });
 
   it("does not take a binary whose name proves nothing on that platform", () => {

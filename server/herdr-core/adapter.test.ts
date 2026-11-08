@@ -435,6 +435,40 @@ describe("herdr-core adapter", () => {
     ]);
   });
 
+  // letta-code 0.34.44 on old-desktop, 2026-11-08: its title carries a spinner frame while a turn runs
+  it("asks for a fresh snapshot when a Letta that reports nothing starts or stops its spinner title, and only then", async () => {
+    let channel = 0;
+    const letta = { pid: 11, name: "letta", argv: ["letta"] };
+    const { socket, cores } = await setup([terminal("t1"), terminal("t2")], {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: [terminal("t1", { foreground: letta, title: "Tutor" }), terminal("t2", { foreground: letta, title: "Tutor", status: { app: "letta", state: "idle" } }), terminal("t3", { foreground: letta, title: "Tutor", status: { app: "letta", state: "error" } })] };
+      },
+    });
+    const frames: EventFrame[] = [];
+    const started = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.updated" }], { onEvent: (frame) => frames.push(frame), onStarted: () => started.resolve(), onClose: () => ended.resolve() }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores[0]!;
+    const title = (seq: number, terminal: string, value: string) => core.notify(channel, "event", { seq, type: "title", terminal, data: { title: value } });
+    title(2, "t1", "⠋ Tutor");
+    title(3, "t1", "⠙ Tutor");
+    title(4, "t1", "Tutor");
+    // a Letta that reports its own status keeps it: its title asks for nothing
+    title(5, "t2", "⠋ Tutor");
+    // a report whose word says nothing (an error) gives no status: the title still speaks
+    title(6, "t3", "⠋ Tutor");
+    core.notify(channel, "missed", { seq: 9, terminals: [] });
+    await ended.promise;
+    expect(frames).toEqual([
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } },
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } },
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t3" } },
+    ]);
+  });
+
 it("asks for a fresh snapshot when a report's kind, message or progress changes, and only then", async () => {
     let channel = 0;
     const { socket, cores } = await setup([terminal("t1")], {

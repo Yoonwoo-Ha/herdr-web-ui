@@ -423,13 +423,22 @@ export function lettaLocalSettings(store: string, agent: string, conversation: s
   };
 }
 
-/** The transcript a Letta pane shows, written and held as lettaTranscriptHeld says, and its process's local store; or null. */
-export async function resolveLettaTranscript(pane: HerdrPane, panes: readonly HerdrPane[], known?: ProcessInfo | null): Promise<(LettaTranscript & { store: string }) | null> {
+/**
+ * The local backend's own record of a conversation's messages, which Letta appends to as a turn goes
+ * (its transcript is written only when the turn ends); null for a cloud conversation, kept on the server.
+ */
+export function lettaMessagesPath(store: string, agent: string, conversation: string): string | null {
+  const key = conversation === "default" ? `default:${agent}` : conversation.startsWith("local-conv-") ? `conversation:${conversation}` : null;
+  return key === null ? null : join(store, "conversations", Buffer.from(key).toString("base64url"), "messages.jsonl");
+}
+
+/** The transcript a Letta pane shows, written and held as lettaTranscriptHeld says, its process's local store and when that process started; or null. */
+export async function resolveLettaTranscript(pane: HerdrPane, panes: readonly HerdrPane[], known?: ProcessInfo | null): Promise<(LettaTranscript & { store: string; startedAt: number }) | null> {
   const owner = await paneLettaProcess(pane.pane_id, known);
   if (owner === null || !lettaInStartFolder(owner) || !lettaRecordOwned(pane, panes, owner)) return null;
   const found = lettaTranscriptFor(pane, panes, owner);
   const store = lettaLocalStore(owner.env);
   const root = lettaTranscriptRoot(owner.env);
   if (found === null || store === null || root === null || !lettaLocalOwner(store, found.agent, found.conversation)) return null;
-  return lettaTranscriptHeld(found.path, root) ? { ...found, store } : null;
+  return lettaTranscriptHeld(found.path, root) ? { ...found, store, startedAt: owner.startedAt } : null;
 }

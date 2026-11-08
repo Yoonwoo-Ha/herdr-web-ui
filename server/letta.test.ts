@@ -493,7 +493,7 @@ describe("Letta conversation binding", () => {
     agentRecord({ id: AGENT, model: "anthropic/claude-sonnet-4-5", model_settings: { provider_type: "anthropic", effort: "high" } });
     const own = conversationRecord("conversation:local-conv-1", JSON.parse(localConversation));
     const target = pane("w1:p1", "local-conv-1", root);
-    const resolution = spyOn(lettaStore, "resolveLettaTranscript").mockResolvedValue({ path, session: "local-conv-1", agent: AGENT, conversation: "local-conv-1", store: store() });
+    const resolution = spyOn(lettaStore, "resolveLettaTranscript").mockResolvedValue({ path, session: "local-conv-1", agent: AGENT, conversation: "local-conv-1", store: store(), startedAt: Date.now() });
     const snapshot = spyOn(herdr, "sessionSnapshot").mockResolvedValue({ panes: [target], agents: [], workspaces: [], tabs: [], layouts: [], version: "fixture", protocol: 22 } as never);
     const info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({ pane_id: target.pane_id, foreground_processes: [] } as never);
     const rpc = spyOn(herdr, "herdrRpc").mockImplementation(async () => ({}) as never);
