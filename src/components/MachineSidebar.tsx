@@ -30,6 +30,9 @@ import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
 import { canHideMachine, HIDDEN_MACHINES_MAX, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
 
+/** the release a PC's own Ovis offers as its card shows it: an update installs only that one (docs/remote-pcs.md) */
+const shownRevision = (machine: Machine) => machine.ovis_update?.revision ? { revision: machine.ovis_update.revision } : undefined;
+
 /**
  * Which list of PCs this page goes back to, when it shows one PC of a phone's list: the phone app's
  * own list ("app"), or the hosted shell's front page on a PC's page there ("shell"). Null in a PC's
@@ -543,7 +546,7 @@ function MachineActionNotice({ machine, onSetup }: { machine: Machine; onSetup(m
       {failure && <span className="machine-action-reason">{machineErrorText(failure, t)}</span>}
     </p>
     <div className="machine-action-buttons">
-      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => machineRequest(`/${encodeURIComponent(machine.id)}/update-bridge`, "POST").catch((e) => { if (!machine.herdr_profile_id) throw e; onSetup(machine, true); }))}>{own.latest_version ? t("Update this PC's Ovis to v{version}", { version: own.latest_version }) : t("Update this PC's Ovis")}</button>
+      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => machineRequest(`/${encodeURIComponent(machine.id)}/update-bridge`, "POST", shownRevision(machine)).catch((e) => { if (!machine.herdr_profile_id) throw e; onSetup(machine, true); }))}>{own.latest_version ? t("Update this PC's Ovis to v{version}", { version: own.latest_version }) : t("Update this PC's Ovis")}</button>
       <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => onSetup(machine, true)}>{t("Sign in and update…")}</button>
     </div>
     {error && <p className="machine-error" role="alert">{error}</p>}
@@ -567,7 +570,7 @@ function MachineActionNotice({ machine, onSetup }: { machine: Machine; onSetup(m
     </p>
     {update ? <div className="machine-action-buttons">
       {/* a PC saved in herdr that has not connected yet is refused a direct update: its dialog connects first */}
-      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => machineRequest(`/${encodeURIComponent(machine.id)}/update-bridge`, "POST").catch((e) => { if (!machine.herdr_profile_id) throw e; onSetup(machine, true); }))}>{t("Update bridge")}</button>
+      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => machineRequest(`/${encodeURIComponent(machine.id)}/update-bridge`, "POST", shownRevision(machine)).catch((e) => { if (!machine.herdr_profile_id) throw e; onSetup(machine, true); }))}>{t("Update bridge")}</button>
       {/* a PC that needs a password or a new host key goes through its dialog */}
       <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => onSetup(machine, true)}>{t("Sign in and update…")}</button>
     </div> : <button type="button" className="btn btn-primary" onClick={() => onSetup(machine, false)}>{t("Set up web access")}</button>}
@@ -649,7 +652,7 @@ export function MachineActionBanner({ machines, onSetup }: { machines: Machine[]
   const failure = ownUpdateFailure(first);
   return <div className="update-notice" role="status">
     <span title={failure === null ? undefined : machineErrorText(failure, t)}>{own ? t(failure ? "Updating {name}'s own Ovis failed{others}." : own.updatable ? "{name}'s own Ovis needs an update to reconnect{others}." : "{name}'s own Ovis needs an update on that PC{others}.", { name: first.name, others }) : t(startupFailed ? "Windows desktop startup failed on {name}{others}." : login ? "{name} is waiting for Windows sign-in{others}." : conflict ? "{name} has a bridge connection conflict{others}." : update ? "{name} needs a bridge update to reconnect{others}." : "{name} needs web access setup{others}.", { name: first.name, others })}</span>
-    <button type="button" className="btn" onClick={() => update ? void machineRequest(`/${encodeURIComponent(first.id)}/update-bridge`, "POST").catch(() => onSetup(first, true)) : onSetup(first, false)}>{own ? t(own.updatable ? "Update this PC's Ovis" : "Reconnect") : t(login || startupFailed ? "Review startup options" : conflict ? "Reconnect" : update ? "Update bridge" : "Set up web access")}</button>
+    <button type="button" className="btn" onClick={() => update ? void machineRequest(`/${encodeURIComponent(first.id)}/update-bridge`, "POST", shownRevision(first)).catch(() => onSetup(first, true)) : onSetup(first, false)}>{own ? t(own.updatable ? "Update this PC's Ovis" : "Reconnect") : t(login || startupFailed ? "Review startup options" : conflict ? "Reconnect" : update ? "Update bridge" : "Set up web access")}</button>
     <button type="button" className="icon-button update-notice-dismiss" aria-label={t("Dismiss")} title={t("Dismiss")} onClick={() => { const next = [...dismissed, ...waiting.map(noticeKey)]; setDismissed(next); writeDismissed(next); }}><X /></button>
   </div>;
 }

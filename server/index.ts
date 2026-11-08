@@ -208,6 +208,8 @@ export function createServer(
     relayPcSocket?: (url: string) => RelaySocket;
     /** how they dial those PCs' direct carriers; tests point it at a local listener */
     relayPcDirectSocket?: (url: string) => RelaySocket;
+    /** how often another PC's own update is looked at while it runs; tests shorten it */
+    pcUpdateTimings?: { pollMs?: number; startMs?: number; checkMs?: number; offerMs?: number };
     /** how other PCs on this PC's Tailscale are found (server/tailnet-pcs.ts); tests give their own */
     tailnetPcs?: TailnetPcsOptions;
     /** where Add a connection → SSH reads its list from; tests point it at a fixture */

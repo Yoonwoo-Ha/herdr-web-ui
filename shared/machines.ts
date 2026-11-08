@@ -58,6 +58,53 @@ export interface Machine {
    * to install its own update; without, it is "setup" and `reason` says why.
    */
   remote_ovis?: RemoteOvis | null;
+  /**
+   * The update this PC can take from here, told without being asked (the devices list's badge): absent or null
+   * when it is up to date or cannot tell yet (not connected, an older server). `POST /api/machines/:id/update`
+   * runs it; `updating` shows its steps. Not for this server's own PC (Settings → Updates) or a herdr-core machine.
+   */
+  ovis_update?: PcUpdateOffer | null;
+  /** why this PC's last update from here failed, in plain words; cleared when another one starts or it succeeds */
+  update_error?: string | null;
+}
+/**
+ * An update a PC can take from here.
+ * - `bridge`: this app's bridge on an SSH PC is of another version; the bridge update replaces it (approved setup).
+ * - `own`: the PC runs its own Ovis (a relay PC, direct or through the relay, or an SSH PC's own server) and its own
+ *   updater offers a newer release, which it installs by revision when asked from here.
+ * `updatable` false: `reason` says why in plain words, and asking for it is refused with that reason.
+ * Versions are releases without the v (`0.5.1`), null where the PC names none (a bridge).
+ */
+export interface PcUpdateOffer {
+  how: "bridge" | "own";
+  current_version: string | null;
+  latest_version: string | null;
+  updatable: boolean;
+  reason: string | null;
+  /** `own`: the release on offer (its commit), which an update asked for may name; only that release is installed */
+  revision?: string | null;
+}
+/**
+ * POST /api/machines/:id/update, with an optional JSON body: `revision`, the offer's as shown. When the offer this
+ * server holds names another release, nothing is installed: 409 `update_unavailable`. When the PC itself offers
+ * another one by the time it is asked, the 202 update ends with `update_error` saying so, and nothing is installed.
+ */
+export interface PcUpdateRequest { revision?: string }
+/**
+ * POST /api/machines/:id/update: the update started; its steps show on the PC's `updating`. This and update-all are
+ * this PC's owner's only (403 `forbidden` otherwise), and need the `X-Herdr-Update: 1` header.
+ */
+export interface PcUpdateStarted { job_id: string }
+/**
+ * POST /api/machines/update-all: every PC with an update it can take. `started`: running now (own updates run side
+ * by side); `queued`: bridge updates, which run one after another (they share one bundle download) and show
+ * `updating.queued` until their turn; `skipped`: an update is offered but cannot run, with why. Up-to-date PCs are
+ * not listed.
+ */
+export interface PcUpdateAll {
+  started: { machine_id: string; job_id: string }[];
+  queued: string[];
+  skipped: { machine_id: string; reason: string }[];
 }
 /**
  * What a PC's own Ovis says of its own update (GET /api/updates there, read through the SSH tunnel).
@@ -167,7 +214,15 @@ export interface HerdrCoreFacts {
 }
 export type MachineAction = "connect" | "update_bridge" | "setup" | "bridge_conflict" | "windows_login" | "windows_start_failed";
 /** `ovis`: the PC's own Ovis updates itself (Machine.remote_ovis); absent for a bridge this app installs */
-export interface MachineUpdate { job_id: string; step: string; progress: SetupProgress | null; ovis?: boolean }
+export interface MachineUpdate {
+  /** what cancels it: DELETE /api/machines/:id/update (any update), or a setup job's cancel; empty while `queued` */
+  job_id: string;
+  step: string;
+  progress: SetupProgress | null;
+  ovis?: boolean;
+  /** waiting for the bridge updates of Update all before it to finish */
+  queued?: boolean;
+}
 /**
  * Where a bridge install is. download (the web server fetching the bundle) and upload (the
  * bundle going to the PC over SSH) count bytes; install and restart have no size.

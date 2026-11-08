@@ -1584,7 +1584,8 @@ export async function verifySourceBoot(machineId: string, signal: AbortSignal): 
   }
 }
 export async function machineRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const response = await apiFetch(`/api/machines${path}`, { method, headers: { "content-type": "application/json", "x-herdr-machine": "1" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  // x-herdr-update: an owner's actions on its PCs (updates, turning one on, approving an install) need it, as this PC's own updates do
+  const response = await apiFetch(`/api/machines${path}`, { method, headers: { "content-type": "application/json", "x-herdr-machine": "1", "x-herdr-update": "1" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   if (!response.ok) throw await errorFrom("/api/machines", response);
   return response.json();
 }

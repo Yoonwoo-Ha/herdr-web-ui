@@ -9,7 +9,7 @@ import type { OrderSequence } from "./order-sequence.ts";
 import type { DevicePairedEvent, DeviceRemovedEvent, HealthAuth, RelayPairingsEvent, RemotePairingsEvent, SecuritySummary, SessionSnapshot } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { authClient, deviceAuthorizationValue, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
-import { bindScope, cameThroughProxy, decideAccess, forwardingHeaders, inTailnet, isLoopbackAddress, isServeOwnerRequest, lanExposed, observedIngress } from "./access.ts";
+import { bindScope, cameThroughProxy, decideAccess, forwardingHeaders, inTailnet, isLoopbackAddress, isServeOwnerRequest, lanExposed, observedIngress, ownerAccess } from "./access.ts";
 import { type DeviceStore, handleDeviceRequest, newStreamKey, sameBrowser, streamCookie, streamKeys, type DeviceMatch } from "./devices.ts";
 import { handlePreferencesRequest, type PreferenceStore } from "./preferences.ts";
 import { handleSeenRequest, type SeenStore } from "./seen.ts";
@@ -391,7 +391,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
         if (!approver) listener({ type: "relay-pairings", pairings: [] });
         return () => { stopPaired(); stopRemoved?.(); stopRelay?.(); };
       } };
-      const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : portalRecheckMs !== undefined ? (close) => { const timer = setTimeout(close, portalRecheckMs); return () => clearTimeout(timer); } : undefined, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget);
+      const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : portalRecheckMs !== undefined ? (close) => { const timer = setTimeout(close, portalRecheckMs); return () => clearTimeout(timer); } : undefined, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget, ownerAccess(access));
       response.headers.set("cache-control", "no-store");
       if (issuedKey !== null && response.ok) response.headers.append("set-cookie", streamCookie(issuedKey, isSecureRequest(request)));
       return response;
@@ -483,6 +483,12 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     } catch (error) { return errorResponse(error); }
   }
 
+  // installing an update on this PC (Ovis or herdr; a check installs too where OVIS_AUTO_UPDATE=1) is the owner's, as changing its PCs is (machine-api.ts): from any device
+  // he signed in or paired himself. The connection server's bridge token asks its own install by revision (bridgeUpdatePath)
+  if (request.method === "POST" && (pathname === "/api/updates/install" || pathname === "/api/updates/check" || pathname === "/api/herdr/update") && !ownerAccess(access) && !(bridgeAuthorized && bridgeUpdatePath)) {
+    setRequestRoute(pathname);
+    return jsonResponse({ error: { code: "forbidden", message: "Only the owner's own signed-in or paired devices can update this PC, from this app's own page." } }, 403);
+  }
   if (pathname === "/api/updates" || pathname.startsWith("/api/updates/")) {
     // the bridge token cannot read /api/access: where this server answers comes with its update status (#2191)
     // the port is this server's own; a tailscale that cannot be read only leaves the https address out

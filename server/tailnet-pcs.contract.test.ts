@@ -97,7 +97,7 @@ async function pcA(initial: Parameters<typeof status>[0], origins: Record<string
   cleanup.push(() => a.stop());
   const base = `http://127.0.0.1:${a.port}`;
   const ask = (method: string, body?: unknown) => fetch(`${base}/api/machines/tailnet`, {
-    method, headers: { origin: base, "x-herdr-machine": "1", "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    method, headers: { origin: base, "x-herdr-machine": "1", "x-herdr-update": "1", "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   return { ask, probed, base, setPeers: (next: Parameters<typeof status>[0]) => { peers = next; } };
 }

@@ -1518,7 +1518,7 @@ describe("agent rename", () => {
       const settings = await (await fetch(url)).json() as MachineSettings;
       expect(settings).toEqual({ auto_update_bridges: true, set_aside: [expect.stringMatching(/^machines\.json\.corrupt-\S+$/)] });
       expect(readdirSync(state)).toContain(settings.set_aside![0]!);
-      const patched = await fetch(url, { method: "PATCH", headers: { "content-type": "application/json", "x-herdr-machine": "1" }, body: JSON.stringify({ auto_update_bridges: false, set_aside: [] }) });
+      const patched = await fetch(url, { method: "PATCH", headers: { "content-type": "application/json", "x-herdr-machine": "1", "x-herdr-update": "1" }, body: JSON.stringify({ auto_update_bridges: false, set_aside: [] }) });
       expect(patched.status).toBe(200);
       expect(await patched.json()).toEqual({ auto_update_bridges: false, set_aside: settings.set_aside });
     } finally {
@@ -4732,7 +4732,7 @@ describe("PC management API", () => {
       const response = await fetch(`${base()}/api/machines/setup`, { method: "POST", headers, body: JSON.stringify({ destination: "host" }) });
       expect(response.status).toBe(403);
     }
-    const bad = await fetch(`${base()}/api/machines/setup`, { method: "POST", headers: { "x-herdr-machine": "1" }, body: JSON.stringify({ destination: "-oProxyCommand=bad" }) });
+    const bad = await fetch(`${base()}/api/machines/setup`, { method: "POST", headers: { "x-herdr-machine": "1", "x-herdr-update": "1" }, body: JSON.stringify({ destination: "-oProxyCommand=bad" }) });
     expect(bad.status).toBe(400);
     expect((await fetch(`${base()}/api/machines/missing/pane/read?pane_id=p1`)).status).toBe(503);
     expect((await fetch(`${base()}/api/machines/missing/auth`)).status).toBe(404);

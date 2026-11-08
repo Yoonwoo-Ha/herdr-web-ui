@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync }
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBunRelay } from "../relay/bun.ts";
-import type { HerdrIdentity, Machine, MachineEvent } from "../shared/machines.ts";
+import type { HerdrIdentity, Machine, MachineEvent, PcUpdateAll } from "../shared/machines.ts";
 import type { SessionSnapshot } from "../shared/protocol.ts";
 import { createServer } from "./index.ts";
 import { RelayService } from "./relay/service.ts";
@@ -11,6 +11,8 @@ import { newRouteProbes, openRelayPcTunnel, RelayPcKey } from "./relay-pc.ts";
 import { decodeOffer } from "../shared/relay-offer.ts";
 import type { RelayOffer } from "../shared/relay-offer.ts";
 import { bounded, deferred } from "./relay/test-helpers.ts";
+import type { UpdateService } from "./update-api.ts";
+import { noInstalledNotes, noUpdateNotes, unmanagedUpdateStatus, type UpdateStatus } from "../shared/update.ts";
 
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -34,7 +36,7 @@ const listener = { port: 0 };
  * PC B with the relay on, PC A that adds it through the relay, and the local relay between them. `direct`: B also
  * listens on its network, and A reaches that address on the dials `reachable` lets through (else nothing answers).
  */
-async function twoPcs(options: { direct?: { reachable: (dial: number, host: string) => boolean; held?: (dial: number) => Promise<void> | undefined; named?: (port: number) => readonly string[] } } = {}) {
+async function twoPcs(options: { direct?: { reachable: (dial: number, host: string) => boolean; held?: (dial: number) => Promise<void> | undefined; named?: (port: number) => readonly string[] }; updates?: UpdateService } = {}) {
   const relay = startBunRelay({ port: 0, limiters: {
     perAddress: { async limit() { return { success: true }; } },
     global: { async limit() { return { success: true }; } },
@@ -60,7 +62,7 @@ async function twoPcs(options: { direct?: { reachable: (dial: number, host: stri
   const bState = stateDir();
   const service = new RelayService({ stateDir: bState, relay: `wss://127.0.0.1:${relay.port}`, connect: local, pairCodeRelay: `wss://127.0.0.1:${relay.port}`,
     ...(options.direct ? { direct: { addresses: () => ["127.0.0.1"], advertise: (port: number) => { listener.port = port; return options.direct!.named?.(port) ?? [`ws://${LAN}:7319`]; }, peerAllowed: () => true, preferredPort: 0 } } : {}) });
-  const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relay: service });
+  const b = createServer({ port: 0, hostname: "127.0.0.1", stateDir: bState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relay: service, ...(options.updates ? { updates: options.updates } : {}) });
   cleanup.push(async () => { await service.shutdown(); b.stop(); });
   const bBase = `http://127.0.0.1:${b.port}`;
   const started = await fetch(`${bBase}/api/relay/start`, { method: "POST", headers: { origin: bBase, "x-herdr-update": "1" } });
@@ -97,7 +99,8 @@ async function twoPcs(options: { direct?: { reachable: (dial: number, host: stri
     return socket;
   };
   const startA = () => {
-    const a = createServer({ port: 0, hostname: "127.0.0.1", stateDir: aState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relayPcSocket: local, relayPcDirectSocket: onLan });
+    const a = createServer({ port: 0, hostname: "127.0.0.1", stateDir: aState, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false, relayPcSocket: local, relayPcDirectSocket: onLan,
+      pcUpdateTimings: { pollMs: 20, startMs: 5_000, checkMs: 1_000 } });
     let stopped = false;
     const stop = () => { if (!stopped) { stopped = true; a.stop(); } };
     cleanup.push(stop);
@@ -116,7 +119,7 @@ function addRelayPc(base: string, link: string, name?: string): Promise<Response
 
 function postRelay(base: string, body: Record<string, string>, path = ""): Promise<Response> {
   return fetch(`${base}/api/machines/relay${path}`, {
-    method: "POST", headers: { origin: base, "x-herdr-machine": "1", "content-type": "application/json" },
+    method: "POST", headers: { origin: base, "x-herdr-machine": "1", "x-herdr-update": "1", "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 }
@@ -200,7 +203,7 @@ it("adds a PC through the relay, shows its panes, signs in again after a restart
   expect(revoked.error).toContain("removed this PC's access");
 
   // Remove PC forgets the key with the registration
-  const removed = await fetch(`${a.base}/api/machines/${machine.id}`, { method: "DELETE", headers: { origin: a.base, "x-herdr-machine": "1" } });
+  const removed = await fetch(`${a.base}/api/machines/${machine.id}`, { method: "DELETE", headers: { origin: a.base, "x-herdr-machine": "1", "x-herdr-update": "1" } });
   expect(removed.status).toBe(200);
   const keys = join(aState, "relay-pcs");
   expect(existsSync(keys) ? readdirSync(keys) : []).toEqual([]);
@@ -567,3 +570,77 @@ it("records nothing for a PC when its tunnel closes in the middle of a check", a
   // Then the next sign-in is not held back from the PC's direct routes
   expect(probes.failed).toBe(false);
 }, 60_000);
+
+/** B's own updater as a stand-in: `status` is what it tells; an install asked for runs through `after`, one status per read */
+function updater(status: UpdateStatus, after: Partial<UpdateStatus>[]) {
+  const requests: unknown[] = [];
+  let reads = -1;
+  const service: UpdateService = {
+    status: () => reads < 0 ? status : { ...status, ...after[Math.min(reads++, after.length - 1)] },
+    notes: noUpdateNotes,
+    installed: noInstalledNotes,
+    request: (request) => { requests.push(request); if (request.command === "install") reads = 0; },
+  };
+  return { service, requests };
+}
+const OFFERED_RELEASE = "a".repeat(40);
+const ownOffer = (patch: Partial<UpdateStatus> = {}): UpdateStatus => ({ ...unmanagedUpdateStatus(), managed: true, blocked_reason: null, available: true,
+  current_version: "0.5.0", latest_version: "0.5.1", current_revision: "c".repeat(40), latest_revision: OFFERED_RELEASE, revision_bound_install: true, ...patch });
+const machinePost = (base: string, path: string, method = "POST") => fetch(`${base}/api/machines/${path}`, { method, headers: { origin: base, "x-herdr-machine": "1", "x-herdr-update": "1" } });
+
+it("shows a relay PC's own update on its card and installs it from here, with its steps, until that PC answers on the new release", async () => {
+  const b = updater(ownOffer(), [{ phase: "building", step: "download" }, { phase: "building", step: "build" }, { phase: "idle", available: false, current_revision: OFFERED_RELEASE, current_version: "0.5.1" }]);
+  const { link, startA } = await twoPcs({ updates: b.service });
+  const a = startA();
+  const { machine } = await (await addRelayPc(a.base, link, "Lab")).json() as { machine: Machine };
+  const offered = await machineWhen(a.base, (pc) => pc.id === machine.id && pc.state === "connected" && pc.ovis_update != null);
+  expect(offered.ovis_update).toEqual({ how: "own", current_version: "0.5.0", latest_version: "0.5.1", updatable: true, reason: null, revision: OFFERED_RELEASE });
+  // a release other than the one shown is refused, and nothing is asked of that PC
+  const other = await fetch(`${a.base}/api/machines/${machine.id}/update`, { method: "POST", headers: { origin: a.base, "x-herdr-machine": "1", "x-herdr-update": "1", "content-type": "application/json" }, body: JSON.stringify({ revision: "b".repeat(40) }) });
+  expect(other.status).toBe(409);
+  expect(b.requests).toEqual([]);
+
+  const seen = new AbortController();
+  const step = machineWhen(a.base, (pc) => pc.id === machine.id && pc.updating?.step.includes("building") === true, seen.signal);
+  const started = await fetch(`${a.base}/api/machines/${machine.id}/update`, { method: "POST", headers: { origin: a.base, "x-herdr-machine": "1", "x-herdr-update": "1", "content-type": "application/json" }, body: JSON.stringify({ revision: OFFERED_RELEASE }) });
+  expect(started.status).toBe(202);
+  const { job_id } = await started.json() as { job_id: string };
+  expect((await step).updating).toMatchObject({ job_id, ovis: true });
+  expect(b.requests).toEqual([{ command: "install", expected_revision: OFFERED_RELEASE }]);
+  const done = await machineWhen(a.base, (pc) => pc.id === machine.id && !pc.updating && pc.ovis_update === null);
+  expect(done.update_error ?? null).toBeNull();
+  // nothing more on offer: asked again, it is refused in plain words
+  const again = await machinePost(a.base, `${machine.id}/update`);
+  expect(again.status).toBe(409);
+  expect(await again.json()).toEqual({ error: { code: "update_unavailable", message: "This PC's Ovis is up to date." } });
+});
+
+it("tells why a relay PC cannot update, and Update all skips it with that reason", async () => {
+  const b = updater(ownOffer({ revision_bound_install: undefined }), []);
+  const { link, startA } = await twoPcs({ updates: b.service });
+  const a = startA();
+  const { machine } = await (await addRelayPc(a.base, link, "Lab")).json() as { machine: Machine };
+  const offered = await machineWhen(a.base, (pc) => pc.id === machine.id && pc.state === "connected" && pc.ovis_update != null);
+  expect(offered.ovis_update).toMatchObject({ how: "own", updatable: false, reason: expect.stringContaining("too old") });
+  const refused = await machinePost(a.base, `${machine.id}/update`);
+  expect(refused.status).toBe(409);
+  expect((await refused.json() as { error: { code: string } }).error.code).toBe("update_unavailable");
+  const all = await machinePost(a.base, "update-all");
+  expect(all.status).toBe(202);
+  expect(await all.json() as PcUpdateAll).toEqual({ started: [], queued: [], skipped: [{ machine_id: machine.id, reason: offered.ovis_update!.reason! }] });
+  expect(b.requests).toEqual([]);
+});
+
+it("starts every relay PC's update with Update all, and reports a failure there on its card", async () => {
+  const b = updater(ownOffer(), [{ phase: "building", step: "build" }, { phase: "error", error: "The build failed." }]);
+  const { link, startA } = await twoPcs({ updates: b.service });
+  const a = startA();
+  const { machine } = await (await addRelayPc(a.base, link, "Lab")).json() as { machine: Machine };
+  await machineWhen(a.base, (pc) => pc.id === machine.id && pc.ovis_update?.updatable === true);
+  const all = await machinePost(a.base, "update-all");
+  expect(all.status).toBe(202);
+  const { started } = await all.json() as PcUpdateAll;
+  expect(started.map((entry) => entry.machine_id)).toEqual([machine.id]);
+  const failed = await machineWhen(a.base, (pc) => pc.id === machine.id && !pc.updating && typeof pc.update_error === "string");
+  expect(failed.update_error).toBe("That PC's Ovis could not update itself: The build failed.");
+});

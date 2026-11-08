@@ -95,7 +95,8 @@ an address the latest look found in the last 10 minutes, including a PC it left 
 it was already added).
 
 Its workspaces then join the sidebar as an SSH PC's do. Nothing is installed on that PC: it runs
-its own Ovis, which updates itself, so it has no bridge controls. Its connection carries the PC's
+its own Ovis, which updates itself, so it has no bridge controls; its update can still be started
+from here ([Updating PCs from here](#updating-pcs-from-here)). Its connection carries the PC's
 status, its API routes and its terminals as streams of one relay session, which holds at most 8
 WebSockets, so about 7 of its terminals can be open at once. A dropped connection comes back with
 the same backoff as an SSH PC's and signs in with the saved key; nothing typed is sent again.
@@ -135,6 +136,69 @@ code, `POST /api/machines/relay/code` with `{ "code": "<code>" }` runs one excha
 `unreachable`, `forged`); then `POST /api/machines/relay` with `{ "found": "<ticket>" }` adds
 that PC, once.
 
+## Updating PCs from here
+
+Every PC added here, through the relay (direct or relayed) or over SSH, is updated from the PC in
+use, without going to it. Each PC in `GET /api/machines` (and the machine events) carries
+`ovis_update` when it has an update it can take from here, unasked:
+
+- `how: "own"`: the PC runs its own Ovis (a relay PC, or an SSH PC's own server) and its updater
+  offers a newer release. A connected PC is asked through its connection (`GET /api/updates`
+  there) when it connects and every 5 minutes; an SSH PC whose own Ovis is older than this app
+  says so on its connect.
+- `how: "bridge"`: an SSH PC's bridge from this app is of another version.
+- `updatable: false` with `reason`, in plain words, when an update is on offer but cannot run from
+  here (not started by its updater, blocked there, too old to install by revision, a saved herdr
+  machine whose bridge was never approved). An SSH PC's own Ovis is never updated from here to a
+  release newer than this app, beta builds included (`0.6.0-beta.2` is newer than `0.5.1` and older
+  than `0.6.0`), nor to one whose version it does not tell: this app would then refuse to connect
+  to it. Absent or null: up to date, or not known yet.
+
+`POST /api/machines/:id/update` starts that update (202 `{ job_id }`), whichever way the PC is
+reached, and refuses one that cannot run with 409 `update_unavailable` and the same words. A
+PC's own offer names its release as `revision` (a connected PC's, or the one an SSH PC's own
+Ovis older than this app told at its last connect); a body `{ "revision": … }` with the one shown
+makes sure only that release is installed: one the PC offers instead by then is refused, never installed
+unseen. Update all installs each PC's release as this server last read it when it was asked, also for
+a PC that waits its turn. The 409 comes from the offer this server holds; when the PC itself offers
+another release by the time it is asked (or already installs one), the 202 job ends with
+`update_error` saying so, and nothing is installed. A
+connected PC's own Ovis is asked to install the release it offers, by revision, through its
+connection (no redirect is followed); its connection drops while it restarts, the PC reconnects as
+any PC does, and the update ends once it answers on that release (at most 15 minutes, or a minute
+for the install to start). Anything else runs the bridge update above. While it runs, the PC's
+`updating` shows its steps; a failed one leaves `update_error`, in plain words, until the next try
+starts or one succeeds. `DELETE /api/machines/:id/update` ends the wait (an install already running
+there runs on).
+
+`POST /api/machines/update-all` starts every PC's update at once: 202 `{ started, queued, skipped }`.
+Own updates run side by side; bridge updates run one after another, sharing one bundle download,
+and show `updating.queued` until their turn; a PC with an update it cannot take is `skipped` with
+why. Up-to-date PCs are not listed. At most four PCs' own updates run at once; the others show
+`updating.queued` and start as one ends.
+
+### Who may change PCs from here
+
+One rule covers every change to this PC's PCs: every `POST`, `PATCH` and `DELETE` under
+`/api/machines/` except a PC's own routes (its panes, workspaces and files, which are driven as this
+PC's are). That covers adding a PC (SSH setup, relay, Tailscale), answering, approving or cancelling a
+setup, its settings, renaming, turning on or off and removing a PC, and every update
+(`/:id/update`, `update-all`, `/:id/update-bridge`, which takes `{ "revision" }` and otherwise uses
+the release its card shows). The same rule covers installing an update on this PC itself:
+`POST /api/updates/install` and `POST /api/herdr/update`. The one exception is the connection
+server's bridge token, which asks for its own install by revision.
+
+| May | Who |
+|---|---|
+| Yes | a driving sign-in on this PC, its token, its Tailscale login |
+| Yes | a driving device paired with this install, directly or over the relay (the owner's phone, his other PCs) |
+| No | a visitor of an open install, with nothing paired |
+| No | a Portal visitor, whatever role Portal gives |
+| No | any device that only watches |
+
+The request must also come from this app's own page: the `X-Herdr-Update: 1` header, same origin,
+no query. Anything else gets 403 `forbidden`. The app sends the header on every PC request.
+
 ## Runtime and endpoints
 
 ```
@@ -154,6 +218,8 @@ The current server keeps one status-only WebSocket per remote PC without attachi
 | `GET /api/machines/events` | SSE roster and machine-scoped status events |
 | `POST /api/machines/setup` | Create an interactive setup job |
 | `GET/POST/DELETE /api/machines/setup/:id` | Inspect, answer/approve, cancel |
+| `POST/DELETE /api/machines/:id/update` | Start or stop waiting for the PC's update ([Updating PCs from here](#updating-pcs-from-here)) |
+| `POST /api/machines/update-all` | Start every PC's update |
 | `PATCH /api/machines/:id` | Rename or change `enabled` |
 | `DELETE /api/machines/:id` | Forget the PC and remove its local private key |
 | `/api/machines/:id/{session,agents,pane/*,workspace/*}` | Allowlisted target API routes |
