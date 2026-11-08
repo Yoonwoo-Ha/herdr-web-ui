@@ -39,22 +39,26 @@ const MESSAGES_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (const
  * under its store's real path: no link for the file, its folder or any folder up to the store, so it is
  * never another conversation's or another store's.
  */
-function ownMessagesFile(path: string): boolean {
+function ownMessagesFile(path: string): { dev: bigint; ino: bigint } | null {
   try {
-    if (!lstatSync(path).isFile()) return false;
+    // as bigints: a large inode number rounded to a double could match another file's
+    const stat = lstatSync(path, { bigint: true });
+    if (!stat.isFile()) return null;
     const folder = dirname(path);
     const store = dirname(dirname(folder));
-    return realpathSync(path) === join(realpathSync(store), "conversations", basename(folder), basename(path));
-  } catch { return false; }
+    return realpathSync(path) === join(realpathSync(store), "conversations", basename(folder), basename(path)) ? { dev: stat.dev, ino: stat.ino } : null;
+  } catch { return null; }
 }
 
 /** The reader of Letta's messages files for the tracker: its own regular file only, read from its last `cap` bytes when read anew. */
 export function lettaMessagesFile(cap = LETTA_MESSAGES_BYTES): OmoFile {
   const open = (path: string): number | null => {
-    if (!ownMessagesFile(path)) return null;
+    const checked = ownMessagesFile(path);
+    if (checked === null) return null;
     let fd: number;
     try { fd = openSync(path, MESSAGES_FLAGS); } catch { return null; }
-    try { if (fstatSync(fd).isFile()) return fd; } catch { /* gone */ }
+    // a folder above it swapped for a link between the check and the open opens another file: the same one must be open
+    try { const opened = fstatSync(fd, { bigint: true }); if (opened.isFile() && opened.dev === checked.dev && opened.ino === checked.ino) return fd; } catch { /* gone */ }
     closeSync(fd);
     return null;
   };
@@ -62,7 +66,7 @@ export function lettaMessagesFile(cap = LETTA_MESSAGES_BYTES): OmoFile {
     stat: (path) => {
       const fd = open(path);
       if (fd === null) return null;
-      try { const stat = fstatSync(fd); return { size: stat.size, id: `${stat.dev}:${stat.ino}` }; } finally { closeSync(fd); }
+      try { const stat = fstatSync(fd, { bigint: true }); return { size: Number(stat.size), id: `${stat.dev}:${stat.ino}` }; } finally { closeSync(fd); }
     },
     lines: (path, from, size, each, current) => {
       const fd = open(path);
@@ -111,7 +115,12 @@ export function lettaTitleStatus(snapshot: { panes: HerdrPane[]; agents?: { pane
   const { panes } = snapshot;
   // a read older than one already applied shows what the newest said, and changes nothing it keeps
   if (!newest) {
-    for (const pane of panes) if (pane.agent === "letta" && pane.agent_status === "unknown" && !tracks(pane.pane_id)) pane.agent_status = last.get(pane.pane_id) ?? pane.agent_status;
+    for (const pane of panes) {
+      if (pane.agent !== "letta") continue;
+      if (!tracks(pane.pane_id) && pane.agent_status === "unknown") pane.agent_status = last.get(pane.pane_id) ?? pane.agent_status;
+      // a tracked pane's file says working while its approval waits: the newest read saw it blocked
+      else if (tracks(pane.pane_id) && last.get(pane.pane_id) === "blocked") pane.agent_status = "blocked";
+    }
     syncAgents(snapshot);
     return [];
   }
@@ -165,6 +174,8 @@ function syncAgents(snapshot: { panes: HerdrPane[]; agents?: { pane_id: string; 
  */
 /** What of a Letta pane's title finds it anew: the name and whether a spinner or the approval mark shows, never which spinner frame. */
 export function lettaRefreshKey(pane: HerdrPane): string {
+  // another pane's title (a shell's, per command) says nothing of Letta
+  if (pane.agent !== "letta") return "";
   const title = pane.terminal_title ?? "";
   const mark = LETTA_ASKING_TITLE.test(title) ? "asking" : LETTA_BUSY_TITLE.test(title) ? "busy" : "";
   return `${mark}\0${title.replace(LETTA_ASKING_TITLE, "").replace(LETTA_BUSY_TITLE, "")}`;

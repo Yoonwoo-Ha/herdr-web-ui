@@ -151,6 +151,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   }, omo);
   /** each Letta pane's status as its own title last said it, where nothing else gave one (letta-status.ts lettaTitleStatus) */
   const lettaTitled = new Map<string, AgentStatus>();
+  /** why a Letta pane came to rest while its title said it waited for approval, told when the wait ends */
+  const lettaRests = new Map<string, OmoRest>();
   /** snapshot reads in the order they began, and the newest whose titles were applied: an older read finishing late tells no turn */
   let titleReads = 0;
   let titleApplied = 0;
@@ -160,7 +162,12 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     discover: (panes) => servingCore() ? lettaPanes(panes) : Promise.resolve(new Map()),
     snapshot: omoSnapshot,
     // Letta's title says it waits for the user's approval: an answer the file reads after that was written before it
-    onChange: (paneId, derived, _background, turn, rest) => { if (lettaTitled.get(paneId) !== "blocked") gjcChanged(paneId, derived, turn, rest, "letta"); },
+    // (an aborted or errored answer written meanwhile is kept, so that the wait's end is told as the failed rest it is)
+    onChange: (paneId, derived, _background, turn, rest) => {
+      if (lettaTitled.get(paneId) !== "blocked") { gjcChanged(paneId, derived, turn, rest, "letta"); return; }
+      // each turn the file tells replaces the last: a later good answer leaves no earlier failure standing
+      if (turn && rest !== undefined && derived !== "working") lettaRests.set(paneId, rest); else if (turn) lettaRests.delete(paneId);
+    },
     onFound: (paneId) => completions.adopt(paneId, "letta", []),
   });
   /** Claude panes whose turn ended while work it started runs in the background (server/background-wait.ts) */
@@ -308,7 +315,11 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     // reads overlap (the collector's, each client's): only one newer than every read applied before tells title turns
     const newest = titleRead > titleApplied;
     if (newest) titleApplied = titleRead;
-    if (servingCore()) for (const { paneId, status } of lettaTitleStatus(named, (paneId) => letta.tracks(paneId), lettaTitled, newest)) gjcChanged(paneId, status, true, undefined, "letta");
+    if (servingCore()) for (const { paneId, status } of lettaTitleStatus(named, (paneId) => letta.tracks(paneId), lettaTitled, newest)) {
+      const rest = status === "idle" ? lettaRests.get(paneId) : undefined;
+      if (status !== "blocked") lettaRests.delete(paneId);
+      gjcChanged(paneId, status, true, rest, "letta");
+    }
     const ids = new Set(named.panes.map((pane) => pane.pane_id));
     for (const paneId of [...agentNow.keys()]) {
       if (ids.has(paneId) || (agentRead.get(paneId) ?? 0) > read) continue;
@@ -507,10 +518,15 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       hearClaude(paneId, agent, read, replay === undefined);
       if (agent === "claude") claudeAgents.poll(paneId);
     } finally { settling = was; }
-    const raw = restingClaude(paneId, agent, launchedAgents.settle(paneId, read));
+    // a live report makes what the title said before it stale
+    if (agent === "letta" && read !== "unknown" && replay === undefined) lettaTitled.delete(paneId);
+    // an unreported Letta pane on herdr-core has no word of herdr's: what its own title last said stands for it
+    const titled = agent === "letta" && read === "unknown" && servingCore() && !letta.tracks(paneId) ? lettaTitled.get(paneId) : undefined;
+    const raw = restingClaude(paneId, agent, launchedAgents.settle(paneId, titled ?? read));
     gjc.poll();
     // a report or another agent takes the pane back from Letta's own files
-    if (letta.runs(paneId) && (agent !== "letta" || read !== "unknown")) letta.ended(paneId);
+    // a replay around a gap carries Ovis's own projected status, not herdr's word: only another agent hands the pane back then
+    if (letta.runs(paneId) && (agent !== "letta" || (replay === undefined && read !== "unknown"))) letta.ended(paneId);
     letta.poll();
     // read back from a snapshot around a gap between subscriptions. An OmO pane's status there
     // is OmO's own or herdr's by turns (server/omo-status.ts), and a difference is no change;
@@ -578,6 +594,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     omo.ended(paneId);
     gjc.ended(paneId);
     letta.ended(paneId);
+    lettaRests.delete(paneId);
     options.openCodeState?.forget(paneId);
     releaseOpenCodePane(paneId);
     finishes.ended(paneId);

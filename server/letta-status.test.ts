@@ -137,7 +137,23 @@ describe("a Letta pane's status from its local messages", () => {
     expect(lookups).toBe(1);
     await tracker.refresh(titled("⠋ Tutor"));
     expect(lookups).toBe(2);
+    // another pane's title (a shell's, per command) is no reason to look Letta panes up again
+    const withShell = (title: string) => [...titled("⠋ Tutor"), { ...pane("t2", null, "unknown"), terminal_title: title } as HerdrPane];
+    await tracker.refresh(withShell("~/proj"));
+    const before = lookups;
+    await tracker.refresh(withShell("~/proj — make test"));
+    expect(lookups).toBe(before);
     tracker.stop();
+  });
+
+  it("keeps a tracked pane waiting on approval blocked in a read that finished after a newer one", () => {
+    const titled = (id: string, status: HerdrPane["agent_status"], title: string) => ({ ...pane(id, "letta", status), terminal_title: title } as HerdrPane);
+    const last = new Map<string, HerdrPane["agent_status"]>();
+    lettaTitleStatus({ panes: [titled("t1", "working", "[ ! ] Action Required | Tutor")] }, () => true, last);
+    // an older read: the file's working, a title from before the approval was asked
+    const stale = [titled("t1", "working", "⠋ Tutor")];
+    expect(lettaTitleStatus({ panes: stale }, () => true, last, false)).toEqual([]);
+    expect(stale[0]!.agent_status).toBe("blocked");
   });
 
   it("goes on from the status a tracked messages file gave when the file stops speaking", () => {
