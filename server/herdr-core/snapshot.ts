@@ -4,7 +4,7 @@ import type { HerdrPane } from "../../shared/protocol.ts";
 import type { Foreground, Status, Terminal } from "./hc-api.generated.ts";
 import { clampRatio, type Grouping, type LayoutNode, LAYOUT_AREA, parseOvisLayout, place, reconcile, sideBySide } from "./layout-doc.ts";
 import { worktreeOfLabels } from "./worktrees.ts";
-import { paneAgent, reportedAgent } from "../agent-identity.ts";
+import { paneAgent, reportedAgent, reportedStatus } from "../agent-identity.ts";
 
 /**
  * How herdr-core's terminals look to the rest of the server: herdr's session snapshot, built from
@@ -67,21 +67,9 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * hc stores the program's own status word (idle, working, done, blocked, error, …). herdr's
- * vocabulary is narrower: an error says nothing about the turn having finished, so it shows as no
- * status, like a word neither knows.
- */
+/** The status hc's stored report says, in herdr's words (agent-identity.ts `reportedStatus`). */
 export function agentStatusOf(status: HcStatus | null | undefined): AgentStatus {
-  switch (status?.state) {
-    case "working":
-    case "blocked":
-    case "idle":
-    case "done":
-      return status.state;
-    default:
-      return "unknown";
-  }
+  return reportedStatus(status?.state);
 }
 
 /** The agent a status names, by herdr's name; a program that never reported one runs none herdr would see. */

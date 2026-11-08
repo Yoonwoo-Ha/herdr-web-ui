@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { paneAgent, paneSession } from "./agent-identity.ts";
+import { paneAgent, paneSession, reportedStatus } from "./agent-identity.ts";
 
 describe("which agent a pane runs", () => {
   it("takes the app the program reported, in herdr's names", () => {
@@ -43,6 +43,11 @@ describe("which agent a pane runs", () => {
     expect(paneSession("opencode", { named: ["ses_a"], titled: ["ses_c"] })).toBeNull();
     expect(paneSession("opencode", { named: ["ses_a"] })).toBeNull();
     expect(paneSession("claude", { named: ["ses_a"], titled: ["ses_a"] })).toBeNull();
+  });
+
+  it("reads a reported status in herdr's words, an error or an unknown word as none", () => {
+    expect(["working", "blocked", "idle", "done", "error", "thinking", "", null, undefined].map(reportedStatus))
+      .toEqual(["working", "blocked", "idle", "done", "unknown", "unknown", "unknown", "unknown", "unknown"]);
   });
 
   it("does not take a binary whose name proves nothing on that platform", () => {

@@ -1,6 +1,6 @@
 import nodePath from "node:path";
 import { AGENT_CATALOG, catalogPlatform, type CatalogPlatform } from "../shared/agent-catalog.ts";
-import type { AgentSessionInfo } from "../shared/herdr-api.generated.ts";
+import type { AgentSessionInfo, AgentStatus } from "../shared/herdr-api.generated.ts";
 
 /**
  * Which agent a pane runs, decided in one place from the facts a runtime gives about it, so the
@@ -62,6 +62,23 @@ export function processAgent(argv: readonly string[], platform: CatalogPlatform 
   if (!program) return null;
   const entry = AGENT_CATALOG.find((candidate) => candidate.detect.binaries.includes(program) && !(platform && candidate.detect.unreliable_on?.[platform]));
   return entry?.id ?? null;
+}
+
+/**
+ * The status a program's own report says (herdr-core keeps its OSC 7501 word: idle, working, done,
+ * blocked, error, …), in herdr's narrower words: an error says nothing about the turn having
+ * finished, so it shows as no status, like a word neither knows.
+ */
+export function reportedStatus(state: string | null | undefined): AgentStatus {
+  switch (state) {
+    case "working":
+    case "blocked":
+    case "idle":
+    case "done":
+      return state;
+    default:
+      return "unknown";
+  }
 }
 
 /** What a runtime tells about which conversation a pane's agent shows. */
