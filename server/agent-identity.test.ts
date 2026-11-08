@@ -28,6 +28,43 @@ describe("which agent a pane runs", () => {
     expect(paneAgent({ foreground: ["C:\\Program Files\\Claude\\Claude.EXE"] }, "windows")).toBe("claude");
   });
 
+  // a terminal whose platform nothing tells (another machine's, without a folder), or only POSIX's (#3319)
+  it("names nothing a platform would decide when it is unknown, and no shim off Windows", () => {
+    expect([["claude"], ["node", "/home/u/.bin/letta"], ["cmd"], ["C:\\Users\\u\\letta.cmd"], ["C:\\Program Files\\Claude\\Claude.EXE"]].map((foreground) => paneAgent({ foreground }, null)))
+      .toEqual(["claude", "letta", null, null, null]);
+    expect([["cmd"], ["/mnt/c/Users/u/letta.cmd"]].map((foreground) => paneAgent({ foreground }, "posix"))).toEqual(["cmd", null]);
+  });
+
+  // a backslash is part of a POSIX file name: only Windows reads it as a separator (#3319 review)
+  it("splits a name at a backslash only where the platform does", () => {
+    expect((["posix", "linux", "macos"] as const).map((platform) => paneAgent({ foreground: ["/home/u/a\\claude"] }, platform))).toEqual([null, null, null]);
+    // Windows reads the same word as a folder `a` holding Claude
+    expect(paneAgent({ foreground: ["/home/u/a\\claude"] }, "windows")).toBe("claude");
+    // a platform nothing tells: the two readings differ, so it names nobody
+    expect(paneAgent({ foreground: ["/home/u/a\\claude"] }, null)).toBeNull();
+  });
+
+  // hc tells a terminal's own pid and the pid in front of it, never a process start (#3319 review)
+  it("names a terminal from its start only while that same process is still in front", () => {
+    // the runtime names no foreground program: the start does, while the pids match
+    expect(paneAgent({ foregroundPid: 7, launcher: { argv: ["node", "/home/u/.bin/letta"], pid: 7 } }, "linux")).toBe("letta");
+    expect(paneAgent({ foreground: [], foregroundPid: 7, launcher: { argv: ["C:\\Users\\u\\letta.cmd"], pid: 7 } }, "windows")).toBe("letta");
+    // a foreground the runtime names wins, even as the same pid: a claude start that exec()ed bash is bash now
+    expect(paneAgent({ foreground: ["bash"], foregroundPid: 7, launcher: { argv: ["claude"], pid: 7 } }, "linux")).toBeNull();
+    expect(paneAgent({ foreground: ["cmd.exe"], foregroundPid: 7, launcher: { argv: ["C:\\Users\\u\\letta.cmd"], pid: 7 } }, "windows")).toBeNull();
+    // a terminal started as claude that now runs codex: what is in front is no longer that start
+    expect(paneAgent({ launcher: { argv: ["claude"], pid: 7 }, foreground: ["codex"], foregroundPid: 9 }, "linux")).toBe("codex");
+    expect(paneAgent({ launcher: { argv: ["claude"], pid: 7 }, foreground: ["bash"], foregroundPid: 9 }, "linux")).toBeNull();
+    // no pid in front, or none told for the start: nothing proves the start still runs
+    for (const facts of [
+      { launcher: { argv: ["claude"], pid: 7 } },
+      { launcher: { argv: ["claude"], pid: 7 }, foreground: null, foregroundPid: null },
+      { launcher: { argv: ["claude"] }, foregroundPid: 7 },
+    ]) expect(paneAgent(facts, "linux")).toBeNull();
+    // the start is a plain shell, still in front: it names no agent
+    expect(paneAgent({ launcher: { argv: ["bash"], pid: 7 }, foregroundPid: 7 }, "linux")).toBeNull();
+  });
+
   it("names none for a shell, an unknown program, or a program merely given an agent's name", () => {
     for (const foreground of [["bash"], ["-zsh"], ["vim", "letta"], ["sh", "-c", "letta"], ["node", "/srv/app/server.js"], ["python3", "-m", "letta"], ["node", "-e", "letta"], ["node", "--", "-letta"], ["node", "/srv/project/pi.js"], ["bun", "letta.ts"], ["/opt/x/letta.cmd"], []]) {
       expect(paneAgent({ foreground }, "linux")).toBeNull();

@@ -4,7 +4,8 @@ import type { HerdrPane } from "../../shared/protocol.ts";
 import type { Foreground, Status, Terminal } from "./hc-api.generated.ts";
 import { clampRatio, type Grouping, type LayoutNode, LAYOUT_AREA, parseOvisLayout, place, reconcile, sideBySide } from "./layout-doc.ts";
 import { worktreeOfLabels } from "./worktrees.ts";
-import { paneAgent, reportedAgent, reportedStatus } from "../agent-identity.ts";
+import { paneAgent, type ProgramPlatform, reportedAgent, reportedStatus } from "../agent-identity.ts";
+import { catalogPlatform, type CatalogPlatform } from "../../shared/agent-catalog.ts";
 
 /**
  * How herdr-core's terminals look to the rest of the server: herdr's session snapshot, built from
@@ -99,17 +100,47 @@ export function agentOfStatus(status: HcStatus | null | undefined): string | nul
   return reportedAgent(status?.app);
 }
 
-/** The agent a terminal runs (agent-identity.ts): its program's report, else the process in front of it. */
-export function agentOf(terminal: Pick<HcTerminal, "status" | "foreground">): string | null {
+/**
+ * Where a core's terminals run: this PC, by its platform (null for one the catalog does not know),
+ * or another machine the core reaches (machine-scope.ts, `elsewhere`).
+ */
+export type CoreHost = CatalogPlatform | null | "elsewhere";
+
+/** The host of a server's core: this PC's own, unless it shows another machine (adapter.ts `otherMachine`). */
+export function coreHost(otherMachine: boolean | undefined, platform: NodeJS.Platform = process.platform): CoreHost {
+  return otherMachine ? "elsewhere" : catalogPlatform(platform);
+}
+
+/**
+ * The platform a terminal's programs run on. A terminal of this PC's core runs on this PC. hc names
+ * no platform, so another machine's is read off a folder's shape: a drive letter or a `\\` share
+ * is Windows, a `/` path is Linux's or macOS's (WSL's `/mnt/c` too: its shell is Linux). A missing
+ * or relative folder tells nothing, nor does `//server/share`, a share to Windows and a root to POSIX.
+ */
+export function terminalPlatform(cwd: string | undefined, host: CoreHost): ProgramPlatform {
+  if (host !== "elsewhere") return host;
+  if (cwd === undefined || cwd.startsWith("//")) return null;
+  if (windowsPath(cwd)) return "windows";
+  return cwd.startsWith("/") ? "posix" : null;
+}
+
+/**
+ * The agent a terminal runs (agent-identity.ts): its program's report, else the process in front of
+ * it, else the command it started with while the process that ran it is still in front, as its own
+ * platform names programs: by the process in front's folder, else the terminal's.
+ */
+export function agentOf(terminal: Pick<HcTerminal, "status" | "foreground"> & { cwd?: string | undefined; argv?: readonly string[] | undefined; pid?: number | null }, host: CoreHost): string | null {
   const front = terminal.foreground;
-  return paneAgent({ reported: terminal.status?.app, foreground: front ? (front.argv?.length ? front.argv : [front.name]) : null });
+  const platform = terminalPlatform(front?.cwd || terminal.cwd, host);
+  return paneAgent({ reported: terminal.status?.app, foreground: front?.argv?.length ? front.argv : front?.name ? [front.name] : null, foregroundPid: front?.pid ?? null, launcher: terminal.argv?.length ? { argv: terminal.argv, pid: terminal.pid ?? null } : null }, platform);
 }
 
 /** hc's record of the process in front of a terminal (a record's `foreground`, a `foreground` event's data); null for none or another shape. */
 export function foregroundOf(value: unknown): HcForeground | null {
   if (!isRecord(value) || typeof value["pid"] !== "number" || typeof value["name"] !== "string") return null;
   const argv = value["argv"];
-  return { pid: value["pid"], name: value["name"], ...(Array.isArray(argv) && argv.every((word) => typeof word === "string") ? { argv } : {}) };
+  const cwd = value["cwd"];
+  return { pid: value["pid"], name: value["name"], ...(Array.isArray(argv) && argv.every((word) => typeof word === "string") ? { argv } : {}), ...(typeof cwd === "string" ? { cwd } : {}) };
 }
 
 /**
@@ -177,6 +208,11 @@ function appTree(node: unknown, take: (address: string) => HcTerminal | null, he
   return parts.length === 0 ? null : chain(parts, node["type"] === "column" ? "down" : "right");
 }
 
+/** Whether a path is Windows-shaped: a drive letter or a UNC prefix. */
+function windowsPath(path: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|\\\\)/.test(path);
+}
+
 /**
  * A folder's last name. A Windows path (a drive letter or a UNC prefix) splits at either slash and
  * any other at `/` only, by the path's shape and not this host's platform: a server can show
@@ -185,7 +221,7 @@ function appTree(node: unknown, take: (address: string) => HcTerminal | null, he
  */
 function basename(path: string): string {
   if (/^(?:\\\\[?.]\\)?[A-Za-z]:[\\/]+$/.test(path)) return path;
-  const parts = path.split(/^(?:[A-Za-z]:[\\/]|\\\\)/.test(path) ? /[\\/]/ : "/").filter(Boolean);
+  const parts = path.split(windowsPath(path) ? /[\\/]/ : "/").filter(Boolean);
   return parts[parts.length - 1] ?? path;
 }
 
@@ -361,7 +397,7 @@ export function reportedFacts(status: HcStatus | null | undefined): Pick<HerdrPa
   };
 }
 
-function paneOf(terminal: HcTerminal, workspaceId: string, tabId: string, shown: ReadonlySet<string>, firstTurn?: FirstTurn, sessionOf?: SessionOf): HerdrPane {
+function paneOf(terminal: HcTerminal, workspaceId: string, tabId: string, shown: ReadonlySet<string>, host: CoreHost, firstTurn?: FirstTurn, sessionOf?: SessionOf): HerdrPane {
   const cwd = terminal.foreground?.cwd ?? terminal.cwd;
   const session = sessionOf?.(terminal) ?? null;
   return {
@@ -375,7 +411,7 @@ function paneOf(terminal: HcTerminal, workspaceId: string, tabId: string, shown:
     grid: { cols: terminal.cols, rows: terminal.rows },
     workspace_id: workspaceId,
     tab_id: tabId,
-    agent: agentOf(terminal),
+    agent: agentOf(terminal, host),
     agent_status: shownStatusOf(terminal.status, terminal.turn, terminal.labels, firstTurn?.(terminal)),
     cwd,
     foreground_cwd: cwd,
@@ -457,9 +493,10 @@ function arranged(placed: Group[], ovisDoc: unknown): { groups: Group[]; zoomed:
  * window, and no pane is in front of anyone the way a herdr TUI's is. Each tab is the fixed
  * LAYOUT_AREA cut top down by its tree (the app's, or Ovis's own document `ovisDoc` where no Herdr
  * app arranges the core), never by its terminals' grids: a viewer sizes a terminal to its pane's
- * cell, and a grid read back as the pane made panes shrink each other (#2812).
+ * cell, and a grid read back as the pane made panes shrink each other (#2812). `host`: where the
+ * core's terminals run (agentOf).
  */
-export function buildSnapshot(terminals: readonly HcTerminal[], layout: unknown, version: string, firstTurn?: FirstTurn, ovisDoc?: unknown, sessionOf?: SessionOf): SessionSnapshot {
+export function buildSnapshot(terminals: readonly HcTerminal[], layout: unknown, version: string, firstTurn?: FirstTurn, ovisDoc?: unknown, sessionOf?: SessionOf, host: CoreHost = coreHost(false)): SessionSnapshot {
   const workspaces: WorkspaceInfo[] = [];
   const tabs: TabInfo[] = [];
   const panes: PaneInfo[] = [];
@@ -473,7 +510,7 @@ export function buildSnapshot(terminals: readonly HcTerminal[], layout: unknown,
     for (const [tabIndex, tab] of group.tabs.entries()) {
       const byAddress = new Map(tab.terminals.map((terminal) => [terminal.address, terminal]));
       const cut = place(tab.root ?? sideBySide(tab.terminals.map((terminal) => terminal.address)));
-      const tabPanes = cut.panes.map(({ pane_id }) => paneOf(byAddress.get(pane_id)!, group.id, tab.id, shown, firstTurn, sessionOf));
+      const tabPanes = cut.panes.map(({ pane_id }) => paneOf(byAddress.get(pane_id)!, group.id, tab.id, shown, host, firstTurn, sessionOf));
       groupPanes.push(...tabPanes);
       const alone = zoomed.get(tab.id);
       const focused = alone ?? tabPanes[0]!.pane_id;
