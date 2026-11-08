@@ -213,10 +213,12 @@ export async function sshCandidates(options: SshCandidatesOptions = {}): Promise
   const [config, status] = await Promise.all([readCapped(join(sshDir, "config"), MAX_FILE_BYTES), (options.readStatus ?? readTailscaleStatus)()]);
   const hosts = config === null ? [] : await sshConfigHosts(config, includer(sshDir, options.home ?? homedir()));
   const peers = tailnetPeers(status);
-  // a config host names a Tailscale PC by its machine or MagicDNS name, as alias or HostName: that row stands for it
+  // a config host is the Tailscale PC it reaches: its HostName (machine name, MagicDNS name or Tailscale address)
+  // when it sets one, else its alias, as ssh resolves it. Then that row stands for it. An alias alone never claims a
+  // PC its HostName leads away from: one kept from before a rename names a PC it no longer reaches
   const peerOf = (alias: string, hostname: string | null) => {
-    const names = [alias, ...(hostname === null ? [] : [hostname])].map((value) => value.toLowerCase().replace(/\.$/, ""));
-    return peers.find(({ name, dnsName }) => names.includes(name.toLowerCase()) || names.includes(dnsName.toLowerCase()));
+    const target = (hostname ?? alias).toLowerCase().replace(/\.$/, "");
+    return peers.find(({ name, dnsName, ips }) => target === name.toLowerCase() || target === dnsName.toLowerCase() || ips.includes(target));
   };
   const claimed = new Set<string>();
   const fromConfig: SshCandidate[] = hosts.map(({ alias, hostname, user }) => {

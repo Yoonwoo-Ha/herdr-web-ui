@@ -36,11 +36,11 @@ export interface TailnetPc {
   outdated: boolean;
 }
 
-interface PeerJson { DNSName?: string; UserID?: string; Online?: boolean; OS?: string; Tags?: string[] }
+interface PeerJson { DNSName?: string; UserID?: string; Online?: boolean; OS?: string; Tags?: string[]; TailscaleIPs?: string[] }
 interface StatusJson { BackendState?: string; Self?: PeerJson; Peer?: Record<string, PeerJson> }
 
 /** Online, untagged peers of this PC's own login, phones aside, from `tailscale status --json`. */
-export function tailnetPeers(status: string | null): { name: string; dnsName: string }[] {
+export function tailnetPeers(status: string | null): { name: string; dnsName: string; ips: string[] }[] {
   if (status === null) return [];
   let parsed: StatusJson;
   // user ids pass 2^53: kept as the digits written, or two ids can become one
@@ -54,7 +54,7 @@ export function tailnetPeers(status: string | null): { name: string; dnsName: st
     .map((peer) => {
       const dnsName = peer.DNSName!.replace(/\.$/, "");
       // the machine name Tailscale's admin console shows and lets the person rename, not the OS hostname
-      return { name: dnsName.split(".")[0]!.slice(0, 100), dnsName };
+      return { name: dnsName.split(".")[0]!.slice(0, 100), dnsName, ips: (peer.TailscaleIPs ?? []).filter((ip) => typeof ip === "string") };
     });
 }
 
