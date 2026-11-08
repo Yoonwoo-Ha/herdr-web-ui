@@ -152,8 +152,14 @@ pairing hosts, in a release most PCs run.
   it offers (or offering none) closes `4402`, on Cloudflare in the Worker; a device that types a code
   never needs one. A host keeps its nameplate only while that holds: once enforcement begins, or its
   pass runs out (5 minutes allowed for clocks), it closes `4402` with its device, at the alarm set for
-  that moment or at the next frame or arrival in the room, whichever comes first. The PC then opens
-  the nameplate again with the pass it holds now.
+  that moment or at the next frame or arrival in the room, whichever comes first; once the relay
+  revokes its PC or no longer trusts its pass's key, at the next frame, arrival or alarm that the new
+  settings reach: after a deploy, a Durable Object may run the previous version and its settings for
+  a few minutes, and a host admitted by a version older than this check names no pass key or PC. Any
+  revocation in the settings closes it the same way (nothing on it says which PC was revoked); a key
+  removed from the settings cannot be matched against one, so without a revocation it is held to its
+  pass's expiry and its 11-minute deadline. The PC then opens the nameplate again with the pass it
+  holds now.
 - **Storage.** With passes off, and for pairing rooms always, the Durable Object never reads its
   storage.
 
