@@ -79,17 +79,51 @@ export interface Machine {
  * - `bridge`: this app's bridge on an SSH PC is of another version; the bridge update replaces it (approved setup).
  * - `own`: the PC runs its own Ovis (a relay PC, direct or through the relay, or an SSH PC's own server) and its own
  *   updater offers a newer release, which it installs by revision when asked from here.
+ * - `install`: an SSH PC's own Ovis cannot update itself from here (started by hand, or a supervisor too old to
+ *   install by revision): this app does it over SSH (PcInstallJob), as `steps` says, then updates it.
  * `updatable` false: `reason` says why in plain words, and asking for it is refused with that reason.
  * Versions are releases without the v (`0.5.1`), null where the PC names none (a bridge).
  */
 export interface PcUpdateOffer {
-  how: "bridge" | "own";
+  how: "bridge" | "own" | "install";
   current_version: string | null;
   latest_version: string | null;
   updatable: boolean;
   reason: string | null;
-  /** `own`: the release on offer (its commit), which an update asked for may name; only that release is installed */
+  /**
+   * `own`, and an `install` that restarts its Ovis and then updates it: the release on offer (its commit), which an
+   * update asked for may name; only that release is installed
+   */
   revision?: string | null;
+  /** `install` only: what it does on that PC, in plain words, for the person to read before they start it */
+  steps?: string[];
+}
+/**
+ * POST /api/machines/install: install Ovis on a PC over SSH with the official installer, pinned to this app's
+ * release (docs/remote-pcs.md). `machine_id` names a PC added here whose own Ovis cannot update itself (its offer's
+ * `how: "install"`); without one, the PC is added once Ovis answers there.
+ */
+/** POST /api/machines/install: a PC saved here by its id, or a new one by its SSH address (and a name for it) */
+export type PcInstallRequest = { machine_id: string } | (SshTarget & { name?: string; machine_id?: undefined });
+/** why an install over SSH stopped, for the words to show (`error` carries them in English) */
+export type PcInstallFailure = "ssh_refused" | "ssh_host_key" | "ssh_unreachable" | "unsupported" | "missing_tool" | "disk" | "permission"
+  | "bridge_there" | "ovis_there" | "changed" | "not_stopped" | "installer_failed" | "no_launcher" | "not_started" | "connect_failed";
+/**
+ * An install over SSH (GET /api/machines/install/:id). `mode`: `install` on a PC without Ovis; `replace` stops the
+ * Ovis server started by hand there, then installs; `restart` restarts an Ovis whose supervisor is too old through
+ * its own launcher, then updates it. `connect_job`: the setup job (GET /api/machines/setup/:id) that connects the PC.
+ * SSH uses keys only (BatchMode): nothing asks for a password.
+ */
+export interface PcInstallJob {
+  id: string;
+  machine_id: string | null;
+  target: SshTarget;
+  mode: "install" | "replace" | "restart";
+  phase: "connecting" | "checking" | "stopping" | "installing" | "starting" | "connecting_pc" | "connected" | "failed" | "cancelled";
+  step: string;
+  error: string | null;
+  error_code: PcInstallFailure | null;
+  connect_job: string | null;
 }
 /**
  * POST /api/machines/:id/update, with an optional JSON body: `revision`, the offer's as shown. When the offer this

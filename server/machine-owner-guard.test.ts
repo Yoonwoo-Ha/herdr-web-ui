@@ -43,6 +43,8 @@ const ROUTES: [string, string, unknown][] = [
   ["POST", "relay", { link: "x" }],
   ["POST", "relay/code", { code: "x" }],
   ["POST", "tailnet", { url: "x" }],
+  ["POST", "install", { destination: "me@pc.invalid" }],
+  ["DELETE", "install/no-such-job", undefined],
 ];
 
 const cleanups: (() => void)[] = [];

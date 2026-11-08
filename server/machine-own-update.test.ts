@@ -626,6 +626,22 @@ describe("a PC whose own Ovis is older than this app", () => {
     expect(installs).toEqual([{ expected_revision: OFFERED }]);
   });
 
+  it("waits for a just-started updater's first check instead of taking it as offering nothing, then updates", async () => {
+    // restarted a moment ago: its updater has not checked for releases yet, so it offers nothing so far
+    const fresh = { checked_at: null, available: false, latest_revision: null, latest_version: null };
+    const { installs, until } = pc({ status: managedOffer(), beforeInstall: [fresh, fresh] }, { ownUpdate: { pollMs: 5, checkMs: 2000 } });
+    await until((machine) => machine.state === "connected");
+    expect(installs).toEqual([{ expected_revision: OFFERED }]);
+  });
+
+  it("does not wait on an updater whose check failed, as one that cannot reach its releases never gets a check time", async () => {
+    // a wait would last 10 s, longer than this test waits for the PC's state
+    const failed = managedOffer({ phase: "error", error: "fetch failed", checked_at: null, available: false, latest_revision: null, latest_version: null });
+    const { until } = pc({ status: failed }, { ownUpdate: { pollMs: 5, checkMs: 10_000 } });
+    const waiting = await until((machine) => machine.action_required === "setup");
+    expect(waiting.remote_ovis?.updatable).toBe(false);
+  });
+
   it("tries again on its own, not waiting for a tap, when a check for releases there outlasts its wait", async () => {
     const { installs, until } = pc({ status: managedOffer(), beforeInstall: Array.from({ length: 10_000 }, () => checking) }, { ownUpdate: { pollMs: 5, checkMs: 20 } });
     const waiting = await until((machine) => machine.state === "reconnecting" && /still checking for updates/.test(machine.error ?? ""));
@@ -726,14 +742,17 @@ describe("a PC whose own Ovis is older than this app", () => {
     expect(installs).toEqual([{ expected_revision: OFFERED }]);
   });
 
-  const refusals: [string, Remote, RegExp][] = [
-    ["not started by its updater", { status: { ...unmanagedUpdateStatus() } }, /does not update itself: Start with bun run start/],
-    ["blocked there", { status: managedOffer({ blocked_reason: "The source checkout changed. Restart the app before updating." }) }, /cannot update itself now: The source checkout changed/],
-    ["asks for its own token", { status: null }, /OVIS_TOKEN/],
-    ["too old to install a named revision", { status: managedOffer({ revision_bound_install: undefined }) }, /too old to take an update/],
-    ["without a newer release on offer", { status: managedOffer({ available: false, latest_revision: null }) }, /no newer release on offer than v0\.4\.16/],
+  // the install over SSH that puts it right, where one can: a server started by hand is replaced, a too-old supervisor restarted
+  const refusals: [string, Remote, RegExp, "replace" | "restart" | null][] = [
+    ["not started by its updater", { status: { ...unmanagedUpdateStatus() } }, /does not update itself: Start with bun run start/, "replace"],
+    ["the desktop app's server", { status: { ...unmanagedUpdateStatus(true) } }, /updates come with the app/, null],
+    ["blocked there", { status: managedOffer({ blocked_reason: "The source checkout changed. Restart the app before updating." }) }, /cannot update itself now: The source checkout changed/, null],
+    ["asks for its own token", { status: null }, /OVIS_TOKEN/, null],
+    ["too old to install a named revision", { status: managedOffer({ revision_bound_install: undefined }) }, /too old to take an update/, "restart"],
+    ["too old, with no newer release a restart would install", { status: managedOffer({ revision_bound_install: undefined, available: false, latest_revision: null, checked_at: "2026-11-08T00:00:00.000Z" }) }, /too old to take an update/, null],
+    ["without a newer release on offer", { status: managedOffer({ available: false, latest_revision: null, checked_at: "2026-11-08T00:00:00.000Z" }) }, /no newer release on offer than v0\.4\.16/, null],
   ];
-  for (const [name, remote, reason] of refusals) it(`says why it cannot be updated from here when it is ${name}`, async () => {
+  for (const [name, remote, reason, fix] of refusals) it(`says why it cannot be updated from here when it is ${name}`, async () => {
     const { manager, installs, operations, until } = pc({ ...remote, access: { port: OWN_PORT, tailscale: { serving_url: "https://home-server.example.ts.net" } } });
     const waiting = await until((machine) => machine.action_required === "setup");
     expect(waiting.state).toBe("error");
@@ -741,14 +760,39 @@ describe("a PC whose own Ovis is older than this app", () => {
     expect(waiting.error).toMatch(reason);
     expect(waiting.remote_ovis).toMatchObject({ updatable: false, address: `pc.invalid:${OWN_PORT}`, url: "https://home-server.example.ts.net" });
     expect(waiting.remote_ovis?.reason).toMatch(reason);
-    // the devices list tells it the same way, and asking for the update anyway is refused with those words
-    expect(waiting.ovis_update).toMatchObject({ how: "own", updatable: false });
-    expect(waiting.ovis_update?.reason).toMatch(reason);
     const asked = await handleMachineRequest(new Request(`http://localhost:7317/api/machines/${MACHINE_ID}/update`, { method: "POST", headers: { origin: "http://localhost:7317", "x-herdr-machine": "1", "x-herdr-update": "1" } }), manager, undefined, undefined, false, undefined, undefined, undefined, undefined, true);
-    expect(asked.status).toBe(409);
-    expect((await asked.json() as { error: { code: string; message: string } }).error).toMatchObject({ code: "update_unavailable", message: expect.stringMatching(reason) });
+    if (fix) {
+      // the devices list offers the install over SSH, naming what it does and the very process it stops or restarts
+      expect(waiting.ovis_update).toMatchObject({ how: "install", updatable: true, reason: null });
+      expect(waiting.ovis_update?.steps?.[0]).toContain("process 4242");
+      // a restart then updates it to the release on offer when it was read: the one its card names, never another
+      if (fix === "restart") expect(waiting.ovis_update?.revision).toBe(OFFERED);
+      expect(asked.status).toBe(202);
+      const { job_id } = await asked.json() as { job_id: string };
+      expect(manager.installJob(job_id)).toMatchObject({ machine_id: MACHINE_ID, mode: fix, target: { destination: "fixture@pc.invalid" } });
+      manager.cancelInstall(job_id);
+    } else {
+      // the devices list tells it the same way, and asking for the update anyway is refused with those words
+      expect(waiting.ovis_update).toMatchObject({ how: "own", updatable: false });
+      expect(waiting.ovis_update?.reason).toMatch(reason);
+      expect(asked.status).toBe(409);
+      expect((await asked.json() as { error: { code: string; message: string } }).error).toMatchObject({ code: "update_unavailable", message: expect.stringMatching(reason) });
+    }
     expect(installs).toEqual([]);
     expect(operations).toEqual([]);
+  });
+
+  it("keeps a restart's offer and the release it names while that PC's Ovis is away, as when the restart stopped it", async () => {
+    let clock = 0;
+    const { manager, ovis, until } = pc({ status: managedOffer({ revision_bound_install: undefined }) }, { now: () => clock });
+    const offered = await until((machine) => machine.action_required === "setup");
+    expect(offered.ovis_update).toMatchObject({ how: "install", updatable: true, revision: OFFERED });
+    ovis.stop("removed");
+    // its next connect, as on this server's start or the PC turned on again: a PC waiting for setup has no retry of its own
+    const internals = manager as unknown as { machines: Map<string, unknown>; reconnect(runtime: unknown): Promise<void> };
+    clock += 10_000; void internals.reconnect(internals.machines.get(MACHINE_ID));
+    const away = await until((machine) => /own Ovis is not running/.test(machine.error ?? ""));
+    expect(away.ovis_update).toMatchObject({ how: "install", updatable: true, revision: OFFERED });
   });
 
   it("keeps a newer one's message, asks it nothing about its updates and links no address it did not give", async () => {

@@ -174,7 +174,8 @@ there runs on).
 `POST /api/machines/update-all` starts every PC's update at once: 202 `{ started, queued, skipped }`.
 Own updates run side by side; bridge updates run one after another, sharing one bundle download,
 and show `updating.queued` until their turn; a PC with an update it cannot take is `skipped` with
-why. Up-to-date PCs are not listed. At most four PCs' own updates run at once; the others show
+why (a PC whose update is an install over SSH is always skipped: it is started for that PC alone,
+once its `steps` are read). Up-to-date PCs are not listed. At most four PCs' own updates run at once; the others show
 `updating.queued` and start as one ends.
 
 ### Who may change PCs from here
@@ -199,6 +200,59 @@ server's bridge token, which asks for its own install by revision.
 The request must also come from this app's own page: the `X-Herdr-Update: 1` header, same origin,
 no query. Anything else gets 403 `forbidden`. The app sends the header on every PC request.
 
+### Installing Ovis on a PC over SSH
+
+Where a PC's own Ovis cannot update itself, or a PC has none yet, Ovis is installed there from
+here over SSH with the official installer (the `install.sh` the [guide](guide.md) pipes from
+`https://ovis.sh/install.sh`), taken from this app's own release tag on GitHub and run with
+`OVIS_REF=v<version>`, so the script and what it installs are that release's and both ends run one
+version. SSH uses keys only (`BatchMode`): a PC that wants a password, or whose host key is not
+known here yet, is refused with what to do (add its key with `ssh-copy-id`, or add it once with
+**Add PC**, which checks the fingerprint and can register a key). Linux and macOS PCs (x64 or arm64)
+and herdr's default session only.
+
+- An SSH PC whose own Ovis was started by hand (`bun run server`, not its updater) offers
+  `ovis_update.how: "install"`: its `steps` name the process it stops; Ovis is installed as a herdr
+  plugin that updates itself (`OVIS_RUNTIME=herdr`), started (herdr is started headless when it is
+  not running, which starts the plugin), and the PC connected again. As when it is run by hand, the
+  installer adds what is missing for that account (herdr, Bun, which may add itself to the shell's
+  startup file) and serves Ovis to the tailnet when Tailscale runs there; the steps say so first. An
+  Ovis already installed there (a herdr plugin or its user service) is started that way instead, since
+  the installer would keep its release. When its bridge is older than this app's, the install updates
+  it before it ends; otherwise it connects as it is, and its own update is offered on its card, never
+  installed unseen. Its settings and data stay; herdr and its sessions
+  keep running. The desktop app's own server is never replaced: it updates with the app.
+- One whose supervisor is too old to install an update by revision is restarted through its own
+  launcher (the herdr plugin's stop and start actions, or the `ovis` user service of Ovis on
+  herdr-core), then asked to install the release its card showed. The install ends once that update has
+  installed, or fails with its words. Without a launcher nothing is stopped (`no_launcher`). A release before 0.4.13 cannot be updated from here this way.
+  When the launcher stopped it but failed to start it again, Update asks the launcher once more.
+- The installer sets Ovis up for herdr's default session only: a PC added with a named session is
+  offered no install (`updatable: false`, with why).
+- `POST /api/machines/:id/update` runs that install as any update; `POST /api/machines/install`
+  with `{ "machine_id": … }` does the same, and with an SSH address (`destination`, `port`,
+  `identity_file`, `name`) installs on a PC not added here and adds it once Ovis answers there
+  (refused when Ovis or this app's bridge already runs there).
+- The job (`GET /api/machines/install/:id`, `DELETE` to cancel) goes `connecting`, `checking`,
+  `stopping`, `installing`, `starting`, `connecting_pc`, then `connected`, `failed` or `cancelled`.
+  A failure carries `error_code` and words: `ssh_refused`, `ssh_host_key`, `ssh_unreachable`,
+  `unsupported`, `missing_tool` (no curl, git or tar), `disk` (under 1 GB free in the home folder),
+  `permission`, `bridge_there`, `ovis_there`, `changed` (the process to stop is no longer the one
+  shown, or its pid now runs another program: nothing is stopped), `not_stopped`, `installer_failed` (with the installer's last words),
+  `no_launcher`, `not_started`, `connect_failed`. A failure or cancel after the server started by hand was stopped
+  says so, and whether another was installed in its place. These routes are this PC's owner's only, with the
+  `X-Herdr-Update: 1` header on a change, as updates are ([Updating PCs from here](#updating-pcs-from-here)). Only the process named is ever stopped, only after
+  it is checked to be that PC's own Ovis server. While an install or setup runs, no other setup or
+  install connects to that PC from here: the same PC as ssh resolves it (`ssh -G`: an alias, or its
+  default port given, is the same one), for any herdr session there or another PC saved at that
+  address. The install's final connect uses keys only too. A cancelled install keeps the PC busy until its own run
+  has ended. Stopping an installer already running there is best effort: beside it, a watcher writes
+  an empty line to the SSH connection every two seconds, and once nobody reads there (the connection
+  was closed) it stops the installer's whole process group, and the command writes once more right
+  before the installer starts. The PC's SSH server can take a moment to notice a closed connection,
+  longer when the network between is cut, so an installer may still start or finish its changes there
+  after the job says `cancelled`.
+
 ## Runtime and endpoints
 
 ```
@@ -220,6 +274,7 @@ The current server keeps one status-only WebSocket per remote PC without attachi
 | `GET/POST/DELETE /api/machines/setup/:id` | Inspect, answer/approve, cancel |
 | `POST/DELETE /api/machines/:id/update` | Start or stop waiting for the PC's update ([Updating PCs from here](#updating-pcs-from-here)) |
 | `POST /api/machines/update-all` | Start every PC's update |
+| `POST /api/machines/install`, `GET/DELETE /api/machines/install/:id` | Install Ovis on a PC over SSH ([Installing Ovis on a PC over SSH](#installing-ovis-on-a-pc-over-ssh)) |
 | `PATCH /api/machines/:id` | Rename or change `enabled` |
 | `DELETE /api/machines/:id` | Forget the PC and remove its local private key |
 | `/api/machines/:id/{session,agents,pane/*,workspace/*}` | Allowlisted target API routes |
