@@ -116,6 +116,35 @@ describe("Muse session log", () => {
     expect(transcriptToolOutput("muse-transcript", path, "call_05")).toBe(museToolOutput(path, "call_05"));
   });
 
+  test("serves no tool output from another log that a folder swap puts at the path around the lookup's open", () => {
+    const path = logAt(FICTION, fixture);
+    const folder = join(root, FICTION);
+    const elsewhere = join(root, "elsewhere");
+    const away = join(root, "away");
+    mkdirSync(elsewhere);
+    // the same records and length: only the result's bytes tell the logs apart
+    writeFileSync(join(elsewhere, "session.jsonl"), fixture.replace("cat: missing.txt: No such", "cat: FOREIGN.txt: No such"));
+    expect(transcriptToolOutput("muse-transcript", path, "call_03")).toBe("cat: missing.txt: No such file or directory\n");
+    // the path names the pane's own log when the lookup begins; its open meets the other folder
+    let swaps = 0;
+    const real = fs.openSync;
+    const spy = spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+      if (args[0] !== path) return real(...args);
+      swaps++;
+      renameSync(folder, away);
+      renameSync(elsewhere, folder);
+      try { return real(...args); }
+      finally {
+        renameSync(folder, elsewhere);
+        renameSync(away, folder);
+      }
+    }) as typeof fs.openSync);
+    let answered: string | null;
+    try { answered = transcriptToolOutput("muse-transcript", path, "call_03"); } finally { spy.mockRestore(); }
+    expect(swaps).toBeGreaterThan(0);
+    expect(answered).toBeNull();
+  });
+
   test("reads a session Muse 1.4.13 recorded, with its records as Muse wrote them", () => {
     const turns = real(recorded);
     expect(turns.map((turn) => [turn.role, turn.parts.map((part) => part.kind === "text" && part.phase ? `text:${part.phase}` : part.kind)])).toEqual([

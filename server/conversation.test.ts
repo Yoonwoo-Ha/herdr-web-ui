@@ -4549,3 +4549,44 @@ it("reads a Claude pane's process start from the kernel on macOS, with no ps for
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+it("serves no Claude tool output from another transcript that a folder swap puts at the path around the lookup's open", () => {
+  const root = mkdtempSync(join(tmpdir(), "claude-output-swap-"));
+  try {
+    const folder = join(root, "project");
+    const elsewhere = join(root, "elsewhere");
+    const away = join(root, "away");
+    mkdirSync(folder);
+    mkdirSync(elsewhere);
+    const path = join(folder, "session.jsonl");
+    // the same records and length: only the result's bytes tell the transcripts apart
+    const transcript = (result: string) => [
+      { type: "assistant", uuid: "a1", parentUuid: null, message: { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: {} }] } },
+      { type: "user", uuid: "u1", parentUuid: "a1", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: result }] } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+    writeFileSync(path, transcript("the pane's own output"));
+    writeFileSync(join(elsewhere, "session.jsonl"), transcript("FOREIGN SECRET OUTPUT"));
+    expect(transcriptToolOutput("claude-transcript", path, "toolu_1")).toBe("the pane's own output");
+    // the path names the pane's own transcript when the lookup begins; its open, or a read by path, meets the other folder
+    let swaps = 0;
+    const swapped = <T>(read: () => T): T => {
+      swaps++;
+      renameSync(folder, away);
+      renameSync(elsewhere, folder);
+      try { return read(); }
+      finally {
+        renameSync(folder, elsewhere);
+        renameSync(away, folder);
+      }
+    };
+    const { openSync, readFileSync } = fs;
+    const opens = spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) =>
+      args[0] === path ? swapped(() => openSync(...args)) : openSync(...args)) as typeof fs.openSync);
+    const reads = spyOn(fs, "readFileSync").mockImplementation(((...args: Parameters<typeof fs.readFileSync>) =>
+      args[0] === path ? swapped(() => readFileSync(...args)) : readFileSync(...args)) as typeof fs.readFileSync);
+    let answered: string | null;
+    try { answered = transcriptToolOutput("claude-transcript", path, "toolu_1"); } finally { opens.mockRestore(); reads.mockRestore(); }
+    expect(swaps).toBeGreaterThan(0);
+    expect(answered).toBeNull();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

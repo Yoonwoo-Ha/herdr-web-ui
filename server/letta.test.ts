@@ -95,6 +95,37 @@ describe("Letta transcript", () => {
     expect(lettaToolOutput(link, "Bash-1-1")).toBeNull();
   });
 
+  test("serves no tool output from another transcript that a folder swap puts at the path around the lookup's open", () => {
+    const folder = join(root, "own");
+    const elsewhere = join(root, "elsewhere");
+    const away = join(root, "away");
+    mkdirSync(folder);
+    mkdirSync(elsewhere);
+    const path = join(folder, "transcript.jsonl");
+    const call = (resultText: string) => `${JSON.stringify({ kind: "tool_call", name: "Bash", argsText: "{}", resultText, resultOk: true, captured_at: "2026-10-29T01:00:00.000Z", source_line_id: "Bash-1-1" })}\n`;
+    writeFileSync(path, call("the pane's own output"));
+    writeFileSync(join(elsewhere, "transcript.jsonl"), call("FOREIGN SECRET OUTPUT"));
+    expect(transcriptToolOutput("letta-transcript", path, "Bash-1-1")).toBe("the pane's own output");
+    // the path names the pane's own transcript when the lookup begins; its open meets the other folder
+    let swaps = 0;
+    const real = fs.openSync;
+    const spy = spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+      if (args[0] !== path) return real(...args);
+      swaps++;
+      renameSync(folder, away);
+      renameSync(elsewhere, folder);
+      try { return real(...args); }
+      finally {
+        renameSync(folder, elsewhere);
+        renameSync(away, folder);
+      }
+    }) as typeof fs.openSync);
+    let answered: string | null;
+    try { answered = transcriptToolOutput("letta-transcript", path, "Bash-1-1"); } finally { spy.mockRestore(); }
+    expect(swaps).toBeGreaterThan(0);
+    expect(answered).toBeNull();
+  });
+
   test("a field the reader does not know falls back, and a ref the output route refuses is not offered", () => {
     const entry = (fields: object): string => `${JSON.stringify({ kind: "tool_call", name: "Bash", argsText: "{}", captured_at: "2026-10-29T01:00:00.000Z", ...fields })}\n`;
     expect(() => parseLettaTranscript(entry({ result: { text: "must not drop" } }))).toThrow(LettaUnavailable);

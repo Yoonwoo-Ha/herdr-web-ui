@@ -10,8 +10,9 @@
  * and a turn still running is written only when it ends. A whole line that does not parse or is in
  * another shape throws LettaUnavailable: Chat then uses Terminal rather than show part of it.
  */
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, readSync } from "node:fs";
 import type { ConversationPart, ConversationTurn } from "../shared/protocol.ts";
+import { openBound } from "./conversation-shared.ts";
 import { trimOutput } from "./tool-output.ts";
 import { toolSummary } from "./transcript-records.ts";
 
@@ -100,7 +101,8 @@ export function lettaToolOutput(path: string, ref: string): string | null {
   const id = JSON.stringify(ref);
   let fd: number;
   // never through a link put where the transcript was, never waiting on a FIFO
-  try { fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)); } catch { return null; }
+  // nor another file than the one the lookup is bound to (openBound)
+  try { fd = openBound(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)); } catch { return null; }
   try {
     if (!fstatSync(fd).isFile()) return null;
     const chunk = Buffer.alloc(1024 * 1024);

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { ConversationReadPending, forgetTranscriptState, HistoryChanged, transcriptPage } from "./conversation.ts";
+import { ConversationReadPending, forgetTranscriptState, HistoryChanged, transcriptPage, transcriptToolOutput } from "./conversation.ts";
 import { grokImage, grokToolOutput, grokProjection, GrokUnavailable, parseGrokTranscript } from "./grok.ts";
 import { darwinProcess } from "./claude-store.ts";
 import { grokHeldSessionsFromLsof, grokHomeFromEnvironment, grokLsofEvidence, grokPaneProcesses, grokTranscriptPath, isGrokExecutable, resolveGrokStore } from "./grok-store.ts";
@@ -286,6 +286,39 @@ describe("shared pager projection", () => {
     expect(swaps).toBe(1);
     // the pane's own file reads as it is
     expect(page().turns.flatMap((turn) => turn.parts)).toEqual([{ kind: "text", text: "the pane's prompt" }, { kind: "text", text: "the pane's answer" }]);
+  });
+  test("serves no tool output from another session that a folder swap puts at the path around the lookup's opens after its first", () => {
+    writeFileSync(path, user(0) + tool() + update("own ".repeat(1500)));
+    const ref = lastTool().output_ref!;
+    const folder = dirname(path);
+    const elsewhere = join(root, "elsewhere");
+    const away = join(root, "away");
+    mkdirSync(elsewhere);
+    // the same records and length: only the output's bytes tell the files apart
+    writeFileSync(join(elsewhere, "updates.jsonl"), user(0) + tool() + update("FRGN".repeat(1500)));
+    expect(transcriptToolOutput("grok-transcript", path, ref)).toBe("own ".repeat(1500));
+    forgetTranscriptState();
+    // a cold lookup: the path names the pane's own file when it begins and at its first open, the projection's
+    // (verified); the later open that reads the output meets the other folder
+    let opens = 0;
+    let swaps = 0;
+    const real = fs.openSync;
+    const spy = spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+      if (args[0] !== path || opens++ === 0) return real(...args);
+      swaps++;
+      renameSync(folder, away);
+      renameSync(elsewhere, folder);
+      try { return real(...args); }
+      finally {
+        renameSync(folder, elsewhere);
+        renameSync(away, folder);
+      }
+    }) as typeof fs.openSync);
+    let answered: string | null;
+    try { answered = transcriptToolOutput("grok-transcript", path, ref); } finally { spy.mockRestore(); }
+    expect(opens).toBeGreaterThan(1);
+    expect(swaps).toBeGreaterThan(0);
+    expect(answered).toBeNull();
   });
   test("truncation resets history and tool refs; refs cannot cross stores", () => {
     writeFileSync(path, user(0) + tool() + update("a".repeat(6000)));

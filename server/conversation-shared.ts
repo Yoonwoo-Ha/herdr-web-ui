@@ -74,6 +74,27 @@ export function readBound<T>(files: readonly (readonly [string, FileIdentity])[]
   try { return read(); } finally { boundFiles = outer; }
 }
 
+/**
+ * `steps`, a reader that awaits between its steps, with `files` bound as readBound binds them through every
+ * step, after each await too; a file one step binds (bindFile) stays bound for the steps after it.
+ */
+export function* boundSteps<T>(files: readonly (readonly [string, FileIdentity])[], steps: Generator<void | Promise<void>, T, void>): Generator<void | Promise<void>, T, void> {
+  // the map readBound builds: the enclosing bindings and `files`
+  const bound = readBound(files, () => boundFiles!);
+  let failed: { error: unknown } | undefined;
+  for (;;) {
+    const outer = boundFiles;
+    boundFiles = bound;
+    let step: IteratorResult<void | Promise<void>, T>;
+    try { step = failed === undefined ? steps.next() : steps.throw(failed.error); }
+    finally { boundFiles = outer; }
+    failed = undefined;
+    if (step.done) return step.value;
+    // a read that fails fails where the steps wait for it, so their own cleanup runs
+    try { yield step.value; } catch (error) { failed = { error }; }
+  }
+}
+
 /** Binds `path` for the rest of the enclosing readBound, unless it is bound already; nothing outside one. */
 export function bindFile(path: string, identity: FileIdentity): void {
   if (boundFiles !== null && !boundFiles.has(path)) boundFiles.set(path, { dev: identity.dev, ino: identity.ino });
@@ -81,10 +102,13 @@ export function bindFile(path: string, identity: FileIdentity): void {
 
 /** Refuses `fd`, opened from `path`, when `path` is bound to another file: the read is pending. */
 export function checkBound(path: string, fd: number): void {
+  if (boundFiles?.has(path) === true) checkBoundFile(path, fstatSync(fd));
+}
+
+/** Refuses `opened`, a file opened from `path` (its stats), when `path` is bound to another file: the read is pending. */
+export function checkBoundFile(path: string, opened: FileIdentity): void {
   const identity = boundFiles?.get(path);
-  if (identity === undefined) return;
-  const opened = fstatSync(fd);
-  if (opened.dev !== identity.dev || opened.ino !== identity.ino) throw new ConversationReadPending();
+  if (identity !== undefined && (opened.dev !== identity.dev || opened.ino !== identity.ino)) throw new ConversationReadPending();
 }
 
 /**

@@ -47,7 +47,7 @@ import { authorizedTranscript } from "./transcript-store.ts";
 import type { ConversationMetadata, ConversationTurn, HerdrPane, SessionSnapshot } from "../shared/protocol.ts";
 import { herdrRpc, herdrSocketPath, paneProcessInfo, paneRead, paneScrollInfo, sessionSnapshot, type ProcessInfo } from "./herdr/client.ts";
 import { resolveAgent } from "./pane-context.ts";
-import { codexFreshSession, codexHistorySegments, createCodexTranscriptParser, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHomePlaced, parseCodexTranscript, readRange } from "./codex.ts";
+import { codexFreshSession, codexHistorySegments, createCodexTranscriptParser, type HistorySegment, codexOutputText, codexTranscriptPath, defaultCodexHome, forgetAllCodexState, forgetCodexStateFor, paneCodexHomePlaced, parseCodexTranscript, readRange } from "./codex.ts";
 import { awaited, CODEX_IMAGE_REF, CODEX_TOOL_IMAGE_REF, codexOutputPicture, codexTranscriptImage, DataUrlPictureScan, finish, finishAsync, forgetOmpBlobTypes, InlinePictureScan, MAX_IMAGE_BYTES, ompBlobAnchor, ompBlobDigest, ompBlobPictureSteps, type Steps } from "./codex-images.ts";
 import { type Held, heldOpenPlatform, openHeldDirectory } from "./held-open.ts";
 import { AmbiguousClaudeStore, claudeAttachSession, claudeProcessSession, claudeTranscriptFile, darwinProcess, defaultClaudeConfigDir, forgetClaudeSessionFile, forgetClaudeSessions, isClaudeProcess, jobClaude, processClaudeConfigDir, windowsShellClaude } from "./claude-store.ts";
@@ -78,7 +78,7 @@ import { COPILOT_IMAGE_REF, copilotImage, copilotOffsetOutput, copilotOutput, co
 import { copilotApiTranscript, copilotExplicitResume, copilotHandoffSession, copilotProcessSession, copilotTranscriptFile, copilotUnwrittenSession, openCopilotFile, readCopilotProcessSession } from "./copilot-store.ts";
 import { forgetCopilotForeground, readCopilotForeground } from "./copilot-foreground.ts";
 import { claudeSetting, parseConversationMetadata } from "./conversation-metadata.ts";
-import { answerVersion, bindFile, ConversationNotStarted, ConversationReadPending, ConversationUnavailable, copilotRecoverable, openBound, readBound, type ConversationPage, HistoryChanged, type RecognizedConversation, type StreamSource, TRANSCRIPT_WINDOW_BYTES } from "./conversation-shared.ts";
+import { answerVersion, bindFile, boundSteps, checkBoundFile, ConversationNotStarted, ConversationReadPending, ConversationUnavailable, copilotRecoverable, openBound, readBound, type ConversationPage, HistoryChanged, type RecognizedConversation, type StreamSource, TRANSCRIPT_WINDOW_BYTES } from "./conversation-shared.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
 
 import { createOmpTranscriptParser, isContextClear, MAX_TURNS, omoTaskResults, parseOmpTranscript, PI_IMAGE_REF, PI_PROMPT_IMAGE_REF, piImageBlock, piMessage, piNotice, piPromptImages, piResults, type TranscriptParser } from "./transcript-records.ts";
@@ -2942,7 +2942,7 @@ export async function conversationImage(paneId: string, ref: string, codexHome?:
   rememberPaneRead(paneId, resolved.path);
   if (resolved.source === "codex-transcript") {
     if (CODEX_TOOL_IMAGE_REF.test(ref)) return codexToolImage(resolved.path, ref, resolved.codexHome ?? codexHome ?? defaultCodexHome());
-    return codexTranscriptImage(codexHistorySegments(resolved.path, resolved.codexHome ?? codexHome), ref, pane.cwd);
+    return codexPromptImage(resolved.path, ref, pane.cwd, resolved.codexHome ?? codexHome);
   }
   if (resolved.source === "pi-transcript" || resolved.source === "cmd-transcript") return readAuthorized(resolved.path, () => piTranscriptImage(resolved.path, ref));
   // the update log the pane's own Grok holds (resolveGrokStore), read only over its active history
@@ -2953,6 +2953,19 @@ export async function conversationImage(paneId: string, ref: string, codexHome?:
   // a path above it swapped since cannot move the read elsewhere
   if (resolved.source === "omp-transcript") return ompTranscriptImage(resolved.path, ref, resolved.ompBlobs ?? null);
   return resolved.source === "claude-transcript" ? transcriptImageAsync(resolved.path, ref) : null;
+}
+
+/**
+ * A picture a Codex prompt holds (codexTranscriptImage), over the history the live rollout names as the
+ * lookup begins: its chain is discovered with that rollout bound (another file at its path, swapped in around
+ * an open, names no parent), and every rollout is then read as the file it was then. Null otherwise.
+ */
+export async function codexPromptImage(path: string, ref: string, cwd: string, codexHome?: string): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
+  const authorized = authorizedFile(path);
+  if (authorized === null) return null;
+  let segments: HistorySegment[];
+  try { segments = readBound([[path, authorized]], () => codexHistorySegments(path, codexHome)); } catch { return null; }
+  return codexTranscriptImage(segments.map((segment) => segment.path === path ? { ...segment, identity: authorized } : segment), ref, cwd);
 }
 
 /** How much of a transcript the image endpoint reads at a time while it looks for a ref's entry. */
@@ -3309,7 +3322,10 @@ export async function transcriptImageAsync(path: string, ref: string): Promise<T
   // request and its answer. The version itself is still the lease's: a rewrite between that check and
   // this lookup's stat changes it, unless the file's times did not move (the limit fineTimes states).
   const began = { began: performance.now(), wall: Date.now() };
-  try { return await imageTurn(path, () => transcriptReader.read(path, (file) => finishAsync(transcriptImageSteps(path, ref, true, file, began)), { follow: true })); } catch { return null; }
+  // the file the lease pins is the one the path names as the lookup begins, not one put there while it waited its turn
+  const authorized = authorizedFile(path);
+  if (authorized === null) return null;
+  try { return await imageTurn(path, () => transcriptReader.read(path, (file) => finishAsync(boundSteps([[path, authorized]], transcriptImageSteps(path, ref, true, file, began))), { follow: true })); } catch { return null; }
 }
 
 /**
@@ -3352,6 +3368,8 @@ function* transcriptImageSteps(path: string, ref: string, apart: boolean, file?:
   };
   try {
     const stat = yield* pinned();
+    // another file than the one the lookup is bound to (transcriptImageAsync) holds none of its pictures
+    checkBoundFile(path, stat);
     const current = function* (snapshot: Stats): Steps<boolean> { return sameImageFile(snapshot, yield* pinned()) && (yield* named(snapshot)); };
     // a lease is let in only while the path names the file it pinned (TranscriptReader.read); a change
     // since is judged once the read ends, as one during it is
@@ -3660,17 +3678,18 @@ export function transcriptToolOutput(source: Exclude<StreamSource, "agy-transcri
     }
     return null;
   }
-  if (source === "grok-transcript") return grokToolOutput(path, ref);
+  // each open of the log is held to the file the path names as the lookup begins (readAuthorized)
+  if (source === "grok-transcript") return readAuthorized(path, () => grokToolOutput(path, ref));
   if (source === "muse-transcript") {
-    const output = museToolOutput(path, ref);
+    const output = readAuthorized(path, () => museToolOutput(path, ref));
     return output !== null && output.length > TOOL_OUTPUT_MAX ? `${output.slice(0, TOOL_OUTPUT_MAX)}\n… trimmed` : output;
   }
   if (source === "letta-transcript") {
-    const output = lettaToolOutput(path, ref);
+    const output = readAuthorized(path, () => lettaToolOutput(path, ref));
     return output !== null && output.length > TOOL_OUTPUT_MAX ? `${output.slice(0, TOOL_OUTPUT_MAX)}\n… trimmed` : output;
   }
   if (source === "pi-transcript" || source === "cmd-transcript") return piToolOutput(path, ref);
-  if (source === "kimi-transcript") return kimiToolOutput(path, ref, TOOL_OUTPUT_MAX);
+  if (source === "kimi-transcript") return readAuthorized(path, () => kimiToolOutput(path, ref, TOOL_OUTPUT_MAX));
   if (source === "omo-transcript") {
     try {
       const stream = transcriptStream(source, path, statSync(path), codexHome ?? defaultCodexHome());
@@ -3721,9 +3740,14 @@ export function transcriptToolOutput(source: Exclude<StreamSource, "agy-transcri
       return ref.includes("@") ? copilotOffsetOutput(fd, ref, TOOL_OUTPUT_MAX) : copilotOutput(fd, ref, TOOL_OUTPUT_MAX);
     } finally { closeSync(fd); }
   }
-  let text: string;
-  try { text = readFileSync(path, "utf8"); } catch { return null; }
-  return outputInText(source, text, ref);
+  // read whole through one open held to the file the path names as the lookup begins (readAuthorized)
+  return readAuthorized(path, () => {
+    let fd: number;
+    try { fd = openBound(path); } catch { return null; }
+    let text: string;
+    try { text = readFileSync(fd, "utf8"); } catch { return null; } finally { closeSync(fd); }
+    return outputInText(source, text, ref);
+  });
 }
 
 /**
@@ -3824,7 +3848,10 @@ export function piTranscriptImage(path: string, ref: string): { mediaType: strin
  * large transcript never holds the bridge for more than a window's work.
  */
 export async function ompTranscriptImage(path: string, ref: string, anchor?: string | null): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
-  try { return await finishAsync(ompTranscriptImageSteps(path, ref, anchor)); } catch { return null; }
+  // every open of the transcript, after each await too, is held to the file the path names as the lookup begins
+  const authorized = authorizedFile(path);
+  if (authorized === null) return null;
+  try { return await finishAsync(boundSteps([[path, authorized]], ompTranscriptImageSteps(path, ref, anchor))); } catch { return null; }
 }
 
 /**
@@ -3934,7 +3961,10 @@ function* ompPictureSteps(stream: TranscriptStream, shape: RecordShape, content:
  * windows (finishAsync).
  */
 export async function codexToolImage(path: string, ref: string, codexHome: string): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
-  try { return await finishAsync(codexToolImageSteps(path, ref, codexHome)); } catch { return null; }
+  // as ompTranscriptImage: the live rollout as the lookup begins, and each earlier one as the chain is laid out (transcriptStream)
+  const authorized = authorizedFile(path);
+  if (authorized === null) return null;
+  try { return await finishAsync(boundSteps([[path, authorized]], codexToolImageSteps(path, ref, codexHome))); } catch { return null; }
 }
 
 function* codexToolImageSteps(path: string, ref: string, codexHome: string): Steps<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {

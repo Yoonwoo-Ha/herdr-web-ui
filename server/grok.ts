@@ -297,7 +297,8 @@ export function grokToolOutput(path: string, ref: string): string | null {
       if (outputRef(path, id) !== ref) continue;
       const length = call.owner.end - call.owner.start;
       if (length > 64 * 1024 * 1024) return null;
-      const fd = openSync(path, "r");
+      // the file a lookup is bound to (readBound), never another a folder swapped in around this open puts there
+      const fd = openBound(path);
       try {
         const bytes = Buffer.alloc(length);
         if (readSync(fd, bytes, 0, length, call.owner.start) !== length) return null;

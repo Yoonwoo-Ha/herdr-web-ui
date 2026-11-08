@@ -808,11 +808,13 @@ const readdir = (path: string): string[] => { try { return readdirSync(path); } 
 export interface HistorySegment { path: string; end: number; identity?: FileIdentity }
 
 /**
- * Chains per rollout, newest first. A header never changes, so a complete chain is
- * kept for good; one that stops at a cut no file holds yet is kept a short while,
- * so every append does not walk sessions/ again, and then looked up afresh.
+ * Chains per rollout, newest first, with the rollout they were resolved from (`live`). A header never
+ * changes, so a complete chain is kept for as long as that file is the one its path names (another
+ * rollout put at the path, continuing something else or nothing, resolves its own); one that stops at a
+ * cut no file holds yet is kept a short while, so every append does not walk sessions/ again, and then
+ * looked up afresh.
  */
-const historyChains = new Map<string, { chain: HistorySegment[]; complete: boolean; at: number }>();
+const historyChains = new Map<string, { chain: HistorySegment[]; complete: boolean; at: number; live: FileIdentity | undefined }>();
 const INCOMPLETE_CHAIN_MS = 30_000;
 
 /** Drops every remembered chain: the next read resolves each one again. */
@@ -913,11 +915,14 @@ function threadRollouts(home: string, threadId: string): string[] {
  * less history rather than the wrong one, and is looked up again next time.
  */
 function historyChain(path: string, home: string): HistorySegment[] {
+  const now = statSync(path, { throwIfNoEntry: false });
+  const live = now === undefined ? undefined : { dev: now.dev, ino: now.ino };
   const cached = historyChains.get(path);
-  if (cached && (cached.complete || Date.now() - cached.at < INCOMPLETE_CHAIN_MS)) return cached.chain;
+  const same = cached?.live !== undefined && cached.live.dev === live?.dev && cached.live.ino === live.ino;
+  if (cached && same && (cached.complete || Date.now() - cached.at < INCOMPLETE_CHAIN_MS)) return cached.chain;
   const remember = (chain: HistorySegment[], complete: boolean): HistorySegment[] => {
     historyChains.delete(path);
-    historyChains.set(path, { chain, complete, at: Date.now() });
+    historyChains.set(path, { chain, complete, at: Date.now(), live });
     if (historyChains.size > 64) historyChains.delete(historyChains.keys().next().value!);
     return chain;
   };
