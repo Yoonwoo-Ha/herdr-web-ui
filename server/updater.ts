@@ -357,9 +357,13 @@ export class Updater {
 
   private async discover(byUser = false) {
     const channel = this.channel();
-    this.patch({ phase: "checking", error: this.options.notice ?? null, error_code: null, available: false, blocked_reason: null, channel });
+    // an offer already made stays up while this check runs, and changes only with its answer: the
+    // page polls this status, and an offer withdrawn for the check's length blinks its line (#3325).
+    // An offer made on another channel is not this one's: it goes at once
+    const kept = channel === this.status.channel ? {} : { available: false };
+    this.patch({ phase: "checking", error: this.options.notice ?? null, error_code: null, blocked_reason: null, channel, ...kept });
     const reason = await this.sourceBlock();
-    if (reason) { this.patch({ blocked_reason: reason, checked_at: new Date().toISOString() }); return; }
+    if (reason) { this.patch({ blocked_reason: reason, checked_at: new Date().toISOString(), available: false }); return; }
     // Only published releases update installs: commits pushed to main without a tag stay put. The
     // beta channel also takes the beta tags CI makes on green main.
     const betas = channel === "beta" ? ["+refs/tags/beta/*:refs/tags/beta/*"] : [];
@@ -465,8 +469,10 @@ export class Updater {
     this.busy = true;
     let stage: string | null = null;
     let attempted: string | null = null;
+    let checked = false;
     try {
       await this.discover(byUser);
+      checked = true;
       // a release published since the person said yes is not the one they said yes to: nothing is
       // installed, the new offer stays to be read, and nothing tries again by itself
       // (a blocked checkout says why itself, and installs nothing either)
@@ -505,7 +511,11 @@ export class Updater {
           catch (error) { console.error("Rust PTY host install failed; the release uses the Node PTY sidecar", error); }
         }
         const reason = await this.sourceBlock();
-        if (reason) throw new Error(reason);
+        // the checkout changed while the release built: the offer ends with the block, as a check's would
+        if (reason) {
+          this.patch({ blocked_reason: reason, available: false });
+          throw new Error(reason);
+        }
         this.controller.signal.throwIfAborted();
         const previous = this.release;
         // what it replaces, on record for the supervisor the release starts: that one was not here for the install
@@ -546,7 +556,8 @@ export class Updater {
           writeFileSync(join(this.options.stateDir, "failed.json"), JSON.stringify({ revision: attempted }), { mode: 0o600 });
         } catch { /* the in-memory guard still prevents repeated automatic restarts */ }
       }
-      this.patch({ phase: "error", step: null, error: error instanceof Error ? error.message : String(error) });
+      // a check that failed ends the offer it kept while it ran; a failed install keeps it to retry
+      this.patch({ phase: "error", step: null, error: error instanceof Error ? error.message : String(error), ...(checked ? {} : { available: false }) });
     } finally {
       if (stage) rmSync(stage, { recursive: true, force: true });
       this.busy = false;
