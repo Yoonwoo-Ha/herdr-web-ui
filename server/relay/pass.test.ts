@@ -23,8 +23,18 @@ async function keeper(answer: () => Response | Promise<Response>) {
     : answer();
   const signed = () => signRelayPass(keys.privateKey, "0badc0de", identity.server_id, Math.floor(clock.now() / 1000));
   const made = new RelayPassKeeper({ stateDir, identity: () => identity, account: () => "acct_1", service: "https://account.test", fetch, clock, onPass: (pass) => passes.push(pass) });
-  return { made, clock, passes, signed };
+  return { made, clock, passes, signed, stateDir, identity };
 }
+
+test("a pass saved under another account service (a staging one, say) is never sent where that service's passes go", async () => {
+  const k = await keeper(async () => Response.json({ pass: await k.signed(), expires_in: 172_800, refresh_in: 43_200 }));
+  k.made.start();
+  await k.made.refresh();
+  k.made.stop();
+  const saved = (service: string) => new RelayPassKeeper({ stateDir: k.stateDir, identity: () => k.identity, account: () => "acct_1", service, clock: k.clock, onPass: () => {} }).current();
+  expect(saved("https://account.test")).toBe(k.passes[0]!);
+  expect(saved("https://account-staging.test")).toBeNull();
+});
 
 test("the account's refusals are told apart, and asked again later", async () => {
   for (const [status, code, state] of [[403, "not_listed", "not_listed"], [409, "relay_limit", "limit"]] as const) {

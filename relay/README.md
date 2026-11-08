@@ -288,6 +288,28 @@ cd relay
 bunx wrangler@4.156.0 deploy --dry-run --outdir /tmp/relay-dist
 ```
 
+### Staging
+
+`[env.staging]` in `wrangler.toml` is a copy of the relay for end-to-end checks of passes and pairing
+before a change reaches `relay.ovis.sh`: the Worker `ovis-relay-staging`, at its workers.dev address
+only (`routes = []`: an environment inherits the routes above otherwise), with Durable Objects,
+limiters and a usage dataset (`ovis_relay_usage_staging`) of its own, and passes enforced. CI never deploys it; it is deployed by
+hand, and that deploy never touches `relay.ovis.sh`:
+
+```sh
+cd relay
+bunx wrangler@4.156.0 deploy --env staging
+```
+
+Put the staging account service's public key in `RELAY_PASS_KEYS` under `[env.staging.vars]` first:
+without one the Worker logs `relay.pass.settings_invalid` and lets every PC in. A test PC reaches it
+with `OVIS_RELAY_URL=wss://ovis-relay-staging.<workers.dev subdomain>.workers.dev`,
+`OVIS_ACCOUNT_SERVICE_URL=https://account-staging.devswha.workers.dev` (Ovis's staging account
+service) and `OVIS_RELAY_STAGING=1`: the PC then uses that relay alone (no regional one beside it),
+asks the staging service for its pass and sends it there and nowhere else. With any other account
+service the setting does nothing but log `relay.staging.ignored`, and a pass only ever goes to the
+relays of the service that signed it (the production one's to Ovis's production relays).
+
 ## Running your own
 
 Either deploy the Worker to your own Cloudflare account (change `name` and the route in
