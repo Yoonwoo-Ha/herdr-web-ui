@@ -1039,6 +1039,8 @@ interface Entry {
   usage: ProviderUsage | null;
   readAt: number;
   nextAt: number;
+  /** whose sign-in the place held when this was read (holderOf) */
+  holder: string;
 }
 
 /** when a provider's sign-ins were last looked for, and the sources found then */
@@ -1049,8 +1051,14 @@ interface Search {
 }
 
 export class UsageService {
-  /** A local CLI login ended: rediscover sign-ins, preserving account rate-limit backoffs. */
-  invalidate(): void { this.searches.clear(); this.entries.clear(); }
+  /**
+   * A local CLI login of `provider` ended: look its sign-ins up again and read them anew, preserving account
+   * rate-limit backoffs. Only that provider: another one's hidden accounts stay unread (#3333).
+   */
+  invalidate(provider: UsageProviderId): void {
+    this.searches.delete(provider);
+    for (const source of [...this.entries.keys()]) if (source.startsWith(`${provider}|`)) this.entries.delete(source);
+  }
   /** Whether Claude's status line is wrapped here (server/statusline-install.ts), on this server's home and CLAUDE_CONFIG_DIR. */
   statusline(): StatuslineInstallState {
     return statuslineInstallState(this.statuslineOptions());
@@ -1062,7 +1070,7 @@ export class UsageService {
       if (enabled) installStatusline(this.statuslineOptions());
       else removeStatusline(this.statuslineOptions());
     } finally {
-      this.invalidate();
+      this.invalidate("claude");
     }
     return this.statusline();
   }
@@ -1086,9 +1094,13 @@ export class UsageService {
   private readonly backoffs = new Map<string, number>();
   private pending: Promise<UsageReport> | null = null;
   private pendingRefresh = false;
+  /** the keys of the accounts hidden or removed from Ovis (skipAccounts) */
+  private skipped: () => ReadonlySet<string> = () => new Set();
+  /** what `skipped` gave the last pass: an account no longer in it was shown again */
+  private lastSkipped: ReadonlySet<string> = new Set();
 
   constructor(private readonly ctx: UsageContext = systemUsageContext(), private readonly providers: readonly UsageProvider[] = USAGE_PROVIDERS,
-    private readonly additional: (refresh: boolean) => Promise<readonly ProviderUsage[]> = async () => []) {}
+    private readonly additional: (refresh: boolean, skipped: ReadonlySet<string>) => Promise<readonly ProviderUsage[]> = async () => []) {}
 
   /**
    * `refresh` asks again sooner than FRESH_MS. Concurrent callers share one pass; a refresh that
@@ -1104,10 +1116,29 @@ export class UsageService {
     return pass;
   }
 
+  /**
+   * A provider whose every listed account is among `keys` is not searched again: hiding or removing an
+   * account must stop reading its credentials, not only showing them (#3333). Its last numbers stay, so it
+   * can be shown or restored. An account without the plan is never listed, so it cannot hold a provider
+   * back; a provider not searched yet is searched once, whatever `keys` names, so a new account is still found.
+   */
+  skipAccounts(keys: () => ReadonlySet<string>): void { this.skipped = keys; }
+
   private async collect(refresh: boolean): Promise<UsageReport> {
     const now = this.ctx.now();
     const missing = new Map(this.providers.flatMap((provider) => { const command = provider.missingCommand?.(this.ctx) ?? null; return command === null ? [] : [[provider.id, command] as const]; }));
-    const usages = await Promise.all(this.providers.map((provider) => this.collectProvider(provider, now, refresh, missing.has(provider.id))));
+    const skipped = this.skipped();
+    // an account shown again is looked up and read anew now, its provider's last search no longer standing for it;
+    // the provider's other accounts keep their readings, so one still hidden is not read for it
+    const shownAgain = new Set([...this.lastSkipped].filter((key) => !skipped.has(key)));
+    for (const [source, entry] of this.entries) {
+      if (entry.usage && shownAgain.has(entry.usage.key)) { this.searches.delete(entry.usage.id); this.entries.delete(source); }
+    }
+    this.lastSkipped = skipped;
+    const usages = await Promise.all(this.providers.map((provider) => {
+      const listed = (this.searches.get(provider.id)?.sources ?? []).flatMap((source) => this.entries.get(source)?.usage ?? []);
+      return listed.length > 0 && listed.every((usage) => skipped.has(usage.key)) ? listed : this.collectProvider(provider, now, refresh, missing.has(provider.id));
+    }));
     // one account found in two places is listed once: the reading without a problem, else the first
     const byKey = new Map<string, ProviderUsage>();
     for (const usage of usages.flat()) {
@@ -1123,7 +1154,7 @@ export class UsageService {
     }
     // a provider with an account found here needs nothing more; one with none names what it could not look with (a hub's accounts are not this PC's)
     const missingCommands = [...missing].filter(([id]) => !usages.flat().some((usage) => usage.id === id)).map(([provider, command]) => ({ provider, command }));
-    return { providers: [...byKey.values(), ...await this.additional(refresh)], ...(missingCommands.length > 0 ? { missing_commands: missingCommands } : {}) };
+    return { providers: [...byKey.values(), ...await this.additional(refresh, skipped)], ...(missingCommands.length > 0 ? { missing_commands: missingCommands } : {}) };
   }
 
   /** `incomplete`: a command it looks with is missing, so the search is not kept: the next report looks again, finding a sign-in once it is installed */
@@ -1142,18 +1173,25 @@ export class UsageService {
     const read = await Promise.all(found.map(async (signIn): Promise<[string, Entry]> => {
       const source = `${provider.id}|${signIn.source}`;
       const entry = this.entries.get(source);
-      const current = entry !== undefined && now < entry.nextAt && !(forced && entry.usage?.problem !== "rate_limited");
-      return [source, current ? entry : await this.read(provider, signIn, entry?.usage ?? null, now)];
+      // a hidden or removed account keeps its last reading: its credentials are not used (#3333)
+      const key = entry?.usage?.key;
+      const hidden = key !== undefined && this.lastSkipped.has(key);
+      // only while the place still holds that account: another one there is read anew, without the hidden one's row
+      const held = hidden && entry?.holder === holderOf(signIn);
+      const current = entry !== undefined && (held || (!hidden && now < entry.nextAt && !(forced && entry.usage?.problem !== "rate_limited")));
+      return [source, current ? entry : await this.read(provider, signIn, hidden ? null : entry?.usage ?? null, now)];
     }));
     for (const source of search?.sources ?? []) if (!read.some(([found]) => found === source)) this.entries.delete(source);
     for (const [source, entry] of read) this.entries.set(source, entry);
     const sources = read.map(([source]) => source);
-    this.searches.set(provider.id, { readAt: now, nextAt: incomplete ? now : Math.min(now + FRESH_MS, ...read.map(([, entry]) => entry.nextAt)), sources });
+    // a hidden account's kept reading is past its time and is not read again, so it cannot bring the next search forward
+    const timed = read.filter(([, entry]) => !(entry.usage && this.lastSkipped.has(entry.usage.key)));
+    this.searches.set(provider.id, { readAt: now, nextAt: incomplete ? now : Math.min(now + FRESH_MS, ...timed.map(([, entry]) => entry.nextAt)), sources });
     return usages(sources);
   }
 
   private async read(provider: UsageProvider, found: Found, previous: ProviderUsage | null, now: number): Promise<Entry> {
-    const settle = (usage: ProviderUsage | null, wait: number): Entry => ({ usage, readAt: now, nextAt: now + wait });
+    const settle = (usage: ProviderUsage | null, wait: number): Entry => ({ usage, readAt: now, nextAt: now + wait, holder: holderOf(found) });
     // an account is known by its id; one the sign-in does not name, by where it was found (hashed:
     // the key reaches the browser, the credential's path must not)
     const identity = (account: Account | null | undefined) => {
@@ -1213,6 +1251,12 @@ export class UsageService {
       return keep("failed", signIn.plan ?? null, RETRY_MS);
     }
   }
+}
+
+/** Whose sign-in a place holds: the account it names, else its token, hashed (kept in memory only, never reported). */
+function holderOf(found: Found): string {
+  if (found.account) return `account:${found.account.id}`;
+  return "locked" in found ? "locked" : `token:${createHash("sha256").update(found.token).digest("hex")}`;
 }
 
 /** The key an account is listed by: its id, or, for a sign-in that names none, where it was found, hashed. */

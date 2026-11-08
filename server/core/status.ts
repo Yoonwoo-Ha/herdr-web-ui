@@ -600,7 +600,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     options.openCodeState?.forget(paneId);
     releaseOpenCodePane(paneId);
     finishes.ended(paneId);
-    if (usageLogin.ended(paneId)) usage.invalidate();
+    const signedIn = usageLogin.ended(paneId);
+    if (signedIn) usage.invalidate(signedIn);
     holdPendingPane(paneId, { code: "pane_not_found", message: "The pane ended; its pending messages were not sent" });
     pending.forget(paneId);
     waits.forget(paneId);

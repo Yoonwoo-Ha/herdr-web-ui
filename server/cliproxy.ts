@@ -24,6 +24,10 @@ export class CLIProxyService {
   private pending: Promise<readonly ProviderUsage[]> | null = null;
   private generation = 0;
   private requests: Promise<void> = Promise.resolve();
+  /** the hidden or removed accounts of the last report: their credentials are not used (#3333) */
+  private skipped: ReadonlySet<string> = new Set();
+  /** the account (email, ChatGPT workspace) each row's file named when it was read; never reported */
+  private readonly holders = new WeakMap<ProviderUsage, string>();
 
   constructor(stateDir: string) {
     this.path = join(stateDir, "cliproxy.json");
@@ -89,14 +93,21 @@ export class CLIProxyService {
     const temporary = `${this.path}.${process.pid}.tmp`;
     writeFileSync(temporary, JSON.stringify(config ?? {}), { mode: 0o600 });
     renameSync(temporary, this.path);
+    // another Hub, or another key to it, has other accounts: no row of the old one stays, hidden or not
+    const moved = config?.url !== this.config?.url || config?.management_key !== this.config?.management_key;
     this.config = config;
     this.blocked = null;
     this.problem = null;
     this.checked = false;
     this.invalidate();
+    if (moved) this.entries = [];
   }
 
-  invalidate(): void { this.generation++; this.nextAt = 0; this.readAt = 0; this.entries = []; this.pending = null; }
+  /** The next report reads the Hub anew, except the rows of the hidden or removed accounts: their credentials stay unused (#3333). */
+  invalidate(): void {
+    this.generation++; this.nextAt = 0; this.readAt = 0; this.pending = null;
+    this.entries = this.entries.filter((entry) => this.skipped.has(entry.key));
+  }
 
   call(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
     // A revoked key must cause one refusal, not one per account (the proxy bans after five).
@@ -147,13 +158,16 @@ export class CLIProxyService {
     }
   }
 
-  report(refresh = false): Promise<readonly ProviderUsage[]> {
+  /** `skipped`: accounts hidden or removed from Ovis, whose last rows stay without asking the Hub to use their credentials; one shown again is read now. */
+  report(refresh = false, skipped: ReadonlySet<string> = new Set()): Promise<readonly ProviderUsage[]> {
     if (!this.config) return Promise.resolve([]);
     if (this.pending) return this.pending;
     const now = Date.now();
-    if (now < this.nextAt && !(refresh && now - this.readAt >= MIN_REFRESH_MS)) return Promise.resolve(this.entries);
+    const shownAgain = this.entries.some((entry) => this.skipped.has(entry.key) && !skipped.has(entry.key));
+    this.skipped = skipped;
+    if (now < this.nextAt && !shownAgain && !(refresh && now - this.readAt >= MIN_REFRESH_MS)) return Promise.resolve(this.entries);
     const generation = this.generation;
-    const pass = this.collect().then((entries) => {
+    const pass = this.collect(skipped).then((entries) => {
       if (generation !== this.generation) return [];
       this.entries = entries; this.readAt = now; this.nextAt = now + FRESH_MS;
       return entries;
@@ -162,7 +176,7 @@ export class CLIProxyService {
     return pass;
   }
 
-  private async collect(): Promise<readonly ProviderUsage[]> {
+  private async collect(skipped: ReadonlySet<string>): Promise<readonly ProviderUsage[]> {
     try {
       const body = await this.call("/credentials");
       if (!Array.isArray(body["files"])) throw new CLIProxyError("cliproxy_response", 502, "Hub returned an unreadable response");
@@ -178,7 +192,13 @@ export class CLIProxyService {
         const claims = file["id_token"];
         const workspace = isJsonObject(claims) && typeof claims["chatgpt_account_id"] === "string" ? claims["chatgpt_account_id"] : null;
         const entry: ProviderUsage = { id: provider.id, key: `${provider.id}:cliproxy:${encodeURIComponent(name)}`, account, plan: null, windows: [], problem: "failed", checked_at: null };
-        if (file["disabled"] === true || file["unavailable"] === true) return [Promise.resolve(entry)];
+        // a hidden or removed account keeps its last row; one never read yet is read once, so it can be listed
+        // only while the file still names that account: another one under the same name is read anew
+        const holder = JSON.stringify([typeof file["email"] === "string" ? file["email"] : null, workspace]);
+        const kept = skipped.has(entry.key) ? this.entries.find((held) => held.key === entry.key && this.holders.get(held) === holder) : undefined;
+        if (kept) return [Promise.resolve(kept)];
+        const held = (row: ProviderUsage): ProviderUsage => { this.holders.set(row, holder); return row; };
+        if (file["disabled"] === true || file["unavailable"] === true) return [Promise.resolve(held(entry))];
         return [(async (): Promise<ProviderUsage> => {
           try {
             const reading = await provider.read({ ...ctx, fetch: async (url, init) => {
@@ -193,7 +213,7 @@ export class CLIProxyService {
           } catch (error) {
             return { ...entry, problem: error instanceof UsageHttpError && (error.status === 401 || error.status === 403) ? "expired" : "failed" };
           }
-        })()];
+        })().then(held)];
       }));
     } catch (error) {
       if (!(error instanceof CLIProxyError)) throw error;

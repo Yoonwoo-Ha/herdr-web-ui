@@ -43,6 +43,11 @@ export class UsageAccountList {
     });
   }
 
+  /** The removed keys, read under the guard as `report` reads them; throws when the list cannot be read. */
+  removed(): string[] {
+    return withOwnerGuard(this.path, () => this.read());
+  }
+
   restore(key: string): void {
     this.change((held) => held.filter((account) => account !== key));
   }
@@ -52,7 +57,7 @@ export class UsageAccountList {
     const report = await this.usage.report(refresh);
     let removed: Set<string>;
     // under the guard too: a damaged file is set aside only while no other server can have replaced it
-    try { removed = new Set(withOwnerGuard(this.path, () => this.read())); }
+    try { removed = new Set(this.removed()); }
     catch (error) {
       // an unreadable list hides nothing: every meter stays rather than none
       console.warn("Could not read the removed accounts list", error instanceof Error ? error.message : String(error));

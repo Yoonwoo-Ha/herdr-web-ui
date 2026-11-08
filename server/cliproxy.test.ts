@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +8,7 @@ import { CLIProxyService } from "./cliproxy.ts";
 import { startFakeCLIProxy } from "./cliproxy.fake.ts";
 import { CLIProxyRoutes } from "./cliproxy-routes.ts";
 import { createServer } from "./index.ts";
-import { UsageService, type UsageContext } from "./usage.ts";
+import { FRESH_MS, UsageService, type UsageContext } from "./usage.ts";
 
 const KEY = "test-management-secret-not-in-responses";
 let dir: string;
@@ -90,6 +90,80 @@ describe("CLIProxyAPI v8", () => {
     expect(fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => entry.body)).toEqual([
       expect.objectContaining({ auth_index: "a", header: expect.objectContaining({ authorization: "Bearer $TOKEN$", "anthropic-beta": "oauth-2025-04-20" }) }),
       expect.objectContaining({ auth_index: "b", header: expect.objectContaining({ authorization: "Bearer $TOKEN$", "chatgpt-account-id": "workspace-b" }) }),
+    ]);
+  });
+
+  it("asks the hub nothing for hidden accounts and keeps their last rows, until one is shown again", async () => {
+    // Given
+    await configure();
+    const ctx: UsageContext = { home: dir, env: {}, platform: "linux", fetch, now: Date.now, keychain: async () => ({ status: "missing" }), run: async () => null, has: () => true };
+    const usage = new UsageService(ctx, [], (refresh, skipped) => service.report(refresh, skipped));
+    let skipped = new Set<string>();
+    usage.skipAccounts(() => skipped);
+    const asked = () => fake.calls.filter((entry) => entry.path === "/requests/api-call").length;
+    const start = Date.now();
+    try {
+      const first = await usage.report();
+      expect(asked()).toBe(2);
+      // When
+      skipped = new Set(first.providers.map((entry) => entry.key));
+      setSystemTime(start + FRESH_MS);
+      const hidden = await usage.report(true);
+      // Then
+      expect(asked()).toBe(2);
+      expect(hidden.providers).toEqual(first.providers);
+      skipped = new Set(["claude:cliproxy:claude-a.json"]);
+      await usage.report();
+      expect(fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index)).toEqual(["a", "b", "b"]);
+    } finally { setSystemTime(); }
+  });
+
+  it("keeps hidden accounts unread across an invalidate, as after a Hub sign-in or a saved configuration", async () => {
+    // Given
+    await configure();
+    const first = await service.report();
+    const hidden = new Set(first.map((entry) => entry.key));
+    await service.report(false, hidden);
+    // When
+    service.invalidate();
+    const after = await service.report(false, hidden);
+    // Then
+    expect(fake.calls.filter((entry) => entry.path === "/requests/api-call").length).toBe(2);
+    expect(after).toEqual(first);
+  });
+
+  it("drops hidden rows when the Hub URL changes", async () => {
+    // Given
+    await configure();
+    const hidden = new Set((await service.report()).map((entry) => entry.key));
+    await service.report(false, hidden);
+    const other = startFakeCLIProxy(KEY);
+    other.files.forEach((file) => { file.email = `other-${file.email}`; });
+    try {
+      // When
+      await send("", { url: other.server.url.origin, management_key: KEY });
+      const after = await service.report(false, hidden);
+      // Then
+      expect(after.map((entry) => [entry.account, entry.windows[0]?.used_percent])).toEqual([
+        ["other-claude-a@example.test", 25],
+        ["other-codex-b@example.test", 32],
+      ]);
+    } finally { other.server.stop(true); }
+  });
+
+  it("reads a hidden Hub file anew once it names another account under the same name", async () => {
+    // Given
+    await configure();
+    const hidden = new Set((await service.report()).map((entry) => entry.key));
+    await service.report(false, hidden);
+    fake.files[0]!.email = "bob@example.test";
+    // When
+    service.invalidate();
+    const after = await service.report(false, hidden);
+    // Then
+    expect(after.map((entry) => [entry.key, entry.account])).toEqual([
+      ["claude:cliproxy:claude-a.json", "bob@example.test"],
+      ["codex:cliproxy:codex-b.json", "codex-b@example.test"],
     ]);
   });
 
