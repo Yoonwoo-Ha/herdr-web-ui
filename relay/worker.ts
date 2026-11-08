@@ -46,6 +46,10 @@ export interface Env extends PassSettings {
   RELAY_LIMITER: RateLimiter;
   /** the backstop over all addresses together */
   RELAY_GLOBAL_LIMITER: RateLimiter;
+  /** keyed by server_id, for a PC whose relay pass holds (core.ts Limiters.perPc); without it and RELAY_PASS_CHECK_LIMITER every PC counts under its address */
+  RELAY_PC_LIMITER?: RateLimiter;
+  /** keyed by the address: the passes it may have checked before its own limit */
+  RELAY_PASS_CHECK_LIMITER?: RateLimiter;
   /** Workers Analytics Engine dataset for usage counters (wrangler.toml); without it nothing is counted */
   USAGE?: { writeDataPoint(point: { indexes: string[]; blobs: string[]; doubles: number[] }): void };
 }
@@ -292,7 +296,9 @@ export class RelayRoom {
 
 export async function handle(request: Request, env: Env): Promise<Response> {
   const policy = await policyOf(env);
-  const admitted = await admit(request, request.headers.get("cf-connecting-ip") ?? "", { perAddress: env.RELAY_LIMITER, global: env.RELAY_GLOBAL_LIMITER }, policy);
+  const limiters = { perAddress: env.RELAY_LIMITER, global: env.RELAY_GLOBAL_LIMITER,
+    ...(env.RELAY_PC_LIMITER && env.RELAY_PASS_CHECK_LIMITER ? { perPc: env.RELAY_PC_LIMITER, passChecks: env.RELAY_PASS_CHECK_LIMITER } : {}) };
+  const admitted = await admit(request, request.headers.get("cf-connecting-ip") ?? "", limiters, policy);
   if (admitted instanceof Response) return admitted;
   // a PC socket refused for its pass closes here, so it wakes no Durable Object (an HTTP refusal would reach the PC as a bare 1006)
   const refused = passRefusal(admitted, policy, Date.now());

@@ -910,6 +910,52 @@ describe("relay pass", () => {
     expect((await w.open("role=client")).closedWith).toBeNull();
   });
 
+  /** A Worker over fake limiters that record what they are asked; the address has spent its own budget unless `address` says otherwise. */
+  function limitedWorld(allow: { address?: boolean; checks?: boolean } = {}) {
+    setSystemTime(new Date(T0));
+    const asked: string[] = [];
+    const rooms: string[] = [];
+    const limiter = (name: string, success: boolean) => ({ limit: async ({ key }: { key: string }) => { asked.push(`${name}:${key}`); return { success }; } });
+    const e: Env = {
+      RELAY_PASS_MODE: "enforce", RELAY_PASS_KEYS: keys,
+      RELAY: { idFromName: (name: string) => name, get: (id: unknown) => ({ fetch: async () => { rooms.push(id as string); return new Response(null, { status: 101 }); } }) },
+      RELAY_LIMITER: limiter("address", allow.address ?? false), RELAY_GLOBAL_LIMITER: limiter("global", true),
+      RELAY_PC_LIMITER: limiter("pc", true), RELAY_PASS_CHECK_LIMITER: limiter("checks", allow.checks ?? true),
+    };
+    const request = (pass?: string) => new Request(url(`role=server&${proof()}`), { headers: { upgrade: "websocket", "cf-connecting-ip": "203.0.113.9", ...(pass ? { [RELAY_PASS_HEADER]: pass } : {}) } });
+    return { e, asked, rooms, request };
+  }
+
+  test("once its address's budget is spent, a PC whose pass holds gets in on a budget of its own, so PCs behind one address get in", async () => {
+    const w = limitedWorld();
+    expect((await handle(w.request(await passFor()), w.e)).status).toBe(101);
+    expect(w.asked).toEqual(["address:203.0.113.9", "checks:203.0.113.9", "global:all", `pc:${SERVER}`]);
+    expect(w.rooms).toEqual([SERVER]);
+  });
+
+  test("past its address's budget, a pass for another PC, none, or one forged costs no signature check or only one counted one, and gets no way in", async () => {
+    const w = limitedWorld();
+    expect((await handle(w.request(await passFor("f".repeat(32))), w.e)).status).toBe(429);
+    expect((await handle(w.request(), w.e)).status).toBe(429);
+    expect(w.asked).toEqual(["address:203.0.113.9", "address:203.0.113.9"]);
+    w.asked.length = 0;
+    const good = await passFor();
+    const forged = `${good.slice(0, -8)}${good.endsWith("AAAAAAAA") ? "BBBBBBBB" : "AAAAAAAA"}`;
+    expect((await handle(w.request(forged), w.e)).status).toBe(429);
+    expect(w.asked).toEqual(["address:203.0.113.9", "checks:203.0.113.9", "global:all"]);
+    w.asked.length = 0;
+    const spent = limitedWorld({ checks: false });
+    expect((await handle(spent.request(good), spent.e)).status).toBe(429);
+    expect(spent.asked).toEqual(["address:203.0.113.9", "checks:203.0.113.9"]);
+    expect(w.rooms).toEqual([]);
+  });
+
+  test("within its address's budget a PC with its pass counts there like any socket, and its own budget is left alone", async () => {
+    const w = limitedWorld({ address: true });
+    expect((await handle(w.request(await passFor()), w.e)).status).toBe(101);
+    expect(w.asked).toEqual(["address:203.0.113.9", "global:all"]);
+  });
+
   test("a pairing host's nameplate does not outlive enforcement: no device joins it, and the alarm at the date closes it 4402", async () => {
     const enforceAt = T0 + 1000;
     const w = await world("grace", new Date(enforceAt).toISOString());

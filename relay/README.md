@@ -114,10 +114,20 @@ pairing hosts, in a release most PCs run.
 - **Sending it.** The PC puts it in the `x-ovis-relay-pass` header of every PC socket's upgrade
   (control, data, warm), never in the URL. A pass alone opens nothing: the socket still answers the
   server challenge for that `server_id`'s key, so a copied pass is no use without the PC's secret key.
-- **Checking it.** Once per socket, after the rate limits and before any room: its shape, a known
-  `kid`, `sid` equal to the socket's `server_id`, `iat` at most 5 minutes ahead and `exp` at most
-  5 minutes behind, then the signature. Never per frame. On Cloudflare the Worker checks it and hands
-  only the result to the Durable Object.
+- **Checking it.** Once per socket, before any room: its shape, a known `kid`, `sid` equal to the
+  socket's `server_id`, `iat` at most 5 minutes ahead and `exp` at most 5 minutes behind, then the
+  signature. Never per frame. On Cloudflare the Worker checks it and hands only the result to the
+  Durable Object.
+- **Limits for a PC with a pass.** Every socket counts against its address's budget first. Once that
+  is spent (others behind the same NAT, an office's, say), a PC socket whose pass holds still gets in
+  on a budget of its own, keyed by its `server_id`. Only then is the pass checked before admission:
+  first everything but the signature (a pass for another PC, or one that cannot hold, is refused for
+  nothing), then the signature, which takes one of the address's pass checks (30 a minute) and one
+  place of the backstop's, so forged passes cost a bounded number of signature checks (about 150 us
+  each). It is relief at best, never a guarantee: on Cloudflare these limits count per location and
+  approximately, someone behind the same address can spend its pass checks, and a copied pass (no
+  use without the PC's key) can spend that PC's own budget. A PC then stands where it would without
+  its pass: on its address's budget.
 - **The room.** A proven PC socket's pass authorizes its room until the pass expires; the expiry is
   kept in the Durable Object's storage, so it outlives an eviction. The PC renews it on its proven
   control socket with `{"type":"relay_pass","pass":"..."}`, which only ever moves the expiry later; a
@@ -160,6 +170,8 @@ pairing hosts, in a release most PCs run.
 | frames held for a waiting client | 200 frames or 1 MiB, whichever comes first | the client closes `1013` |
 | idle | 120 s without a frame or keepalive | the socket closes `1001` |
 | connections per address | Cloudflare Worker: 30 a minute; Bun: 120 a minute | `429`, `Retry-After: 60` |
+| connections per PC whose relay pass holds, once its address's budget is spent (passes on) | Cloudflare Worker: 30 a minute; Bun: as per address | `429`, `Retry-After: 60` |
+| relay passes checked per address past its own budget | Cloudflare Worker: 30 a minute; Bun: as per address | `429`, `Retry-After: 60` |
 | connections from all addresses | 600 a minute | `429`, `Retry-After: 60` |
 | total sockets (Bun, including pending upgrades/proofs) | 1024 | `503`, `Retry-After: 60` |
 | rooms (Bun, including pending upgrades) | 256 | `503`, `Retry-After: 60` |
@@ -196,7 +208,7 @@ and counts from 30 s after it, so such a socket closes at most 150 s after its l
 
 It sees, per socket: the `server_id`, the role, the `connection_id`, the PC's public key and its
 answer to the challenge, when frames pass and how
-large they are, and the connecting address (as the key of the per-address rate limiter only). It
+large they are, and the connecting address (as the key of the per-address rate limiters only). It
 does not see what a frame says: frames are encrypted end to end, and the relay neither parses nor
 logs them.
 
@@ -253,7 +265,7 @@ A deploy drops every socket; the PC and clients reconnect. Without the two secre
 with a notice naming the missing one and deploys nothing. It needs the `ovis.sh` zone on the deploying
 account: the route in `wrangler.toml` makes `relay.ovis.sh` a custom domain of the Worker, and
 `workers_dev = false` leaves no second address. The deploy creates the Durable Object class
-(`[[migrations]]`) and the two rate limiters (`[[ratelimits]]`, whose `namespace_id` only has to
+(`[[migrations]]`) and the rate limiters (`[[ratelimits]]`, whose `namespace_id` only has to
 be unique among the account's limiters). The Worker itself has no secrets.
 
 One-time setup by the owner:

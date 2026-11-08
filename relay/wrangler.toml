@@ -44,3 +44,24 @@ namespace_id = "1698"
   [ratelimits.simple]
   limit = 600
   period = 60
+
+# While passes are on, a PC whose relay pass holds gets this budget of its own, keyed by its
+# server_id, once its address's 30 a minute are spent: PCs behind one address (an office's NAT) are
+# not held to that address's budget.
+[[ratelimits]]
+name = "RELAY_PC_LIMITER"
+namespace_id = "1703"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
+# Passes an address past its own budget may have checked a minute (each also takes a place of the
+# backstop's): roughly what bounds the signature checks (about 150 us each) forged passes can cost.
+[[ratelimits]]
+name = "RELAY_PASS_CHECK_LIMITER"
+namespace_id = "1704"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60

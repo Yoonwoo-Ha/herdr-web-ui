@@ -79,5 +79,8 @@ export function memoryLimiters(limits: BunRelayLimits, now: () => number = Date.
   return {
     perAddress: bucket(limits.perAddressPerMinute, limits.maxAddresses),
     global: bucket(limits.globalPerMinute, 1),
+    // once its address's budget is spent, a PC whose relay pass holds gets one of its own (core.ts Limiters.perPc)
+    perPc: bucket(limits.perAddressPerMinute, limits.maxAddresses),
+    passChecks: bucket(limits.perAddressPerMinute, limits.maxAddresses),
   };
 }

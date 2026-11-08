@@ -325,6 +325,34 @@ describe("relay pass on the Bun relay", () => {
     } finally { await enforced.stop(); }
   });
 
+  test("enforced: PCs behind one address whose passes hold each get in after the address spent its budget", async () => {
+    const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
+    const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    const pass = await passPolicy(relayPassFromArgs(["--pass-mode", "enforce", "--pass-keys", `0badc0de:${Array.from(raw, (byte) => byte.toString(16).padStart(2, "0")).join("")}`], {}));
+    const limited = startBunRelay({ port: 0, pass, limits: { perAddressPerMinute: 2 } });
+    const opened: Peer[] = [];
+    try {
+      const base = `ws://127.0.0.1:${limited.port}`;
+      const phones = relayUrls(base, newServer());
+      for (let index = 0; index < 2; index++) opened.push(await Peer.open(phones.client));
+      const upgrade = { headers: { upgrade: "websocket", connection: "Upgrade", "sec-websocket-version": "13", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==" } };
+      expect((await fetch(phones.client.replace("ws://", "http://"), upgrade)).status).toBe(429);
+      // as many PCs as the address's budget of pass checks, each on a budget of its own
+      for (let index = 0; index < 2; index++) {
+        const server = newServer();
+        const token = await signRelayPass(pair.privateKey, "0badc0de", server.serverId, Math.floor(Date.now() / 1000));
+        const control = new Peer(new WebSocket(relayUrls(base, server).control, { headers: { [RELAY_PASS_HEADER]: token } } as unknown as string[]));
+        opened.push(control);
+        await control.ready;
+        control.socket.send(answerChallenge(await control.next("server_challenge"), server, null)!);
+        expect((await control.json("sync"))["relay_pass"]).toEqual({ state: "ok", enforce_at: null });
+      }
+    } finally {
+      for (const peer of opened) peer.socket.close();
+      await limited.stop();
+    }
+  });
+
   test("enforced: a pairing host needs a pass for the PC key it proves; the device that joins needs none", async () => {
     const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
     const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));

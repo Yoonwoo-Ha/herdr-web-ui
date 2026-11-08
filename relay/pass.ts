@@ -10,7 +10,7 @@
  * - `RELAY_PASS_KEYS`: `kid:hex[,kid:hex]`, the Ed25519 public keys passes are checked with.
  * - `RELAY_PASS_REVOKED`: server_ids whose passes are refused, comma separated.
  */
-import { RELAY_PASS_REQUIRED, checkRelayPass, importRelayPassKey } from "../shared/relay-pass.ts";
+import { RELAY_PASS_LIFETIME_S, RELAY_PASS_REQUIRED, RELAY_PASS_SKEW_S, checkRelayPass, importRelayPassKey, parseRelayPass } from "../shared/relay-pass.ts";
 
 export type PassMode = "off" | "grace" | "enforce";
 
@@ -72,6 +72,18 @@ export async function passPolicy(settings: PassSettings): Promise<PassPolicy> {
   const revoked = new Set((settings.RELAY_PASS_REVOKED ?? "").split(",").map((part) => part.trim()).filter(Boolean));
   for (const id of revoked) if (!/^[0-9a-f]{32}$/.test(id)) throw new Error("RELAY_PASS_REVOKED must list server_ids");
   return { mode, enforceAt, keys, revoked };
+}
+
+/**
+ * Whether a pass could hold for `serverId` at `now` (ms): everything checkRelayPass checks but the signature, so what
+ * fails here costs no signature check.
+ */
+export function passMayHold(policy: PassPolicy, pass: string | null, serverId: string, now: number): boolean {
+  const parsed = parseRelayPass(pass);
+  if (!parsed || policy.revoked.has(serverId)) return false;
+  const { kid, sid, iat, exp } = parsed.payload;
+  const seconds = Math.floor(now / 1000);
+  return policy.keys.has(kid) && sid === serverId && iat <= seconds + RELAY_PASS_SKEW_S && exp - iat <= RELAY_PASS_LIFETIME_S && exp + RELAY_PASS_SKEW_S > seconds;
 }
 
 /** Checks the pass a PC socket of `serverId` came with, at `now` (ms). */

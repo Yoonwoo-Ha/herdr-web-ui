@@ -41,7 +41,7 @@
 import { parsePairRequest, type PairSocketRequest } from "./pair-room.ts";
 import { SERVER_KEY_INVALID, SERVER_KEY_MISMATCH, SERVER_PROOF_CLOSE, SERVER_PROOF_MS, SERVER_PROOF_REQUIRED, deriveServerId, proofKey, serverChallenge, verifyServerProof } from "../shared/relay-server-proof.ts";
 import { RELAY_PASS_CLOSE, RELAY_PASS_EXPIRED, RELAY_PASS_HEADER, RELAY_PASS_INVALID, RELAY_PASS_REQUIRED, RELAY_PASS_SKEW_S } from "../shared/relay-pass.ts";
-import { checkPass, passMode, passNotice, type PassPolicy, type PassResult, type PassState } from "./pass.ts";
+import { checkPass, passMayHold, passMode, passNotice, type PassPolicy, type PassResult, type PassState } from "./pass.ts";
 
 /** the wire version this relay speaks, `v=` in the socket URL */
 export const WIRE_VERSION = "1";
@@ -186,8 +186,15 @@ export interface RateLimiter { limit(options: { key: string }): Promise<{ succes
 export interface Limiters {
   /** keyed by the connecting address */
   perAddress: RateLimiter;
-  /** asked with one key for all addresses, only once an address's own limit lets it through */
+  /** asked with one key for all addresses, only once an address's own limit (or a PC's) lets it through */
   global: RateLimiter;
+  /**
+   * keyed by server_id: a budget of its own for a PC socket whose relay pass holds, once its address's is spent,
+   * so PCs behind one address (an office's NAT) are not held to its budget. Asked only while passes are on.
+   */
+  perPc?: RateLimiter;
+  /** keyed by the address: how many passes it may have checked once its own budget is spent, which bounds what a flood of passes costs */
+  passChecks?: RateLimiter;
 }
 
 const HEX32 = /^[0-9a-f]{32}$/;
@@ -233,16 +240,28 @@ export async function admit(request: Request, address: string, limiters?: Limite
   const socket = url.pathname === "/v1/pair" ? parsePairRequest(url) : parseSocketRequest(url);
   if ("error" in socket) return text(400, socket.error);
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return text(426, "expected a WebSocket upgrade", { upgrade: "websocket" });
+  // a PC socket's server_id: only those get the rescue below; a pairing host still counts against its address
+  const pcServerId = "kind" in socket || socket.role === "client" ? undefined : socket.server_id;
+  const header = request.headers.get(RELAY_PASS_HEADER);
+  const tooMany = () => text(429, "too many connections", { "retry-after": "60" });
+  let pass: PassResult | undefined;
   if (limiters) {
-    if (!(await limiters.perAddress.limit({ key: address })).success) return text(429, "too many connections", { "retry-after": "60" });
-    if (!(await limiters.global.limit({ key: "all" })).success) return text(429, "too many connections", { "retry-after": "60" });
+    if ((await limiters.perAddress.limit({ key: address })).success) {
+      if (!(await limiters.global.limit({ key: "all" })).success) return tooMany();
+    } else {
+      // past its address's budget (others behind the same NAT, say), a PC whose relay pass holds gets in on a budget of its own
+      const { perPc, passChecks } = limiters;
+      if (!policy || policy.mode === "off" || pcServerId === undefined || !perPc || !passChecks || !passMayHold(policy, header, pcServerId, Date.now())) return tooMany();
+      // each signature checked here takes one of the address's checks and one of the backstop's places: forged passes cost little
+      if (!(await passChecks.limit({ key: address })).success || !(await limiters.global.limit({ key: "all" })).success) return tooMany();
+      pass = await checkPass(policy, header, pcServerId, Date.now());
+      if (pass.state !== "ok" || !(await perPc.limit({ key: pcServerId })).success) return tooMany();
+    }
   }
-  // checked after the limits, so a flood of requests costs no signature checks; a pairing host's pass, for the key it offers
-  const serverId = "kind" in socket ? socket.key?.server_id : socket.role === "client" ? undefined : socket.server_id;
-  if (policy && policy.mode !== "off" && serverId !== undefined) {
-    return { ...socket, pass: await checkPass(policy, request.headers.get(RELAY_PASS_HEADER), serverId, Date.now()) };
-  }
-  return socket;
+  // otherwise checked after the limits, so a flood of requests costs no signature checks; a pairing host's pass, for the key it offers
+  const serverId = "kind" in socket ? socket.key?.server_id : pcServerId;
+  if (!policy || policy.mode === "off" || serverId === undefined) return socket;
+  return { ...socket, pass: pass ?? await checkPass(policy, header, serverId, Date.now()) };
 }
 
 /** Why a PC socket or a pairing host must close at once for its pass (`enforce` and no pass that holds), or null. */
