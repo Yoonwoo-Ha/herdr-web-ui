@@ -184,11 +184,12 @@ test("a PC whose pass the relay refuses (a key it does not trust) says pass_refu
   const raw = Array.from(new Uint8Array(await crypto.subtle.exportKey("raw", untrusted.publicKey)), (byte) => byte.toString(16).padStart(2, "0")).join("");
   const f = await fixture("enforce", {}, `${KID}:${raw}`);
   expect((await f.nameAccount("acct_1")).status).toBe(204);
-  // a pass this PC kept under another key: its control socket carries it from the start, so no retry waits on a timer
+  // a pass this PC kept under another key, from this PC's own account service (a pass is kept with the service that
+  // gave it, #3302): its control socket carries it from the start, so no retry waits on a timer
   const identity = loadRelayIdentity(f.stateDir);
   const stale = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair;
   mkdirSync(join(f.stateDir, "relay"), { recursive: true });
-  writeFileSync(join(f.stateDir, "relay", "pass.json"), JSON.stringify({ pass: await signRelayPass(stale.privateKey, KID, identity.server_id, Math.floor(Date.now() / 1000)), server_id: identity.server_id, expires_at: Date.now() + 3_600_000, refresh_at: Date.now() + 3_600_000 }));
+  writeFileSync(join(f.stateDir, "relay", "pass.json"), JSON.stringify({ pass: await signRelayPass(stale.privateKey, KID, identity.server_id, Math.floor(Date.now() / 1000)), server_id: identity.server_id, service: "https://account.test", expires_at: Date.now() + 3_600_000, refresh_at: Date.now() + 3_600_000 }));
   await f.start();
   // the kept pass refused is replaced at once, and the replacement goes out at once on a new control socket: refused too,
   // the PC holds a pass the relay will not take
