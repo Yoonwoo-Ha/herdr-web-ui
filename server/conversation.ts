@@ -56,7 +56,7 @@ import { coreSocketPath, servingCore } from "./herdr-core/runtime.ts";
 import { forgetGjcPane, forgetGjcState, gjcPidUnderShell, gjcTranscriptForPane, isGjcProcess, storeRelative } from "./gjc-runtime.ts";
 import { isOmoProcess, omoProcessIdentity, omoSessionForPane, processEnviron } from "./omo.ts";
 import { processAlive, processStartedAtAsync } from "./process-start.ts";
-import { ompBlobStore, ompPaneRoute, ompRouteOwns, ompRouteStore, ompRouteTranscript } from "./omp.ts";
+import { ompBlobStore, ompHeldOpen, ompPaneRoute, ompRouteOwns, ompRouteStore, ompRouteTranscript } from "./omp.ts";
 import { forgetOpencodeRead, forgetOpencodeState, OPENCODE_IMAGE_REF, opencodeConversation, opencodeDatabasePath, opencodeImage, opencodeReadKey, opencodeSessionId, opencodeToolOutput } from "./opencode.ts";
 import { piTranscriptPath, unwrittenSession } from "./pi.ts";
 import { cmdTranscriptPath } from "./cmd.ts";
@@ -1950,7 +1950,7 @@ export async function ompTranscriptPath(paneId: string, cwd: string, known?: Kno
     if (route === null) throw new ConversationUnavailable("no_session_path");
   }
   // herdr names no session of this store (or another agent's): the pane's omp process does
-  const held = route === null ? null : ompRouteTranscript(route, cwd);
+  const held = route === null ? null : ompRouteTranscript(await ompHeldOpen(route, servingCore()), cwd);
   if (held === null) throw new ConversationUnavailable("no_session_path");
   // the held transcript is the pane's own, in the store its process keeps: authorized there, and read so
   const authorized = authorizedTranscript(held, route!.layout.sessions);

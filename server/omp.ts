@@ -11,6 +11,7 @@ import { darwinProcess } from "./claude-store.ts";
 import { paneProcessInfo, type ProcessInfo } from "./herdr/client.ts";
 import { heldTranscript, runsAgent, storeRelative, type StoreRoots, transcriptHeader } from "./gjc-runtime.ts";
 import { ompProcessMemory, ompRoutingEnviron, processStartTicks } from "./omp-process.ts";
+import { processStartIdentity } from "./process-start.ts";
 
 const OMP_EXECUTABLE = /(^|[\\/])omp(?:\.exe|\.[cm]?js)?$/i;
 
@@ -292,6 +293,144 @@ export interface OmpRoute {
   environOf: (pid: number) => readonly string[] | undefined;
   /** The absolute `--cwd` every omp process in the pane started with, or null (ompLaunchDir). */
   launchDir: string | null;
+  /**
+   * On macOS herdr-core, the files each process holds open (ompHeldOpen), the only proof there; null for a
+   * process whose listing held a name that could not be read, so nothing is proved for it. Elsewhere /proc is read.
+   */
+  openFilesOf?: (pid: number) => readonly string[] | null;
+}
+
+/** An lsof listing longer than this is not read: nothing is proved from a part of one. */
+const LSOF_MAX_BYTES = 1 << 20;
+/** How long lsof may run before it is killed and nothing is proved. */
+const LSOF_DEADLINE_MS = 3000;
+
+/** How long one lsof listing of a process stands for it while its start stays the same: about one poll. */
+const LSOF_FRESH_MS = 2000;
+/** Each process's last listing, by pid, with the start it was listed under and when (performance.now). */
+const listed = new Map<number, { identity: number; files: string[] | null; at: number }>();
+
+/** The bytes lsof's `-F n` field writes as a backslash and one letter. */
+const LSOF_ESCAPES = new Map([["b", 8], ["f", 12], ["n", 10], ["r", 13], ["t", 9], ["\\", 92]]);
+
+/**
+ * A name as lsof's `-F n` field prints it, decoded from the field's bytes (a latin1 string, one char per
+ * byte): lsof writes \b \f \n \r \t and \\ for those bytes and \xNN for a byte it cannot print, so
+ * every backslash it prints starts an escape. Its ^X for another control byte is left as printed: a
+ * name's own `^` is printed as it is, so ^X cannot be told from it. null when the field is not one lsof
+ * could print (a backslash starting no escape) or its bytes are not UTF-8.
+ */
+function lsofName(field: string): string | null {
+  const bytes: number[] = [];
+  for (let at = 0; at < field.length; at += 1) {
+    const char = field[at]!, next = field[at + 1] ?? "";
+    const hex = field.slice(at + 2, at + 4);
+    if (char !== "\\") bytes.push(char.charCodeAt(0));
+    else if (LSOF_ESCAPES.has(next)) { bytes.push(LSOF_ESCAPES.get(next)!); at += 1; }
+    else if (next === "x" && /^[0-9a-f]{2}$/i.test(hex)) { bytes.push(Number.parseInt(hex, 16)); at += 3; }
+    else return null;
+  }
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes)); } catch { return null; }
+}
+
+/**
+ * The files each process holds open on macOS (`-Fpn`: a `p` line per process, then an `n` line per
+ * file). omp keeps its session file open from its first write, which is the only proof of the session
+ * an `omp -c` continues: omp leaves an unchanged breadcrumb as it was (#3365). A process listed in the
+ * last LSOF_FRESH_MS under the start it has now is not listed again; the others are, in one lsof run.
+ * That run proves nothing when it fails, runs past its deadline (then it is SIGKILLed) or prints more
+ * than LSOF_MAX_BYTES; an exit of 1 with the whole listing printed means only that some pid was gone,
+ * and the others' listings stand. A process counts only when its start is the same before and after
+ * the run: herdr named it a moment ago, and a pid reused meanwhile lists another omp's session (as
+ * #3324 checks); every one, a listing reused too, is checked again after the last wait, just before
+ * the listing is returned. A name holding a control character once decoded is no held path.
+ */
+async function darwinOpenFiles(pids: readonly number[]): Promise<Map<number, string[] | null>> {
+  const open = new Map<number, string[] | null>();
+  const now = performance.now();
+  for (const [pid, entry] of listed) if (now - entry.at >= LSOF_FRESH_MS) listed.delete(pid);
+  const unlisted: { pid: number; identity: number }[] = [];
+  const identities = new Map<number, number>();
+  for (const pid of pids) {
+    const identity = processStartIdentity(pid);
+    if (identity === null) continue;
+    identities.set(pid, identity);
+    const entry = listed.get(pid);
+    if (entry?.identity === identity) open.set(pid, entry.files);
+    else unlisted.push({ pid, identity });
+  }
+  if (unlisted.length === 0) return sameStarts(open, identities);
+  let child: Bun.Subprocess<"ignore", "pipe", "ignore">;
+  try { child = Bun.spawn(["/usr/sbin/lsof", "-nPbw", "-a", "-p", unlisted.map(({ pid }) => pid).join(","), "-Fpn"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" }); }
+  catch { return sameStarts(open, identities); }
+  let whole = true;
+  const deadline = setTimeout(() => { whole = false; child.kill("SIGKILL"); }, LSOF_DEADLINE_MS);
+  const chunks: Uint8Array[] = [];
+  try {
+    let size = 0;
+    for await (const chunk of child.stdout) {
+      size += chunk.byteLength;
+      if (size > LSOF_MAX_BYTES) { whole = false; child.kill("SIGKILL"); break; }
+      chunks.push(chunk);
+    }
+    // a listing cut off by its size or its deadline proves nothing, whatever lsof exits with
+    const code = whole ? await child.exited : null;
+    if (code !== 0 && code !== 1 || !whole) return sameStarts(open, identities);
+  } catch { return sameStarts(open, identities); } finally { clearTimeout(deadline); }
+  const fresh = new Map<number, string[] | null>();
+  let current: number | undefined;
+  for (const line of Buffer.concat(chunks).toString("latin1").split("\n")) {
+    if (line.startsWith("p")) fresh.set(current = Number(line.slice(1)), []);
+    else if (line.startsWith("n") && current !== undefined) {
+      // a name that cannot be read may be the very session: nothing is proved for this process then
+      const name = lsofName(line.slice(1));
+      const files = fresh.get(current);
+      if (name === null || /[\x00-\x1f\x7f]/.test(name)) fresh.set(current, null);
+      else files?.push(name);
+    }
+  }
+  for (const { pid, identity } of unlisted) {
+    const held = fresh.get(pid);
+    if (held === undefined) continue;
+    open.set(pid, held);
+    listed.set(pid, { identity, files: held, at: now });
+  }
+  return sameStarts(open, identities);
+}
+
+/** The listings of the processes whose start is still the one read before them; a changed one is forgotten. */
+function sameStarts(open: Map<number, string[] | null>, identities: ReadonlyMap<number, number>): Map<number, string[] | null> {
+  for (const pid of open.keys()) {
+    if (processStartIdentity(pid) === identities.get(pid)) continue;
+    open.delete(pid);
+    listed.delete(pid);
+  }
+  return open;
+}
+
+/**
+ * Settings -> Experimental -> OMP on macOS herdr-core: chat from the session it holds open (src/lib/settings.ts
+ * ompHeldFiles), as the server's shared preferences hold it. Off until the server's start points it there, and
+ * off by default: the chat there then falls back as it did before lsof was read.
+ */
+let heldFilesOn: () => boolean = () => false;
+
+/** Points ompHeldOpen at the setting's live value (the server's start, from its shared preferences). */
+export function readOmpHeldFilesSetting(read: () => boolean): void {
+  heldFilesOn = read;
+}
+
+/**
+ * The route as the held transcript is read from it, once herdr's report for the pane gave no usable
+ * path (none, or one rejected: outside the omp's store, or not its session). On macOS herdr-core
+ * (`core`) there is no /proc and omp's breadcrumb proves nothing (#3365): only the files a process
+ * holds open do, so lsof lists them, and when it proves nothing no file is held and heldTranscript
+ * binds nothing. Only with ompHeldFiles on; off, lsof is never run and the route is read as before.
+ */
+export async function ompHeldOpen(route: OmpRoute, core: boolean): Promise<OmpRoute> {
+  if (process.platform !== "darwin" || !core || !heldFilesOn()) return route;
+  const open = await darwinOpenFiles(route.pids);
+  return { ...route, openFilesOf: (pid) => open.has(pid) ? open.get(pid)! : [] };
 }
 
 /**
@@ -362,9 +501,9 @@ const sameDirectory = (a: string, b: string): boolean => {
  * not omp's own, or none).
  */
 export function ompRouteTranscript(route: OmpRoute, cwd: string): string | null {
-  const { layout, pids, environOf, launchDir } = route;
-  const live = heldTranscript(layout, cwd, pids, environOf);
-  const path = live.found > 0 ? live.path : launchDir && launchDir !== cwd ? heldTranscript(layout, launchDir, pids, environOf).path : null;
+  const { layout, pids, launchDir } = route;
+  const live = heldTranscript(layout, cwd, pids, route);
+  const path = live.found > 0 ? live.path : launchDir && launchDir !== cwd ? heldTranscript(layout, launchDir, pids, route).path : null;
   return path !== null && ompSessionVersion(transcriptHeader(path)?.version) ? path : null;
 }
 
@@ -416,8 +555,8 @@ export function ompBlobStore(transcript: string): string | null {
   return null;
 }
 
-/** The transcript the pane's omp process holds open or last pointed its terminal breadcrumb at, or null (ompRouteTranscript). */
-export async function ompHeldTranscript(paneId: string, cwd: string): Promise<string | null> {
+/** The transcript the pane's omp process holds open or last pointed its terminal breadcrumb at, or null (ompRouteTranscript, read as ompHeldOpen says). */
+export async function ompHeldTranscript(paneId: string, cwd: string, core = false): Promise<string | null> {
   const route = await ompPaneRoute(paneId);
-  return route === null || route === "unproved" ? null : ompRouteTranscript(route, cwd);
+  return route === null || route === "unproved" ? null : ompRouteTranscript(await ompHeldOpen(route, core), cwd);
 }

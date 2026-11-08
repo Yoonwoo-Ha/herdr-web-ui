@@ -244,31 +244,52 @@ export function terminalBreadcrumb(store: string | StoreRoots, cwd: string, term
  * active session; never infer ownership from cwd or session recency. `path` is null unless
  * exactly one transcript qualifies; `found` says how many did. `environOf` supplies a process's
  * environment already read elsewhere, so none is read here; undefined for a pid reads it.
+ * `openFilesOf` supplies the files a process holds open where there is no /proc (lsof on macOS
+ * herdr-core); there they are the only proof, and with none held no breadcrumb stands in (#3365).
+ * There a process whose listing held a name that could not be read (null), or that holds a `.jsonl` in
+ * the store that does not resolve, may hold the very session: nothing is bound for the pane then.
  */
-export function heldTranscript(roots: StoreRoots, cwd: string, pids: readonly number[], environOf?: (pid: number) => readonly string[] | null | undefined): { path: string | null; found: number } {
+export function heldTranscript(roots: StoreRoots, cwd: string, pids: readonly number[], probe: HeldProbe = {}): { path: string | null; found: number } {
+  const { environOf, openFilesOf } = probe;
   let root: string;
   try { root = realpathSync(roots.sessions); }
   catch { return { path: null, found: 0 }; }
   const open = new Set<string>();
   const breadcrumbs = new Set<string>();
+  let unreadable = false;
   for (const pid of pids) {
     const terminal = gjcTerminal(pid, environOf?.(pid));
     if (terminal) {
       const path = terminalBreadcrumb(roots, cwd, terminal.id, terminal.startedAt);
       if (path) breadcrumbs.add(path);
     }
-    let fds: string[] = [];
-    try { fds = readdirSync(`/proc/${pid}/fd`); } catch { /* macOS uses the native breadcrumb */ }
-    for (const fd of fds) {
+    let held: readonly string[] = [];
+    if (openFilesOf) {
+      const listed = openFilesOf(pid);
+      if (listed === null) { unreadable = true; continue; }
+      held = listed;
+    }
+    else try { held = readdirSync(`/proc/${pid}/fd`).map((fd) => `/proc/${pid}/fd/${fd}`); } catch { /* no /proc: the native breadcrumb */ }
+    for (const entry of held) {
       try {
-        const file = realpathSync(readlinkSync(`/proc/${pid}/fd/${fd}`));
+        const file = realpathSync(openFilesOf ? entry : readlinkSync(entry));
         const target = statSync(file).isFile() ? gjcSessionFile(root, file, nodePath, roots.depth) : null;
         if (target && transcriptCwd(target) === cwd) open.add(target);
-      } catch { /* closed, deleted or unreadable descriptor */ }
+      } catch {
+        // closed, deleted or unreadable descriptor; a listed session of the store that does not resolve proves nothing either way
+        if (openFilesOf && entry.endsWith(".jsonl") && storeRelative(root, entry) !== null) unreadable = true;
+      }
     }
   }
-  const candidates = open.size > 0 ? open : breadcrumbs;
+  if (unreadable) return { path: null, found: 0 };
+  const candidates = open.size > 0 || openFilesOf ? open : breadcrumbs;
   return { path: candidates.size === 1 ? [...candidates][0]! : null, found: candidates.size };
+}
+
+/** What heldTranscript reads of a process that its caller already has. */
+export interface HeldProbe {
+  environOf?: (pid: number) => readonly string[] | null | undefined;
+  openFilesOf?: (pid: number) => readonly string[] | null;
 }
 
 type GjcPaneProcessInfo = { process_info?: { shell_pid?: unknown; foreground_processes?: { pid?: unknown; argv?: unknown }[] } };

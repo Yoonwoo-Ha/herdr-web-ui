@@ -16,6 +16,7 @@ import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { isLoopbackBind, lanExposed } from "./access.ts";
 import { DeviceStore, mergeAccountTombstones } from "./devices.ts";
 import { PreferenceStore } from "./preferences.ts";
+import { readOmpHeldFilesSetting } from "./omp.ts";
 import { SeenStore } from "./seen.ts";
 import type { SeenFinish } from "../shared/seen.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
@@ -293,6 +294,8 @@ export function createServer(
   }
   const devices = new DeviceStore(stateDir, merge?.devicesBlocked ?? null, accountBlocked);
   const preferences = new PreferenceStore(stateDir);
+  // Settings -> Experimental -> OMP on macOS herdr-core: chat from the session it holds open
+  readOmpHeldFilesSetting(() => preferences.get().settings.ompHeldFiles === true);
   // on herdr-core an agent pinned here is pinned in the Herdr app and its other clients too
   const stopPinBridge = servingCore() ? bridgePins(coreConnection(), preferences, LOCAL_MACHINE, stateDir) : null;
   // Chat's own rewind (#1500, never released) kept its rewinds here; nothing reads them since #1577

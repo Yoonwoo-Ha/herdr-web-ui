@@ -797,6 +797,9 @@ function ExperimentalPage() {
       <SettingsRow label={t("OpenCode: subagent ends from their session")} icon={Bot} description={t("An OpenCode subagent counts as running, and holds its turn's BG wait, until the session that started it is told it ended, not as soon as the subagent goes idle. Its own background work may still run then. When off, the subagent's own rows tell.")} reset={["opencodeParentEnds"]}>
         <Toggle label={t("OpenCode: subagent ends from their session")} checked={settings.opencodeParentEnds} onChange={(opencodeParentEnds) => update({ opencodeParentEnds })} />
       </SettingsRow>
+      <SettingsRow label={t("OMP on macOS herdr-core: chat from the session it holds open")} icon={MessageSquare} description={t("On a Mac running herdr-core, an OMP pane's chat comes from the session file its omp holds open, read with lsof, so omp -c and resumed sessions show their chat. When off, the chat there falls back to the terminal.")} reset={["ompHeldFiles"]}>
+        <Toggle label={t("OMP on macOS herdr-core: chat from the session it holds open")} checked={settings.ompHeldFiles} onChange={(ompHeldFiles) => update({ ompHeldFiles })} />
+      </SettingsRow>
     </SettingsGroup>
     </SettingsBare.Provider>
   );
