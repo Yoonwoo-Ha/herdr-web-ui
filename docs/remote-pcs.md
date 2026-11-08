@@ -239,8 +239,35 @@ and herdr's default session only.
   `unsupported`, `missing_tool` (no curl, git or tar), `disk` (under 1 GB free in the home folder),
   `permission`, `bridge_there`, `ovis_there`, `changed` (the process to stop is no longer the one
   shown, or its pid now runs another program: nothing is stopped), `not_stopped`, `installer_failed` (with the installer's last words),
-  `no_launcher`, `not_started`, `connect_failed`. A failure or cancel after the server started by hand was stopped
-  says so, and whether another was installed in its place. These routes are this PC's owner's only, with the
+  `no_launcher`, `not_started`, `connect_failed`. Experimental, off by default (Settings → Experimental → PCs → Start a replaced server again): when it is off, a failed or cancelled replacement leaves the server started by hand stopped, as before, and nothing of it is copied. When it is on and the install fails or is cancelled after the server started by
+  hand was stopped, before anything was installed or launched in its place (the installer could not be
+  downloaded, or never ran), that server is started again as it was. Just before it is stopped, its program, arguments,
+  environment (its `OVIS_TOKEN` with the rest) and folder are copied from `/proc` into a folder only
+  that account can read. The stop goes ahead only while that pid is still the very server its bridge
+  registration recorded (its birth: this boot's id and start ticks on Linux, `ps`'s start time on macOS),
+  so another Ovis that took the pid after it ended is never stopped (`changed`), whether or not the
+  restore is on. A registration that recorded no birth (every 0.5.x server's) is stopped only if its
+  process started no later than its registration file was written (2 s of slack): one that took the
+  pid later is refused in plain words. The copy and the stop each go ahead only while that pid is still the process
+  shown (on Linux its start in clock ticks since boot from `/proc/<pid>/stat` and its owner; on macOS `ps`'s start time to the second and owner, where a pid reused within that second stays a residual; checked in the same command): one that took
+  its pid since is never copied or signalled (`changed`). A copy cut short removes itself. Nothing is stopped when copying fails this time (try again). When no faithful
+  copy can be made (its environment unreadable, its program or folder deleted since it started, as after
+  a Bun upgrade, or a byte that would not survive being started again, not UTF-8), it is replaced as on macOS:
+  without a copy, and the job says it stays stopped if the install then fails.
+  To start it again, its own Bun first binds the server's own address (`HOST`, `PORT`): one already
+  taken means a live server is there, its replacement among them, and nothing is started beside it; so does any live Ovis registered for that herdr session, managed or not, on any port. It
+  then reads the copy and starts the program with exactly that environment,
+  given to the process directly (never on a command line another account could read), in its own
+  session, its output in `~/.local/state/ovis/restored-server.log` (opened without following a link, this
+  account's own file, made readable by this account alone). A new SSH
+  connection does it, tried twice, after waiting for a server that is still stopping, and the PC stays
+  busy until then. Once something was installed or launched in its place, it is not started again (a
+  start of their own may still be on its way, and would come up beside it): the copy is then only
+  removed, and the words say what may be running. The copy is removed once read, once the new Ovis
+  answers, or after two hours whatever becomes of the job (`systemd-run` where it can, so it outlives the
+  SSH session; each later capture also sweeps older ones). Where there is no `/proc` (macOS) nothing is
+  copied, and the server is never started again with a guessed environment; the job then says it stays
+  stopped. The words say which happened. These routes are this PC's owner's only, with the
   `X-Herdr-Update: 1` header on a change, as updates are ([Updating PCs from here](#updating-pcs-from-here)). Only the process named is ever stopped, only after
   it is checked to be that PC's own Ovis server. While an install or setup runs, no other setup or
   install connects to that PC from here: the same PC as ssh resolves it (`ssh -G`: an alias, or its

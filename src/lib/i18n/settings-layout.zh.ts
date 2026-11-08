@@ -15,6 +15,8 @@ export const SETTINGS_LAYOUT_ZH: Record<string, string> = {
   "Later themes": "下一组主题",
   "More settings": "更多设置",
   "Experimental": "实验功能",
+  "Start a replaced server again": "重新启动被替换的服务器",
+  "When installing Ovis over SSH in place of one started by hand fails or is cancelled, start that one again as it was. When off, it stays stopped, as before.": "通过 SSH 替换手动启动的 Ovis 时，如果安装失败或被取消，则按原样重新启动该服务器。关闭时，它会像以前一样保持停止。",
   "{count} changed": "已更改 {count} 项",
   "By state": "按状态",
   "Hidden": "隐藏",

@@ -15,6 +15,8 @@ export const SETTINGS_LAYOUT_JA: Record<string, string> = {
   "Later themes": "次のテーマ",
   "More settings": "その他の設定",
   "Experimental": "試験的な機能",
+  "Start a replaced server again": "置き換えたサーバーを再起動",
+  "When installing Ovis over SSH in place of one started by hand fails or is cancelled, start that one again as it was. When off, it stays stopped, as before.": "手動で起動した Ovis を SSH で置き換えるインストールが失敗またはキャンセルされたら、そのサーバーを元どおりに再起動します。オフのときは以前と同じく停止したままです。",
   "{count} changed": "{count} 件変更",
   "By state": "状態別",
   "Hidden": "非表示",

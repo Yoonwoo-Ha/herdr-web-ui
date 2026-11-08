@@ -5,7 +5,6 @@
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const MACHINES_ZH: Record<string, string> = {
-  "PCs": "PC",
   "1 agent running": "1 个代理运行中",
   "{n} agents running": "{n} 个代理运行中",
   "Keep this dialog open until the PC connects.": "请保持此对话框打开，直到 PC 连接成功。",

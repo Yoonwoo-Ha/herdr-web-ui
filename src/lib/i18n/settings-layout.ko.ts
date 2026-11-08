@@ -15,6 +15,8 @@ export const SETTINGS_LAYOUT_KO: Record<string, string> = {
   "Later themes": "다음 테마",
   "More settings": "설정 더 보기",
   "Experimental": "실험 기능",
+  "Start a replaced server again": "다른 PC의 교체된 서버 다시 시작",
+  "When installing Ovis over SSH in place of one started by hand fails or is cancelled, start that one again as it was. When off, it stays stopped, as before.": "SSH로 손으로 띄운 Ovis를 바꿔 설치하다 실패하거나 취소하면, 그 서버를 원래대로 다시 시작합니다. 끄면 이전처럼 멈춘 채로 둡니다.",
   "{count} changed": "{count}개 바꿈",
   "By state": "상태별",
   "Hidden": "숨김",

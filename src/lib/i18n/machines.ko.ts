@@ -5,7 +5,6 @@
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const MACHINES_KO: Record<string, string> = {
-  "PCs": "PC",
   "1 agent running": "실행 중인 에이전트 1개",
   "{n} agents running": "실행 중인 에이전트 {n}개",
   "Keep this dialog open until the PC connects.": "PC가 연결될 때까지 이 대화 상자를 열어 두세요.",

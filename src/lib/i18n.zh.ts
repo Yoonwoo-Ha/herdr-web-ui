@@ -103,6 +103,7 @@ const BASE: Record<string, string> = {
   "Input line": "输入框",
   // ---- settings ----
   "Settings": "设置",
+  "PCs": "PC",
   "Chat": "聊天",
   "Agent default": "代理默认",
   "Devices and PCs": "设备和电脑",
