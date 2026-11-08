@@ -1,26 +1,21 @@
 /**
  * Name lookups for the SSH tab's list (server/ssh-candidates.ts): the addresses a config host's name resolves to,
- * bounded in time and in lookups running at once, each answer kept briefly.
+ * bounded in time and in lookups running at once.
  */
 import { isIP } from "node:net";
 
 /** how long the list waits on every name lookup together; a name still unanswered then claims no PC */
 export const RESOLVE_TIMEOUT_MS = 1500;
-/** how long one lookup holds its slot before it gives up, so a hung one never stops the names waiting behind it */
-const LOOKUP_TIMEOUT_MS = 1500;
-/** name lookups running at most across every listing, so hung ones never pile up; the rest wait for a free slot */
+/** name lookups running at most across every listing; a lookup holds its slot until the resolver answers, since a
+ * system lookup cannot be cancelled, and the rest wait for a free slot. A held slot relies on getaddrinfo's own timeout
+ * (resolv.conf's timeout and attempts) to come back when a name server never answers */
 const MAX_LOOKUPS = 16;
-/** how long a name's answer is kept, so reopening the list does not look everything up again */
-const ANSWER_TTL_MS = 30_000;
 
 export type Resolve = (host: string) => Promise<string[]>;
 export interface Lookup {
   resolve: Resolve;
-  now: () => number;
   /** how long the listing waits for every name together */
   timeoutMs: number;
-  /** settles when one running lookup has waited long enough */
-  deadline: () => Promise<void>;
 }
 
 /**
@@ -40,51 +35,63 @@ export const canonicalIp = (ip: string): string => {
 
 export const systemResolve: Resolve = async (host) => (await Bun.dns.lookup(host, { backend: "system" })).map(({ address }) => address);
 
-export const lookupDeadline = (): Promise<void> => new Promise((done) => { setTimeout(done, LOOKUP_TIMEOUT_MS).unref(); });
-
-/**
- * Each resolver's lookups by name, waiting or running (a hung one holds its slot until its own deadline), its recent
- * answers, and the lookups waiting for one of its MAX_LOOKUPS slots
- */
-interface Lookups { pending: Map<string, Promise<string[]>>; answers: Map<string, { addresses: string[]; at: number }>; running: number; waiting: (() => void)[] }
+/** one name's lookup, waiting for a slot or running, with the listings still waiting on it */
+interface NameLookup { addresses: Promise<string[]>; listings: number; start: () => void }
+/** each resolver's lookups by name, how many hold a slot, and the ones waiting for one of its MAX_LOOKUPS slots */
+interface Lookups { pending: Map<string, NameLookup>; running: number; waiting: NameLookup[] }
 const lookupsOf = new WeakMap<Resolve, Lookups>();
 
-/** the addresses `name` resolves to: a recent answer, the lookup already pending, or a new one once a slot is free */
-function lookupOnce({ resolve, now, deadline }: Lookup, name: string): Promise<string[]> {
-  const state: Lookups = lookupsOf.get(resolve) ?? { pending: new Map(), answers: new Map(), running: 0, waiting: [] };
+/**
+ * The lookup of `name` this listing waits on: the one already pending, or a new one that starts once a slot is free.
+ * Nothing is kept once it answers, so the next listing sees a changed hosts file or DNS answer at once.
+ */
+function lookupOnce(resolve: Resolve, name: string): NameLookup {
+  const state: Lookups = lookupsOf.get(resolve) ?? { pending: new Map(), running: 0, waiting: [] };
   lookupsOf.set(resolve, state);
-  const answer = state.answers.get(name);
-  if (answer !== undefined && now() - answer.at < ANSWER_TTL_MS) return Promise.resolve(answer.addresses);
   const known = state.pending.get(name);
-  if (known !== undefined) return known;
-  const lookup = (async () => {
-    if (state.running < MAX_LOOKUPS) state.running++; else await new Promise<void>((start) => state.waiting.push(start));
-    try {
-      const addresses = await Promise.race([Promise.resolve().then(() => resolve(name)), deadline().then(() => null)]);
-      if (addresses === null) return [];
-      state.answers.set(name, { addresses, at: now() });
-      return addresses;
-    } catch { return []; } finally {
-      // the slot goes straight to the next waiting lookup
-      const next = state.waiting.shift();
-      if (next === undefined) state.running--; else next();
-      state.pending.delete(name);
-    }
-  })();
+  if (known !== undefined) { known.listings += 1; return known; }
+  const slot = Promise.withResolvers<void>();
+  const lookup: NameLookup = {
+    listings: 1, start: slot.resolve,
+    addresses: slot.promise.then(async () => {
+      try { return await resolve(name); } catch { return []; } finally {
+        if (state.pending.get(name) === lookup) state.pending.delete(name);
+        // the slot goes straight to the next waiting lookup
+        const next = state.waiting.shift();
+        if (next === undefined) state.running--; else next.start();
+      }
+    }),
+  };
   state.pending.set(name, lookup);
+  if (state.running < MAX_LOOKUPS) { state.running++; lookup.start(); } else state.waiting.push(lookup);
   return lookup;
 }
 
+/**
+ * A listing stops waiting on a lookup. One no listing waits on any more is offered to no later listing, which looks the
+ * name up afresh rather than take an answer from before it asked; still waiting for a slot, it is dropped, and running,
+ * it keeps its slot until its resolver answers.
+ */
+function leave(resolve: Resolve, name: string, lookup: NameLookup): void {
+  lookup.listings -= 1;
+  const state = lookupsOf.get(resolve);
+  if (state === undefined || lookup.listings > 0) return;
+  if (state.pending.get(name) === lookup) state.pending.delete(name);
+  const queued = state.waiting.indexOf(lookup);
+  if (queued >= 0) state.waiting.splice(queued, 1);
+}
+
 /** the addresses each name resolves to, waiting `timeoutMs` at most for all of them; a name that fails or is late is left out */
-export async function resolveWithin(names: string[], lookup: Lookup): Promise<Map<string, string[]>> {
+export async function resolveWithin(names: string[], { resolve, timeoutMs }: Lookup): Promise<Map<string, string[]>> {
   const found = new Map<string, string[]>();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<void>((done) => { timer = setTimeout(done, lookup.timeoutMs); });
-  const lookups = names.map(async (name) => {
-    const addresses = await lookupOnce(lookup, name);
-    if (addresses.length > 0) found.set(name, addresses.map(canonicalIp));
-  });
-  await Promise.race([Promise.all(lookups), deadline]);
+  const deadline = new Promise<void>((done) => { timer = setTimeout(done, timeoutMs); });
+  const lookups = names.map((name) => [name, lookupOnce(resolve, name)] as const);
+  await Promise.race([Promise.all(lookups.map(async ([name, { addresses }]) => {
+    const answer = await addresses;
+    if (answer.length > 0) found.set(name, answer.map(canonicalIp));
+  })), deadline]);
   clearTimeout(timer);
+  for (const [name, lookup] of lookups) leave(resolve, name, lookup);
   return new Map(found);
 }
