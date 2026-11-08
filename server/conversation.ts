@@ -68,6 +68,7 @@ import { FileBusyError } from "./file-pool.ts";
 import { museSession, museToolOutput, MuseUnavailable, parseMuseTranscript } from "./muse.ts";
 import { resolveMuseSession } from "./muse-store.ts";
 import { LettaUnavailable, lettaToolOutput, parseLettaTranscript } from "./letta.ts";
+import { programName } from "./agent-identity.ts";
 import { lettaLocalSettings, resolveLettaTranscript } from "./letta-store.ts";
 import { followKimiUndo, kimiToolOutput, kimiTranscriptPathForPane, parseKimiTranscript, type KimiUndo } from "./kimi.ts";
 import { withinRetentionBudget } from "./retention-budget.ts";
@@ -1327,9 +1328,6 @@ export async function paneRunsOmo(paneId: string, known?: KnownProcesses): Promi
     }, "", home) !== null,
   );
 }
-
-/** A program's name in a process listing: its path's last part, without a Windows or script extension. */
-const programName = (word: string): string => nodePath.posix.basename(word.replace(/\\/g, "/")).replace(/\.(?:exe|cmd|js|mjs|cjs)$/i, "");
 
 /**
  * The script an agent's npm package runs as its `bin`, which bunx and npx start under bun or node: omp's is

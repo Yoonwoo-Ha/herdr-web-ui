@@ -4,6 +4,7 @@ import type { HerdrPane } from "../../shared/protocol.ts";
 import type { Foreground, Status, Terminal } from "./hc-api.generated.ts";
 import { clampRatio, type Grouping, type LayoutNode, LAYOUT_AREA, parseOvisLayout, place, reconcile, sideBySide } from "./layout-doc.ts";
 import { worktreeOfLabels } from "./worktrees.ts";
+import { paneAgent, reportedAgent } from "../agent-identity.ts";
 
 /**
  * How herdr-core's terminals look to the rest of the server: herdr's session snapshot, built from
@@ -83,9 +84,6 @@ export function agentStatusOf(status: HcStatus | null | undefined): AgentStatus 
   }
 }
 
-/** herdr-core's names for agents herdr names otherwise: the rest of the server knows herdr's (`claude`, `agy`). */
-const HERDR_AGENT_NAMES: Record<string, string> = { "claude-code": "claude", antigravity: "agy", "kimi-code": "kimi" };
-
 /** The agent a status names, by herdr's name; a program that never reported one runs none herdr would see. */
 /** The turn a terminal's `herdr.seen` names; null when it has none, or none a client wrote as a turn. */
 export function seenTurnOf(labels: Readonly<Record<string, string>> | undefined): number | null {
@@ -110,13 +108,20 @@ export function shownStatusOf(status: HcStatus | null | undefined, turn: number 
 }
 
 export function agentOfStatus(status: HcStatus | null | undefined): string | null {
-  const app = status?.app;
-  if (!app) return null;
-  return Object.hasOwn(HERDR_AGENT_NAMES, app) ? HERDR_AGENT_NAMES[app]! : app;
+  return reportedAgent(status?.app);
 }
 
-export function agentOf(terminal: HcTerminal): string | null {
-  return agentOfStatus(terminal.status);
+/** The agent a terminal runs (agent-identity.ts): its program's report, else the process in front of it. */
+export function agentOf(terminal: Pick<HcTerminal, "status" | "foreground">): string | null {
+  const front = terminal.foreground;
+  return paneAgent({ reported: terminal.status?.app, foreground: front ? (front.argv?.length ? front.argv : [front.name]) : null });
+}
+
+/** hc's record of the process in front of a terminal (a record's `foreground`, a `foreground` event's data); null for none or another shape. */
+export function foregroundOf(value: unknown): HcForeground | null {
+  if (!isRecord(value) || typeof value["pid"] !== "number" || typeof value["name"] !== "string") return null;
+  const argv = value["argv"];
+  return { pid: value["pid"], name: value["name"], ...(Array.isArray(argv) && argv.every((word) => typeof word === "string") ? { argv } : {}) };
 }
 
 /**

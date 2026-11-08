@@ -1,0 +1,44 @@
+import { describe, expect, it } from "bun:test";
+import { paneAgent } from "./agent-identity.ts";
+
+describe("which agent a pane runs", () => {
+  it("takes the app the program reported, in herdr's names", () => {
+    expect(paneAgent({ reported: "codex" }, "linux")).toBe("codex");
+    expect(paneAgent({ reported: "claude-code" }, "linux")).toBe("claude");
+    expect(paneAgent({ reported: "antigravity" }, "linux")).toBe("agy");
+    expect(paneAgent({ reported: "kimi-code" }, "linux")).toBe("kimi");
+    // Grok Build 1.0.67 reports itself as `grok-build` (old-desktop, 2026-11-08)
+    expect(paneAgent({ reported: "grok-build" }, "linux")).toBe("grok");
+  });
+
+  it("prefers the report to the process in front", () => {
+    expect(paneAgent({ reported: "claude-code", foreground: ["/usr/bin/letta"] }, "linux")).toBe("claude");
+  });
+
+  it("names an agent that reports nothing from its process in front", () => {
+    // Letta Code 0.34.44 as npm installs it: node running the bin script (hc's foreground, old-desktop 2026-11-08)
+    expect(paneAgent({ foreground: ["node", "/home/u/.npm-global/lib/node_modules/.bin/letta", "--backend", "local"] }, "linux")).toBe("letta");
+    expect(paneAgent({ foreground: ["devin"] }, "linux")).toBe("devin");
+    expect(paneAgent({ foreground: ["/home/u/.local/bin/hermes", "chat"] }, "macos")).toBe("hermes");
+    expect(paneAgent({ foreground: ["C:\\Users\\u\\AppData\\Roaming\\npm\\letta.cmd"] }, "windows")).toBe("letta");
+    expect(paneAgent({ foreground: ["bun", "/opt/x/node_modules/.bin/dsh-tui"] }, "linux")).toBe("dsh-tui");
+    // the interpreter's own options come before the script it runs
+    expect(paneAgent({ foreground: ["node", "--enable-source-maps", "--no-warnings", "/home/u/.bin/letta", "--backend", "local"] }, "linux")).toBe("letta");
+    expect(paneAgent({ foreground: ["python3", "-u", "/home/u/.local/bin/hermes"] }, "linux")).toBe("hermes");
+    expect(paneAgent({ foreground: ["C:\\Program Files\\Claude\\Claude.EXE"] }, "windows")).toBe("claude");
+  });
+
+  it("names none for a shell, an unknown program, or a program merely given an agent's name", () => {
+    for (const foreground of [["bash"], ["-zsh"], ["vim", "letta"], ["sh", "-c", "letta"], ["node", "/srv/app/server.js"], ["python3", "-m", "letta"], ["node", "-e", "letta"], ["node", "--", "-letta"], ["node", "/srv/project/pi.js"], ["bun", "letta.ts"], ["/opt/x/letta.cmd"], []]) {
+      expect(paneAgent({ foreground }, "linux")).toBeNull();
+    }
+    expect(paneAgent({}, "linux")).toBeNull();
+    expect(paneAgent({ reported: "", foreground: null }, "linux")).toBeNull();
+  });
+
+  it("does not take a binary whose name proves nothing on that platform", () => {
+    // Windows' own command prompt is cmd.exe; elsewhere `cmd` is the agent
+    expect(paneAgent({ foreground: ["C:\\Windows\\System32\\cmd.exe"] }, "windows")).toBeNull();
+    expect(paneAgent({ foreground: ["cmd"] }, "linux")).toBe("cmd");
+  });
+});

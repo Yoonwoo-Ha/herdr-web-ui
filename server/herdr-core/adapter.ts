@@ -8,7 +8,7 @@ import { cmdQuote, powershellNativeArgs, SHELL_AGENTS, shellCommandLine } from "
 import { descendantProcesses, type ProcessRow, windowsProcessTable } from "../windows-processes.ts";
 import { type HcConnection, HcError } from "./connection.ts";
 import { foreignLayout, leaves, neighbour, OVIS_LAYOUT_DOC, type OvisLayout, type PaneDirection, resizeLeaf, setRatio, splitLeaf, swapLeaves, type TabLayout } from "./layout-doc.ts";
-import { agentInfoOf, agentOfStatus, agentStatusOf, buildSnapshot, type FirstTurn, keptLayout, opencodeRecords, type SessionOf, reportedFacts, type HcStatus, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, onOtherMachine, OTHER_WORKSPACE_ID, PANE_NAME_LABEL, processInfoOf, SEEN_LABEL, shownStatusOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
+import { agentInfoOf, agentOf, agentOfStatus, agentStatusOf, foregroundOf, type HcForeground, buildSnapshot, type FirstTurn, keptLayout, opencodeRecords, type SessionOf, reportedFacts, type HcStatus, type HcTerminal, hcKeyName, HERDR_PROTOCOL, isRecord, keyBytes, LAYOUT_DOC, onOtherMachine, OTHER_WORKSPACE_ID, PANE_NAME_LABEL, processInfoOf, SEEN_LABEL, shownStatusOf, SPACE_LABEL, TAB_LABEL, TAB_NAME_LABEL, WORKSPACE_NAME_LABEL } from "./snapshot.ts";
 import { checkoutHolding, defaultCheckoutPath, factsOf, git, gitDirIdentity, labeledWorktree, realPath, type Checkout, type Repository, repositoryOf, WORKTREE_LABEL, WorktreeError, worktreeFolder, worktreeLabel } from "./worktrees.ts";
 import type { AgentStatus, SessionSnapshot } from "../../shared/herdr-api.generated.ts";
 import type { WorktreeInfo } from "../herdr/client.ts";
@@ -1301,7 +1301,7 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
    * `shownStatusOf`): its program's word, its turn and its labels, from hc's snapshot and then its
    * events, with the status last told. Until hc's snapshot is in, events wait in `early`.
    */
-  const known = new Map<string, { status: HcStatus | null; turn: number; first: number; labels: Record<string, string>; shown: AgentStatus }>();
+  const known = new Map<string, { status: HcStatus | null; front: HcForeground | null; turn: number; first: number; labels: Record<string, string>; shown: AgentStatus }>();
   let early: HcEvent[] | null = [];
   const remember = (record: unknown) => {
     if (!isRecord(record) || typeof record["address"] !== "string") return;
@@ -1310,11 +1310,11 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
     const labels = labelsOf(record["labels"]);
     const first = firstTurn({ address: record["address"], turn });
     noteSession?.(record["address"], status, record["records"]);
-    known.set(record["address"], { status, turn, first, labels, shown: shownStatusOf(status, turn, labels, first) });
+    known.set(record["address"], { status, front: foregroundOf(record["foreground"]), turn, first, labels, shown: shownStatusOf(status, turn, labels, first) });
     observeSeen?.(record["address"], turn, labels);
   };
   const tell = (paneId: string, status: HcStatus | null, shown: AgentStatus) => {
-    emit(STATUS_EVENT, { pane_id: paneId, agent_status: shown, agent: agentOfStatus(status) });
+    emit(STATUS_EVENT, { pane_id: paneId, agent_status: shown, agent: agentOf({ status, foreground: known.get(paneId)?.front ?? null }) });
   };
   /** A turn or a look (the `herdr.seen` label) that changes what a terminal shows is told as its status. */
   const retell = (paneId: string) => {
@@ -1396,11 +1396,22 @@ async function subscribe(hc: HcConnection, socket: Socket<ConnectionState>, requ
         lifecycle("layout.updated", "layout_updated");
         return;
       }
+      case "foreground": {
+        // a program that reports nothing is named from the process in front of it (snapshot.ts `agentOf`)
+        const entry = paneId ? known.get(paneId) : undefined;
+        if (!entry) return;
+        const before = agentOf({ status: entry.status, foreground: entry.front });
+        entry.front = foregroundOf(event.data);
+        if (agentOf({ status: entry.status, foreground: entry.front }) === before) return;
+        lifecycle("pane.updated", "pane_updated", paneId);
+        if (statusPanes.has(paneId!)) tell(paneId!, entry.status, entry.shown);
+        return;
+      }
       case "doc":
         if (event.data?.["name"] === LAYOUT_DOC || event.data?.["name"] === OVIS_LAYOUT_DOC) lifecycle("layout.updated", "layout_updated");
         return;
       default:
-        // title, size and foreground change many times a second and show in the next snapshot
+        // title and size change many times a second and show in the next snapshot
         return;
     }
   };

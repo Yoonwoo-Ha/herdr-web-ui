@@ -141,6 +141,18 @@ describe("buildSnapshot", () => {
     expect(snapshot.agents.map((a) => [a.pane_id, a.agent])).toEqual([["t1", "claude"], ["t2", "codex"], ["t3", "omp"], ["t5", "claude"], ["t6", "agy"]]);
   });
 
+  // hc 0.1.17 records on old-desktop, 2026-11-08: Letta Code and Devin send no OSC 7501, Grok Build reports `grok-build`
+  it("names an agent that reports nothing from the process in front, and Grok Build as herdr's grok", () => {
+    const snapshot = buildSnapshot([
+      terminal("t1", { argv: ["bash"], status: null, foreground: { pid: 11, name: "node", argv: ["node", "/home/u/npm/node_modules/.bin/letta", "--backend", "local"] } }),
+      terminal("t2", { argv: ["bash"], foreground: { pid: 21, name: "devin", argv: ["devin"] } }),
+      terminal("t3", { argv: ["bash"], status: { app: "grok-build", state: "blocked", kind: "auth" }, foreground: { pid: 31, name: "grok", argv: ["grok"] } }),
+      terminal("t4", { argv: ["bash"], foreground: { pid: 41, name: "bash", argv: ["bash"] } }),
+    ], { spaces: [] }, "0.1.17");
+    expect(snapshot.panes.map((p) => [p.pane_id, p.agent, p.agent_status])).toEqual([["t1", "letta", "unknown"], ["t2", "devin", "unknown"], ["t3", "grok", "blocked"], ["t4", null, "unknown"]]);
+    expect(snapshot.agents.map((a) => [a.pane_id, a.agent])).toEqual([["t1", "letta"], ["t2", "devin"], ["t3", "grok"]]);
+  });
+
   it("cuts the tab top down by the app's tree and weights, whatever size the terminals are, with a divider per split", () => {
     const weighted = { ...block("t1"), size: { weight: 3 } };
     const layout = { spaces: [{ id: "s1", name: "a", tabs: [{ id: "s1t1", name: "", root: { type: "row", id: "r", children: [weighted, { type: "column", id: "c", children: [block("t2"), block("t3")] }] } }] }] };

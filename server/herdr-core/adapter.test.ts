@@ -398,6 +398,43 @@ describe("herdr-core adapter", () => {
     expect(core.closed).toContain(channel);
   });
 
+  // hc 0.1.17 on old-desktop, 2026-11-08: Letta Code reports nothing, and hc tells each new program in front as a `foreground` event
+  it("names an agent that reports nothing from the process in front, in its status and as that process changes", async () => {
+    let channel = 0;
+    const letta = { pid: 11, name: "node", argv: ["node", "/home/u/npm/node_modules/.bin/letta"] };
+    const { socket, cores } = await setup([terminal("t1")], {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: [terminal("t1", { argv: ["bash"], foreground: letta })] };
+      },
+    });
+    const frames: EventFrame[] = [];
+    const started = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.updated" }, { type: "pane.agent_status_changed", pane_id: "t1" }], {
+      onEvent: (frame) => frames.push(frame),
+      onStarted: () => started.resolve(),
+      onClose: () => ended.resolve(),
+    }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores[0]!;
+    core.notify(channel, "event", { seq: 2, type: "status", terminal: "t1", data: { status: { state: "working" } } });
+    // the same program again changes nothing
+    core.notify(channel, "event", { seq: 3, type: "foreground", terminal: "t1", data: { ...letta, pid: 12 } });
+    core.notify(channel, "event", { seq: 4, type: "foreground", terminal: "t1", data: { pid: 13, name: "bash", argv: ["bash"] } });
+    core.notify(channel, "event", { seq: 5, type: "foreground", terminal: "t1", data: { pid: 14, name: "devin", argv: ["devin"] } });
+    core.notify(channel, "missed", { seq: 9, terminals: [] });
+    await ended.promise;
+    expect(frames).toEqual([
+      { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: "letta" } },
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } },
+      { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: null } },
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } },
+      { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: "devin" } },
+    ]);
+  });
+
 it("asks for a fresh snapshot when a report's kind, message or progress changes, and only then", async () => {
     let channel = 0;
     const { socket, cores } = await setup([terminal("t1")], {
