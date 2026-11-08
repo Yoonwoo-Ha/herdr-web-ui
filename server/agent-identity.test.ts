@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { paneAgent } from "./agent-identity.ts";
+import { paneAgent, paneSession } from "./agent-identity.ts";
 
 describe("which agent a pane runs", () => {
   it("takes the app the program reported, in herdr's names", () => {
@@ -34,6 +34,15 @@ describe("which agent a pane runs", () => {
     }
     expect(paneAgent({}, "linux")).toBeNull();
     expect(paneAgent({ reported: "", foreground: null }, "linux")).toBeNull();
+  });
+
+  it("takes OpenCode's session as the one it named that alone carries the terminal's title", () => {
+    expect(paneSession("opencode", { named: ["ses_a", "ses_b"], titled: ["ses_b"] })).toEqual({ agent: "opencode", source: "herdr:opencode", kind: "id", value: "ses_b" });
+    // a title two sessions share, one never named, or none settles nothing
+    expect(paneSession("opencode", { named: ["ses_a", "ses_b"], titled: ["ses_a", "ses_b"] })).toBeNull();
+    expect(paneSession("opencode", { named: ["ses_a"], titled: ["ses_c"] })).toBeNull();
+    expect(paneSession("opencode", { named: ["ses_a"] })).toBeNull();
+    expect(paneSession("claude", { named: ["ses_a"], titled: ["ses_a"] })).toBeNull();
   });
 
   it("does not take a binary whose name proves nothing on that platform", () => {

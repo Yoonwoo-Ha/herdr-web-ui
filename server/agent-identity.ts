@@ -1,5 +1,6 @@
 import nodePath from "node:path";
 import { AGENT_CATALOG, catalogPlatform, type CatalogPlatform } from "../shared/agent-catalog.ts";
+import type { AgentSessionInfo } from "../shared/herdr-api.generated.ts";
 
 /**
  * Which agent a pane runs, decided in one place from the facts a runtime gives about it, so the
@@ -61,6 +62,25 @@ export function processAgent(argv: readonly string[], platform: CatalogPlatform 
   if (!program) return null;
   const entry = AGENT_CATALOG.find((candidate) => candidate.detect.binaries.includes(program) && !(platform && candidate.detect.unreliable_on?.[platform]));
   return entry?.id ?? null;
+}
+
+/** What a runtime tells about which conversation a pane's agent shows. */
+export interface SessionFacts {
+  /** the sessions the agent named as busy while it ran here (OpenCode's OSC 7501 records), the newest last */
+  named?: readonly string[];
+  /** the sessions in the agent's own store whose title is the pane's terminal title */
+  titled?: readonly string[];
+}
+
+/**
+ * The conversation a pane's agent shows, in herdr's report shape so every resolver reads one form;
+ * null when the facts do not settle it. OpenCode: a record names a busy tab, not the one on screen,
+ * so the session is the one it named that alone carries the terminal's title.
+ */
+export function paneSession(agent: string | null, facts: SessionFacts): AgentSessionInfo | null {
+  if (agent !== "opencode") return null;
+  const titled = facts.titled ?? [];
+  return titled.length === 1 && (facts.named ?? []).includes(titled[0]!) ? { agent: "opencode", source: "herdr:opencode", kind: "id", value: titled[0]! } : null;
 }
 
 /** The agent a pane runs: the program's own report first, else the process in front of it; null for none. */
