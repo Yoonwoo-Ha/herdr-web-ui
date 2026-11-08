@@ -3,12 +3,13 @@
  * Herdr deliberately omits recognized agents' argv on WSL to avoid blocking procfs reads.
  * Recover process identity outside the bridge, then use the open transcript or breadcrumb.
  */
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import { darwinProcess } from "./claude-store.ts";
-import { paneProcessInfo, type ProcessInfo } from "./herdr/client.ts";
+import { darwinStartTime } from "./darwin-process.ts";
+import { paneProcessInfo, processInfoAskedAt, type ProcessInfo } from "./herdr/client.ts";
 import { heldTranscript, runsAgent, storeRelative, type StoreRoots, transcriptHeader } from "./gjc-runtime.ts";
 import { ompProcessMemory, ompRoutingEnviron, processStartTicks } from "./omp-process.ts";
 import { processStartIdentity } from "./process-start.ts";
@@ -298,6 +299,11 @@ export interface OmpRoute {
    * process whose listing held a name that could not be read, so nothing is proved for it. Elsewhere /proc is read.
    */
   openFilesOf?: (pid: number) => readonly string[] | null;
+  /**
+   * On macOS with ompHeldFiles on, each process's start identity, read as herdr's sample that names it is
+   * taken: lsof lists a process only while its start stays this one, so a pid reused since is never read.
+   */
+  startsOf?: ReadonlyMap<number, number>;
 }
 
 /** An lsof listing longer than this is not read: nothing is proved from a part of one. */
@@ -307,8 +313,13 @@ const LSOF_DEADLINE_MS = 3000;
 
 /** How long one lsof listing of a process stands for it while its start stays the same: about one poll. */
 const LSOF_FRESH_MS = 2000;
+/**
+ * A name lsof listed, with the `dev:ino` of the file it held (its `D` and `i` fields), or null when lsof
+ * printed neither: such a `.jsonl` proves nothing, since the name may meanwhile name another file.
+ */
+interface HeldName { name: string; id: string | null }
 /** Each process's last listing, by pid, with the start it was listed under and when (performance.now). */
-const listed = new Map<number, { identity: number; files: string[] | null; at: number }>();
+const listed = new Map<number, { identity: number; files: HeldName[] | null; at: number }>();
 
 /** The bytes lsof's `-F n` field writes as a backslash and one letter. */
 const LSOF_ESCAPES = new Map([["b", 8], ["f", 12], ["n", 10], ["r", 13], ["t", 9], ["\\", 92]]);
@@ -341,19 +352,22 @@ function lsofName(field: string): string | null {
  * That run proves nothing when it fails, runs past its deadline (then it is SIGKILLed) or prints more
  * than LSOF_MAX_BYTES; an exit of 1 with the whole listing printed means only that some pid was gone,
  * and the others' listings stand. A process counts only when its start is the same before and after
- * the run: herdr named it a moment ago, and a pid reused meanwhile lists another omp's session (as
- * #3324 checks); every one, a listing reused too, is checked again after the last wait, just before
- * the listing is returned. A name holding a control character once decoded is no held path.
+ * the run as the one read with herdr's sample (`sampled`): a pid reused meanwhile lists another omp's
+ * session (as #3324 checks); every one, a listing reused too, is checked again after the last wait, just
+ * before the listing is returned. A name holding a control character once decoded is no held path.
+ * Each held `.jsonl` must still name the file lsof saw (its `dev:ino`) when the listing is returned, a
+ * reused one too: a path renamed or replaced since proves nothing, and that listing is forgotten. A
+ * process absent from the result has no listing that proves anything (ompHeldOpen).
  */
-async function darwinOpenFiles(pids: readonly number[]): Promise<Map<number, string[] | null>> {
-  const open = new Map<number, string[] | null>();
+async function darwinOpenFiles(pids: readonly number[], sampled: ReadonlyMap<number, number>): Promise<Map<number, string[] | null>> {
+  const open = new Map<number, HeldName[] | null>();
   const now = performance.now();
   for (const [pid, entry] of listed) if (now - entry.at >= LSOF_FRESH_MS) listed.delete(pid);
   const unlisted: { pid: number; identity: number }[] = [];
   const identities = new Map<number, number>();
   for (const pid of pids) {
     const identity = processStartIdentity(pid);
-    if (identity === null) continue;
+    if (identity === null || identity !== sampled.get(pid)) continue;
     identities.set(pid, identity);
     const entry = listed.get(pid);
     if (entry?.identity === identity) open.set(pid, entry.files);
@@ -361,7 +375,7 @@ async function darwinOpenFiles(pids: readonly number[]): Promise<Map<number, str
   }
   if (unlisted.length === 0) return sameStarts(open, identities);
   let child: Bun.Subprocess<"ignore", "pipe", "ignore">;
-  try { child = Bun.spawn(["/usr/sbin/lsof", "-nPbw", "-a", "-p", unlisted.map(({ pid }) => pid).join(","), "-Fpn"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" }); }
+  try { child = Bun.spawn(["/usr/sbin/lsof", "-nPbw", "-a", "-p", unlisted.map(({ pid }) => pid).join(","), "-FpDin"], { stdin: "ignore", stdout: "pipe", stderr: "ignore" }); }
   catch { return sameStarts(open, identities); }
   let whole = true;
   const deadline = setTimeout(() => { whole = false; child.kill("SIGKILL"); }, LSOF_DEADLINE_MS);
@@ -377,16 +391,22 @@ async function darwinOpenFiles(pids: readonly number[]): Promise<Map<number, str
     const code = whole ? await child.exited : null;
     if (code !== 0 && code !== 1 || !whole) return sameStarts(open, identities);
   } catch { return sameStarts(open, identities); } finally { clearTimeout(deadline); }
-  const fresh = new Map<number, string[] | null>();
+  const fresh = new Map<number, HeldName[] | null>();
   let current: number | undefined;
+  // a file's fields come before its name, which ends it
+  let device: string | null = null, inode: string | null = null;
   for (const line of Buffer.concat(chunks).toString("latin1").split("\n")) {
-    if (line.startsWith("p")) fresh.set(current = Number(line.slice(1)), []);
+    if (line.startsWith("p")) { fresh.set(current = Number(line.slice(1)), []); device = inode = null; }
+    else if (line.startsWith("f")) device = inode = null;
+    else if (line.startsWith("D") && /^0x[0-9a-f]+$/i.test(line.slice(1))) device = BigInt(line.slice(1)).toString();
+    else if (line.startsWith("i") && /^\d+$/.test(line.slice(1))) inode = line.slice(1);
     else if (line.startsWith("n") && current !== undefined) {
       // a name that cannot be read may be the very session: nothing is proved for this process then
       const name = lsofName(line.slice(1));
       const files = fresh.get(current);
       if (name === null || /[\x00-\x1f\x7f]/.test(name)) fresh.set(current, null);
-      else files?.push(name);
+      else files?.push({ name, id: device !== null && inode !== null ? `${device}:${inode}` : null });
+      device = inode = null;
     }
   }
   for (const { pid, identity } of unlisted) {
@@ -398,14 +418,34 @@ async function darwinOpenFiles(pids: readonly number[]): Promise<Map<number, str
   return sameStarts(open, identities);
 }
 
-/** The listings of the processes whose start is still the one read before them; a changed one is forgotten. */
-function sameStarts(open: Map<number, string[] | null>, identities: ReadonlyMap<number, number>): Map<number, string[] | null> {
-  for (const pid of open.keys()) {
+/** The `dev:ino` a path names now, or null; read as bigints, as lsof prints them, past 2^53 too. */
+function fileId(path: string): string | null {
+  try { const stat = statSync(path, { bigint: true }); return `${stat.dev}:${stat.ino}`; } catch { return null; }
+}
+
+/**
+ * The listings of the processes whose start is still the one read before them, by name; a changed one is
+ * forgotten. A listing one of whose `.jsonl` names no longer names the file lsof saw proves nothing (null),
+ * and is forgotten too.
+ */
+function sameStarts(open: Map<number, HeldName[] | null>, identities: ReadonlyMap<number, number>): Map<number, string[] | null> {
+  const names = new Map<number, string[] | null>();
+  for (const [pid, files] of open) {
+    const current = files === null || files.every(({ name, id }) => !name.endsWith(".jsonl") || id !== null && fileId(name) === id);
+    if (!current) listed.delete(pid);
+    names.set(pid, current ? files?.map(({ name }) => name) ?? null : null);
+  }
+  for (const pid of names.keys()) {
     if (processStartIdentity(pid) === identities.get(pid)) continue;
-    open.delete(pid);
+    names.delete(pid);
     listed.delete(pid);
   }
-  return open;
+  return names;
+}
+
+/** The kernel's start of a process on macOS, in microseconds, or null. */
+function sampledStart(pid: number): bigint | null {
+  try { return darwinStartTime(pid); } catch { return null; }
 }
 
 /**
@@ -426,11 +466,13 @@ export function readOmpHeldFilesSetting(read: () => boolean): void {
  * (`core`) there is no /proc and omp's breadcrumb proves nothing (#3365): only the files a process
  * holds open do, so lsof lists them, and when it proves nothing no file is held and heldTranscript
  * binds nothing. Only with ompHeldFiles on; off, lsof is never run and the route is read as before.
+ * A process with no listing that proves anything (its start unread or changed, left out by lsof, lsof
+ * failed) may hold another session than the others: it is unreadable, so nothing is bound then.
  */
 export async function ompHeldOpen(route: OmpRoute, core: boolean): Promise<OmpRoute> {
   if (process.platform !== "darwin" || !core || !heldFilesOn()) return route;
-  const open = await darwinOpenFiles(route.pids);
-  return { ...route, openFilesOf: (pid) => open.has(pid) ? open.get(pid)! : [] };
+  const open = await darwinOpenFiles(route.pids, route.startsOf ?? new Map());
+  return { ...route, openFilesOf: (pid) => open.get(pid) ?? null };
 }
 
 /**
@@ -443,16 +485,31 @@ export async function ompHeldOpen(route: OmpRoute, core: boolean): Promise<OmpRo
 export async function ompPaneRoute(paneId: string, known?: ProcessInfo | null): Promise<OmpRoute | "unproved" | null> {
   // `known`: herdr's answer the caller's poll already read for this pane. One that named no processes is asked again:
   // with no omp seen herdr's reported session is trusted, and an omp started since may keep another store
-  const info = known ?? await paneProcessInfo(paneId).catch(() => null);
+  // lsof may list these processes later (ompHeldOpen): each one's start is read with the sample that names it
+  const sampleStarts = process.platform === "darwin" && heldFilesOn();
+  // A process that started at or after herdr was asked is not the one its sample named, but a pid reused
+  // since: its start is not taken, so lsof never lists it (ompHeldOpen). `askedAt` is never later than the
+  // real ask: a caller's sample counts with its own ask time (paneProcessInfo keeps it), and one whose ask
+  // time is unknown is asked again. The kernel's start is in microseconds and askedAt a floored millisecond,
+  // so any start in the ask's millisecond is refused too. herdr's sample carries no start, so a pid reused
+  // by a process started before the ask cannot be told, nor a start under a wall clock stepped back since.
+  const askedTime = known ? processInfoAskedAt(known) : undefined;
+  const reuse = known != null && (!sampleStarts || askedTime !== undefined);
+  const askedAt = reuse ? askedTime ?? Date.now() : Date.now();
+  const info = reuse ? known : await paneProcessInfo(paneId).catch(() => null);
   let layout: OmpLayout | null = null;
   const pids: number[] = [];
   const launchDirs = new Set<string | null>();
   const environs = new Map<number, readonly string[]>();
+  const starts = new Map<number, number>();
   let unread = false;
   for (const foreground of info?.foreground_processes ?? []) {
     if (typeof foreground.pid !== "number") continue;
     let argv = Array.isArray(foreground.argv) ? foreground.argv.map(String) : [];
     if (argv.length > 0 && (!isOmpProcess(argv) || isOmpHelper(argv))) continue;
+    const start = sampleStarts ? sampledStart(foreground.pid) : null;
+    // processStartIdentity's own form (whole milliseconds), as darwinOpenFiles reads it again
+    if (start !== null && start < BigInt(askedAt) * 1000n) starts.set(foreground.pid, Number(start / 1000n));
     // Herdr omits a recognized agent's argv (on Linux, WSL included). A procfs memory read blocks
     // while the process holds its memory map locked (omp does while it pages in, and on WSL while
     // it exits), so on Linux every read goes through the bounded helper, never the bridge itself.
@@ -478,7 +535,7 @@ export async function ompPaneRoute(paneId: string, known?: ProcessInfo | null): 
   if (unread) return "unproved";
   if (layout === null) return null;
   const [launchDir] = launchDirs;
-  return { layout, pids, environOf: (pid) => environs.get(pid), launchDir: launchDirs.size === 1 ? launchDir ?? null : null };
+  return { layout, pids, environOf: (pid) => environs.get(pid), launchDir: launchDirs.size === 1 ? launchDir ?? null : null, startsOf: starts };
 }
 
 /**

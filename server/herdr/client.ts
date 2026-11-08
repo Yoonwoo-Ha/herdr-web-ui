@@ -815,7 +815,18 @@ export type ProcessInfo = PaneProcessInfo;
  * `pane_id`: given `target`, herdr silently answers for the focused pane. Rejects as herdrRpc does.
  */
 export async function paneProcessInfo(paneId: string, socketPath?: string): Promise<ProcessInfo | undefined> {
-  return (await herdrRpc("pane.process_info", { pane_id: paneId }, socketPath)).process_info;
+  const askedAt = Date.now();
+  const info = (await herdrRpc("pane.process_info", { pane_id: paneId }, socketPath)).process_info;
+  if (info) processInfoAsks.set(info, askedAt);
+  return info;
+}
+
+/** When each answer paneProcessInfo gave was asked for (Date.now, taken before the ask): herdr's sample is no older. */
+const processInfoAsks = new WeakMap<ProcessInfo, number>();
+
+/** When `info` was asked of herdr, or undefined for an answer paneProcessInfo did not give. */
+export function processInfoAskedAt(info: ProcessInfo): number | undefined {
+  return processInfoAsks.get(info);
 }
 
 /** The agent herdr tracks in a pane (`agent.get`), including the session it reported. */

@@ -1,6 +1,6 @@
 /** GJC transcript identity is published by its lifecycle extension; shared terminal/store helpers are also used by omp. */
 
-import { closeSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import nodePath, { join, type PlatformPath } from "node:path";
 
 import { readGjcNativeBinding, validateGjcNativeTranscript } from "./gjc-native.ts";
@@ -247,7 +247,9 @@ export function terminalBreadcrumb(store: string | StoreRoots, cwd: string, term
  * `openFilesOf` supplies the files a process holds open where there is no /proc (lsof on macOS
  * herdr-core); there they are the only proof, and with none held no breadcrumb stands in (#3365).
  * There a process whose listing held a name that could not be read (null), or that holds a `.jsonl` in
- * the store that does not resolve, may hold the very session: nothing is bound for the pane then.
+ * the store that does not resolve, may hold the very session: nothing is bound for the pane then. So may a
+ * held `.jsonl` lsof names under neither the store's configured root nor its canonical one (lsof lists
+ * resolved paths, so a store reached through a link is placed by the canonical root).
  */
 export function heldTranscript(roots: StoreRoots, cwd: string, pids: readonly number[], probe: HeldProbe = {}): { path: string | null; found: number } {
   const { environOf, openFilesOf } = probe;
@@ -271,19 +273,57 @@ export function heldTranscript(roots: StoreRoots, cwd: string, pids: readonly nu
     }
     else try { held = readdirSync(`/proc/${pid}/fd`).map((fd) => `/proc/${pid}/fd/${fd}`); } catch { /* no /proc: the native breadcrumb */ }
     for (const entry of held) {
+      if (openFilesOf) {
+        const target = listedSession(roots, root, entry);
+        if (target === null) continue;
+        // a held session whose header cannot be read, or is no session header, may be the pane's: unproved
+        const header = target === "unproved" ? null : transcriptCwd(target);
+        const same = header === null ? null : sameCwd(header, cwd);
+        if (same === null) unreadable = true;
+        else if (same) open.add(target);
+        continue;
+      }
       try {
-        const file = realpathSync(openFilesOf ? entry : readlinkSync(entry));
+        const file = realpathSync(readlinkSync(entry));
         const target = statSync(file).isFile() ? gjcSessionFile(root, file, nodePath, roots.depth) : null;
         if (target && transcriptCwd(target) === cwd) open.add(target);
-      } catch {
-        // closed, deleted or unreadable descriptor; a listed session of the store that does not resolve proves nothing either way
-        if (openFilesOf && entry.endsWith(".jsonl") && storeRelative(root, entry) !== null) unreadable = true;
-      }
+      } catch { /* closed, deleted or unreadable descriptor */ }
     }
   }
   if (unreadable) return { path: null, found: 0 };
   const candidates = open.size > 0 || openFilesOf ? open : breadcrumbs;
   return { path: candidates.size === 1 ? [...candidates][0]! : null, found: candidates.size };
+}
+
+/**
+ * The session a name lsof listed (macOS, where it is the only proof) is, placed by the name as listed: a
+ * subagent's file maps to the parent its listed directory names, never the one a link below the root
+ * resolves to. null for a name that is no session of the store; "unproved" for a `.jsonl` that may be one
+ * but is placed under neither the store's configured root nor its canonical one (lsof lists resolved
+ * paths), has a link or anything but a directory below the root, or does not resolve. A spelling that
+ * names the store only once resolved (another case, Unicode form or `/private` alias) is refused too:
+ * that fails closed.
+ */
+function listedSession(roots: StoreRoots, root: string, entry: string): string | null | "unproved" {
+  if (!entry.endsWith(".jsonl")) return null;
+  const base = storeRelative(roots.sessions, entry) !== null ? roots.sessions : storeRelative(root, entry) !== null ? root : null;
+  if (base === null) return "unproved";
+  const parts = storeRelative(base, entry)!;
+  if (parts.length !== roots.depth && parts.length !== roots.depth + 1) return null;
+  try {
+    for (let at = 1; at < parts.length; at += 1) {
+      if (!lstatSync(join(base, ...parts.slice(0, at))).isDirectory()) return "unproved";
+    }
+    if (!lstatSync(entry).isFile()) return "unproved";
+    // a subagent's parent transcript that is a link may name any session of the store
+    if (parts.length === roots.depth + 1 && !lstatSync(join(base, ...parts.slice(0, -2), `${parts.at(-2)!}.jsonl`)).isFile()) return "unproved";
+  } catch { return "unproved"; }
+  return gjcSessionFile(root, join(root, ...parts), nodePath, roots.depth);
+}
+
+/** Whether a header's cwd is the pane's, links followed on both; null when either does not resolve (the same spelling too). */
+function sameCwd(header: string, cwd: string): boolean | null {
+  try { return realpathSync(header) === realpathSync(cwd); } catch { return null; }
 }
 
 /** What heldTranscript reads of a process that its caller already has. */
