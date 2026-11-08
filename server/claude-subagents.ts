@@ -131,11 +131,12 @@ export function lineNotifications(line: string): TaskNotification[] {
  * begins inside a line that is not wanted (a window's start, or a line too long to take), which
  * is passed over to its end. A line that does not fit `limit` waits for a call with more, and
  * one that does not fit READ_BUDGET is skipped, not waited for. `more`: the file goes on past
- * what this read looked at.
+ * what this read looked at. `file`: the plain file `plain` looked at, which the open must still be.
  */
-export function readLines(path: string, from: number, size: number, limit: number, each: (line: string, end: number) => void, skipping: boolean): { offset: number; skipping: boolean; more: boolean; failed?: true } {
-  let fd: number;
-  try { fd = openSync(path, "r"); } catch { return { offset: from, skipping, more: true, failed: true }; }
+export function readLines(path: string, from: number, file: { size: number; exact: string }, limit: number, each: (line: string, end: number) => void, skipping: boolean): { offset: number; skipping: boolean; more: boolean; failed?: true } {
+  const size = file.size;
+  const fd = openPlain(path, file.exact)?.fd;
+  if (fd === undefined) return { offset: from, skipping, more: true, failed: true };
   try {
     const length = Math.min(size - from, limit);
     const buffer = Buffer.alloc(length);
@@ -168,11 +169,37 @@ export function readLines(path: string, from: number, size: number, limit: numbe
   } catch { return { offset: from, skipping, more: true, failed: true }; } finally { closeSync(fd); }
 }
 
-export function plain(path: string, max = Infinity): { size: number; mtimeMs: number; id: string } | null {
+/**
+ * A plain file at `path` as one look sees it: `id`, `size` and `mtimeMs` in the number form the versions share
+ * (historyVersion), and `exact`, its identity as BigInt, which a read's open must find (openPlain): two NTFS file IDs
+ * can round to one number.
+ */
+export function plain(path: string, max = Infinity): { size: number; mtimeMs: number; id: string; exact: string } | null {
   try {
-    const stat = lstatSync(path);
-    return stat.isFile() && stat.size <= max ? { size: stat.size, mtimeMs: stat.mtimeMs, id: `${stat.dev}:${stat.ino}` } : null;
+    const stat = lstatSync(path, { bigint: true });
+    const size = Number(stat.size);
+    if (!stat.isFile() || size > max) return null;
+    // as a number Stats gives it: seconds in milliseconds, then the nanoseconds
+    const mtimeMs = Number(stat.mtimeNs / 1_000_000_000n) * 1000 + Number(stat.mtimeNs % 1_000_000_000n) / 1e6;
+    return { size, mtimeMs, id: `${Number(stat.dev)}:${Number(stat.ino)}`, exact: identity(stat) };
   } catch { return null; }
+}
+
+/**
+ * `path` opened as the plain file whose identity `plain` looked at (`exact`), of at most `max` bytes: its descriptor
+ * and size, or null. Not waited on, not followed: a FIFO or a link put in the file's place after the look neither hangs
+ * the read nor leads elsewhere, and another file put there is not the one looked at.
+ */
+function openPlain(path: string, exact: string, max = Infinity): { fd: number; size: number } | null {
+  let fd: number;
+  try { fd = detailIo.openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0)); } catch { return null; }
+  try {
+    const opened = fstatSync(fd, { bigint: true });
+    const size = Number(opened.size);
+    if (opened.isFile() && size <= max && identity(opened) === exact) return { fd, size };
+  } catch { /* refused below */ }
+  closeSync(fd);
+  return null;
 }
 
 /** What one transcript says of background commands: those it started, by task id, and how those it heard of ended. */
@@ -337,7 +364,7 @@ function scanParent(path: string): Parent | null {
   // the first read takes the whole window, a chunk at a time; after that a call reads what was appended
   for (let left = PARENT_WINDOW; state.offset < stat.size && left > 0;) {
     if (state.skipping) state.restAt = null;
-    const read = readLines(path, state.offset, stat.size, READ_BUDGET, (line, end) => {
+    const read = readLines(path, state.offset, stat, READ_BUDGET, (line, end) => {
       if (state.firstAt === null) state.firstAt = stamp(line.match(/"timestamp":"([^"]+)"/)?.[1]);
       scanParentLine(state, line, end);
     }, state.skipping);
@@ -521,19 +548,18 @@ function scanStop(parent: Parent, entry: Row, block: Row, at: number | null): vo
 interface Meta { title: string | null; name: string | null; agent: string | null; toolUseId: string | null }
 const metas = new Map<string, { key: string; meta: Meta | null }>();
 
-function readMeta(path: string): Meta | null {
-  const stat = plain(path, MAX_META_BYTES);
+/** `where`: the file in the folder held open (claudeSubagentState); `path` names it in the cache. */
+function readMeta(path: string, where: string): Meta | null {
+  const stat = plain(where, MAX_META_BYTES);
   if (stat === null) return null;
   const key = `${stat.id}:${stat.mtimeMs}:${stat.size}`;
   const known = metas.get(path);
   if (known?.key === key) return known.meta;
   let meta: Meta | null = null;
-  let fd: number;
-  // not waited on, not followed: a FIFO or a link put in the file's place after the look neither hangs the read nor leads elsewhere
-  try { fd = detailIo.openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0)); } catch { return null; }
+  const opened = openPlain(where, stat.exact, MAX_META_BYTES);
+  if (opened === null) return null;
+  const fd = opened.fd;
   try {
-    const opened = fstatSync(fd);
-    if (!opened.isFile() || opened.size > MAX_META_BYTES) return null;
     const record = row(JSON.parse(readAt(fd, 0, opened.size).toString("utf8")));
     if (record !== null) meta = { title: text(record["description"]) ?? text(record["name"]), name: text(record["name"]), agent: text(record["agentType"]), toolUseId: text(record["toolUseId"]) };
   } catch { return null; } finally { closeSync(fd); } // being written
@@ -564,8 +590,8 @@ interface Work {
 }
 const works = new Map<string, Work>();
 
-function scanWork(path: string, budget: { left: number }): Work | null {
-  const stat = plain(path);
+function scanWork(path: string, where: string, budget: { left: number }): Work | null {
+  const stat = plain(where);
   if (stat === null) return null;
   let work = works.get(path);
   if (!work || work.id !== stat.id || work.offset > stat.size) {
@@ -577,7 +603,7 @@ function scanWork(path: string, budget: { left: number }): Work | null {
   if (budget.left <= 0) { work.behind = true; work.hungry = true; return work; }
   const state = work;
   const limit = Math.min(budget.left, READ_BUDGET);
-  const read = readLines(path, state.offset, stat.size, limit, (line) => {
+  const read = readLines(where, state.offset, stat, limit, (line) => {
     let entry: Row | null;
     try { entry = row(JSON.parse(line)); } catch { return; }
     if (entry === null) return;
@@ -637,9 +663,9 @@ function turnAfter(entry: Row, at: number | null, turnEndedAt: number | null): n
   return row(row(entry["message"]))?.["stop_reason"] === "end_turn" ? at : null;
 }
 
-function readBytes(path: string, from: number, length: number): Buffer | null {
-  let fd: number;
-  try { fd = openSync(path, "r"); } catch { return null; }
+function readBytes(path: string, exact: string, from: number, length: number): Buffer | null {
+  const fd = openPlain(path, exact)?.fd;
+  if (fd === undefined) return null;
   try {
     const buffer = Buffer.alloc(length);
     let got = 0;
@@ -662,14 +688,14 @@ const tails = new Map<string, { id: string; key: string; tail: Tail }>();
  * first line its start. Read again only when the file changed; not counted against any budget.
  * `known` false: the tail holds no whole line of it (one very long entry, or a file being written).
  */
-function readTail(path: string, stat: { size: number; mtimeMs: number; id: string }): Tail {
+function readTail(path: string, where: string, stat: { size: number; mtimeMs: number; id: string; exact: string }): Tail {
   const key = `${stat.size}:${stat.mtimeMs}`;
   const kept = tails.get(path);
   if (kept?.id === stat.id && kept.key === key) return kept.tail;
   const tail: Tail = { known: false, firstAt: kept?.id === stat.id ? kept.tail.firstAt : null, lastAt: null, dispatchAt: null, turnEndedAt: null };
   if (stat.size === 0) { tail.known = true; return tail; }
   const from = Math.max(0, stat.size - TAIL_BYTES);
-  const chunk = readBytes(path, from, stat.size - from);
+  const chunk = readBytes(where, stat.exact, from, stat.size - from);
   if (chunk === null) return tail;
   const end = chunk.lastIndexOf(0x0a) + 1;
   const start = from === 0 ? 0 : chunk.indexOf(0x0a) + 1;
@@ -690,7 +716,7 @@ function readTail(path: string, stat: { size: number; mtimeMs: number; id: strin
   }
   tail.known = (from === 0 && end > 0) || decisive;
   if (tail.firstAt === null && from > 0) {
-    const head = readBytes(path, 0, TAIL_BYTES);
+    const head = readBytes(where, stat.exact, 0, TAIL_BYTES);
     const newline = head?.indexOf(0x0a) ?? -1;
     if (head !== null && newline !== -1) { try { tail.firstAt = stamp(row(JSON.parse(head.subarray(0, newline).toString("utf8")))?.["timestamp"]); } catch { /* a long first line: no start yet */ } }
   }
@@ -715,17 +741,15 @@ function folderVersion(dir: string): { sig: string; latestMs: number } {
  * listing read after the folder had been quiet for a second is kept.
  */
 const listings = new Map<string, { sig: string; readAt: number; ids: string[]; chain: Folder["chain"] }>();
-function agentIds(parentPath: string): string[] {
+function agentIds(parentPath: string, folder: Folder | null): string[] {
   const dir = subagentsDir(parentPath);
   const { sig, latestMs } = folderVersion(dir);
-  if (sig === "-") { listings.delete(dir); return []; }
+  // the session's own folder only, as the detail read opens it: a link on the way, or one swapped in, lists nothing
+  if (sig === "-" || folder === null) { listings.delete(dir); return []; }
   const known = listings.get(dir);
   // and only while each folder on the way is still the one listed: a session folder moved and replaced with a link to it
   // leaves the subagents folder as it was, and lists nothing as the detail read opens nothing
   if (known?.sig === sig && known.readAt - latestMs >= 1000 && known.chain.every((step) => folderId(step.path) === step.id)) return known.ids;
-  // the session's own folder only, as the detail read opens it: a link on the way, or one swapped in, lists nothing
-  const folder = sessionFolder(parentPath);
-  if (typeof folder === "string") return [];
   const ids: string[] = [];
   let listing: Dir | undefined;
   // read entry by entry, inside the folder opened where the kernel allows: a folder of any size costs at most MAX_NAMES names
@@ -739,10 +763,7 @@ function agentIds(parentPath: string): string[] {
     }
     // a folder on the way swapped while it was listed: what was listed may be another folder's
     if (!intact(folder)) return [];
-  } catch { return []; } finally {
-    listing?.closeSync();
-    if (folder.fd !== null) closeSync(folder.fd);
-  }
+  } catch { return []; } finally { listing?.closeSync(); }
   remember(listings, dir, { sig, readAt: Date.now(), ids, chain: folder.chain }, 256);
   return ids;
 }
@@ -915,6 +936,13 @@ function sessionFolder(parentPath: string): Folder | DetailRefusal {
   let store: string;
   try { store = realpathSync(dirname(parentPath)); } catch { return "unavailable"; }
   return openFolder(store, basename(parentPath, ".jsonl"));
+}
+
+/** The session's subagents folder opened by sessionFolder for one read, closed with it; null when it cannot be. */
+function heldFolder(parentPath: string): { folder: Folder | null; [Symbol.dispose](): void } {
+  const opened = sessionFolder(parentPath);
+  const folder = typeof opened === "string" ? null : opened;
+  return { folder, [Symbol.dispose]: () => { if (folder !== null && folder.fd !== null) closeSync(folder.fd); } };
 }
 
 /** Whether the folder is still the one looked at: every folder on the way the same, and the open one where it was. */
@@ -1158,12 +1186,17 @@ const previous = new Map<string, Map<string, OmoTask>>();
 
 export function claudeSubagentState(parentPath: string, live: boolean, now = Date.now(), since: number | null = null, history?: HistoryEvidence | null): { tasks: OmoTask[]; historyNeeded: boolean; historyPending: boolean; settled: boolean; behind: boolean; watch: string[]; running: number; turnRunning: number; promptAt: number | null; resting: boolean } {
   const dir = subagentsDir(parentPath);
+  // every file is read inside the folder listed, held open for the whole read (where the kernel names a descriptor's
+  // file): a folder on the way swapped after the listing leads nowhere else. Elsewhere the look after the read stands for it
+  using held = heldFolder(parentPath);
+  const folder = held.folder;
+  const inFolder = (name: string): string => folder === null ? join(dir, name) : folder.fd === null ? join(folder.path, name) : `${FD_DIR}/${folder.fd}/${name}`;
   const known = staleAgents.get(dir);
   const skip = staleFresh(known, now) ? known!.ids : null;
   const stale = new Set<string>();
-  const files = agentIds(parentPath).flatMap((id) => {
+  const files = agentIds(parentPath, folder).flatMap((id) => {
     if (skip?.has(id)) { stale.add(id); return []; }
-    const stat = plain(join(dir, `agent-${id}.jsonl`));
+    const stat = plain(inFolder(`agent-${id}.jsonl`));
     if (stat !== null && now - stat.mtimeMs > RECENT_MS) stale.add(id);
     return stat !== null && now - stat.mtimeMs <= RECENT_MS ? [{ id, mtimeMs: stat.mtimeMs, stat }] : [];
   }).sort((a, b) => Number(works.get(join(dir, `agent-${b.id}.jsonl`))?.hungry ?? false) - Number(works.get(join(dir, `agent-${a.id}.jsonl`))?.hungry ?? false) || b.mtimeMs - a.mtimeMs).slice(0, MAX_AGENTS);
@@ -1184,15 +1217,15 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
   const halts = new Map<Commands, number>();
   let settled = parent !== null && !parent.behind;
   for (const { id, stat } of files) {
-    const meta = readMeta(join(dir, `agent-${id}.meta.json`));
-    const work = scanWork(join(dir, `agent-${id}.jsonl`), budget);
+    const meta = readMeta(join(dir, `agent-${id}.meta.json`), inFolder(`agent-${id}.meta.json`));
+    const work = scanWork(join(dir, `agent-${id}.jsonl`), inFolder(`agent-${id}.jsonl`), budget);
     if (work?.behind) behind = true;
     if (work !== null) sources.push(work.commands);
     // a file caught while it is written says nothing yet, and what was worked out without it is not final
     if (meta === null || work === null) { settled = false; continue; }
     if (work.behind) settled = false;
     // its status from the end of its file, which no budget holds back; the whole file only when that tells nothing
-    const tail = readTail(join(dir, `agent-${id}.jsonl`), stat);
+    const tail = readTail(join(dir, `agent-${id}.jsonl`), inFolder(`agent-${id}.jsonl`), stat);
     const view = tail.known ? tail : work.behind ? null : work;
     // not told yet: neither running nor ended
     if (view === null) { settled = false; continue; }
@@ -1247,6 +1280,14 @@ export function claudeSubagentState(parentPath: string, live: boolean, now = Dat
       detail_kind: "claude-subagent",
     };
     keep(task, Math.max(tail.dispatchAt ?? 0, work.dispatchAt ?? 0, firstAt ?? 0));
+  }
+  // a folder on the way swapped while its files were read: what was read, and kept, may be another folder's, and an
+  // agent found old there may be a recent one here
+  if (folder !== null && !intact(folder)) {
+    listings.delete(dir);
+    staleAgents.delete(dir);
+    for (const kept of [works, metas, tails]) for (const path of kept.keys()) if (path.startsWith(`${dir}${sep}`)) kept.delete(path);
+    return { tasks: [], historyNeeded: false, historyPending: false, settled: false, behind: false, watch: [], running: 0, turnRunning: 0, promptAt: null, resting: false };
   }
   // every end any transcript was told of, by id. A launch ends at the first one after it, in
   // whichever transcript was told first: an end no later than it (one in its very millisecond too:
