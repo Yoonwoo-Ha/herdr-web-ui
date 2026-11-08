@@ -188,6 +188,68 @@ describe("CLIProxyAPI v8", () => {
     expect(after).toEqual(first);
   });
 
+  it("keeps an account hidden since the last report unread across a Hub sign-in", async () => {
+    // Given
+    await configure();
+    let hidden = new Set<string>();
+    service.skipAccounts(() => hidden);
+    await service.report(false, hidden);
+    hidden = new Set(["claude:cliproxy:claude-a.json"]);
+    // When
+    service.invalidate();
+    await service.report(false, hidden);
+    // Then
+    expect(fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index)).toEqual(["a", "b", "b"]);
+  });
+
+  it("keeps a hidden account's row unread when the Hub cannot be read right after a sign-in", async () => {
+    // Given
+    await configure();
+    const hidden = new Set(["claude:cliproxy:claude-a.json"]);
+    service.skipAccounts(() => hidden);
+    const first = await service.report(false, hidden);
+    service.invalidate();
+    fake.setDown(true);
+    await service.report(false, hidden);
+    fake.setDown(false);
+    // When
+    const after = await service.report(false, hidden);
+    // Then
+    expect(fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index)).toEqual(["a", "b", "b"]);
+    expect(after[0]).toBe(first[0]);
+  });
+
+  it("keeps the row of an account hidden after the report's snapshot when the Hub cannot be read", async () => {
+    // Given
+    await configure();
+    await service.report();
+    let hidden = new Set<string>();
+    service.skipAccounts(() => hidden);
+    hidden = new Set(["claude:cliproxy:claude-a.json"]);
+    service.invalidate();
+    fake.setDown(true);
+    await service.report(false, new Set());
+    fake.setDown(false);
+    // When
+    await service.report(false, hidden);
+    // Then
+    expect(fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index)).toEqual(["a", "b", "b"]);
+  });
+
+  it("reads a hidden Hub file anew when it names no account", async () => {
+    // Given
+    Reflect.deleteProperty(fake.files[0]!, "email");
+    await configure();
+    const hidden = new Set((await service.report()).map((entry) => entry.key));
+    service.skipAccounts(() => hidden);
+    await service.report(false, hidden);
+    // When
+    service.invalidate();
+    await service.report(false, hidden);
+    // Then
+    expect(fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index)).toEqual(["a", "b", "a"]);
+  });
+
   it("drops hidden rows when the Hub URL changes", async () => {
     // Given
     await configure();

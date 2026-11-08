@@ -1171,12 +1171,21 @@ export class UsageService {
     if (search && now < search.nextAt && !forced && !incomplete) return usages(search.sources);
 
     let found: Found[];
-    try { found = await provider.signIns(this.ctx); } catch { found = []; }
+    let searched = true;
+    try { found = await provider.signIns(this.ctx); } catch { found = []; searched = false; }
     // the same token in two places is one sign-in
     const tokens = new Set<string>();
     found = found.filter((signIn) => "locked" in signIn || (!tokens.has(signIn.token) && Boolean(tokens.add(signIn.token))));
+    // a hidden account its sign-in names keeps its last reading wherever it is found now, so its credentials are not used (#3333)
+    const keptFor = (signIn: Found): Entry | undefined => {
+      const key = signIn.account ? accountKey(provider.id, signIn.account, signIn.source) : undefined;
+      if (key === undefined || !this.lastSkipped.has(key)) return undefined;
+      return [...this.entries].find(([source, entry]) => source.startsWith(`${provider.id}|`) && entry.usage?.key === key)?.[1];
+    };
     const read = await Promise.all(found.map(async (signIn): Promise<[string, Entry]> => {
       const source = `${provider.id}|${signIn.source}`;
+      const kept = keptFor(signIn);
+      if (kept) return [source, kept];
       const entry = this.entries.get(source);
       // a hidden or removed account keeps its last reading: its credentials are not used (#3333)
       const key = entry?.usage?.key;
@@ -1186,7 +1195,17 @@ export class UsageService {
       const current = entry !== undefined && (held || (!hidden && now < entry.nextAt && !(forced && entry.usage?.problem !== "rate_limited")));
       return [source, current ? entry : await this.read(provider, signIn, hidden ? null : entry?.usage ?? null, now)];
     }));
-    for (const source of search?.sources ?? []) if (!read.some(([found]) => found === source)) this.entries.delete(source);
+    // only a search that completed drops the places it did not find, a hidden one kept past invalidate (no search) included;
+    // a hidden account it did not name (gone, or a lookup that failed) keeps one reading, so it is not read when found again
+    if (searched) {
+      const named = new Set(read.flatMap(([, entry]) => entry.usage ? [entry.usage.key] : []));
+      for (const [source, entry] of this.entries) {
+        if (!source.startsWith(`${provider.id}|`) || read.some(([found]) => found === source)) continue;
+        const key = entry.usage?.key;
+        if (key !== undefined && this.lastSkipped.has(key) && !named.has(key)) { named.add(key); continue; }
+        this.entries.delete(source);
+      }
+    }
     for (const [source, entry] of read) this.entries.set(source, entry);
     const sources = read.map(([source]) => source);
     // a hidden account's kept reading is past its time and is not read again, so it cannot bring the next search forward
