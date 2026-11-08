@@ -39,7 +39,8 @@ import type { HerdrPane, OmoTask, PaneBackgroundAgentDetail } from "../shared/pr
  * when it ran past its timeout), by the session or by a subagent. One ends with the
  * `<task-notification>` of its task id, in any transcript of the session, or with the answer
  * of the `TaskStop` (`KillShell` in older Claude Code) that stopped it, which no notice follows.
- * It lives in the Claude process that started it, as a running agent does.
+ * It lives in the Claude process that started it, as a running agent does. A `Workflow` run counts
+ * as one such command: its call answers at once with a task id, and the same notice ends it.
  */
 const READ_BUDGET = 8 * 1024 * 1024;
 /** how much of a parent transcript is read the first time: older notices are not found */
@@ -192,7 +193,7 @@ const noCommands = (): Commands => ({ calls: new Map(), launches: new Map(), end
 const TITLE_LENGTH = 120;
 
 /** Whether a line may say something of a background command, before it is parsed: the answers of every other call are passed over. */
-const commandLine = (line: string): boolean => line.includes('"name":"Bash"') || line.includes('"backgroundTaskId"') || line.includes('"task_id"') || line.includes('"shell_id"');
+const commandLine = (line: string): boolean => line.includes('"name":"Bash"') || line.includes('"backgroundTaskId"') || line.includes('"local_workflow"') || line.includes('"task_id"') || line.includes('"shell_id"');
 
 function commandEnds(result: Row | null, at: number, notices: readonly TaskNotification[]): CommandEnd[] {
   const ends: CommandEnd[] = [];
@@ -217,10 +218,12 @@ function scanCommands(commands: Commands, entry: Row, at: number | null, notices
   }
   const failed = blocks.some((block) => block["type"] === "tool_result" && block["is_error"] === true);
   const result = failed ? null : row(entry["toolUseResult"]);
-  const launched = result?.["backgroundTaskId"];
+  const workflow = result?.["taskType"] === "local_workflow" && result["status"] === "async_launched";
+  const launched = workflow ? result["taskId"] : result?.["backgroundTaskId"];
   if (typeof launched === "string" && AGENT_ID.test(launched)) {
     const call = blocks.find((block) => block["type"] === "tool_result" && typeof block["tool_use_id"] === "string")?.["tool_use_id"] as string | undefined;
-    remember(commands.launches, launched, { at, title: (call === undefined ? undefined : commands.calls.get(call)) ?? "Background command", call: call ?? null, seq }, MAX_NAMES);
+    const title = workflow ? text(result["workflowName"]) : call === undefined ? undefined : commands.calls.get(call);
+    remember(commands.launches, launched, { at, title: title ?? "Background command", call: call ?? null, seq }, MAX_NAMES);
     if (call !== undefined) commands.calls.delete(call);
   }
   for (const end of commandEnds(result, at, notices)) {

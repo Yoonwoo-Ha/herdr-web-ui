@@ -1429,6 +1429,19 @@ describe("claudeSubagents, background commands", () => {
     expect(claudeSubagentState(s.path, true, NOW).resting).toBe(false);
   });
 
+  it("holds a turn at rest while its Workflow run goes on, until the run's notice", () => {
+    const s = session();
+    s.prompt(1);
+    s.parent({ type: "assistant", timestamp: at(2), message: { role: "assistant", stop_reason: "tool_use", content: [{ type: "tool_use", id: "toolu_wm1", name: "Workflow", input: { name: "sweep" } }] } });
+    s.parent({ type: "user", timestamp: at(2), toolUseResult: { status: "async_launched", taskId: "wm1", taskType: "local_workflow", workflowName: "sweep", runId: "wf_1" }, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_wm1", content: "Workflow launched in background. Task ID: wm1" }] } });
+    s.parent({ type: "assistant", timestamp: at(3), message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "OK" }] } });
+    s.parent({ type: "system", subtype: "turn_duration", isSidechain: false, timestamp: at(3) });
+    expect(claudeSubagentState(s.path, true, NOW)).toMatchObject({ running: 1, resting: true });
+    expect(claudeSubagents(s.path, true, NOW)[0]).toMatchObject({ status: "running", title: "sweep" });
+    s.notify("wm1", 4, { summary: 'Background workflow "sweep" (run wf_1) completed' });
+    expect(claudeSubagentState(s.path, true, NOW).running).toBe(0);
+  });
+
   it("takes a skill's echo for a prompt, and a local command's output back from its echo (#2072)", () => {
     const s = session();
     s.prompt(1);
