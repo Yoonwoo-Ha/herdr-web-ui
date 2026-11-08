@@ -42,6 +42,8 @@ interface Remote {
   bundle?: string;
   /** what its status says once asked to install, one answer per read (the last repeats); it restarts on the new version after `restartAfter` reads, never without */
   afterInstall?: { statuses: Partial<UpdateStatus>[]; restartAfter?: number };
+  /** the install request's answer waits for gate (reached once it arrived) */
+  installHeld?: { reached(): void; gate: Promise<void> };
   /** what the PC holds of this app's bridge runtime, as its inspection prints it; an older one when unset */
   runtime?: "bundle-ready" | "bundle-older" | null;
   /** a bridge this app started serves the socket, not the PC's own Ovis */
@@ -112,7 +114,7 @@ function pc(remote: Remote, options: { registered?: boolean; autoUpdate?: boolea
     expect(port).toBe(REGISTERED_PORT);
     // what answers there tells which address it is: the PC's own, or another its dialog was given
     const at = this.target.destination;
-    relays.push(Bun.serve({ hostname: "127.0.0.1", port: local, async fetch(request, server) {
+    const relay = Bun.serve({ hostname: "127.0.0.1", port: local, async fetch(request, server) {
       const path = new URL(request.url).pathname;
       requests.push(`${request.method} ${path}`);
       if (request.headers.get("authorization") !== `Bearer ${descriptor.token}`) return new Response("unauthorized", { status: 401 });
@@ -129,8 +131,12 @@ function pc(remote: Remote, options: { registered?: boolean; autoUpdate?: boolea
         return before === null ? new Response("unavailable", { status: 503 }) : Response.json({ ...remote.status, ...before });
       }
       if (path === "/api/updates" && request.method === "GET") return remote.status ? Response.json(remote.status) : Response.json({ error: { code: "unauthorized", message: "token required" } }, { status: 401 });
+      // asked to stop the install it builds: it stops, and says so
+      if (path === "/api/updates/cancel" && request.method === "POST") { if ((await request.json() as { install_id?: string }).install_id !== "11111111-2222-4333-8444-555555555555") return Response.json({ error: { code: "invalid_update_cancel" } }, { status: 400 }); if (remote.afterInstall) remote.afterInstall = { statuses: [{ phase: "error", error_code: "update_cancelled", error: "The update was cancelled before it was installed." }] }; return new Response(null, { status: 202 }); }
       if (path === "/api/updates/install" && request.method === "POST") {
         expect(request.headers.get("x-herdr-update")).toBe("1");
+        // its answer held back, as when it is still on its way
+        if (remote.installHeld) { remote.installHeld.reached(); await remote.installHeld.gate; }
         installs.push(await request.json());
         const answer = remote.install?.[Math.min(installAttempts++, remote.install.length - 1)] ?? { status: 202 };
         // busy: an install of its own runs there already
@@ -139,7 +145,7 @@ function pc(remote: Remote, options: { registered?: boolean; autoUpdate?: boolea
         installed = true;
         // its supervisor installs and restarts it: the new version registers a bridge of its own
         if (!remote.afterInstall) restart();
-        return Response.json({ accepted: true }, { status: 202 });
+        return Response.json({ accepted: true, install_id: "11111111-2222-4333-8444-555555555555" }, { status: 202 });
       }
       if (path === "/api/bridge" && heldBridge) { const held = heldBridge; heldBridge = null; held.reached.resolve(); await held.gate.promise; }
       if (path === "/api/bridge") return Response.json({ ...descriptor, ...(restarted && remote.replacementLiveBundle ? { bundle_version: remote.replacementLiveBundle } : {}), socket_id: "fixture:1", herdr: { version: at === "fixture@pc.invalid" ? "0.9.3" : "0.9.4", protocol: 22 } });
@@ -156,7 +162,8 @@ function pc(remote: Remote, options: { registered?: boolean; autoUpdate?: boolea
       if (path === "/api/session") return Response.json({ snapshot: rosters.get(at) ?? { panes: [], workspaces: [], fixture_at: at, finish_epoch: `run@${at}` } });
       if (path === "/ws" && server.upgrade(request, { data: undefined })) return;
       return new Response("not found", { status: 404 });
-    }, websocket: { open(ws) { if (away) ws.close(); else sockets.add(ws); }, close(ws) { sockets.delete(ws); }, message() {} } }));
+    }, websocket: { open(ws) { if (away) ws.close(); else sockets.add(ws); }, close(ws) { sockets.delete(ws); }, message() {} } });
+    relays.push(relay);
   };
   /** its own Ovis stops, as a restart, its update, a crash or a reboot stops it, and later starts again as another process */
   const ovis = {
@@ -609,6 +616,58 @@ describe("a PC whose own Ovis is older than this app", () => {
     const { until } = pc({ status: managedOffer({ current_version: "0.5.0", latest_version: "0.5.1" }), bundle: REMOTE_BUNDLE_VERSION });
     const connected = await until((machine) => machine.state === "connected" && machine.ovis_update != null);
     expect(connected.ovis_update).toEqual({ how: "own", current_version: "0.5.0", latest_version: "0.5.1", updatable: true, reason: null, revision: OFFERED });
+  });
+
+  it("never asks that PC to stop its update when the PC is removed here: only a cancel asked for does", async () => {
+    const { manager, requests, until } = pc({ status: managedOffer({ install_cancellable: true }), afterInstall: { statuses: [{ phase: "building", step: "build" }] } }, { ownUpdate: { pollMs: 5 } });
+    const building = await until((machine) => /updating itself/.test(machine.updating?.step ?? ""));
+    const jobs = (manager as unknown as { jobs: Map<string, { cancelling?: Promise<void> }> }).jobs;
+    manager.remove(building.id);
+    expect([...jobs.values()].some((job) => job.cancelling !== undefined)).toBe(false);
+    expect(requests).not.toContain("POST /api/updates/cancel");
+  });
+
+  it("never asks that PC to stop its update when this server stops (its own restart, say): only a cancel asked for here does", async () => {
+    const { manager, requests, until } = pc({ status: managedOffer({ install_cancellable: true }), afterInstall: { statuses: [{ phase: "building", step: "build" }] } }, { ownUpdate: { pollMs: 5 } });
+    await until((machine) => /updating itself/.test(machine.updating?.step ?? ""));
+    const jobs = (manager as unknown as { jobs: Map<string, { cancelling?: Promise<void> }> }).jobs;
+    manager.stop();
+    // no request to stop it was started for any job (it would be under way by now: cancelJob starts it at once)
+    expect([...jobs.values()].some((job) => job.cancelling !== undefined)).toBe(false);
+    expect(requests).not.toContain("POST /api/updates/cancel");
+  });
+
+  it("says an update cancelled while the answer to its install request is on its way may still finish there, and stops nothing it cannot name", async () => {
+    const arrived = Promise.withResolvers<void>(), gate = Promise.withResolvers<void>();
+    const { manager, requests, until } = pc({ status: managedOffer({ install_cancellable: true }), afterInstall: { statuses: [{ phase: "building", step: "build" }] }, installHeld: { reached: () => arrived.resolve(), gate: gate.promise } }, { ownUpdate: { pollMs: 5 } });
+    await arrived.promise;
+    // the PC took the install; its answer, which names it, has not come back when the update is cancelled here
+    const machine = manager.list().find((pc) => pc.updating)!;
+    expect(manager.cancelUpdate(machine.id)).toBe(true);
+    gate.resolve();
+    // the job says so, once its request to stop (which cannot name the install) is settled
+    const jobs = (manager as unknown as { jobs: Map<string, { public: { error: string | null } }> }).jobs;
+    await until(() => [...jobs.values()].some((job) => /may still finish it there/.test(job.public.error ?? "")));
+    // never a cancel without the install's id: it could stop another device's install
+    expect(requests).not.toContain("POST /api/updates/cancel");
+  });
+
+
+  it("asks that PC to stop its update when the update is cancelled here while it builds, over the job's own connection", async () => {
+    const { manager, requests, until } = pc({ status: managedOffer({ install_cancellable: true }), afterInstall: { statuses: [{ phase: "building", step: "build" }] } }, { ownUpdate: { pollMs: 5 } });
+    const building = await until((machine) => /updating itself/.test(machine.updating?.step ?? ""));
+    // each SSH close, in order with what the PC was asked: its connection must outlast the request to stop
+    const close = SshConnection.prototype.close;
+    SshConnection.prototype.close = function (this: SshConnection) { requests.push("SSH CLOSE"); return close.call(this); };
+    cleanups.push(() => { SshConnection.prototype.close = close; });
+    const from = requests.length;
+    expect(manager.cancelUpdate(building.id)).toBe(true);
+    await until(() => requests.includes("POST /api/updates/cancel"));
+    const after = requests.slice(from);
+    expect(after.indexOf("POST /api/updates/cancel")).toBeLessThan(after.includes("SSH CLOSE") ? after.indexOf("SSH CLOSE") : Infinity);
+    // it stopped there: nothing says it may still finish
+    const ended = await until((machine) => !machine.updating);
+    expect(ended.update_error ?? "").not.toContain("may still finish");
   });
 
   it("follows an install that its own Settings already started instead of failing", async () => {

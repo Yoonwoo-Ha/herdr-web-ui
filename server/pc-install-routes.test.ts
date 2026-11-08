@@ -1,5 +1,5 @@
-import { afterEach, expect, it, spyOn } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, expect, it, spyOn, setSystemTime } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Machine, PcInstallJob, RemoteOvis, SshTarget } from "../shared/machines.ts";
@@ -8,10 +8,10 @@ import { handleMachineRequest } from "./machine-api.ts";
 import { MachineManager } from "./machines.ts";
 import type { PushService } from "./push.ts";
 import { SshConnection } from "./ssh.ts";
-import { forgetSshAddresses, sshAddresses } from "./ssh-address.ts";
+/** this app's own release, as the install's steps show it */
+const APP_VERSION = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
+import {forgetSshAddresses, literalAddress, resolveWithSsh, samePc, sshAddresses, warmSshAddresses } from "./ssh-address.ts";
 
-/** ssh -G as it runs, for the tests that read a config of their own; every other test reads none */
-const realResolve = sshAddresses.resolve;
 
 // The install routes and the one-job-per-PC rule on a manager with one saved SSH PC. SSH never connects: each
 // connection waits until the test lets it in, refuses it, or it is closed. No PC, herdr or real state is touched.
@@ -40,7 +40,8 @@ function fixture() {
   };
   SshConnection.prototype.close = function (this: SshConnection) { (this as unknown as { refuse?: () => void }).refuse?.(); };
   const manager = new MachineManager(dir, {} as PushService, {} as CompletionTracker, async () => { throw new Error("isolated local offline"); });
-  const resolve = spyOn(sshAddresses, "resolve").mockReturnValue(null);
+  // addresses as written: no developer's or CI's SSH config is read
+  const resolve = spyOn(sshAddresses, "resolve").mockImplementation(async (target) => literalAddress(target));
   forgetSshAddresses();
   cleanups.push(() => { resolve.mockRestore(); forgetSshAddresses(); });
   cleanups.push(() => { manager.stop(); Object.assign(SshConnection.prototype, real); reconnect.mockRestore(); rmSync(dir, { recursive: true, force: true }); });
@@ -161,14 +162,22 @@ it("updates an older Ovis a fresh install finds already installed there, only to
   const { asked, outcomes, connect } = connects(manager);
   // no machine_id: a PC not added here yet, whose own Ovis the launcher started at its old release; its update installs
   // the release this connect read, and was checked against this app's
-  outcomes.push({ ...OLDER, remote_ovis: { latest_version: "0.5.0" }, offeredRevision: "b".repeat(40) }, { phase: "connected" });
+  // this app runs the release it showed, build "b…"
+  const before = process.env["OVIS_REVISION"];
+  process.env["OVIS_REVISION"] = "b".repeat(40);
+  cleanups.push(() => { if (before === undefined) delete process.env["OVIS_REVISION"]; else process.env["OVIS_REVISION"] = before; });
+  outcomes.push({ ...OLDER, remote_ovis: { latest_version: APP_VERSION }, offeredRevision: "b".repeat(40) }, { phase: "connected" });
   expect(await connect({ target: { destination: "me@fresh.invalid" }, update: true }).finished).toBeNull();
   expect(asked).toEqual([{ update: false, revision: undefined }, { update: true, revision: "b".repeat(40) }]);
   // a beta of a release newer than this app, one whose version it does not tell, or no release read: no update is started
   for (const [outcome, words] of [
     [{ ...OLDER, remote_ovis: { latest_version: "999.0.0-beta.1" }, offeredRevision: "b".repeat(40) }, "newer than this app"],
     [{ ...OLDER, remote_ovis: { latest_version: null }, offeredRevision: "b".repeat(40) }, "does not tell its version"],
-    [{ ...OLDER, remote_ovis: { latest_version: "0.5.0" } }, "did not tell which release"],
+    [{ ...OLDER, remote_ovis: { latest_version: APP_VERSION } }, "did not tell which release"],
+    // the release shown was this app's own (v0.5.1): another one the PC offers by now is not installed
+    [{ ...OLDER, remote_ovis: { latest_version: "0.5.0" }, offeredRevision: "b".repeat(40) }, `another release now (v0.5.0) than the one shown (v${APP_VERSION})`],
+    // the same version, another build than this app's (the one shown): never adopted
+    [{ ...OLDER, remote_ovis: { latest_version: APP_VERSION }, offeredRevision: "c".repeat(40) }, `another build of v${APP_VERSION}`],
   ] as const) {
     asked.length = 0;
     outcomes.push(outcome);
@@ -220,7 +229,8 @@ it("cancels an automatic bridge update that is already running, not only one wai
   (manager as unknown as { autoQueued: Set<string> }).autoQueued.add(SAVED);
   const cancel = spyOn(manager as unknown as { cancelJob(id: string): void }, "cancelJob").mockImplementation(() => {});
   expect(manager.cancelUpdate(SAVED)).toBe(true);
-  expect(cancel).toHaveBeenCalledWith("auto-1");
+  // the person's cancel: that PC may be asked to stop its own update
+  expect(cancel).toHaveBeenCalledWith("auto-1", false, true);
 });
 
 it("starts no bridge update while the PC's own Ovis updates itself", () => {
@@ -283,18 +293,26 @@ it("ends a restart's install with the PC's own update it started: its error, or 
 });
 
 /** the SSH config these tests resolve addresses with (ssh -G -F): an alias of one host, and that host itself */
-function sshConfig(): void {
-  const dir = mkdtempSync(join(tmpdir(), "ovis-ssh-config-"));
-  const config = join(dir, "config");
-  writeFileSync(config, "Host new-alias\n  HostName new.invalid\n  User me\n\nHost lab-alias\n  HostName lab.invalid\n  User me\n\nHost *\n  User me\n");
-  spyOn(sshAddresses, "resolve").mockImplementation((target) => realResolve.call(sshAddresses, target, config));
+/**
+ * What ssh -G would answer for this test SSH config, without running ssh or reading any account's config:
+ * Host new-alias and new.home are new.invalid, Host lab-alias is lab.invalid, and every host's user is me.
+ */
+function sshConfig(): (targets: SshTarget[]) => Promise<void> {
+  const aliases: Record<string, string> = { "new-alias": "new.invalid", "lab-alias": "lab.invalid", "new.home": "new.invalid" };
+  spyOn(sshAddresses, "resolve").mockImplementation(async (target) => {
+    const at = target.destination.lastIndexOf("@");
+    const host = target.destination.slice(at + 1);
+    return `${at >= 0 ? target.destination.slice(0, at) : "me"}@${aliases[host] ?? host}:${target.port ?? 22}`;
+  });
   forgetSshAddresses();
-  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  // resolved ahead, as the manager does for its saved PCs
+  return (targets: SshTarget[]) => warmSshAddresses(targets);
 }
 
-it.skipIf(!Bun.which("ssh"))("keeps one install or setup per PC as ssh resolves it: an alias, or the default port given, is the same PC", async () => {
+it("keeps one install or setup per PC as ssh resolves it: an alias, or the default port given, is the same PC", async () => {
   const { manager, reached } = fixture();
-  sshConfig();
+  const warm = sshConfig();
+  await warm([{ destination: "me@new.invalid" }, { destination: "new-alias" }, { destination: "me@new.invalid", port: 22 }, { destination: "lab-alias" }, { destination: "me@lab.invalid" }, { destination: "me@lab.invalid", port: 22 }]);
   const job = manager.install({ destination: "me@new.invalid" });
   await reached("me@new.invalid");
   // the same PC by its alias, and by its address with the default port given
@@ -306,9 +324,10 @@ it.skipIf(!Bun.which("ssh"))("keeps one install or setup per PC as ssh resolves 
   for (const same of [{ destination: "lab-alias" }, { destination: "me@lab.invalid", port: 22 }]) expect(() => manager.install(same)).toThrow("already added here");
 });
 
-it.skipIf(!Bun.which("ssh"))("keeps one setup at a time per PC as ssh resolves it, whatever herdr session each names", async () => {
+it("keeps one setup at a time per PC as ssh resolves it, whatever herdr session each names", async () => {
   const { manager, reached } = fixture();
-  sshConfig();
+  const warm = sshConfig();
+  await warm([{ destination: "new-alias" }, { destination: "me@new.invalid" }, { destination: "me@new.invalid", port: 22 }, { destination: "me@other.invalid" }]);
   const first = manager.setup({ destination: "new-alias" });
   await reached("new-alias");
   for (const second of [{ destination: "me@new.invalid" }, { destination: "me@new.invalid", port: 22, session: "work" }, { destination: "new-alias", session: "work" }]) {
@@ -317,4 +336,92 @@ it.skipIf(!Bun.which("ssh"))("keeps one setup at a time per PC as ssh resolves i
   // another PC is not held up by it
   expect(() => manager.setup({ destination: "me@other.invalid" })).not.toThrow();
   manager.action(first.id, { action: "cancel" });
+});
+
+it("counts a PC that ssh cannot resolve as possibly busy, so an alias never starts a second job beside one", async () => {
+  const { manager, reached } = fixture();
+  const job = manager.install({ destination: "me@new.invalid" });
+  await reached("me@new.invalid");
+  // an alias ssh -G could not resolve (it failed, or ran out of time): it may be that same PC
+  (sshAddresses.resolve as unknown as { mockImplementation(fn: (target: SshTarget) => Promise<string | null>): void }).mockImplementation(async (target) => target.destination === "unresolved-alias" ? null : literalAddress(target));
+  forgetSshAddresses();
+  await warmSshAddresses([{ destination: "unresolved-alias" }]);
+  expect(() => manager.setup({ destination: "unresolved-alias" })).toThrow("Ovis is being installed on this PC");
+  // and is never refused as already added for that alone
+  manager.cancelInstall(job.id);
+});
+
+it("starts a first job for another PC at once, while its address is still being looked up", async () => {
+  const { manager, reached } = fixture();
+  const job = manager.install({ destination: "me@new.invalid" });
+  await reached("me@new.invalid");
+  // nothing looked up yet for the other PC: compared as written meanwhile, never refused as possibly the same
+  forgetSshAddresses();
+  expect(() => manager.setup({ destination: "me@other.invalid" })).not.toThrow();
+  manager.cancelInstall(job.id);
+});
+
+it("refuses an alias typed for the first time while its host has a job, before ssh has resolved it", async () => {
+  const { manager, reached } = fixture();
+  const job = manager.install({ destination: "me@new.invalid" });
+  await reached("me@new.invalid");
+  // nothing looked up for the alias yet: it may name that PC
+  forgetSshAddresses();
+  expect(() => manager.setup({ destination: "new-alias" })).toThrow();
+  manager.cancelInstall(job.id);
+});
+
+it("resolves a dotted alias typed for the first time before checking it, through the HTTP route", async () => {
+  const { manager, reached, call } = fixture();
+  sshConfig();
+  const job = manager.install({ destination: "me@new.invalid" });
+  await reached("me@new.invalid");
+  forgetSshAddresses();
+  // never looked up before: the route resolves it first, and it names that same PC
+  const answer = await call("install", "POST", { destination: "new.home" });
+  expect(answer.status).toBe(409);
+  manager.cancelInstall(job.id);
+});
+
+it("keeps a saved PC's resolved address past its minute while it is looked up again, so a bare alias is never taken for another PC", async () => {
+  fixture();
+  const desktop = { destination: "desktop" }, other = { destination: "me@other.invalid" };
+  await warmSshAddresses([desktop, other]);
+  expect(samePc(desktop, other)).toBe(false);
+  // a minute later, and another address looked up meanwhile: the saved one still answers as it was resolved
+  setSystemTime(new Date(Date.now() + 61_000));
+  try {
+    await warmSshAddresses([{ destination: "me@third.invalid" }]);
+    expect(samePc(desktop, other)).toBe(false);
+  } finally { setSystemTime(); }
+});
+
+it("ends a lookup at its limit even when something ssh started holds its output open", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ovis-ssh-"));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  // an "ssh" whose child outlives it, holding stdout, as a hung Match exec can
+  const ssh = join(dir, "ssh");
+  writeFileSync(ssh, "#!/bin/sh\nsleep 30 &\nsleep 30\n", { mode: 0o755 });
+  const before = process.env["OVIS_SSH"];
+  process.env["OVIS_SSH"] = ssh;
+  cleanups.push(() => { if (before === undefined) delete process.env["OVIS_SSH"]; else process.env["OVIS_SSH"] = before; });
+  const started = Date.now();
+  expect(await resolveWithSsh({ destination: "held.invalid" })).toBeNull();
+  expect(Date.now() - started).toBeLessThan(6000);
+}, 10_000);
+
+it("runs no ssh -G under bun test: the resolver is the test stand-in, never ssh itself", () => {
+  expect(sshAddresses.resolve).not.toBe(resolveWithSsh);
+});
+
+it("cancels an install's follow-up connect as the person's cancel, so its update there is asked to stop too", async () => {
+  const { manager } = fixture();
+  const { outcomes, connect } = connects(manager);
+  outcomes.push({ phase: "connected" });
+  const cancel = spyOn(manager as unknown as { cancelJob(id: string, timedOut?: boolean, asked?: boolean): void }, "cancelJob").mockImplementation(() => {});
+  const handle = connect({ target: { destination: "me@fresh.invalid" }, update: true }) as unknown as { job_id: string; cancel(): void; finished: Promise<string | null> };
+  handle.cancel();
+  expect(cancel).toHaveBeenCalledWith(handle.job_id, false, true);
+  cancel.mockRestore();
+  await handle.finished;
 });

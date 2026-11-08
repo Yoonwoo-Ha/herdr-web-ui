@@ -12,7 +12,7 @@ import { decodeOffer } from "../shared/relay-offer.ts";
 import type { RelayOffer } from "../shared/relay-offer.ts";
 import { bounded, deferred } from "./relay/test-helpers.ts";
 import type { UpdateService } from "./update-api.ts";
-import { noInstalledNotes, noUpdateNotes, unmanagedUpdateStatus, type UpdateStatus } from "../shared/update.ts";
+import { noInstalledNotes, noUpdateNotes, unmanagedUpdateStatus, type UpdateStatus, INSTALL_ID } from "../shared/update.ts";
 
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -606,7 +606,9 @@ it("shows a relay PC's own update on its card and installs it from here, with it
   expect(started.status).toBe(202);
   const { job_id } = await started.json() as { job_id: string };
   expect((await step).updating).toMatchObject({ job_id, ovis: true });
-  expect(b.requests).toEqual([{ command: "install", expected_revision: OFFERED_RELEASE }]);
+  // the install names the release shown, and carries the id its 202 gave (POST /api/updates/install), which only a cancel by
+  // the one that asked for it names
+  expect(b.requests).toEqual([{ command: "install", expected_revision: OFFERED_RELEASE, install_id: expect.stringMatching(INSTALL_ID) }]);
   const done = await machineWhen(a.base, (pc) => pc.id === machine.id && !pc.updating && pc.ovis_update === null);
   expect(done.update_error ?? null).toBeNull();
   // nothing more on offer: asked again, it is refused in plain words

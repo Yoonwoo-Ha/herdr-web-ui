@@ -1540,3 +1540,53 @@ describe("update channels", () => {
     } finally { rmSync(appState, { recursive: true, force: true }); }
   });
 });
+
+it("cancels an install while it builds: nothing is installed, its offer stays, and it is not taken for a failed release", async () => {
+  const running = updater.status.current_revision;
+  // a release whose build never ends on its own
+  writeFileSync(join(upstream, "build-fixture.ts"), "await new Promise(() => {});");
+  await git(upstream, "add", ".");
+  await git(upstream, "commit", "-qm", "slow build");
+  await git(upstream, "tag", "v9.0.0");
+  const building = Promise.withResolvers<void>();
+  const watched = new Updater({ ...updater.options, publish(status) { if (status.step === "build") building.resolve(); } });
+  await watched.initialize();
+  try {
+    // nothing to cancel before an install runs
+    expect(watched.cancel("11111111-2222-4333-8444-555555555555")).toBe(false);
+    const install = watched.request("install", true, undefined, "11111111-2222-4333-8444-555555555555");
+    await building.promise;
+    // another's id (another device's install, or this PC's own Settings') never stops it
+    expect(watched.cancel("99999999-2222-4333-8444-555555555555")).toBe(false);
+    expect(watched.cancel("11111111-2222-4333-8444-555555555555")).toBe(true);
+    await install;
+    expect(watched.status).toMatchObject({ phase: "error", error_code: "update_cancelled", current_revision: running, available: true, install_cancellable: true });
+    expect(existsSync(join(stateDir, "failed.json"))).toBe(false);
+    // the 5-minute timer's check (auto-update on) leaves the cancelled release alone: it would build it again otherwise
+    (watched.options as { autoUpdate: boolean }).autoUpdate = true;
+    await watched.request("check");
+    expect(watched.status.phase).toBe("idle");
+    expect(watched.status.current_revision).toBe(running);
+  } finally { watched.stop(); }
+});
+
+it("stops an install cancelled while it still checks what is on offer, before anything is built", async () => {
+  writeFileSync(join(upstream, "build-fixture.ts"), "await new Promise(() => {});");
+  await git(upstream, "add", ".");
+  await git(upstream, "commit", "-qm", "slow build");
+  await git(upstream, "tag", "v9.0.1");
+  const seen: Array<string | null> = [];
+  const watched: Updater = new Updater({ ...updater.options, publish(status) {
+    seen.push(status.step ?? null);
+    // asked as soon as the run starts checking
+    if (status.phase === "checking" && !asked) asked = watched.cancel("11111111-2222-4333-8444-555555555555");
+  } });
+  let asked = false;
+  await watched.initialize();
+  try {
+    await watched.request("install", true, undefined, "11111111-2222-4333-8444-555555555555");
+    expect(asked).toBe(true);
+    expect(watched.status).toMatchObject({ phase: "error", error_code: "update_cancelled", available: true });
+    expect(seen).not.toContain("build");
+  } finally { watched.stop(); }
+});

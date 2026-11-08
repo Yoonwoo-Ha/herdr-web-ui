@@ -24,6 +24,13 @@ process.env["TMPDIR"] = realpathSync(tmpdir());
 // herdr socket, in this process and the children tests spawn, whatever XDG_CONFIG_HOME a test sets later
 process.env["OVIS_TEST_USER_XDG_CONFIG_HOME"] ??= process.env["XDG_CONFIG_HOME"] ?? "";
 
+// under bun test, no test runs the account's ssh -G or reads its SSH config: addresses resolve as written, and a test that
+// needs another answer replaces the resolver itself (server/ssh-address.ts)
+if (process.env["NODE_ENV"] === "test") {
+  const { literalAddress, sshAddresses } = await import("../server/ssh-address.ts");
+  sshAddresses.resolve = async (target) => literalAddress(target);
+}
+
 export const TEST_SESSION = process.env["HERDR_TEST_SESSION"] || "ovis-test";
 
 /**

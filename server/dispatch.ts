@@ -163,7 +163,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // replaced (server/machines.ts ownOffer). An install still names the offered revision and the
   // custom header (update-api.ts), and whoever holds the token already drives every pane here. Only those two
   // requests, each by its own method and with no query: the token opens nothing else of these routes (#2054)
-  const bridgeUpdatePath = url.search === "" && (pathname === "/api/updates" ? request.method === "GET" : pathname === "/api/updates/install" && request.method === "POST");
+  const bridgeUpdatePath = url.search === "" && (pathname === "/api/updates" ? request.method === "GET" : (pathname === "/api/updates/install" || pathname === "/api/updates/cancel") && request.method === "POST");
   // the same server runs the move to herdr-core here for the person on its side (docs/runtime-move.md,
   // "On another PC"); each move route still asks for the app's own header and no query (updateRequestAllowed)
   const bridgeMovePath = RUNTIME_MOVE_ROUTE.test(pathname);
@@ -491,7 +491,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
 
   // installing an update on this PC (Ovis or herdr; a check installs too where OVIS_AUTO_UPDATE=1) is the owner's, as changing its PCs is (machine-api.ts): from any device
   // he signed in or paired himself. The connection server's bridge token asks its own install by revision (bridgeUpdatePath)
-  if (request.method === "POST" && (pathname === "/api/updates/install" || pathname === "/api/updates/check" || pathname === "/api/herdr/update") && !ownerAccess(access) && !(bridgeAuthorized && bridgeUpdatePath)) {
+  if (request.method === "POST" && (pathname === "/api/updates/install" || pathname === "/api/updates/cancel" || pathname === "/api/updates/check" || pathname === "/api/herdr/update") && !ownerAccess(access) && !(bridgeAuthorized && bridgeUpdatePath)) {
     setRequestRoute(pathname);
     return jsonResponse({ error: { code: "forbidden", message: "Only the owner's own signed-in or paired devices can update this PC, from this app's own page." } }, 403);
   }

@@ -39,7 +39,7 @@ import { shellContentSecurityPolicy } from "../server/static.ts";
 import { REGIONAL_APPS } from "../shared/relay-regions.ts";
 import type { UpdateService } from "../server/update-api.ts";
 import { MIN_SERVER_VERSION } from "../shared/relay-mux.ts";
-import { noInstalledNotes, noUpdateNotes } from "../shared/update.ts";
+import { noInstalledNotes, noUpdateNotes, INSTALL_ID } from "../shared/update.ts";
 import type { UpdateRequest, UpdateStatus } from "../shared/update.ts";
 import { version as shellVersion } from "../package.json";
 import { exportPublicKey, generateKeyPair, openDaemonSecureChannel } from "../shared/relay-e2ee.ts";
@@ -1140,7 +1140,11 @@ export async function relayShellQa(tree: RelayServerTree): Promise<void> {
           assert.deepEqual(updates.requests, [], "nothing is installed before the tap");
           await page.getByRole("button", { name: "Update now" }).click();
           await bounded(updates.installed, "the PC's update service received the install");
-          assert.deepEqual(updates.requests, [{ command: "install", expected_revision: "b".repeat(40) }], "one install of the release on offer, no check first");
+          // one install of the release on offer, named by it, with the install_id its 202 gave (a cancel names that id)
+          assert.equal(updates.requests.length, 1, "one install of the release on offer, no check first");
+          const [asked] = updates.requests as { command?: string; expected_revision?: string; install_id?: string }[];
+          assert.deepEqual([asked?.command, asked?.expected_revision], ["install", "b".repeat(40)], "one install of the release on offer, no check first");
+          assert.match(asked?.install_id ?? "", INSTALL_ID, "the install carries the id its 202 gave");
           await page.getByText("Step 4 of 5: Building the app").waitFor();
           await shot19(page, "update");
           note(`pc-outdated (managed): WELCOME ${below} < ${MIN_SERVER_VERSION} -> update screen; Update now -> POST /api/updates/install over the relay -> fake service recorded ${JSON.stringify(updates.requests)}; progress from GET /api/updates`);

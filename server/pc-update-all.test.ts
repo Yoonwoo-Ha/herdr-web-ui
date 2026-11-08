@@ -98,7 +98,7 @@ it("takes a PC out of the queue on cancel, or when it is disabled or removed, an
   expect(asked).toEqual([A, A]);
 });
 
-it("ends the wait of a running own update on cancel, with no failure told", async () => {
+it("ends the wait of a running own update on cancel, and says it may still finish there when that PC cannot stop it", async () => {
   const { internals, pc, until, request } = fixture();
   const offered = "a".repeat(40);
   let installing = false;
@@ -118,7 +118,8 @@ it("ends the wait of a running own update on cancel, with no failure told", asyn
   await until(() => installing && pc(A).updating?.step.includes("building") === true);
   expect(await (await request(`${A}/update`, "DELETE")).json()).toEqual({ cancelled: true });
   await until(() => !pc(A).updating);
-  expect(pc(A).update_error ?? null).toBeNull();
+  // an older Ovis that cannot stop it (no install_cancellable): never told as ended
+  expect(pc(A).update_error).toContain("may still finish it there");
 });
 
 it("leaves a disabled PC out of Update all and its badge, so it is never connected again by it", async () => {

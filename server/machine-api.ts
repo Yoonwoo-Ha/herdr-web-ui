@@ -330,6 +330,8 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
         setRequestRoute("/api/machines/setup");
         const body = await request.json() as SetupRequest;
         // a setup that updates what runs there is an update of that PC: the owner's only, as above
+        // the addresses its one-job-per-PC check compares, resolved first (ssh -G, off the event loop, 3 s at most)
+        await manager.resolveFor(body);
         return jsonResponse(manager.setup(body), 202);
       }
       if (parts.length === 2) {
@@ -362,6 +364,7 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
         if (request.method !== "POST") return fail("method_not_allowed", "Use POST", 405);
         const body: unknown = await request.json().catch(() => null);
         if (!isJsonObject(body)) return fail("invalid_body", "Expected an SSH address, or the machine_id of a PC added here", 400);
+        await manager.resolveFor(body);
         try { return jsonResponse(manager.install(body as unknown as PcInstallRequest) satisfies PcInstallJob, 202); }
         catch (error) {
           if (error instanceof PcUpdateRefused) return fail("install_unavailable", error.message, 409);
@@ -413,6 +416,8 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       const body: unknown = text.trim() === "" ? {} : (() => { try { return JSON.parse(text); } catch { return null; } })();
       const shown = isJsonObject(body) ? body.revision : undefined;
       if (!isJsonObject(body) || shown !== undefined && typeof shown !== "string") return fail("invalid_body", "Expected nothing, or { revision } of the offer shown", 400);
+      // its address and those of the running jobs, resolved first, as for a setup
+      await manager.resolveFor({ machine_id: id });
       return jsonResponse(manager.updateBridge(id, false, shown as string | undefined), 202);
     }
     if (parts.length === 1 && request.method === "PATCH") {

@@ -8,7 +8,7 @@ import { shellQuote } from "./machine-security.ts";
 import type { ProcessBirth } from "./process-owner.ts";
 import { posixHost, REMOTE_PATH } from "./remote-host.ts";
 import { SshConnection } from "./ssh.ts";
-import { sshAddress } from "./ssh-address.ts";
+import { samePc } from "./ssh-address.ts";
 
 /**
  * Ovis installed or put right on another PC over SSH, from the PC in use (docs/remote-pcs.md): the official
@@ -112,8 +112,7 @@ export const restoreServer = (dir: string): string =>
   `d=${shellQuote(dir)}; [ -L "$d/exe" ] || { rm -rf "$d"; echo 'the copy of that server is gone' >&2; exit 1; }; "$d/exe" -e ${shellQuote(RESTORE_LAUNCHER)} "$d"`;
 /** removes what captureServer saved, once the server it copied is not to be started again */
 export const forgetServer = (dir: string): string => `rm -rf ${shellQuote(dir)}`;
-/** the same PC over SSH as ssh resolves it (an alias, or the default port given, is the same one), whatever herdr session each names */
-export const samePc = (a: SshTarget, b: SshTarget): boolean => sshAddress(a) === sshAddress(b);
+export { samePc } from "./ssh-address.ts";
 /**
  * The official installer's run on that PC, for one SSH command. Downloaded first, so a failed download is told as one
  * (piped, sh would run an empty script and exit 0), then run with nothing on stdin, on herdr (a herdr plugin that updates
@@ -234,6 +233,8 @@ export class PcInstaller {
     return job;
   }
   job(id: string): PcInstallJob | undefined { return this.jobs.get(id)?.public; }
+  /** the installs still running, of any PC */
+  running(): PcInstallJob[] { return [...this.jobs.values()].filter((state) => !state.settled).map((state) => state.public); }
   async finished(id: string): Promise<void> { await this.jobs.get(id)?.finished; }
   /** the install running for a PC added here, if any */
   runningFor(machineId: string): PcInstallJob | undefined {
