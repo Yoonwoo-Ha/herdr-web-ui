@@ -25,7 +25,7 @@ import * as gjcRuntime from "./gjc-runtime.ts";
 import * as runtime from "./herdr-core/runtime.ts";
 import { claudeProjectDir } from "./claude-store.ts";
 import { launchedAgents } from "./launched-agents.ts";
-import { agyTranscriptPage, claudePanePid, claudePaneSession, ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneTranscript, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptPage, transcriptToolOutput, TRANSCRIPT_WINDOW_BYTES } from "./conversation.ts";
+import { agyTranscriptPage, claudePanePid, claudePaneSession, ConversationUnavailable, devinSessionForPane, forgetPaneTranscriptState, forgetTranscriptState, gjcTranscriptPath, HistoryChanged, isDevinProcess, isOmoProcess, ompSessionStore, paneConversation, paneProcessRoots, paneTranscript, parseClaudeTranscript, unwrapPastes, transcriptImage, transcriptImageAsync, transcriptPage, transcriptToolOutput, TRANSCRIPT_WINDOW_BYTES } from "./conversation.ts";
 
 it("labels only Claude's explicit end_turn text as final-answer evidence", () => {
   const entry = (stop_reason: string | null) => JSON.stringify({ type: "assistant", message: { role: "assistant", stop_reason, content: [{ type: "text", text: "Answer" }] } });
@@ -2119,7 +2119,8 @@ describe("transcript pages", () => {
     const growing = transcriptPage("claude-transcript", path, { from: held });
     expect(growing.cursor).toBe(held);
     expect(texts(growing.turns).at(-1)).toBe("[out 59] answer 59 still working");
-    writeFileSync(path, `${Array.from({ length: 70 }, (_, n) => claudeTurn(n)).join("\n")}\n`);
+    // appended after it (replacing the record above instead would be a rewrite, and a new history)
+    appendFileSync(path, `${Array.from({ length: 10 }, (_, n) => claudeTurn(60 + n)).join("\n")}\n`);
     // the newest page slid past it: the answer is the newest page, never more than a page
     const newest = transcriptPage("claude-transcript", path, { from: held });
     expect(newest.cursor).not.toBe(held);
@@ -2771,6 +2772,74 @@ it("incrementally reads one growing Codex task across split UTF-8, partial recor
     writeFileSync(path, records.slice(0, 2).map((entry) => JSON.stringify(entry)).join("\n"));
     expect(transcriptPage("codex-transcript", path).turns).toHaveLength(1);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it("keeps a transcript's history_id across a touch that leaves its bytes alone", () => {
+  // Claude Code sets its open session's times about hourly without writing a byte: not a rewrite.
+  const root = mkdtempSync(join(tmpdir(), "herdr-claude-touch-"));
+  try {
+    const path = join(root, "session.jsonl");
+    const prompt = (n: number, text: string) => `${JSON.stringify({ type: "user", uuid: `u${n}`, parentUuid: n ? `u${n - 1}` : null, timestamp: "2026-11-06T00:00:00.000Z", message: { role: "user", content: text } })}\n`;
+    const id = () => transcriptPage("claude-transcript", path).history_id;
+    const touch = (seconds: number) => utimesSync(path, new Date(), new Date(Date.now() + seconds * 1000));
+    writeFileSync(path, prompt(0, "alpha") + prompt(1, "bravo"));
+    const base = id();
+    touch(1);
+    expect(id()).toBe(base);
+    appendFileSync(path, prompt(2, "charlie"));
+    expect(id()).toBe(base);
+    touch(2);
+    expect(id()).toBe(base);
+    // the same size with one early byte changed is still a rewrite
+    writeFileSync(path, readFileSync(path, "utf8").replace("alpha", "alphA"));
+    touch(3);
+    const rewritten = id();
+    expect(rewritten).not.toBe(base);
+    touch(4);
+    expect(id()).toBe(rewritten);
+    // the generation lives in memory only: a cold read names the file by its identity alone
+    forgetTranscriptState();
+    expect(id()).toBe(base);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it("keeps a transcript's history_id across a touch after an image lookup saw it grow", async () => {
+  // the image lookup reads asynchronously and leaves the digest for the next page read to extend
+  const root = mkdtempSync(join(tmpdir(), "herdr-claude-touch-image-"));
+  try {
+    const path = join(root, "session.jsonl");
+    const prompt = (n: number) => `${JSON.stringify({ type: "user", uuid: `u${n}`, parentUuid: n ? `u${n - 1}` : null, timestamp: "2026-11-06T00:00:00.000Z", message: { role: "user", content: `prompt ${n}` } })}\n`;
+    const id = () => transcriptPage("claude-transcript", path).history_id;
+    writeFileSync(path, prompt(0));
+    const base = id();
+    appendFileSync(path, prompt(1));
+    expect(await transcriptImageAsync(path, "00000000-0000-0000-0000-000000000000:0")).toBeNull();
+    utimesSync(path, new Date(), new Date(Date.now() + 1000));
+    expect(id()).toBe(base);
+  } finally { forgetTranscriptState(); rmSync(root, { recursive: true, force: true }); }
+});
+
+it("changes a transcript's history_id when its first bytes are rewritten while it grows", async () => {
+  // same inode: the growth is not a plain append, and restoring the old bytes later is a rewrite again
+  const root = mkdtempSync(join(tmpdir(), "herdr-claude-grow-rewrite-"));
+  try {
+    const path = join(root, "session.jsonl");
+    const prompt = (n: number, text: string) => `${JSON.stringify({ type: "user", uuid: `u${n}`, parentUuid: n ? `u${n - 1}` : null, timestamp: "2026-11-06T00:00:00.000Z", message: { role: "user", content: text } })}\n`;
+    const id = () => transcriptPage("claude-transcript", path).history_id;
+    writeFileSync(path, prompt(0, "alpha") + prompt(1, "bravo"));
+    const base = id();
+    writeFileSync(path, prompt(0, "ALPHA") + prompt(1, "bravo") + prompt(2, "charlie"));
+    const grown = id();
+    expect(grown).not.toBe(base);
+    writeFileSync(path, prompt(0, "alpha") + prompt(1, "bravo") + prompt(2, "charlie"));
+    utimesSync(path, new Date(), new Date(Date.now() + 1000));
+    const restored = id();
+    expect(restored).not.toBe(grown);
+    // an image lookup that sees such a growth first leaves the check to the next page read
+    writeFileSync(path, prompt(0, "ALPHA") + prompt(1, "bravo") + prompt(2, "charlie") + prompt(3, "delta"));
+    expect(await transcriptImageAsync(path, "00000000-0000-0000-0000-000000000000:0")).toBeNull();
+    expect(id()).not.toBe(restored);
+  } finally { forgetTranscriptState(); rmSync(root, { recursive: true, force: true }); }
 });
 
 it("expands inherited Codex tool output without exposing output discarded by a backtrack", () => {
