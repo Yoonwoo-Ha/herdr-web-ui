@@ -917,6 +917,58 @@ it.skipIf(process.platform !== "linux")("answers a changed history, not a missin
   }
 });
 
+it.skipIf(process.platform !== "linux")("answers a pending read, with no recovery that digests it on the event loop, to a Copilot read whose transcript keeps growing through every settle", async () => {
+  const root = mkdtempSync(join(tmpdir(), "copilot-growing-"));
+  const transcript = join(root, "session-state", session, "events.jsonl");
+  mkdirSync(join(root, "session-state", session), { recursive: true });
+  writeFileSync(transcript, start + prompt("first") + answer("one"));
+  mkdirSync(join(root, "logs"));
+  const log = join(root, "logs", `process-100-${process.pid}.log`);
+  // The lifecycle log counts only while this process holds it open, as Copilot does.
+  const held = fs.openSync(log, "a");
+  appendFileSync(log, register(session));
+  const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [] } });
+  const info = spyOn(herdr, "paneProcessInfo").mockImplementation(async (paneId) => ({ pane_id: paneId, foreground_processes: [{ pid: process.pid, name: "copilot", argv: ["copilot"] }] }));
+  const environment = spyOn(omo, "processEnviron").mockReturnValue([`COPILOT_HOME=${root}`]);
+  const snapshots = spyOn(herdr, "sessionSnapshot").mockResolvedValue({
+    panes: [{ pane_id: "own", agent: "copilot", cwd: root }], agents: [],
+  } as unknown as SessionSnapshot);
+  const { open } = fsp;
+  let writing = false;
+  // while writing, Copilot appends right after each settle's last stat of its file, so no settle records
+  const opens = spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+    const handle = await open(...args);
+    if (args[0] !== transcript) return handle;
+    const stat = handle.stat.bind(handle);
+    let stats = 0;
+    handle.stat = (async (...rest: Parameters<typeof stat>) => {
+      const taken = await stat(...rest);
+      if (++stats === 2 && writing) appendFileSync(transcript, answer("more", "commentary"));
+      return taken;
+    }) as typeof handle.stat;
+    return handle;
+  }) as typeof fsp.open);
+  try {
+    const shown = await paneConversation("own");
+    expect(shown.source).toBe("copilot-transcript");
+    writing = true;
+    await expect(paneConversation("own")).rejects.toMatchObject({ name: "ConversationReadPending" });
+    writing = false;
+    let before = snapshots.mock.calls.length;
+    const settled = await paneConversation("own", undefined, { history_id: shown.history_id });
+    const ordinary = snapshots.mock.calls.length - before;
+    writing = true;
+    before = snapshots.mock.calls.length;
+    // a recovery would ask herdr again for the pane's peers, after digesting the file on the event loop
+    await expect(paneConversation("own", undefined, { history_id: settled.history_id })).rejects.toMatchObject({ name: "ConversationReadPending" });
+    expect(snapshots.mock.calls.length - before).toBe(ordinary);
+  } finally {
+    opens.mockRestore(); snapshots.mockRestore(); environment.mockRestore(); info.mockRestore(); rpc.mockRestore();
+    fs.closeSync(held); forgetTranscriptState();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it.skipIf(process.platform !== "linux")("does not retain the old history when the session switches while a failed read rechecks its peers", async () => {
   const root = mkdtempSync(join(tmpdir(), "copilot-recheck-"));
   const transcript = (id: string) => join(root, "session-state", id, "events.jsonl");

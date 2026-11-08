@@ -3016,6 +3016,100 @@ describe("a page read that settles its transcript's revision off the event loop"
     expect(parses).toHaveBeenCalledTimes(1);
   });
 
+  it("never answers the old history for a transcript rewritten in place and grown that keeps growing through every settle", async () => {
+    const base = await paneConversation(pane.pane_id);
+    // rewritten in place (same inode), its first bytes changed, and longer than before
+    writeFileSync(path, JSON.stringify({ type: "session", id: "cmd-settle", version: 3 }) + "\n" + message("u1", null, "HELLO, rewritten"));
+    const { open } = fsp;
+    let writes = 0;
+    restores.push(
+      // each settle's last stat of the transcript: an append lands right after it, so no settle records
+      spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+        const handle = await open(...args);
+        if (args[0] !== path) return handle;
+        const stat = handle.stat.bind(handle);
+        let stats = 0;
+        handle.stat = (async (...rest: Parameters<typeof stat>) => {
+          const taken = await stat(...rest);
+          if (++stats === 2) { writes++; appendFileSync(path, message(`w${writes}`, writes === 1 ? "u1" : `w${writes - 1}`, "more")); }
+          return taken;
+        }) as typeof handle.stat;
+        return handle;
+      }) as typeof fsp.open),
+    );
+    const answer = await paneConversation(pane.pane_id).catch((error: unknown) => error);
+    expect(writes).toBe(3);
+    expect(answer).toBeInstanceOf(ConversationReadPending);
+    for (const spy of restores.splice(3)) spy.mockRestore();
+    // the next poll checks the first bytes and finds the rewrite
+    expect((await paneConversation(pane.pane_id)).history_id).not.toBe(base.history_id);
+  });
+
+  it("answers a transcript written to through every settle of two polls on the second, under another history", async () => {
+    const base = await paneConversation(pane.pane_id);
+    const { open } = fsp;
+    let writes = 0;
+    restores.push(
+      // each settle's last stat of the transcript: an append lands right after it, so no settle records
+      spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+        const handle = await open(...args);
+        if (args[0] !== path) return handle;
+        const stat = handle.stat.bind(handle);
+        let stats = 0;
+        handle.stat = (async (...rest: Parameters<typeof stat>) => {
+          const taken = await stat(...rest);
+          if (++stats === 2) { writes++; appendFileSync(path, message(`w${writes}`, writes === 1 ? "u1" : `w${writes - 1}`, "more")); }
+          return taken;
+        }) as typeof handle.stat;
+        return handle;
+      }) as typeof fsp.open),
+    );
+    await expect(paneConversation(pane.pane_id)).rejects.toBeInstanceOf(ConversationReadPending);
+    // its growth was never checked: another history, not the old one and not pending again
+    expect((await paneConversation(pane.pane_id)).history_id).not.toBe(base.history_id);
+    expect(writes).toBe(6);
+  });
+
+  it("answers a transcript written to through every settle under one history after its first pending poll, and sees a rewrite once writes stop", async () => {
+    const base = await paneConversation(pane.pane_id);
+    const { open } = fsp;
+    let writing = true;
+    let writes = 0;
+    restores.push(
+      // while writing, an append lands right after each settle's last stat of the transcript, so no settle records
+      spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+        const handle = await open(...args);
+        if (args[0] !== path) return handle;
+        const stat = handle.stat.bind(handle);
+        let stats = 0;
+        handle.stat = (async (...rest: Parameters<typeof stat>) => {
+          const taken = await stat(...rest);
+          if (++stats === 2 && writing) { writes++; appendFileSync(path, message(`w${writes}`, writes === 1 ? "u1" : `w${writes - 1}`, "more")); }
+          return taken;
+        }) as typeof handle.stat;
+        return handle;
+      }) as typeof fsp.open),
+    );
+    const polls: (string | "pending")[] = [];
+    for (let poll = 0; poll < 5; poll++) {
+      try { polls.push((await paneConversation(pane.pane_id)).history_id); }
+      catch (error) { if (!(error instanceof ConversationReadPending)) throw error; polls.push("pending"); }
+    }
+    expect(writes).toBe(15);
+    const answered = polls.findIndex((poll) => poll !== "pending");
+    expect(answered).toBeGreaterThanOrEqual(0);
+    expect(answered).toBeLessThanOrEqual(1);
+    const history = polls[answered] ?? "";
+    expect(history).not.toBe(base.history_id);
+    expect(polls.slice(answered)).toEqual(polls.slice(answered).map(() => history));
+    // the writes were appends: once they stop, the history stays
+    writing = false;
+    expect((await paneConversation(pane.pane_id)).history_id).toBe(history);
+    // an in-place rewrite that also grew is another history
+    writeFileSync(path, JSON.stringify({ type: "session", id: "cmd-settle", version: 3 }) + "\n" + message("u1", null, "HELLO, rewritten") + "x".repeat(4096) + "\n");
+    expect((await paneConversation(pane.pane_id)).history_id).not.toBe(history);
+  });
+
   it("never digests another agent's transcript that a folder swapped in after authorization puts at the path", async () => {
     const project = join(root, "project");
     const elsewhere = join(root, "elsewhere");
@@ -3283,6 +3377,48 @@ describe("a page read that settles its transcript's revision off the event loop"
     // its digest is never read, so a touch counts as a rewrite
     expect((await paneConversation(pane.pane_id)).history_id).not.toBe(base);
     expect(opened).not.toContain(path);
+  });
+
+  it.skipIf(!linksRefused)("settles a transcript reached through a link once per read, not once per settle it may take", async () => {
+    // each settle pass checks the path still names the authorized file, before and after its page read
+    const { statSync } = fs;
+    let checks = 0;
+    restores.push(spyOn(fs, "statSync").mockImplementation(((...args: Parameters<typeof fs.statSync>) => {
+      if (args[0] === path && new Error().stack?.includes("stillAuthorized")) checks++;
+      return statSync(...args);
+    }) as typeof fs.statSync));
+    const target = join(root, "target.jsonl");
+    fs.renameSync(path, target);
+    symlinkSync(target, path);
+    const linked = await paneConversation(pane.pane_id);
+    // a touch: a revision check a settle would be asked for
+    utimesSync(target, new Date(), new Date(Date.now() + 1000));
+    checks = 0;
+    const touched = await paneConversation(pane.pane_id);
+    expect(checks).toBe(2);
+    // its digest is never read, so the touch is another history
+    expect(touched.history_id).not.toBe(linked.history_id);
+  });
+
+  it.skipIf(!linksRefused)("never answers a linked transcript's old history once it is rewritten in place and grown", async () => {
+    const target = join(root, "target.jsonl");
+    fs.renameSync(path, target);
+    symlinkSync(target, path);
+    const base = await paneConversation(pane.pane_id);
+    // the same inode, its first bytes changed, and longer than before
+    writeFileSync(target, JSON.stringify({ type: "session", id: "cmd-settle", version: 3 }) + "\n" + message("u1", null, "HELLO, rewritten"));
+    expect((await paneConversation(pane.pane_id)).history_id).not.toBe(base.history_id);
+  });
+
+  it.skipIf(!linksRefused)("answers a transcript replaced by a link to itself and appended to, under another history", async () => {
+    const base = await paneConversation(pane.pane_id);
+    const target = join(root, "target.jsonl");
+    fs.renameSync(path, target);
+    symlinkSync(target, path);
+    appendFileSync(target, message("u2", "u1", "again"));
+    const answer = await paneConversation(pane.pane_id);
+    expect(answer.history_id).not.toBe(base.history_id);
+    expect((await paneConversation(pane.pane_id)).history_id).toBe(answer.history_id);
   });
 });
 
