@@ -163,6 +163,8 @@ describe("CLIProxyAPI v8", () => {
     const start = Date.now();
     const reads = () => fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index);
     try {
+      // the first read schedules the next one from its own clock reading: pin it to `start`
+      setSystemTime(start);
       await service.report(false, new Set(["claude:cliproxy:claude-a.json"]));
       setSystemTime(start + FRESH_MS - 1000);
       await service.report();
