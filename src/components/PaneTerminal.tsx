@@ -15,6 +15,7 @@ import { pageAddress, reloadOnPlainClick } from "../lib/pageQuery.ts";
 import { PaneCachedContext, PaneWatchedContext, PanePresentedContext, PaneFollowContext, PaneShownContext, PaneSubmitContext } from "../lib/paneSubmitContext.ts";
 import { NO_MODIFIER_LATCH, NO_STICKY_MODIFIERS, releaseLatched, type ModifierLatch, type StickyModifiers } from "../lib/keys.ts";
 import { EMPTY_DRAFT, draftIsEmpty, restoreDraft, type InputDraft } from "../lib/draft.ts";
+import { useReconnectGrace } from "../lib/reconnectGrace.ts";
 import { looksLikeKey } from "../../shared/secret-prompt.ts";
 import { messageQueues } from "../lib/messageQueue.ts";
 import { pendingMessages } from "../lib/pendingMessages.ts";
@@ -492,6 +493,23 @@ export function PaneTerminal({
   // input typed while disconnected, held for the user to review and send
   const [draftState, setDraftState] = useState<{ owner: string | null; value: InputDraft }>({ owner: null, value: EMPTY_DRAFT });
   const draft = draftState.value;
+  // a drop the connection is back from within the grace is not said (lib/reconnectGrace.ts); held input,
+  // a key, a press or typed text (dictation, an IME) anywhere in the window meanwhile (the active pane's),
+  // stopped output, or a pane another app held say it at once: the drop clears that warning (useTerminalMount),
+  // and the pane must not look ready to type in while nothing it is sent can reach it
+  const [actedWhileDropped, setActedWhileDropped] = useState(false);
+  if (connected && actedWhileDropped) setActedWhileDropped(false);
+  const heldWhileUp = useRef(false);
+  if (connected) heldWhileUp.current = held;
+  const connectionShown = useReconnectGrace(connected, connectedBefore, !draftIsEmpty(draft) || outputError !== null || actedWhileDropped || heldWhileUp.current, socketRef.current?.lostSince ?? null);
+  const waitingOnGrace = active && connectionShown && !connected;
+  useEffect(() => {
+    if (!waitingOnGrace) return;
+    const acted = () => setActedWhileDropped(true);
+    const actions = ["keydown", "pointerdown", "beforeinput", "compositionstart"] as const;
+    for (const action of actions) window.addEventListener(action, acted, true);
+    return () => { for (const action of actions) window.removeEventListener(action, acted, true); };
+  }, [waitingOnGrace]);
   const onPeekRef = useRef(onPeek); onPeekRef.current = onPeek;
   const onEndPeekRef = useRef(onEndPeek); onEndPeekRef.current = onEndPeek;
   // The outcome ids this pane's chat last read (its prompt poll). A send notes them as it leaves, so
@@ -703,8 +721,8 @@ export function PaneTerminal({
   useEffect(() => {
     if (connected && socketRef.current !== null) connectedSockets.add(socketRef.current);
     if (connected && !connectedBefore) setConnectedBefore(true);
-    if (active) onConnectionChangeRef.current?.(connected, connectedBefore || connected);
-  }, [connected, connectedBefore, active]);
+    if (active) onConnectionChangeRef.current?.(connectionShown, connectedBefore || connected);
+  }, [connected, connectionShown, connectedBefore, active]);
 
   // what opens outside the pane (a diff's line notes) reads whether this window only watches it
   const observingMount = useRef(Symbol("pane-terminal")).current;
@@ -1187,7 +1205,7 @@ export function PaneTerminal({
             {t("Terminal ended")}
           </div>
         )}
-        {paneId !== null && !chatView && !ended && !connected && (
+        {paneId !== null && !chatView && !ended && !connectionShown && (
           <div className="terminal-banner terminal-banner-warning" role="status">
             {t(connectedBefore ? "Reconnecting to Ovis…" : "Connecting to Ovis…")}
             {/* one line, cut with an ellipsis: a command is never broken inside a word; the title holds it whole */}
