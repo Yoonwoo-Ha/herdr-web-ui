@@ -32,8 +32,9 @@ import { forgetPageMedia } from "./file-view.ts";
 import { textEditAllowed } from "./file-edit.ts";
 import { handleFileRequest } from "./file-routes.ts";
 import { BACKGROUND_AGENT_PATH, handleBackgroundAgentRequest } from "./background-agent.ts";
-import { paneGet, ping } from "./herdr/client.ts";
-import { RUNTIME_MOVE_PATH } from "./runtime-move.ts";
+import { paneGet, ping, herdrSocketPath } from "./herdr/client.ts";
+import { RUNTIME_MOVE_PATH, RUNTIME_MOVE_ROUTE } from "./runtime-move.ts";
+import { MOVE_LOCK_UNSAFE, moveLockPath } from "./runtime-move-lock.ts";
 import type { StopRefusal } from "./runtime-move-service.ts";
 import type { MoveService } from "./runtime-move-service.ts";
 import { handlePushRequest } from "./push.ts";
@@ -163,7 +164,10 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // custom header (update-api.ts), and whoever holds the token already drives every pane here. Only those two
   // requests, each by its own method and with no query: the token opens nothing else of these routes (#2054)
   const bridgeUpdatePath = url.search === "" && (pathname === "/api/updates" ? request.method === "GET" : pathname === "/api/updates/install" && request.method === "POST");
-  const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === SESSION_HISTORY_PATH || pathname === SESSION_RESUME_PATH || pathname === "/api/agents" || pathname === "/api/agent-catalog" || pathname === INSTALL_PATH || pathname === SIGN_IN_PATH || pathname === "/api/agent/rename" || pathname === "/api/agent/commands" || pathname === "/api/integrations" || (pathname === "/api/system" && request.method === "GET") || pathname === "/api/usage/statusline" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname === "/ws" || bridgeUpdatePath;
+  // the same server runs the move to herdr-core here for the person on its side (docs/runtime-move.md,
+  // "On another PC"); each move route still asks for the app's own header and no query (updateRequestAllowed)
+  const bridgeMovePath = RUNTIME_MOVE_ROUTE.test(pathname);
+  const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === SESSION_HISTORY_PATH || pathname === SESSION_RESUME_PATH || pathname === "/api/agents" || pathname === "/api/agent-catalog" || pathname === INSTALL_PATH || pathname === SIGN_IN_PATH || pathname === "/api/agent/rename" || pathname === "/api/agent/commands" || pathname === "/api/integrations" || (pathname === "/api/system" && request.method === "GET") || pathname === "/api/usage/statusline" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname === "/ws" || bridgeUpdatePath || bridgeMovePath;
   const ip = relayPeer === undefined ? ctx.requestIP(request) : null;
   const loopback = ip !== null && isLoopbackAddress(ip.address);
   const forwarded = relayPeer === undefined && cameThroughProxy(request.headers);
@@ -363,7 +367,9 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     } else {
       // a worktree made with an agent waits on git and then agent.start, up to 150 s on the PC, and a
       // resume on agent.start and then its store check (machine-api.ts slowMachinePath)
-      ctx.timeout(request, pathname === "/api/machines/events" ? 0 : slowMachinePath(pathname.split("/").slice(4).join("/")) ? 180 : 80);
+      // a move's install there is waited for 200 s (machine-api.ts): this connection is held a little longer still
+      const machinePathAsked = pathname.split("/").slice(4).join("/");
+      ctx.timeout(request, pathname === "/api/machines/events" ? 0 : machinePathAsked === "runtime/move/install" ? 210 : slowMachinePath(machinePathAsked) ? 180 : 80);
       const deviceId = access.level === "full" ? access.device?.id : undefined;
       // a device's enrollment is news to every stream but the new device's own: one the stream's
       // device cookie names, or one this browser asked for itself (its stream key, server/devices.ts),
@@ -590,7 +596,8 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     // Only a driving owner is told: a session name can name a project, which a watching device or a
     // stranger on an open install has no need to read
     const owner = access.level === "full" && access.role === "drive" && access.via !== "open";
-    const herdr_runtime = owner ? options.runtimeService?.facts() : undefined;
+    // the connection server that reaches this PC with its bridge token shows its move badge from them
+    const herdr_runtime = owner || bridgeAuthorized ? options.runtimeService?.facts() : undefined;
     // the boot id lets the launcher know its own new bridge without waiting on herdr (server/supervisor.ts);
     // the runtime facts ride along, so Settings can switch back while herdr's TUI is stopped
     if (url.searchParams.get("scope") === "bridge") return jsonResponse({ ok: true, auth, bridge_protocol: BRIDGE_PROTOCOL, ...relay, ...(security ? { security } : {}), web_ui: { boot_id: bootId }, runtime: runtime(), ...(options.launchAccepted ? { accepted: options.launchAccepted() } : {}), ...(herdr_runtime ? { herdr_runtime } : {}) }, 200, securityHeaders);
@@ -626,11 +633,19 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     return answer.ok ? jsonResponse({ accepted: true }, 202) : jsonResponse({ error: { code: answer.code, message: answer.message } }, answer.status);
   }
 
+  // who may move this PC's runtime: a driving owner, or the connection server holding the bridge token,
+  // which already drives every pane here. A Portal visitor never, whatever its role. A relay device that
+  // drives may: a connection server reaches a PC added through the relay as one
+  const moveDriver = bridgeAuthorized || access.level === "full" && access.role === "drive" && access.via !== "open" && access.via !== "portal";
+
   if (pathname === `${RUNTIME_MOVE_PATH}/install`) {
     setRequestRoute(pathname);
     // downloads and runs a program on this PC: the runtime switch's own boundary, and only from this app's page
-    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can install herdr-core" } }, 403);
+    if (!moveDriver) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can install herdr-core" } }, 403);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    // its download alone may take 120 s (herdr-core/install.ts): the answer outlasts the usual minute, as
+    // another PC's proxy waits for it (machine-api.ts slowMachinePath)
+    ctx.timeout(request, 180);
     if (!updateRequestAllowed(request)) return jsonResponse({ error: { code: "forbidden", message: "an install must come from this app's own page" } }, 403);
     const move = ctx.services.runtimeMove;
     if (!move) return jsonResponse({ error: { code: "runtime_locked", message: "this server cannot switch its runtime" } }, 409);
@@ -646,7 +661,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === `${RUNTIME_MOVE_PATH}/stop`) {
     setRequestRoute(pathname);
     // ends a command in a pane of this PC: the move's own boundary, and only from this app's page
-    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can end a pane's command" } }, 403);
+    if (!moveDriver) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can end a pane's command" } }, 403);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
     if (!updateRequestAllowed(request)) return jsonResponse({ error: { code: "forbidden", message: "a stop must come from this app's own page" } }, 403);
     const move = ctx.services.runtimeMove;
@@ -671,7 +686,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === `${RUNTIME_MOVE_PATH}/stop-all`) {
     setRequestRoute(pathname);
     // ends commands in panes of this PC: the move's own boundary, and only from this app's page
-    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can end a pane's command" } }, 403);
+    if (!moveDriver) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can end a pane's command" } }, 403);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
     if (!updateRequestAllowed(request)) return jsonResponse({ error: { code: "forbidden", message: "a stop must come from this app's own page" } }, 403);
     const move = ctx.services.runtimeMove;
@@ -696,7 +711,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === RUNTIME_MOVE_PATH) {
     setRequestRoute(pathname);
     // folders and conversation ids of every pane, and agents ended and started: the runtime switch's own boundary
-    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can move its runtime" } }, 403);
+    if (!moveDriver) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can move its runtime" } }, 403);
     const move = ctx.services.runtimeMove;
     if (!move) return jsonResponse({ error: { code: "runtime_locked", message: "this server cannot switch its runtime" } }, 409);
     if (request.method === "GET") {
@@ -712,6 +727,9 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     try {
       const refused = await move.start(revision);
       if (refused === null) return jsonResponse({ accepted: true }, 202);
+      // another Ovis server of this herdr session (the PC's own, or a connection server's bridge) moves it
+      if (refused === "locked") return jsonResponse({ error: { code: "already_moving", message: `Another Ovis on this PC is moving this herdr session already. If none is (one that stopped without telling), delete ${moveLockPath(herdrSocketPath())} on this PC and try again.` } }, 409);
+      if (refused === "lock_unsafe") return jsonResponse({ error: { code: "move_lock_unsafe", message: MOVE_LOCK_UNSAFE } }, 409);
       return jsonResponse({ error: { code: refused, message: refused === "plan_changed" ? "the panes changed since the plan was shown: look again" : refused === "already_moving" ? "a move is already waiting or running" : refused === "runtime_switching" ? "the server is switching its runtime: try again once it is back" : "no move to herdr-core is offered here" } }, 409);
     } catch (error) {
       return errorResponse(error);

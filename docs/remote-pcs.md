@@ -223,6 +223,8 @@ The current server keeps one status-only WebSocket per remote PC without attachi
 | `PATCH /api/machines/:id` | Rename or change `enabled` |
 | `DELETE /api/machines/:id` | Forget the PC and remove its local private key |
 | `/api/machines/:id/{session,agents,pane/*,workspace/*}` | Allowlisted target API routes |
+| `GET/POST/DELETE /api/machines/:id/runtime/move`, `POST .../runtime/move/{stop,stop-all,install}` | That PC's move to herdr-core, for the owner only: this PC, the token, a Tailscale login, a paired or relay device that drives; never an open LAN visitor, a Portal visitor or a device that watches ([runtime-move.md](runtime-move.md#on-another-pc)); 409 `pc_update_required` from an Ovis too old for it |
+| `POST /api/machines/runtime/move-all` | Starts every previewed PC's move at once, for the owner only (as above): 202 `{ started, refused, unknown }` |
 | `/ws?machine_id=…` | Immutable terminal destination |
 
 Legacy HTTP paths, `/ws` without a machine, and old stored preferences/notification links mean **local**. Machine mutations require `X-Herdr-Machine: 1`, the existing token gate and same-origin browser requests. The proxy passes a bridge credential read through SSH; browser cookies, bearer tokens, forwarded headers and remote cookies are not forwarded. Authentication, push devices, VAPID keys and app updates belong to the current connection server.

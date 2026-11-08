@@ -29,6 +29,7 @@ import { offerFromCode, TypedCodeError } from "../shared/relay-code-offer.ts";
 import { TailnetPcError, TailnetPcs, type TailnetPcsOptions } from "./tailnet-pcs.ts";
 import { sshCandidates, type SshCandidatesOptions } from "./ssh-candidates.ts";
 import { followOwnUpdate, offerFromStatus, readOwnStatus } from "./pc-update.ts";
+import { readMoveOffer } from "./remote-move.ts";
 
 import type { RelaySocket } from "../shared/relay-channel.ts";
 import { newRouteProbes, openRelayPcTunnel, RelayPcKey, RelayPcRefused, relayPcLabel, removeRelayPcKey, type RelayPcTunnel, type RouteProbes } from "./relay-pc.ts";
@@ -98,6 +99,8 @@ interface Runtime {
   offerReading?: number;
   /** its own Ovis updating itself, asked from here through its connection (updateOwn) */
   ownJob?: { id: string; abort: AbortController };
+  /** its move badge's next read (watchMove): one read at a time, and `again` when one was asked for meanwhile */
+  moveWatch?: { timer?: ReturnType<typeof setTimeout>; reading: boolean; again: boolean };
 }
 /** An update asked for that the PC cannot take now: answered 409 `update_unavailable` with these words. */
 export class PcUpdateRefused extends Error {}
@@ -158,6 +161,11 @@ function pastThisApp(offer: { updatable: boolean; latest_version: string | null 
 }
 const NOT_CONNECT_APPROVED = "Connect this PC first: it was added from herdr, and connecting it here was not approved yet.";
 const NOT_BRIDGE_APPROVED = "Review the bridge update in this PC's dialog first: it was added from herdr without approving this app's bridge.";
+/**
+ * how often a PC's move badge is read again: every minute, and every 5 s while its move waits or runs.
+ * Each read has that PC build its whole plan, so not more often.
+ */
+const MOVE_OFFER_MS = { idle: 60_000, active: 5000 };
 /** a PC of herdr-core's machines is the core's: Ovis neither renames, removes nor sets it up */
 const HC_MACHINE_MANAGED = "This PC is a machine of herdr-core: add, rename or remove it with `hc machine` or in the Herdr app.";
 /** the shortest time between the starts of two health calls that prove one PC's server (sourceCheck) */
@@ -375,6 +383,7 @@ export class MachineManager {
   /** PCs Update all queued for a bridge update, waiting for their turn on autoChain */
   /** each PC waiting in Update all's queue, by the token of its one entry there: a stale entry (cancelled, then queued again) is not it */
   private updateQueued = new Map<string, symbol>();
+  private moveOfferMs: { idle: number; active: number };
   /** how a relay PC's connection reaches the relay; tests point it at a local one */
   private relaySocket?: (url: string) => RelaySocket;
   /** how a relay PC's connection dials that PC's direct carriers; tests point it at a local one */
@@ -392,7 +401,7 @@ export class MachineManager {
   private readonly sshCandidateOptions: SshCandidatesOptions;
 
   constructor(readonly stateDir: string, private push: PushService, private completions: CompletionTracker, private readLocal: () => Promise<SessionSnapshot> = () => this.completions.readSnapshot(sessionSnapshot, labelOmoPanes),
-    options: { bootId?: string; localFinishEpoch?: () => string; now?: () => number; ownUpdate?: { pollMs?: number; startMs?: number; checkMs?: number; offerMs?: number }; relaySocket?: (url: string) => RelaySocket; relayDirectSocket?: (url: string) => RelaySocket; serverId?: () => string | undefined; tailnet?: TailnetPcsOptions; sshCandidates?: SshCandidatesOptions } = {}) {
+    options: { bootId?: string; localFinishEpoch?: () => string; now?: () => number; ownUpdate?: { pollMs?: number; startMs?: number; checkMs?: number; offerMs?: number }; moveOfferMs?: { idle: number; active: number }; relaySocket?: (url: string) => RelaySocket; relayDirectSocket?: (url: string) => RelaySocket; serverId?: () => string | undefined; tailnet?: TailnetPcsOptions; sshCandidates?: SshCandidatesOptions } = {}) {
     this.bootId = options.bootId;
     this.tailnet = new TailnetPcs(options.tailnet);
     this.sshCandidateOptions = options.sshCandidates ?? (options.tailnet?.readStatus === undefined ? {} : { readStatus: options.tailnet.readStatus });
@@ -404,6 +413,7 @@ export class MachineManager {
     this.ownUpdateStartMs = options.ownUpdate?.startMs ?? OWN_UPDATE_START_MS;
     this.ownUpdateCheckMs = options.ownUpdate?.checkMs ?? OWN_CHECK_WAIT_MS;
     this.ownOfferMs = options.ownUpdate?.offerMs ?? 5 * 60_000;
+    this.moveOfferMs = options.moveOfferMs ?? MOVE_OFFER_MS;
     this.now = options.now ?? (() => performance.now());
     if (this.bootId) this.local.source_boot_id = this.bootId;
     this.profileState = new HerdrProfileState(stateDir);
@@ -1744,6 +1754,33 @@ export class MachineManager {
     if (runtime.ssh) runtime.ssh.onExit = () => this.lost(runtime, generation, new Error("SSH connection ended"));
     runtime.poll = setInterval(() => void this.refresh(runtime).catch((e) => this.lost(runtime, generation, e)), 5000);
     runtime.poll.unref();
+    // an SSH or relay PC may still serve herdr's TUI; an hc machine is herdr-core's own
+    if (runtime.ssh || runtime.tunnel) this.watchMove(runtime, generation);
+  }
+  /**
+   * Reads a connected PC's move badge (Machine.runtime_move) now, then again after a while; a read that
+   * fails keeps the last badge. Never two reads of one PC at once: one asked for meanwhile follows it.
+   */
+  private watchMove(runtime: Runtime, generation: number): void {
+    const watch = runtime.moveWatch ??= { reading: false, again: false };
+    if (watch.reading) { watch.again = true; return; }
+    clearTimeout(watch.timer);
+    watch.reading = true;
+    void readMoveOffer(runtime.endpoint!).catch(() => undefined).then((offer) => {
+      watch.reading = false;
+      if (generation !== runtime.generation || this.stopped) return;
+      if (offer !== undefined && JSON.stringify(offer) !== JSON.stringify(runtime.machine.runtime_move)) { runtime.machine.runtime_move = offer; this.emit(); }
+      const state = runtime.machine.runtime_move?.status.state;
+      const delay = watch.again ? 0 : state === "waiting" || state === "moving" ? this.moveOfferMs.active : this.moveOfferMs.idle;
+      watch.again = false;
+      watch.timer = setTimeout(() => this.watchMove(runtime, generation), delay);
+      watch.timer.unref();
+    });
+  }
+  /** A move was started, cancelled or stopped on that PC: its badge is read again now. */
+  moveOfferSoon(id: string): void {
+    const runtime = this.machines.get(id);
+    if (runtime?.moveWatch && runtime.machine.state === "connected" && !this.stopped) this.watchMove(runtime, runtime.generation);
   }
   /** The PC's status-only socket, through its endpoint: its end is the connection's loss. */
   private openObserver(runtime: Runtime, generation: number): void {
@@ -1927,6 +1964,7 @@ export class MachineManager {
     runtime.verification?.abort.abort(); runtime.verification = undefined;
     runtime.acceptedEpoch = undefined; runtime.candidate = undefined; runtime.candidateRun = undefined; delete runtime.machine.source_boot_id;
     runtime.move = undefined;
+    clearTimeout(runtime.moveWatch?.timer); runtime.moveWatch = undefined; delete runtime.machine.runtime_move;
     runtime.machine.state = "disconnected";
   }
   /**

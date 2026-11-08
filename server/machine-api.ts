@@ -13,6 +13,7 @@ import { updateRequestAllowed } from "./update-api.ts";
 import { crossSiteFileRead } from "./file-view.ts";
 import { snapshotWithoutHiddenTokens, withoutHiddenTokens } from "./herdr-sidebar.ts";
 import { parseJson, readCapped, REMOTE_LIMITS, RemoteResponseInvalid, RemoteResponseTooLarge } from "./remote-json.ts";
+import { answerCode, moveAll, moveAllPlans, PC_MOVE_PATH, PC_UPDATE_REQUIRED, tooOldToMove } from "./remote-move.ts";
 
 const fail = (code: string, message: string, status: number) => jsonResponse({ error: { code, message } }, status);
 /**
@@ -20,6 +21,8 @@ const fail = (code: string, message: string, status: number) => jsonResponse({ e
  * update header, same origin, no query).
  */
 const OWNER_ONLY = "Only the owner's own signed-in or paired devices can change this PC's PCs, from this app's own page.";
+const MOVE_OWNER_ONLY = "Only the owner, from a device signed in or paired to drive this PC, can move another PC";
+const MOVE_FROM_PAGE = "A move must come from this app's own page";
 
 /** POST /api/machines/relay/code: why a typed code found no PC, as `typed_code_<failure>` (the app words each one). */
 const CODE_FAILURES: Record<TypedCodeFailure, [string, number]> = {
@@ -98,7 +101,8 @@ export const machineEventsQueuedBytes = (): number => {
  * A PC route whose answer can take longer than the proxy's usual 75 s: a worktree's creation waits on
  * git and then an agent's start, and a resume on the agent's start and then the check of its store.
  */
-export const slowMachinePath = (path: string): boolean => path === "worktree/create" || path === "sessions/resume";
+// runtime/move/install waits 200 s here: that PC holds the request up to 180 s (dispatch.ts), so an install that ends late is still told
+export const slowMachinePath = (path: string): boolean => path === "worktree/create" || path === "sessions/resume" || path === "runtime/move/install";
 
 /**
  * A path no route is spelled as: an empty segment (`//`, or a trailing `/`) or an encoded separator.
@@ -355,6 +359,16 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       if (request.method !== "POST") return fail("method_not_allowed", "Use POST", 405);
       return jsonResponse(manager.updateAll() satisfies PcUpdateAll, 202);
     }
+    if (parts[0] === "runtime" && parts[1] === "move-all" && parts.length === 2) {
+      setRequestRoute("/api/machines/runtime/move-all");
+      if (readOnly) return fail("read_only", "this device can only watch", 403);
+      if (!owner) return fail("forbidden", MOVE_OWNER_ONLY, 403);
+      if (request.method !== "POST") return fail("method_not_allowed", "Use POST", 405);
+      if (!updateRequestAllowed(request)) return fail("forbidden", MOVE_FROM_PAGE, 403);
+      const plans = moveAllPlans(await request.json().catch(() => null), manager.list().length);
+      if (!plans) return fail("invalid_body", "Expected { plans: [{ machine_id, revision }] }, each PC once", 400);
+      return jsonResponse(await moveAll(manager, plans), 202);
+    }
     const id = parts[0]!;
     if (parts.length === 2 && parts[1] === "update") {
       setRequestRoute("/api/machines/:machine_id/update");
@@ -393,7 +407,14 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
     // dialog's agent commands, a pane's command rows), as do the paths under a pane's folder and a plugin run's
     // output, and a repository's checkouts: never asked for a watching device with the PC's credential
     if (readOnly && (path === "sessions/history" || path === "agent/commands" || path === "pane/commands" || path === "pane/files" || path === "pane/docs" || path === "plugin/action" || path === "worktree/list" || path === "worktree/inventory")) return fail("read_only", "this device can only watch", 403);
-    if (MACHINE_PROXY_PATH.test(path)) {
+    const movePath = PC_MOVE_PATH.test(path);
+    // a move's plan names every pane's folder and conversation, and the rest move or end them: a driving device's only
+    if (readOnly && movePath) return fail("read_only", "this device can only watch", 403);
+    if (movePath && !owner) return fail("forbidden", MOVE_OWNER_ONLY, 403);
+    // that PC refuses a move route with a query (updateRequestAllowed), which would read as an Ovis too old below
+    if (movePath && url.search !== "") return fail("invalid_query", "The move routes take no query", 400);
+    if (movePath && request.method !== "GET" && !updateRequestAllowed(request)) return fail("forbidden", MOVE_FROM_PAGE, 403);
+    if (MACHINE_PROXY_PATH.test(path) || movePath) {
       // `path` is a finite endpoint literal, never the machine id or an arbitrary suffix.
       setRequestRoute(`/api/machines/:machine_id/${path}`);
       // a connection that may only watch is refused here as well as at the access check, by the same rule
@@ -413,6 +434,8 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       // a remote conversation answers 304 when unchanged, as a local one does
       const ifNoneMatch = request.headers.get("if-none-match");
       if (ifNoneMatch) headers.set("if-none-match", ifNoneMatch);
+      // what that PC asks of a move from its own page; this server's own guards already passed it here
+      if (movePath) headers.set("x-herdr-update", "1");
       const abort = new AbortController();
       if (path === "fs/file") {
         // a file (a video, say) streams through, with its ranges, never held here; it can
@@ -438,8 +461,10 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
       // a move's PC reads its roster again once the move is confirmed, so its receipt is soon shown
       const moved = path === "workspace/move" && request.method === "POST" ? manager.refreshAfterMove(id) : null;
       try {
-        const response = await fetch(target, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body, redirect: "error", signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(slowMachinePath(path) ? 165_000 : 75_000)]) });
+        const response = await fetch(target, { method: request.method, headers, body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body, redirect: "error", signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(path === "runtime/move/install" ? 200_000 : slowMachinePath(path) ? 165_000 : 75_000)]) });
         if (moved && response.ok) moved();
+        // a start, cancel or stop shows on the PC's badge soon, not at its next slow read
+        if (movePath && request.method !== "GET" && response.ok) manager.moveOfferSoon(id);
         const etag = response.headers.get("etag");
         // that PC's clock as it answered a conversation read, a 304 too (src/lib/sentWaiting.ts)
         const serverTime = response.headers.get("x-server-time");
@@ -447,6 +472,7 @@ export async function handleMachineRequest(request: Request, manager: MachineMan
         const retryAfter = response.status === 503 ? response.headers.get("retry-after") : null;
         // held whole before it is passed on (and parsed, for a watcher's prompt), so only up to a size
         let body: Uint8Array<ArrayBuffer> | null = response.status === 304 ? null : await readCapped(response, watchedPrompt ? REMOTE_LIMITS.watchedPrompt : REMOTE_LIMITS.proxy);
+        if (movePath && tooOldToMove(manager.list().find((machine) => machine.id === id)?.kind, response.status, answerCode(body))) return fail("pc_update_required", PC_UPDATE_REQUIRED, 409);
         if (watchedPrompt && response.ok && body) {
           const answer = parseJson<PanePromptResponse>(body);
           if (answer.prompt?.plan_file !== undefined) {

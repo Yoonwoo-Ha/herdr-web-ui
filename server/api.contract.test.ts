@@ -5790,10 +5790,10 @@ describe("access facts on /api/health", () => {
   const guard = { "content-type": "application/json", "x-herdr-machine": "1" };
   /** a server of its own: a temp state dir, an empty token unless one is given, nothing from the runner's environment */
   const CORE_FACTS: HerdrCoreFacts = { version: "0.1.17", session: "default", running: false };
-  const serve = (options: { hostname?: string; token?: string; serveOnly?: boolean; owner?: string | null; seed?: (stateDir: string) => void; runtime?: RuntimeService; accepted?: () => boolean } = {}) => {
+  const serve = (options: { hostname?: string; token?: string; serveOnly?: boolean; owner?: string | null; seed?: (stateDir: string) => void; runtime?: RuntimeService; accepted?: () => boolean; bridgeToken?: string } = {}) => {
     const stateDir = mkdtempSync(join(tmpdir(), "herdr-security-summary-"));
     options.seed?.(stateDir);
-    const instance = createServer({ port: 0, hostname: options.hostname ?? "127.0.0.1", token: options.token ?? "", stateDir, tailscaleOwner: options.owner ?? null, tailscaleServeOnly: options.serveOnly ?? false, herdrCoreFacts: () => CORE_FACTS, ...(options.runtime ? { runtimeService: options.runtime } : {}), ...(options.accepted ? { launchAccepted: options.accepted } : {}) });
+    const instance = createServer({ port: 0, hostname: options.hostname ?? "127.0.0.1", token: options.token ?? "", stateDir, ...(options.bridgeToken ? { bridgeToken: options.bridgeToken } : {}), tailscaleOwner: options.owner ?? null, tailscaleServeOnly: options.serveOnly ?? false, herdrCoreFacts: () => CORE_FACTS, ...(options.runtime ? { runtimeService: options.runtime } : {}), ...(options.accepted ? { launchAccepted: options.accepted } : {}) });
     const read = async (headers: Record<string, string> = {}, scope = "") => {
       const response = await fetch(`http://127.0.0.1:${instance.port}/api/health${scope}`, { headers });
       const text = await response.text();
@@ -5899,7 +5899,7 @@ describe("access facts on /api/health", () => {
     let answer: SwitchAnswer = { ok: true };
     const runtime: RuntimeService = { facts: () => facts, request: (target) => { asked.push(target); return answer; } };
     let token = "";
-    const secured = serve({ token: SECRET, runtime, seed: (stateDir) => {
+    const secured = serve({ token: SECRET, runtime, bridgeToken: "fictional-bridge-token", seed: (stateDir) => {
       const store = new DeviceStore(stateDir);
       token = store.pair(store.startPairing().code, "Watch", "watch")!.token;
       store.match(token);
@@ -5915,6 +5915,8 @@ describe("access facts on /api/health", () => {
       expect((await secured.read(bearer, "?scope=bridge")).body.herdr_runtime).toEqual(facts);
       expect((await secured.read({ cookie: `ovis_device=${token}`, "x-forwarded-for": "192.168.0.20" }, "?scope=bridge")).body.herdr_runtime).toBeUndefined();
       expect((await secured.read({}, "?scope=bridge")).body.herdr_runtime).toBeUndefined();
+      // the connection server reaching this PC with its bridge token shows its move badge from them
+      for (const scope of ["", "?scope=bridge"]) expect((await secured.read({ authorization: "Bearer fictional-bridge-token" }, scope)).body.herdr_runtime).toEqual(facts);
       // nobody but a driving owner, and only through the app's own request header
       expect((await post({})).status).toBe(401);
       expect((await post({ cookie: `ovis_device=${token}`, "x-forwarded-for": "192.168.0.20", "x-herdr-update": "1" })).status).toBe(403);

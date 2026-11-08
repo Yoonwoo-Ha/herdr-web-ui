@@ -6,6 +6,8 @@ import type { SessionHistoryAgent } from "../shared/session-history.ts";
 import { isSessionHistoryAgent, listSessions, type SessionHistoryOptions } from "./session-history.ts";
 
 export const RUNTIME_MOVE_PATH = "/api/runtime/move";
+/** the move's four routes: the plan and its start or cancel, a pane's stop, stop all, and the herdr-core install */
+export const RUNTIME_MOVE_ROUTE = /^\/api\/runtime\/move(?:\/(?:stop|stop-all|install))?$/;
 
 /**
  * The command each agent ends itself with, as its own built-in command list names it

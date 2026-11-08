@@ -30,6 +30,7 @@ import { herdrSocketPath, ping } from "./herdr/client.ts";
 import { coreConnection, coreSeenMarker, hcBin, hcMachine, NoHerdrCoreError, runtime, servingCore, setRuntime, startRuntime } from "./herdr-core/runtime.ts";
 import { chooseRuntime, runtimeService, type RuntimeChoice, type RuntimeService } from "./herdr-core/runtime-choice.ts";
 import { moveService, type HcInstaller } from "./runtime-move-service.ts";
+import { moveLockPath } from "./runtime-move-lock.ts";
 import { bridgePins } from "./herdr-core/pin-label.ts";
 import { herdrCoreFacts, rediscoverHc } from "./herdr-core/discovery.ts";
 import { HC_RELEASE, hcInstallTarget, installHc } from "./herdr-core/install.ts";
@@ -448,6 +449,7 @@ export function createServer(
   const services: RequestServices = {
     runtimeMove: options.runtimeService ? moveService({
       stateDir, port: server.port ?? DEFAULT_PORT, serving: runtime, facts: () => options.runtimeService?.facts(),
+      lock: { path: moveLockPath(herdrSocketPath()), bootId },
       stores: { codexHome: options.codexHome, opencodeDb: options.opencodeDb, hermesHome: options.hermesHome, piReader },
       holdsPending: core.holdsPending,
       inputEmpty: core.inputEmpty,

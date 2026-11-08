@@ -47,7 +47,7 @@ function world() {
     stateDir: join(root, "state"), port: 0, serving: () => "herdr", facts: () => facts, stores: {}, holdsPending: () => false,
     lane: (_pane, task) => { const run = tail.catch(() => undefined).then(task); tail = run; return run; },
     settleAfterTyping: async () => { inLane = true; }, inputEmpty: async () => null, switchRuntime: () => null, accepted: () => true, switching: () => false,
-    stopDeps: deps,
+    stopDeps: deps, lock: { path: join(root, "herdr.sock.ovis-move.lock"), bootId: "stop-test" },
   });
   services.push(service);
   const wait = async () => {

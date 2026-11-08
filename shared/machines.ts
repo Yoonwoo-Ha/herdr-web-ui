@@ -1,6 +1,7 @@
 import type { AgentRowTokens } from "./pane-tokens.ts";
 import type { SharedPreferences } from "./preferences.ts";
 import type { HealthAuth, SecuritySummary, ServerMessage, SessionSnapshot } from "./protocol.ts";
+import type { MoveStatus, MoveUnavailable } from "./runtime-move.ts";
 import type { SeenFinish } from "./seen.ts";
 
 export const LOCAL_MACHINE = "local";
@@ -66,6 +67,12 @@ export interface Machine {
   ovis_update?: PcUpdateOffer | null;
   /** why this PC's last update from here failed, in plain words; cleared when another one starts or it succeeds */
   update_error?: string | null;
+  /**
+   * A connected SSH or relay PC's move to herdr-core (docs/runtime-move.md, "On another PC"), as its own
+   * GET /api/runtime/move tells it. Null when that PC cannot tell (an older Ovis, or a bridge with no
+   * runtime to switch); absent while it is not connected, not read yet, and for this PC and hc machines.
+   */
+  runtime_move?: PcMoveOffer | null;
 }
 /**
  * An update a PC can take from here.
@@ -105,6 +112,39 @@ export interface PcUpdateAll {
   started: { machine_id: string; job_id: string }[];
   queued: string[];
   skipped: { machine_id: string; reason: string }[];
+}
+/**
+ * Where another PC stands on the move to herdr-core. `serving: "herdr"` with `offered` is the "not moved
+ * yet" badge. `offered`: the move can start there, or herdr-core can be installed there first (`reason`
+ * is then "no_herdr_core"); otherwise `reason` says why not. `status` is the progress of its move.
+ */
+export interface PcMoveOffer {
+  serving: "herdr" | "herdr-core";
+  offered: boolean;
+  reason: MoveUnavailable | null;
+  status: PcMoveStatus;
+}
+/**
+ * A PC's move status as every roster (a watching device's too) may carry it: where it is and how far,
+ * and how many agents a move that could not finish left. Its reasons name folders and agents' words, so
+ * they stay in the plan answer (GET /api/machines/:id/runtime/move), which only a driving device reads.
+ */
+export type PcMoveStatus =
+  | { state: "idle" | "waiting" | "done" }
+  | Extract<MoveStatus, { state: "moving" }>
+  | { state: "rolled_back" | "interrupted"; left: number };
+/** POST /api/machines/runtime/move-all: the revision of each PC's plan as the person previewed it. */
+export interface MoveAllRequest {
+  plans: { machine_id: string; revision: string }[];
+}
+/**
+ * Its 202 answer: the PCs whose move started (each waits for its own busy panes), why the others did not,
+ * and those whose answer never came: the start may have reached them, so their move status says.
+ */
+export interface MoveAllResponse {
+  started: string[];
+  refused: { machine_id: string; code: string; message: string }[];
+  unknown: { machine_id: string; message: string }[];
 }
 /**
  * What a PC's own Ovis says of its own update (GET /api/updates there, read through the SSH tunnel).

@@ -14,6 +14,7 @@ import { findHc } from "./herdr-core/discovery.ts";
 import { hcEnv } from "./herdr-core/runtime.ts";
 import { LAYOUT_DOC } from "./herdr-core/snapshot.ts";
 import { moveUnavailable, planMove, storeResume, type MoveFacts } from "./runtime-move.ts";
+import { MoveLockUnsafe, takeMoveLock, type MoveLockHandle } from "./runtime-move-lock.ts";
 import { journalStatus, runMove, setAsideJournal, settleJournal, switchedMove, type MoveDestination, type MoveSource } from "./runtime-move-run.ts";
 import type { SessionHistoryOptions } from "./session-history.ts";
 
@@ -41,6 +42,11 @@ export interface MoveServiceOptions {
   accepted: () => boolean;
   /** a runtime switch was asked for (Settings) and the server restarts for it: no agent is ended meanwhile */
   switching: () => boolean;
+  /**
+   * the herdr session's move lock (runtime-move-lock.ts) and this server lifetime's boot id: another Ovis
+   * serving the same session (a connection server's bridge, say) cannot move it at the same time
+   */
+  lock: { path: string; bootId: string };
   /** installs herdr-core where the PC has none (server/herdr-core/install.ts), so the move can be offered */
   installer?: HcInstaller;
   /** what a stop of a busy pane reads and signals; herdr and this PC unless a test stands in */
@@ -76,7 +82,8 @@ export interface HcInstaller {
 export interface MoveService {
   read: () => Promise<MovePlanResponse>;
   /** starts the move, or waits for every pane to be done first; an error code when it cannot */
-  start: (revision: string) => Promise<"plan_changed" | "unavailable" | "already_moving" | "runtime_switching" | null>;
+  /** `locked`: another Ovis server is moving this herdr session; `lock_unsafe`: its lock's folder is a symlink or not this user's */
+  start: (revision: string) => Promise<"plan_changed" | "unavailable" | "already_moving" | "locked" | "lock_unsafe" | "runtime_switching" | null>;
   cancel: () => void;
   /**
    * Ends the command a shell pane runs while the move waits, as the person would: Ctrl+C in the pane's
@@ -302,11 +309,16 @@ export function moveService(options: MoveServiceOptions): MoveService {
     holdsPending: options.holdsPending,
   };
   const plan = async (): Promise<MovePlan> => planMove(await deps.snapshot(), facts);
+  /** the lock is held from the start of a wait or a move until it ends, however it ends */
+  let held: MoveLockHandle | null = null;
+  const release = (): void => { const handle = held; held = null; handle?.release(); };
   const go = async (current: MovePlan): Promise<void> => {
     running = true;
     const id = randomUUID();
     let destination: Awaited<ReturnType<typeof coreDestination>> | null = null;
     try {
+      // still this server's move: another Ovis of the session that took the lock meanwhile moves instead, never both
+      if (!(await held?.holds())) { status = { state: "rolled_back", reason: "locked", left: [] }; return; }
       status = { state: "moving", step: "ending_agents", done: 0, total: 0 };
       destination = await coreDestination(options.stateDir, id);
       if (options.switching()) { status = { state: "rolled_back", reason: "runtime_switching", left: [] }; return; }
@@ -322,6 +334,7 @@ export function moveService(options: MoveServiceOptions): MoveService {
     } finally {
       destination?.close();
       running = false;
+      release();
     }
   };
   const look = async (wait: number): Promise<void> => {
@@ -329,12 +342,12 @@ export function moveService(options: MoveServiceOptions): MoveService {
     if (wait !== generation || status.state !== "waiting") return;
     try {
       // the PC may have lost herdr-core, or got the Herdr app, while it waited
-      if (moveUnavailable(options.serving(), options.facts()) !== null || options.switching()) { status = { state: "idle" }; return; }
+      if (moveUnavailable(options.serving(), options.facts()) !== null || options.switching()) { status = { state: "idle" }; release(); return; }
       const current = await plan();
       if (wait !== generation || status.state !== "waiting") return;
       if (current.ready) {
         // only what was shown moves: a pane, tab or conversation that is new or changed asks again
-        if (confirmed && !sameShape(confirmed, current)) { status = { state: "rolled_back", reason: "plan_changed", left: [] }; return; }
+        if (confirmed && !sameShape(confirmed, current)) { status = { state: "rolled_back", reason: "plan_changed", left: [] }; release(); return; }
         await go(current);
         return;
       }
@@ -480,6 +493,17 @@ export function moveService(options: MoveServiceOptions): MoveService {
         if (status.state === "interrupted" || status.state === "rolled_back") { setAsideJournal(options.stateDir, options.port); status = { state: "idle" }; }
         const current = await plan();
         if (current.revision !== revision) return "plan_changed";
+        // the server stopped while the plan was read: nothing is started, and no lock taken
+        if (stopped) return "unavailable";
+        try {
+          held = await takeMoveLock(options.lock.path);
+          if (!held) return "locked";
+          // the server stopped while the lock was taken: it lets go at once
+          if (stopped) { release(); return "unavailable"; }
+        } catch (error) {
+          if (error instanceof MoveLockUnsafe) return "lock_unsafe";
+          throw error;
+        }
         if (current.ready) { void go(current); return null; }
         confirmed = current;
         tries.clear();
@@ -514,10 +538,12 @@ export function moveService(options: MoveServiceOptions): MoveService {
       tries.clear();
       offer = null;
       status = { state: "idle" };
+      release();
     },
     busy: () => starting || running || status.state === "waiting" || status.state === "moving",
     // the server stops: a stop still on its way is no longer for a wait anyone sees
-    stop: () => { if (timer) clearTimeout(timer); timer = null; stopped = true; generation++; offer = null; },
+    // a wait ends with the server; a move under way keeps the lock until it ends, or until its process does
+    stop: () => { if (timer) clearTimeout(timer); timer = null; stopped = true; generation++; offer = null; if (!running) release(); },
   };
 }
 
