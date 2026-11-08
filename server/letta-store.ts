@@ -24,7 +24,8 @@
  * and the transcript was written since the process started, the process's own use of it.
  */
 import { accessSync, closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
-import { basename, isAbsolute, join, normalize } from "node:path";
+import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, normalize } from "node:path";
 import type { ConversationMetadata, HerdrPane } from "../shared/protocol.ts";
 import { darwinProcess } from "./claude-store.ts";
 import { paneProcessInfo, type ProcessInfo } from "./herdr/client.ts";
@@ -224,17 +225,20 @@ export type LettaTranscript = { path: string; session: string; agent: string; co
  * The transcript a Letta pane shows (see the top of this file), or null when it is not proven, or
  * when another pane reports the same conversation. The file may not exist yet.
  */
-export function lettaTranscriptFor(pane: HerdrPane, panes: readonly HerdrPane[], owner: LettaProcess): LettaTranscript | null {
+export async function lettaTranscriptFor(pane: HerdrPane, panes: readonly HerdrPane[], owner: LettaProcess): Promise<LettaTranscript | null> {
   const session = lettaSessionOf(pane);
   // a report in another form is not the absence of one
   if (session === null && pane.agent_session) return null;
   if (session === null && !lettaRecordSpeaksAlone(pane, panes, owner)) return null;
   if (session !== null && panes.some((other) => other.pane_id !== pane.pane_id && lettaSessionOf(other)?.reported === session.reported)) return null;
-  const text = recordOlderThan(join(owner.cwd, ".letta", "settings.local.json"), owner.startedAt);
+  const record = join(owner.cwd, ".letta", "settings.local.json");
+  const text = recordOlderThan(record, owner.startedAt);
   const opened = text === null ? null : lettaOpenedSessions(text);
   const bound = opened === null ? null : session === null ? lettaRecordedBinding(opened) : lettaBinding(session, opened);
   const root = lettaTranscriptRoot(owner.env);
-  if (bound === null || root === null || (session === null && claimedElsewhere(pane, panes, owner, bound))) return null;
+  if (bound === null || root === null) return null;
+  // the peers are read off the event loop: the record bound on must still stand once they answer
+  if (session === null && (await claimedElsewhere(pane, panes, owner, bound) || recordOlderThan(record, owner.startedAt) !== text)) return null;
   const path = lettaTranscriptPath(root, bound.agent, bound.conversation);
   // without a report the record only proves the process has not written yet: its own use of the conversation must show
   if (session === null && (owner.startedBy === null || !writtenSince(path, owner.startedBy))) return null;
@@ -273,27 +277,151 @@ function writtenSince(path: string, startedAt: number): boolean {
 }
 
 /**
+ * How long the peer folders may take to answer a claim check. One that has not answered by then may
+ * hide a claim of its own (a mount that stopped answering), so it claims. A test injects its own.
+ */
+export const peerClaimDeadline = { ms: 5_000 };
+
+/**
  * Whether another Letta pane's folder record names the same conversation: a Letta there resumed it
  * too, and which pane shows it cannot be told. Its record is read as it stands, written whenever:
  * an old one only costs this pane its chat, never shows it another's.
  */
-function claimedElsewhere(pane: HerdrPane, panes: readonly HerdrPane[], owner: LettaProcess, bound: { agent: string; conversation: string }): boolean {
-  const own = canonical(owner.cwd);
-  return panes.some((other) => {
-    if (other.pane_id === pane.pane_id || (other.agent !== "letta" && other.agent_session?.agent !== "letta")) return false;
-    // its process may run in a folder other than where the pane started: each folder's record counts
-    const folders = new Set([other.foreground_cwd, other.cwd].filter((cwd): cwd is string => typeof cwd === "string" && isAbsolute(cwd)));
-    return [...folders].some((folder) => {
-      if (canonical(folder) === own) return false;
-      const record = join(folder, ".letta", "settings.local.json");
-      const real = canonical(record);
-      // a record reached through a link in the folder is not that folder's own: it claims the conversation unread
-      if (real !== null && real !== join(canonical(folder) ?? folder, ".letta", "settings.local.json")) return true;
-      const text = readBounded(record, SETTINGS_BYTES);
-      const opened = text === null ? null : lettaOpenedSessions(text);
-      return opened?.some((ref) => ref.agent === bound.agent && ref.conversation === bound.conversation) === true;
-    });
-  });
+async function claimedElsewhere(pane: HerdrPane, panes: readonly HerdrPane[], owner: LettaProcess, bound: { agent: string; conversation: string }): Promise<boolean> {
+  const own = await realpath(owner.cwd).catch(() => null);
+  // its process may run in a folder other than where the pane started: each folder's record counts
+  const folders = lettaPeerFolders(pane, panes).filter((cwd) => isAbsolute(cwd));
+  // the folders are read off the event loop, and one of them may never answer: what a deadline passes is a claim,
+  // as a read that failed is, and the check that was left waiting is not kept
+  const claims = await beforePeerDeadline(folders, (folder) => folderClaims(folder, own, bound).catch(() => true));
+  return claims === "late" || claims.includes(true);
+}
+
+/** The folders of the other Letta panes: where their processes run, and where those panes started. */
+const lettaPeerFolders = (pane: HerdrPane, panes: readonly HerdrPane[]): string[] =>
+  panes.filter((other) => other.pane_id !== pane.pane_id && (other.agent === "letta" || other.agent_session?.agent === "letta"))
+    .flatMap((other) => [other.foreground_cwd, other.cwd]).filter((cwd): cwd is string => typeof cwd === "string" && cwd !== "");
+
+/**
+ * Peer folders with a check still running past its deadline, by how many: on a mount that stopped answering,
+ * each check left waiting holds a slot of Bun's fs pool until it settles, so none is started there meanwhile.
+ */
+const stuckPeers = new Map<string, number>();
+
+/**
+ * What `check` answers for each folder, or "late" once peerClaimDeadline passes first, and at once while a
+ * folder's earlier check is still waiting past its own deadline. A check left waiting is not kept, but its
+ * folder stays stuck until it settles.
+ */
+async function beforePeerDeadline<T>(folders: readonly string[], check: (folder: string) => Promise<T>): Promise<T[] | "late"> {
+  const unique = [...new Set(folders)];
+  if (unique.some((folder) => stuckPeers.has(folder))) return "late";
+  const settled = new Set<string>();
+  let passed = false;
+  const work = Promise.all(unique.map(async (folder) => {
+    try { return await check(folder); } finally {
+      if (!passed) settled.add(folder);
+      else if (stuckPeers.get(folder) === 1) stuckPeers.delete(folder);
+      else stuckPeers.set(folder, (stuckPeers.get(folder) ?? 1) - 1);
+    }
+  }));
+  let late: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"late">((resolve) => { late = setTimeout(() => resolve("late"), peerClaimDeadline.ms); });
+  try {
+    const answer = await Promise.race([work, deadline]);
+    if (answer === "late") {
+      passed = true;
+      for (const folder of unique) if (!settled.has(folder)) stuckPeers.set(folder, (stuckPeers.get(folder) ?? 0) + 1);
+    }
+    return answer;
+  } finally { clearTimeout(late); }
+}
+
+/** Where Linux names an open descriptor's own path: what is opened through it is inside the folder held. */
+const FD_DIR = "/proc/self/fd";
+/**
+ * How a peer's record is reached. `procFd`: Linux reaches into a held folder by its /proc/self/fd entry;
+ * elsewhere (macOS, Windows, a Linux without /proc) the record is opened by its path and proven by its
+ * identity instead (folderClaims). A test turns /proc off to run the other way here.
+ */
+export const peerRecordReach = { procFd: ((): boolean => { try { return process.platform === "linux" && lstatSync(FD_DIR).isDirectory(); } catch { return false; } })() };
+/** A folder opened as itself: O_DIRECTORY, and O_NOFOLLOW so a link put where it was stands refused. */
+const FOLDER_FLAGS = constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0);
+
+/** A folder's identity as the checks compare it: its device and inode, whole (a 64-bit inode does not fit a number). */
+const deviceInode = (stat: { dev: bigint; ino: bigint }): string => `${stat.dev}:${stat.ino}`;
+
+/** Whether two chains of folders name the same folders at every step. */
+const sameChain = (a: readonly string[] | null, b: readonly string[] | null): boolean => {
+  if (a === null || b === null || a.length !== b.length) return false;
+  return a.every((at, step) => at === b[step]);
+};
+
+/** Whether an error says only that nothing is there (a missing entry, or a folder on its way), not that it cannot be read. */
+const absent = (error: unknown): boolean => {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+};
+
+/**
+ * Whether a peer folder's record names the conversation, read without blocking (the folder may be on a
+ * slow mount). The folder is opened itself, and its `.letta` and the record inside that, each through
+ * the descriptor held before it, so nothing swapped into a folder already checked is read in its stead;
+ * what was opened must be the folder the chain of plain folders from the root names, still where it was
+ * resolved to after the read. Without /proc (peerRecordReach) the record is opened by its path, through
+ * no final link where the platform refuses one, and the file opened must be the one the path names
+ * after the read, on the device of the `.letta` the chain names. Either way the record read must be the
+ * file its path names after the read. A record not proven to be the folder's own claims it unread: reached
+ * through a link, or read under a folder, `.letta` or record swapped for a decoy and put back. Only a folder known to be gone claims nothing; one that cannot be resolved (no
+ * permission, an I/O error) may hide a record of its own.
+ */
+async function folderClaims(folder: string, own: string | null, bound: { agent: string; conversation: string }): Promise<boolean> {
+  let real: string;
+  try { real = await realpath(folder); } catch (error) { return !absent(error); }
+  if (real === own) return false;
+  const letta = join(real, ".letta");
+  const path = join(letta, "settings.local.json");
+  let before: string[] | null;
+  try { before = await folderChain(letta); } catch (error) { return !absent(error); }
+  if (before === null) return true;
+  const held: FileHandle[] = [];
+  try {
+    const hold = async (at: string, flags: number): Promise<FileHandle> => { const handle = await open(at, flags); held.push(handle); return handle; };
+    let record: FileHandle;
+    if (peerRecordReach.procFd) {
+      // the folder itself, then its .letta and the record inside the ones held: each opened through the one before, never by its path
+      const peer = await hold(real, FOLDER_FLAGS);
+      if (deviceInode(await peer.stat({ bigint: true })) !== before.at(-2)) return true;
+      const hidden = await hold(join(FD_DIR, `${peer.fd}`, ".letta"), FOLDER_FLAGS);
+      if (deviceInode(await hidden.stat({ bigint: true })) !== before.at(-1)) return true;
+      record = await hold(join(FD_DIR, `${hidden.fd}`, "settings.local.json"), RECORD_FLAGS);
+    } else record = await hold(path, RECORD_FLAGS);
+    // a record whose own stat fails is not proven the folder's own: it claims
+    const found = await record.stat({ bigint: true }).catch(() => null);
+    if (found === null) return true;
+    const readable = found.isFile() && found.size <= BigInt(SETTINGS_BYTES);
+    const buffer = Buffer.alloc(readable ? Number(found.size) : 0);
+    const { bytesRead } = readable ? await record.read(buffer, 0, buffer.length, 0) : { bytesRead: 0 };
+    // the folders are what they were and the peer's folder still resolves to them: one swapped for a decoy and put back shows here
+    if (!sameChain(before, await folderChain(letta).catch(() => null)) || await realpath(folder).catch(() => null) !== real) return true;
+    // the file read is the one the path names now, however it was reached (a record swapped for a decoy and back shows here),
+    // and when opened by its path, in the .letta the chain names
+    // nothing at the path now (a decoy opened, the path then removed) or a stat that fails proves nothing: it claims
+    if (await lstat(path, { bigint: true }).then(deviceInode, () => null) !== deviceInode(found)) return true;
+    if (!peerRecordReach.procFd && !before.at(-1)!.startsWith(`${found.dev}:`)) return true;
+    // a record that is not a plain file, or too large to read, may name the conversation: it claims
+    if (!readable) return true;
+    const opened = lettaOpenedSessions(buffer.subarray(0, bytesRead).toString("utf8"));
+    return opened?.some((ref) => ref.agent === bound.agent && ref.conversation === bound.conversation) === true;
+  } catch (error) { return !absent(error); } finally { for (const handle of held) await handle.close().catch(() => {}); }
+}
+
+/** Each folder from the root down to `dir`, by device and inode; null when one is not a plain folder (a link, or nothing). */
+async function folderChain(dir: string): Promise<string[] | null> {
+  const folders = [dir];
+  while (dirname(folders.at(-1)!) !== folders.at(-1)) folders.push(dirname(folders.at(-1)!));
+  const stats = await Promise.all(folders.map((at) => lstat(at, { bigint: true })));
+  return stats.every((found) => found.isDirectory()) ? stats.map(deviceInode).reverse() : null;
 }
 
 /**
@@ -355,12 +483,14 @@ const canonical = (path: string): string | null => { try { return realpathSync(p
  * where Letta with LETTA_CONFIG_DIR writes no project record (so an old one stays), and not while
  * another pane runs Letta in the same folder, which writes the same record.
  */
-export function lettaRecordOwned(pane: HerdrPane, panes: readonly HerdrPane[], owner: LettaProcess): boolean {
-  const folder = canonical(owner.cwd);
-  const home = owner.env["HOME"] === undefined ? null : canonical(owner.env["HOME"]);
+export async function lettaRecordOwned(pane: HerdrPane, panes: readonly HerdrPane[], owner: LettaProcess): Promise<boolean> {
+  const resolve = (path: string): Promise<string | null> => realpath(path).catch(() => null);
+  const [folder, home] = await Promise.all([resolve(owner.cwd), owner.env["HOME"] === undefined ? null : resolve(owner.env["HOME"])]);
   if (folder === null || home === null || home === folder) return false;
-  return !panes.some((other) => other.pane_id !== pane.pane_id && (other.agent === "letta" || other.agent_session?.agent === "letta")
-    && [other.foreground_cwd, other.cwd].some((cwd) => typeof cwd === "string" && cwd !== "" && canonical(cwd) === folder));
+  // another pane's folder may be on an unresponsive mount: resolved off the event loop, and one that has not
+  // answered by the deadline may be this folder, so the record is not this pane's
+  const peers = await beforePeerDeadline(lettaPeerFolders(pane, panes), resolve);
+  return peers !== "late" && !peers.includes(folder);
 }
 
 /** Letta's local backend store for an environment: `$LETTA_LOCAL_BACKEND_DIR`, else `lc-local-backend` in its config folder. */
@@ -435,10 +565,17 @@ export function lettaMessagesPath(store: string, agent: string, conversation: st
 /** The transcript a Letta pane shows, written and held as lettaTranscriptHeld says, its process's local store and when that process started; or null. */
 export async function resolveLettaTranscript(pane: HerdrPane, panes: readonly HerdrPane[], known?: ProcessInfo | null): Promise<(LettaTranscript & { store: string; startedAt: number }) | null> {
   const owner = await paneLettaProcess(pane.pane_id, known);
-  if (owner === null || !lettaInStartFolder(owner) || !lettaRecordOwned(pane, panes, owner)) return null;
-  const found = lettaTranscriptFor(pane, panes, owner);
+  if (owner === null || !lettaInStartFolder(owner) || !(await lettaRecordOwned(pane, panes, owner))) return null;
+  const found = await lettaTranscriptFor(pane, panes, owner);
   const store = lettaLocalStore(owner.env);
   const root = lettaTranscriptRoot(owner.env);
   if (found === null || store === null || root === null || !lettaLocalOwner(store, found.agent, found.conversation)) return null;
+  // the peer folders above (lettaRecordOwned resolves them all, claimedElsewhere reads their records) are answered while
+  // this waits: the pane's letta may have exited, or moved to another project (whose record is another one's) since.
+  // herdr is then asked once more, and only the same process in the same folder binds; with no peer nothing was waited on
+  if (lettaPeerFolders(pane, panes).length > 0) {
+    const same = await paneLettaProcess(pane.pane_id).catch(() => null);
+    if (same === null || same.pid !== owner.pid || same.identity !== owner.identity || same.cwd !== owner.cwd || !lettaInStartFolder(same)) return null;
+  }
   return lettaTranscriptHeld(found.path, root) ? { ...found, store, startedAt: owner.startedAt } : null;
 }
