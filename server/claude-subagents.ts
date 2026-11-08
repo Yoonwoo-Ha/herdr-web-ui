@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, type Dir, fstatSync, lstatSync, opendirSync, openSync, readlinkSync, readSync, realpathSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { commandHistory, resetCommandHistory, sameHistory, vouchedEnds, watchCommandHistory, type CommandEnd, type HistoryEvidence, type HistoryVersion } from "./claude-command-history.ts";
 import type { HerdrPane, OmoTask, PaneBackgroundAgentDetail } from "../shared/protocol.ts";
@@ -528,10 +528,15 @@ function readMeta(path: string): Meta | null {
   const known = metas.get(path);
   if (known?.key === key) return known.meta;
   let meta: Meta | null = null;
+  let fd: number;
+  // not waited on, not followed: a FIFO or a link put in the file's place after the look neither hangs the read nor leads elsewhere
+  try { fd = detailIo.openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0)); } catch { return null; }
   try {
-    const record = row(JSON.parse(readFileSync(path, "utf8")));
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.size > MAX_META_BYTES) return null;
+    const record = row(JSON.parse(readAt(fd, 0, opened.size).toString("utf8")));
     if (record !== null) meta = { title: text(record["description"]) ?? text(record["name"]), name: text(record["name"]), agent: text(record["agentType"]), toolUseId: text(record["toolUseId"]) };
-  } catch { return null; } // being written
+  } catch { return null; } finally { closeSync(fd); } // being written
   remember(metas, path, { key, meta }, 4096);
   return meta;
 }
@@ -698,6 +703,8 @@ const subagentsDir = (parentPath: string): string => join(parentPath.replace(/\.
 function folderVersion(dir: string): { sig: string; latestMs: number } {
   try {
     const stat = lstatSync(dir);
+    // a link leads to another session's folder, whose agents are none of this one's
+    if (!stat.isDirectory()) return { sig: "-", latestMs: 0 };
     return { sig: `${stat.dev}:${stat.ino}:${stat.mtimeMs}:${stat.ctimeMs}`, latestMs: Math.max(stat.mtimeMs, stat.ctimeMs) };
   } catch { return { sig: "-", latestMs: 0 }; }
 }
@@ -707,21 +714,36 @@ function folderVersion(dir: string): { sig: string; latestMs: number } {
  * that changed within a second of the read may have changed again with the same time, so only a
  * listing read after the folder had been quiet for a second is kept.
  */
-const listings = new Map<string, { sig: string; readAt: number; ids: string[] }>();
+const listings = new Map<string, { sig: string; readAt: number; ids: string[]; chain: Folder["chain"] }>();
 function agentIds(parentPath: string): string[] {
   const dir = subagentsDir(parentPath);
   const { sig, latestMs } = folderVersion(dir);
   if (sig === "-") { listings.delete(dir); return []; }
   const known = listings.get(dir);
-  if (known?.sig === sig && known.readAt - latestMs >= 1000) return known.ids;
-  let ids: string[];
+  // and only while each folder on the way is still the one listed: a session folder moved and replaced with a link to it
+  // leaves the subagents folder as it was, and lists nothing as the detail read opens nothing
+  if (known?.sig === sig && known.readAt - latestMs >= 1000 && known.chain.every((step) => folderId(step.path) === step.id)) return known.ids;
+  // the session's own folder only, as the detail read opens it: a link on the way, or one swapped in, lists nothing
+  const folder = sessionFolder(parentPath);
+  if (typeof folder === "string") return [];
+  const ids: string[] = [];
+  let listing: Dir | undefined;
+  // read entry by entry, inside the folder opened where the kernel allows: a folder of any size costs at most MAX_NAMES names
   try {
-    ids = readdirSync(dir).slice(0, MAX_NAMES).flatMap((name) => {
-      const id = /^agent-(.+)\.meta\.json$/.exec(name)?.[1];
-      return id !== undefined && AGENT_ID.test(id) ? [id] : [];
-    });
-  } catch { return []; }
-  remember(listings, dir, { sig, readAt: Date.now(), ids }, 256);
+    listing = opendirSync(folder.fd === null ? folder.path : `${FD_DIR}/${folder.fd}`);
+    for (let read = 0; read < MAX_NAMES; read += 1) {
+      const entry = listing.readSync();
+      if (entry === null) break;
+      const id = /^agent-(.+)\.meta\.json$/.exec(entry.name)?.[1];
+      if (id !== undefined && AGENT_ID.test(id)) ids.push(id);
+    }
+    // a folder on the way swapped while it was listed: what was listed may be another folder's
+    if (!intact(folder)) return [];
+  } catch { return []; } finally {
+    listing?.closeSync();
+    if (folder.fd !== null) closeSync(folder.fd);
+  }
+  remember(listings, dir, { sig, readAt: Date.now(), ids, chain: folder.chain }, 256);
   return ids;
 }
 
@@ -758,13 +780,21 @@ export interface SubagentDetail {
 /** The subagents named, by agent id, as their meta files say. An id that is not a plain word is none. */
 export function subagentDetails(parentPath: string, ids: Iterable<string>): Map<string, SubagentDetail> {
   const found = new Map<string, SubagentDetail>();
-  const dir = subagentsDir(parentPath);
-  for (const id of new Set(ids)) {
-    if (!AGENT_ID.test(id)) continue;
-    const meta = readMeta(join(dir, `agent-${id}.meta.json`));
-    if (meta !== null) found.set(id, { title: meta.title, agent: meta.agent });
-  }
-  return found;
+  const wanted = [...new Set(ids)].filter((id) => AGENT_ID.test(id));
+  if (wanted.length === 0) return found;
+  // opened as the detail read opens them: another session's folder, linked or swapped in, titles nothing
+  const folder = sessionFolder(parentPath);
+  if (typeof folder === "string") return found;
+  try {
+    for (const id of wanted) {
+      const meta = openIn(folder, `agent-${id}.meta.json`, MAX_META_BYTES);
+      if (typeof meta === "string") continue;
+      let record: Row | null;
+      try { record = stillThere(meta) ? row(JSON.parse(readAt(meta.fd, 0, meta.size).toString("utf8"))) : null; } catch { record = null; } finally { closeSync(meta.fd); }
+      if (record !== null) found.set(id, { title: text(record["description"]) ?? text(record["name"]), agent: text(record["agentType"]) });
+    }
+    return intact(folder) ? found : new Map();
+  } finally { if (folder.fd !== null) closeSync(folder.fd); }
 }
 
 /**
@@ -880,6 +910,13 @@ function openFolder(store: string, sessionId: string): Folder | DetailRefusal {
   return "unavailable";
 }
 
+/** The subagents folder of the session whose transcript is `parentPath`, opened by openFolder in the store's real place. */
+function sessionFolder(parentPath: string): Folder | DetailRefusal {
+  let store: string;
+  try { store = realpathSync(dirname(parentPath)); } catch { return "unavailable"; }
+  return openFolder(store, basename(parentPath, ".jsonl"));
+}
+
 /** Whether the folder is still the one looked at: every folder on the way the same, and the open one where it was. */
 function intact(folder: Folder): boolean {
   return folder.chain.every((step) => folderId(step.path) === step.id) && (folder.fd === null || fdPath(folder.fd) === folder.path);
@@ -900,8 +937,9 @@ function openIn(folder: Folder, name: string, max = Infinity): Opened | DetailRe
   if (looked === "error") return "unavailable";
   if (looked === "other" || looked.kind !== "file" || looked.size > max) return "not_found";
   let fd: number;
-  // O_NOFOLLOW: a link put in the file's place after the look is refused by the open itself where the platform has it
-  try { fd = detailIo.openSync(where, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); } catch { return "unavailable"; }
+  // O_NOFOLLOW: a link put in the file's place after the look is refused by the open itself where the platform has it;
+  // O_NONBLOCK: a FIFO put there is opened without waiting for a writer, and refused as no plain file
+  try { fd = detailIo.openSync(where, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)); } catch { return "unavailable"; }
   try {
     const opened = fstatSync(fd, { bigint: true });
     const size = Number(opened.size);
@@ -1032,9 +1070,7 @@ function readDetailRecords(fd: number, size: number, sessionId: string, agentId:
 export function backgroundAgentDetail(parentPath: string, agentId: string): { detail: Omit<PaneBackgroundAgentDetail, "server_time"> } | { refusal: DetailRefusal } {
   if (!validDetailId(agentId) || plain(parentPath) === null) return { refusal: "unavailable" };
   const sessionId = basename(parentPath, ".jsonl");
-  let store: string;
-  try { store = realpathSync(dirname(parentPath)); } catch { return { refusal: "unavailable" }; }
-  const folder = openFolder(store, sessionId);
+  const folder = sessionFolder(parentPath);
   if (typeof folder === "string") return { refusal: folder };
   try {
     const meta = openIn(folder, `agent-${agentId}.meta.json`, MAX_META_BYTES);
@@ -1334,6 +1370,8 @@ interface Tracked {
   /** when its transcript, and its process, were last looked for */
   at: number; pidAt: number;
   live: boolean; running: number; turnRunning: number; promptAt: number | null; resting: boolean; holding?: boolean; sig: string | null;
+  /** the session's turn has rested since background work last ran: herdr's working from then is still that work's */
+  restedOnWork?: boolean;
   reset?: boolean;
   /** the turns of the transcript read, and the busy signals matched to them */
   turns?: Turns;
@@ -1446,11 +1484,12 @@ export class ClaudeSubagentStatus {
 
   /**
    * The session's own turn ended while subagents or commands still run: Claude keeps its busy
-   * title up while a background subagent works, and herdr reads that as `working` (#2069).
+   * title up while a background subagent works, and herdr reads that as `working` (#2069). The
+   * last of that work ending keeps the rest until a turn begins: herdr's working may be from before.
    */
   restsOn(paneId: string): boolean {
     const tracked = this.panes.get(paneId);
-    return tracked !== undefined && tracked.resting && tracked.running > 0;
+    return tracked !== undefined && tracked.resting && (tracked.running > 0 || tracked.restedOnWork === true);
   }
 
   /**
@@ -1566,6 +1605,8 @@ export class ClaudeSubagentStatus {
     if (this.lookups.get(pane.pane_id) !== claim) return;
     const current = this.panes.get(pane.pane_id);
     const same = current?.key === key;
+    // the same transcript of the same process under another key (its cwd changed, or its session id became known): the same lifetime
+    const sameLife = current !== undefined && (same || (!!found && current.path === found.path));
     const reset = !!(found && current && ((current.path !== null && current.path !== found.path)
       || (current.pid !== null && found.pid != null && current.pid !== found.pid)
       || (current.startedAt !== null && found.startedAt !== null && current.startedAt !== found.startedAt)));
@@ -1573,7 +1614,7 @@ export class ClaudeSubagentStatus {
     // another process's transcript: what it holds is that process's, and a rest in it ends no turn of this one
     if (reset && found) this.deferred.set(pane.pane_id, [...this.deferred.get(pane.pane_id) ?? [], { source: "herdr", at: this.now() }]);
     // the count it had goes on from here: another session with none says so at the next poll
-    this.panes.set(pane.pane_id, { read: same && !reset ? current.read : ++taskReadSequence, key, path: found?.path ?? (same ? current.path : null), startedAt: found ? found.startedAt : same ? current.startedAt : null, pid: found ? found.pid ?? null : same ? current.pid : null, at: this.now(), pidAt: this.now(), live: true, running: current?.running ?? 0, turnRunning: current?.turnRunning ?? 0, promptAt: current?.promptAt ?? null, resting: current?.resting ?? false, turns: reset ? undefined : current?.turns, sig: null, watch: same && !found ? current.watch : [], reset });
+    this.panes.set(pane.pane_id, { read: same && !reset ? current.read : ++taskReadSequence, key, path: found?.path ?? (same ? current.path : null), startedAt: found ? found.startedAt : same ? current.startedAt : null, pid: found ? found.pid ?? null : same ? current.pid : null, at: this.now(), pidAt: this.now(), live: true, running: current?.running ?? 0, turnRunning: current?.turnRunning ?? 0, promptAt: current?.promptAt ?? null, resting: current?.resting ?? false, restedOnWork: sameLife && !reset ? current.restedOnWork : false, turns: reset ? undefined : current?.turns, sig: null, watch: same && !found ? current.watch : [], reset });
   }
 
   private observeSession(pane: HerdrPane): void {
@@ -1591,6 +1632,7 @@ export class ClaudeSubagentStatus {
     tracked.read = ++taskReadSequence;
     tracked.live = false;
     tracked.reset = true;
+    tracked.restedOnWork = false;
     // Leaving Claude retains the old transcript for the lost-task list, but a new Claude session cannot read it.
     if (session !== null) {
       tracked.path = null;
@@ -1656,6 +1698,10 @@ export class ClaudeSubagentStatus {
       const holding = this.holdsQueue(paneId);
       if (!tracked.reset && running === tracked.running && turnRunning === tracked.turnRunning && promptAt === tracked.promptAt && resting === tracked.resting && holding === (tracked.holding ?? false)) continue;
       tracked.holding = holding;
+      // the last of its work ending keeps the rest: herdr's working may be the busy title it had, said before
+      // that work ended, until a turn begins (a busy signal, or one written) and the rest is gone
+      // read together with its rest, the last of that work ending keeps it too: the rest and the end came before this read
+      tracked.restedOnWork = resting && (running > 0 || (!tracked.reset && (tracked.running > 0 || (tracked.resting && tracked.restedOnWork === true))));
       tracked.reset = false;
       tracked.running = running;
       tracked.turnRunning = turnRunning;
