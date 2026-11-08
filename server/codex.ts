@@ -1,7 +1,7 @@
 /** Native Codex rollouts contain both display events and model context. Only
  * conversation records belong in chat; developer prompts and terminal chrome do not. */
 import { constants as sqliteConstants, Database } from "bun:sqlite";
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, existsSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import { open, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import nodePath, { isAbsolute, join, type PlatformPath } from "node:path";
@@ -14,6 +14,7 @@ import { CODEX_TOOL_IMAGE_REF, codexImageParts, codexOutputPictures } from "./co
 import { codexReadCall, codexReadSkills, selectedSkill } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
 import type { TranscriptParser } from "./transcript-records.ts";
+import { ConversationReadPending, type FileIdentity, openBound, readBound } from "./conversation-shared.ts";
 import type { AgentInfo } from "../shared/herdr-api.generated.ts";
 import { agentGet, HerdrError, paneGet, paneProcessInfo, paneRead, sessionSnapshot, type ProcessInfo } from "./herdr/client.ts";
 import { kiroCodexProcess, kiroNested, kiroWrapper } from "./kiro-terminal.ts";
@@ -550,7 +551,8 @@ export async function paneCodexHomePlaced(paneId: string, configured?: string, k
  * full read): what it holds past the read cannot be checked, even when the part read parses.
  */
 function rolloutMetaLine(path: string): RecordValue | null {
-  const fd = openSync(path, "r");
+  // refused where a read bound the path to another file (openBound)
+  const fd = openBound(path);
   try {
     const buffer = Buffer.alloc(256 * 1024);
     const length = readSync(fd, buffer, 0, buffer.length, 0);
@@ -706,12 +708,17 @@ export function codexRolloutPath(path: string, codexHome: string): string | null
     // is not the conversation of the parent TUI.
     if (header === null || !interactiveCodexRollout(header.payload, nodePath.basename(canonical))) return null;
     return canonical;
-  } catch { return null; }
+  } catch (error) {
+    // another file than the one the read is bound to: pending, not a file that is no rollout
+    if (error instanceof ConversationReadPending) throw error;
+    return null;
+  }
 }
 
 /** Bytes [start, end) of a file as text; a cut first line is dropped. */
 export function readRange(path: string, start: number, end: number): string {
-  const fd = openSync(path, "r");
+  // refused where a read bound the path to another file (openBound)
+  const fd = openBound(path);
   try {
     const buffer = Buffer.alloc(Math.max(0, end - start));
     const length = readSync(fd, buffer, 0, buffer.length, start);
@@ -797,8 +804,8 @@ async function scanQuestions(path: string): Promise<QueuedQuestion[]> {
 
 const readdir = (path: string): string[] => { try { return readdirSync(path); } catch { return []; } };
 
-/** A byte range of rollout history: the file's first `end` bytes. */
-export interface HistorySegment { path: string; end: number }
+/** A byte range of rollout history: the file's first `end` bytes; an earlier rollout's `identity` as its chain was resolved. */
+export interface HistorySegment { path: string; end: number; identity?: FileIdentity }
 
 /**
  * Chains per rollout, newest first. A header never changes, so a complete chain is
@@ -841,7 +848,7 @@ function countLines(path: string, end: number): number {
   const key = `${stat.dev}:${stat.ino}:${end}`;
   const known = linesBeforeCut.get(key);
   if (known !== undefined) return known;
-  const fd = openSync(path, "r");
+  const fd = openBound(path);
   let lines = 0;
   try {
     const buffer = Buffer.alloc(16 * 1024 * 1024);
@@ -858,7 +865,7 @@ function countLines(path: string, end: number): number {
 }
 
 function byteAt(path: string, offset: number): number | null {
-  const fd = openSync(path, "r");
+  const fd = openBound(path);
   try {
     const buffer = Buffer.alloc(1);
     return readSync(fd, buffer, 0, 1, offset) === 1 ? buffer[0]! : null;
@@ -879,7 +886,7 @@ function firstOrdinal(header: RecordValue): number {
  */
 function holdsCut(path: string, ordinal: number, end: number): boolean {
   let header: RecordValue | null;
-  try { header = rolloutHeader(path); } catch { return false; }
+  try { header = rolloutHeader(path); } catch (error) { if (error instanceof ConversationReadPending) throw error; return false; }
   if (header === null) return false;
   const lines = ordinal - firstOrdinal(header);
   if (lines <= 0 || (statSync(path, { throwIfNoEntry: false })?.size ?? 0) < end || byteAt(path, end - 1) !== 0x0a) return false;
@@ -918,21 +925,30 @@ function historyChain(path: string, home: string): HistorySegment[] {
   let current = path;
   for (let depth = 0; depth < 32; depth++) {
     let base: RecordValue;
-    try { base = record(rolloutHeader(current)?.history_base); } catch { return remember(chain, false); }
+    // an earlier rollout's header is read from the file it was when it was weighed below
+    const weighed = chain.at(-1);
+    try { base = record((weighed?.identity ? readBound([[current, weighed.identity]], () => rolloutHeader(current)) : rolloutHeader(current))?.history_base); }
+    catch (error) { if (error instanceof ConversationReadPending) throw error; return remember(chain, false); }
     const threadId = string(base.thread_id);
     const ordinal = base.end_ordinal_exclusive;
     const end = base.end_byte_offset;
     if (Object.keys(base).length === 0) return remember(chain, true);
     if (!UUID.test(threadId) || typeof ordinal !== "number" || !Number.isSafeInteger(ordinal)
       || typeof end !== "number" || !Number.isSafeInteger(end) || end <= 0) return remember(chain, false);
+    // Each candidate is weighed as the file its path names now: an open finding another there (a folder
+    // swapped in around it) leaves the chain unresolved and unremembered, pending (openBound).
     const holders = threadRollouts(home, threadId).flatMap((candidate) => {
-      const resolved = codexRolloutPath(candidate, home);
-      return resolved !== null && resolved !== current && !chain.some((segment) => segment.path === resolved)
-        && holdsCut(resolved, ordinal, end) ? [resolved] : [];
+      let identity: FileIdentity, canonical: string;
+      try { identity = statSync(candidate); canonical = realpathSync(candidate); } catch { return []; }
+      return readBound([[candidate, identity], [canonical, identity]], () => {
+        const resolved = codexRolloutPath(candidate, home);
+        return resolved !== null && resolved !== current && !chain.some((segment) => segment.path === resolved)
+          && holdsCut(resolved, ordinal, end) ? [{ path: resolved, identity }] : [];
+      });
     });
     if (holders.length !== 1) return remember(chain, false);
-    chain.push({ path: holders[0]!, end });
-    current = holders[0]!;
+    chain.push({ path: holders[0]!.path, end, identity: { dev: holders[0]!.identity.dev, ino: holders[0]!.identity.ino } });
+    current = holders[0]!.path;
   }
   return remember(chain, false);
 }
@@ -944,7 +960,11 @@ function historyChain(path: string, home: string): HistorySegment[] {
  */
 function liveChain(path: string, home: string): HistorySegment[] {
   const chain = historyChain(path, home);
-  if (chain.every((segment) => statSync(segment.path, { throwIfNoEntry: false }))) return chain;
+  // a rollout replaced since it was weighed (another file at its path) is weighed again, as one gone is
+  if (chain.every((segment) => {
+    const now = statSync(segment.path, { throwIfNoEntry: false });
+    return now !== undefined && now.dev === segment.identity?.dev && now.ino === segment.identity.ino;
+  })) return chain;
   forgetHistoryChain(path);
   return historyChain(path, home);
 }

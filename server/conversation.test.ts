@@ -3,7 +3,8 @@ import * as darwinProcess from "./darwin-process.ts";
 import { Database } from "bun:sqlite";
 import { appendFileSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, win32 } from "node:path";
+import { execFileSync } from "node:child_process";
+import { basename, join, win32 } from "node:path";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import * as cmd from "./cmd.ts";
@@ -2214,6 +2215,124 @@ describe("transcript pages", () => {
     expect(() => transcriptPage("codex-transcript", segment, { before: before.cursor! }, home)).toThrow(HistoryChanged);
   });
 
+  it("answers nothing from another rollout that a folder swap puts at a parent rollout's path around its opens", () => {
+    const home = join(temp(), "codex");
+    const thread = "01a0a337-19e8-7712-92f5-aa0883392afd";
+    // the other conversation's prompts are as long as the pane's, so its rollout fills the same offsets
+    const task = (n: number, said = "prompt ") => [
+      { type: "event_msg", timestamp: "2026-09-23T00:00:00.000Z", payload: { type: "task_started" } },
+      { type: "response_item", timestamp: "2026-09-23T00:00:00.000Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: `${said}${n}` }] } },
+      { type: "response_item", timestamp: "2026-09-23T00:00:01.000Z", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `answer ${n}` }] } },
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    const meta = (extra = {}) => JSON.stringify({ type: "session_meta", payload: { source: "cli", thread_source: "user", ...extra } });
+    const day = join(home, "sessions", "2026", "09", "15");
+    const elsewhere = join(temp(), "15");
+    mkdirSync(day, { recursive: true });
+    mkdirSync(elsewhere);
+    mkdirSync(join(home, "sessions", "2026", "09", "23"), { recursive: true });
+    const name = `rollout-2026-09-15T12-58-12-${thread}.jsonl`;
+    const kept = `${meta()}\n${Array.from({ length: 80 }, (_, n) => task(n)).join("\n")}\n`;
+    writeFileSync(join(day, name), kept);
+    writeFileSync(join(elsewhere, name), `${meta()}\n${Array.from({ length: 80 }, (_, n) => task(n, "FOREIGN")).join("\n")}\n`);
+    // right after a backtrack the live file is small: its newest page reaches into the parent
+    const segment = join(home, "sessions", "2026", "09", "23", `rollout-2026-09-23T10-46-43-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`);
+    writeFileSync(segment, `${meta({ history_base: { thread_id: thread, end_ordinal_exclusive: kept.split("\n").length - 1, end_byte_offset: Buffer.byteLength(kept) } })}\n${Array.from({ length: 3 }, (_, n) => task(80 + n)).join("\n")}\n`);
+    forgetHistoryChains();
+    const parent = join(day, name);
+    const away = join(temp(), "away");
+    let swaps = 0;
+    const { openSync } = fs;
+    const opens = spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+      if (args[0] !== parent) return openSync(...args);
+      swaps++;
+      renameSync(day, away);
+      renameSync(elsewhere, day);
+      try { return openSync(...args); }
+      finally {
+        renameSync(day, elsewhere);
+        renameSync(away, day);
+      }
+    }) as typeof fs.openSync);
+    let answer: unknown;
+    try { answer = transcriptPage("codex-transcript", segment, {}, home); }
+    catch (error) { answer = error; }
+    finally { opens.mockRestore(); }
+    expect(swaps).toBeGreaterThan(0);
+    expect(JSON.stringify(answer)).not.toContain("FOREIGN");
+    expect(answer).toBeInstanceOf(ConversationReadPending);
+  });
+
+  /** A backtracked Codex conversation: a live rollout whose newest page reaches into the parent it continues. */
+  const codexChain = () => {
+    const home = join(temp(), "codex");
+    const thread = "01a0a337-19e8-7712-92f5-aa0883392afd";
+    // another conversation's prompts are as long as the pane's, so its rollout holds the same cut
+    const task = (n: number, said = "prompt ") => [
+      { type: "event_msg", timestamp: "2026-09-23T00:00:00.000Z", payload: { type: "task_started" } },
+      { type: "response_item", timestamp: "2026-09-23T00:00:00.000Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: `${said}${n}` }] } },
+      { type: "response_item", timestamp: "2026-09-23T00:00:01.000Z", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `answer ${n}` }] } },
+    ].map((entry) => JSON.stringify(entry)).join("\n");
+    const meta = (extra = {}) => JSON.stringify({ type: "session_meta", payload: { source: "cli", thread_source: "user", ...extra } });
+    const day = join(home, "sessions", "2026", "09", "15");
+    mkdirSync(day, { recursive: true });
+    mkdirSync(join(home, "sessions", "2026", "09", "23"), { recursive: true });
+    const parent = join(day, `rollout-2026-09-15T12-58-12-${thread}.jsonl`);
+    const kept = `${meta()}\n${Array.from({ length: 80 }, (_, n) => task(n)).join("\n")}\n`;
+    writeFileSync(parent, kept);
+    const live = join(home, "sessions", "2026", "09", "23", `rollout-2026-09-23T10-46-43-${thread}_01a0cbf1-9b0e-7383-a345-80974b279c68.jsonl`);
+    writeFileSync(live, `${meta({ history_base: { thread_id: thread, end_ordinal_exclusive: kept.split("\n").length - 1, end_byte_offset: Buffer.byteLength(kept) } })}\n${Array.from({ length: 3 }, (_, n) => task(80 + n)).join("\n")}\n`);
+    const foreign = `${meta()}\n${Array.from({ length: 80 }, (_, n) => task(n, "FOREIGN")).join("\n")}\n`;
+    forgetHistoryChains();
+    return { home, thread, day, parent, live, foreign, task };
+  };
+
+  it("never resolves a Codex chain to another conversation's rollout because a folder swap hid the parent around its open", () => {
+    const { home, thread, day, parent, live, foreign } = codexChain();
+    // another conversation's rollout of the same thread that also holds the cut: with the parent beside it,
+    // the chain is ambiguous and shows no parent
+    mkdirSync(join(home, "sessions", "2026", "09", "14"));
+    writeFileSync(join(home, "sessions", "2026", "09", "14", `rollout-2026-09-14T12-58-12-${thread}.jsonl`), foreign);
+    // around each open of the parent, a folder where its name holds no rollout
+    const elsewhere = join(temp(), "15");
+    const away = join(temp(), "away");
+    mkdirSync(elsewhere);
+    writeFileSync(join(elsewhere, basename(parent)), "not a rollout\n");
+    let swaps = 0;
+    const { openSync } = fs;
+    const opens = spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+      if (args[0] !== parent) return openSync(...args);
+      swaps++;
+      renameSync(day, away);
+      renameSync(elsewhere, day);
+      try { return openSync(...args); }
+      finally {
+        renameSync(day, elsewhere);
+        renameSync(away, day);
+      }
+    }) as typeof fs.openSync);
+    let answer: unknown;
+    try { answer = transcriptPage("codex-transcript", live, {}, home); }
+    catch (error) { answer = error; }
+    finally { opens.mockRestore(); }
+    expect(swaps).toBeGreaterThan(0);
+    expect(JSON.stringify(answer)).not.toContain("FOREIGN");
+    expect(answer).toBeInstanceOf(ConversationReadPending);
+  });
+
+  it("reads no replacement of a Codex parent rollout its remembered chain was resolved without", () => {
+    const { home, parent, live, task } = codexChain();
+    const before = transcriptPage("codex-transcript", live, {}, home);
+    expect(texts(before.turns)[0]).toBe("prompt 33");
+    // another file renamed over the parent: no rollout header, so it holds no cut, but turns where the parent's were
+    const next = `${parent}.next`;
+    writeFileSync(next, `${JSON.stringify({ type: "event_msg", payload: { type: "not_a_rollout" } })}\n${Array.from({ length: 80 }, (_, n) => task(n, "FOREIGN")).join("\n")}\n${"\n".repeat(256)}`);
+    renameSync(next, parent);
+    let after: unknown;
+    try { after = transcriptPage("codex-transcript", live, {}, home); } catch (error) { after = error; }
+    expect(JSON.stringify(after)).not.toContain("FOREIGN");
+    expect(texts((after as { turns: ConversationTurn[] }).turns)).toEqual(["prompt 80", "answer 80", "prompt 81", "answer 81", "prompt 82", "answer 82"]);
+  });
+
   it("pages across the rollouts a backtracked Codex conversation continues", () => {
     const home = join(temp(), "codex");
     const thread = "01a0a337-19e8-7712-92f5-aa0883392afd";
@@ -3192,6 +3311,102 @@ describe("a page read that settles its transcript's revision off the event loop"
     }) as typeof fsp.open));
     await expect(paneConversation(pane.pane_id)).rejects.toBeInstanceOf(ConversationReadPending);
     expect(swaps).toBe(1);
+  });
+
+  it("answers nothing from another agent's transcript that a folder swap puts at the path only while the page read opens it", async () => {
+    const project = join(root, "project");
+    const elsewhere = join(root, "elsewhere");
+    const away = join(root, "away");
+    mkdirSync(project);
+    mkdirSync(elsewhere);
+    path = join(project, "session.jsonl");
+    // the same shape and length, so the foreign bytes fill the pane's own offsets
+    writeFileSync(path, JSON.stringify({ type: "session", id: "cmd-ownses", version: 3 }) + "\n" + message("u1", null, "the pane's own words"));
+    writeFileSync(join(elsewhere, "session.jsonl"), JSON.stringify({ type: "session", id: "cmd-foreig", version: 3 }) + "\n" + message("u1", null, "PI FOREIGN SECRET..."));
+    restores.push(spyOn(cmd, "cmdTranscriptPath").mockResolvedValue({ path }));
+    // no page of it is cached: every synchronous open of the path is made with the other agent's folder swapped in, put back
+    // right after: the identity checks around the page read see only the pane's own
+    let swaps = 0;
+    const { openSync } = fs;
+    restores.push(spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+      if (args[0] !== path) return openSync(...args);
+      swaps++;
+      renameSync(project, away);
+      renameSync(elsewhere, project);
+      try { return openSync(...args); }
+      finally {
+        renameSync(project, elsewhere);
+        renameSync(away, project);
+      }
+    }) as typeof fs.openSync));
+    const answer: unknown = await paneConversation(pane.pane_id).catch((error: unknown) => error);
+    expect(swaps).toBeGreaterThan(0);
+    expect(JSON.stringify(answer)).not.toContain("FOREIGN");
+    expect(answer).toBeInstanceOf(ConversationReadPending);
+  });
+
+  /** Another agent's folder beside the pane's, put in place of the pane's around each open of `path` that `swapping` picks. */
+  const swapOpens = (swapping: (open: number) => boolean) => {
+    const project = join(root, "project");
+    const elsewhere = join(root, "elsewhere");
+    const away = join(root, "away");
+    const counts = { opens: 0, swaps: 0 };
+    const { openSync } = fs;
+    restores.push(spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+      if (args[0] !== path || !swapping(counts.opens++)) return openSync(...args);
+      counts.swaps++;
+      renameSync(project, away);
+      renameSync(elsewhere, project);
+      try { return openSync(...args); }
+      finally {
+        renameSync(project, elsewhere);
+        renameSync(away, project);
+      }
+    }) as typeof fs.openSync));
+    return counts;
+  };
+  const folders = (own: string, foreign: string) => {
+    mkdirSync(join(root, "project"));
+    mkdirSync(join(root, "elsewhere"));
+    path = join(root, "project", "session.jsonl");
+    writeFileSync(path, own);
+    writeFileSync(join(root, "elsewhere", "session.jsonl"), foreign);
+    restores.push(spyOn(cmd, "cmdTranscriptPath").mockResolvedValue({ path }));
+  };
+
+  it("answers nothing from another agent's branch index that a folder swap puts at the path for an open after the verified one", async () => {
+    // the other agent's live path carries pi's summary of a branch; the pane's own file is the longer one
+    folders(
+      JSON.stringify({ type: "session", id: "cmd-ownses", version: 3 }) + "\n" + message("u1", null, "own words ".repeat(30)),
+      JSON.stringify({ type: "session", id: "cmd-foreig", version: 3 }) + "\n"
+        + JSON.stringify({ type: "branch_summary", id: "s1", parentId: null, summary: "PI FOREIGN SECRET" }) + "\n" + message("u2", "s1", "hi"),
+    );
+    // the page's first open of the path is the verified one; every later open meets the other folder
+    const counts = swapOpens((open) => open > 0);
+    const answer: unknown = await paneConversation(pane.pane_id).catch((error: unknown) => error);
+    expect(counts.swaps).toBeGreaterThan(0);
+    expect(JSON.stringify(answer)).not.toContain("FOREIGN");
+    expect(answer).toBeInstanceOf(ConversationReadPending);
+  });
+
+  it.skipIf(process.platform !== "linux")("is pending, never waits, where a folder swap puts a FIFO at the path for an open after the verified one", async () => {
+    folders(JSON.stringify({ type: "session", id: "cmd-ownses", version: 3 }) + "\n" + message("u1", null, "own words"), "");
+    // the other folder holds a FIFO no one writes: a blocking open of it never returns
+    rmSync(join(root, "elsewhere", "session.jsonl"));
+    execFileSync("mkfifo", [join(root, "elsewhere", "session.jsonl")]);
+    const counts = swapOpens((open) => open > 0);
+    await expect(paneConversation(pane.pane_id)).rejects.toBeInstanceOf(ConversationReadPending);
+    expect(counts.swaps).toBeGreaterThan(0);
+  });
+
+  it("answers no tool output from another agent's transcript that a folder swap puts at the path around the lookup's opens", async () => {
+    const result = (id: string, text: string) => JSON.stringify({ type: "session", id, version: 3 }) + "\n"
+      + JSON.stringify({ type: "message", id: "a1", parentId: null, message: { role: "toolResult", toolCallId: "call_1", content: [{ type: "text", text }] } }) + "\n";
+    folders(result("cmd-ownses", "the pane's own output"), result("cmd-foreig", "PI FOREIGN SECRET...."));
+    expect(await toolOutput(pane.pane_id, "call_1")).toBe("the pane's own output");
+    const counts = swapOpens(() => true);
+    expect(await toolOutput(pane.pane_id, "call_1")).toBeNull();
+    expect(counts.swaps).toBeGreaterThan(0);
   });
 
   it("answers a pending read, not the new file, when the agent replaces its transcript by atomic rename between the settle and the page read", async () => {

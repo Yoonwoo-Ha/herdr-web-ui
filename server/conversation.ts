@@ -78,7 +78,7 @@ import { COPILOT_IMAGE_REF, copilotImage, copilotOffsetOutput, copilotOutput, co
 import { copilotApiTranscript, copilotExplicitResume, copilotHandoffSession, copilotProcessSession, copilotTranscriptFile, copilotUnwrittenSession, openCopilotFile, readCopilotProcessSession } from "./copilot-store.ts";
 import { forgetCopilotForeground, readCopilotForeground } from "./copilot-foreground.ts";
 import { claudeSetting, parseConversationMetadata } from "./conversation-metadata.ts";
-import { answerVersion, ConversationNotStarted, ConversationReadPending, ConversationUnavailable, copilotRecoverable, type ConversationPage, HistoryChanged, type RecognizedConversation, type StreamSource, TRANSCRIPT_WINDOW_BYTES } from "./conversation-shared.ts";
+import { answerVersion, bindFile, ConversationNotStarted, ConversationReadPending, ConversationUnavailable, copilotRecoverable, openBound, readBound, type ConversationPage, HistoryChanged, type RecognizedConversation, type StreamSource, TRANSCRIPT_WINDOW_BYTES } from "./conversation-shared.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
 
 import { createOmpTranscriptParser, isContextClear, MAX_TURNS, omoTaskResults, parseOmpTranscript, PI_IMAGE_REF, PI_PROMPT_IMAGE_REF, piImageBlock, piMessage, piNotice, piPromptImages, piResults, type TranscriptParser } from "./transcript-records.ts";
@@ -331,6 +331,14 @@ async function settleTranscriptRevision({ path, checkWindow, live }: RevisionTar
 }
 
 /**
+ * The transcript a readSettled page read reads, opened once as authorized: readStream reads it through this
+ * handle. The other files a page holds (a Codex rollout before the live one) are opened bound (openBound).
+ */
+let pageFile: { path: string; fd: number } | null = null;
+// a link is followed, as the page readers do; O_NONBLOCK: a FIFO put there is not waited on
+const PAGE_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
+
+/**
  * How many times readSettled settles a transcript before its read takes what it finds without reading;
  * a transcript reached through a link, which no settle opens, takes it at once.
  */
@@ -355,8 +363,19 @@ async function readSettled<T>(target: RevisionTarget, read: () => T): Promise<{ 
     const reads = settles < REVISION_SETTLES && authorized?.link !== true ? { mode: "deferred" as const, unsettled: false } : { mode: "none" as const, verifiable: authorized?.link !== true };
     revisionReads = reads;
     try {
-      if (!stillAuthorized(target.path, authorized)) throw refuse();
-      const value = read();
+      if (authorized === null || !stillAuthorized(target.path, authorized)) throw refuse();
+      // the page's bytes come through one handle, the authorized file's: an open of the path itself could
+      // meet a folder swapped in around that open alone, which the checks around the read never see
+      let fd: number;
+      try { fd = openSync(target.path, PAGE_FLAGS); } catch { throw refuse(); }
+      let value: T;
+      try {
+        const opened = fstatSync(fd);
+        if (opened.dev !== authorized.dev || opened.ino !== authorized.ino) throw refuse();
+        pageFile = { path: target.path, fd };
+        // any other open of it (a branch index, a projection) is held to the same file (openBound)
+        value = readBound([[target.path, authorized]], read);
+      } finally { pageFile = null; closeSync(fd); }
       if (!stillAuthorized(target.path, authorized)) throw refuse();
       if (reads.mode === "none" || !reads.unsettled) return { value };
     } catch (error) {
@@ -506,7 +525,11 @@ function transcriptStream(source: StreamSource, path: string, stat: { dev: numbe
   const branch = (source === "pi-transcript" || source === "cmd-transcript") ? piBranchSegments(path, stat.size) : null;
   if ((source === "pi-transcript" || source === "cmd-transcript") && branch === null) throw new ConversationUnavailable("branch_unreadable");
   const segments: { path: string; start: number; end: number }[] = source === "codex-transcript"
-    ? codexHistorySegments(path, codexHome).map((segment) => ({ path: segment.path, start: 0, end: segment.end }))
+    ? codexHistorySegments(path, codexHome).map((segment) => {
+      // each earlier rollout is read as the file it was when its chain was resolved (readStream)
+      if (segment.identity) bindFile(segment.path, segment.identity);
+      return { path: segment.path, start: 0, end: segment.end };
+    })
     : grok !== null ? grok.segments.map((segment) => ({ path, ...segment }))
     : agy ? agy.segments.map((segment) => ({ path, ...segment }))
     : branch !== null ? branch.map((segment) => ({ path, start: segment.start, end: segment.end }))
@@ -557,9 +580,10 @@ function readStreamInto(stream: TranscriptStream, from: number, to: number, into
     const low = Math.max(from, file.start);
     const high = Math.min(to, file.start + file.length);
     if (low >= high) continue;
-    const fd = stream.fd ?? openSync(file.path, "r");
+    const held = stream.fd ?? (pageFile?.path === file.path ? pageFile.fd : undefined);
+    const fd = held ?? openBound(file.path);
     try { length += readSync(fd, into, length, high - low, file.offset + (low - file.start)); }
-    finally { if (stream.fd === undefined) closeSync(fd); }
+    finally { if (held === undefined) closeSync(fd); }
   }
   const bytes = into.subarray(0, length);
   for (const [start, end] of stream.hidden ?? []) {
@@ -576,12 +600,13 @@ function readStream(stream: TranscriptStream, from: number, to: number): Buffer 
     const low = Math.max(from, file.start);
     const high = Math.min(to, file.start + file.length);
     if (low >= high) continue;
-    const fd = stream.fd ?? openSync(file.path, "r");
+    const held = stream.fd ?? (pageFile?.path === file.path ? pageFile.fd : undefined);
+    const fd = held ?? openBound(file.path);
     try {
       const buffer = Buffer.alloc(high - low);
       chunks.push(buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, file.offset + (low - file.start))));
     } finally {
-      if (stream.fd === undefined) closeSync(fd);
+      if (held === undefined) closeSync(fd);
     }
   }
   return hideOffBranch(stream, chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks), from, to);
@@ -2759,14 +2784,21 @@ function runsOnFromCut(leaf: string, path: readonly CommandTranscriptRecord[], f
  * agent directory, whose catalogs state a pi model's context window (parseConversationMetadata).
  */
 export function transcriptPage(source: Exclude<StreamSource, "agy-transcript">, path: string, page: ConversationPage = {}, codexHome?: string, piAgentDir?: string | null): RecognizedConversation {
-  if (source === "copilot-transcript") {
-    let fd: number;
-    try { fd = openCopilotFile(path); }
-    catch { throw new ConversationUnavailable("transcript_missing"); }
-    try { return transcriptPageRead(source, path, page, codexHome, undefined, fd, piAgentDir); }
-    finally { closeSync(fd); }
-  }
-  return transcriptPageRead(source, path, page, codexHome, undefined, undefined, piAgentDir);
+  // the files the page opens are held to the ones it began with (transcriptPageRead binds them)
+  return readBound([], () => {
+    if (source === "copilot-transcript") {
+      let fd: number;
+      try { fd = openCopilotFile(path); }
+      catch (error) {
+        // another file than the one the read is bound to: pending, not a missing transcript
+        if (error instanceof ConversationReadPending) throw error;
+        throw new ConversationUnavailable("transcript_missing");
+      }
+      try { return transcriptPageRead(source, path, page, codexHome, undefined, fd, piAgentDir); }
+      finally { closeSync(fd); }
+    }
+    return transcriptPageRead(source, path, page, codexHome, undefined, undefined, piAgentDir);
+  });
 }
 
 /** One page of an Agy ledger (transcriptPage), whose catalog is read on a file thread (#2706). */
@@ -2790,6 +2822,8 @@ function transcriptPageRead(source: StreamSource, path: string, page: Conversati
   } catch {
     throw new ConversationUnavailable("transcript_missing");
   }
+  // every other open of it in this page is held to this file, unless the caller bound it already
+  bindFile(path, stat);
   let stream: TranscriptStream;
   try {
     stream = transcriptStream(source, path, stat, codexHome ?? defaultCodexHome(), agy, fd);
@@ -2861,7 +2895,8 @@ function transcriptPageRead(source: StreamSource, path: string, page: Conversati
     if (live === null && page.before === undefined && start > stream.floor) head = metadataHead(path, stream, source, start);
     cursor = formatCursor(stream, start);
   } catch (error) {
-    if (error instanceof HistoryChanged || error instanceof ConversationUnavailable) throw error;
+    // another file than one the page is bound to (openBound) is pending, not a missing transcript
+    if (error instanceof HistoryChanged || error instanceof ConversationUnavailable || error instanceof ConversationReadPending) throw error;
     throw new ConversationUnavailable("transcript_missing");
   }
 
@@ -2909,7 +2944,7 @@ export async function conversationImage(paneId: string, ref: string, codexHome?:
     if (CODEX_TOOL_IMAGE_REF.test(ref)) return codexToolImage(resolved.path, ref, resolved.codexHome ?? codexHome ?? defaultCodexHome());
     return codexTranscriptImage(codexHistorySegments(resolved.path, resolved.codexHome ?? codexHome), ref, pane.cwd);
   }
-  if (resolved.source === "pi-transcript" || resolved.source === "cmd-transcript") return piTranscriptImage(resolved.path, ref);
+  if (resolved.source === "pi-transcript" || resolved.source === "cmd-transcript") return readAuthorized(resolved.path, () => piTranscriptImage(resolved.path, ref));
   // the update log the pane's own Grok holds (resolveGrokStore), read only over its active history
   if (resolved.source === "grok-transcript") return grokImage(resolved.path, ref);
   // the session file the pane's own process holds (copilotTranscriptPath), opened pinned as the page reads it
@@ -3589,6 +3624,8 @@ export async function toolOutput(paneId: string, ref: string, codexHome?: string
       if (fresh.source !== transcript.source || fresh.path !== transcript.path) return null;
     }
     output = settled.value;
+  } else if (resolved.source === "pi-transcript" || resolved.source === "cmd-transcript" || resolved.source === "codex-transcript") {
+    output = readAuthorized(resolved.path, lookup);
   } else output = resolved.source === "agy-transcript" ? await agyToolOutput(resolved.path, ref) : lookup();
   if (resolved.agy && !sameAgyStore(resolved.agy, await resolveAgyStore(pane))) return null;
   if (resolved.source === "copilot-transcript") {
@@ -3609,8 +3646,15 @@ export function transcriptToolOutput(source: Exclude<StreamSource, "agy-transcri
     try { segments = codexHistorySegments(path, codexHome); } catch { return null; }
     for (const segment of segments) {
       let text: string;
-      // a rollout may have been archived since resolution: the others still hold theirs
-      try { text = readRange(segment.path, 0, segment.end); } catch { continue; }
+      // a rollout may have been archived since resolution: the others still hold theirs. Each is read as the
+      // file it was when its chain was resolved, and another file there answers nothing (readAuthorized)
+      try {
+        if (segment.identity) bindFile(segment.path, segment.identity);
+        text = readRange(segment.path, 0, segment.end);
+      } catch (error) {
+        if (error instanceof ConversationReadPending) throw error;
+        continue;
+      }
       const output = outputInText(source, text, ref);
       if (output !== null) return output;
     }
@@ -3680,6 +3724,17 @@ export function transcriptToolOutput(source: Exclude<StreamSource, "agy-transcri
   let text: string;
   try { text = readFileSync(path, "utf8"); } catch { return null; }
   return outputInText(source, text, ref);
+}
+
+/**
+ * `read`, a lookup for an image or tool output, with the file `path` names now bound (readBound): null
+ * where it names none, or where an open in the lookup finds another file there.
+ */
+function readAuthorized<T>(path: string, read: () => T | null): T | null {
+  const authorized = authorizedFile(path);
+  if (authorized === null) return null;
+  try { return readBound([[path, authorized]], read); }
+  catch (error) { if (error instanceof ConversationReadPending) return null; throw error; }
 }
 
 /**

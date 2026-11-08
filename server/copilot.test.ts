@@ -969,6 +969,61 @@ it.skipIf(process.platform !== "linux")("answers a pending read, with no recover
   }
 });
 
+it.skipIf(process.platform !== "linux")("answers nothing from another session's file that a folder swap holds at the path through each pinned Copilot open after the verified one", async () => {
+  const root = mkdtempSync(join(tmpdir(), "copilot-swapped-"));
+  const folder = join(root, "session-state", session);
+  const transcript = join(folder, "events.jsonl");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(transcript, start + prompt("first") + answer("the pane's own answer"));
+  // the same session's header, so only the bytes after it tell the files apart
+  const elsewhere = join(root, "elsewhere");
+  mkdirSync(elsewhere);
+  writeFileSync(join(elsewhere, "events.jsonl"), start + prompt("first") + answer("FOREIGN SECRET"));
+  mkdirSync(join(root, "logs"));
+  const log = join(root, "logs", `process-100-${process.pid}.log`);
+  const held = fs.openSync(log, "a");
+  appendFileSync(log, register(session));
+  const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [] } });
+  const info = spyOn(herdr, "paneProcessInfo").mockImplementation(async (paneId) => ({ pane_id: paneId, foreground_processes: [{ pid: process.pid, name: "copilot", argv: ["copilot"] }] }));
+  const environment = spyOn(omo, "processEnviron").mockReturnValue([`COPILOT_HOME=${root}`]);
+  const snapshots = spyOn(herdr, "sessionSnapshot").mockResolvedValue({
+    panes: [{ pane_id: "own", agent: "copilot", cwd: root }], agents: [],
+  } as unknown as SessionSnapshot);
+  // Each pinned open (O_NOFOLLOW, as openCopilotFile opens) finds the other folder in place, held there
+  // until that descriptor closes, so its own checks against the path pass; the page's verified open, which
+  // follows a link, and the identity checks around the read see the pane's own.
+  let armed = false;
+  const swapped = new Set<number>();
+  const away = join(root, "away");
+  const { openSync, closeSync } = fs;
+  const opens = spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+    const pinned = typeof args[1] === "number" && (args[1] & fs.constants.O_NOFOLLOW) !== 0;
+    if (!armed || args[0] !== transcript || !pinned) return openSync(...args);
+    if (swapped.size === 0) { fs.renameSync(folder, away); fs.renameSync(elsewhere, folder); }
+    const fd = openSync(...args);
+    swapped.add(fd);
+    return fd;
+  }) as typeof fs.openSync);
+  const closes = spyOn(fs, "closeSync").mockImplementation(((fd: number) => {
+    closeSync(fd);
+    if (swapped.delete(fd) && swapped.size === 0) { fs.renameSync(folder, elsewhere); fs.renameSync(away, folder); }
+  }) as typeof fs.closeSync);
+  try {
+    expect((await paneConversation("own")).source).toBe("copilot-transcript");
+    forgetTranscriptState();
+    armed = true;
+    const answered: unknown = await paneConversation("own").catch((error: unknown) => error);
+    armed = false;
+    expect(JSON.stringify(answered)).not.toContain("FOREIGN");
+    expect(answered).toMatchObject({ name: "ConversationReadPending" });
+  } finally {
+    armed = false;
+    opens.mockRestore(); closes.mockRestore(); snapshots.mockRestore(); environment.mockRestore(); info.mockRestore(); rpc.mockRestore();
+    fs.closeSync(held); forgetTranscriptState();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it.skipIf(process.platform !== "linux")("does not retain the old history when the session switches while a failed read rechecks its peers", async () => {
   const root = mkdtempSync(join(tmpdir(), "copilot-recheck-"));
   const transcript = (id: string) => join(root, "session-state", id, "events.jsonl");

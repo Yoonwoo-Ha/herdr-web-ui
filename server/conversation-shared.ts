@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { closeSync, constants, fstatSync, openSync } from "node:fs";
 
 import type { ConversationMetadata, ConversationTurn } from "../shared/protocol.ts";
 
@@ -53,6 +54,47 @@ export class ConversationReadPending extends Error {
     super("The conversation could not be read; try again shortly.");
     this.name = "ConversationReadPending";
   }
+}
+
+/** A file as it was authorized: its device and inode. */
+export interface FileIdentity { dev: number; ino: number }
+
+/**
+ * The files the synchronous read in progress is bound to, by path, each as it was authorized. An open of
+ * one that finds another file there (a folder swapped in around that open alone) is refused, so no bytes
+ * behind an answer come from a file nobody authorized (#3382). Null outside readBound.
+ */
+let boundFiles: Map<string, FileIdentity> | null = null;
+
+/** `read` with `files` bound (boundFiles) until it returns; a path an enclosing read bound keeps its binding. */
+export function readBound<T>(files: readonly (readonly [string, FileIdentity])[], read: () => T): T {
+  const outer = boundFiles;
+  boundFiles = new Map(outer ?? []);
+  for (const [path, identity] of files) bindFile(path, identity);
+  try { return read(); } finally { boundFiles = outer; }
+}
+
+/** Binds `path` for the rest of the enclosing readBound, unless it is bound already; nothing outside one. */
+export function bindFile(path: string, identity: FileIdentity): void {
+  if (boundFiles !== null && !boundFiles.has(path)) boundFiles.set(path, { dev: identity.dev, ino: identity.ino });
+}
+
+/** Refuses `fd`, opened from `path`, when `path` is bound to another file: the read is pending. */
+export function checkBound(path: string, fd: number): void {
+  const identity = boundFiles?.get(path);
+  if (identity === undefined) return;
+  const opened = fstatSync(fd);
+  if (opened.dev !== identity.dev || opened.ino !== identity.ino) throw new ConversationReadPending();
+}
+
+/**
+ * openSync of `path`, closed and refused where it is bound to another file (checkBound). O_NONBLOCK: a FIFO
+ * put there is opened at once, for the check to refuse, never waited on.
+ */
+export function openBound(path: string, flags: number | string = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0)): number {
+  const fd = openSync(path, flags);
+  try { checkBound(path, fd); } catch (error) { closeSync(fd); throw error; }
+  return fd;
 }
 
 /** The pane's agent holds a session it has not written yet: a conversation with no turns, not a missing one. */
