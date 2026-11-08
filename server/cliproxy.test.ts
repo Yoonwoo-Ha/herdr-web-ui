@@ -118,6 +118,62 @@ describe("CLIProxyAPI v8", () => {
     } finally { setSystemTime(); }
   });
 
+  it("reads only the Hub account shown again, keeping the other accounts' fresh rows", async () => {
+    // Given
+    await configure();
+    const hidden = new Set(["claude:cliproxy:claude-a.json"]);
+    const first = await service.report(false, hidden);
+    const reads = () => fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index);
+    expect(reads()).toEqual(["a", "b"]);
+    // When
+    const shown = await service.report();
+    // Then
+    expect(reads()).toEqual(["a", "b", "a"]);
+    expect(shown[1]).toBe(first[1]);
+  });
+
+  it("keeps every Hub row when the read after an account is shown again fails", async () => {
+    // Given
+    await configure();
+    const first = await service.report(false, new Set(["claude:cliproxy:claude-a.json"]));
+    fake.setKey("another-key");
+    // When
+    const shown = await service.report();
+    // Then
+    expect(shown).toEqual(first);
+  });
+
+  it("reads an account shown again at the next report when the Hub could not be read the first time", async () => {
+    // Given
+    await configure();
+    const reads = () => fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index);
+    await service.report(false, new Set(["claude:cliproxy:claude-a.json"]));
+    fake.setDown(true);
+    await service.report();
+    fake.setDown(false);
+    // When
+    await service.report();
+    // Then: a fresh server reads the hidden account once; the retry reads only the account shown again
+    expect(reads()).toEqual(["a", "b", "a"]);
+  });
+
+  it("does not read an account shown again a second time at the scheduled read that follows", async () => {
+    // Given
+    await configure();
+    const start = Date.now();
+    const reads = () => fake.calls.filter((entry) => entry.path === "/requests/api-call").map((entry) => (entry.body as { auth_index: string }).auth_index);
+    try {
+      await service.report(false, new Set(["claude:cliproxy:claude-a.json"]));
+      setSystemTime(start + FRESH_MS - 1000);
+      await service.report();
+      // When
+      setSystemTime(start + FRESH_MS);
+      await service.report();
+      // Then
+      expect(reads()).toEqual(["a", "b", "a", "b"]);
+    } finally { setSystemTime(); }
+  });
+
   it("keeps hidden accounts unread across an invalidate, as after a Hub sign-in or a saved configuration", async () => {
     // Given
     await configure();
