@@ -1,6 +1,7 @@
 import { expect, it, spyOn } from "bun:test";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { copilotImage, parseCopilotTranscript } from "./copilot.ts";
@@ -872,6 +873,47 @@ it.skipIf(process.platform !== "linux")("reads a Copilot pane at the page size t
     info.mockRestore(); environment.mockRestore(); rpc.mockRestore(); snapshots.mockRestore();
     forgetTranscriptState();
     await own.close();
+  }
+});
+
+it.skipIf(process.platform !== "linux")("answers a changed history, not a missing transcript, to a Copilot read whose transcript is replaced by rename while it settles", async () => {
+  const root = mkdtempSync(join(tmpdir(), "copilot-replaced-"));
+  const transcript = join(root, "session-state", session, "events.jsonl");
+  mkdirSync(join(root, "session-state", session), { recursive: true });
+  writeFileSync(transcript, start + prompt("first") + answer("one"));
+  mkdirSync(join(root, "logs"));
+  const log = join(root, "logs", `process-100-${process.pid}.log`);
+  // The lifecycle log counts only while this process holds it open, as Copilot does.
+  const held = fs.openSync(log, "a");
+  appendFileSync(log, register(session));
+  const rpc = spyOn(herdr, "herdrRpc").mockResolvedValue({ process_info: { foreground_processes: [] } });
+  const info = spyOn(herdr, "paneProcessInfo").mockImplementation(async (paneId) => ({ pane_id: paneId, foreground_processes: [{ pid: process.pid, name: "copilot", argv: ["copilot"] }] }));
+  const environment = spyOn(omo, "processEnviron").mockReturnValue([`COPILOT_HOME=${root}`]);
+  const snapshots = spyOn(herdr, "sessionSnapshot").mockResolvedValue({
+    panes: [{ pane_id: "own", agent: "copilot", cwd: root }], agents: [],
+  } as unknown as SessionSnapshot);
+  const { open } = fsp;
+  let replace = false;
+  // Copilot replaces its file by rename just after the settle opened the one the read authorized
+  const opens = spyOn(fsp, "open").mockImplementation((async (...args: Parameters<typeof fsp.open>) => {
+    const handle = await open(...args);
+    if (replace && args[0] === transcript) {
+      replace = false;
+      writeFileSync(`${transcript}.next`, start + prompt("first") + answer("one") + prompt("second"));
+      fs.renameSync(`${transcript}.next`, transcript);
+    }
+    return handle;
+  }) as typeof fsp.open);
+  try {
+    const shown = await paneConversation("own");
+    expect(shown.source).toBe("copilot-transcript");
+    replace = true;
+    await expect(paneConversation("own", undefined, { history_id: shown.history_id })).rejects.toBeInstanceOf(HistoryChanged);
+    expect(replace).toBe(false);
+  } finally {
+    opens.mockRestore(); snapshots.mockRestore(); environment.mockRestore(); info.mockRestore(); rpc.mockRestore();
+    fs.closeSync(held); forgetTranscriptState();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

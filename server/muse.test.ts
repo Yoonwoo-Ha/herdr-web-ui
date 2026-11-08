@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, constants, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { forgetTranscriptState, paneTranscript, transcriptPage, transcriptToolOutput } from "./conversation.ts";
@@ -253,6 +254,43 @@ describe("Muse session log", () => {
     // read before again only as far as that read went
     expect(digested).toBeGreaterThanOrEqual(readFileSync(path).length);
     expect(digested).toBeLessThanOrEqual(readFileSync(path).length + 64 * 1024);
+  });
+
+  test("a window read that opens another file than the one stat saw keeps no digest of it", () => {
+    const path = logAt(RECORDED, recorded);
+    // the same length, other bytes: what a file put in the log's place between its stat and the window's open holds
+    const other = join(root, "other.jsonl");
+    writeFileSync(other, recorded.replaceAll("tell me in one sentence", "tell me in two sentence"));
+    const open = fs.openSync;
+    let replaced = false;
+    // a cold read's first open of the log by number flags is its window's
+    const opens = spyOn(fs, "openSync").mockImplementation(((...[file, ...rest]: Parameters<typeof fs.openSync>) => {
+      if (!replaced && file === path && typeof rest[0] === "number") { replaced = true; return open(other, ...rest); }
+      return open(file, ...rest);
+    }) as typeof fs.openSync);
+    let before: ReturnType<typeof transcriptPage>;
+    try { before = transcriptPage("muse-transcript", path); } finally { opens.mockRestore(); }
+    expect(replaced).toBe(true);
+    appendFileSync(path, `${recorded.split("\n").find((line) => line.includes('"payload_type":"session.name.changed"'))}\n`);
+    // a plain append: no digest of the other file stands in for the log's own window
+    expect(transcriptPage("muse-transcript", path).history_id).toBe(before.history_id);
+  });
+
+  // A link can be made here (Windows wants a privilege for one) and an open can refuse it (O_NOFOLLOW, which Windows lacks)
+  const linksRefused = constants.O_NOFOLLOW !== undefined && (() => {
+    const probe = mkdtempSync(join(tmpdir(), "ovis-muse-link-probe-"));
+    try { symlinkSync(probe, join(probe, "link")); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "EPERM") return false; throw error; }
+    finally { rmSync(probe, { recursive: true, force: true }); }
+  })();
+  test.skipIf(!linksRefused)("a log reached through a link is never read for its window, so its touch counts as a rewrite", () => {
+    const path = logAt(RECORDED, recorded);
+    const target = join(root, "target.jsonl");
+    renameSync(path, target);
+    symlinkSync(target, path);
+    const before = transcriptPage("muse-transcript", path);
+    utimesSync(target, new Date(), new Date(Date.now() + 1000));
+    expect(transcriptPage("muse-transcript", path).history_id).not.toBe(before.history_id);
   });
 
   test("a log read while empty keeps its history when Muse writes it", () => {

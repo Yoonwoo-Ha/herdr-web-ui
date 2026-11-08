@@ -35,7 +35,8 @@
  */
 
 import { createHash, randomUUID, type Hash } from "node:crypto";
-import { closeSync, constants, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync, type Stats } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, statSync, type Stats } from "node:fs";
+import { open as openHandle, type FileHandle } from "node:fs/promises";
 import { readStatuslineContext } from "./statusline.ts";
 import { transcriptReader, type TranscriptFile } from "./transcript-reader.ts";
 import nodePath, { basename, dirname, relative, sep, type PlatformPath } from "node:path";
@@ -219,11 +220,123 @@ interface TranscriptStream {
 // invalidating settled turns and incremental parsers as well as the response cache.
 // `hash` digests the first `hashed` bytes, fed only what each growth appends. `prefix` is the digest of
 // the first PREFIX_BYTES (or all) of the `at` bytes the last reading call saw.
-const transcriptRevisions = new Map<string, { identity: string; size: number; changed: string; generation: string; hash?: Hash; hashed: number; prefix?: { digest: string; at: number }; window?: { start: number; end: number; digests: BigUint64Array } }>();
+interface TranscriptRevision { identity: string; size: number; changed: string; generation: string; hash?: Hash; hashed: number; prefix?: { digest: string; at: number }; window?: { start: number; end: number; digests: BigUint64Array } }
+const transcriptRevisions = new Map<string, TranscriptRevision>();
 const PREFIX_BYTES = 64 * 1024;
+type RevisionStat = { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number };
 // `read` false (a leased image read, whose bytes come asynchronously) never reads the file here: the
 // digest stays as it was, for the next read to extend, and a touch it sees counts as a rewrite.
-function transcriptGeneration(path: string, stat: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number }, checkWindow = false, read = true): string {
+function transcriptGeneration(path: string, stat: RevisionStat, checkWindow = false, read = true): string {
+  const reads = revisionReads;
+  const deferred = read && reads.mode === "deferred" ? reads : null;
+  let wanted = false as boolean;
+  const opened: RevisionOpen = deferred === null ? openRevisionNow : function* () { wanted = true; throw new Error("left to settleTranscriptRevision"); };
+  const { next } = finish(transcriptRevisionSteps(path, stat, checkWindow, read && reads.mode !== "none", opened));
+  // a revision it could not check: the read stops here, before it parses anything, records nothing, and
+  // readSettled settles again off the loop
+  if (deferred !== null && wanted) {
+    deferred.unsettled = true;
+    throw new Error("transcript revision left to settleTranscriptRevision");
+  }
+  remember(transcriptRevisions, path, next, 64);
+  return next.generation ? `-${next.generation}` : "";
+}
+
+/**
+ * How a synchronous page read's revision check reads the transcript: on the event loop (anywhere
+ * readSettled is not running one); "deferred", where any read it needs marks it `unsettled` instead, for
+ * readSettled to settle again off the loop; or "none", reading nothing (a touch then counts as a rewrite).
+ */
+let revisionReads: { mode: "inline" } | { mode: "deferred"; unsettled: boolean } | { mode: "none" } = { mode: "inline" };
+
+/** What settleTranscriptRevision brings up to date, and whether its reader still wants it recorded (`live`). */
+interface RevisionTarget { path: string; checkWindow: boolean; live?: () => boolean }
+
+/**
+ * The file `path` names as its caller authorized it, taken in the same turn of the event loop, before
+ * anything awaits. The page readers follow a link, and so does this; `link` says the settle refuses it,
+ * as its open does wherever an open can (O_NOFOLLOW; not Windows).
+ */
+function authorizedFile(path: string): { dev: number; ino: number; link: boolean } | null {
+  try {
+    const own = lstatSync(path);
+    const stat = own.isSymbolicLink() ? statSync(path) : own;
+    return stat.isFile() ? { dev: stat.dev, ino: stat.ino, link: own.isSymbolicLink() && constants.O_NOFOLLOW !== undefined } : null;
+  } catch { return null; }
+}
+
+/** Whether `path` still names the file `authorized` (authorizedFile). */
+function stillAuthorized(path: string, authorized: ReturnType<typeof authorizedFile>): boolean {
+  if (authorized === null) return false;
+  try {
+    const now = statSync(path);
+    return now.dev === authorized.dev && now.ino === authorized.ino;
+  } catch { return false; }
+}
+
+/**
+ * Brings a transcript's revision up to date with reads through the thread pool, so the page read that
+ * follows finds its digests current and reads nothing for them on the event loop. Only `authorized` is
+ * read, through one handle: a folder on the way swapped since names another file, which is refused, and
+ * bytes whose size or mtime changed while they were read record nothing. A read that recorded the
+ * transcript meanwhile keeps its own result; a change after this is the page read's (readSettled).
+ */
+async function settleTranscriptRevision({ path, checkWindow, live }: RevisionTarget, authorized = authorizedFile(path)): Promise<void> {
+  // what this settle builds on: a read that recorded the transcript while its stat was awaited saw it
+  // later, and an older stat checked against that newer revision would take an append for a shrink
+  const start = transcriptRevisions.get(path);
+  if (authorized === null || authorized.link) return;
+  let handle: FileHandle;
+  try { handle = await openHandle(path, REVISION_FLAGS); } catch { return; }
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.dev !== authorized.dev || stat.ino !== authorized.ino || transcriptRevisions.get(path) !== start) return;
+    const file: RevisionFile = {
+      stat: () => awaited(handle.stat()),
+      *read(into, length, position) { return (yield* awaited(handle.read(into, 0, length, position))).bytesRead; },
+      *close() { /* the handle is this settle's, closed below */ },
+    };
+    const { previous, next } = await finishAsync(transcriptRevisionSteps(path, stat, checkWindow, true, function* () { return file; }));
+    const after = await handle.stat();
+    if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) return;
+    if (transcriptRevisions.get(path) === previous && (live?.() ?? true)) remember(transcriptRevisions, path, next, 64);
+  } catch { /* a stat that fails digests nothing */ } finally { await handle.close().catch(() => {}); }
+}
+
+/** How many times readSettled settles a transcript before its read takes what it finds without reading. */
+const REVISION_SETTLES = 3;
+
+/**
+ * `read`, a synchronous read of `target.path`, with the digests its revision check needs read through
+ * the thread pool first (settleTranscriptRevision), from the file authorized as this is called. A change
+ * the read meets after that is settled again, REVISION_SETTLES times at most, and the last read reads
+ * nothing for its revision. Null when, after a settle, the reader no longer wants it (`live`). The read
+ * answers only while the path names the authorized file before and after it. Any other file there (one
+ * renamed over it, even from its own folder, or a folder on the way swapped since) may be another
+ * session's, and is never read: that read is pending, for the next poll to authorize afresh. A path that
+ * named no file to authorize is transcript_missing.
+ */
+async function readSettled<T>(target: RevisionTarget, read: () => T): Promise<{ value: T } | null> {
+  const authorized = authorizedFile(target.path);
+  const refuse = () => authorized === null ? new ConversationUnavailable("transcript_missing") : new ConversationReadPending();
+  for (let settles = 1; ; settles++) {
+    await settleTranscriptRevision(target, authorized);
+    if (!(target.live?.() ?? true)) return null;
+    const reads = settles < REVISION_SETTLES ? { mode: "deferred" as const, unsettled: false } : { mode: "none" as const };
+    revisionReads = reads;
+    try {
+      if (!stillAuthorized(target.path, authorized)) throw refuse();
+      const value = read();
+      if (!stillAuthorized(target.path, authorized)) throw refuse();
+      if (reads.mode === "none" || !reads.unsettled) return { value };
+    } catch (error) {
+      // a read that met an unsettled revision answered from a stale one: its failure says nothing
+      if (reads.mode === "none" || !reads.unsettled) throw error;
+    } finally { revisionReads = { mode: "inline" }; }
+  }
+}
+
+function* transcriptRevisionSteps(path: string, stat: RevisionStat, checkWindow: boolean, read: boolean, opened: RevisionOpen): Steps<{ previous: TranscriptRevision | undefined; next: TranscriptRevision }> {
   const identity = `${stat.dev}:${stat.ino}`;
   const changed = `${stat.mtimeMs}:${stat.ctimeMs}`;
   const previous = transcriptRevisions.get(path);
@@ -235,7 +348,7 @@ function transcriptGeneration(path: string, stat: { dev: number; ino: number; si
   // times about hourly, bytes untouched). The digest of the bytes digested before tells them apart;
   // bytes that cannot be read count as a rewrite.
   if (same && stat.size === previous.size && changed !== previous.changed) {
-    const now = read && hash ? hashRange(path, stat, createHash("sha256"), 0, hashed) : undefined;
+    const now = read && hash ? (yield* hashRange(opened, path, stat, createHash("sha256"), 0, hashed)) : undefined;
     if (!now || now.copy().digest("base64") !== hash!.copy().digest("base64")) rewritten = true;
   }
   // A growth of the same inode is taken for an append, and `hash` is only extended by it. Its first
@@ -246,7 +359,7 @@ function transcriptGeneration(path: string, stat: { dev: number; ino: number; si
   let prefix = same && !rewritten ? previous.prefix : undefined;
   let head: Hash | undefined;
   if (read && prefix && stat.size > prefix.at) {
-    head = hashRange(path, stat, createHash("sha256"), 0, Math.min(PREFIX_BYTES, prefix.at));
+    head = yield* hashRange(opened, path, stat, createHash("sha256"), 0, Math.min(PREFIX_BYTES, prefix.at));
     if (!head || head.copy().digest("base64") !== prefix.digest) { rewritten = true; head = undefined; }
   }
   // Muse: a rewrite that also grew keeps the inode and passes the checks above, so the window last
@@ -261,7 +374,7 @@ function transcriptGeneration(path: string, stat: { dev: number; ino: number; si
     if (window !== undefined && window.end <= start) rewritten = true;
     const check = rewritten ? undefined : window;
     const from = check?.start ?? start;
-    const bytes = windowBytes(path, from, stat.size);
+    const bytes = yield* windowBytes(opened, path, stat, from);
     const digests = bytes && chunkDigests(bytes);
     if (check && (!digests || !sameOverlap(check, from, bytes!, digests))) rewritten = true;
     // an empty log keeps no window: it has no bytes to check
@@ -273,53 +386,81 @@ function transcriptGeneration(path: string, stat: { dev: number; ino: number; si
   // larger log's touch counts as a rewrite, as before.
   if (rewritten || stat.size > TRANSCRIPT_WINDOW_BYTES) { hash = undefined; hashed = 0; }
   if (read && stat.size <= TRANSCRIPT_WINDOW_BYTES && (hash === undefined || hashed < stat.size)) {
-    hash = hashRange(path, stat, hash?.copy() ?? createHash("sha256"), hash === undefined ? 0 : hashed, stat.size);
+    hash = yield* hashRange(opened, path, stat, hash?.copy() ?? createHash("sha256"), hash === undefined ? 0 : hashed, stat.size);
     hashed = hash ? stat.size : 0;
   }
   if (rewritten) { prefix = undefined; head = undefined; }
   if (read && prefix?.at !== stat.size) {
     const checked = head ? Math.min(PREFIX_BYTES, prefix!.at) : 0;
     const to = Math.min(PREFIX_BYTES, stat.size);
-    head = checked === to ? head : hashRange(path, stat, head ?? createHash("sha256"), checked, to);
+    head = checked === to ? head : yield* hashRange(opened, path, stat, head ?? createHash("sha256"), checked, to);
     prefix = head ? { digest: head.digest("base64"), at: stat.size } : undefined;
   }
   const generation = rewritten ? randomUUID() : previous?.identity === identity ? previous.generation : "";
-  remember(transcriptRevisions, path, { identity, size: stat.size, changed, generation, hash, hashed, prefix, window }, 64);
-  return generation ? `-${generation}` : "";
+  return { previous, next: { identity, size: stat.size, changed, generation, hash, hashed, prefix, window } };
+}
+
+/** The revision check's file: read on the event loop (finish) or through the thread pool (finishAsync). */
+interface RevisionFile {
+  stat(): Steps<Stats>;
+  read(into: Buffer, length: number, position: number): Steps<number>;
+  close(): Steps<void>;
+}
+type RevisionOpen = (path: string) => Steps<RevisionFile>;
+// O_NOFOLLOW: a link put in the transcript's place is refused, as the other transcript readers do;
+// O_NONBLOCK: a FIFO put there is not waited on
+const REVISION_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
+function* openRevisionNow(path: string): Steps<RevisionFile> {
+  const fd = openSync(path, REVISION_FLAGS);
+  return {
+    *stat() { return fstatSync(fd); },
+    *read(into, length, position) { return readSync(fd, into, 0, length, position); },
+    *close() { closeSync(fd); },
+  };
 }
 
 /**
  * `hash` fed bytes `from` to `to` of a file a chunk at a time, or undefined when they cannot all be read
  * or the path no longer names the regular file `stat` saw, holding at least `to` bytes, before and after
- * the read (an append meanwhile leaves them alone). O_NONBLOCK, so a FIFO put there is not waited on.
+ * the read (an append meanwhile leaves them alone).
  */
-function hashRange(path: string, stat: { dev: number; ino: number }, hash: Hash, from: number, to: number): Hash | undefined {
+function* hashRange(opened: RevisionOpen, path: string, stat: { dev: number; ino: number }, hash: Hash, from: number, to: number): Steps<Hash | undefined> {
   const unchanged = (now: Stats): boolean => now.isFile() && now.dev === stat.dev && now.ino === stat.ino && now.size >= to;
   try {
-    const fd = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    const file = yield* opened(path);
     try {
-      if (!unchanged(fstatSync(fd))) return undefined;
+      if (!unchanged(yield* file.stat())) return undefined;
       // 64 KiB at a time: a check, not a page read, so a page read's failure is its own
       const chunk = Buffer.allocUnsafe(Math.min(Math.max(to - from, 0), 64 * 1024));
       for (let at = from; at < to;) {
-        const read = readSync(fd, chunk, 0, Math.min(chunk.length, to - at), at);
+        const read = yield* file.read(chunk, Math.min(chunk.length, to - at), at);
         if (read <= 0) return undefined;
         hash.update(chunk.subarray(0, read));
         at += read;
       }
-      return unchanged(fstatSync(fd)) ? hash : undefined;
-    } finally { closeSync(fd); }
+      return unchanged(yield* file.stat()) ? hash : undefined;
+    } finally { yield* file.close(); }
   } catch { return undefined; }
 }
 
-/** Bytes `from` to `to` of a file, or null when they cannot all be read. */
-function windowBytes(path: string, from: number, to: number): Buffer | null {
+/**
+ * Bytes `from` to `stat.size` of a file, or null when they cannot all be read or the path no longer names
+ * the regular file `stat` saw, holding at least that many bytes, before and after the read.
+ */
+function* windowBytes(opened: RevisionOpen, path: string, stat: { dev: number; ino: number; size: number }, from: number): Steps<Buffer | null> {
+  const unchanged = (now: Stats): boolean => now.isFile() && now.dev === stat.dev && now.ino === stat.ino && now.size >= stat.size;
   try {
-    const fd = openSync(path, "r");
+    const file = yield* opened(path);
     try {
-      const bytes = Buffer.allocUnsafe(to - from);
-      return readSync(fd, bytes, 0, bytes.length, from) === bytes.length ? bytes : null;
-    } finally { closeSync(fd); }
+      if (!unchanged(yield* file.stat())) return null;
+      const bytes = Buffer.allocUnsafe(stat.size - from);
+      for (let got = 0; got < bytes.length;) {
+        const read = yield* file.read(bytes.subarray(got), bytes.length - got, from + got);
+        if (read <= 0) return null;
+        got += read;
+      }
+      return unchanged(yield* file.stat()) ? bytes : null;
+    } finally { yield* file.close(); }
   } catch { return null; }
 }
 
@@ -928,6 +1069,25 @@ function rememberPaneDevin(paneId: string, sessionId: string, cwd: string, dbPat
   remember(paneReads, paneId, reads, PANE_READS_MAX);
 }
 
+/**
+ * The transcript each pane was last resolved to, numbered: a resolution naming another one than the last
+ * takes a new number, and a forgotten pane has none. A read that awaited after its resolution compares
+ * the number it was resolved under with the pane's (rebound), so it learns whether the pane was seen bound
+ * elsewhere meanwhile without asking herdr again.
+ */
+let bindingCount = 0;
+const paneBindings = new Map<string, { key: string; generation: number }>();
+const resolvedGenerations = new WeakMap<object, number>();
+function noteBinding<T extends NativeTranscript>(paneId: string, resolved: T): T {
+  const key = `${resolved.source}\0${resolved.path}`;
+  const previous = paneBindings.get(paneId);
+  const generation = previous?.key === key ? previous.generation : ++bindingCount;
+  remember(paneBindings, paneId, { key, generation }, PANE_READS_MAX);
+  resolvedGenerations.set(resolved, generation);
+  return resolved;
+}
+const rebound = (paneId: string, resolved: NativeTranscript): boolean => paneBindings.get(paneId)?.generation !== resolvedGenerations.get(resolved);
+
 /** Pi retains at most four small parsed pages per cache; oversized pages remain readable uncached. */
 function rememberPage<T extends { source: RecognizedConversation["source"] }>(map: Map<string, T>, key: string, value: T, limit: number): void {
   map.delete(key);
@@ -1275,8 +1435,21 @@ export function liveTurnCacheUsage(): { paths: string[]; withinBudget: boolean }
   return { paths: [...liveTranscriptTurns.keys()], withinBudget };
 }
 
+/**
+ * Forgets so far, and the last one of each pane or of every pane (the floor): a read that awaited sees
+ * whether its pane was forgotten meanwhile (forgottenSince). A pane's mark pushed out by newer ones
+ * raises the floor, so a read of that pane in flight still sees it (and one of another pane takes it
+ * for its own, and fails once).
+ */
+let forgets = 0;
+let forgottenFloor = 0;
+const forgottenPanes = new Map<string, number>();
+const forgottenSince = (paneId: string, at: number): boolean => forgottenFloor > at || (forgottenPanes.get(paneId) ?? 0) > at;
+
 /** Forget every scan and parse kept between polls (tests compare against a cold read). */
 export function forgetTranscriptState(): void {
+  forgottenFloor = ++forgets;
+  forgottenPanes.clear();
   launchedAgents.clear();
   cache.clear();
   commandTranscripts.clear();
@@ -1294,6 +1467,7 @@ export function forgetTranscriptState(): void {
   clearScans.clear();
   pictureChecks.clear();
   paneReads.clear();
+  paneBindings.clear();
   copilotBindings.clear();
   forgetCopilotForeground();
   forgetAllCodexState();
@@ -1312,8 +1486,16 @@ export function forgetTranscriptState(): void {
  * of a live pane re-derives it, and a file nobody reads again costs nothing to forget.
  */
 export function forgetPaneTranscriptState(paneId: string): void {
+  forgottenPanes.delete(paneId);
+  forgottenPanes.set(paneId, ++forgets);
+  for (const [oldest, at] of forgottenPanes) {
+    if (forgottenPanes.size <= PANE_READS_MAX) break;
+    forgottenPanes.delete(oldest);
+    forgottenFloor = Math.max(forgottenFloor, at);
+  }
   const reads = paneReads.get(paneId);
   paneReads.delete(paneId);
+  paneBindings.delete(paneId);
   copilotBindings.delete(paneId);
   launchedAgents.forget(paneId);
   forgetGjcPane(paneId);
@@ -2070,11 +2252,11 @@ export async function paneTranscript(paneId: string, codexHome?: string, snapsho
         const again = devinLockProof(foreground.pid!, storePath);
         if (again.session !== proof.session || again.binding !== proof.binding) throw new ConversationUnavailable("no_session_id");
       }
-      return { source: "devin-transcript", path: storePath, session, cwd, binding: JSON.stringify([socket, proof?.binding ?? null]) };
+      return noteBinding(paneId, { source: "devin-transcript", path: storePath, session, cwd, binding: JSON.stringify([socket, proof?.binding ?? null]) });
     }
   }
 
-  return resolveTranscript(pane, pane.cwd, codexHome, panes, opencodeDb, hermesHome, grokHome, museData, known);
+  return noteBinding(paneId, await resolveTranscript(pane, pane.cwd, codexHome, panes, opencodeDb, hermesHome, grokHome, museData, known));
 }
 
 /**
@@ -2228,18 +2410,37 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
       throw error;
     }
   }
-  const identity = resolved.source === "agy-transcript" || resolved.source === "copilot-transcript" || resolved.source === "letta-transcript" || resolved.source === "kimi-transcript" ? resolved.path
-    : resolved.source === "claude-transcript" ? nodePath.basename(resolved.path, ".jsonl")
-    : resolved.source === "pi-transcript" || resolved.source === "cmd-transcript" || resolved.source === "omp-transcript" ? realpathSync(resolved.path) : null;
-  rememberPaneRead(paneId, resolved.path);
-  const history = resolved.source === "copilot-transcript" ? copilotHistoryIdentity(resolved.path) : null;
-  const prefix = history !== null && resolved.source === "copilot-transcript" ? copilotPrefix(paneId, `${resolved.binding}\0${history}`, resolved.path) : null;
+  // the page read below digests the transcript (transcriptGeneration): readSettled reads that off the
+  // event loop first. A pane closed meanwhile (forgetPaneTranscriptState) or a herdr session left is not
+  // read or recorded, and a pane bound to another transcript since is not answered (below)
+  const transcript = resolved;
+  const forgetsBefore = forgets;
+  const live = (): boolean => herdrSocketPath() === socket && !forgottenSince(paneId, forgetsBefore);
+  // set by the read below, in a closure the checker does not follow
+  let history = null as string | null;
+  let prefix = null as string | null;
   let answer: RecognizedConversation;
   try {
-    answer = resolved.source === "agy-transcript" ? await agyTranscriptPage(resolved.path, page, resolved.codexHome ?? codexHome)
-      : transcriptPage(resolved.source, resolved.path, prefix === null ? page : copilotPage(page, prefix), resolved.codexHome ?? codexHome, resolved.piAgentDir);
+    const settled = await readSettled({ path: transcript.path, checkWindow: transcript.source === "muse-transcript", live }, () => {
+      rememberPaneRead(paneId, transcript.path);
+      if (transcript.source === "agy-transcript") return null;
+      history = transcript.source === "copilot-transcript" ? copilotHistoryIdentity(transcript.path) : null;
+      prefix = history !== null && transcript.source === "copilot-transcript" ? copilotPrefix(paneId, `${transcript.binding}\0${history}`, transcript.path) : null;
+      return transcriptPage(transcript.source, transcript.path, prefix === null ? page : copilotPage(page, prefix), transcript.codexHome ?? codexHome, transcript.piAgentDir);
+    });
+    if (settled === null) throw new ConversationUnavailable("no_session_id");
+    answer = settled.value ?? await agyTranscriptPage(resolved.path, page, resolved.codexHome ?? codexHome);
   } catch (error) {
-    if (resolved.source !== "copilot-transcript" || prefix === null || !(error instanceof ConversationUnavailable) || error.message !== "transcript_missing") throw error;
+    const refused = error instanceof ConversationReadPending || (error instanceof ConversationUnavailable && error.message === "transcript_missing");
+    if (resolved.source !== "copilot-transcript" || !refused) throw error;
+    // refused before its read (readSettled: the path names another file than the one authorized, as
+    // after a replacement by rename): the history is the one the path names now, as a read beginning
+    // now would bind it, and a cursor from another one has changed history
+    if (prefix === null) {
+      try { history = copilotHistoryIdentity(resolved.path); } catch { throw error; }
+      prefix = copilotPrefix(paneId, `${resolved.binding}\0${history}`, resolved.path);
+      copilotPage(page, prefix);
+    }
     const paged = page.before !== undefined || page.since !== undefined || page.from !== undefined;
     // Unpaged refreshes otherwise carry no proof of which history is on screen: older
     // clients without it keep their fail-closed fallback, with no recheck to wait on.
@@ -2266,6 +2467,24 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     if (page.history_id !== undefined && !page.history_id.startsWith(prefix)) throw new HistoryChanged();
     throw new ConversationReadPending();
   }
+  // settling awaited after the transcript was resolved: a pane bound to another one since (a new session,
+  // another agent) has not this answer. A pane seen bound elsewhere meanwhile is refused at once; any
+  // other is resolved again (one more resolution per read), since nothing in Ovis may have looked at it,
+  // and that resolution's own failure or not-begun session is the answer. Copilot's binding is checked
+  // after its read below.
+  if (transcript.source !== "copilot-transcript") {
+    if (!live() || rebound(paneId, transcript)) throw new ConversationUnavailable("no_session_id");
+    let fresh: NativeTranscript;
+    try { fresh = await paneTranscript(paneId, codexHome, undefined, devinDbPath, opencodeDb, hermesHome, grokHome, museData); }
+    catch (error) {
+      if (error instanceof ConversationNotStarted) return await onNotStarted(error);
+      throw error;
+    }
+    if (fresh.source !== transcript.source || fresh.path !== transcript.path || !live()) throw new ConversationUnavailable("no_session_id");
+  }
+  const identity = resolved.source === "agy-transcript" || resolved.source === "copilot-transcript" || resolved.source === "letta-transcript" || resolved.source === "kimi-transcript" ? resolved.path
+    : resolved.source === "claude-transcript" ? nodePath.basename(resolved.path, ".jsonl")
+    : resolved.source === "pi-transcript" || resolved.source === "cmd-transcript" || resolved.source === "omp-transcript" ? realpathSync(resolved.path) : null;
   const status = snapshot.panes.find((pane) => pane.pane_id === paneId)?.agent_status;
   if (resolved.source === "grok-transcript" && answer.turns.length === 0 && page.before === undefined
     && (status === "working" || status === "blocked")) {
@@ -3284,11 +3503,15 @@ const TOOL_OUTPUT_MAX = 2_000_000;
 /** The whole output of a tool call whose page output was cut, by its id; null when there is none. */
 export async function toolOutput(paneId: string, ref: string, codexHome?: string, opencodeDb?: string, hermesHome?: string, grokHome?: string, museData?: string): Promise<string | null> {
   if (!TOOL_REF.test(ref) && !/^cp[0-9a-f]{16}\.[A-Za-z0-9_:.-]{1,128}(?:@[0-9a-z]+@[0-9a-z]+@[0-9a-f]{32})?$/.test(ref)) return null;
+  // a pane closed (forgetPaneTranscriptState) or a herdr session left while this awaited answers nothing
+  const socket = herdrSocketPath();
+  const forgetsBefore = forgets;
+  const live = (): boolean => herdrSocketPath() === socket && !forgottenSince(paneId, forgetsBefore);
   const snapshot = await sessionSnapshot();
   const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined || typeof pane.cwd !== "string" || pane.cwd.length === 0) return null;
   let resolved: ResolvedTranscript;
-  try { resolved = await resolveTranscript(pane, pane.cwd, codexHome, snapshot.panes, opencodeDb, hermesHome, grokHome, museData); }
+  try { resolved = noteBinding(paneId, await resolveTranscript(pane, pane.cwd, codexHome, snapshot.panes, opencodeDb, hermesHome, grokHome, museData)); }
   catch (error) { if (error instanceof ConversationUnavailable) return null; throw error; }
   if (resolved.source === "opencode-transcript") {
     const output = opencodeToolOutput(resolved.path, resolved.session, ref);
@@ -3298,17 +3521,37 @@ export async function toolOutput(paneId: string, ref: string, codexHome?: string
   if (resolved.source === "dsh-transcript") return await dshToolOutput(resolved, ref);
   if (resolved.source === "kiro-transcript") return await kiroToolOutput(resolved, ref);
   if (resolved.source === "hermes-transcript") return hermesToolOutput(resolved.sessionId, resolved.path, ref, TOOL_OUTPUT_MAX);
-  let nativeRef = ref;
-  if (resolved.source === "copilot-transcript") {
-    let history: string;
-    try { history = copilotHistoryIdentity(resolved.path); } catch { return null; }
-    const prefix = copilotPrefix(paneId, `${resolved.binding}\0${history}`, resolved.path);
-    if (!ref.startsWith(prefix)) return null;
-    nativeRef = ref.slice(prefix.length);
-    if (!nativeRef.includes("@")) return null;
-  }
-  const output = resolved.source === "agy-transcript" ? await agyToolOutput(resolved.path, nativeRef)
-    : transcriptToolOutput(resolved.source, resolved.path, nativeRef, resolved.codexHome ?? codexHome);
+  const transcript = resolved;
+  const lookup = (): string | null => {
+    let nativeRef = ref;
+    if (transcript.source === "copilot-transcript") {
+      let history: string;
+      try { history = copilotHistoryIdentity(transcript.path); } catch { return null; }
+      const prefix = copilotPrefix(paneId, `${transcript.binding}\0${history}`, transcript.path);
+      if (!ref.startsWith(prefix)) return null;
+      nativeRef = ref.slice(prefix.length);
+      if (!nativeRef.includes("@")) return null;
+    }
+    return transcript.source === "agy-transcript" ? null : transcriptToolOutput(transcript.source, transcript.path, nativeRef, transcript.codexHome ?? codexHome);
+  };
+  let output: string | null;
+  // the sources whose lookup digests the transcript (transcriptGeneration) read that off the event loop first
+  if (resolved.source === "copilot-transcript" || resolved.source === "omo-transcript") {
+    let settled: { value: string | null } | null;
+    // a transcript the path no longer names (replaced while it settled) has not this output
+    try { settled = await readSettled({ path: resolved.path, checkWindow: false, live }, lookup); }
+    catch (error) { if (error instanceof ConversationUnavailable || error instanceof ConversationReadPending) return null; throw error; }
+    // a pane bound to another transcript while this settled (another OmO session) has not this output:
+    // one seen bound elsewhere is refused at once, any other resolved again. Copilot's is checked below.
+    if (settled === null || rebound(paneId, transcript)) return null;
+    if (transcript.source === "omo-transcript") {
+      let fresh: NativeTranscript;
+      try { fresh = await paneTranscript(paneId, codexHome, undefined, undefined, opencodeDb, hermesHome, grokHome, museData); }
+      catch (error) { if (error instanceof ConversationUnavailable) return null; throw error; }
+      if (fresh.source !== transcript.source || fresh.path !== transcript.path) return null;
+    }
+    output = settled.value;
+  } else output = resolved.source === "agy-transcript" ? await agyToolOutput(resolved.path, ref) : lookup();
   if (resolved.agy && !sameAgyStore(resolved.agy, await resolveAgyStore(pane))) return null;
   if (resolved.source === "copilot-transcript") {
     const current = await copilotTranscriptPath(pane, snapshot.panes, resolved.peerClaims).catch(() => null);
@@ -3317,7 +3560,7 @@ export async function toolOutput(paneId: string, ref: string, codexHome?: string
       if (!ref.startsWith(copilotPrefix(paneId, `${resolved.binding}\0${copilotHistoryIdentity(resolved.path)}`, resolved.path))) return null;
     } catch { return null; }
   }
-  return output;
+  return live() ? output : null;
 }
 
 /** The output a transcript file holds for one tool call id, whole (up to TOOL_OUTPUT_MAX). */
