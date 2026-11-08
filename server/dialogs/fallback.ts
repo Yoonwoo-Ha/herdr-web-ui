@@ -48,6 +48,11 @@ const NOT_PROMPT_TEXT_RE = /^(?:[❯›>"'“]|\$ )/;
  * ellipsis, and in parentheses the time it has taken and the tokens it has used, then maybe the
  * interrupt hint: "✢ Tempering… (1m 55s · ↓ 10.0k tokens)".
  */
+/**
+ * omp's status row under its panel while a question waits (omp 18.12.6): a spinner and the elapsed time, or `π` at
+ * rest, then `· ⬢` and the model, folder and context: "⠋ 6m 0s · ⬢ Ask fixture · 🗑 …/home/fixture · ◫ 5.7%/131K ⟲".
+ */
+const OMP_STATUS_ROW_RE = /^(?:[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] (?:\d+h )?(?:\d+m )?\d+s|π) · ⬢ (.+)$/u;
 const WORKING_LINE_RE = /^[·✢✳✶✻✽*] (\S(?:.*\S)?…) \((?:\d+h )?(?:\d+m )?\d+s · [↑↓] [\d.,]+[kKmM]? tokens( · esc to interrupt)?\)$/u;
 
 /**
@@ -64,11 +69,20 @@ const WORKING_LINE_RE = /^[·✢✳✶✻✽*] (\S(?:.*\S)?…) \((?:\d+h )?(?:\
  * "Deleting production…".
  */
 function steadyReader(agent: string, shown: string[]): SteadyReader {
-  const working = agent === "claude" ? shown.flatMap((line, at) => WORKING_LINE_RE.test(line) ? [at] : []) : [];
+  const pattern = agent === "claude" ? WORKING_LINE_RE : agent === "omp" ? OMP_STATUS_ROW_RE : null;
+  // omp draws its status row last, under the panel: a status-shaped line anywhere else is read as written, and a
+  // row whose exact text another shown line also has is not blanked at all, as `read` goes by the text (#3412)
+  const last = shown.at(-1);
+  const working = pattern === null ? []
+    : agent === "omp" ? (last !== undefined && pattern.test(last) && shown.indexOf(last) === shown.length - 1 ? [shown.length - 1] : [])
+    : shown.flatMap((line, at) => pattern.test(line) ? [at] : []);
   const [at] = working;
   if (working.length !== 1 || at === undefined) return { read: (other) => other, working: null };
   const line = shown[at]!;
-  const steady = line.replace(WORKING_LINE_RE, (_all, doing: string, hint: string | undefined) => `* ${doing} (<time> · <tokens>${hint ?? ""})`);
+  const steady = agent === "omp"
+    // the spinner and the elapsed time, or the resting π, are omp's ticking part; the model, folder and context stay (#3412)
+    ? line.replace(OMP_STATUS_ROW_RE, (_all, rest: string) => `<status> · ⬢ ${rest}`)
+    : line.replace(WORKING_LINE_RE, (_all, doing: string, hint: string | undefined) => `* ${doing} (<time> · <tokens>${hint ?? ""})`);
   return { read: (other) => other === line ? steady : other, working: at };
 }
 

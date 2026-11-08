@@ -2943,6 +2943,29 @@ Which approach?
     expect(idOf(asked("✢ Tempering… (5s · ↓ 1.0k tokens)"))).toBe(idOf(asked("✶ Tempering… (9s · ↓ 1.3k tokens)")));
   });
 
+  test("keeps its id while only omp's status row ticks (#3412)", () => {
+    // omp's status row under its panel, as omp 18.12.6 draws it: spinner, elapsed time, then the model, folder and context
+    const row = (lead: string, model = "Ask fixture") => ` ${lead} · ⬢ ${model} · 🗑 …PsA/home/fixture · ◫ 5.7%/131K ⟲`;
+    const underStatus = (status: string, cursor = 0) => [
+      "Run the tests?", "",
+      ...["Yes", "No"].map((label, index) => `${index === cursor ? "❯" : " "} ${index + 1}. ${label}`),
+      "", "Enter to select · ↑/↓ to navigate · Esc to cancel", "", status,
+    ].join("\n");
+    const ompId = (screen: string) => parseFallbackPrompt("omp", screen).id;
+    // the spinner and the elapsed time move every second; the question does not
+    expect(ompId(underStatus(row("⠋ 6m 0s")))).toBe(ompId(underStatus(row("⠙ 6m 1s"))));
+    expect(ompId(underStatus(row("⠸ 1h 2m 3s")))).toBe(ompId(underStatus(row("⠋ 0s"))));
+    // the selected row, or the model and folder the row names, are still another card
+    expect(ompId(underStatus(row("⠋ 6m 0s"), 0))).not.toBe(ompId(underStatus(row("⠋ 6m 0s"), 1)));
+    expect(ompId(underStatus(row("⠋ 6m 0s")))).not.toBe(ompId(underStatus(row("⠋ 6m 0s", "Other model"))));
+    // only the last line is omp's status row: one shaped like it inside the question is read as written
+    const asking = (line: string) => [line, "", "❯ 1. Yes", "  2. No", "", "Enter to select · ↑/↓ to navigate · Esc to cancel"].join("\n");
+    expect(ompId(asking(row("⠋ 1m 0s")))).not.toBe(ompId(asking(row("⠋ 2m 0s"))));
+    // a question line written exactly as the status row is: neither is blanked, so a change to both is another card
+    const echoed = (status: string) => [status, "", "❯ 1. Yes", "  2. No", "", "Enter to select · ↑/↓ to navigate · Esc to cancel", "", status].join("\n");
+    expect(ompId(echoed(row("⠋ 1m 0s")))).not.toBe(ompId(echoed(row("⠋ 2m 0s"))));
+  });
+
   test("makes another card of anything else that changed, on a working line too", () => {
     const working = "✢ Tempering… (5s · ↓ 1.0k tokens)";
     // what the agent is doing: the words stay in the id
