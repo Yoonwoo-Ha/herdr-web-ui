@@ -1119,24 +1119,57 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 }
 
 /* Compact rows, the default (Settings → Sidebar rows → Two lines keeps the tall ones), as herdr-app's list: one line
-   a little lower than a control under a pointer (a finger keeps its touch target), the name, and a branch other than the default dim at the row's end */
+   a little lower than a control under a pointer (a finger keeps its touch target), the name, and a branch other than the
+   default dim right after it */
 @media (pointer: fine) {
   .machine-workspaces:not(.is-two-line) {
     --side-row: calc(var(--control-h) - var(--space-1) - var(--hairline) * 2);
   }
 }
 
+/* short of room the branch gives way first, and only then the name: a shrink this much larger than the name's leaves
+   the name whole until the branch is down to a couple of letters and its ellipsis, never a stray letter */
 .workspace-branch-tail {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 45%;
-  margin-inline-start: auto;
+  flex: 0 99999 auto;
+  min-width: 2.5em;
   overflow: hidden;
   color: var(--text-dim);
   font-size: var(--fs-sm);
   line-height: var(--lh-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* a compact row's state sits at its end in a cell its glyph's size, as far in as the mark at its start: no column wider
+   than what it holds (Two lines keeps the grid's --side-box cell) */
+.machine-workspaces:not(.is-two-line) .workspace-header { padding-right: var(--space-6); }
+
+.machine-workspaces:not(.is-two-line) .workspace-select > .sidebar-pane-meta { width: var(--space-6); }
+
+/* the badge fills that cell: a state that draws nothing (ready, unknown) keeps its box, label and tooltip */
+.machine-workspaces:not(.is-two-line) .workspace-select > .sidebar-pane-meta > .sidebar-status {
+  flex-basis: 100%;
+  width: 100%;
+}
+
+/* under a pointer the ⋯ shows just before the state's cell, over the end of the name and branch, which fade out under
+   it: nothing in the row moves and the state stays in sight. A finger and the drawer keep it in the row, the state beside it */
+@media (hover: hover) and (pointer: fine) and (min-width: 769px) {
+  .machine-workspaces:not(.is-two-line) .workspace-header > .workspace-actions {
+    position: absolute;
+    inset-block: 0;
+    right: var(--space-6);
+    width: var(--space-6);
+  }
+
+  .machine-workspaces:not(.is-two-line) .workspace-header > .workspace-actions .sidebar-row-action { width: 100%; }
+
+  /* the text ends where the state's cell starts: its last --space-6 is under the ⋯, the --space-4 before it fades */
+  .machine-workspaces:not(.is-two-line) .workspace-header:is(:hover, :focus-within) .workspace-copy,
+  .machine-workspaces:not(.is-two-line) .workspace-header:has(> .workspace-actions [aria-expanded="true"]) .workspace-copy {
+    -webkit-mask-image: linear-gradient(to left, transparent var(--space-6), var(--bg-panel) calc(var(--space-6) + var(--space-4)));
+    mask-image: linear-gradient(to left, transparent var(--space-6), var(--bg-panel) calc(var(--space-6) + var(--space-4)));
+  }
 }
 
 /* the compact sidebar (Settings → Sidebar rows → One line, the default) */
