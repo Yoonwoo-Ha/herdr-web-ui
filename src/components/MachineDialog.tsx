@@ -22,6 +22,7 @@ export function MachineDialog({ machine, preset, updateRemote = false, onClose, 
   const [key, setKey] = useState(machine?.target?.identity_file ?? "");
   const [session, setSession] = useState(machine?.target?.session ?? "");
   const [herdrSocket, setHerdrSocket] = useState(machine?.target?.herdr_socket ?? "");
+  const [ownOvis, setOwnOvis] = useState(machine?.target?.own_ovis ?? "");
   const [startNewHerdr, setStartNewHerdr] = useState(machine?.target?.start_new_herdr === true);
   const [job, setJob] = useState<SetupJob | null>(null);
   const mounted = useRef(true);
@@ -65,7 +66,7 @@ export function MachineDialog({ machine, preset, updateRemote = false, onClose, 
   }, [job?.id, finished]);
   useEffect(() => setSecret(""), [job?.challenge?.id]);
   const editIdentity = (field: "destination" | "port" | "session", value: string) => {
-    setHerdrSocket(""); setStartNewHerdr(false);
+    setHerdrSocket(""); setStartNewHerdr(false); setOwnOvis("");
     // A result from the old address must not offer its choices for the edited address.
     setJob((current) => current?.action_required === "choose_herdr" ? { ...current, action_required: null, found_herdr_sessions: undefined } : current);
     if (field === "destination") setDestination(value);
@@ -78,9 +79,9 @@ export function MachineDialog({ machine, preset, updateRemote = false, onClose, 
     setError(null); setPending(true);
     if (choice && machine?.herdr_profile_id) choice = { ...choice, session: machine.target?.session };
     // a PC saved in herdr keeps its catalog name, which the server does not read from here
-    if (choice) { if ("session" in choice) setSession(choice.session ?? ""); setHerdrSocket(choice.herdr_socket ?? ""); setStartNewHerdr(choice.start_new_herdr === true); }
+    if (choice) { if ("session" in choice) setSession(choice.session ?? ""); setHerdrSocket(choice.herdr_socket ?? ""); setStartNewHerdr(choice.start_new_herdr === true); setOwnOvis(choice.own_ovis ?? ""); }
     const sentFor = [destination.trim(), port, choice && "session" in choice ? choice.session ?? "" : session].join("\0");
-    try { const next = await startMachineSetup({ destination: destination.trim(), ...(name.trim() && !machine?.herdr_profile_id ? { name: name.trim() } : {}), ...(port ? { port: Number(port) } : {}), ...(key.trim() ? { identity_file: key.trim() } : {}), ...(session.trim() ? { session: session.trim() } : {}), ...(herdrSocket ? { herdr_socket: herdrSocket } : {}), ...(startNewHerdr ? { start_new_herdr: true } : {}), ...choice, ...(machine ? { machine_id: machine.id } : {}), ...(needsBridgeUpdate || updateRemote ? { update_remote: true } : {}) });
+    try { const next = await startMachineSetup({ destination: destination.trim(), ...(name.trim() && !machine?.herdr_profile_id ? { name: name.trim() } : {}), ...(port ? { port: Number(port) } : {}), ...(key.trim() ? { identity_file: key.trim() } : {}), ...(session.trim() ? { session: session.trim() } : {}), ...(herdrSocket ? { herdr_socket: herdrSocket } : {}), ...(startNewHerdr ? { start_new_herdr: true } : {}), ...(ownOvis ? { own_ovis: ownOvis } : {}), ...choice, ...(machine ? { machine_id: machine.id } : {}), ...(needsBridgeUpdate || updateRemote ? { update_remote: true } : {}) });
       // the address, port or session edited while it was in flight: that PC's sessions are never offered for this one
       if (mounted.current) setJob(next.action_required === "choose_herdr" && sentFor !== identityRef.current ? { ...next, action_required: null, found_herdr_sessions: undefined } : next);
       else if (!["connected", "failed", "cancelled"].includes(next.phase) && (next.windows_startup || !["installing", "starting"].includes(next.phase))) await answerMachineSetup(next.id, { action: "cancel" });
@@ -117,7 +118,7 @@ export function MachineDialog({ machine, preset, updateRemote = false, onClose, 
         </>}
       </form>}
       {job && job.challenge?.kind !== "host_key" && <div className="machine-progress" role="status">{waitingForLogin ? <strong>{t(startupFailed ? "Windows desktop startup failed" : "Waiting for Windows sign-in")}</strong> : running && job.progress ? <BridgeUpdateProgress update={{ job_id: job.id, step: job.step, progress: job.progress }} /> : <strong>{job.step === "Starting without Windows sign-in…" ? t("Starting without Windows sign-in…") : job.step}</strong>}{waitingForLogin && job.step !== "Waiting for Windows sign-in on this PC." && <p>{machineErrorText(job.step, t)}</p>}{job.error && <p>{machineErrorText(job.error, t)}</p>}{job.ssh_output && <SshOutput text={job.ssh_output} />}</div>}
-      {job?.action_required === "choose_herdr" && job.found_herdr_sessions && <FoundHerdrChoices sessions={job.found_herdr_sessions} busy={pending} onChoose={(choice) => void begin(choice)} />}
+      {job?.action_required === "choose_herdr" && (job.found_herdr_sessions || job.found_ovis) && <FoundHerdrChoices sessions={job.found_herdr_sessions ?? []} ownOvis={job.found_ovis} coreRefusal={ownOvis && !job.found_ovis?.length && job.error ? machineErrorText(job.error, t) : undefined} busy={pending} onChoose={(choice) => void begin(choice)} />}
       {waitingForLogin && <p className="field-hint">{t("Starting without Windows sign-in can break Codex sandbox commands, and desktop-control tools may be unavailable. This choice applies to one start.")}</p>}
       {waitingForLogin && <p className="field-hint">{t("Signing out of Windows ends herdr and its panes; lock the PC instead.")}</p>}
       {needsBridgeUpdate && <p className="field-hint">{t(ownUpdate ? "It updates itself through its own updater, then this PC reconnects; herdr sessions keep running." : "This PC runs a bridge from a different version of Ovis. Update it to reconnect; herdr sessions keep running.")}</p>}

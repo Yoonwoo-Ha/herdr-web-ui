@@ -59,6 +59,7 @@ import type { UsageAccountList } from "./usage-account-list.ts";
 import { handleVoiceRequest } from "./voice.ts";
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity } from "./bridge.ts";
+import { discoverHerdrSessions } from "./herdr-discovery.ts";
 import { handleMachineRequest, nonCanonicalPath, slowMachinePath, type EventStreamBudget } from "./machine-api.ts";
 import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTORY_PATH, SESSION_RESUME_PATH } from "./session-history-routes.ts";
 import type { PiSessionReader } from "./pi-session-metadata.ts";
@@ -352,8 +353,15 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
 
   if (pathname === "/api/bridge") {
     setRequestRoute(pathname);
-    if (token === "" && !bridgeAuthorized) return unauthorizedJson();
-    try { return jsonResponse(await bridgeIdentity(sidecar)); } catch (error) { return errorResponse(error); }
+    const discover = url.searchParams.get("discover") === "herdr";
+    // discovery is the owner's (a paired driving device, their Tailscale login, this PC) or the bridge token's, on a
+    // tokenless installation too; the identity alone stays the bridge token's there
+    if (discover && !bridgeAuthorized && !ownerAccess(access)) return jsonResponse({ error: { code: "forbidden", message: "Only the owner can discover this PC's sessions" } }, 403);
+    if (token === "" && !bridgeAuthorized && !discover) return unauthorizedJson();
+    try {
+      const identity = await bridgeIdentity(sidecar);
+      return jsonResponse(discover ? { ...identity, found_herdr_sessions: await discoverHerdrSessions() } : identity);
+    } catch (error) { return errorResponse(error); }
   }
   if (pathname === "/api/machines" || pathname.startsWith("/api/machines/")) {
     if (!machines) return jsonResponse({ error: { code: "bridge_only", message: "Manage PCs on the connection server" } }, 404);

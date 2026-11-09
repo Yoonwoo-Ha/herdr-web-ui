@@ -27,6 +27,7 @@ const TWO_PCS = String.raw`(() => {
     const machine = structuredClone(original.find((item) => item.id === "local"));
     machine.id = id; machine.kind = id === "local" ? "local" : "ssh";
     machine.name = id === "local" ? "Laptop" : "Work PC";
+    machine.runtime = id === "local" ? "herdr" : "herdr-core";
     machine.state = id === "work" && localStorage.getItem("heads-fixture:work-offline") === "1" ? "disconnected" : "connected";
     return machine;
   });

@@ -140,8 +140,13 @@ export interface RemoteHost {
   foundSessions?(ssh: SshConnection, inspection: HostInspection): Promise<{ gone: boolean; sessions: FoundHerdrSession[] } | null>;
   /** a chosen socket checked on the PC by the rule its bridge applies (server/herdr-discovery.ts); null when it cannot be */
   chosenSocketStatus?(ssh: SshConnection, inspection: HostInspection, socket: string): Promise<"usable" | "gone" | "refused" | null>;
+  /** Read-only discovery, including when the chosen Ovis server is stopped. */
+  discoverSessions?(ssh: SshConnection, inspection: HostInspection): Promise<FoundHerdrSession[]>;
   descriptors(ssh: SshConnection): Promise<BridgeDescriptor[]>;
 }
+
+/** the most a PC's herdr discovery answer (or its error) may send */
+const DISCOVERY_OUTPUT_BYTES = 256 * 1024;
 
 function parseDescriptors(lines: string[]): BridgeDescriptor[] {
   return lines.flatMap((line) => { try { return [JSON.parse(line) as BridgeDescriptor]; } catch { return []; } });
@@ -206,6 +211,13 @@ export const posixHost: RemoteHost = {
     const gone = result.code === "herdr_session_gone";
     // a stopped chosen session may leave no other one running
     return { gone, sessions: gone && Array.isArray(result.sessions) && result.sessions.length === 0 ? [] : parseFoundHerdrSessions(result.sessions) };
+  },
+  async discoverSessions(ssh, inspection) {
+    const script = `import { discoverHerdrSessions } from ${JSON.stringify(inspection.runtimeDir + "/server/herdr-discovery.ts")}; console.log(JSON.stringify(await discoverHerdrSessions()));`;
+    // at most 256 sessions of a few hundred bytes each: an answer past the cap is stopped and refused, never parsed
+    const text = await ssh.run(`if test -x ${shellQuote(inspection.runtimeDir + "/bin/bun")}; then ${shellQuote(inspection.runtimeDir + "/bin/bun")} -e ${shellQuote(script)}; else printf '[]'; fi`, undefined, undefined, DISCOVERY_OUTPUT_BYTES);
+    const sessions: unknown = JSON.parse(text);
+    return Array.isArray(sessions) && sessions.length === 0 ? [] : parseFoundHerdrSessions(sessions);
   },
   async chosenSocketStatus(ssh, inspection, socket) {
     // the installed bundle holds the rule; an older or missing one cannot say

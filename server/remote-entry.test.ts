@@ -142,6 +142,14 @@ describe("remote entry startup lock", () => {
     expect(result.output).not.toContain(join(home, "missing-herdr"));
   }, 60_000);
 
+  it.skipIf(process.platform === "win32")("starts herdr without extra consent when no sessions exist", async () => {
+    const resultFile = join(home, "empty.result");
+    const result = await start(undefined, { HERDR_REMOTE_RESULT: resultFile });
+    expect(result.output).toContain(join(home, "missing-herdr"));
+    expect(result.code).not.toBe(0);
+    expect(existsSync(resultFile)).toBe(false);
+  }, 60_000);
+
   it.skipIf(process.platform === "win32")("offers another live session when the selected socket has disappeared", async () => {
     const chosen = join(home, "config/herdr/sessions/gone/herdr.sock");
     const other = fakeHerdr(join(home, "config/herdr/sessions/other/herdr.sock"));

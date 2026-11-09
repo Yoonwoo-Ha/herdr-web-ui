@@ -16,7 +16,9 @@ export function validateTarget(value: unknown): SshTarget {
   if (v.herdr_socket !== undefined && !validHerdrSocket(v.herdr_socket)) throw new Error("The herdr socket must be an absolute path ending in /herdr.sock");
   if (v.start_new_herdr !== undefined && typeof v.start_new_herdr !== "boolean") throw new Error("Choose whether to start a new herdr on this PC");
   if (v.herdr_socket && v.start_new_herdr) throw new Error("Choose a running herdr or start a new one");
-  return { destination: v.destination, ...(v.port === undefined ? {} : { port: Number(v.port) }), ...(v.identity_file ? { identity_file: String(v.identity_file) } : {}), ...(v.session ? { session: String(v.session) } : {}), ...(typeof v.herdr_socket === "string" ? { herdr_socket: v.herdr_socket } : {}), ...(v.start_new_herdr === true ? { start_new_herdr: true } : {}) };
+  if (v.own_ovis !== undefined && (typeof v.own_ovis !== "string" || !v.own_ovis.startsWith("/") || v.own_ovis.length > 4096 || /[\0\r\n]/.test(v.own_ovis))) throw new Error("Choose an Ovis server registered on this PC");
+  if (v.own_ovis && (v.herdr_socket || v.start_new_herdr)) throw new Error("Choose Ovis, a running herdr, or a new herdr");
+  return { destination: v.destination, ...(v.port === undefined ? {} : { port: Number(v.port) }), ...(v.identity_file ? { identity_file: String(v.identity_file) } : {}), ...(v.session ? { session: String(v.session) } : {}), ...(typeof v.herdr_socket === "string" ? { herdr_socket: v.herdr_socket } : {}), ...(typeof v.own_ovis === "string" ? { own_ovis: v.own_ovis } : {}), ...(v.start_new_herdr === true ? { start_new_herdr: true } : {}) };
 }
 
 export function sameOrigin(request: Request): boolean {

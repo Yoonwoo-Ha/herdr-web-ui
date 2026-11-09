@@ -107,6 +107,10 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
 /** Machine API (same token gate; mutations require X-Herdr-Machine: 1 + same origin)
  * GET /api/health?scope=bridge -> BridgeHealth, never waits for herdr (a driving owner is told herdr_runtime too)
  * GET /api/bridge -> authenticated BridgeIdentity (socket + runtime compatibility)
+ * GET /api/bridge?discover=herdr -> owner/bridge-token only; also found_herdr_sessions on this account.
+ * SetupRequest.own_ovis chooses a registered Ovis by socket identity, reverified over SSH each time;
+ * mutually exclusive with herdr_socket/start_new_herdr. choose_herdr offers found_ovis beside sessions.
+ * Machine/SetupJob.runtime names the verified runtime (herdr or herdr-core); absent until known.
  * GET /api/machines -> MachineRoster { machines: Machine[] }; GET /api/machines/events -> MachineEvent SSE
  * GET /api/machines?verify_source_boot=:id -> MachineRoster with verified_source_boot { machine_id, boot_id }:
  *   the boot id of the server behind that PC, asked for during this request (the local one directly,

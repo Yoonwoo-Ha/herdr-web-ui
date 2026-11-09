@@ -7,7 +7,7 @@ import { holdsDocument, readStateDocument, setAsideDamaged } from "./state-docum
 import { validateTarget } from "./machine-security.ts";
 
 /** `retiring`: this binding's key removal was started and has not succeeded yet. */
-interface ProfileState { binding: string; approved: boolean; connectionApproved: boolean; snapshot: SessionSnapshot | null; retiring?: true; herdrChoice?: Pick<SshTarget, "herdr_socket" | "start_new_herdr"> }
+interface ProfileState { binding: string; approved: boolean; connectionApproved: boolean; snapshot: SessionSnapshot | null; retiring?: true; herdrChoice?: Pick<SshTarget, "herdr_socket" | "start_new_herdr" | "own_ovis"> }
 
 // Existing routes accept UUID-shaped machine IDs; deriving one keeps browser storage stable.
 export function herdrMachineId(profileId: string): string {
@@ -48,7 +48,7 @@ export class HerdrProfileState {
       this.entries.set(item.profile_id, { binding: item.binding, approved: item.approved, connectionApproved: item.connectionApproved ?? item.approved, snapshot: item.snapshot, ...(item.retiring ? { retiring: true as const } : {}) });
       if (item.herdrChoice !== undefined) {
         const choice = validateTarget({ ...item.herdrChoice, destination: "stored-choice" });
-        this.entries.get(item.profile_id)!.herdrChoice = { herdr_socket: choice.herdr_socket, start_new_herdr: choice.start_new_herdr };
+        this.entries.get(item.profile_id)!.herdrChoice = { herdr_socket: choice.herdr_socket, start_new_herdr: choice.start_new_herdr, own_ovis: choice.own_ovis };
       }
     }
   }
@@ -75,7 +75,7 @@ export class HerdrProfileState {
     this.reconcile(id, target);
     const entry = this.entries.get(id)!;
     entry.connectionApproved = true;
-    entry.herdrChoice = { herdr_socket: target.herdr_socket, start_new_herdr: target.start_new_herdr };
+    entry.herdrChoice = { herdr_socket: target.herdr_socket, start_new_herdr: target.start_new_herdr, own_ovis: target.own_ovis };
     this.dirty = true;
   }
   target(id: string, catalog: SshTarget): SshTarget {
