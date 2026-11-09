@@ -1041,6 +1041,8 @@ interface Entry {
   nextAt: number;
   /** whose sign-in the place held when this was read (holderOf) */
   holder: string;
+  /** a hidden account's kept reading that the last completed search did not find: the next such search drops it (#3391) */
+  gone?: true;
 }
 
 /** when a provider's sign-ins were last looked for, and the sources found then */
@@ -1103,6 +1105,13 @@ export class UsageService {
   private skipped: () => ReadonlySet<string> = () => new Set();
   /** what `skipped` gave the last pass: an account no longer in it was shown again */
   private lastSkipped: ReadonlySet<string> = new Set();
+  /**
+   * The hidden accounts whose kept reading was evicted (#3391), by key: their provider, whose sign-in held them
+   * (holderOf) and their name. Only the reading goes: a sign-in that names no account is known as hidden again by its
+   * holder, so it is never read to learn whose it is. Kept only while the hidden list names the key, so it is bounded
+   * by that list and holds no numbers.
+   */
+  private dropped = new Map<string, { provider: UsageProviderId; holder: string; account: string | null }>();
 
   constructor(private readonly ctx: UsageContext = systemUsageContext(), private readonly providers: readonly UsageProvider[] = USAGE_PROVIDERS,
     private readonly additional: (refresh: boolean, skipped: ReadonlySet<string>) => Promise<readonly ProviderUsage[]> = async () => []) {}
@@ -1138,6 +1147,12 @@ export class UsageService {
     const shownAgain = new Set([...this.lastSkipped].filter((key) => !skipped.has(key)));
     for (const [source, entry] of this.entries) {
       if (entry.usage && shownAgain.has(entry.usage.key)) { this.searches.delete(entry.usage.id); this.entries.delete(source); }
+    }
+    // one whose kept reading was dropped (#3391) is known by its key alone, never by a prefix: a Hub account's key
+    // starts with its provider's id too, and must not send a fully hidden provider to its credentials
+    for (const [key, { provider }] of this.dropped) {
+      if (shownAgain.has(key)) this.searches.delete(provider);
+      if (!skipped.has(key)) this.dropped.delete(key);
     }
     this.lastSkipped = skipped;
     const usages = await Promise.all(this.providers.map((provider) => {
@@ -1178,14 +1193,37 @@ export class UsageService {
     found = found.filter((signIn) => "locked" in signIn || (!tokens.has(signIn.token) && Boolean(tokens.add(signIn.token))));
     // a hidden account its sign-in names keeps its last reading wherever it is found now, so its credentials are not used (#3333)
     const keptFor = (signIn: Found): Entry | undefined => {
-      const key = signIn.account ? accountKey(provider.id, signIn.account, signIn.source) : undefined;
-      if (key === undefined || !this.lastSkipped.has(key)) return undefined;
-      return [...this.entries].find(([source, entry]) => source.startsWith(`${provider.id}|`) && entry.usage?.key === key)?.[1];
+      const ours = (source: string) => source.startsWith(`${provider.id}|`);
+      // one that names no account is the hidden one whose sign-in it holds, wherever that reading is kept, so the
+      // order sign-ins are judged in cannot read it before its old place lets the reading go
+      if (!signIn.account) {
+        if ("locked" in signIn) return undefined;
+        const holder = holderOf(signIn);
+        return [...this.entries].find(([source, entry]) => ours(source) && entry.holder === holder && entry.usage !== null && this.lastSkipped.has(entry.usage.key))?.[1];
+      }
+      const key = accountKey(provider.id, signIn.account, signIn.source);
+      if (!this.lastSkipped.has(key)) return undefined;
+      return [...this.entries].find(([source, entry]) => ours(source) && entry.usage?.key === key)?.[1];
+    };
+    // which hidden account a sign-in is, from the hidden list alone, never from whether a reading of it is kept: the key
+    // it names, or, for one that names none, the holder of a hidden reading evicted before (dropped)
+    const hiddenAs = (signIn: Found): { key: string; account: string | null } | undefined => {
+      if ("locked" in signIn) return undefined;
+      // only a sign-in that names its account is that account by its key: one that names none is keyed by its place,
+      // which another sign-in found there does not make the hidden one (#3425 keeps the rest of that gap)
+      if (signIn.account) {
+        const own = accountKey(provider.id, signIn.account, signIn.source);
+        if (this.lastSkipped.has(own)) return { key: own, account: signIn.account.label };
+      }
+      const holder = holderOf(signIn);
+      const evicted = [...this.dropped].find(([, drop]) => drop.provider === provider.id && drop.holder === holder);
+      return evicted === undefined ? undefined : { key: evicted[0], account: evicted[1].account };
     };
     const read = await Promise.all(found.map(async (signIn): Promise<[string, Entry]> => {
       const source = `${provider.id}|${signIn.source}`;
       const kept = keptFor(signIn);
-      if (kept) return [source, kept];
+      // found: no longer a reading gone for a search
+      if (kept) return [source, { usage: kept.usage, readAt: kept.readAt, nextAt: kept.nextAt, holder: kept.holder }];
       const entry = this.entries.get(source);
       // a hidden or removed account keeps its last reading: its credentials are not used (#3333)
       const key = entry?.usage?.key;
@@ -1193,18 +1231,36 @@ export class UsageService {
       // only while the place still holds that account: another one there is read anew, without the hidden one's row
       const held = hidden && entry?.holder === holderOf(signIn);
       const current = entry !== undefined && (held || (!hidden && now < entry.nextAt && !(forced && entry.usage?.problem !== "rate_limited")));
-      return [source, current ? entry : await this.read(provider, signIn, hidden ? null : entry?.usage ?? null, now)];
+      // found: no longer a reading gone for a search (an account the sign-in names none for is kept here, not by keptFor)
+      if (current) return [source, { usage: entry.usage, readAt: entry.readAt, nextAt: entry.nextAt, holder: entry.holder }];
+      // the hidden account another sign-in replaced at this place: only its reading goes
+      if (hidden && entry?.usage) this.dropped.set(entry.usage.key, { provider: provider.id, holder: entry.holder, account: entry.usage.account });
+      // a hidden account with no reading kept (evicted, or never read by this server) is listed unread, never read
+      const as = hiddenAs(signIn);
+      if (as !== undefined) {
+        return [source, { usage: { id: provider.id, key: as.key, account: as.account, plan: "locked" in signIn ? null : signIn.plan ?? null, windows: [], problem: null, checked_at: null }, readAt: now, nextAt: now, holder: holderOf(signIn) }];
+      }
+      return [source, await this.read(provider, signIn, hidden ? null : entry?.usage ?? null, now)];
     }));
     // only a search that completed drops the places it did not find, a hidden one kept past invalidate (no search) included;
-    // a hidden account it did not name (gone, or a lookup that failed) keeps one reading, so it is not read when found again
+    // a hidden account it did not name (gone, or a lookup that failed) keeps one reading for one such search, so it is not
+    // read when found again soon after; one still not named by the search after that is dropped, so gone accounts do not
+    // pile up (#3391), and is read again only as a first sighting is. A search that could not look everywhere (a missing
+    // command: `incomplete`) ages none, so a hidden account it could not reach stays unread until one can
     if (searched) {
       const named = new Set(read.flatMap(([, entry]) => entry.usage ? [entry.usage.key] : []));
       for (const [source, entry] of this.entries) {
         if (!source.startsWith(`${provider.id}|`) || read.some(([found]) => found === source)) continue;
         const key = entry.usage?.key;
-        if (key !== undefined && this.lastSkipped.has(key) && !named.has(key)) { named.add(key); continue; }
+        if (key !== undefined && this.lastSkipped.has(key) && !named.has(key) && (incomplete || entry.gone !== true)) {
+          named.add(key);
+          if (!incomplete) entry.gone = true;
+          continue;
+        }
+        if (key !== undefined && this.lastSkipped.has(key) && !named.has(key)) this.dropped.set(key, { provider: provider.id, holder: entry.holder, account: entry.usage?.account ?? null });
         this.entries.delete(source);
       }
+      for (const key of named) this.dropped.delete(key);
     }
     for (const [source, entry] of read) this.entries.set(source, entry);
     const sources = read.map(([source]) => source);
