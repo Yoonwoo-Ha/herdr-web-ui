@@ -15,12 +15,13 @@ import { FinishEpochLedger } from "./finish-epoch-ledger.ts";
 import { labelOmoPanes } from "./conversation.ts";
 import type { CompletionTracker } from "./completion.ts";
 import { HerdrProfileState, herdrMachineId } from "./herdr-profile-state.ts";
-import { sameSshSession, type HerdrMachineProfile } from "./herdr-profiles.ts";
+import { type HerdrMachineProfile, samePort, sameSshSession } from "./herdr-profiles.ts";
 import { appBuild } from "./app-revision.ts";
 import { validateTarget } from "./machine-security.ts";
 import { writePrivateState } from "./private-state.ts";
 import { holdsDocument, readStateDocument, setAsideDamaged } from "./state-document.ts";
 import { detectHost, HERDR_INSTALL_CMD, installLockOwner, type RemoteHost } from "./remote-host.ts";
+import type { FoundHerdrSession } from "../shared/machines.ts";
 import { DESKTOP_APP_UPDATES, REVISION, type UpdateStatus } from "../shared/update.ts";
 import { discard, readCappedJson, REMOTE_LIMITS } from "./remote-json.ts";
 import { SshConnection, sshClient } from "./ssh.ts";
@@ -302,7 +303,7 @@ const ownUpdateRefused = (offer: RemoteOvis): string => `${independentBridge(REM
 /** A connection that retrying cannot fix: the PC waits for the user instead of reconnecting. */
 export class MachineActionRequired extends Error {
   /** `newerServer`: the server that answered is newer than this app, as its own identity proved (verify) */
-  constructor(message: string, readonly action: MachineAction, readonly newerServer = false) { super(message); }
+  constructor(message: string, readonly action: MachineAction, readonly newerServer = false, readonly foundHerdrSessions?: FoundHerdrSession[]) { super(message); }
 }
 
 
@@ -562,7 +563,7 @@ export class MachineManager {
         }
         if (runtime.machine.name !== profile.label) { runtime.machine.name = profile.label; changed = true; }
         runtime.machine.enabled = enabled;
-        runtime.machine.target = profile.target ?? undefined;
+        runtime.machine.target = profile.target ? this.profileState.target(profile.id, profile.target) : undefined;
         if (!enabled) {
           runtime.machine.action_required = null;
           runtime.machine.error = profile.target ? "Disabled in herdr" : "This saved herdr machine uses an unsupported SSH address or session.";
@@ -650,6 +651,9 @@ export class MachineManager {
   private mayConnect(runtime: Runtime): boolean {
     const machine = runtime.machine;
     return !machine.herdr_profile_id || !!machine.target && this.profileState.connectionApproved(machine.herdr_profile_id, machine.target);
+  }
+  private setupOwns(runtime: Runtime): boolean {
+    return [...this.jobs.values()].some((job) => job.public.machine_id === runtime.machine.id && (!TERMINAL.has(job.public.phase) || job.closing));
   }
   private mayManageBridge(runtime: Runtime): boolean {
     const machine = runtime.machine;
@@ -1226,13 +1230,17 @@ export class MachineManager {
     if (existing?.machine.herdr_profile_id && (!existing.machine.enabled || !existing.machine.target || !sameSshSession(target, existing.machine.target))) throw new Error("This PC is managed by herdr; refresh its saved machine before setup");
     if (existing?.machine.herdr_profile_id) {
       if (target.identity_file) throw new Error("SSH connection details are managed by herdr; use the account's SSH config for keys");
-      target = { ...existing.machine.target! };
+      // SSH identity stays catalog-owned; the socket/new-start choice belongs to this web client.
+      target = { ...existing.machine.target!, herdr_socket: target.herdr_socket, start_new_herdr: target.start_new_herdr };
     }
     // the install that asks it (fromInstall) was the approval of a PC not added here yet too
     const auto = options.auto === true && request.update_remote === true && (!!existing || options.fromInstall === true);
     // A saved PC set up at another SSH address stays at its own until it connects there: that address is the user's to
     // review in this dialog, and a reconnect or an update that asks nobody goes only where the PC is (#2075)
-    const moving = !!existing && !sameSshSession(target, existing.machine.target!);
+    const moving = !!existing && (!sameSshSession(target, existing.machine.target!) || target.herdr_socket !== existing.machine.target!.herdr_socket);
+    // A session switch gets a separate connection. Keep the saved PC serving its old workspaces until commit.
+    const switchingSession = !!existing && moving && target.destination === existing.machine.target!.destination && samePort(target.port, existing.machine.target!.port);
+    if (switchingSession) { clearTimeout(existing.retry); existing.retry = undefined; }
     const resumeRetry = existing?.machine.state === "reconnecting";
     const job: JobState = { update: request.update_remote === true, auto, public: { id, machine_id: machineId, target, phase: "connecting", step: "Connecting with SSH keys and ssh-agent…", challenge: null, installations: [], error: null, ssh_output: null, progress: null }, abort: new AbortController(), timer: setTimeout(() => this.cancelJob(id, true), 600_000), stageStartedAt: Date.now(), finished: Promise.resolve() };
     if (options.expectedRevision) job.expectedRevision = options.expectedRevision;
@@ -1241,7 +1249,7 @@ export class MachineManager {
     job.timer.unref();
     this.jobs.set(id, job);
     if (this.jobs.size > 40) for (const [key, j] of this.jobs) if (["connected", "failed", "cancelled"].includes(j.public.phase) && key !== id) { this.jobs.delete(key); break; }
-    const runtime = existing ?? this.runtime({ id: machineId, name: name?.trim() || target.destination, kind: "ssh", enabled: true, state: "connecting", target, snapshot: null, error: null });
+    const runtime = switchingSession ? this.runtime({ ...existing!.machine }) : existing ?? this.runtime({ id: machineId, name: name?.trim() || target.destination, kind: "ssh", enabled: true, state: "connecting", target, snapshot: null, error: null });
     this.disconnect(runtime);
     // a setup or bridge update is a try to connect too: a failed one waits its interval (retryNow)
     runtime.triedAt = this.now();
@@ -1269,9 +1277,10 @@ export class MachineManager {
         await this.prepare(runtime, job);
         if (job.abort.signal.aborted || runtime.generation !== generation || this.stopped) throw new Error("Setup cancelled");
         runtime.machine.enabled = true;
-        this.machines.set(machineId, runtime);
+        if (!switchingSession) this.machines.set(machineId, runtime);
         await this.observe(runtime);
         if (job.abort.signal.aborted || runtime.generation !== generation || this.stopped) throw new Error("Setup cancelled");
+        if (switchingSession && this.machines.get(machineId) !== existing) throw new Error("Setup cancelled");
         // connected there: the PC moves to the address it was set up at, with what this setup learnt there. A move is
         // all or nothing: one that cannot be completed or saved leaves the PC as it was, trying its own address (#2075)
         const move = runtime.move;
@@ -1292,8 +1301,10 @@ export class MachineManager {
             this.profileState.allowConnection(runtime.machine.herdr_profile_id, target);
             if (job.installationApproved) this.profileState.approve(runtime.machine.herdr_profile_id, target);
           }
+          if (switchingSession) this.machines.set(machineId, runtime);
           this.persist();
         } catch (error) {
+          if (switchingSession) this.machines.set(machineId, existing!);
           if (move) {
             Object.assign(runtime.machine, { target: left.target, error: left.error, herdr: left.herdr, snapshot: left.snapshot });
             if (left.ownOvisAt) runtime.ownOvisAt = left.ownOvisAt; else delete runtime.ownOvisAt;
@@ -1301,6 +1312,7 @@ export class MachineManager {
           }
           throw error;
         }
+        if (switchingSession) this.disconnect(existing!);
         // what runs at the address it moved to is known only now: whether its own Ovis is asked what it offers
         if (move) { clearInterval(runtime.offerTimer); this.watchOwnOffer(runtime, runtime.generation); }
         this.stage(job, "connected", "Connected");
@@ -1327,7 +1339,7 @@ export class MachineManager {
         // again when it is enabled: what that setup met there is not this PC's, and its dialog says how it ended (#2075).
         if (job.public.phase === "cancelled" || job.timedOut) {
           if (ownsRuntime && !moving && runtime.machine.action_required === "windows_start_failed") { runtime.machine.state = "error"; this.emit(); }
-          else if (ownsRuntime && (job.update || moving || resumeRetry || runtime.machine.action_required === "windows_login") && existing && runtime.machine.enabled && !this.stopped) {
+          else if (ownsRuntime && !switchingSession && (job.update || moving || resumeRetry || runtime.machine.action_required === "windows_login") && existing && runtime.machine.enabled && !this.stopped) {
             runtime.machine.error = null; runtime.machine.action_required = null;
             if (job.update && !moving && !job.timedOut) runtime.updateCancelled = true;
             this.retryLater(runtime);
@@ -1336,22 +1348,25 @@ export class MachineManager {
         } else {
           job.public.phase = "failed"; job.public.step = "Connection failed";
           job.public.error = error;
-          if (moving) { if (ownsRuntime && runtime.machine.enabled && !this.stopped) { runtime.machine.error = null; runtime.machine.action_required = null; this.retryLater(runtime); } }
+          if (moving) { if (!switchingSession && ownsRuntime && runtime.machine.enabled && !this.stopped) { runtime.machine.error = null; runtime.machine.action_required = null; this.retryLater(runtime); } }
           else if (ownsRuntime && existing && runtime.machine.enabled && !this.stopped && e instanceof MachineActionRequired && e.action === "windows_login") { runtime.machine.error = error; runtime.machine.action_required = e.action; this.retryLater(runtime); }
           else if (ownsRuntime && existing && runtime.machine.enabled && !this.stopped && !(e instanceof MachineActionRequired) && (unreachable || resumeRetry || runtime.machine.action_required === "windows_login")) { runtime.machine.error = error; runtime.machine.action_required = null; this.retryLater(runtime); }
           // a failed bridge update on a PC that answered keeps its button: the bridge is still
           // out of date, and the error says why this attempt failed (a password needed, …)
-          else if (ownsRuntime) { runtime.machine.state = "error"; runtime.machine.error = error; runtime.machine.action_required = e instanceof MachineActionRequired ? e.action : job.update && existing ? "update_bridge" : null; }
+          else if (ownsRuntime) { runtime.machine.state = "error"; runtime.machine.error = error; runtime.machine.action_required = e instanceof MachineActionRequired ? e.action : job.update && existing ? "update_bridge" : null; runtime.machine.found_herdr_sessions = e instanceof MachineActionRequired ? e.foundHerdrSessions : undefined; }
           // the dialog reads the job, not the PC: a first connect that failed on the version
           // check has no machine to carry action_required, and an interrupted update keeps
           // offering itself even when the PC was never registered
           job.public.action_required = e instanceof MachineActionRequired ? e.action : job.update ? "update_bridge" : null;
+          job.public.found_herdr_sessions = e instanceof MachineActionRequired ? e.foundHerdrSessions : undefined;
           // the devices list says why this PC's update failed, whichever way it was started
           if (ownsRuntime && job.runtime) job.runtime.machine.update_error = error;
           this.emit();
         }
       } finally {
         clearTimeout(job.timer); job.public.challenge = null; job.public.ssh_output = null; job.pending = undefined; job.ssh = undefined;
+        // A failed switch leaves the saved PC in place, including a link lost while its retries were paused.
+        if (switchingSession && this.machines.get(machineId) === existing && existing.machine.enabled && !this.stopped && existing.machine.state === "reconnecting" && existing.retry === undefined) this.retryLater(existing);
         // a PC still waiting in Update all's queue keeps showing that it waits
         if (job.runtime && !this.updateQueued.has(job.runtime.machine.id)) { job.runtime.machine.updating = null; this.emit(); }
       }
@@ -1439,7 +1454,7 @@ export class MachineManager {
     const session = target.session;
     // at an address the PC is not at yet, what this try learns is kept apart (Runtime.move) and its offer goes only
     // to the job its dialog reads: the PC keeps its own until it connects there
-    const moving = !!job && !sameSshSession(target, runtime.machine.target!);
+    const moving = !!job && (!sameSshSession(target, runtime.machine.target!) || target.herdr_socket !== runtime.machine.target!.herdr_socket);
     // only this try, at this address, tells whose server the PC runs: a cancelled or superseded one (another
     // connection, or its dialog moving the PC to another address, since it looked) writes nothing
     const learnServer = (seen: Pick<BridgeDescriptor, "managed_remote">, verified = false) => {
@@ -1460,7 +1475,7 @@ export class MachineManager {
       update.public.remote_ovis = left;
       if (runtime.generation === generation && !moving) runtime.machine.remote_ovis = left;
     };
-    const { host, inspection } = await detectHost(ssh, session);
+    const { host, inspection } = await detectHost(ssh, session, target.herdr_socket);
     if (job && host.kind === "windows") job.public.windows_startup = moving || !this.machines.has(runtime.machine.id);
     const { platform, expectedSocket } = inspection;
     // what the PC's own Ovis said is read anew on every try: it may have been updated or replaced since
@@ -1483,6 +1498,13 @@ export class MachineManager {
       // whose server this socket has, running or not: what the PC waits for while none runs
       learnServer(descriptor);
       if (!(await host.alive(ssh, descriptor.pid))) { stalePid = descriptor.pid; descriptor = undefined; }
+    }
+    // a live bridge for a chosen socket is reused only once the PC verifies that socket by the rule its bridge applies
+    // (this account's, a socket and no link, inside its herdr dirs, answering). Otherwise it is never taken: the bridge
+    // started below checks the socket again and says why
+    if (descriptor && target.herdr_socket && host.kind !== "windows" && await host.chosenSocketStatus?.(ssh, inspection, target.herdr_socket) !== "usable") {
+      stalePid = descriptor.pid;
+      descriptor = undefined;
     }
     // The PC's own Ovis is away (#2047): the PC waits for it, as for a PC that cannot be reached, and nothing of this
     // app's is installed or started in its place, by a reconnect or by an update that asks nobody. Only a setup the
@@ -1620,7 +1642,7 @@ export class MachineManager {
         if (job?.abort.signal.aborted || runtime.generation !== generation || this.stopped) throw new Error("Setup cancelled");
         const headless = job?.headlessStart === true;
         if (job) job.headlessStart = false;
-        await host.start(ssh, { session, herdrPath, inspection, ...(headless ? { headless: true } : {}) });
+        await host.start(ssh, { session, herdrPath, inspection, ...(headless ? { headless: true } : {}), ...(target.herdr_socket ? { herdr_socket: target.herdr_socket } : {}), ...(target.start_new_herdr ? { start_new_herdr: true } : {}) });
         notice = null;
         // Windows allows 30 seconds for the desktop launcher, then 30 for herdr
         // readiness. Leave a further ten seconds for bridge registration.
@@ -1629,6 +1651,9 @@ export class MachineManager {
           if (job?.abort.signal.aborted || runtime.generation !== generation || this.stopped) throw new Error("Setup cancelled");
           descriptor = (await host.descriptors(ssh)).find((d) => d.socket_path === expectedSocket && d.pid !== stalePid);
           if (descriptor) break;
+          const found = await host.foundSessions?.(ssh, inspection);
+          if (found?.gone) throw new MachineActionRequired("The herdr session chosen for this PC is no longer running. Start it on that PC and reconnect, or choose again.", "choose_herdr", false, found.sessions);
+          if (found?.sessions.length) throw new MachineActionRequired("A herdr session is already running on this PC. Choose it, or start a new one.", "choose_herdr", false, found.sessions);
           if (!headless) notice = await host.startupNotice?.(ssh, session) ?? null;
           if (notice) break;
           await Bun.sleep(250);
@@ -1958,7 +1983,7 @@ export class MachineManager {
     const generation = runtime.generation;
     await this.refresh(runtime);
     if (generation !== runtime.generation || this.stopped) throw new Error("Connection cancelled");
-    runtime.machine.state = "connected"; runtime.machine.action_required = null; runtime.machine.remote_ovis = null; runtime.remoteRevision = undefined; runtime.installFix = undefined; runtime.attempts = 0; runtime.updateCancelled = false;
+    runtime.machine.state = "connected"; runtime.machine.action_required = null; runtime.machine.found_herdr_sessions = undefined; runtime.machine.remote_ovis = null; runtime.remoteRevision = undefined; runtime.installFix = undefined; runtime.attempts = 0; runtime.updateCancelled = false;
     // told only for a connected PC (shared/machines.ts)
     if (runtime.tunnel) runtime.machine.route = runtime.tunnel.route;
     this.openObserver(runtime, generation);
@@ -2069,6 +2094,7 @@ export class MachineManager {
     }
     if (error instanceof MachineActionRequired && error.action !== "windows_login") {
       runtime.machine.state = "error"; runtime.machine.action_required = error.action;
+      runtime.machine.found_herdr_sessions = error.foundHerdrSessions;
       this.emit();
       // SSH itself just worked without a password, so the update can run unattended
       if (error.action === "update_bridge" && this.preferences.auto_update_bridges && this.mayManageBridge(runtime) && !runtime.updateCancelled) this.queueAutoUpdate(runtime.machine.id);
@@ -2081,7 +2107,8 @@ export class MachineManager {
   private retryLater(runtime: Runtime): void {
     runtime.machine.state = "reconnecting";
     const delay = Math.min(60_000, 1000 * 2 ** Math.min(runtime.attempts++, 6));
-    runtime.retry = setTimeout(() => { runtime.retry = undefined; void this.reconnect(runtime); }, delay); runtime.retry.unref();
+    // Keep the waiting state (including Windows sign-in), but let setup own the next connection.
+    runtime.retry = setTimeout(() => { runtime.retry = undefined; if (!this.setupOwns(runtime)) void this.reconnect(runtime); }, delay); runtime.retry.unref();
     this.emit();
   }
   /**
@@ -2100,6 +2127,7 @@ export class MachineManager {
     void this.reconnect(runtime);
   }
   private async reconnect(runtime: Runtime): Promise<void> {
+    if (this.setupOwns(runtime)) return;
     if (!this.mayConnect(runtime)) return;
     if (this.stopped || !runtime.machine.enabled) return;
     this.disconnect(runtime);

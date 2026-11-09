@@ -14,6 +14,9 @@ export interface SshTarget {
   port?: number;
   identity_file?: string;
   session?: string;
+  herdr_socket?: string;
+  /** Explicitly chosen on this PC; permits starting its configured session when absent. */
+  start_new_herdr?: boolean;
 }
 export interface Machine {
   /** Read-only identity inherited from the local herdr catalog. */
@@ -40,6 +43,8 @@ export interface Machine {
   error: string | null;
   /** Attention needed; windows_login retries, windows_start_failed waits for a startup decision. */
   action_required?: MachineAction | null;
+  /** herdr daemons found on the PC before this bridge was started */
+  found_herdr_sessions?: FoundHerdrSession[];
   /** a bridge update running for this PC right now (in the background, or from its dialog) */
   updating?: MachineUpdate | null;
   /** the PC's latest roster as its server read it, with that read's order_epoch/read_seq copied unchanged */
@@ -286,7 +291,8 @@ export interface HerdrCoreFacts {
   session: string | null;
   running: boolean;
 }
-export type MachineAction = "connect" | "update_bridge" | "setup" | "bridge_conflict" | "windows_login" | "windows_start_failed";
+export interface FoundHerdrSession { socket_path: string; session?: string; label: string }
+export type MachineAction = "connect" | "update_bridge" | "setup" | "bridge_conflict" | "windows_login" | "windows_start_failed" | "choose_herdr";
 /** `ovis`: the PC's own Ovis updates itself (Machine.remote_ovis); absent for a bridge this app installs */
 export interface MachineUpdate {
   /** what cancels it: DELETE /api/machines/:id/update (any update), or a setup job's cancel; empty while `queued` */
@@ -313,10 +319,11 @@ export interface MachineSettings {
    */
   set_aside?: string[];
 }
-export interface SetupRequest extends SshTarget { name?: string; machine_id?: string; update_remote?: boolean }
+export interface SetupRequest extends SshTarget { name?: string; machine_id?: string; update_remote?: boolean; start_new_herdr?: boolean }
 export type SetupPhase = "connecting" | "authentication" | "checking" | "approval" | "installing" | "starting" | "connected" | "failed" | "cancelled";
 export interface SetupChallenge { id: string; kind: "host_key" | "secret"; prompt: string }
 export interface SetupJob {
+  found_herdr_sessions?: FoundHerdrSession[];
   id: string;
   machine_id: string;
   phase: SetupPhase;

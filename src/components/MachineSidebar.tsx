@@ -23,6 +23,7 @@ import { useEdgeFades } from "../lib/useEdgeFades.ts";
 import "./Machines.css";
 import "./SidebarSections.css";
 import { useT } from "../lib/i18n.ts";
+import { FoundHerdrChoices } from "./FoundHerdrChoices.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
 import { machineErrorText, saysHerdrAway, sshFailure } from "../lib/userError.ts";
@@ -579,6 +580,7 @@ function MachineActionNotice({ machine, onSetup }: { machine: Machine; onSetup(m
   </div>;
   // another app's bridge runs on this PC: neither an update from here nor an approval fixes that,
   // so it is named as what it is, with the server's reason and a plain reconnect
+  if (machine.action_required === "choose_herdr" && machine.found_herdr_sessions && machine.target) return <FoundHerdrChoices sessions={machine.found_herdr_sessions} busy={busy || !machine.enabled} onChoose={(choice) => onSetup({ ...machine, target: { ...machine.target!, ...choice, ...(machine.herdr_profile_id ? { session: machine.target?.session } : {}) } }, false)} />;
   if (machine.action_required === "bridge_conflict") return <div className="machine-action" role="alert">
     <p className="machine-action-text"><strong>{t("Bridge connection conflict")}</strong><span>{t("Update the apps connected to this PC to the same version, or disconnect the other app, then reconnect here. Sessions keep running.")}</span>{machine.error && <span className="machine-action-reason">{machineErrorText(machine.error, t)}</span>}</p>
     <button type="button" className="btn btn-primary" onClick={() => onSetup(machine, false)}>{t("Reconnect")}</button>
