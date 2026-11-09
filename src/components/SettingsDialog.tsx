@@ -1259,6 +1259,8 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
   const searching = useContext(SettingsQuery).length > 0;
   /** More settings' place for the device list's notes and Revoke every device (DevicesPanel `more`) */
   const [devicesMore, setDevicesMore] = useState<HTMLDivElement | null>(null);
+  /** the end of this PC's own row, for the device list's Check now (DevicesPanel `checkSlot`) */
+  const [devicesCheck, setDevicesCheck] = useState<HTMLDivElement | null>(null);
   const closeConnect = useCallback(() => setConnecting(false), []);
   // a reset relay identity is a new ID for this PC: My devices reads it again
   const [identityResets, setIdentityResets] = useState(0);
@@ -1294,8 +1296,8 @@ function DevicesPage({ auth, security, onSignOut, onRevokedAll, machines, pcSett
       {/* what is connected to this PC: its name atop one list of the other PCs, phones and browsers, the one in use first */}
       <SettingsGroup section="devices">
         <div className="settings-item my-devices">
-          <MyPcRows machines={machines} accountPcs={account.pcs} watching={auth?.role === "watch"} relayKey={`${relay.status?.phase ?? ""}:${identityResets}`}>
-            <DevicesPanel onDevicePaired={closeConnect} auth={auth} onRevokedAll={onRevokedAll} kindOf={(label) => deviceKind(label, t)} currentAction={selfRelay} more={devicesMore} />
+          <MyPcRows machines={machines} accountPcs={account.pcs} watching={auth?.role === "watch"} relayKey={`${relay.status?.phase ?? ""}:${identityResets}`} selfAction={setDevicesCheck}>
+            <DevicesPanel onDevicePaired={closeConnect} auth={auth} onRevokedAll={onRevokedAll} kindOf={(label) => deviceKind(label, t)} currentAction={selfRelay} more={devicesMore} checkSlot={devicesCheck} />
           </MyPcRows>
         </div>
         {/* how anything else gets connected: one button, its sheet picks the way; a search finds it as a row by every way it holds */}
@@ -1441,9 +1443,11 @@ const removablePc = (machine: Machine): boolean => machine.state !== "connected"
  * (a reset in another window) is read again too. Removing a PC stays
  * in the sidebar's PC menu, which moves the selection off it first and knows the PCs herdr manages.
  */
-function MyPcRows({ machines, accountPcs, relayKey, watching, children }: { machines: readonly Machine[]; accountPcs: readonly MyPc[] | null; relayKey: string;
+function MyPcRows({ machines, accountPcs, relayKey, watching, selfAction, children }: { machines: readonly Machine[]; accountPcs: readonly MyPc[] | null; relayKey: string;
   /** a watching device: the server refuses it the removal, so it is not offered */
   watching: boolean;
+  /** takes the end of this PC's own row, where the device list puts its Check now */
+  selfAction?: (slot: HTMLDivElement | null) => void;
   /** the paired phones and browsers, the one in use first: right under this PC, above the other PCs */
   children?: ReactNode }) {
   const t = useT();
@@ -1469,6 +1473,7 @@ function MyPcRows({ machines, accountPcs, relayKey, watching, children }: { mach
             <span className="settings-label">{local.name}<span className="devices-kind is-self">{t("This PC")}</span></span>
             {id !== undefined && <span className="settings-description my-device-id">{t("ID {id}", { id: groupedId(id) })}</span>}
           </div>
+          <div className="devices-actions my-device-check" ref={selfAction} />
         </li>
       </ul>
     )}
