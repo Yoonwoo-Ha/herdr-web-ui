@@ -78,7 +78,7 @@ import { COPILOT_IMAGE_REF, copilotImage, copilotOffsetOutput, copilotOutput, co
 import { copilotApiTranscript, copilotExplicitResume, copilotHandoffSession, copilotProcessSession, copilotTranscriptFile, copilotUnwrittenSession, openCopilotFile, readCopilotProcessSession } from "./copilot-store.ts";
 import { forgetCopilotForeground, readCopilotForeground } from "./copilot-foreground.ts";
 import { claudeSetting, parseConversationMetadata } from "./conversation-metadata.ts";
-import { answerVersion, bindFile, boundSteps, checkBoundFile, ConversationNotStarted, ConversationReadPending, ConversationUnavailable, copilotRecoverable, openBound, readBound, type ConversationPage, HistoryChanged, type RecognizedConversation, type StreamSource, TRANSCRIPT_WINDOW_BYTES } from "./conversation-shared.ts";
+import { answerVersion, bindFile, boundSteps, checkBoundFile, ConversationNotStarted, ConversationReadPending, ConversationUnavailable, copilotRecoverable, type FileIdentity, openBound, readBound, type ConversationPage, HistoryChanged, type RecognizedConversation, type StreamSource, TRANSCRIPT_WINDOW_BYTES } from "./conversation-shared.ts";
 import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
 
 import { createOmpTranscriptParser, isContextClear, MAX_TURNS, omoTaskResults, parseOmpTranscript, PI_IMAGE_REF, PI_PROMPT_IMAGE_REF, piImageBlock, piMessage, piNotice, piPromptImages, piResults, type TranscriptParser } from "./transcript-records.ts";
@@ -1286,12 +1286,12 @@ function parseTurns(source: RecognizedConversation["source"], path: string, text
       : parseOmpTranscript(text, Infinity, ompReading(source, path, taskTitles));
 }
 
-/** How the omp record fold reads a source, the same for a one-shot parse and a live one: pi keeps a
- * picture inline and omp in its blob store, and the image endpoint answers both; omo and gjc are read
- * the same way but would carry image refs nothing answers, so they name none. gjc's tool parts carry
- * their call ids, which the chat matches gjc's rewrites by */
+/** How the omp record fold reads a source, the same for a one-shot parse and a live one: pi and omo keep a
+ * picture inline (an omo tool's display() or image read, #3420) and omp in its blob store, and the image
+ * endpoint answers all three; gjc is read the same way but would carry image refs nothing answers, so it
+ * names none. gjc's tool parts carry their call ids, which the chat matches gjc's rewrites by */
 function ompReading(source: RecognizedConversation["source"], path: string, taskTitles?: Map<string, string>) {
-  return { images: source === "pi-transcript" || source === "cmd-transcript" || source === "omp-transcript", blobs: source === "omp-transcript" ? ompBlobStore(path) : null, callIds: source === "gjc-transcript", taskTitles };
+  return { images: source === "pi-transcript" || source === "cmd-transcript" || source === "omp-transcript" || source === "omo-transcript", blobs: source === "omp-transcript" ? ompBlobStore(path) : null, callIds: source === "gjc-transcript", taskTitles };
 }
 
 /** The blob store of the omp transcript a stream reads (ompBlobStore), for its turn scan; null for any other agent. */
@@ -2988,6 +2988,12 @@ export async function conversationImage(paneId: string, ref: string, codexHome?:
     return codexPromptImage(resolved.path, ref, pane.cwd, resolved.codexHome ?? codexHome);
   }
   if (resolved.source === "pi-transcript" || resolved.source === "cmd-transcript") return readAuthorized(resolved.path, () => piTranscriptImage(resolved.path, ref));
+  // omo writes its pictures inline and its page reads the file in one line, as omp's does (#3420): read so, held
+  // to the exact file its resolver proved where it proved one
+  if (resolved.source === "omo-transcript") {
+    const [dev, ino] = resolved.omoFile === undefined ? [] : resolved.omoFile.split(":").map(BigInt);
+    return ompTranscriptImage(resolved.path, ref, null, "omo-transcript", dev === undefined || ino === undefined ? undefined : { dev, ino });
+  }
   // the update log the pane's own Grok holds (resolveGrokStore), read only over its active history
   if (resolved.source === "grok-transcript") return grokImage(resolved.path, ref);
   // the session file the pane's own process holds (copilotTranscriptPath), opened pinned as the page reads it
@@ -3889,12 +3895,15 @@ export function piTranscriptImage(path: string, ref: string): { mediaType: strin
  * Like a Claude picture, it holds a window, a record's shape and the picture at a time, never a record
  * or the transcript whole, and it gives the event loop its turn between windows (finishAsync), so a
  * large transcript never holds the bridge for more than a window's work.
+ * omo writes its pictures inline the same way and its page reads the file the same way, so `source`
+ * omo-transcript reads it so too, with no blob store (#3420); `exact` is the file its resolver proved
+ * (omoFile), which every open is then held to instead of the file the path names as the lookup begins.
  */
-export async function ompTranscriptImage(path: string, ref: string, anchor?: string | null): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
+export async function ompTranscriptImage(path: string, ref: string, anchor?: string | null, source: "omp-transcript" | "omo-transcript" = "omp-transcript", exact?: FileIdentity): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
   // every open of the transcript, after each await too, is held to the file the path names as the lookup begins
   const authorized = authorizedFile(path);
   if (authorized === null) return null;
-  try { return await finishAsync(boundSteps([[path, authorized]], ompTranscriptImageSteps(path, ref, anchor))); } catch { return null; }
+  try { return await finishAsync(boundSteps([[path, exact ?? authorized]], ompTranscriptImageSteps(path, ref, anchor, source))); } catch { return null; }
 }
 
 /**
@@ -3908,16 +3917,17 @@ const RECORDS_PER_STEP = 32;
  * authorized (conversationImage: ompBlobAnchor); a blob is read only from that directory. Without one
  * (a caller that authorized nothing first), it is the store as this read starts.
  */
-function* ompTranscriptImageSteps(path: string, ref: string, given?: string | null): Steps<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
+function* ompTranscriptImageSteps(path: string, ref: string, given: string | null | undefined, source: "omp-transcript" | "omo-transcript"): Steps<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
   const tool = PI_IMAGE_REF.exec(ref);
   const match = tool ?? PI_PROMPT_IMAGE_REF.exec(ref);
   if (match === null || match[1] === undefined || match[2] === undefined) return null;
   const [, id, nth] = match;
-  const blobs = ompBlobStore(path);
-  const anchor = given === undefined ? ompBlobAnchor(blobs)?.identity ?? null : given;
+  // omo keeps every picture inline: no store to read a blob from
+  const blobs = source === "omp-transcript" ? ompBlobStore(path) : null;
+  const anchor = blobs === null ? null : given === undefined ? ompBlobAnchor(blobs)?.identity ?? null : given;
   {
-    const stream = transcriptStream("omp-transcript", path, statSync(path), defaultCodexHome());
-    yield* applyHistoryBoundarySteps(path, stream, "omp-transcript", true);
+    const stream = transcriptStream(source, path, statSync(path), defaultCodexHome());
+    yield* applyHistoryBoundarySteps(path, stream, source, true);
     // the records that name the id, and those that can be a clear however JSON writes it
     const ranges = yield* linesWithSteps(stream, id, stream.floor, stream.length);
     const seen = new Set(ranges.map(([start]) => start));
@@ -3935,7 +3945,7 @@ function* ompTranscriptImageSteps(path: string, ref: string, given?: string | nu
       if (shape === UNREAD) return null;
       if (shape === NOT_A_RECORD) continue;
       const entry: unknown = shape.entry;
-      if (isContextClear(entry, "omp-transcript")) { open = false; found = null; continue; }
+      if (isContextClear(entry, source)) { open = false; found = null; continue; }
       if (found !== null) continue;
       // what the parser draws as something other than a message carries no picture of its
       if (skillPromptMessage(entry) !== null || piNotice(entry) !== null || omoTaskResults(entry, new Map()) !== null || (entry as { type?: unknown }).type === "compaction") continue;
