@@ -110,7 +110,11 @@ pairing hosts, in a release most PCs run.
 - **The pass.** `ovp1.<payload>.<signature>`, base64url. The payload is JSON with exactly `v` (1),
   `kid`, `aud` (`ovis-relay`), `sid` (the PC's `server_id`), `iat` and `exp` (seconds; 48 hours
   apart, and a relay refuses one good for longer); the signature is Ed25519 over `ovis-relay-pass/1.` followed by the payload's text. It names
-  no account.
+  no account. A v2 payload has the same fields with `v` 2 and one more, `new`: 1 when new client
+  sessions to the PC are allowed, 0 when they are not for the pass's lifetime; a v1 pass allows
+  them. The prefix stays `ovp1.`: the signature covers the payload, `v` and `new` included. The
+  relay accepts both forms and parses `new`, but does not act on it yet: that is enforced by a
+  later relay change.
 - **Sending it.** The PC puts it in the `x-ovis-relay-pass` header of every PC socket's upgrade
   (control, data, warm), never in the URL. A pass alone opens nothing: the socket still answers the
   server challenge for that `server_id`'s key, so a copied pass is no use without the PC's secret key.

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   RELAY_PASS_EXPIRED, RELAY_PASS_INVALID, RELAY_PASS_LIFETIME_S, RELAY_PASS_REQUIRED, RELAY_PASS_SKEW_S,
-  checkRelayPass, importRelayPassKey, parseRelayPass, signRelayPass,
+  checkRelayPass, importRelayPassKey, parseRelayPass, relayPassAdmitsNewSessions, signRelayPass,
 } from "./relay-pass.ts";
 
 const SID = "0123456789abcdef0123456789abcdef";
@@ -12,8 +12,37 @@ async function issuer(kid = "a1b2c3d4") {
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
   const hex = Array.from(raw, (byte) => byte.toString(16).padStart(2, "0")).join("");
   const keys = new Map([[kid, await importRelayPassKey(hex)]]);
-  return { kid, keys, sign: (sid = SID, now = NOW) => signRelayPass(pair.privateKey, kid, sid, now) };
+  return { kid, keys, sign: (sid = SID, now = NOW) => signRelayPass(pair.privateKey, kid, sid, now),
+    signAdmitting: (newSessions: boolean) => signRelayPass(pair.privateKey, kid, SID, NOW, undefined, { newSessions }) };
 }
+
+const encode = (value: unknown) => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+test("a v2 pass says whether new client sessions to the PC are allowed; a v1 pass always allows them", async () => {
+  const { keys, sign, signAdmitting } = await issuer();
+  const base = { kid: "a1b2c3d4", aud: "ovis-relay", sid: SID, iat: NOW, exp: NOW + RELAY_PASS_LIFETIME_S } as const;
+  const closed = await checkRelayPass(await signAdmitting(false), keys, SID, NOW);
+  expect(closed).toEqual({ ok: true, payload: { v: 2, ...base, new: 0 } });
+  const open = await checkRelayPass(await signAdmitting(true), keys, SID, NOW);
+  expect(open).toEqual({ ok: true, payload: { v: 2, ...base, new: 1 } });
+  const v1 = await checkRelayPass(await sign(), keys, SID, NOW);
+  expect(v1).toEqual({ ok: true, payload: { v: 1, ...base } });
+  expect([closed, open, v1].map((check) => check.ok && relayPassAdmitsNewSessions(check.payload))).toEqual([false, true, true]);
+});
+
+test("a v2 pass whose new-session field was edited does not hold, and only the exact v2 shape parses", async () => {
+  const { keys, signAdmitting } = await issuer();
+  const pass = await signAdmitting(false);
+  const [, body, sig] = pass.split(".") as [string, string, string];
+  const payload = JSON.parse(atob(body.replace(/-/g, "+").replace(/_/g, "/"))) as Record<string, unknown>;
+  // the signature covers the whole payload: neither flipping the field nor dropping it back to v1 holds
+  expect(await checkRelayPass(`ovp1.${encode({ ...payload, new: 1 })}.${sig}`, keys, SID, NOW)).toEqual({ ok: false, reason: RELAY_PASS_INVALID });
+  const { new: _new, ...v1 } = payload;
+  expect(await checkRelayPass(`ovp1.${encode({ ...v1, v: 1 })}.${sig}`, keys, SID, NOW)).toEqual({ ok: false, reason: RELAY_PASS_INVALID });
+  for (const bad of [{ ...payload, new: 2 }, { ...payload, new: true }, { ...payload, new: "0" }, v1, { ...payload, v: 1 }, { ...v1, v: 1, new: 1 }, { ...payload, v: 3 }, { ...payload, extra: 0 }]) {
+    expect(parseRelayPass(`ovp1.${encode(bad)}.${sig}`)).toBeNull();
+  }
+});
 
 test("a pass the service signed holds for its PC until it expires, with the skew allowed", async () => {
   const { keys, sign } = await issuer();
@@ -67,7 +96,6 @@ test("only the exact shape parses", async () => {
   const { sign } = await issuer();
   const pass = await sign();
   const [, body, sig] = pass.split(".") as [string, string, string];
-  const encode = (value: unknown) => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const base = { v: 1, kid: "a1b2c3d4", aud: "ovis-relay", sid: SID, iat: NOW, exp: NOW + 10 };
   expect(parseRelayPass(pass)).not.toBeNull();
   for (const bad of [
