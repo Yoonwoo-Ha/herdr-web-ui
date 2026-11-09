@@ -324,7 +324,7 @@ try {
 
   // The invite's read-only bearer link still needs keyboard focus, using the global theme ring.
   const inviteFixture = {
-    ...recoveringFixture, phase: "running", url: portalAddress,
+    ...recoveringFixture, version: "v2.7.3", phase: "running", url: portalAddress,
     auth: { method: "credential", allow: [], issuer: null, client_id: null },
     auth_methods: ["credential"],
   } satisfies PortalStatus;
