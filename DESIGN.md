@@ -483,6 +483,34 @@ blocks of `src/styles.css`.
   overlay2 and Latte subtext0 darkened to stay AA on `--bg`, as set in its blocks of
   `src/styles.css`.
 
+### Notice tint
+
+The one surface for a row or banner that needs the user (the hosted relay app's Needs you): `--notice`
+mixed over `--bg-panel`, 12% in dark and 6% in light, rounded once to an opaque colour, so it is
+never made transparent again on hover. Text on it is `--notice` or `--text`, at least 4.5:1 in every
+theme (`src/lib/themes.contrast.test.ts`); a stronger light mix failed that floor in several palettes.
+It is a CSS-only role of the relay app, not one of the runtime roles in `src/lib/themeRoles.ts`.
+
+| Role | Token | Dark | Light |
+|------|-------|------|-------|
+| Notice tint (Amber, the base blocks) | `--notice-tint` | `#312b1c` | `#f2efe4` |
+
+| Theme | Dark | Light |
+|-------|------|-------|
+| Charcoal | `#2e2a21` | `#f3f0ea` |
+| Codex | `#353128` | `#f2efea` |
+| Catppuccin / Catppuccin Latte | `#333036` | `#e0e0e2` |
+| Tokyo Night / Tokyo Night Day | `#322d2e` | `#dad9dc` |
+| Black | `#1b150c` | none |
+| Gruvbox / Gruvbox Light | `#413a29` | `#f4e8bc` |
+| One Dark / One Light | `#3f3e3d` | `#f4f1eb` |
+| Solarized / Solarized Light | `#173730` | `#f6edd5` |
+| Kanagawa / Kanagawa Lotus | `#322f30` | `#e9e3b4` |
+| Rose Pine / Rose Pine Dawn | `#342b2e` | `#f4ebe0` |
+| Dracula | `#404340` | none |
+| Nord | `#454649` | none |
+| Vesper | `#352f29` | none |
+
 ### Rules
 - Amber is the one chrome color. Accent (selected, focused, informational) and primary (the user's
   action: Send, primary buttons) are both amber; in light, accent is the darker text-safe ochre and
@@ -542,6 +570,7 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
 | `--tracking-tight` | `-0.01em` | Brand and primary titles |
 | `--tracking-display` | `-0.02em` | The display line |
 | `--tracking-caps` | `0.06em` | Uppercase operational labels |
+| `--tracking-code` | `0.12em` | A pairing code or key id spelled out in the mono face (the relay shell's code fields) |
 
 ### Faces
 - The app ships its typefaces (`src/fonts/`, licenses in `THIRD_PARTY_NOTICES.md`) and loads
@@ -827,7 +856,7 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | `--icon-size` | `18px` | — | Standard icon |
 | `--mark-size` | `22px` | — | Brand mark |
 | `--avatar-size` | `32px` | `26px` | Command-palette mark box |
-| `--dot-size` | `7px` | — | Connection dot |
+| `--dot-size` | `7px` | — | Connection dot; the inline status glyph (StatusDot `inline`); twice it is the 14px data glyph |
 | `--rail-w` | `3px` | — | Quoted-content rails |
 | `--hairline` | `1px` | — | Borders |
 | `--content-w` | `820px` | — | Settings and dialog content |
@@ -836,6 +865,17 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | `--chat-fold-lines` | `12` | — | Lines of prose a long user message shows before it folds behind Show full message (Chat turn); `lib/userMessageFold.ts` folds a message past the same count |
 | `--palette-w` | `640px` | — | Command palette |
 | `--palette-top` | `12vh` | — | Palette top offset |
+| `--table-row-h` | `44px` | `40px` | The hosted relay app's rows that carry an action (PC table, attention list); a coarse pointer gets `--touch-target` in either density. `--row-h` stays for the lists above |
+| `--tabbar-h` | `56px` | — | The relay app's phone tab bar, before the bottom safe area; a minimum, larger text grows it |
+| `--relay-sidebar-w` | `240px` | — | The relay dashboard's sidebar: its own width, never the terminal sidebar's density step |
+| `--relay-content-w` | `1280px` | — | The relay dashboard's main column cap, gutters included |
+| `--relay-signin-w` | `368px` | — | The relay sign-in column |
+| `--relay-sheet-w` | `520px` | — | The Add-a-PC sheet |
+| `--relay-detail-w` | `360px` | — | The PC details column from `1100px` |
+| `--relay-table-head-h` | `36px` | — | The PC table's sticky header |
+| `--relay-control-icon-size` | `16px` | — | One glyph size for the relay app's controls and navigation, and every segmented control's glyph (the old `15px` is retired) |
+| `--relay-fs-min` | `11px` | — | Floor under a compact or scaled tab label: `max(var(--relay-fs-min), var(--fs-2xs))` |
+| `--relay-fs-body-min` | `12px` | — | Floor under scaled relay body text |
 | `--context-line` | `calc(var(--fs-lg) * var(--lh-base))` = `24px` | `21.75px`, through the scale | The selected pane's crumb row, min and max height. Scoped to `.context`, not `:root`, so it follows `--fs-lg`/`--lh-base` in either density |
 
 ### Focus and layers
@@ -996,6 +1036,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 - One `aria-pressed="true"` option receives hover fill and strong text; the group itself is an
   elevated, bordered `--radius-md` track.
 - Used for Chat/Terminal, theme and density. It is not a generic tab list.
+- An option's glyph is `--relay-control-icon-size` (`16px`), the size of a `.btn`'s glyph.
 - An option is `--control-h` less `--segmented-inset` tall, so the track is `--control-h`. On a coarse
   pointer the track keeps its height; each option is at least `--touch-target` wide, so neighbours
   never share a tap, and reaches `--touch-target` tall through an invisible `::before` expander sized
@@ -3733,7 +3774,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   About links the repository.
 - In the hosted relay shell (app.ovis.sh, `<meta name="ovis-shell">`, lib/shellMode.ts) the page
   opens with a **This app** group of two rows the native build never shows: **Change PC** (a neutral button to the
-  shell's front page, which lists every paired PC, the same row the iOS app gets for its own list)
+  shell's front page: the paired-PC list, or, signed out where the account service runs, the sign-in
+  screen with that list behind **Continue without an account**; the same row the iOS app gets for
+  its own list)
   and **Forget this PC** (a neutral button that asks once in a `ConfirmDialog`, **Forget**, then
   deletes this phone's key for the PC and leaves for the front page). Neither is destructive on the
   PC, which keeps listing the phone until it is revoked there, so neither is a `.btn-danger`.
@@ -4385,34 +4428,213 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   scoped screen, the sentence per state, **Back** to the front page on a PC's page and nowhere
   else, the iPhone browser tab's line "Add to Home Screen to stay paired" (a `--fs-sm` dim line
   over a hairline at the card's foot, only there: the installed app's storage is not cleared).
-- Layout: `centred card`; the document is the one scroller; the saved-PC list is a plain column
+- Layout: `centred card` for the pairing and recovery screens (the sign-in below is an unboxed
+  column); the document is the one scroller; the saved-PC list is a plain column
   inside the card, never a scroller of its own.
 - Precedent: paseo's hosted web app (confirm a new host, remember hosts, one list to pick from)
   for the flow; the states and their words are this app's, in the token gate's own frame, so a
   phone that pairs through the relay and one that pairs with a code see the same room. Neither
   the Codex nor the Claude app has a hosted relay shell to follow.
-- Account part (components/AccountPcs.tsx, lib/account/), only on the front page and only when
-  the page names an account service (`<meta name="ovis-account-service">`, account.ovis.sh unless
-  the build names another) and, in a browser, it is app.ovis.sh, the one page a sign-in comes back
-  to; otherwise the front page is the saved-PC list above, unchanged. Signed out: **Continue with GitHub** and **Continue
-  with Apple**, two equal neutral `.btn`s (App Review 4.8 wants Apple wherever another provider
-  is, and neither is the one to pick), a `--fs-xs` dim line on what the account service learns,
-  then the QR route under a hairline (an `h2`, the page keeps one `h1`). With saved PCs the list
-  comes first and the sign-in follows it. Signed in: **Your PCs** with "Signed in with GitHub"
-  under it, one row per PC of the account merged with the PCs this device is paired with: the
-  name, and under it a `--fs-sm` dim line in words (Paired; This device is not approved on it
-  yet; Offline, last seen 3 h ago; Its Ovis needs an update to join the account), no badge. Only
-  a paired PC is a link with a chevron; the others are plain rows. The `<main>` adds
-  `data-account-state` (`signed-out`, `signing-in`, `signed-in`) for scripts; each row
-  `data-pc-state`. Precedent: Tailscale's admin machine list (every machine of the account, its
-  state in words) for the list, and Signal's linked devices for keeping trust on devices already
-  linked rather than on the sign-in.
+- Account part (components/AccountPcs.tsx, RelayDashboard.tsx, RelayOverview.tsx,
+  RelayPcTable.tsx, RelayPcDetails.tsx, RelayMap.tsx, AddPcSheet.tsx, EnrollmentStatus.tsx,
+  StatusDot.tsx, relayPcState.tsx, lib/account/, lib/relay/dashboard.ts), only on the front page
+  and only when the page names an account service
+  (`<meta name="ovis-account-service">`, account.ovis.sh unless the build names another) and, in a
+  browser, it is app.ovis.sh, the one page a sign-in comes back to; otherwise the front page is the
+  saved-PC list above, unchanged.
+- Sign-in (RelayShellScreens.tsx, AccountPcs.tsx): an unboxed column `--relay-signin-w` (368 px)
+  wide on `--bg`, no card, in this order: the sheep mark; **Sign in to Ovis** (the page's one
+  `h1`); one provider button for each provider the account service lists, in the order GitHub,
+  Google, Apple (production lists GitHub and Google), equal neutral `.btn`s `--touch-target`
+  (44 px) tall with the provider's mark at a fixed inset; then, only when this device holds
+  pairings, **Continue without an account (N PCs)**; a hairline divider; **Pair with a QR or
+  code**, a quiet ghost button; and last a `--fs-xs` dim line, "The account only lists your PCs.
+  Sessions stay end-to-end encrypted." Continuing without an account opens the dashboard in local
+  mode (this device's own pairings, `data-dashboard-mode="local"`, the nav's foot offering the
+  sign-in).
+- Routes: the dashboard is one page with five hash routes, `#overview` (the default), `#pcs`,
+  `#devices`, `#relay` and `#settings`. Devices shows **This device** and the **Account** controls (**Sign out** and **Remove this device from your account**, or **Sign in** in local mode); Relay holds the connection map open and lists each relay host with its PC count and regional or global; Settings is a real page (theme, density, interface
+  font size, language) built from the app's own settings rows.
+- Frame: on a desktop a left nav `--relay-sidebar-w` (240 px) wide on `--bg-panel`, the five places
+  with Overview and PCs carrying their counts, the current one on `--bg-elevated`, and the provider
+  and **Sign out** (or **Without an account** and **Sign in** in local mode) at its foot. The content column stops at `--relay-content-w` (1280 px). A top
+  bar holds the view's title and **Add a PC**, the one primary action on every view (quiet `.btn`
+  when Overview or PCs shows the empty state, which holds the primary **Add a PC**). At 768 px and
+  under the nav becomes a bottom tab bar (`--tabbar-h` over the safe area) of the same places, and
+  the brand bar turns sticky glass at the top with **Add a PC** as a 44 px icon button (`#devices`
+  carries the account controls on a phone). `html:has(.relay-dash)` sets `scroll-padding-top` and
+  `scroll-padding-bottom` so keyboard focus stays above the fixed bottom tab bar and below the
+  sticky top bar, and below 280 px (including 200% zoom on a 390 px phone, 195 CSS px) the tab bar
+  shows icons only while keeping each label as a visually hidden accessible name and 44 px targets.
+- Overview: a strip of three cells with hairlines between them, **Ready** | **Needs you** |
+  **Relays in use** (or **Paired with this device** | **Relays** in local mode), each a state dot,
+  its word and one `--fs-xl` numeral (stacking to one column below 320 px so words never split at
+  200% zoom or +40% text, with `overflow-wrap: break-word` on headings and labels and `word-break:
+  auto-phrase` in Japanese). Needs you counts every
+  PC that wants something, offline ones included, and says so on a dim line under the numeral
+  ("incl. 1 offline"), so the cells add up to the PCs listed. A pressed cell filters the table below
+  (`aria-pressed`). Under the strip, one mono chip per relay host with its PC count,
+  regional or global, and the fastest measured relay RTT when a check answered through it; a chip
+  filters the table to that relay, and once a check has run a dim line summarizes reachability
+  ("Reachable now: {direct} direct · {relay} via relay · {none} no answer"). Then the attention list: PCs that
+  need you, most urgent first, at most three rows of state dot, name, reason (or relay / last seen
+  when the reason is shared) and action, with **View all N** above when more than three need you.
+  When the rows share one reason it's said once as a caption above them ("Add window closed · an
+  account member must approve") rather than on every row. Then the PC table (below), and last the
+  **Connection map**, a 44 px disclosure row that opens `#relay` with "N relays · M PCs" on its right.
+  A first-time account gets one empty state instead of the strip: an icon, one title,
+  one line ("Sign in on a PC, or scan the QR code it shows, to see it here."), **Add a PC** and **Pair with a QR or code**.
+- PCs table (RelayPcTable.tsx), filtered by All / Ready / Needs you / Offline with **Check now**
+  beside the filters, `--table-row-h` (44 px) rows under a 36 px head, or a two-line `<ul>` list
+  on phones (768 px and under) and narrow containers. Columns: **Name** (state dot and name),
+  **State** (the specific word below, plus a separate enrollment line `data-pc-enrollment` when
+  account enrollment is pending "Adding it to your account…" or failed "Account setup is incomplete.
+  Open it to try again." on a `paired` or `unchecked` row where **Open** retries setup, or "Account
+  setup is incomplete." otherwise, and a dim subline for a fresh Add countdown "new · {n} min
+  left", "Update Ovis on it", or this device's check result after **Check now**; on a phone row a
+  closed Add window also shows "Add window closed · an account member must approve", which is the
+  state word's `title` in the table), **Relay** (how this device reaches a paired PC right now and
+  the measured round trip: "Same network · 4 ms", "Tailscale · 18 ms", the answering relay host as
+  a mono chip followed by " · 62 ms", or "Checking…" / "No answer" / "Not checked", or the assigned
+  host as a mono chip for a PC it isn't paired with), **Last seen**, and the one action its state
+  allows (Open, Add, Join, Update, Details; during pending or failed enrollment each row keeps its
+  own `displayState` word and action, so an `offline` row shows "Offline" or "Offline · {when}" with
+  **Details**, a `needs-update` row shows "Needs update" with **Update**, an unlisted or local `paired`
+  or `unchecked` row shows its local check word ("Paired · not checked", "Answers", or "No answer"),
+  a listed `paired` row shows "Ready" when linked or when enrollment failed and "Ready · not in the
+  account yet" when unlinked and not failed, and only `paired` and `unchecked` rows show **Open**,
+  which reopens the PC's scope at the Ready checkpoint to retry enrollment, so only they get "Open
+  it to try again."). Selecting a
+  row or **Details** opens RelayPcDetails without opening a socket to the PC: beside the list as a
+  `--relay-detail-w` (360 px) side panel at 1100 px and wider, sitting beside the two-line narrow
+  list from 1100 to 1391 px (`NARROW_SPLIT_TABLE_QUERY`) and beside the four-column table (dropping
+  **Last seen** so rows stay on one line) at 1392 px and wider; below 1100 px the details replace the list as a full view with **Back**,
+  moving focus to the details heading and returning it to the PC's row on close (including browser Back), or when an unlisted pairing's row is gone after **Forget**, to the next row, else the previous row, else the **PCs** view heading (`tabIndex={-1}`). Details holds
+  seven labelled rows (state, with an "Account setup is incomplete." subline when enrollment failed;
+  route; relay; last seen; this device; key ID; version) and the PC's
+  actions (Open or Update, Add or Join, Check now for this PC alone, Forget this PC) at its foot; pressing **Forget this PC** opens a portalled `ConfirmDialog` ("Forget this PC?", "This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.", **Cancel** and **Forget**) over the `inert` dashboard (`.relay-dash`), moving initial focus to **Cancel**, returning focus to **Forget this PC** on **Cancel** or Escape, and after **Forget** returning focus to the row when the PC stays listed or to the next row, else the previous row, else the **PCs** view heading (`tabIndex={-1}`) when an unlisted pairing's row is removed.
+- Connection map (RelayMap.tsx): this device, each relay hub, the PCs behind it. A PC that answered
+  by the same network or Tailscale draws its wire straight from this device and skips the hub; a
+  PC reached through a relay hangs off that hub. Wires are still lines (`--accent` when live or seen
+  lately, `--text-dim` when unchecked or offline, `--status-working` while checking);
+  only a wire whose PC is being checked animates. On a phone, or past eight PCs, the map is an
+  ordered route list of hops.
+- Add-a-PC sheet and Ready checkpoint (AddPcSheet.tsx, RelayShell.tsx, EnrollmentStatus.tsx,
+  lib/relay/shell.tsx): a modal sheet `--relay-sheet-w` (520 px) wide with four
+  segmented bars and a step list, in the mode the row picked, named in `data-add-pc-mode` and its
+  phase in `data-add-pc-phase`: `start`, `confirm`, `connecting`, `compare` (six digits to type
+  or match), `wrong` (a wrong number, with Try again), `approving`, `ready` and `failed`. **Add**
+  types the six digits the new PC shows, then approves on that PC; **Join** asks through the
+  account, shows this device's digits, and an account member approves on another device. Pressing
+  **Add this PC** or **Ask to join** in the sheet records the consent once (`keepConfirmedPc`) and
+  starts pairing at once on `/s/<id>/` (`start` -> `connecting` -> `compare`) without a second
+  "Pair with {name}?" step; "Pair with {name}?" with **Pair** remains only for pairing links and QR
+  codes opened from outside the dashboard (or when `sessionStorage` is blocked). **Add a
+  PC** with no PC says how one is added ("On the PC, open Settings → Devices and PCs to add it to
+  your account, or pair with the QR code or pairing code it shows.") and leads to the QR and code
+  modal sheet (`PairQrDialog`, over the scrimmed inert dashboard), whose QR and code screens name
+  only the current path ("On the PC, open Settings → Devices and PCs → Add a connection → Ovis relay
+  and scan the QR code." and "On the PC, open Settings → Devices and PCs → Add a connection → Ovis
+  relay and type the code it shows."). The sheet drives the
+  shell's existing join, Pair, match and Cancel; failure stays in the sheet in the shell's own
+  words, except a new identity, which keeps the shell's screen with its ids and Forget. Ready shows
+  at once when local pairing finishes ("{name} is ready to open on this device." with **Open PC**),
+  without waiting on account enrollment. While account enrollment runs (`enrollment: "pending"`),
+  `EnrollmentStatus` shows a spinner and "Adding it to your account…"; when enrollment finishes, it
+  shows "In your account" (plus " · Devices added: {count}" when `state` is `{ state: "complete",
+  admitted }`, keeping earlier admissions across enrollment and introduction retries, or "In your
+  account" alone when `state === "complete"`); if enrollment fails or times
+  out (`"failed"`), the checkpoint stays on Ready and `EnrollmentStatus` shows "Account setup is
+  incomplete." with **Try again** (`data-action="retry-enrollment"`). The enrolling transport stays open in the
+  background if the user opens the PC or closes the checkpoint before enrollment settles; on the
+  dashboard row, a PC whose enrollment is pending or failed keeps its own `displayState` word and
+  action (an `offline` row shows "Offline" or "Offline · {when}" with **Details**, a `needs-update`
+  row shows "Needs update" with **Update**, an unlisted or local `paired` or `unchecked` row shows
+  its local check word, a listed `paired` row shows "Ready" when linked or when enrollment failed
+  and "Ready · not in the account yet" only while listed, not linked, and not failed, and only
+  `paired` and `unchecked` rows keep **Open**, which retries enrollment at the Ready checkpoint),
+  and adds a separate enrollment line ("Adding it to your account…", "Account setup is incomplete.
+  Open it to try again." only when `paired` or `unchecked`, or "Account setup is incomplete."
+  otherwise). In `AddPcSheet` and
+  `PairQrDialog`, phone dialog and sheet footers (`SHEET_QUERY`, 640 px and under) render the
+  primary action first in DOM markup and stack vertically, putting the primary action first in both
+  visual and Tab order.
+- Status vocabulary: one state word per PC, specific to what's true: Ready (on a listed `paired`
+  row when linked or when account enrollment failed), Ready · not in the account yet (only on a
+  listed `paired` row that is not linked and whose enrollment is not failed), Needs approval, Needs update, Updating, Checking…, Offline (or Offline · {when}), or
+  for a paired PC in local mode or not listed in the account (`unchecked`), Paired · not checked,
+  Answers, or No answer (with pending or failed account enrollment shown on its own line under the
+  state: "Adding it to your account…", "Account setup is incomplete. Open it to try again." on a
+  `paired` or `unchecked` row, or "Account setup is incomplete." otherwise);
+  the strip groups them as Ready, Needs you and Offline. The summary, the filters,
+  the attention list, the table, Details and the map all read one model (`dashboardModel` and
+  `dashboardState()` in lib/relay/dashboard.ts: a live answer from this device beats a stale
+  directory Offline on every surface, while an unlisted pairing without a live answer stays
+  `unchecked` and out of Ready and Needs you). Color rule: color sits only on the state dot (StatusDot.tsx, `--dot-size`
+  7 px): filled `--status-done` for ready, half `--notice` for needs you, ring with an arrow up
+  `--notice` for updating, hollow `--text-dim` for offline, `--status-working` for checking and
+  `--status-blocked` for failed, so the shape alone still reads in forced colors.
+  The words stay `--text`, and no row, badge or cell is tinted by state; the one tinted surface is
+  the error banner (`--danger-tint` with `--danger-text`) when the account read fails.
+- Motion: nothing enters. Hover and the pressed strip cell change background over `--dur-fast`.
+  The only loop is a checking wire's flow in the map (`--dur-spin`); every other wire is still.
+  Under `prefers-reduced-motion: reduce` the flow is hidden and the transitions stop; a checking
+  wire stays as a still line, and its dot and word still say Checking…. Loading skeletons never
+  shimmer.
+- Tokens used: `--bg`, `--bg-panel`, `--bg-elevated`, `--bg-hover`, `--border`, `--divider`,
+  `--text`, `--text-strong`, `--text-dim`, `--status-done`, `--notice`, `--status-working`,
+  `--status-blocked`, `--danger-tint`, `--danger-text`, `--fs-xs` to
+  `--fs-xl`, `--touch-target`, `--control-h`, `--table-row-h`, `--chip-h`, `--dot-size`,
+  `--tabbar-h`, and the relay sizes `--relay-sidebar-w`, `--relay-content-w`, `--relay-signin-w`,
+  `--relay-sheet-w`, `--relay-detail-w`, `--relay-table-head-h`, `--relay-control-icon-size`,
+  `--relay-fs-min` and `--relay-fs-body-min` (the floors that keep small text readable). No
+  color literal lives in the relay CSS.
+- One account read on load, again when the page comes into view and every 60 s while it stays in
+  view. The `<main>` adds `data-account-state` (`signed-out`, `signing-in`, `signed-in`) for
+  scripts; each row `data-pc-state`.
+- Precedent: Linear for the nav, the summary strip and the rows; Geist for the table, the empty
+  state and the sign-in column; Kumo for the banner and the Add-a-PC wizard; Ryu for the status
+  pairs (dot and word) and the actions docked at the foot of Details. Tailscale's admin machine
+  list (every machine of the account, its state in words) and Signal's linked devices (trust
+  kept on devices already linked, not on the sign-in) still hold for what the table and Devices
+  say. Patterns only: no code or pixels are borrowed, so THIRD_PARTY_NOTICES gains nothing.
 - Relay files keep the existing file viewer and its Paseo-style file bar, rather than adding a
   separate remote-files screen. A client without a resource-capable service worker shows the
   usual file note as an alert when the 64 MiB limit is exceeded. Copy link and new-tab actions
   name the paired PC's reader, which opens its own channel; active file content is never a
   navigated blob. Rendered HTML uses the opaque sandbox's own render host and policy, so its
   inline scripts work without access to the shell's origin or device keys.
+
+- Foundation for the console (tokens above; the views adopt them in their own changes): one state
+  glyph, `StatusDot` (components/StatusDot.tsx), for the strip, the attention list, the map, the PC
+  table, the saved-PC list and `ConnectionLine`. A state is a shape, a colour and its word, never
+  the colour alone, and the glyph is `aria-hidden` beside the word:
+
+  | Meaning | Shape | Colour |
+  |---------|-------|--------|
+  | Ready | Filled disc | `--status-done` |
+  | Needs you (an approval, or an update to install) | Ring, its left half filled | `--notice` (a row may sit on `--notice-tint`) |
+  | Offline | Hollow ring | `--text-dim` |
+  | Updating (an installation actually running) | Ring with an arrow up | `--notice` |
+  | Checking / Connecting | Open arc | `--status-working` |
+  | Failed | Ring crossed out | `--status-blocked` |
+
+  `14px` (`2 * --dot-size`) beside data, `--dot-size` inside a line of text (`ConnectionLine`, where
+  Connected and Answers share the ready disc and their words tell them apart); the line is `1.5px`
+  at either size. Every part is drawn in `currentColor`, so forced colours keep each shape, drawn
+  in `CanvasText`. It never moves and casts no shadow: a check in progress is said by its arc and
+  word, the only motion in the console is the `--dur-fast` / `--dur-base` colour change and the
+  phone sheet's `--dur-sheet` / `--dur-sheet-out`, with no count roll, row entrance or decorative
+  loop, and reduced motion removes the transitions. Glyph targets: `3:1` for a state glyph and the
+  focus ring on the surfaces they sit on, `4.5:1` for text, in every theme
+  (`src/lib/themes.contrast.test.ts`). Action icons stay lucide: `16px` in controls and
+  navigation (`--relay-control-icon-size`), `--icon-size` in rows, `--mark-size` in phone tabs.
+- Console precedent: Linear for the navigation, the summary strip and dense rows; Vercel's Geist
+  for the table, the empty state, the sign-in column and its status dot; Cloudflare's Kumo for the
+  banner and the step wizard; Ramp's Ryu for state pairs (glyph and word) and docked phone actions;
+  Paseo's hosted app and Signal's linked devices stay the precedent for the pairing flow. They are
+  followed in structure only: no code or pixels are copied, so nothing is added to
+  THIRD_PARTY_NOTICES.md.
 
 ### Role (no control surface)
 - `interact` types and resizes; `observe` does neither. The server enforces both and the WS protocol

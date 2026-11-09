@@ -169,4 +169,63 @@ describe("theme boot", () => {
     expect(boot()).toBe(rowFor(DEFAULT_SETTINGS.darkTheme, "dark"));
     expect(boot()).toBe(app());
   });
+
+  test("hosted shell build defaults to system prefers-color-scheme when no appearance is saved, while saved settings and the main app keep their defaults", () => {
+    const origDoc = Object.getOwnPropertyDescriptor(globalThis, "document");
+    const setShellMeta = (shell: boolean) => {
+      Object.defineProperty(globalThis, "document", {
+        configurable: true,
+        value: {
+          querySelector: (sel: string) =>
+            sel === 'meta[name="ovis-shell"]' && shell ? { getAttribute: (n: string) => (n === "content" ? "relay" : null) } : null,
+        },
+      });
+    };
+    try {
+      // In the hosted shell with no saved settings: follows prefers-color-scheme (system)
+      setShellMeta(true);
+      store(null, null);
+      systemDark = false;
+      expect(storedAppearance(readStoredAppearance(() => window.localStorage))).toEqual({
+        theme: "system",
+        darkTheme: DEFAULT_SETTINGS.darkTheme,
+        lightTheme: DEFAULT_SETTINGS.lightTheme,
+      });
+      expect(boot()).toBe(rowFor(DEFAULT_SETTINGS.lightTheme, "light"));
+      // the settings SettingsProvider starts from keep following the system, as the first frame did
+      expect(loadSettings().theme).toBe("system");
+      expect(app()).toBe(boot());
+
+      systemDark = true;
+      expect(boot()).toBe(rowFor(DEFAULT_SETTINGS.darkTheme, "dark"));
+
+      // A saved record with darkTheme/lightTheme but no explicit theme field in shell mode still defaults theme to system
+      store({ darkTheme: "amber", lightTheme: "amber" }, null);
+      systemDark = false;
+      expect(boot()).toBe(rowFor("amber", "light"));
+      expect(boot()).toBe(app());
+
+      // A saved explicit theme setting always wins in the hosted shell
+      store({ theme: "dark", darkTheme: "codex", lightTheme: "codex" }, null);
+      systemDark = false;
+      expect(boot()).toBe(rowFor("codex", "dark"));
+      expect(boot()).toBe(app());
+
+      store({ theme: "light", darkTheme: "codex", lightTheme: "codex" }, null);
+      systemDark = true;
+      expect(boot()).toBe(rowFor("codex", "light"));
+      expect(boot()).toBe(app());
+
+      // Main Ovis app (no ovis-shell meta): unchanged hard dark default
+      setShellMeta(false);
+      store(null, null);
+      systemDark = false;
+      expect(storedAppearance(readStoredAppearance(() => window.localStorage)).theme).toBe("dark");
+      expect(boot()).toBe(rowFor(DEFAULT_SETTINGS.darkTheme, "dark"));
+      expect(boot()).toBe(app());
+    } finally {
+      if (origDoc) Object.defineProperty(globalThis, "document", origDoc);
+      else Reflect.deleteProperty(globalThis, "document");
+    }
+  });
 });

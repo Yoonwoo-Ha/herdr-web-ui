@@ -63,6 +63,9 @@
   --indicator-unknown: #6c7086;
   /* a note that the view is partial (a file cut short, code left plain): warning yellow */
   --notice: #e8c55c;
+  /* the quiet surface under a row or banner that needs the user: --notice mixed over --bg-panel, 12% in dark and
+     6% in light, rounded once to an opaque colour so --notice stays 4.5:1 text on it (DESIGN.md, Notice tint) */
+  --notice-tint: #312b1c;
 
   /* overlays */
   --scrim: rgba(8, 6, 4, 0.55);
@@ -132,6 +135,8 @@
   --tracking-tight: -0.01em;
   --tracking-display: -0.02em;
   --tracking-caps: 0.06em;
+  /* a pairing code or a key id spelled out in the mono face (the relay shell's code fields) */
+  --tracking-code: 0.12em;
 
   /* space (4px base) */
   --space-1: 4px;
@@ -191,6 +196,21 @@
   --pending-max-h: min(20dvh, 12rem);
   --palette-w: 640px;
   --palette-top: 12vh;
+  /* the hosted relay app (RelayShell, RelayDashboard and the components under them). Its own
+     geometry, so it never shrinks with the terminal sidebar's density: rows that carry an action,
+     the bottom tab bar, the columns and the one size of a control's or a tab's glyph */
+  --table-row-h: 44px;
+  --tabbar-h: 56px;
+  --relay-sidebar-w: 240px;
+  --relay-content-w: 1280px;
+  --relay-signin-w: 368px;
+  --relay-sheet-w: 520px;
+  --relay-detail-w: 360px;
+  --relay-table-head-h: 36px;
+  --relay-control-icon-size: 16px;
+  /* floors under a compact or user-scaled size: max(floor, role) keeps a tab label and body text readable */
+  --relay-fs-min: 11px;
+  --relay-fs-body-min: 12px;
 
   /* focus */
   --ring: 2px solid var(--accent);
@@ -360,6 +380,7 @@
   --indicator-unknown: #9ca0b0;
   --danger-text: #8f1d1d;
   --notice: #7a5a00;
+  --notice-tint: #f2efe4;
   --scrim: rgba(40, 32, 22, 0.35);
   --shadow-drawer: 0 0 40px rgba(40, 32, 22, 0.22);
   --shadow-pop: 0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border);
@@ -395,6 +416,7 @@
 /* Charcoal in light: plain paper with ink for the accent and the cursor */
 [data-theme="light"][data-palette="charcoal"] {
   --notice: #8a5300;
+  --notice-tint: #f3f0ea;
   --bg: #f2f2f0;
   --bg-panel: #fafaf9;
   --bg-elevated: #efefed;
@@ -448,6 +470,7 @@
    states are muted as in the terminal palette. Light is the paper block above. */
 [data-theme="dark"][data-palette="charcoal"] {
   --notice: #d9b26a;
+  --notice-tint: #2e2a21;
   --bg: #0f0f0f;
   --bg-panel: #171717;
   --bg-elevated: #1f1f1f;
@@ -519,6 +542,7 @@
   --status-done-tint: rgba(0, 108, 43, 0.12);
   --danger-tint: rgba(177, 36, 33, 0.1);
   --notice: #8a5300;
+  --notice-tint: #f2efea;
   --danger-text: #b12421;
   --scrim: rgba(26, 28, 31, 0.35);
   --term-bg: #ffffff;
@@ -581,6 +605,7 @@
   --status-done-tint: rgba(64, 201, 119, 0.14);
   --danger-tint: rgba(250, 66, 62, 0.14);
   --notice: #d9b26a;
+  --notice-tint: #353128;
   --danger-text: #ffd0ce;
   --scrim: rgba(0, 0, 0, 0.6);
   --term-bg: #181818;
@@ -613,6 +638,7 @@
    darkened until it passes AA (Mauve 17%, Red 18%, Blue 22%, Green 37%). */
 [data-theme="dark"][data-palette="catppuccin"] {
   --notice: #f9e2af;
+  --notice-tint: #333036;
   /* overlay2: --text-dim (subtext1) is nearly --text here */
   --line-number: #9399b2;
   --bg: #1e1e2e;
@@ -660,6 +686,7 @@
 [data-theme="light"][data-palette="catppuccin"],
 [data-theme="light"][data-palette="catppuccin-latte"] {
   --notice: #8a5710;
+  --notice-tint: #e0e0e2;
   /* subtext0, darkened to 4.5:1 on --bg */
   --line-number: #64677d;
   --bg: #eff1f5;
@@ -747,6 +774,7 @@
   --status-done-tint: rgba(158, 206, 106, 0.14);
   --danger-tint: rgba(252, 122, 146, 0.12);
   --notice: #e0af68;
+  --notice-tint: #322d2e;
   --danger-text: #fc7a92;
   --scrim: rgba(26, 27, 38, 0.5);
   --term-bg: #1a1b26;
@@ -795,6 +823,7 @@
   --status-done-tint: rgba(158, 206, 106, 0.14);
   --danger-tint: rgba(252, 122, 146, 0.12);
   --notice: #e0af68;
+  --notice-tint: #1b150c;
   --danger-text: #fc7a92;
   --scrim: rgba(0, 0, 0, 0.5);
   --term-bg: #000000;
@@ -842,6 +871,7 @@
   --status-done-tint: rgba(54, 80, 19, 0.12);
   --danger-tint: rgba(144, 0, 27, 0.1);
   --notice: #674f2e;
+  --notice-tint: #dad9dc;
   --danger-text: #90001b;
   --scrim: rgba(39, 77, 171, 0.35);
   --term-bg: #e1e2e7;
@@ -905,6 +935,7 @@
   --status-done-tint: rgba(191, 195, 50, 0.14);
   --danger-tint: rgba(255, 166, 138, 0.12);
   --notice: #fabd2f;
+  --notice-tint: #413a29;
   --danger-text: #ffa68a;
   --scrim: rgba(40, 40, 40, 0.5);
   --term-bg: #282828;
@@ -952,6 +983,7 @@
   --status-done-tint: rgba(93, 87, 0, 0.12);
   --danger-tint: rgba(157, 0, 6, 0.1);
   --notice: #84560f;
+  --notice-tint: #f4e8bc;
   --danger-text: #9d0006;
   --scrim: rgba(60, 56, 54, 0.35);
   --term-bg: #fbf1c7;
@@ -1015,6 +1047,7 @@
   --status-done-tint: rgba(152, 195, 121, 0.14);
   --danger-tint: rgba(255, 154, 161, 0.12);
   --notice: #e5c07b;
+  --notice-tint: #3f3e3d;
   --danger-text: #ff9aa1;
   --scrim: rgba(40, 44, 52, 0.5);
   --term-bg: #282c34;
@@ -1062,6 +1095,7 @@
   --status-done-tint: rgba(1, 98, 11, 0.12);
   --danger-tint: rgba(165, 17, 16, 0.1);
   --notice: #916301;
+  --notice-tint: #f4f1eb;
   --danger-text: #a51110;
   --scrim: rgba(56, 58, 66, 0.35);
   --term-bg: #fafafa;
@@ -1125,6 +1159,7 @@
   --status-done-tint: rgba(194, 216, 93, 0.14);
   --danger-tint: rgba(255, 188, 170, 0.12);
   --notice: #c29300;
+  --notice-tint: #173730;
   --danger-text: #ffbcaa;
   --scrim: rgba(0, 43, 54, 0.5);
   --term-bg: #002b36;
@@ -1172,6 +1207,7 @@
   --status-done-tint: rgba(83, 99, 0, 0.12);
   --danger-tint: rgba(182, 0, 6, 0.1);
   --notice: #826200;
+  --notice-tint: #f6edd5;
   --danger-text: #b60006;
   --scrim: rgba(85, 106, 114, 0.35);
   --term-bg: #fdf6e3;
@@ -1235,6 +1271,7 @@
   --status-done-tint: rgba(163, 195, 151, 0.14);
   --danger-tint: rgba(255, 160, 155, 0.12);
   --notice: #c0a36e;
+  --notice-tint: #322f30;
   --danger-text: #ffa09b;
   --scrim: rgba(31, 31, 40, 0.5);
   --term-bg: #1f1f28;
@@ -1282,6 +1319,7 @@
   --status-done-tint: rgba(59, 82, 23, 0.12);
   --danger-tint: rgba(149, 0, 43, 0.1);
   --notice: #605c33;
+  --notice-tint: #e9e3b4;
   --danger-text: #95002b;
   --scrim: rgba(84, 84, 100, 0.35);
   --term-bg: #f2ecbc;
@@ -1345,6 +1383,7 @@
   --status-done-tint: rgba(103, 169, 198, 0.14);
   --danger-tint: rgba(245, 119, 154, 0.12);
   --notice: #f6c177;
+  --notice-tint: #342b2e;
   --danger-text: #f5779a;
   --scrim: rgba(25, 23, 36, 0.5);
   --term-bg: #191724;
@@ -1392,6 +1431,7 @@
   --status-done-tint: rgba(22, 90, 116, 0.12);
   --danger-tint: rgba(135, 58, 82, 0.1);
   --notice: #945c0f;
+  --notice-tint: #f4ebe0;
   --danger-text: #873a52;
   --scrim: rgba(70, 66, 97, 0.35);
   --term-bg: #faf4ed;
@@ -1455,6 +1495,7 @@
   --status-done-tint: rgba(80, 250, 123, 0.14);
   --danger-tint: rgba(255, 200, 200, 0.12);
   --notice: #f1fa8c;
+  --notice-tint: #404340;
   --danger-text: #ffc8c8;
   --scrim: rgba(40, 42, 54, 0.5);
   --term-bg: #282a36;
@@ -1502,6 +1543,7 @@
   --status-done-tint: rgba(200, 229, 177, 0.14);
   --danger-tint: rgba(255, 208, 215, 0.12);
   --notice: #ebcb8b;
+  --notice-tint: #454649;
   --danger-text: #ffd0d7;
   --scrim: rgba(46, 52, 64, 0.5);
   --term-bg: #2e3440;
@@ -1549,6 +1591,7 @@
   --status-done-tint: rgba(153, 255, 228, 0.14);
   --danger-tint: rgba(255, 128, 128, 0.12);
   --notice: #ffc799;
+  --notice-tint: #352f29;
   --danger-text: #ff8080;
   --scrim: rgba(16, 16, 16, 0.5);
   --term-bg: #101010;
@@ -1597,8 +1640,16 @@
   --sidebar-w: 300px;
   --control-h: 32px;
   --row-h: 44px;
+  --table-row-h: 40px;
   --chip-h: 18px;
   --avatar-size: 26px;
+}
+
+/* after the density block on purpose: same specificity, and a finger gets a full row in either density */
+@media (pointer: coarse) {
+  :root {
+    --table-row-h: var(--touch-target);
+  }
 }
 
 /* after the density block on purpose: same specificity, and from 769px both densities share one
@@ -3254,8 +3305,8 @@ button {
 }
 
 .segmented > button svg {
-  width: 15px;
-  height: 15px;
+  width: var(--relay-control-icon-size);
+  height: var(--relay-control-icon-size);
 }
 
 .segmented > button[aria-pressed="true"] {

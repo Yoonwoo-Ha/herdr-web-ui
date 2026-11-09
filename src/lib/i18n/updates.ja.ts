@@ -43,7 +43,6 @@ export const UPDATES_JA: Record<string, string> = {
   "How to restart": "再起動の方法",
   "Ovis v{version} is available.": "Ovis v{version} が利用可能です。",
   "An Ovis update is available.": "Ovis の更新が利用可能です。",
-  "Update": "更新",
   "Starting the update…": "更新を開始しています…",
   "The update could not be installed.": "更新をインストールできませんでした。",
   "Downloading the update": "更新をダウンロード中",

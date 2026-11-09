@@ -84,6 +84,54 @@ function labelMapUses(): [key: string, file: string][] {
 
 const DICTIONARIES = { Korean: KO, Japanese: JA, Chinese: ZH };
 
+// a Ready PC is one the directory lists, not one anything is linked to: its state word claims no connection
+describe.each([["Korean", KO, /연결|접속/], ["Japanese", JA, /接続/], ["Chinese", ZH, /连接/]] as const)("%s Ready wording", (_name, dictionary, connected) => {
+  it.each(["Ready", "Ready · not in the account yet"])("does not say connected in %p", (key) => {
+    expect(dictionary[key]).toBeString();
+    expect(dictionary[key]).not.toMatch(connected);
+  });
+});
+
+/**
+ * One word per state: a composed state label reuses the standalone word verbatim, so the strip, the
+ * filter, the attention list, the map legend and a row never name one state two ways.
+ */
+describe.each(Object.entries(DICTIONARIES))("%s state words", (_name, dictionary) => {
+  it.each([
+    ["Ready", "Ready · not in the account yet"],
+    ["Offline", "Offline · {when}"],
+    ["Offline", "{name} is offline"],
+    ["Not checked", "Paired · not checked"],
+  ])("reuses the %p word inside %p", (word, composed) => {
+    expect(dictionary[composed]).toBeString();
+    expect(dictionary[composed]).toContain(dictionary[word]!);
+  });
+});
+
+/**
+ * One update word for the whole update journey: the state words, the relay failure title and every
+ * step of updating a PC use the word `Needs update` uses, never its synonym.
+ */
+describe.each([["Korean", KO, ["업데이트", "갱신"]], ["Japanese", JA, ["アップデート", "更新"]], ["Chinese", ZH, ["更新", "升级"]]] as const)("%s update journey", (_name, dictionary, synonyms) => {
+  it("names the update with one word", () => {
+    const term = synonyms.find((word) => dictionary["Needs update"]?.includes(word));
+    expect(term).toBeString();
+    const journey = [
+      "Updating",
+      "Update needed",
+      "Update Ovis on {name}",
+      "Update it from here: the PC installs the latest release and restarts Ovis, then this app reconnects.",
+      "Update now",
+      "Its Ovis does not update itself. On the PC, run the installer:",
+      "Asking the PC to update…",
+      "The update did not finish.",
+      "{name} and this app speak different versions of the relay protocol. Update Ovis on the PC, then try again.",
+    ];
+    const mixed = journey.filter((key) => !dictionary[key]?.includes(term!) || synonyms.some((word) => word !== term && dictionary[key]!.includes(word)));
+    expect(mixed).toEqual([]);
+  });
+});
+
 describe.each(Object.entries(DICTIONARIES))("%s dictionary", (_name, dictionary) => {
   const inCode = keysInCode();
   const keys = new Set([...inCode.keys(), ...labelMapUses().map(([key]) => key)]);
@@ -134,7 +182,8 @@ const PART_FILES: Record<string, string[]> = {
   palette: ["components/CommandPalette.tsx"],
   setup: ["components/AgentSetupCard.tsx", "components/AddAgentPanel.tsx", "components/AgentTile.tsx", "components/AgentsSettings.tsx"],
   guide: ["components/SetupGuide.tsx"],
-  relay: ["components/RelayShell.tsx", "components/AccountPcs.tsx", "lib/relay/shell.tsx"],
+  relay: ["components/RelayShell.tsx", "components/RelayShellScreens.tsx", "components/AccountPcs.tsx", "lib/relay/shell.tsx", "lib/relay/accountController.ts", "components/relayFailureText.ts"],
+  dashboard: ["components/AddPcSheet.tsx", "components/RelayDashboard.tsx", "components/RelayMap.tsx", "components/RelayPcTable.tsx", "components/RelayPcDetails.tsx", "components/RelayOverview.tsx", "components/relayMapLayout.ts", "components/relayPcState.tsx"],
   "runtime-move": ["components/RuntimeMove.tsx", "components/RuntimeMoveViews.tsx", "lib/runtimeMove.ts"],
 };
 
@@ -169,6 +218,19 @@ describe("dictionary parts", () => {
     const misplaced = Object.entries(KO_PARTS).flatMap(([part, entries]) => Object.keys(entries).filter((key) => owner(key) !== part).map((key) => `${key} (in ${part}, belongs in ${owner(key)})`));
     expect(misplaced).toEqual([]);
     expect(Object.keys(KO_PARTS).filter((part) => part !== "base" && !(part in PART_FILES))).toEqual([]);
+  });
+
+  it("writes Korean particles per word, never as a dual-particle template", () => {
+    // a PC name arrives as a placeholder, so its final consonant is unknown: `{name}을(를)` and the
+    // like read as mail-merge text in a heading. The relay/dashboard files are this todo's scope.
+    // the pairing prompts belong to the same relay journey but keep their keys in the base catalog
+    const relayFiles = [...(PART_FILES.relay ?? []), ...(PART_FILES.dashboard ?? []), "components/RelayPairingPrompt.tsx", "components/AccountApprovalPrompt.tsx"];
+    const templated = [...keysInCode()]
+      .filter(([, files]) => files.every((file) => relayFiles.includes(file)))
+      .map(([key]) => key)
+      .filter((key) => /\((?:를|을|가|이|와|과|은|는)\)/.test(KO[key] ?? ""))
+      .sort();
+    expect(templated).toEqual([]);
   });
 
   it("keeps each part file at 400 lines or fewer", () => {

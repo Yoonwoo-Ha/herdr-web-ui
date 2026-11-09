@@ -47,7 +47,6 @@ export const WORKSPACE_KO: Record<string, string> = {
   "absolute path or ~/…": "절대 경로 또는 ~/…",
   "Optional workspace label": "워크스페이스 이름 (선택)",
   "Workspace label; follows the branch until you change it": "워크스페이스 이름. 직접 바꾸기 전까지 브랜치를 따릅니다",
-  "Open": "열기",
   "The workspace opened, but {agent} did not start. Check that it is installed on the PC, then open it again.": "워크스페이스는 열렸지만 {agent} 에이전트는 시작되지 않았습니다. PC에 설치되어 있는지 확인한 뒤 다시 여세요.",
   "{agent} started, but its first message was not queued. It is in the new tab's message box: open the tab and send it.": "{agent} 에이전트는 시작되었지만 첫 메시지는 대기열에 넣지 못했습니다. 메시지는 새 탭의 입력창에 있습니다. 탭을 열어 보내세요.",
   "{agent} started, but this PC's bridge does not take a first message yet. It is in the new tab's message box: open the tab and send it.": "{agent} 에이전트는 시작되었지만 이 PC의 브리지는 아직 첫 메시지를 받지 않습니다. 메시지는 새 탭의 입력창에 있습니다. 탭을 열어 보내세요.",

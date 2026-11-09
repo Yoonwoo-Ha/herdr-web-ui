@@ -12,7 +12,6 @@ export const PALETTE_KO: Record<string, string> = {
   "Search panes and actions…": "패널과 동작 검색…",
   "Close command palette": "명령 팔레트 닫기",
   "Filter panes by status": "상태별 패널 필터",
-  "All": "전체",
   "Workspace": "워크스페이스",
   "Unknown workspace": "알 수 없는 워크스페이스",
   "Actions": "동작",

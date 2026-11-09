@@ -97,7 +97,14 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     return () => {
       // a covering dialog owns focus; otherwise return it only when this surface closes
-      if (!latest.current.paused && latest.current.shouldRestore?.() !== false && opener?.isConnected && !nativeModalOver(surface.current)) opener.focus({ preventScroll: true });
+      if (latest.current.paused || latest.current.shouldRestore?.() === false || !opener?.isConnected || nativeModalOver(surface.current)) return;
+      opener.focus({ preventScroll: true });
+      // The commit that removes this surface can lift `inert` off the page behind it only after this cleanup ran, so
+      // the opener refused the focus: give it again once that commit is done, unless something else took it meanwhile.
+      if (document.activeElement !== opener) queueMicrotask(() => {
+        const active = document.activeElement;
+        if (opener.isConnected && (active === null || active === document.body)) opener.focus({ preventScroll: true });
+      });
     };
   }, [open]);
 

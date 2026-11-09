@@ -3,6 +3,7 @@
  * page's boot script (src/theme-bootstrap.ts, run before the first paint) and loadSettings use, so
  * the theme the page is first drawn in is the one the app goes on drawing.
  */
+import { shellMode } from "./shellMode.ts";
 import { DEFAULT_THEME, isThemeId, type ThemeEntry, type ThemeId } from "./themes.ts";
 import { themeFor } from "./themeFor.ts";
 
@@ -22,10 +23,15 @@ export const THEMES_STORAGE_KEY = "ovis:themes";
 
 export const DEFAULT_APPEARANCE: Appearance = { theme: "dark", darkTheme: DEFAULT_THEME, lightTheme: DEFAULT_THEME };
 
+/** In the hosted shell build only, a first visit with no saved theme follows prefers-color-scheme (system). */
+export function defaultThemeSetting(): ThemeSetting {
+  return shellMode() === "relay" ? "system" : DEFAULT_APPEARANCE.theme;
+}
+
 /** The appearance of a stored record, with the migration of the records from before the two theme sides. */
 export function sanitizeAppearance(raw: unknown): Appearance {
   const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-  const theme = record["theme"] === "dark" || record["theme"] === "light" || record["theme"] === "system" ? record["theme"] : DEFAULT_APPEARANCE.theme;
+  const theme = record["theme"] === "dark" || record["theme"] === "light" || record["theme"] === "system" ? record["theme"] : defaultThemeSetting();
   const palette = isThemeId(record["palette"]) ? record["palette"] : "amber";
   // Absence migrates (a record from before themes wore amber, so it keeps amber); an explicitly
   // unknown id falls back to the default, not a stale pair.
@@ -67,7 +73,7 @@ export function readStoredAppearance(storage: () => Pick<Storage, "getItem">): S
 
 /** The appearance the records hold: the main record's (or the default), with the protected sides over it. */
 export function storedAppearance(stored: StoredAppearance): Appearance {
-  const main = stored.main === null ? DEFAULT_APPEARANCE : sanitizeAppearance(stored.main.value);
+  const main = stored.main === null ? { ...DEFAULT_APPEARANCE, theme: defaultThemeSetting() } : sanitizeAppearance(stored.main.value);
   return stored.themes === null ? main : sanitizeAppearance({ ...main, ...stored.themes });
 }
 

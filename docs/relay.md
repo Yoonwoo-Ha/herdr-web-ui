@@ -190,8 +190,9 @@ then waits for the approval. A PC that declines, or does not approve in time, le
 
 **Pairing with a typed code.** For a device with no camera pointed at the PC, **Show a code to
 type** under the QR code shows ten characters, `XXXXX-XXXXX` (Crockford base32: no I, L, O or U;
-O, I and L typed are read as 0, 1 and 1), and **Pair with a code** on app.ovis.sh's front page takes
-them. The code finds the PC and hands the device the same offer the QR code carries, then the
+O, I and L typed are read as 0, 1 and 1), and **Pair with a code** on app.ovis.sh takes them
+(on its front page, or behind **Pair with a QR or code** on the sign-in screen when the account
+service runs). The code finds the PC and hands the device the same offer the QR code carries, then the
 device pairs with the six-digit code in it as a scanned QR code does: nothing else admits it
 ([`shared/relay-pair-code.ts`](../shared/relay-pair-code.ts),
 [`server/relay/pair-code.ts`](../server/relay/pair-code.ts),

@@ -16,7 +16,7 @@ import { fontScale, sanitizeUiFontSize, uiFontStack } from "./typography.ts";
 import { sanitizeKeyBarExtras, type KeyBarExtra } from "./keys.ts";
 import { themeFor } from "./themeFor.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems, sanitizeKeyBarItems, type KeyBarItem } from "./keyBar.ts";
-import { applyThemeEntry, DARK_QUERY, readStoredAppearance, resolveTheme, sanitizeAppearance, SETTINGS_STORAGE_KEY, THEMES_STORAGE_KEY, type ResolvedTheme, type ThemeSetting } from "./themeBoot.ts";
+import { applyThemeEntry, DARK_QUERY, defaultThemeSetting, readStoredAppearance, resolveTheme, sanitizeAppearance, SETTINGS_STORAGE_KEY, THEMES_STORAGE_KEY, type ResolvedTheme, type ThemeSetting } from "./themeBoot.ts";
 
 export { resolveTheme };
 export type { ResolvedTheme, ThemeSetting };
@@ -1003,7 +1003,8 @@ export function enterSendsOn(settings: Pick<Settings, "enterSends">, touch: bool
 export function loadSettings(): Settings {
   // read as the page's boot script reads them (themeBoot.ts), so React starts on the row the first frame showed
   const stored = readStoredAppearance(() => window.localStorage);
-  const settings = stored.main === null ? DEFAULT_SETTINGS : sanitizeSettings(stored.main.value);
+  // no main record: the same theme the boot script draws (the hosted shell follows the system)
+  const settings = stored.main === null ? { ...DEFAULT_SETTINGS, theme: defaultThemeSetting() } : sanitizeSettings(stored.main.value);
   const merged = stored.themes === null ? settings : sanitizeSettings({ ...settings, ...stored.themes });
   return { ...merged, enterSends: readEnterSends(merged.enterSends), uiFontFamily: readUiFontFamily(), terminalMirrorWrap: readMirrorWrap(), sidebarFilter: readSidebarFilter(), pcLoad: readPcLoad(), voiceEngine: readVoiceEngine(), ...readAgentGroups(), ...readFileFont(), composerArtifacts: readComposerArtifacts(),
     expandThinking: readChatFold(EXPAND_THINKING_STORAGE_KEY, DEFAULT_SETTINGS.expandThinking), foldWork: readChatFold(FOLD_WORK_STORAGE_KEY, DEFAULT_SETTINGS.foldWork),

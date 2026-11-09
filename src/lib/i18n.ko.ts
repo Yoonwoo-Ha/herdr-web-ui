@@ -17,6 +17,7 @@ import { GUIDE_KO } from "./i18n/guide.ko.ts";
 import { UPDATES_KO } from "./i18n/updates.ko.ts";
 import { PALETTE_KO } from "./i18n/palette.ko.ts";
 import { RELAY_KO } from "./i18n/relay.ko.ts";
+import { DASHBOARD_KO } from "./i18n/dashboard.ko.ts";
 import { RUNTIME_MOVE_KO } from "./i18n/runtime-move.ko.ts";
 
 /**
@@ -29,6 +30,7 @@ import { RUNTIME_MOVE_KO } from "./i18n/runtime-move.ko.ts";
  * braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "Open PC": "PC 열기",
   "View only": "보기 전용",
   "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "붙여넣지 않았습니다: 파일 경로에 줄바꿈이 있어 터미널이 Enter로 받아들입니다.",
   "Attach files": "파일 첨부",
@@ -436,8 +438,8 @@ const BASE: Record<string, string> = {
   "Open terminal": "터미널 열기",
   "Sign in to {agent}": "{agent}에 로그인",
   "Approve": "승인",
-  "Pair a phone through the relay": "릴레이로 휴대폰 연결",
-  "{name} wants to pair through the relay. Approve it only if its screen shows": "{name}이(가) 릴레이로 연결하려고 합니다. 그 화면에 다음 숫자가 보일 때만 승인하세요:",
+  "Pair a phone through the relay": "릴레이로 폰 연결",
+  "{name} wants to pair through the relay. Approve it only if its screen shows": "{name}에서 릴레이로 연결하려고 합니다. 그 화면에 다음 숫자가 보일 때만 승인하세요:",
   "Decline": "거절",
   "differs": "다름",
   "A code has ten letters and digits, like 7K3QD-M2XHA.": "코드는 7K3QD-M2XHA처럼 영문과 숫자 열 자입니다.",
@@ -483,12 +485,55 @@ const BASE: Record<string, string> = {
   "Conversation": "대화",
   "Off": "끄기",
   "Not now": "나중에",
+  "Pair with a QR or code": "QR이나 코드로 페어링",
+  "Add this PC": "이 PC 추가",
+  "Pair with {name}?": "{name} 페어링을 시작할까요?",
+  "Pair": "페어링",
+  "Connecting to {name}…": "{name}에 연결하는 중…",
+  "The numbers match": "숫자가 같습니다",
+  "That is not the number {name} shows": "{name}에 나온 숫자가 아닙니다",
+  "Number on {name}": "{name}에 나온 숫자",
+  "{name} shows six digits on its own screen now. Type them here, then approve on {name}.": "지금 {name} 화면에 여섯 자리 숫자가 나옵니다. 여기에 입력한 뒤 {name}에서 승인하세요.",
+  "Approve this device on {name} within 90 seconds to finish.": "90초 안에 {name}에서 이 기기를 승인하면 끝납니다.",
+  "Type the number {name} shows": "{name}에 나온 숫자를 입력하세요",
+  "Ready": "준비됨",
+  "Needs approval": "승인 필요",
+  "Offline": "오프라인",
+  "Update Ovis on it": "Ovis 업데이트 필요",
+  "Open": "열기",
+  "Relay": "릴레이",
+  "Add": "추가",
+  "Update": "업데이트",
+  "All": "전체",
   "Remove PC": "PC 제거",
   "Remove PC {name}?": "{name} PC를 제거할까요?",
   "Removes this registration. Remote sessions keep running.": "이 등록만 지웁니다. 원격 세션은 계속 돕니다.",
   "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "이 PC에서만 지웁니다. 접근까지 끊으려면 그 PC의 폰 및 기기에서 취소하세요.",
   "Added": "추가됨",
   "Sign in to Ovis": "Ovis에 로그인",
+  "Theme": "테마",
+  "Dark": "어둡게",
+  "Light": "밝게",
+  "System": "시스템",
+  "Density": "밀도",
+  "Comfortable": "여유",
+  "Compact": "촘촘",
+  "Language": "언어",
+  "Interface font size": "인터페이스 글자 크기",
+  "Decrease interface font size": "인터페이스 글자 크기 줄이기",
+  "Increase interface font size": "인터페이스 글자 크기 키우기",
+  "Forget this PC?": "이 PC를 잊을까요?",
+  "This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.": "이 폰에서 해당 키를 삭제합니다. PC에서는 폐기하기 전까지 이 폰이 목록에 남습니다. 다시 페어링하려면 PC의 새 QR 코드가 필요합니다.",
+  "Forget": "잊기",
+  "Offline · {when}": "오프라인 · {when}",
+  "The PC is off, or Ovis is not running on it.": "PC가 꺼져 있거나 Ovis가 실행 중이 아닙니다.",
+  "The relay did not answer. Check this device's network.": "릴레이가 답하지 않습니다. 이 기기의 네트워크를 확인하세요.",
+  "Ready · not in the account yet": "준비됨 · 아직 계정에 없음",
+  "Account setup is incomplete.": "계정 설정이 완료되지 않았습니다.",
+  "Adding it to your account…": "계정에 추가하는 중…",
+  "{name} is ready to open on this device.": "이제 이 기기에서 {name}에 연결할 준비가 됐습니다.",
+  "In your account": "계정에 추가됨",
+  "Devices added: {count}": "추가된 기기: {count}대",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
@@ -509,6 +554,7 @@ export const KO_PARTS: Record<string, Record<string, string>> = {
   updates: UPDATES_KO,
   palette: PALETTE_KO,
   relay: RELAY_KO,
+  dashboard: DASHBOARD_KO,
   "runtime-move": RUNTIME_MOVE_KO,
 };
 

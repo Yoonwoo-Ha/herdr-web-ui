@@ -47,7 +47,6 @@ export const WORKSPACE_JA: Record<string, string> = {
   "absolute path or ~/…": "絶対パスまたは ~/…",
   "Optional workspace label": "ワークスペースのラベル (任意)",
   "Workspace label; follows the branch until you change it": "ワークスペースのラベル。変更するまでブランチ名に従います",
-  "Open": "開く",
   "The workspace opened, but {agent} did not start. Check that it is installed on the PC, then open it again.": "ワークスペースは開きましたが、{agent} は起動しませんでした。PC にインストールされているか確認してから、もう一度開いてください。",
   "{agent} started, but its first message was not queued. It is in the new tab's message box: open the tab and send it.": "{agent} は起動しましたが、最初のメッセージはキューに入りませんでした。メッセージは新しいタブの入力欄にあります。タブを開いて送信してください。",
   "{agent} started, but this PC's bridge does not take a first message yet. It is in the new tab's message box: open the tab and send it.": "{agent} は起動しましたが、この PC のブリッジはまだ最初のメッセージを受け付けません。メッセージは新しいタブの入力欄にあります。タブを開いて送信してください。",

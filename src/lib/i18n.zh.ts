@@ -17,6 +17,7 @@ import { GUIDE_ZH } from "./i18n/guide.zh.ts";
 import { UPDATES_ZH } from "./i18n/updates.zh.ts";
 import { PALETTE_ZH } from "./i18n/palette.zh.ts";
 import { RELAY_ZH } from "./i18n/relay.zh.ts";
+import { DASHBOARD_ZH } from "./i18n/dashboard.zh.ts";
 import { RUNTIME_MOVE_ZH } from "./i18n/runtime-move.zh.ts";
 
 /**
@@ -33,6 +34,7 @@ import { RUNTIME_MOVE_ZH } from "./i18n/runtime-move.zh.ts";
  * Placeholders in braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "Open PC": "打开 PC",
   "View only": "仅查看",
   "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "未粘贴：文件路径中含有换行，终端会将其当作 Enter。",
   "Attach files": "附加文件",
@@ -487,12 +489,55 @@ const BASE: Record<string, string> = {
   "Conversation": "对话",
   "Off": "关闭",
   "Not now": "暂不",
+  "Pair with a QR or code": "使用二维码或配对码配对",
+  "Add this PC": "添加此电脑",
+  "Pair with {name}?": "与 {name} 配对？",
+  "Pair": "配对",
+  "Connecting to {name}…": "正在连接 {name}…",
+  "The numbers match": "数字一致",
+  "That is not the number {name} shows": "这不是 {name} 显示的数字",
+  "Number on {name}": "{name} 上的数字",
+  "{name} shows six digits on its own screen now. Type them here, then approve on {name}.": "{name} 的屏幕上现在显示六位数字。请在此输入，然后在 {name} 上批准。",
+  "Approve this device on {name} within 90 seconds to finish.": "请在 90 秒内在 {name} 上批准此设备以完成。",
+  "Type the number {name} shows": "输入 {name} 显示的数字",
+  "Ready": "就绪",
+  "Needs approval": "需要批准",
+  "Offline": "离线",
+  "Update Ovis on it": "需要更新 Ovis",
+  "Open": "打开",
+  "Relay": "中继",
+  "Add": "添加",
+  "Update": "更新",
+  "All": "全部",
   "Remove PC": "移除 PC",
   "Remove PC {name}?": "移除 PC {name}？",
   "Removes this registration. Remote sessions keep running.": "仅移除此注册。远程会话会继续运行。",
   "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "仅从这台 PC 移除。要同时取消它的访问权限，请在那台 PC 的 手机和设备 中撤销。",
   "Added": "新增",
   "Sign in to Ovis": "登录 Ovis",
+  "Theme": "主题",
+  "Dark": "深色",
+  "Light": "浅色",
+  "System": "跟随系统",
+  "Density": "密度",
+  "Comfortable": "宽松",
+  "Compact": "紧凑",
+  "Language": "语言",
+  "Interface font size": "界面字号",
+  "Decrease interface font size": "减小界面字号",
+  "Increase interface font size": "增大界面字号",
+  "Forget this PC?": "忘记这台电脑？",
+  "This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.": "此手机上的对应密钥将被删除；在电脑上撤销之前，它仍会列出这部手机。重新配对需要电脑上新的二维码。",
+  "Forget": "忘记",
+  "Offline · {when}": "离线 · {when}",
+  "The PC is off, or Ovis is not running on it.": "电脑已关机，或其上的 Ovis 未运行。",
+  "The relay did not answer. Check this device's network.": "中继没有响应。请检查此设备的网络。",
+  "Ready · not in the account yet": "就绪 · 尚未加入账户",
+  "Account setup is incomplete.": "账户设置尚未完成。",
+  "Adding it to your account…": "正在添加到账户…",
+  "{name} is ready to open on this device.": "此设备已准备好打开 {name}。",
+  "In your account": "已加入你的账户",
+  "Devices added: {count}": "已添加的设备：{count}台",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
@@ -513,6 +558,7 @@ export const ZH_PARTS: Record<string, Record<string, string>> = {
   updates: UPDATES_ZH,
   palette: PALETTE_ZH,
   relay: RELAY_ZH,
+  dashboard: DASHBOARD_ZH,
   "runtime-move": RUNTIME_MOVE_ZH,
 };
 

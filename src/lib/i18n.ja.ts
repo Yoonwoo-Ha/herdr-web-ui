@@ -17,6 +17,7 @@ import { GUIDE_JA } from "./i18n/guide.ja.ts";
 import { UPDATES_JA } from "./i18n/updates.ja.ts";
 import { PALETTE_JA } from "./i18n/palette.ja.ts";
 import { RELAY_JA } from "./i18n/relay.ja.ts";
+import { DASHBOARD_JA } from "./i18n/dashboard.ja.ts";
 import { RUNTIME_MOVE_JA } from "./i18n/runtime-move.ja.ts";
 
 /**
@@ -31,6 +32,7 @@ import { RUNTIME_MOVE_JA } from "./i18n/runtime-move.ja.ts";
  * in English. Placeholders in braces keep their English names.
  */
 const BASE: Record<string, string> = {
+  "Open PC": "PC を開く",
   "View only": "表示のみ",
   "Not pasted: the file's path holds a line break, which the terminal would take as Enter.": "貼り付けていません: ファイルのパスに改行があり、ターミナルが Enter として受け取ります。",
   "Attach files": "ファイルを添付",
@@ -485,12 +487,55 @@ const BASE: Record<string, string> = {
   "Conversation": "会話",
   "Off": "オフ",
   "Not now": "今はしない",
+  "Pair with a QR or code": "QR またはコードでペアリング",
+  "Add this PC": "このPCを追加",
+  "Pair with {name}?": "{name}とペアリングしますか？",
+  "Pair": "ペアリング",
+  "Connecting to {name}…": "{name}に接続中…",
+  "The numbers match": "数字が一致しています",
+  "That is not the number {name} shows": "{name} に表示されている番号ではありません",
+  "Number on {name}": "{name} の番号",
+  "{name} shows six digits on its own screen now. Type them here, then approve on {name}.": "{name} の画面に6桁の番号が表示されています。ここに入力してから {name} で承認してください。",
+  "Approve this device on {name} within 90 seconds to finish.": "90 秒以内に {name} でこのデバイスを承認すると完了します。",
+  "Type the number {name} shows": "{name} に表示された番号を入力してください",
+  "Ready": "準備完了",
+  "Needs approval": "承認が必要",
+  "Offline": "オフライン",
+  "Update Ovis on it": "Ovis の更新が必要",
+  "Open": "開く",
+  "Relay": "リレー",
+  "Add": "追加",
+  "Update": "更新",
+  "All": "すべて",
   "Remove PC": "PC を削除",
   "Remove PC {name}?": "PC {name} を削除しますか？",
   "Removes this registration. Remote sessions keep running.": "この登録のみを削除します。リモートのセッションは実行されたままです。",
   "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC.": "この PC からだけ削除します。アクセスも止めるには、その PC の スマートフォンとデバイス で取り消してください。",
   "Added": "追加",
   "Sign in to Ovis": "Ovis にサインイン",
+  "Theme": "テーマ",
+  "Dark": "ダーク",
+  "Light": "ライト",
+  "System": "システム",
+  "Density": "表示密度",
+  "Comfortable": "ゆったり",
+  "Compact": "コンパクト",
+  "Language": "言語",
+  "Interface font size": "インターフェースの文字サイズ",
+  "Decrease interface font size": "インターフェースの文字サイズを小さく",
+  "Increase interface font size": "インターフェースの文字サイズを大きく",
+  "Forget this PC?": "このPCを削除しますか？",
+  "This phone's key for it is deleted here, and the PC keeps listing this phone until it is revoked there. Pairing again takes a new QR code from the PC.": "このスマホ側のキーを削除します。PC側ではそこで取り消すまでこのスマホが一覧に残ります。再度ペアリングするにはPCの新しいQRコードが必要です。",
+  "Forget": "削除",
+  "Offline · {when}": "オフライン · {when}",
+  "The PC is off, or Ovis is not running on it.": "PCの電源が切れているか、Ovisが動いていません。",
+  "The relay did not answer. Check this device's network.": "リレーが応答しません。このデバイスのネットワークを確認してください。",
+  "Ready · not in the account yet": "準備完了 · まだアカウント外",
+  "Account setup is incomplete.": "アカウントの設定が完了していません。",
+  "Adding it to your account…": "アカウントに追加中…",
+  "{name} is ready to open on this device.": "このデバイスで {name} を開く準備ができました。",
+  "In your account": "アカウントに追加済み",
+  "Devices added: {count}": "追加したデバイス: {count}台",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
@@ -511,6 +556,7 @@ export const JA_PARTS: Record<string, Record<string, string>> = {
   updates: UPDATES_JA,
   palette: PALETTE_JA,
   relay: RELAY_JA,
+  dashboard: DASHBOARD_JA,
   "runtime-move": RUNTIME_MOVE_JA,
 };
 

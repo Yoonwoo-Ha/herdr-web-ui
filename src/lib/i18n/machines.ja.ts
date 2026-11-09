@@ -106,7 +106,6 @@ export const MACHINES_JA: Record<string, string> = {
   "Reject": "拒否",
   "Trust fingerprint": "フィンガープリントを信頼",
   "Install and connect": "インストールして接続",
-  "Open PC": "PC を開く",
   "Retry connection": "接続を再試行",
   "Settings (⌘⇧,)": "設定 (⌘⇧,)",
   "The computer this app runs on": "このアプリが動作しているコンピューター",

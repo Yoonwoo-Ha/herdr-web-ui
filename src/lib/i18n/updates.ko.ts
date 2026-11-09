@@ -43,7 +43,6 @@ export const UPDATES_KO: Record<string, string> = {
   "How to restart": "다시 시작하는 방법",
   "Ovis v{version} is available.": "Ovis v{version}이 나왔습니다.",
   "An Ovis update is available.": "Ovis 업데이트가 있습니다.",
-  "Update": "업데이트",
   "Starting the update…": "업데이트를 시작하는 중…",
   "The update could not be installed.": "업데이트를 설치하지 못했습니다.",
   "Downloading the update": "업데이트 내려받는 중",
