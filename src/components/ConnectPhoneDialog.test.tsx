@@ -213,7 +213,7 @@ describe("Connect a phone on a phone", () => {
   });
 
   it("without the Ovis account here, the relay tab keeps the relay's own pairing: its switch, QR code and code to type", async () => {
-    const tab = (relay: RelayState) => <RelayTab relay={relay} closesGate={false} signedIn={false} joinBySignIn={false} onAccount={null} phone={false} />;
+    const tab = (relay: RelayState) => <RelayTab relay={relay} closesGate={false} signedIn={false} joinBySignIn={false} account={null} phone={false} />;
     await mount(tab(relayState()));
     for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
     expect(renderer!.root.findAllByProps({ label: "Ovis relay", checked: true })).toHaveLength(1);

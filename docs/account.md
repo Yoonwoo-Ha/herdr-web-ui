@@ -501,6 +501,11 @@ OAuth's authorization code flow with PKCE, `S256` only:
    no device: adding still needs an approval on a device already in the account. The start may
    carry `label` (1-48 characters, no control characters) and `os`, which the page's confirmation
    shows (Who is asking, below); a provider's own device start takes neither.
+   The relay tab of Add a connection signs in this way too, from its own Sign in rather than Settings:
+   it opens `verification_uri_complete` (else `verification_uri`) in a new tab, opened blank in the
+   click so no popup blocker takes it (the desktop app hands it to the system browser), shows the code
+   beside it, or the page's link and code alone when the tab was blocked, and stops polling when the
+   sheet closes. Where the link page cannot start a sign-in it falls back to GitHub's device page.
 6. `POST /v1/signout` (Bearer) answers 204 and ends that sign-in's family.
 
 `GET /v1/providers` (no sign-in) answers `{ "providers": ["github", "google"], "device": ["github",

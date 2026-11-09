@@ -1,6 +1,6 @@
 /**
  * Japanese for the keys only the devices files use:
- * components/DevicesPanel.tsx (with VIA), components/ConnectPhoneDialog.tsx, components/PhonePanel.tsx, components/PortalPanel.tsx,
+ * components/DevicesPanel.tsx (with VIA), components/ConnectPhoneDialog.tsx, components/RelaySignIn.tsx, components/PhonePanel.tsx, components/PortalPanel.tsx,
  * components/PortalAuth.tsx, components/PortalInvite.tsx, components/RelayPanel.tsx,
  * components/PushTestControls.tsx, components/AccessGate.tsx, components/LanExposureNotice.tsx,
  * components/InstallHint.tsx, lib/install.ts, lib/installHint.ts, lib/portalAuth.ts, and shared/portal.ts (PORTAL_AUTH_PROBLEMS).
@@ -136,6 +136,8 @@ export const DEVICES_JA: Record<string, string> = {
   "Blocked: OVIS_TAILSCALE_SERVE_ONLY says tailscale serve is the only way in. Unset it on this PC and restart the app.": "ブロック中: OVIS_TAILSCALE_SERVE_ONLY により tailscale serve が唯一の入口になっています。この PC で解除し、アプリを再起動してください。",
   "Off. Nothing goes through the relay.": "オフ。リレーを通る通信はありません。",
   "This account has as many PCs on the Ovis relay as it may. Remove one from your account to add this one.": "このアカウントで Ovis リレーに載せられる PC の数が上限に達しています。アカウントから PC を1台外すと、この PC を追加できます。",
+  "The sign-in page opened in a new tab with this code. Continue there with GitHub or Google.": "このコードを入れたサインインページを新しいタブで開きました。そこで GitHub か Google で続けてください。",
+  "The sign-in page opened in a new tab. Enter this code there, then continue with GitHub or Google.": "サインインページを新しいタブで開きました。そこでこのコードを入力し、GitHub か Google で続けてください。",
   "The Ovis relay needs an Ovis account. Sign in, or connect over the same Wi-Fi or Tailscale.": "Ovis リレーには Ovis アカウントが必要です。サインインするか、同じ Wi-Fi または Tailscale で接続してください。",
   "Online. Sign in to keep using the Ovis relay after {date}. Same Wi-Fi, Tailscale and your own relay keep working without an account.": "オンライン。{date} 以降も Ovis リレーを使うにはサインインしてください。同じ Wi-Fi、Tailscale、自分で運用するリレーはアカウントなしで使えます。",
   "Cannot reach the Ovis account service for a relay pass. Retrying.": "リレーパスを受け取るための Ovis アカウントサービスに接続できません。再試行しています。",

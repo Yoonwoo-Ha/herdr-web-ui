@@ -1,6 +1,6 @@
 /**
  * Simplified Chinese for the keys only the devices files use:
- * components/DevicesPanel.tsx (with VIA), components/ConnectPhoneDialog.tsx, components/PhonePanel.tsx, components/PortalPanel.tsx,
+ * components/DevicesPanel.tsx (with VIA), components/ConnectPhoneDialog.tsx, components/RelaySignIn.tsx, components/PhonePanel.tsx, components/PortalPanel.tsx,
  * components/PortalAuth.tsx, components/PortalInvite.tsx, components/RelayPanel.tsx,
  * components/PushTestControls.tsx, components/AccessGate.tsx, components/LanExposureNotice.tsx,
  * components/InstallHint.tsx, lib/install.ts, lib/installHint.ts, lib/portalAuth.ts, and shared/portal.ts (PORTAL_AUTH_PROBLEMS).
@@ -136,6 +136,8 @@ export const DEVICES_ZH: Record<string, string> = {
   "Blocked: OVIS_TAILSCALE_SERVE_ONLY says tailscale serve is the only way in. Unset it on this PC and restart the app.": "已阻止：OVIS_TAILSCALE_SERVE_ONLY 规定 tailscale serve 是唯一的访问途径。请在此 PC 上取消它并重启应用。",
   "Off. Nothing goes through the relay.": "已关闭。没有流量经过中继。",
   "This account has as many PCs on the Ovis relay as it may. Remove one from your account to add this one.": "此账户在 Ovis 中继上的 PC 数量已达上限。从账户中移除一台 PC 后即可添加这台。",
+  "The sign-in page opened in a new tab with this code. Continue there with GitHub or Google.": "已在新标签页中打开填好此代码的登录页面。请在那里用 GitHub 或 Google 继续。",
+  "The sign-in page opened in a new tab. Enter this code there, then continue with GitHub or Google.": "已在新标签页中打开登录页面。请在那里输入此代码，然后用 GitHub 或 Google 继续。",
   "The Ovis relay needs an Ovis account. Sign in, or connect over the same Wi-Fi or Tailscale.": "Ovis 中继需要 Ovis 账户。请登录，或通过同一 Wi-Fi 或 Tailscale 连接。",
   "Online. Sign in to keep using the Ovis relay after {date}. Same Wi-Fi, Tailscale and your own relay keep working without an account.": "在线。{date} 之后若要继续使用 Ovis 中继，请登录。同一 Wi-Fi、Tailscale 和您自己运行的中继无需账户即可继续使用。",
   "Cannot reach the Ovis account service for a relay pass. Retrying.": "无法连接 Ovis 账户服务以获取中继通行证。正在重试。",

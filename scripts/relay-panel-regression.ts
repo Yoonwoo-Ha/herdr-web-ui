@@ -3,7 +3,7 @@
  * switch is in More settings → Ovis relay, whose row says the relay's state and which holds Reset relay
  * identity. The Add a connection sheet has one tab per way (SSH, Phones and devices, Ovis relay), SSH first on
  * an owner's PC window, and none of the old sheet's folds or its relay pairing QR code. Signed out, the Ovis
- * relay tab is the Ovis sign-in, which closes the sheet for the account in More settings; signed in, it carries
+ * relay tab opens the Ovis link page in a new tab while the sheet stays open; signed in, it carries
  * the relay's switch (with the gate note while off). Phones and devices starts a six-digit code at once and
  * keeps it while another tab is open; a phone pairing with it closes the sheet. Reset relay identity asks first
  * (Escape closes only the confirmation) and gives the PC a new ID. A Portal visitor gets no SSH tab, no switch,
@@ -26,6 +26,7 @@ import { startBunRelay } from "../relay/bun.ts";
 import { createServer } from "../server/index.ts";
 import { RelayService } from "../server/relay/service.ts";
 import { UsageService } from "../server/usage.ts";
+import { FakeAccountService } from "../shared/account-service-fake.ts";
 import type { PairedDevice, PairingCode, RelayStatus, RemoteAccess } from "../shared/protocol.ts";
 import { openSettingsPage } from "./settings-page.ts";
 
@@ -85,6 +86,8 @@ const englishContext = async (browser: Browser, access: RemoteAccess = NO_TAILSC
   await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
   await context.route("**/api/access", (route) => route.fulfill({ json: access }));
   if (account) {
+    const service = new FakeAccountService();
+    service.offerLinkPage(["github", "google"]);
     // added by an init script, not by rewriting the page in a route: Chrome treats a page a route fulfilled as public,
     // and its local-network check then blocks the app's WebSocket to 127.0.0.1. Settings reads the meta only once open
     await context.addInitScript((service) => document.addEventListener("DOMContentLoaded", () => {
@@ -93,11 +96,24 @@ const englishContext = async (browser: Browser, access: RemoteAccess = NO_TAILSC
       meta.content = service;
       document.head.append(meta);
     }), ACCOUNT_SERVICE);
-    await context.route(`${ACCOUNT_SERVICE}/**`, (route) => {
+    await context.route(`${ACCOUNT_SERVICE}/**`, async (route) => {
       const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, PUT, DELETE" };
       if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-      if (new URL(route.request().url()).pathname !== "/v1/pcs") return route.fulfill({ status: 404, headers: cors, json: { error: { code: "not_found" } } });
-      return route.fulfill({ headers: cors, json: { pcs: [] } });
+      const path = new URL(route.request().url()).pathname;
+      if (path === "/v1/pcs") return route.fulfill({ headers: cors, json: { pcs: [] } });
+      if (path === "/link") return route.fulfill({ contentType: "text/html", body: '<!doctype html><title>Sign-in fixture</title><p>Sign-in fixture</p><button onclick="fetch(`/approve${location.search}`, {method: \'POST\'})">Approve</button>' });
+      if (path === "/approve") {
+        const code = new URL(route.request().url()).searchParams.get("code");
+        assert.ok(code);
+        service.approveOnLinkPage(code, "acct_fixture", "github");
+        return route.fulfill({ status: 204 });
+      }
+      if (!["/v1/providers", "/v1/signin/ovis/device", "/v1/token"].includes(path)) return route.fulfill({ status: 404, headers: cors, json: { error: { code: "not_found" } } });
+      const body = route.request().postData();
+      const response = await service.fetch(route.request().url(), {
+        method: route.request().method(), headers: route.request().headers(), ...(body === null ? {} : { body }),
+      });
+      return route.fulfill({ status: response.status, headers: { ...Object.fromEntries(response.headers), ...cors }, body: await response.text() });
     });
   }
   return context;
@@ -200,6 +216,7 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     assert.equal(await moreSwitch.getAttribute("aria-checked"), "false", "the relay starts off");
     assert.equal(await dialog.getByRole("img").count(), 0, "the settings page itself shows no QR code");
     assert.equal((await relayState()).phase, "off");
+    await dialog.locator('.settings-fold[data-fold="more"] > summary').click();
 
     // the sheet: one tab per way, on SSH in an owner's PC window, and none of the old sheet's folds and ways
     await connect.click();
@@ -211,15 +228,37 @@ export async function checkRelayPanel(browser: Browser): Promise<void> {
     assert.equal(await sheet.getByRole("img", { name: "QR code that pairs a phone through the relay", exact: true }).count(), 0, "the sheet offers no relay pairing QR code");
     assert.equal((await relayState()).phase, "off", "opening the sheet turns nothing on");
 
-    // signed out, the relay's tab is the Ovis sign-in alone: it closes the sheet for the account in More settings
+    // signed out, Sign in opens the link page and keeps the sheet on its relay tab, without navigating Settings
     await ui.openTab("relay");
     const signInButton = relayTab.getByTestId("connect-signin").getByRole("button", { name: "Sign in to Ovis", exact: true });
     await signInButton.waitFor();
     assert.equal(await relayTab.getByRole("switch").count(), 0, "signed out, the relay's tab has no switch");
+    const beforeSignIn = page.url();
+    const opened = context.waitForEvent("page");
     await signInButton.click();
-    await sheet.waitFor({ state: "detached" });
-    await dialog.locator('[data-section="account"]').waitFor();
-    assert.notEqual(await dialog.locator('.settings-fold[data-fold="more"]').getAttribute("open"), null, "Sign in to Ovis opens More settings, where the account is");
+    const linkPage = await opened;
+    await linkPage.waitForURL(`${ACCOUNT_SERVICE}/link?code=*`);
+    await linkPage.getByText("Sign-in fixture", { exact: true }).waitFor();
+    const waiting = relayTab.getByTestId("relay-signin-waiting");
+    await waiting.waitFor();
+    assert.equal(linkPage.url(), `${ACCOUNT_SERVICE}/link?code=${await waiting.locator("output").textContent()}`, "the new tab carries the sheet's code to the account service");
+    assert.equal(await linkPage.evaluate(() => window.opener), null, "the account page has no opener");
+    assert.equal(await sheet.isVisible(), true, "sign-in keeps Add a connection open");
+    assert.equal(page.url(), beforeSignIn, "sign-in does not navigate the PC's page");
+    assert.equal(await dialog.locator('.settings-fold[data-fold="more"]').getAttribute("open"), null, "sign-in leaves the Settings account group closed");
+    await waiting.getByRole("button", { name: "Cancel", exact: true }).click();
+    await linkPage.close();
+
+    const approvalPage = context.waitForEvent("page");
+    await signInButton.click();
+    const approving = await approvalPage;
+    await approving.waitForURL(`${ACCOUNT_SERVICE}/link?code=*`);
+    await waiting.locator("a").focus();
+    await approving.getByRole("button", { name: "Approve", exact: true }).click();
+    await relayTab.getByRole("button", { name: "Open the account", exact: true }).waitFor();
+    assert.equal(await sheet.evaluate((node) => node.contains(document.activeElement)), true, "approval keeps keyboard focus inside the sheet");
+    assert.equal(await toggle.evaluate((node) => node === document.activeElement), true, "approval focuses the signed-in view's first control");
+    await approving.close();
 
     // signed in, the relay's tab carries the relay's switch while it is off, with the gate note and the account
     await signIn(page);
