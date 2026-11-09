@@ -1139,6 +1139,12 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   white-space: nowrap;
 }
 
+/* the compact sidebar (Settings → Sidebar rows → One line, the default) */
+@media (min-width: 769px) {
+  /* the palette (⌘/Ctrl+K) filters the sidebar: its glass leaves the logo row, the + for a new workspace takes it */
+  .app:not(.sidebar-collapsed) .header-side .palette-button:not(:only-child) { display: none; }
+}
+
 /* a workspace row's branch shows under the pointer or the focus; a finger keeps it */
 @media (hover: hover) and (pointer: fine) {
   .machine-workspaces:not(.is-two-line) .workspace-header:not(:hover, :focus-within) .workspace-branch-tail { visibility: hidden; }

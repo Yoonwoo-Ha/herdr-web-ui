@@ -86,7 +86,7 @@ try {
         // the title's place among the workspace's tabs goes with the second tab
         await page.waitForFunction(() => document.querySelector(".context-position") === null);
 
-        await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+        await page.locator(".view-switch .is-chat").click();
         const message = page.getByRole("textbox", { name: "Message", exact: true });
         await message.waitFor();
 

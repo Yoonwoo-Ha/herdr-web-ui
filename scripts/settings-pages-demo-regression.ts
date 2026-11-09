@@ -1152,13 +1152,13 @@ try {
           await page.locator(".conn-live").waitFor({ state: "attached" });
           const terminal = page.locator(".pane-terminal");
           await terminal.waitFor({ state: "attached" });
-          const lens = page.getByRole("group", { name: "Pane view", exact: true });
-          await lens.getByTitle(label("Live terminal (⌘⇧J)"), { exact: true }).tap();
+          const lens = page.locator(".view-switch");
+          await lens.getByRole("button", { name: label("Terminal"), exact: true }).tap();
           assert.equal(await terminal.getAttribute("role"), "region");
           assert.equal(await terminal.getAttribute("aria-roledescription"), label("Terminal"));
           assert.equal(await terminal.getAttribute("aria-label"), label("Terminal for {title}").replace("{title}", "Idempotent payments"));
           assert.equal(await terminal.getAttribute("tabindex"), null, "the wrapper adds no empty keyboard stop");
-          await lens.getByTitle(label("Chat transcript (⌘⇧J)"), { exact: true }).tap();
+          await lens.getByRole("button", { name: label("Chat"), exact: true }).tap();
           assert.equal(await terminal.getAttribute("role"), null, "chat exposes no empty terminal landmark");
           assert.equal(await terminal.getAttribute("aria-label"), null);
           await openSettings(page);

@@ -149,6 +149,6 @@ export const MACHINES_KO: Record<string, string> = {
   "CPU {value}": "CPU {value}",
   "Memory {value}": "메모리 {value}",
   "Disk {value}": "디스크 {value}",
-  "PC load in the sidebar": "사이드바에 PC 부하 표시",
-  "CPU, memory and the fullest disk under each open PC, on this device only. On by default when two or more PCs are connected.": "열린 각 PC 아래에 CPU, 메모리, 가장 많이 찬 디스크를 표시합니다(이 기기에서만). PC가 2대 이상 연결되어 있으면 기본으로 켜집니다.",
+  "PC load in the status bar": "상태 표시줄에 PC 부하 표시",
+  "The selected PC's CPU, memory and fullest disk in the status bar, on this device only.": "선택한 PC의 CPU, 메모리, 가장 찬 디스크를 상태 표시줄에 보여 줍니다. 이 기기에서만 적용됩니다.",
 };

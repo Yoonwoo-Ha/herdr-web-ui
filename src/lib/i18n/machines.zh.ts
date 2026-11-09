@@ -149,6 +149,6 @@ export const MACHINES_ZH: Record<string, string> = {
   "CPU {value}": "CPU {value}",
   "Memory {value}": "内存 {value}",
   "Disk {value}": "磁盘 {value}",
-  "PC load in the sidebar": "在侧边栏显示 PC 负载",
-  "CPU, memory and the fullest disk under each open PC, on this device only. On by default when two or more PCs are connected.": "在每台展开的 PC 下显示 CPU、内存和占用最高的磁盘（仅限此设备）。连接两台或更多 PC 时默认开启。",
+  "PC load in the status bar": "在状态栏显示 PC 负载",
+  "The selected PC's CPU, memory and fullest disk in the status bar, on this device only.": "在状态栏显示所选 PC 的 CPU、内存和占用最高的磁盘，仅对此设备生效。",
 };

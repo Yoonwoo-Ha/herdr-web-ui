@@ -578,7 +578,7 @@ try {
         // the selected pane closes: the app picks the pane herdr has in front (autoSelected)
         await page.evaluate((pane) => fetch("/api/pane/close", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pane_id: pane }) }), DOCS);
         await page.waitForFunction((pane) => new URLSearchParams(window.location.search).get("pane") !== pane, DOCS);
-        await page.locator(".palette-button").click();
+        await page.keyboard.press("ControlOrMeta+Shift+K");
         const palette = page.getByRole("dialog", { name: "Command palette" });
         await palette.waitFor();
         await page.goBack();
@@ -673,7 +673,7 @@ try {
         // pane menu) Rename pane dialog stays up once the sheet's closing has settled, and Back closes it alone
         await more.tap();
         await page.getByRole("button", { name: "Rename pane", exact: true }).tap();
-        const creation = page.getByRole("dialog", { name: "Rename pane", exact: true });
+        const creation = page.getByRole("dialog", { name: /^Rename pane · / });
         await creation.waitFor();
         await page.waitForTimeout(150); // fixed wait: the Rename pane dialog may not close
         assert.equal(await creation.isVisible(), true, "the Rename pane dialog stays up after the sheet's entry settles");

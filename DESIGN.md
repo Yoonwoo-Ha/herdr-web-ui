@@ -814,7 +814,7 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | Token | Comfortable | Compact | Usage |
 |-------|-------------|---------|-------|
 | `--header-h` | `52px` | `46px` | App header below `769px` |
-| `--header-h-wide` | `46px` | — | App header from `769px`, in either density (`--header-h` takes this value there) |
+| `--header-h-wide` | `42px` | — | App header from `769px`, in either density (`--header-h` takes this value there) |
 | `--sidebar-w` | `320px` | `300px` | Sidebar/drawer; the default while the user has not dragged the sidebar's edge |
 | `--control-h` | `34px` | `32px` | Buttons and fields |
 | `--segmented-inset` | `6px` | — | What the segmented track takes from `--control-h` above and below an option (its `2px` padding and the hairline, both sides): an option is `--control-h` less this, and its touch expander grows from that height to `--touch-target` |
@@ -893,9 +893,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   List all tabs and VS Code's tab overflow do, rather than Chrome's tabs shrinking to their icon:
   an Ovis tab is told apart by its name, and a tab too narrow for it is a close button to
   misclick. The open tab is always in the row (the last place when it is past the others), and
-  one picked from the list opens there; `lib/tabOverflow.ts` picks them. The open tab takes the pane's surface (`--bg` under
-  the chat lens, `--term-bg` otherwise) with rounded top corners and no line under it, so it runs
-  on into the pane; its close (×) shows on the open tab and a hovered one. A split view keeps a
+  one picked from the list opens there; `lib/tabOverflow.ts` picks them. The row is the panel's surface and the
+  open tab a raised pill on it (`--bg-elevated`); its close (×) shows on the open tab alone, and a
+  resting tab closes from its menu or a middle click, as a browser's does. A split view keeps a
   strip per half and the title in the header. The Herdr app's Changes button is not carried over:
   Files holds the changes as one of its tabs.
 - The Chat/Terminal switch (`.view-switch`) shows both lenses as Apple's segmented control: a
@@ -2378,7 +2378,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   its title the same way; Ovis puts it on the crumb line because the header is one line. A Codex
   goal (kept in Codex's own state store, not the rollout) is not read.
 - The More menu (`.header-more-button`, the `RowMenu` popover, a bottom sheet at `<=640px`) opens
-  with the location on two lines, "PC › workspace" then the full path in mono. Its first item,
+  with the location on two lines, "PC › workspace" then the full path in mono. Where no status bar
+  shows, the pane's whole title and its agent lead those lines (`.header-more-title`, `--text`
+  `--fw-medium`, "Claude Code · Guard the export button"): the header cuts a long title short and a
+  touch has no tooltip, so More is where a phone reads it in full. Its first item,
   at every width, is **Search panes and actions**, which opens the command palette (its shortcut
   as the item's hint where the pointer is fine); then **Find in terminal**, **Browse files** (at
   `<=768px` only: from `769px` Files is the header's own button), **Copy link** and **Alerts**,
@@ -2409,7 +2412,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   coding-agent app because their case is Ovis's on a phone: one conversation's header, whose link to
   the other end comes and goes with the network. From `769px` it sits on the title's line; at
   `<=768px` it goes under the title, both lines inside the header's height. It swaps in place and
-  is never animated, and while it speaks the chip keeps only its dot (`.conn-quiet`). It is about
+  is never animated, and while it speaks, as while the status bar says the connection, the chip is
+  heard and not seen (`.conn-quiet`: out of the flow like the live chip, still a `role="status"` a
+  screen reader reads), so the lens switch and Files hold their place while reconnecting. It is about
   the PC and split half the header shows, by the half that reported it: a recovery on one PC or half
   is not said once another is shown, and a pane's first connection is not a reconnect. A stalled
   output, which retries nothing, gets no line: the chip says disconnected. The return sends nothing: a draft stays a draft.
@@ -2427,12 +2432,22 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   follows Paseo's app, which says beside a host whether it is reached directly or through its relay.
 - The header draws no session counts: the sidebar and each tab's mark say every session's state, and
   the status bar (from `769px` with a fine pointer) its waiting count. Its "N waiting for you" button
-  (`lib/headerSessions.ts` `nextWaitingPane`) opens the next waiting session after the selected one in
+  (`lib/headerSessions.ts` `nextWaitingTarget`) opens the next waiting session after the selected one in
   the roster's order, wrapping, never the selected one and never one a zoomed tab hides; with none
   to open it stays a button, `aria-disabled`, so a keyboard's focus is not dropped. It follows
   Slack's "next unread". More carries the same jump: **Open the next session waiting for you** is
   its first item, and where no status bar shows the count its button wears a `--status-blocked` dot
   (`.header-more-dot.is-waiting`, in place of the alerts-off dot) and says the count in its name.
+  The dot says the count itself: with `data-count` its `::after` widens it into a `--status-blocked`
+  pill from the dot's own corner, the numeral in `--fs-meta` `--fw-semibold` `--status-ink`, its
+  line box `--lh-tight` so it scales with the type, so a phone reads how many wait without opening
+  More; the button, its glyph and the dot's place do not move.
+- A watching device where no status bar shows says so on the crumb line: **View only**
+  (`.context-watch`, `--text-strong` `--fw-medium`, as the status bar's own pill reads) leads the
+  place, and the connection's word keeps its turn after it. At `<=768px`, where the crumb otherwise
+  wraps out of sight, that line goes under the title in the connection word's place and shape
+  (`.context:has(.context-watch)`: the column layout, one line); the title
+  keeps its top-left.
   Below `769px` the title is followed, `--text-dim` and kept whole, by the selected tab's place in
   its workspace's strip (`.context-position`, "1/2", said "Tab 1 of 2"), only with two tabs or more;
   below `420px` it leaves the header and the title's list marks the open tab.

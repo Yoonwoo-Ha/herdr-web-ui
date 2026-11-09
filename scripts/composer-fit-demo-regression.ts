@@ -1178,8 +1178,8 @@ try {
           return { text: paragraph.textContent!, offset: paragraph.getBoundingClientRect().top - view.top, gap: node.scrollHeight - node.clientHeight - node.scrollTop };
         });
         assert.ok(reading.gap > 48, "the reader is away from the end before changing lenses");
-        await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
-        await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+        await page.locator(".view-switch .is-terminal").click();
+        await page.locator(".view-switch .is-chat").click();
         await page.waitForFunction((saved) => {
           const node = document.querySelector(".chat-view");
           if (!node) return false;
@@ -1192,15 +1192,15 @@ try {
         // Leave in the same task: the list's deferred scroll cannot update memory first.
         await page.evaluate(() => {
           document.querySelector<HTMLButtonElement>('button[title="Jump to latest"]')!.click();
-          document.querySelector<HTMLButtonElement>('button[title="Live terminal (⌘⇧J)"]')!.click();
+          document.querySelector<HTMLButtonElement>('.view-switch .is-terminal')!.click();
         });
-        await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+        await page.locator(".view-switch .is-chat").click();
         await page.waitForFunction(() => {
           const node = document.querySelector(".chat-view")!;
           return node.scrollHeight - node.clientHeight - node.scrollTop <= 1;
         }, undefined, { timeout: 5_000 });
-        await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
-        await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+        await page.locator(".view-switch .is-terminal").click();
+        await page.locator(".view-switch .is-chat").click();
         await page.waitForFunction(() => {
           const node = document.querySelector(".chat-view")!;
           return node.scrollHeight - node.clientHeight - node.scrollTop <= 1;

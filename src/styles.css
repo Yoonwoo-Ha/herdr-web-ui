@@ -156,7 +156,7 @@
      --border, which stays for lines inside a region */
   --divider: var(--border-strong);
   /* the header from 769px, in either density: one line beside the sidebar's own top row */
-  --header-h-wide: 46px;
+  --header-h-wide: 42px;
   --sidebar-w: 320px;
   --control-h: 34px;
   /* what the segmented track takes from --control-h above and below an option: its padding and
@@ -2084,6 +2084,13 @@ button {
   white-space: nowrap;
 }
 
+/* a watching device on a phone (App.tsx, G-004): the crumb line leads with View only where the status
+   bar would say it, set apart from the place after it as the status bar's pill is */
+.context-watch {
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+}
+
 /* the chat's session totals after the crumb (lib/sessionStats.ts): an item of its own, so it wraps out
    of sight first, whole or not at all like the crumb. A phone's header line is the title's: there the
    More menu says them */
@@ -2118,7 +2125,8 @@ button {
 /* the connection said in the crumb's place (App.tsx, lib/headerConnection.ts): it shares the title's
    line instead of wrapping out of sight, the title giving it room, so a phone reads it too and the
    header keeps its height. A word swapped in place, never animated. */
-.context.has-connection {
+.context.has-connection,
+.context:has(.context-watch) {
   flex-wrap: nowrap;
 }
 
@@ -2145,17 +2153,34 @@ button {
 }
 
 /* a phone has no room for both on one line: the word goes under the title, as a messenger's header
-   says it under a chat's name, both lines inside the header's height */
+   says it under a chat's name, both lines inside the header's height. A watching phone (G-004) says
+   View only on that line the same way: the crumb, which a phone otherwise wraps out of sight, takes
+   the connection word's place under the title, one line that ends in an ellipsis */
 @media (max-width: 768px) {
-  .context.has-connection {
+  .context.has-connection,
+  .context.has-connection.has-tabs,
+  .context:has(.context-watch),
+  .context:has(.context-watch).has-tabs {
     flex-direction: column;
     align-items: flex-start;
     justify-content: center;
     row-gap: 0;
-    max-height: none;
+    max-height: var(--touch-target);
+    margin-block: calc(-1 * var(--tabs-pad, 0px));
+    padding-top: var(--space-2-5);
+    padding-bottom: 0;
   }
 
-  .context.has-connection .context-title {
+  .context.has-connection .context-title,
+  .context:has(.context-watch) .context-title {
+    flex-shrink: 0;
+    min-height: 0;
+    line-height: 1;
+  }
+
+  .context.has-connection .context-connection,
+  .context:has(.context-watch) .context-sub {
+    flex-shrink: 0;
     min-height: 0;
   }
 }
@@ -2332,22 +2357,18 @@ button {
    evenly, and the open tab takes the pane's own surface with rounded top corners, so it runs on into
    the pane under it. + follows the last tab; the tools sit at the far end as pills. */
 .app-header.is-zoned.has-tab-row {
-  /* a dark theme keeps the row near the pane's own colour: only a breath of the accent */
-  --strip-tint: color-mix(in srgb, var(--accent) 5%, var(--bg-panel));
-  --tab-open-bg: var(--term-bg);
+  /* the Herdr app's tab bar: the sidebar's own surface, a hairline under it, tabs as pills on it */
+  --strip-tint: var(--bg-panel);
+  --tab-open-bg: var(--bg-elevated);
   --tool-pill-bg: var(--bg-panel);
   --tool-pill-border: var(--divider);
   background: var(--strip-tint);
-  border-bottom: 0;
-}
-
-[data-theme="light"] .app-header.is-zoned.has-tab-row {
-  --strip-tint: color-mix(in srgb, var(--accent) 16%, var(--bg-panel));
+  border-bottom: var(--hairline) solid var(--divider);
 }
 
 .app-header.is-zoned.has-tab-row.is-chat {
-  --tab-open-bg: var(--bg);
   background: var(--strip-tint);
+  border-bottom-color: var(--divider);
 }
 
 .app-header.has-tab-row .header-more-button {
@@ -2374,8 +2395,8 @@ button {
 
 .header-tabs .tab-strip {
   --strip-bg: var(--strip-tint);
-  align-items: flex-end;
-  gap: 0;
+  align-items: center;
+  gap: var(--space-px-3);
   flex: 1 1 auto;
   min-width: 0;
   height: 100%;
@@ -2389,11 +2410,13 @@ button {
 .header-tabs .tab-strip-item {
   position: relative;
   align-items: center;
-  flex: 0 1 220px;
-  min-width: 120px;
-  height: 36px;
+  flex: 0 1 auto;
+  min-width: var(--tab-min-w);
+  max-width: var(--tab-max-w);
+  height: var(--tab-h);
   margin-bottom: 0;
-  border-radius: 10px 10px 0 0;
+  border: var(--hairline) solid transparent;
+  border-radius: var(--radius-sm);
 }
 
 .header-tabs .tab-strip-item:hover {
@@ -2402,6 +2425,7 @@ button {
 
 .header-tabs .tab-strip-item.is-active {
   background: var(--tab-open-bg);
+  border-color: var(--border);
   box-shadow: none;
 }
 
@@ -2412,7 +2436,24 @@ button {
   height: 100%;
   padding: 0 var(--space-2) 0 10px;
   overflow: hidden;
-  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+}
+
+.header-tabs .tab-strip-item.is-active .tab-strip-tab {
+  color: var(--text-strong);
+  font-weight: var(--fw-selected);
+}
+
+.tab-strip-tab:focus-visible,
+.tab-strip-rename:focus-visible {
+  outline-offset: var(--ring-inset-offset);
+}
+
+.pane-slot .tab-strip-tab {
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
 }
 
 .header-tabs .tab-strip-label {
@@ -2427,30 +2468,19 @@ button {
   color: var(--text-dim);
 }
 
-/* the agent's state sits on its mark: a working one's ring turns round it, a waiting or finished one
-   is a dot at its corner */
-.header-tabs .tab-strip-tab {
-  position: relative;
-}
+/* the agent's state after its name, beside the open tab's close, as the Herdr app's tab draws it: a
+   working one's small turning ring, a waiting or finished one's dot */
+.header-tabs .tab-strip-agent { order: 0; }
+.header-tabs .tab-strip-label { order: 1; }
 
 .header-tabs .tab-strip-tab > .tab-strip-dot {
-  position: absolute;
-  left: 20px;
-  top: calc(50% - 10px);
+  order: 2;
+  margin-left: auto;
 }
 
 .header-tabs .tab-strip-tab > .tab-strip-dot:not(.tab-strip-glyph)[data-status="working"] {
-  left: 7px;
-  width: 20px;
-  height: 20px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .header-tabs .tab-strip-tab > .tab-strip-dot:not(.tab-strip-glyph)[data-status="working"] {
-    left: 20px;
-    width: var(--dot-size);
-    height: var(--dot-size);
-  }
+  width: calc(var(--dot-size) + var(--space-1));
+  height: calc(var(--dot-size) + var(--space-1));
 }
 
 .header-tabs .tab-strip-menu {
@@ -2462,7 +2492,7 @@ button {
   display: none;
 }
 
-.header-tabs .tab-strip-item:is(.is-active, :hover) .tab-strip-close {
+.header-tabs .tab-strip-item.is-active .tab-strip-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2473,7 +2503,7 @@ button {
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   cursor: pointer;
 }
@@ -2493,7 +2523,7 @@ button {
   width: 28px;
   height: 28px;
   margin-left: var(--space-1);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   box-shadow: none;
 }
 
@@ -2538,7 +2568,7 @@ button {
   }
 
   .header-tabs .tab-strip-menu,
-  .header-tabs .tab-strip-item:is(.is-active, :hover) .tab-strip-close,
+  .header-tabs .tab-strip-item.is-active .tab-strip-close,
   .header-tabs .tab-strip-add {
     width: var(--touch-target);
     height: var(--touch-target);
@@ -2549,16 +2579,6 @@ button {
   }
 }
 
-/* a tab at rest is set off from the next by a short rule; none beside the open tab or one hovered */
-.header-tabs .tab-strip-item:not(.is-active, :hover) + .tab-strip-item:not(.is-active, :hover)::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 10px;
-  bottom: 10px;
-  width: var(--hairline);
-  background: var(--divider);
-}
 
 /* how this device reaches Ovis (components/ConnectionRouteMark.tsx): a quiet glyph and a short word,
    always there, never a button and never wrapped */
@@ -2687,24 +2707,36 @@ button {
   animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
 }
 
-/* The title area says the word (.context-connection): the chip keeps its pulsing dot, and the word
-   stays for a screen reader and in the chip's title, as on a narrow window below. */
-.conn-quiet {
-  gap: 0;
+.status-bar .status-bar-conn.is-lost {
+  color: var(--status-reconnecting);
 }
 
-.conn-quiet .conn-text {
+.status-bar .status-bar-conn.is-lost .status-bar-dot {
+  background: var(--status-reconnecting);
+}
+
+/* The title area or the status bar says the connection in words (.context-connection, App.tsx): the
+   chip is then heard, not seen. It leaves the flow like the live chip, so the lens switch and Files
+   hold their place while reconnecting (G-144), and stays a status a screen reader reads; its dot
+   does not pulse where nothing shows it. */
+.conn.conn-quiet {
   position: absolute;
   width: 1px;
   height: 1px;
+  margin: -1px;
+  padding: 0;
   overflow: hidden;
   clip: rect(0 0 0 0);
-  white-space: nowrap;
 }
 
-/* A narrow window: the chip keeps its pulsing dot and gives its word's room to the pane title, which
-   says the connection itself. The word stays for a screen reader and in the chip's title. A header
-   whose row is the tabs has no title to say it, so its chip keeps the word. */
+.conn.conn-quiet .conn-dot {
+  animation: none;
+}
+
+/* A narrow window whose title does not say the connection (a header note stands in the crumb's place,
+   or there is no crumb): the chip keeps its pulsing dot and gives its word's room to the pane title.
+   The word stays for a screen reader and in the chip's title. A header whose row is the tabs has no
+   title to say it, so its chip keeps the word. */
 @media (max-width: 900px) {
   .app-header:not(.has-tab-row) .conn-reconnecting {
     gap: 0;
@@ -2728,6 +2760,56 @@ button {
 
 /* alerts are off on this device: the one state of the menu worth a glance. The button's name
    and the Alerts item say it in words. */
+/* a phone's header counts (components/HeaderCounts.tsx): the running and the unseen finished sessions in
+   the sidebar's marks, tabular so a count that changes moves nothing; as tall as the header's buttons */
+.header-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--touch-target-header);
+  padding: 0 var(--space-1);
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.header-count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.header-count-mark {
+  flex: 0 0 auto;
+  width: var(--dot-size);
+  height: var(--dot-size);
+  border-radius: var(--radius-pill);
+  background: var(--status-working);
+}
+
+/* the narrowest phones keep their room for the pane's title: the drawer still says each state */
+@media (max-width: 359px) {
+  .header-counts { display: none; }
+}
+
+/* a finish is a check, as the sidebar's rows draw it (Sidebar.css) */
+.header-count.is-done .header-count-mark {
+  width: calc(var(--space-1) + 1px);
+  height: calc(var(--space-2) + 1px);
+  margin-top: calc(-1 * var(--hairline) * 2);
+  border: solid var(--status-done);
+  border-width: 0 2px 2px 0;
+  border-radius: 0;
+  background: transparent;
+  transform: rotate(45deg);
+}
+
 /* a session waiting where no tab row carries the sessions' pill (App.tsx): More's first item opens it */
 .header-more-dot.is-waiting {
   background: var(--status-blocked);
@@ -2744,6 +2826,29 @@ button {
   pointer-events: none;
 }
 
+/* the waiting dot says how many (App.tsx data-count, G-015): the numeral widens the dot into a pill
+   from the dot's own corner, so the button, its glyph and the dot's place stay; the ink is the
+   panel's paper, which every palette's blocked colour clears as an indicator (themes.contrast.test.ts)
+   and the pill's line box scales with the type, not a fixed height */
+.header-more-dot.is-waiting[data-count]::after {
+  content: attr(data-count);
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  box-sizing: border-box;
+  min-width: calc(1em * var(--lh-tight));
+  padding: 0 var(--space-half);
+  border-radius: var(--radius-pill);
+  background: var(--status-blocked);
+  color: var(--status-ink);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  text-align: center;
+  font-variant-numeric: var(--font-numeric);
+}
+
 /* the menu's first thing, two lines on purpose: "PC › workspace", then the whole path in the
    mono face. It is where a touch screen reads the path. A path longer than six lines scrolls
    here, so the items under it stay on the screen. */
@@ -2757,6 +2862,13 @@ button {
   font-size: var(--fs-xs);
   line-height: var(--lh-base);
   overflow-wrap: anywhere;
+}
+
+/* a phone's More leads with the pane's whole title and its agent (App.tsx, G-069): the header cuts the
+   title short and a touch has no tooltip, so the title leads the place and path lines here */
+.header-more-title {
+  color: var(--text);
+  font-weight: var(--fw-medium);
 }
 
 .header-more-path {
@@ -2808,6 +2920,24 @@ button {
 
   .app:not(.sidebar-collapsed) .header-side .brand {
     margin-right: auto;
+  }
+
+  /* the logo row as the Herdr app's: the tab bar's height, its 26px buttons with their 15px glyphs */
+  .app:not(.sidebar-collapsed) .header-side {
+    gap: var(--space-1);
+    padding-left: calc(var(--space-3) + 2px + env(safe-area-inset-left, 0px));
+    padding-right: 10px;
+  }
+
+  .app:not(.sidebar-collapsed) .header-side .icon-button {
+    width: calc(var(--control-h) - 8px);
+    height: calc(var(--control-h) - 8px);
+    border-radius: var(--radius-sm);
+  }
+
+  .app:not(.sidebar-collapsed) .header-side .icon-button svg {
+    width: 15px;
+    height: 15px;
   }
 }
 
@@ -3492,7 +3622,8 @@ button {
     bottom: 0;
     left: 0;
     z-index: var(--z-drawer);
-    width: min(88vw, var(--sidebar-w));
+    /* about four fifths of a phone, leaving the page beside it to tap the drawer closed (as herdr-app's) */
+    width: min(80vw, calc(var(--sidebar-w) - var(--space-5)));
     transform: translateX(-100%);
     visibility: hidden;
     touch-action: pan-y;
@@ -3500,6 +3631,11 @@ button {
     transition:
       transform var(--dur-base) var(--ease-out),
       visibility 0s linear var(--dur-base);
+  }
+
+  /* the open drawer holds the focus itself (lib/useFocusTrap.ts startOnSurface): a surface, not a control, so no ring */
+  .sidebar[role="dialog"]:focus {
+    outline: none;
   }
 
   .sidebar.is-open {

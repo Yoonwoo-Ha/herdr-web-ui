@@ -99,6 +99,24 @@
 @media (pointer: coarse) {
   .pane-frame-head { height: var(--touch-target); }
   .pane-frame-menu { min-width: var(--touch-target); height: var(--touch-target); }
+  .pane-rename-form .input { height: var(--touch-target); min-height: var(--touch-target); }
 }
 
 .pane-canvas.is-pending { pointer-events: none; }
+
+/* the pane's menu names the pane it is for above its items (G-022); a phone's sheet draws it as its title */
+.pane-frame-menu-target {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-sheet-head .pane-frame-menu-target {
+  color: var(--text-strong);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+}

@@ -112,6 +112,8 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<HerdrPane | null>(null);
   const [renamingTab, setRenamingTab] = useState<HerdrTab | null>(null);
+  // a rename dismissed before Save keeps what was typed, per target, so reopening restores it
+  const renameDrafts = useRef(new Map<string, string>());
   // the row's Move to workspace… and Close tab, where a lone tab's row is left out
   const [movingTab, setMovingTab] = useState<{ tab: HerdrTab; anchor: HTMLElement } | null>(null);
   const [closingTab, setClosingTab] = useState<HerdrTab | null>(null);
@@ -165,7 +167,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     return () => { alive.current = false; cancelDrag(); };
   }, []);
   useEffect(() => { cancelDrag(); }, [topology]);
-  useEffect(() => { setMenu(null); setRenaming(null); setRenamingTab(null); setMovingTab(null); setClosingTab(null); setClosing(null); setError(null); }, [presented?.tab_id]);
+  useEffect(() => { setMenu(null); setRenaming(null); setRenamingTab(null); setMovingTab(null); setClosingTab(null); setClosing(null); setError(null); renameDrafts.current.clear(); }, [presented?.tab_id]);
   // one press each: the request depends on itself alone, as the row's does (TabStrip)
   useLayoutEffect(() => {
     if (renameRequest === null || !loneRowHidden || !appLayout.rename || !presented) return;
@@ -245,7 +247,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         current: item.pane_id === selectedPaneId, run: () => onSelect(item.pane_id),
       })),
       tab: [
-        ...(onNewTerminal && !tabsInHeader ? [{ id: "new-terminal", label: t("New terminal"), icon: Plus, run: () => {
+        ...(onNewTerminal && !tabsInHeader ? [{ id: "new-terminal", label: t("New terminal"), icon: Plus, disabled: watching, run: () => {
           const tabId = latest.current.tabId;
           setError(null);
           void onNewTerminal().catch((reason: unknown) => {
@@ -257,15 +259,15 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         // menu opened from, as the row's menu lists them in place (TabStrip)
         ...(onMoveToWorkspace && appLayout.move && tab && (snapshot?.panes.filter((item) => item.tab_id === target.tab_id).length ?? 0) === 1
           && moveDestinations(snapshot?.workspaces ?? [], target, target.workspace_id).length > 0
-          ? [{ id: "move-workspace", label: t("Move to workspace…"), icon: FolderInput, run: () => {
+          ? [{ id: "move-workspace", label: t("Move to workspace…"), icon: FolderInput, disabled: watching, run: () => {
             const anchor = document.querySelector<HTMLElement>(".header-more-button") ?? canvas.current;
             if (anchor) setMovingTab({ tab, anchor });
           } }] : []),
-        ...(onNewTab && !tabsInHeader ? [{ id: "new-agent-tab", label: t("New tab with agent…"), icon: Bot, run: onNewTab }] : []),
+        ...(onNewTab && !tabsInHeader ? [{ id: "new-agent-tab", label: t("New tab with agent…"), icon: Bot, disabled: watching, run: onNewTab }] : []),
         // the row's inline name field is gone with it: the tab is named in a dialog, as a pane is
-        ...(!appLayout.rename || !tab ? [] : [{ id: "rename-tab", label: t("Rename tab"), icon: Pencil, run: () => setRenamingTab(tab) }]),
+        ...(!appLayout.rename || !tab ? [] : [{ id: "rename-tab", label: t("Rename tab"), icon: Pencil, disabled: watching, run: () => setRenamingTab(tab) }]),
         // the tab's last pane closes it too, but a split tab has no other way to close as one (the row's confirmation: it is the workspace's last tab)
-        ...(tab && !tabLocked(tab.tab_id) ? [{ id: "close-tab", label: t("Close tab"), icon: X, danger: true, run: () => setClosingTab(tab) }] : []),
+        ...(tab && !tabLocked(tab.tab_id) ? [{ id: "close-tab", label: t("Close tab"), icon: X, danger: true, disabled: watching, run: () => setClosingTab(tab) }] : []),
       ],
     };
   };
@@ -349,6 +351,8 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     flush(current);
   };
   const cells = layout ? layoutCells(layout) : pane ? [{ paneId: pane.pane_id, left: 0, top: 0, width: 100, height: 100, focused: true }] : [];
+  const closingTabPanes = closingTab ? snapshot?.panes.filter((item) => item.tab_id === closingTab.tab_id) ?? [] : [];
+  const closingTabWhat = closingTabPanes.length === 1 && closingTabPanes[0] ? displayPaneTitle(closingTabPanes[0]) : t("{n} panes", { n: closingTabPanes.length });
   const alone = soloPane(layout, cells.map((cell) => cell.paneId), selectedPaneId, narrow);
   const stacked = alone !== null && !layout?.zoomed;
   // a split tab where every pane can be drawn (not a phone's one at a time): each title offers its
@@ -472,10 +476,18 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         }} />;
     })}
     {error && <div className="pane-canvas-error" role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}<button className="icon-button" aria-label={t("Dismiss")} onClick={() => setError(null)}><X /></button></div>}
-    {menu && target && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={t("Pane actions for {name}", { name: displayPaneTitle(target) })} items={items} onClose={closeMenu} />}
-    {renaming && <RenameDialog title={t("Rename pane")} field={t("Pane name")} initial={renaming.label ?? ""} maxLength={80} onClose={() => setRenaming(null)} onSave={async (label) => { await api.renamePane(renaming.pane_id, label); onChanged(); }} />}
-    {renamingTab && <RenameDialog title={t("Rename tab")} field={t("Tab name")} initial={customTabLabel(renamingTab, 1) ?? ""} maxLength={MAX_LABEL_CHARS} required={t("A tab needs a name.")}
-      onClose={() => setRenamingTab(null)} onSave={async (label) => { await api.renameTab(renamingTab.tab_id, label); onChanged(); }} />}
+    {menu && target && <RowMenu anchor={menu.anchor} point={menu.point} restoreFocusTo={menu.previousFocus} title={t("Pane actions for {name}", { name: displayPaneTitle(target) })}
+        header={<span className="pane-frame-menu-target">{displayPaneTitle(target)}</span>} items={items} onClose={closeMenu} />}
+    {renaming && <RenameDialog title={`${t("Rename pane")} · ${displayPaneTitle(renaming)}`} field={t("Pane name")} initial={renameDrafts.current.get(`pane:${renaming.pane_id}`) ?? renaming.label ?? ""} placeholder={displayPaneTitle(renaming)} maxLength={80}
+      onDraft={(value) => renameDrafts.current.set(`pane:${renaming.pane_id}`, value)}
+      onClose={() => setRenaming(null)}
+      onCancel={() => { renameDrafts.current.delete(`pane:${renaming.pane_id}`); setRenaming(null); }}
+      onSave={async (label) => { await api.renamePane(renaming.pane_id, label); renameDrafts.current.delete(`pane:${renaming.pane_id}`); onChanged(); }} />}
+    {renamingTab && <RenameDialog title={`${t("Rename tab")} · ${tabLabel(renamingTab, t, 1)}`} field={t("Tab name")} initial={renameDrafts.current.get(`tab:${renamingTab.tab_id}`) ?? customTabLabel(renamingTab, 1) ?? ""} placeholder={tabLabel(renamingTab, t, 1)} maxLength={MAX_LABEL_CHARS} required={t("A tab needs a name.")}
+      onDraft={(value) => renameDrafts.current.set(`tab:${renamingTab.tab_id}`, value)}
+      onClose={() => setRenamingTab(null)}
+      onCancel={() => { renameDrafts.current.delete(`tab:${renamingTab.tab_id}`); setRenamingTab(null); }}
+      onSave={async (label) => { await api.renameTab(renamingTab.tab_id, label); renameDrafts.current.delete(`tab:${renamingTab.tab_id}`); onChanged(); }} />}
     {movingTab && <RowMenu anchor={movingTab.anchor} title={t("Move {tab} to", { tab: tabLabel(movingTab.tab, t, 1) })} align="start" onClose={() => setMovingTab(null)}
       items={moveDestinations(snapshot?.workspaces ?? [], snapshot?.panes.find((item) => item.tab_id === movingTab.tab.tab_id), movingTab.tab.workspace_id).map((entry): RowMenuItem => ({
         id: `workspace:${entry.workspace_id}`, label: entry.label, icon: Folder, run: () => {
@@ -487,7 +499,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
         },
       }))} />}
     {closingTab && <ConfirmDialog title={t("Close tab {name}?", { name: tabLabel(closingTab, t, 1) })}
-      body={t("It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.", { workspace: snapshot?.workspaces.find((entry) => entry.workspace_id === closingTab.workspace_id)?.label ?? "" })}
+      body={`${t("It is the last tab of {workspace}: the workspace closes with it, and the agents and shells in it stop.", { workspace: snapshot?.workspaces.find((entry) => entry.workspace_id === closingTab.workspace_id)?.label ?? "" })} ${closingTabWhat}`}
       confirmLabel={t("Close tab")} onClose={() => setClosingTab(null)}
       onConfirm={async () => {
         await api.closeTab(closingTab.tab_id); setClosingTab(null); onChanged();
@@ -512,7 +524,7 @@ function paneInput(frame: Pick<Element, "querySelector"> | null): HTMLElement | 
 }
 
 /** A pane's or a lone tab's name; `required` is the error an empty name gets, where one is not allowed (a tab's). */
-function RenameDialog({ title, field, initial, maxLength, required, onClose, onSave }: { title: string; field: string; initial: string; maxLength: number; required?: string; onClose: () => void; onSave: (label: string) => Promise<void> }) {
+function RenameDialog({ title, field, initial, placeholder, maxLength, required, onDraft, onClose, onCancel, onSave }: { title: string; field: string; initial: string; placeholder?: string; maxLength: number; required?: string; onDraft?: (value: string) => void; onClose: () => void; onCancel?: () => void; onSave: (label: string) => Promise<void> }) {
   const t = useT();
   const input = useRef<HTMLInputElement>(null);
   const surface = useFocusTrap<HTMLDivElement>(true, { initialFocus: input });
@@ -537,8 +549,8 @@ function RenameDialog({ title, field, initial, maxLength, required, onClose, onS
         if (required !== undefined && value.trim() === "") { setError({ message: required, detail: null }); return; }
         setBusy(true); void onSave(value.trim()).then(onClose, (reason) => { setError(userErrorMessage(reason)); setBusy(false); }); }}>
         <header className="modal-header"><h2 className="modal-title">{title}</h2></header>
-        <div className="modal-body"><label>{field}<input ref={input} className="input" value={value} disabled={busy} maxLength={maxLength} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setValue(event.target.value)} /></label>{error && <p role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>}</div>
-        <footer className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onClose}>{t("Cancel")}</button><button className="btn btn-primary" disabled={busy}>{t("Save")}</button></footer>
+        <div className="modal-body"><label>{field}<input ref={input} className="input" value={value} placeholder={placeholder} disabled={busy} maxLength={maxLength} onFocus={(event) => event.currentTarget.select()} onChange={(event) => { setValue(event.target.value); onDraft?.(event.target.value); }} /></label>{error && <p role="alert">{error.message}{error.detail !== null && <><br /><code>{error.detail}</code></>}</p>}</div>
+        <footer className="modal-footer"><button type="button" className="btn" disabled={busy} onClick={onCancel ?? onClose}>{t("Cancel")}</button><button className="btn btn-primary" disabled={busy}>{t("Save")}</button></footer>
       </form>
     </div>
   </div>, document.body);

@@ -98,8 +98,8 @@ export interface Settings {
   foldHelpers: boolean;
   /** each workspace's agents listed under its row in the PCs list (components/Sidebar.tsx), a PC > workspace > agent tree; off until chosen */
   sidebarAgentTree: boolean;
-  /** CPU, memory and the fullest disk under each open PC in the sidebar (components/MachineStats.tsx); null until
-   *  chosen on this device, which shows it while two or more PCs are connected (pcLoadOn) */
+  /** the selected PC's CPU, memory and fullest disk in the status bar (components/MachineStats.tsx PcLoadStatus); null until
+   *  chosen on this device, which keeps it off (pcLoadOn) */
   pcLoad: boolean | null;
   /** The Agents list's order. Activity is display-only: herdr's own order never changes. */
   agentOrder: AgentOrder;
@@ -989,9 +989,10 @@ function coarsePointer(): boolean {
   return typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches === true;
 }
 
-/** Whether the sidebar shows each open PC's load: as chosen on this device, else while two or more PCs are connected. */
-export function pcLoadOn(settings: Pick<Settings, "pcLoad">, machines: readonly { state: string }[]): boolean {
-  return settings.pcLoad ?? machines.filter((machine) => machine.state === "connected").length >= 2;
+/** Whether the status bar shows the selected PC's load: as chosen on this device, else off. */
+export function pcLoadOn(settings: Pick<Settings, "pcLoad">, _machines: readonly { state: string }[]): boolean {
+  // off until chosen in Settings: the owner judged each PC's CPU, memory and disk line not needed by default
+  return settings.pcLoad ?? false;
 }
 
 /** Whether Enter (Return) sends from the composer: the device's choice, else not on a touch screen. */

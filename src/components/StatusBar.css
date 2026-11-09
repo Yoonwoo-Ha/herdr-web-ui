@@ -49,7 +49,8 @@
 }
 
 .status-bar-waiting {
-  height: 20px;
+  height: var(--pointer-target);
+  min-height: var(--pointer-target);
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-pill);
@@ -67,8 +68,14 @@
   cursor: default;
 }
 
-.status-bar-waiting:not([aria-disabled="true"]):hover {
-  background: color-mix(in srgb, var(--status-blocked) 24%, transparent);
+@media (hover: hover) {
+  .status-bar-waiting:not([aria-disabled="true"]):hover {
+    background: color-mix(in srgb, var(--status-blocked) 24%, transparent);
+  }
+}
+
+.status-bar-waiting:not([aria-disabled="true"]):active {
+  background: color-mix(in srgb, var(--status-blocked) 30%, transparent);
 }
 
 .status-bar-dot {

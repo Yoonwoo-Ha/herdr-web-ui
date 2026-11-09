@@ -216,6 +216,14 @@ button.machine-title:focus-visible { outline-offset: calc(var(--ring-offset) * -
   }
 }
 
+/* in one-line rows the phone drawer's header has the + for a new workspace: a PC's own + there would only widen
+   its line. The fold then keeps the column a workspace row's ... stands in, the status cell's width short of the
+   edge. Two-line rows draw no header +, so each PC keeps its own */
+@media (max-width: 768px) {
+  .machine-group:not(.is-two-line) .machine-new { display: none; }
+  .machine-group:not(.is-two-line) .machine-toggle { margin-right: var(--side-box); }
+}
+
 .machine-state {
   display: flex;
   flex-direction: column;
