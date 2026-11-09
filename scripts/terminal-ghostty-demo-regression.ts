@@ -198,15 +198,15 @@ try {
         const cell = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector(".pane-frame.is-current .ghostty-layer")!).getPropertyValue("--ghostty-ch")));
         assert.equal(red?.top, `${4 * cell}px`, "core: at the row it was placed on");
 
-        // a dark palette names no ANSI colours: they are xterm's own, not black
+        // Light themes name their ANSI colours; dark themes use xterm's defaults.
         await print(page, "\x1b[31mRED-TEXT\x1b[0m\r\n", "COLOURED");
         const ansiRed = await page.evaluate(() => {
           const span = [...document.querySelectorAll<HTMLElement>(".pane-frame.is-current .ghostty-row span")].find((s) => s.textContent?.includes("RED-TEXT"))!;
           const rgb = (css: string) => `#${(css.match(/\d+/g) ?? []).slice(0, 3).map((n) => Number(n).toString(16).padStart(2, "0")).join("")}`;
-          return { color: rgb(getComputedStyle(span).color), background: rgb(getComputedStyle(document.querySelector(".pane-frame.is-current .xterm-viewport")!).backgroundColor) };
+          return { color: rgb(getComputedStyle(span).color), background: rgb(getComputedStyle(document.querySelector(".pane-frame.is-current .xterm-viewport")!).backgroundColor), token: getComputedStyle(document.documentElement).getPropertyValue("--term-red").trim() || "#cc0000" };
         });
         // xterm draws it at its minimum contrast (4.5) against the background, as terminalFold.ts computes it
-        assert.equal(ansiRed.color, readableColor("#cc0000", ansiRed.background, 4.5), "core: ANSI red is xterm's red under a palette that names none, made readable as xterm makes it");
+        assert.equal(ansiRed.color, readableColor(ansiRed.token, ansiRed.background, 4.5), "core: ANSI red follows the theme token (or xterm's default), made readable as xterm makes it");
 
         // a wide character after a combining accent keeps its two cells: the accent is part of the cell before it
         await print(page, "e\u0301\u754cX\r\n", "COMBINED");

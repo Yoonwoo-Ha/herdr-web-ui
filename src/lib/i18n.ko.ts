@@ -110,10 +110,10 @@ const BASE: Record<string, string> = {
   "Access token": "접속 토큰",
 
   // ---- shortcuts (lib/shortcuts.ts labels) ----
-  "Command palette": "명령 팔레트",
+  "Command palette": "패널과 명령 검색",
   "Switch chat / terminal": "채팅 / 터미널 전환",
   "Focus pane input": "패널 입력창으로 이동",
-  "Toggle sidebar": "사이드바 토글",
+  "Toggle sidebar": "사이드바 열기·닫기",
   "New workspace": "새 워크스페이스",
   "Previous pane": "이전 패널",
   "Next pane": "다음 패널",
@@ -123,9 +123,9 @@ const BASE: Record<string, string> = {
   "Next workspace": "다음 워크스페이스",
 
   // ---- agent status words (lib/status.ts) ----
-  "READY": "대기",
+  "READY": "준비됨",
   "RUN": "실행",
-  "INPUT": "입력",
+  "INPUT": "응답 필요",
   "DONE": "완료",
   "BG": "백그라운드",
   "—": "—",
@@ -223,7 +223,7 @@ const BASE: Record<string, string> = {
   "Checking…": "확인 중…",
   "relay": "릴레이",
   "direct": "직접",
-  "local": "로컬",
+  "local": "PC 내부·터널",
   "Via a loopback address: this PC, or a tunnel to it": "루프백 주소로 연결: 이 PC, 또는 이 PC로 오는 터널",
   "Via the Ovis relay": "Ovis 릴레이를 거쳐 연결",
   "Directly on the same network, not through the relay": "같은 네트워크에서 릴레이 없이 바로 연결",
@@ -232,10 +232,10 @@ const BASE: Record<string, string> = {
   "Via Tailscale, or Funnel from the internet": "Tailscale을 거쳐 연결, 또는 인터넷에서 Funnel로 연결",
   "Via the local network": "로컬 네트워크를 거쳐 연결",
   "Straight to this address": "이 주소로 바로 연결",
-  "{count} waiting for you": "내 응답 대기 {count}개",
+  "{count} waiting for you": "응답 필요 {count}개",
   "{count} working": "작업 중 {count}개",
   "{count} done": "완료 {count}개",
-  "Open the next session waiting for you": "응답을 기다리는 다음 세션 열기",
+  "Open the next session waiting for you": "다음 응답 필요 패널 열기",
   "Tab {index} of {count}": "탭 {count}개 중 {index}번째",
   "Tabs of {workspace}": "{workspace}의 탭",
   "Reconnecting…": "재연결 중…",
@@ -246,7 +246,7 @@ const BASE: Record<string, string> = {
 
   // ---- command palette ----
   "Refresh": "새로 고침",
-  "Search panes and actions": "패널과 동작 검색",
+  "Search panes and actions": "패널과 명령 검색",
   "Search conversation": "대화 검색",
 
   // ---- new workspace ----
@@ -284,7 +284,7 @@ const BASE: Record<string, string> = {
   "Submit": "제출",
   "Recommended": "추천",
   "Agents": "에이전트",
-  "Setup guide": "설정 안내",
+  "Setup guide": "에이전트 설치·연결",
   "Could not confirm this browser is paired. Check that cookies are enabled, then try again.": "이 브라우저의 페어링을 확인할 수 없습니다. 쿠키가 허용되어 있는지 확인한 뒤 다시 시도하세요.",
   "New code": "새 코드",
   "Paired: {name}.": "페어링됨: {name}.",
@@ -347,7 +347,7 @@ const BASE: Record<string, string> = {
   "Done": "완료",
   "Name": "이름",
   "Recent": "최근",
-  "Needs you": "내 응답 필요",
+  "Needs you": "응답 필요",
 
   // ---- phone ----
   "Copy": "복사",
@@ -356,7 +356,7 @@ const BASE: Record<string, string> = {
   "Sending…": "보내는 중…",
   // the alerts health notice over the pane and Settings → Alerts say these alike (lib/pushHealth.ts)
   "This device's push subscription is missing. Turn alerts on again.": "이 기기의 푸시 구독이 없습니다. 알림을\u00a0다시\u00a0켜세요.",
-  "The push service retired this device's subscription. Turn alerts on again to make a new one.": "푸시 서비스가 이 기기의 구독을 끝냈습니다. 알림을\u00a0다시\u00a0켜세요.",
+  "The push service retired this device's subscription. Turn alerts on again to make a new one.": "이 기기의 알림 연결이 만료됐습니다.",
   "Turn alerts on again": "알림 다시 켜기",
   "Turning alerts on…": "알림을 켜는 중…",
   "This device's push subscription was made for another server key. Turn alerts on again to make a new one.": "이 기기의 푸시 구독은 다른 서버 키로 만들어졌습니다. 새로 만들려면 알림을\u00a0다시\u00a0켜세요.",
@@ -366,9 +366,7 @@ const BASE: Record<string, string> = {
   "Brave would not make a push subscription. Turn on Use Google services for push messaging in Brave's privacy settings, then try again.": "Brave가 푸시 구독을 만들지 않았습니다. Brave 개인정보 설정에서 \"Use Google services for push messaging\"을 켠 뒤 다시 시도하세요.",
   "This device would not make a push subscription. Check that push messaging is allowed in its settings, then try again.": "이 기기에서 푸시 구독을 만들지 못했습니다. 설정에서 푸시 메시지가 허용되어 있는지 확인한 뒤 다시 시도하세요.",
   "This device can only watch.": "이 기기는 보기만 할 수 있습니다.",
-  "Needs input": "입력 필요",
   "Needs permission": "권한 필요",
-  "Finished": "작업 완료",
   "Open pane": "패널 열기",
   "Quick replies": "빠른 답장",
   "Skills": "스킬",
@@ -395,6 +393,7 @@ const BASE: Record<string, string> = {
   "This PC's bridge does not offer this yet": "이 PC의 브리지는 아직 이 기능을 제공하지 않습니다.",
   "Move failed: {reason}": "이동 실패: {reason}",
   "Pane swap was refused: {reason}": "패널 교환이 거부되었습니다: {reason}",
+  "The pane swap could not be completed. Try again.": "패널을 교환하지 못했습니다. 다시 시도하세요.",
   "The panes are in different tabs.": "패널이 서로 다른 탭에 있습니다.",
   "Choose two different panes.": "서로 다른 두 패널을 선택하세요.",
   "The pane moved to the right instead.": "패널이 대신 오른쪽으로 옮겨졌습니다.",
@@ -418,7 +417,7 @@ const BASE: Record<string, string> = {
   "Selected": "선택됨",
   // Recover unsent text (components/UnsentText.tsx)
   "Unsent text · {destination}": "보내지 않은 글 · {destination}",
-  "Text you had not sent when herdr restarted. A new herdr gives pane IDs out again, so it waits here rather than in a pane it was not written for. Nothing here is sent.": "herdr가 다시 시작될 때 보내지 않았던 글입니다. 새 herdr는 패널 ID를 다시 나눠 주므로, 그 글이 다른 패널에 나타나지 않도록 여기에 보관합니다. 여기서는 아무것도 보내지 않습니다.",
+  "Text you had not sent when herdr restarted. A new herdr gives pane IDs out again, so it waits here rather than in a pane it was not written for. Nothing here is sent.": "재시작 전에 보내지 못한 글입니다. 대상 패널을 확인한 뒤 입력창에 넣으세요.",
   "Put in message box adds this text to {destination}. Nothing is sent.": "입력창에 넣기를 누르면 {destination}에 글이 들어갑니다. 보내지는 않습니다.",
   "Put in message box": "입력창에 넣기",
   "Adds the text to this pane's message box. Nothing is sent.": "이 패널의 입력창에 글을 추가합니다. 보내지는 않습니다.",
@@ -427,7 +426,7 @@ const BASE: Record<string, string> = {
   "Held message": "보관한 메시지",
   "Held input": "보관한 입력",
   "Other accounts": "다른 계정",
-  "Plan limits": "요금제 한도",
+  "Plan limits": "요금제 사용량 표시",
   "Auto": "자동",
   "Hub request failed": "허브 요청에 실패했어요",
   "On this PC": "이 PC",

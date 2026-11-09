@@ -97,6 +97,10 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     const paneButton = frame(page, first).locator(".pane-frame-menu");
     assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "0");
     await frame(page, first).focus();
+    // the title is the pane's first Tab stop (Enter or Space on it focuses the pane's input), the menu the next
+    await page.keyboard.press("Tab");
+    assert.equal(await frame(page, first).locator('.pane-frame-title [role="button"]').evaluate((node) => node === document.activeElement), true, "Tab reaches the pane's title first");
+    assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "0", "the title's focus leaves the menu button hidden");
     await page.keyboard.press("Tab");
     assert.equal(await paneButton.evaluate((node) => node === document.activeElement), true, "Tab reaches the pane menu");
     assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "1", "keyboard focus reveals the button");

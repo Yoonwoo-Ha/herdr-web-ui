@@ -29,7 +29,8 @@ export function MachineDialog({ machine, preset, updateRemote = false, onClose, 
   const jobRef = useRef(job); jobRef.current = job;
   // the identity the form shows now: an answer sent for another one never offers its choices here
   const identityRef = useRef(""); identityRef.current = [destination.trim(), port, session].join("\0");
-  const [secret, setSecret] = useState("");
+  // the password lives in its field alone (src/AGENTS.md): read once on submit, then cleared, never in state
+  const secretField = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const finished = !!job && ["failed", "cancelled", "connected"].includes(job.phase);
@@ -64,7 +65,8 @@ export function MachineDialog({ machine, preset, updateRemote = false, onClose, 
     timer = window.setTimeout(poll, 750);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [job?.id, finished]);
-  useEffect(() => setSecret(""), [job?.challenge?.id]);
+  const clearSecret = () => { if (secretField.current) secretField.current.value = ""; };
+  useEffect(clearSecret, [job?.challenge?.id]);
   const editIdentity = (field: "destination" | "port" | "session", value: string) => {
     setHerdrSocket(""); setStartNewHerdr(false); setOwnOvis("");
     // A result from the old address must not offer its choices for the edited address.
@@ -97,7 +99,7 @@ export function MachineDialog({ machine, preset, updateRemote = false, onClose, 
   }, []);
   const act = async (action: SetupAction) => {
     if (!job || pending) return;
-    setPending(true); setError(null); setSecret("");
+    setPending(true); setError(null); clearSecret();
     try { setJob(await answerMachineSetup(job.id, action)); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setPending(false); }
@@ -126,10 +128,15 @@ export function MachineDialog({ machine, preset, updateRemote = false, onClose, 
       {running && keepOpen && <p className="field-hint">{t("Keep this dialog open until the PC connects.")}</p>}
       {running && !waitingForLogin && !keepOpen && <p className="field-hint">{t("You can close this; the install keeps going and the sidebar shows it.")}</p>}
       {job?.phase === "approval" && <><ul className="machine-install-list">{job.installations.map((item) => <li key={item}>{item}</li>)}</ul><p className="field-hint">{t(ownUpdate ? "That PC's own updater installs it there. Existing herdr sessions keep running." : "Installs into your home directory. Existing herdr sessions keep running.")}</p></>}
-      {job?.challenge && <div className="machine-challenge">{job.challenge.kind === "host_key" ? <HostKeyQuestion prompt={job.challenge.prompt} host={job.target.destination} sshOutput={job.ssh_output} /> : <><pre>{job.challenge.prompt}</pre><form onSubmit={(e) => { e.preventDefault(); void act({ action: "answer", challenge_id: job.challenge!.id, answer: secret }); }}>
-        <label className="field"><span className="field-label">{t("Password or key passphrase")}</span><input autoFocus className="input" type="password" autoComplete="off" value={secret} disabled={!secretAllowed || pending} onChange={(e) => setSecret(e.target.value)} /></label>
+      {job?.challenge && <div className="machine-challenge">{job.challenge.kind === "host_key" ? <HostKeyQuestion prompt={job.challenge.prompt} host={job.target.destination} sshOutput={job.ssh_output} /> : <><pre>{job.challenge.prompt}</pre><form onSubmit={(e) => {
+        e.preventDefault();
+        const answer = secretField.current?.value ?? "";
+        if (answer === "") { secretField.current?.focus(); return; }
+        void act({ action: "answer", challenge_id: job.challenge!.id, answer });
+      }}>
+        <label className="field"><span className="field-label">{t("Password or key passphrase")}</span><input ref={secretField} autoFocus className="input" type="password" autoComplete="off" disabled={!secretAllowed || pending} /></label>
         {!secretAllowed && <p className="field-hint">{t("Open this app over HTTPS or localhost to enter a password.")}</p>}
-        <button type="submit" className="btn btn-primary" disabled={!secretAllowed || pending || !secret}>{t("Continue")}</button>
+        <button type="submit" className="btn btn-primary" disabled={!secretAllowed || pending}>{t("Continue")}</button>
       </form></>}</div>}
       {error && <p className="machine-error" role="alert">{error}</p>}
     </div>

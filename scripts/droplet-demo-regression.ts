@@ -81,7 +81,7 @@ try {
         await page.locator(`.pane-select[title^="${panes.hermes} —"][aria-current="true"]`).waitFor({ state: "attached" });
         const card = page.locator(".droplet-card");
         await card.waitFor({ state: "visible", timeout: 6_000 });
-        assert.match(await card.getAttribute("aria-label") ?? "", /Finished/);
+        assert.match(await card.getAttribute("aria-label") ?? "", /\bDONE\b/);
         assert.equal(await page.locator(".droplet").getAttribute("data-kind"), "done");
 
         const check = async (label: string) => {

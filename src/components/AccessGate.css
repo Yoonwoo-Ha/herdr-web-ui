@@ -26,7 +26,7 @@
   width: min(100%, calc(var(--sidebar-w) + 2 * var(--space-6)));
   margin: 0;
   padding: var(--space-6);
-  background: var(--bg-panel);
+  background: var(--surface-raised);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-md);
 }
@@ -67,7 +67,7 @@
   height: var(--control-h);
   padding: 0 var(--space-3);
   background: var(--bg-elevated);
-  border: var(--hairline) solid var(--border);
+  border: var(--hairline) solid var(--border-input);
   border-radius: var(--radius-sm);
   color: var(--text-strong);
   font: inherit;

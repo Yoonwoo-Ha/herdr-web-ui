@@ -362,16 +362,17 @@ try {
       // address follows what is typed, and closing the dialog takes it off
       await withPage(browser, `?new=workspace&cwd=${encodeURIComponent("/home/demo/infra")}&name=Fix%20backup&agent=codex`, async (page) => {
         const dialog = page.getByRole("dialog", { name: /New workspace/ });
+        const nameField = dialog.getByRole("textbox", { name: "Optional workspace label", exact: true });
         await dialog.waitFor();
         assert.equal(await page.locator("#new-session-cwd").inputValue(), "/home/demo/infra");
-        assert.equal(await dialog.getByRole("textbox", { name: "Name" }).inputValue(), "Fix backup");
+        assert.equal(await nameField.inputValue(), "Fix backup");
         await dialog.locator(".agent-picker-label", { hasText: /codex/i }).waitFor();
         const workspaces = async () => (await page.evaluate(async () => (await (await fetch("/api/session")).json()).snapshot.workspaces.length)) as number;
         const before = await workspaces();
         await page.waitForTimeout(800); // fixed wait: no workspace may be created by the link
         assert.equal(await workspaces(), before, "a link fills the form; Create is still the user's");
         await waitQuery(page, "name", "Fix backup");
-        await dialog.getByRole("textbox", { name: "Name" }).fill("Fix the nightly backup");
+        await nameField.fill("Fix the nightly backup");
         await waitQuery(page, "name", "Fix the nightly backup");
         assert.equal((await query(page))["new"], "workspace");
         await page.keyboard.press("Escape");

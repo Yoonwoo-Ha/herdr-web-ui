@@ -1108,13 +1108,13 @@ try {
   });
   const chatText = await textStyle(".chat-transcript .chat-turn-agent .markdown");
   const previewText = await textStyle(".file-viewer-markdown");
-  // --fs-chat (15px), the size of prose read at length, at the chat's scale, 17 / 14
-  assert.ok(Math.abs(Number.parseFloat(chatText.fontSize) - 15 * 17 / 14) < 0.05, `the chat font size is applied in the chat: ${chatText.fontSize}`);
+  // a finger's screen reads the chat's prose one step up, --fs-lg (16px), at the chat's scale, 17 / 14
+  assert.ok(Math.abs(Number.parseFloat(chatText.fontSize) - 16 * 17 / 14) < 0.05, `the chat font size is applied in the chat: ${chatText.fontSize}`);
   assert.match(chatText.fontFamily, /^Georgia,/);
   assert.equal(previewText.fontSize, chatText.fontSize, "the preview's text has the chat's font size");
   assert.equal(previewText.fontFamily, chatText.fontFamily, "the preview's text has the chat's font");
-  // --fs-xl (18px) at the chat's scale, 17 / 14
-  assert.ok(Math.abs(Number.parseFloat(previewText.headingSize ?? "") - 18 * 17 / 14) < 0.05, `its headings scale with it: ${previewText.headingSize}`);
+  // --md-h1-size (30px) at the chat's scale, 17 / 14
+  assert.ok(Math.abs(Number.parseFloat(previewText.headingSize ?? "") - 30 * 17 / 14) < 0.05, `its headings scale with it: ${previewText.headingSize}`);
   assert.equal(await page.locator(".file-viewer-markdown").evaluate((element) => getComputedStyle(element).maxWidth), "820px", "Default is the chat's Default lane");
   // on a wide screen the Default lane follows the pane (71.43% of it, up to 60rem): the preview
   // follows with it, as wide as the chat beside it, not the 820px floor. The file is a panel beside
@@ -1522,8 +1522,15 @@ try {
       // nor does the document's own tab, for a PC that is not set up here
       const readerPage = await ownerContext.newPage();
       await readerPage.goto(`${origin}/?read=${encodeURIComponent(markdownPath)}&machine=${target}`);
-      await readerPage.locator(".file-reader .file-viewer-note").waitFor();
+      // The settled alert names the offline PC (503 machine_offline), without a generic error above it.
+      await readerPage.locator(".file-reader .file-viewer-note[role=alert]").waitFor();
+      assert.deepEqual(await readerPage.locator(".file-reader .file-viewer-note").allTextContents(), ["That PC is not reachable right now."]);
       assert.equal(fileRequests.some((path) => path.startsWith("/api/fs/")), false, "the reader never reads the local file for another PC");
+      const rawLink = await readerPage.getByRole("link", { name: "Open raw file", exact: true }).getAttribute("href");
+      assert.ok(rawLink, "the offline reader keeps its raw-file recovery route");
+      const rawUrl = new URL(rawLink, origin);
+      assert.equal(rawUrl.pathname, "/api/machines/missing-fixture/fs/file", "recovery stays on the file's PC");
+      assert.equal(rawUrl.searchParams.get("path"), markdownPath, "recovery keeps the requested file");
       await readerPage.close();
     } else {
       await ownerPage.locator(".file-viewer-markdown").getByRole("heading", { name: "Markdown preview", exact: true }).waitFor();
@@ -1706,7 +1713,8 @@ try {
   await page.getByRole("button", { name: "notes", exact: true }).click();
   const refused = page.getByRole("dialog", { name: "notes.txt", exact: true });
   await refused.getByRole("alert").waitFor();
-  assert.equal(await refused.getByRole("alert").innerText(), "The file could not be opened.");
+  // a PC dropped mid-read keeps its machine code (lib/fileFailure.ts): the alert names the PC as away
+  assert.equal(await refused.getByRole("alert").innerText(), "That PC is not reachable right now.");
   assert.equal(await refused.getByText("machine_unavailable").count(), 0);
   assert.equal(await refused.locator(".file-viewer-text").count(), 0);
   console.log("PASS A file whose body is refused shows an error, not the error's JSON");

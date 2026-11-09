@@ -40,7 +40,7 @@
 .agent-section-count {
   width: var(--side-box);
   margin-left: auto;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-meta);
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
@@ -72,7 +72,7 @@
   margin: var(--space-2) 0 0;
   padding-left: var(--side-box);
   color: var(--text-dim);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tracking-caps);
   line-height: var(--lh-tight);
@@ -104,7 +104,7 @@
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tracking-caps);
   line-height: var(--lh-tight);
@@ -130,7 +130,7 @@
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tracking-caps);
   line-height: var(--lh-tight);
@@ -336,7 +336,7 @@
   font-weight: var(--fw-regular);
 }
 
-.agent-item.is-selected .agent-title { color: var(--text-strong); }
+.agent-item.is-selected .agent-title { color: var(--text-strong); font-weight: var(--fw-selected); }
 
 .agent-title-line {
   display: flex;

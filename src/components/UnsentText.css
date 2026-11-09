@@ -1,7 +1,7 @@
 /* Recover unsent text (UnsentText.tsx): a list of plain-text records in a modal, each with its
    PC, pane, kind and time on one muted line, prose in UI sans and terminal lines in mono, and its three actions under it */
 .unsent-modal {
-  width: min(100%, 560px);
+  width: min(100%, var(--dialog-w));
 }
 
 .unsent-lead {

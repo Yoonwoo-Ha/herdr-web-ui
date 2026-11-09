@@ -4,7 +4,7 @@
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
 export const SETTINGS_LAYOUT_KO: Record<string, string> = {
-  "Search settings": "설정 검색",
+  "Search settings": "모든 설정 검색",
   "No settings match.": "일치하는 설정이 없습니다.",
   "Search results": "검색 결과",
   "Open {page}": "{page} 열기",
@@ -27,10 +27,10 @@ export const SETTINGS_LAYOUT_KO: Record<string, string> = {
   "The agent's reasoning blocks: left out, folded to one line, or open. One you open or fold stays that way for its message.": "에이전트의 추론 블록을 빼거나, 한 줄로 접거나, 펼쳐서 보여 줍니다. 직접 펼치거나 접은 블록은 그 메시지에서 그대로 유지됩니다.",
   "Drops fillers and fixes spacing; code and paths stay as spoken. Where it is off, the text stays exactly as transcribed.": "군말을 빼고 띄어쓰기를 고칩니다. 코드와 경로는 말한 그대로 둡니다. 꺼 둔 곳에서는 받아쓴 그대로 둡니다.",
   "Alert me when": "이럴 때 알림",
-  "Long turn finished": "긴 작업 끝남",
+  "Long turn finished": "1분 이상 작업 완료",
   "Any turn finished": "작업 끝날 때마다",
-  "Lock pinned agents": "고정 에이전트 잠그기",
-  "OMP: side conversations chip": "OMP 곁가지 대화 칩",
+  "Lock pinned agents": "에이전트 메뉴에 닫기 방지 추가",
+  "OMP: side conversations chip": "OMP 별도 대화 목록 표시",
   "A chip in an OMP pane's message box lists the side conversations its session saved with /btw.": "OMP 패널의 입력창에 세션이 /btw로 저장한 곁가지 대화 목록을 여는 칩을 표시합니다.",
   "In use": "사용 중",
   "herdr's TUI server is not running: start herdr after the switch.": "herdr의 TUI 서버가 실행 중이 아닙니다. 전환한 뒤 herdr를 시작하세요.",

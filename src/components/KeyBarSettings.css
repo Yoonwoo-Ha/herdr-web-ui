@@ -153,6 +153,7 @@
   background: var(--bg-elevated);
   border-color: var(--accent);
   color: var(--text-strong);
+  font-weight: var(--fw-selected);
 }
 
 .key-bar-settings-combo {

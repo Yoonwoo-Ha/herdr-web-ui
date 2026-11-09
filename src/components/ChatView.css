@@ -99,9 +99,13 @@
   padding-top: calc(var(--chat-edge) + var(--header-over, 0px));
   padding-bottom: calc(var(--chat-edge-end) + var(--composer-over, 0px));
   scroll-padding-top: var(--header-over, 0px);
-  /* and a row brought into view (an opened screen preview) stops clear of the card, not under it */
-  scroll-padding-bottom: var(--composer-over, 0px);
-  background: var(--bg);
+  /* and a row brought into view (an opened screen preview, a search match) stops clear of the card
+     and of the New messages pill that floats over the end while the reader is away from it: the
+     pill's --control-h and the space around it */
+  scroll-padding-bottom: calc(var(--composer-over, 0px) + var(--control-h) + 2 * var(--space-2));
+  background: var(--surface-canvas);
+  /* the transcript's scrollbar is thin as a document's, in the theme's colours (html, styles.css) */
+  scrollbar-width: thin;
 }
 
 /* From 769px the header over the chat has no bar and no rule (styles.css): the transcript
@@ -272,7 +276,7 @@
   align-items: center;
   gap: var(--space-1);
   color: var(--text-dim);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-fast) var(--ease-out);
@@ -595,22 +599,23 @@
 }
 
 /* Every agent heading is an h3 (Markdown.tsx: an agent's markdown must not shadow the app's own
-   h1/h2 outline), so the tag says nothing about the level and the level class is what these
-   rules key off — the same drawing as before the remap, level by level. */
-.markdown-h1 { font-size: var(--fs-xl); }
-.markdown-h2 { font-size: var(--fs-lg); }
-/* h3 is the prose size, and below it the size stops shrinking: the weight, then the dim colour,
-   tell the levels apart */
-.markdown-h3,
-.markdown-h4,
-.markdown-h5,
-.markdown-h6 { font-size: var(--chat-fs-body); }
+   h1/h2 outline; its aria-level keeps the levels apart for a screen reader), so the tag says
+   nothing about the level and the level class is what these rules key off. The sizes are the
+   page's heading steps (styles.css --fs-h3/h2/h1: 1.25× the prose, then 1.25× again, twice),
+   scaled with the chat's text, and below h3 the size stops shrinking: the weight, then the dim
+   colour, tell the levels apart */
+.markdown .markdown-h1 { font-size: var(--fs-h1); }
+.markdown .markdown-h2 { font-size: var(--fs-h2); }
+.markdown .markdown-h3 { font-size: var(--fs-h3); }
+.markdown .markdown-h4,
+.markdown .markdown-h5,
+.markdown .markdown-h6 { font-size: var(--chat-fs-body); }
 .markdown-h1,
 .markdown-h2,
 .markdown-h3,
 .markdown-h4,
-.markdown-h5 { color: inherit; font-weight: var(--fw-semibold); line-height: var(--lh-tight); }
-.markdown-h6 { color: var(--text-dim); font-weight: var(--fw-semibold); line-height: var(--lh-tight); }
+.markdown-h5 { color: inherit; font-weight: var(--fw-semibold); line-height: var(--lh-heading); }
+.markdown-h6 { color: var(--text-dim); font-weight: var(--fw-semibold); line-height: var(--lh-heading); }
 
 /* A marker sits outside its item, in this indent, and is drawn in the Chat font: in a monospace face
    every digit and the ". " after it take a whole cell (`1ch`), so a fixed 20px cut "1." off on the
@@ -746,7 +751,7 @@ ol.markdown-list {
   border-bottom: var(--hairline) solid var(--border);
   color: var(--text-dim);
   font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
 }
 
 /* The block's chrome is not code: its language label, "Show all" toggle, copy error and "Too
@@ -806,7 +811,7 @@ ol.markdown-list {
   background: transparent;
   color: var(--text-dim);
   font-family: var(--font-mono);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
   text-align: left;
   cursor: pointer;
 }
@@ -940,8 +945,8 @@ ol.markdown-list {
 /* the dot breathes, the words hold still (same rule as the RUN badge) */
 .work-block.is-live .work-block-title::before {
   content: "";
-  width: 6px;
-  height: 6px;
+  width: var(--dot-size-sm);
+  height: var(--dot-size-sm);
   border-radius: var(--radius-pill);
   background: currentColor;
   animation: pulse var(--dur-pulse) var(--ease-pulse) infinite;
@@ -966,6 +971,7 @@ ol.markdown-list {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-numeric: var(--font-numeric);
 }
 
 /* a failure is never the part a narrow header cuts */
@@ -1002,8 +1008,8 @@ ol.markdown-list {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 2.5rem;
-  height: 1.5rem;
+  width: var(--thumb-w);
+  height: var(--thumb-h);
   padding: 0;
   overflow: hidden;
   border: var(--hairline) solid var(--border);
@@ -1207,7 +1213,7 @@ ol.markdown-list {
 }
 
 .chat-tool-file { color: var(--text-strong); }
-.chat-tool-io-meta { color: var(--text-dim); font-size: var(--fs-2xs); }
+.chat-tool-io-meta { color: var(--text-dim); font-size: var(--fs-meta); }
 .chat-diff { display: block; white-space: pre; overflow-x: auto; }
 .chat-diff-add { color: var(--status-done); }
 .chat-diff-del { color: var(--status-blocked); }
@@ -1220,7 +1226,7 @@ ol.markdown-list {
 .chat-tool-output h4 {
   margin: 0 0 var(--space-1);
   color: var(--text-dim);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
   font-weight: var(--fw-semibold);
   text-transform: uppercase;
   letter-spacing: var(--tracking-caps);
@@ -1719,7 +1725,7 @@ ol.markdown-list {
 .work-todo-attempts h4 {
   margin: 0 0 var(--space-1);
   color: var(--text-dim);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
   font-weight: var(--fw-semibold);
   text-transform: uppercase;
   letter-spacing: var(--tracking-caps);
@@ -1945,8 +1951,8 @@ ol.markdown-list {
 }
 
 .chat-goal-wait svg {
-  width: 12px;
-  height: 12px;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   margin-inline-end: var(--space-1);
   vertical-align: -1px;
 }
@@ -2001,7 +2007,7 @@ ol.markdown-list {
   padding: var(--space-2);
   cursor: pointer;
 }
-.chat-skill > summary > svg { width: 14px; height: 14px; flex-shrink: 0; }
+.chat-skill > summary > svg { width: var(--icon-size-sm); height: var(--icon-size-sm); flex-shrink: 0; }
 .chat-skill-name { overflow-wrap: anywhere; }
 .chat-skill-status { color: var(--text-dim); }
 .chat-skill.is-error { border-color: var(--status-blocked); }

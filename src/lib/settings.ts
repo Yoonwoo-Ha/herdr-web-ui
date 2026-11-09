@@ -444,7 +444,8 @@ export const DEFAULT_SETTINGS: Settings = {
   keyBarExpanded: false,
   shortcutOverrides: {},
   herdrPrefixKeys: false,
-  theme: "dark",
+  // the startup default (themeBoot.ts defaultThemeSetting): Reset puts back what a fresh device is drawn in
+  theme: "system",
   density: "comfortable",
   sidebarRows: "one",
   sidebarFilter: false,

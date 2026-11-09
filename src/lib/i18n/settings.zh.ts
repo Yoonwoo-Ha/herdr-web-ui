@@ -5,6 +5,8 @@
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_ZH: Record<string, string> = {
+  "Needs input": "需回应",
+  "Finished": "完成",
   "Direct typing": "直接输入",
   "Microphone permission was denied": "麦克风权限已被拒绝",
   "Terminal input mode": "终端输入模式",

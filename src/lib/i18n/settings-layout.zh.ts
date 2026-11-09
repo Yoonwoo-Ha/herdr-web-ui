@@ -4,7 +4,7 @@
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
 export const SETTINGS_LAYOUT_ZH: Record<string, string> = {
-  "Search settings": "搜索设置",
+  "Search settings": "搜索所有设置",
   "No settings match.": "没有匹配的设置。",
   "Search results": "搜索结果",
   "Open {page}": "打开 {page}",

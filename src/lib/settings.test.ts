@@ -15,6 +15,7 @@ import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CH
 import { applyToDocument, loadSettings, pcLoadOn, saveSettings } from "./settings.ts";
 import { sanitizeSettings as oldSanitizeSettings, saveSettings as oldSaveSettings } from "./settings.legacy-fixture.ts";
 import { themeFor } from "./themeFor.ts";
+import { readStoredAppearance, storedAppearance } from "./themeBoot.ts";
 
 describe("saved theme migration", () => {
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -1359,6 +1360,11 @@ it("sanitizes input modes and shortcut overrides without accepting arbitrary com
   expect(sanitizeSettings({ terminalInputMode: "bad" }).terminalInputMode).toBe("auto");
   expect(sanitizeSettings({ terminalInputMode: "line" }).terminalInputMode).toBe("line");
   expect(sanitizeSettings({ shortcutOverrides: { palette: "p", settings: null, voice: "x", unknown: "x", "next-pane": "rm -rf" } }).shortcutOverrides).toEqual({ palette: "p", settings: null });
+});
+
+it("resets Theme to the theme a fresh device starts on, so Reset never shows on a fresh device or turns a light OS dark", () => {
+  const fresh = storedAppearance(readStoredAppearance(() => ({ getItem: () => null })));
+  expect(DEFAULT_SETTINGS.theme).toBe(fresh.theme);
 });
 
 describe("key bar settings", () => {

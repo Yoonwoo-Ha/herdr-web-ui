@@ -5,6 +5,8 @@
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const SETTINGS_JA: Record<string, string> = {
+  "Needs input": "応答待ち",
+  "Finished": "完了",
   "Direct typing": "直接入力",
   "Microphone permission was denied": "マイクの使用が許可されませんでした",
   "Terminal input mode": "端末入力モード",

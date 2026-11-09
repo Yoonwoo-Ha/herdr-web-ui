@@ -75,11 +75,12 @@
     min-width: var(--touch-target);
   }
 
-  /* measured from inside the button's border, so the border's width is added back on each side */
+  /* measured from inside the button's border (100% is its padding box), so the border's width is added back on
+     each side; from the button's own height, so a button already a finger tall (pointer: coarse) reaches no further */
   .my-device-check .btn::before {
     content: "";
     position: absolute;
-    inset: calc((var(--control-h) - var(--space-2) - var(--touch-target)) / 2 - var(--hairline)) 0;
+    inset: min(calc(-1 * var(--hairline)), calc((100% + 2 * var(--hairline) - var(--touch-target)) / 2 - var(--hairline))) 0;
   }
 }
 

@@ -32,8 +32,8 @@
 }
 
 .bg-tasks-toggle svg {
-  width: 12px;
-  height: 12px;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   flex: none;
 }
 
@@ -189,8 +189,8 @@
 }
 
 .bg-ended-toggle svg {
-  width: 12px;
-  height: 12px;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
   flex: none;
 }
 
@@ -271,16 +271,16 @@ a.bg-task-open {
 }
 
 .bg-task-caret {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   flex: none;
   align-self: center;
   color: var(--text-dim);
 }
 
 .bg-task-icon {
-  width: 14px;
-  height: 14px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   flex: none;
   margin-top: 3px;
   color: var(--text-dim);
@@ -352,7 +352,7 @@ a.bg-task-open {
   flex-direction: column;
   gap: var(--space-1);
   margin: var(--space-1) 0 0;
-  padding: 0 0 0 calc(14px + var(--space-2));
+  padding: 0 0 0 calc(var(--icon-size-sm) + var(--space-2));
   list-style: none;
 }
 
@@ -376,7 +376,7 @@ a.bg-task-open {
   overflow-wrap: anywhere;
 }
 
-.bg-node svg { width: 12px; height: 12px; flex: none; }
+.bg-node svg { width: var(--icon-size-xs); height: var(--icon-size-xs); flex: none; }
 .bg-node.is-running { border-color: var(--status-working); color: var(--text); }
 .bg-node.is-running svg { color: var(--status-working); }
 .bg-node.is-completed svg { color: var(--status-done); }
@@ -387,7 +387,7 @@ a.bg-task-open {
 
 .bg-run-error {
   margin: var(--space-1) 0 0;
-  padding-left: calc(14px + var(--space-2));
+  padding-left: calc(var(--icon-size-sm) + var(--space-2));
   color: var(--status-blocked);
   font-size: var(--fs-xs);
   overflow-wrap: anywhere;

@@ -150,6 +150,35 @@ The glass tokens are expressions over the palette above, not colors of their own
 | Glass bar | `--bar-bg` | `color-mix(in srgb, var(--bg-panel) 72%, transparent)` | same expression |
 | Glass card | `--card-glass` | `color-mix(in srgb, var(--bg-elevated) 80%, transparent)` | same expression |
 | Glass blur | `--glass-blur` | `saturate(180%) blur(20px)` | same |
+| Surface/canvas | `--surface-canvas` | `var(--bg)` | `var(--bg)` |
+| Surface/chrome | `--surface-chrome` | `var(--bg-panel)` | `var(--bg-elevated)` |
+| Surface/raised | `--surface-raised` | `var(--bg-elevated)` | `var(--bg-panel)` |
+| Surface/overlay | `--surface-overlay` | `var(--bg-elevated)` | `var(--bg-input)` |
+| Surface/navigation | `--bg-nav` | `var(--bg)` | `var(--bg-panel)` |
+| Border/input | `--border-input` | `color-mix(in srgb, var(--text-dim) 78%, var(--border-strong))` | same expression |
+| Border/contrast | `--border-contrast` | `var(--border-strong)` | `var(--border-strong)` |
+| Status/reconnecting | `--status-reconnecting` | `var(--notice)` | `var(--notice)` |
+| Marker/idle | `--status-marker-idle` | `var(--text-dim)` | `var(--text-dim)` |
+| Status ink | `--status-ink` | `var(--bg-panel)` | `var(--bg-panel)` |
+| Minimap tick | `--minimap-tick` | `var(--text-dim)` | `var(--text-dim)` |
+| Switch thumb on | `--switch-thumb-on` | `var(--primary)` | `var(--accent)` |
+| Switch track | `--switch-track-bg` | `color-mix(in srgb, var(--text) 9%, transparent)` | `color-mix(in srgb, var(--text) 6%, transparent)` |
+| Breathe min opacity | `--breathe-min-opacity` | `0.68` | same |
+| Menu shadow | `--shadow-menu` | `0 8px 24px rgba(0, 0, 0, 0.28)` | `0 8px 24px rgba(40, 32, 22, 0.08)` |
+| Switch thumb shadow | `--shadow-thumb` | `0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 var(--hairline) color-mix(in srgb, var(--text) 10%, transparent)` | same expression |
+| Selection background | `--selection-bg` | `color-mix(in srgb, var(--accent) 28%, transparent)` | same expression |
+| Selection text | `--selection-text` | `var(--text-strong)` | `var(--text-strong)` |
+| Caret | `--caret-color` | `var(--accent)` | `var(--accent)` |
+| Scrollbar thumb | `--scrollbar-thumb` | `var(--border-strong)` | `var(--border-strong)` |
+| Scrollbar track | `--scrollbar-track` | `transparent` | `transparent` |
+
+`--border-contrast` is the edge of a field, a card, a chip or a switch that must stay readable when
+the OS asks for more contrast: the strong border by default, the text ink under
+`prefers-contrast: more`, where `--border-input` takes it too (the same block turns the glass bars
+and cards opaque and `--border` strong). `--status-ink` is the numeral drawn on a status fill (the
+More button's waiting count): the panel's paper, which every palette's `--status-blocked` clears at
+6:1 or more (the contrast test floors the status colours at 3:1 on the panel the other way round,
+and the ratio is symmetric).
 
 `--pdf-page` is the one color with the same value in both columns, on purpose: a PDF page is
 paper, not UI, and the viewer (`.file-viewer-pdf`) must not tint it for the theme. It is named in
@@ -539,18 +568,29 @@ It is a CSS-only role of the relay app, not one of the runtime roles in `src/lib
 The values are the ones in `src/styles.css`. Every token but `--fs-input` is `calc(<size> * var(--ui-scale))`:
 `--ui-scale` is the interface size factor, which Settings → Appearance → Interface font size writes on
 `<html>` (the chosen body size over the density's, `1` until chosen), so the whole scale follows it, while
-`--fs-input` stays the floor under which iOS Safari zooms a focused field.
+`--fs-input` stays the floor under which iOS Safari zooms a focused field. Inside the chat transcript
+and the Markdown viewer (`ChatView.css`: `.chat-transcript`, `.file-viewer-markdown`) `--fs-meta` and
+`--fs-h1`..`--fs-h3` are remapped through `--chat-scale` (`--chat-fs-meta`, `--chat-fs-h1..3`), so a
+timestamp and a heading follow Settings → Chat → Font size as the chat's other type does; the 12px
+floor of `--fs-meta` holds at scale 1 and only grows with it.
 
 | Level | Token | Comfortable | Compact | Typical use |
 |-------|-------|-------------|---------|-------------|
-| Micro | `--fs-2xs` | `calc(11px * var(--ui-scale))` | `calc(10px * var(--ui-scale))` | Badges, hints, kbd |
+| Micro | `--fs-2xs` | `calc(11px * var(--ui-scale))` | `calc(10px * var(--ui-scale))` | The pinned label, meter percents, a prompt card's option keycaps |
 | Meta | `--fs-xs` | `calc(12px * var(--ui-scale))` | `calc(11px * var(--ui-scale))` | Subtitles, field labels |
+| Info floor | `--fs-meta` | `calc(12px * var(--ui-scale))` | `calc(12px * var(--ui-scale))` | Timestamps, badges, pills, menu headings and paths (12px floor) |
 | Small | `--fs-sm` | `calc(13px * var(--ui-scale))` | `calc(12px * var(--ui-scale))` | Controls, row titles |
 | Body | `--fs-md` | `calc(14px * var(--ui-scale))` | `calc(13px * var(--ui-scale))` | Body and dialog copy |
-| Reading | `--fs-chat` | `calc(15px * var(--ui-scale))` | `calc(14px * var(--ui-scale))` | Chat prose, the user's bubble, live narration; the message box with a mouse |
+| Dense row | `--fs-dense-row` | `var(--fs-md)` | `var(--fs-md)` | Dense document and table rows |
+| Reading | `--fs-chat` | `calc(15px * var(--ui-scale))` | `calc(14px * var(--ui-scale))` | Chat prose, the user's bubble, live narration; the message box with a mouse (`16px` on coarse pointer) |
+| Reading role | `--fs-reading` | `var(--fs-chat)` | `var(--fs-chat)` | Long-form reading copy |
 | Large | `--fs-lg` | `calc(16px * var(--ui-scale))` | `calc(15px * var(--ui-scale))` | Header title, modal title |
-| Title | `--fs-xl` | `calc(18px * var(--ui-scale))` | `calc(17px * var(--ui-scale))` | Markdown h1 |
+| Section title | `--fs-section-title` | `calc(17px * var(--ui-scale))` | `calc(16px * var(--ui-scale))` | Dialog and settings section heading (>= 1.25x over row labels) |
+| Title | `--fs-xl` | `calc(18px * var(--ui-scale))` | `calc(17px * var(--ui-scale))` | Compact heading |
+| Heading 3 | `--fs-h3` | `calc(19px * var(--ui-scale))` | `calc(18px * var(--ui-scale))` | Markdown h3 (1.25x+ over reading body) |
 | Display | `--fs-display` | `calc(22px * var(--ui-scale))` | `calc(21px * var(--ui-scale))` | The empty chat's greeting |
+| Heading 2 | `--fs-h2` | `calc(24px * var(--ui-scale))` | `calc(23px * var(--ui-scale))` | Markdown h2 (1.25x+ over h3) |
+| Heading 1 | `--fs-h1` | `calc(30px * var(--ui-scale))` | `calc(29px * var(--ui-scale))` | Markdown h1 (1.25x+ over h2) |
 | Input | `--fs-input` | `16px` | `16px` | Mobile-safe text input |
 | Pairing | `--fs-pairing` | `calc(32px * var(--ui-scale))` | `calc(26px * var(--ui-scale))` | The pairing code in Settings → Devices |
 
@@ -560,13 +600,16 @@ The values are the ones in `src/styles.css`. Every token but `--fs-input` is `ca
 | `--font-ui` | `"Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif`; Settings → Appearance → Interface font writes the token on `<html>`: a typed list in front of this stack, a preset as a whole stack (`src/lib/typography.ts` keeps this one verbatim) | Chrome and chat prose |
 | `--font-mono` | `"Symbols Nerd Font Mono", "JetBrains Mono Web", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "D2Coding", monospace` | Code, paths, keys, terminal-adjacent metadata |
 | `--lh-tight` | `1.2` | Titles |
+| `--lh-heading` | `1.25` | Markdown and section headings |
 | `--lh-base` | `1.5` comfortable / `1.45` compact | Body copy |
 | `--lh-code` | `1.6` | Code blocks; the message box with a mouse |
 | `--lh-prose` | `1.65` | Chat prose and the user's bubble |
 | `--fw-regular` | `400` | Body |
 | `--fw-medium` | `500` | Controls |
 | `--fw-semibold` | `600` | Labels and titles |
+| `--fw-selected` | `var(--fw-semibold)` | Non-color weight cue for selected rows, tabs, segments and filters |
 | `--fw-bold` | `700` | Brand |
+| `--font-numeric` | `tabular-nums` | Counts, elapsed times and numeric columns |
 | `--tracking-tight` | `-0.01em` | Brand and primary titles |
 | `--tracking-display` | `-0.02em` | The display line |
 | `--tracking-caps` | `0.06em` | Uppercase operational labels |
@@ -817,8 +860,12 @@ All spacing derives from a 4px base.
 
 | Token | Value | Usage |
 |-------|-------|-------|
+| `--space-half` | `2px` | Sub-grid track padding, segmented and option gaps |
+| `--space-px-3` | `3px` | Compact tab and bar rhythm |
 | `--space-1` | `4px` | Tight icon and control gaps |
+| `--space-1-5` | `6px` | Dense control and card inner gaps |
 | `--space-2` | `8px` | Row and menu gaps |
+| `--space-2-5` | `10px` | Compact pill and tab inline padding |
 | `--space-3` | `12px` | Control padding |
 | `--space-4` | `16px` | Section and modal padding |
 | `--space-5` | `20px` | Wide modal padding |
@@ -829,7 +876,8 @@ All spacing derives from a 4px base.
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| `--radius-sm` | `6px` | Chips and inner controls |
+| `--radius-xs` | `4px` | Preview miniatures and grip bars |
+| `--radius-sm` | `6px` | Chips, tabs and inner controls |
 | `--radius-md` | `8px` | Buttons, inputs, selected rows |
 | `--radius-lg` | `12px` | Menus and chat surfaces |
 | `--radius-xl` | `16px` | Modals and bottom sheets |
@@ -846,19 +894,54 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | `--header-h-wide` | `42px` | — | App header from `769px`, in either density (`--header-h` takes this value there) |
 | `--sidebar-w` | `320px` | `300px` | Sidebar/drawer; the default while the user has not dragged the sidebar's edge |
 | `--control-h` | `34px` | `32px` | Buttons and fields |
+| `--bar-control-h` | `28px` | — | Header pills, lens switch and tab overflow control |
+| `--tab-h` | `calc(var(--control-h) - 5px)` | — | Desktop header tab height |
+| `--tab-min-w` | `120px` | — | Minimum tab width in the header strip |
+| `--tab-max-w` | `220px` | — | Maximum tab width in the header strip |
+| `--tab-more-w` | `52px` | — | Tab overflow button width |
+| `--status-bar-h` | `28px` | — | Desktop status bar height |
+| `--pane-bar-h` | `30px` | — | Split pane header bar height |
+| `--split-hit-w` | `8px` | — | Split divider hit band |
 | `--segmented-inset` | `6px` | — | What the segmented track takes from `--control-h` above and below an option (its `2px` padding and the hairline, both sides): an option is `--control-h` less this, and its touch expander grows from that height to `--touch-target` |
 | `--touch-target` | `44px` | — | Coarse-pointer minimum: every control a finger can reach is at least this in both dimensions |
 | `--pointer-target` | `24px` | — | Fine-pointer minimum hit area: a glyph button under `--control-h` (the chat's copy and format buttons, an attachment tile's X) keeps its look and reaches it through an invisible `::before` expander |
 | `--touch-target-header` | `44px` | — | The phone header's controls (`<=768px`) |
 | `--keybar-h` | `48px` | — | Terminal key bar |
 | `--row-h` | `56px` | `44px` | Palette, worktree, device and background-task list rows; chat and composer list height caps |
+| `--sheet-row-h` | `48px` | — | Action sheet row height |
+| `--sheet-grip-w` | `36px` | — | Bottom sheet drag handle width |
+| `--sheet-grip-h` | `4px` | — | Bottom sheet drag handle height |
 | `--chip-h` | `20px` | `18px` | Badge/pill height |
+| `--kbd-h` | `18px` | — | Keyboard shortcut cap height |
+| `--voice-wave-h` | `20px` | — | Voice waveform height |
+| `--icon-size-xs` | `12px` | — | Close and micro glyph size |
+| `--icon-size-sm` | `14px` | — | Header and inline control glyph size |
+| `--icon-size-md` | `16px` | — | Menu, button and disclosure glyph size |
 | `--icon-size` | `18px` | — | Standard icon |
 | `--mark-size` | `22px` | — | Brand mark |
 | `--avatar-size` | `32px` | `26px` | Command-palette mark box |
+| `--dot-size-sm` | `6px` | — | Compact status dot |
 | `--dot-size` | `7px` | — | Connection dot; the inline status glyph (StatusDot `inline`); twice it is the 14px data glyph |
+| `--thumb-w` | `40px` | — | Miniature preview width |
+| `--thumb-h` | `24px` | — | Miniature preview height |
 | `--rail-w` | `3px` | — | Quoted-content rails |
 | `--hairline` | `1px` | — | Borders |
+| `--menu-w-sm` | `208px` | — | Compact popover menu width |
+| `--menu-w` | `280px` | — | Standard popover menu width |
+| `--menu-w-wide` | `420px` | — | Wide popover list width and height cap (the comments list) |
+| `--popover-w` | `360px` | — | Anchored popover form width (the comment form) |
+| `--dialog-w-sm` | `360px` | — | Compact form width |
+| `--dialog-w-md` | `420px` | — | Confirmation dialog width |
+| `--dialog-w-form` | `525px` | — | Form dialog width (the worktree dialog; the new workspace dialog reaches the same width from `--sidebar-w` and `--content-w`) |
+| `--dialog-w` | `560px` | — | Standard modal dialog width (session history, unsent text) |
+| `--dialog-w-lg` | `1100px` | — | Wide file/diff modal width |
+| `--dialog-w-xl` | `1400px` | — | Extra-wide split diff modal width |
+| `--dialog-max-h` | `720px` | — | Modal dialog max height |
+| `--outline-w` | `240px` | — | Markdown outline column width |
+| `--file-panel-min-w` | `320px` | — | Docked file panel minimum width |
+| `--qr-size` | `132px` | — | Pairing QR code box |
+| `--guide-w` | `552px` | — | Onboarding guide column width |
+| `--btn-submit-min-w` | `88px` | — | Modal primary submit button minimum width (stable across idle/pending) |
 | `--content-w` | `820px` | — | Settings and dialog content |
 | `--pending-max-h` | `min(20dvh, 12rem)` | — | Pending-message stack ceiling |
 | `--chat-w` | `--content-w`, then the pane's lane as one length | — | Chat lane: transcript, composer column, held list. Settings → Chat width: Narrow `--content-w`; Default follows the pane (min 820px, max `60rem` = 960px, 71% of the pane between; the px floor wins where 60rem is under it); Wide `72rem` (1152px); Full `100%` |
@@ -884,6 +967,7 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 |-------|-------|-------|
 | `--ring` | `2px solid var(--accent)` | Global `:focus-visible` outline |
 | `--ring-offset` | `2px` | Outline offset |
+| `--ring-inset-offset` | `-2px` | Inset outline offset inside scroll-clipped strips |
 | `--z-header` | `4` | A phone's glass header, over the transcript that scrolls under it |
 | `--z-banner` | `5` | Terminal banners |
 | `--z-popover` | `10` | Composer completions |
@@ -1052,7 +1136,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   view switch in their bar to follow.
 
 ### Keyboard hint (`.kbd`)
-- An inline mono keycap: `18px` high, strong bottom edge, `--radius-sm`, `--fs-2xs`.
+- An inline mono keycap: `18px` high (`--kbd-h`), strong bottom edge, `--radius-sm`, `--fs-meta`
+  (the 12px information floor holds for the palette's and the shortcut rows' caps too).
 - `Mod` resolves to `⌘` on Apple platforms and `Ctrl` elsewhere.
 
 ### Modal (`.modal*`)
@@ -2164,7 +2249,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   pane it listed is gone; a pane still listed without a session keeps it however long ago the
   Resume was (time never brings Resume back for a pane that is there), and only a pane the roster
   never lists ends it, after two minutes. A refusal shows under the rows in the blocked colour.
-  An empty store says **No earlier Codex sessions in this folder.**; a PC whose bridge answers
+  An empty store says **No earlier {agent} sessions in this folder. Choose another agent.**; a PC whose bridge answers
   404 for the route says the bridge does not offer this yet, and the workspace menu of such a PC
   has no item (the bridge is asked once, without a workspace, so nothing is listed by the probe).
 - A Pi listing refused with `session_history_busy` keeps **Reading sessions…** while it retries
@@ -4654,7 +4739,7 @@ The values are the ones in `src/styles.css`.
 | Standard | `--dur-base` | `180ms` | Drawer slide; reserved dialog timing token |
 | Pulse | `--dur-pulse` | `1600ms` | Working and reconnecting dots (trough opacity 0.35; text never pulses) |
 | Spin | `--dur-spin` | `1600ms` | One turn of a stepped spinner (the command palette's busy arc); the step count sets the frame rate |
-| Breathe | `--dur-breathe` | `2000ms` | The sidebar's working dot: full for 40% of the cycle, six steps down to opacity 0.5, held, six steps back; every dot shares the document clock's phase, so several runs breathe together. It replaced a spinning arc that read as flicker beside the rows |
+| Breathe | `--dur-breathe` | `2000ms` | The sidebar's working dot, and the status badge's RUN dot with it (`badge-breathe`, down to `--breathe-min-opacity`): full for 40% of the cycle, six steps down to opacity 0.5, held, six steps back; every dot shares the document clock's phase, so several runs breathe together. It replaced a spinning arc that read as flicker beside the rows |
 | Easing | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` | Finite transitions |
 | Pulse easing | `--ease-pulse` | `steps(2, jump-none)` | Endless working and reconnecting dots; avoids drawing every display refresh |
 | Spring easing | `--ease-spring` | `cubic-bezier(0.32, 0.72, 0, 1)` | Voice recording pill enter (180ms, scale 0.96->1 + opacity, from the mic button) and exit (120ms); a phone's sheet rising and springing back |
@@ -4677,8 +4762,9 @@ The values are the ones in `src/styles.css`.
 - Under reduced motion the voice pill swaps its bars for one level bar updated at 4 Hz and drops
   the ring and the morph; the **Recording** label and the timer stay.
 - Until the app's script runs, `index.html` draws one loading status in `#root` (`.boot`, #2329): a
-  28px ring stepped round once per `--dur-spin` on the saved theme's surface, centred, no visible
-  words (a visually hidden "Loading Ovis", the ring `aria-hidden`), shown only after 400ms so a fast start does not flash it, and
+  28px ring stepped round once per `--dur-spin` on the saved theme's surface, centred, with "Loading Ovis"
+  drawn under it in `--text-dim` at `--fs-sm` in a generic sans-serif no `@font-face` backs (the ring
+  `aria-hidden`, the words the status read out), shown only after 400ms so a fast start does not flash it, and
   still under reduced motion. React's first frame replaces it. It follows T3 Code's `index.html`
   boot shell, which React also replaces; Ovis draws a spinner rather than a still logo, because
   on a slow link a still picture is what looked frozen.
@@ -4699,6 +4785,16 @@ The values are the ones in `src/styles.css`.
 | Drawer shadow | `--shadow-drawer` | Mobile drawer |
 | Overlay shadow | `--shadow-pop` | Menus, palette and modal cards |
 | Card shadow | `--shadow-card` | The composer's input box — the one resting card in chat mode |
+
+The surface roles (`--surface-canvas` < `--surface-chrome` < `--surface-raised` < `--surface-overlay`,
+section 2) climb monotonically in both modes by aliasing the palette, not by new colours. A sheet
+(`.modal`, the bottom sheet) paints `--bg-panel`, and a card inside it reads `--surface-raised`: a
+step up in dark, and in light a hairline group on the sheet's own paper, because the light palettes
+keep their raised step at the panel (amber, charcoal and codex), and six of the herdr ports
+(tokyo-night-day, gruvbox-light, one-light, solarized-light, kanagawa-lotus, rose-pine-dawn) have no
+step above the panel at all: their `--bg-input` and `--bg-elevated` sit below it. A lighter inner
+step would be a new palette colour in every light theme block, an owner's palette call, not a remap;
+until then the card's hairline is its edge in light.
 
 ## 8. Accessibility Constraints & Accepted Debt
 
@@ -4721,6 +4817,13 @@ The values are the ones in `src/styles.css`.
   has text plus color. Compact sidebar states add distinct glyphs and keep their text accessible;
   ready and unknown draw nothing there, and unknown uses a dashed badge edge elsewhere.
 - Touch targets grow to `--touch-target`; fields stay `--fs-input` where mobile zoom is a risk.
+- A Markdown task list's box (`- [ ]` / `- [x]` in a transcript or a document, `.markdown-task-box` in
+  `src/components/Markdown.tsx`) is a read-only indicator, not a control: the agent's text owns the
+  task, so nothing ticks it here, and it is drawn as a span with `role="checkbox"`, `aria-checked`
+  and `aria-disabled="true"`, named by the item's text. The target-size floors (`--touch-target`,
+  `--pointer-target`) are for what a pointer can act on, so the box is exempt from them and keeps
+  its drawn `1em` size beside the item's text; a design-gate `target` hit on it is allowlisted on
+  this ground.
 - On a touch screen (`hover: none` and `pointer: coarse`) the app is an app, not a page: its
   chrome (header, sidebar, tab strip, key bar, menus, sheet heads and feet, buttons, tabs, labels)
   is not selectable and opens no link callout, while the transcript, code, files and fields are;
@@ -4728,6 +4831,9 @@ The values are the ones in `src/styles.css`.
   sizes its font; landscape does not inflate text. A pressed button dims to `0.55` at once in place
   of the amber `:active` box; a list row (sidebar, agent, menu, sheet, Settings page) fills instead.
 - `prefers-reduced-motion` is honored. Lucide/inline SVG decoration is hidden from assistive tech.
+- `prefers-contrast: more` is honored at the root: the glass bar and card take their panel and lose
+  the blur, `--border` becomes `--border-strong`, and `--border-contrast` becomes the text ink, so
+  every field (`--border-input` takes it) and any edge a component draws through it stays readable.
 - Global shortcuts default to **Mod+Shift+key**: Mod is Command on Apple platforms and Ctrl
   elsewhere. Settings lists the global bindings and allows changing or disabling them, with
   duplicate assignments blocked and known browser/OS reservations warned about. Record also keeps

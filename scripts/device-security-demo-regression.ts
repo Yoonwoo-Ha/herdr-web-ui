@@ -693,7 +693,9 @@ try {
                 while (bottom < box.bottom + 30 && button.contains(document.elementFromPoint(x, bottom + 0.5))) bottom += 0.5;
                 return { button: box.height, reach: bottom - top };
               });
-              assert.ok(reach.button < 44 && reach.reach >= 43, `Check now is ${reach.button}px tall and takes a finger ${reach.reach}px tall`);
+              // a phone's buttons are a finger tall in their own box (styles.css, pointer: coarse); the expander then adds
+              // nothing past that box, so it never takes a tap meant for the rows above or below
+              assert.ok(reach.reach >= 43 && reach.reach <= Math.max(reach.button, 44) + 1, `Check now is ${reach.button}px tall and takes a finger ${reach.reach}px tall`);
             }
             // a press asks the PC to check: its answer is held here, so Checking… is seen holding the button, then let go
             await page.evaluate(() => {

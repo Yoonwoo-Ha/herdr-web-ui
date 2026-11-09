@@ -97,6 +97,34 @@ const DOCK_BELOW = 560;
 
 interface Placed { quote: string; left: number; top: number }
 
+const replyCommentDrafts = new Map<string, string>();
+
+function replyCommentDraftKey(storageKey: string, quote: string): string {
+  return `${storageKey}\n${quote}`;
+}
+
+function readReplyCommentDraft(storageKey: string, quote: string): string {
+  const key = replyCommentDraftKey(storageKey, quote);
+  const mem = replyCommentDrafts.get(key);
+  if (mem !== undefined) return mem;
+  try {
+    return window.sessionStorage?.getItem(`ovis:reply-comment-draft:${key}`) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeReplyCommentDraft(storageKey: string, quote: string, text: string): void {
+  const key = replyCommentDraftKey(storageKey, quote);
+  if (text === "") {
+    replyCommentDrafts.delete(key);
+    try { window.sessionStorage?.removeItem(`ovis:reply-comment-draft:${key}`); } catch { /* private mode */ }
+    return;
+  }
+  replyCommentDrafts.set(key, text);
+  try { window.sessionStorage?.setItem(`ovis:reply-comment-draft:${key}`, text); } catch { /* private mode */ }
+}
+
 /**
  * The actions on a selection in a chat's reply. It floats over the transcript, so a selection in
  * progress never moves what is under it (#1922); with a mouse it stands where the button was
@@ -185,7 +213,7 @@ export function ReplyCommentAction({ scroller, storageKey, paneKey }: { scroller
     const docked = width < DOCK_BELOW;
     const left = docked ? EDGE : Math.min(placed.left, Math.max(width - FORM_W - EDGE, EDGE));
     setOffer(null);
-    setComment("");
+    setComment(readReplyCommentDraft(storageKey, placed.quote));
     setForm({ ...placed, left, top: Math.min(placed.top, Math.max(height - 220, EDGE)), docked });
   };
   const quote = (placed: Placed) => {
@@ -200,17 +228,33 @@ export function ReplyCommentAction({ scroller, storageKey, paneKey }: { scroller
   const draft = useSyncExternalStore(composerDrafts.subscribe, () => paneKey === null ? "" : composerDrafts.read(composerDraftKey(paneKey)).text);
   // a secret prompt stands in the composer's place (paneKey null): Comment alone, which waits for the next message
   const fits = offer !== null && paneKey !== null && quoteFits(draft, offer.quote);
-  const close = () => { setForm(null); setComment(""); };
+  const updateComment = (value: string) => {
+    setComment(value);
+    if (form !== null) writeReplyCommentDraft(storageKey, form.quote, value);
+  };
+  const close = () => {
+    if (form !== null) writeReplyCommentDraft(storageKey, form.quote, comment);
+    formOpen.current = false;
+    setForm(null);
+    setComment("");
+    requestAnimationFrame(() => {
+      place();
+      layer.current?.querySelector<HTMLElement>(".reply-comment-offer")?.focus({ preventScroll: true });
+    });
+  };
   const save = () => {
     if (form === null || comment.trim() === "") return;
     if (!replyComments.add(storageKey, form.quote, comment)) return;
+    writeReplyCommentDraft(storageKey, form.quote, "");
     getSelection()?.removeAllRanges();
-    close();
+    formOpen.current = false;
+    setForm(null);
+    setComment("");
   };
   const keyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing) return;
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); save(); }
-    else if (event.key === "Escape" && comment === "") { event.preventDefault(); close(); }
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
   };
 
   return <div className="reply-comment-layer" ref={layer}>
@@ -230,7 +274,7 @@ export function ReplyCommentAction({ scroller, storageKey, paneKey }: { scroller
         <MessageSquarePlus aria-hidden="true" />
       </button>
     </div>}
-    {form !== null && <ReplyCommentForm form={form} comment={comment} onComment={setComment} onKeyDown={keyDown} onSave={save} onCancel={close} />}
+    {form !== null && <ReplyCommentForm form={form} comment={comment} onComment={updateComment} onKeyDown={keyDown} onSave={save} onCancel={close} />}
   </div>;
 }
 

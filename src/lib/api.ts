@@ -445,7 +445,7 @@ const UNUSABLE_ANSWER: Readonly<Record<string, () => string>> = {
   remote_response_invalid: () => t("The other PC's answer could not be read"),
 };
 
-async function errorFrom(url: string, response: Response): Promise<ApiError> {
+export async function errorFrom(url: string, response: Response): Promise<ApiError> {
   let detail = response.statusText;
   let code: string | null = null;
   try {

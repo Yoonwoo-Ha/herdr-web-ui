@@ -113,7 +113,7 @@ describe("theme boot", () => {
       [{ theme: "system", palette: "amber", paletteLight: "catppuccin", paletteDark: "charcoal" }, null],
       [{ theme: "system", palette: "report", paletteLight: "lilac", paletteDark: "forest" }, null],
       [{ theme: "dark", palette: "amber", paletteDark: "charcoal" }, rowFor("amber", "dark")],
-      [{}, rowFor("amber", "dark")],
+      [{}, null],
     ] as const;
     for (const [record, expected] of cases) {
       for (const dark of [true, false]) {
@@ -159,13 +159,17 @@ describe("theme boot", () => {
     store({ theme: "light", lightTheme: "one-light" }, { darkTheme: "nord", lightTheme: "one-light" });
     blocked = true;
     expect(() => window.localStorage).toThrow("insecure");
-    expect(readStoredAppearance(() => window.localStorage)).toEqual({ main: null, themes: null });
-    expect(boot()).toBe(themeFor(DEFAULT_SETTINGS, resolveTheme(DEFAULT_SETTINGS.theme)));
+    expect(readStoredAppearance(() => window.localStorage)).toEqual({ main: { value: DEFAULT_APPEARANCE }, themes: null });
+    expect(boot()).toBe(themeFor(DEFAULT_APPEARANCE, resolveTheme(DEFAULT_APPEARANCE.theme)));
     expect(boot()).toBe(app());
-    expect(DEFAULT_APPEARANCE).toEqual({ theme: DEFAULT_SETTINGS.theme, darkTheme: DEFAULT_SETTINGS.darkTheme, lightTheme: DEFAULT_SETTINGS.lightTheme });
-    // nothing stored at all is the same default
+    expect(DEFAULT_APPEARANCE).toEqual({ theme: "system", darkTheme: DEFAULT_SETTINGS.darkTheme, lightTheme: DEFAULT_SETTINGS.lightTheme });
+    // nothing stored at all is the same default, following the OS scheme
     blocked = false;
     store(null, null);
+    systemDark = false;
+    expect(boot()).toBe(rowFor(DEFAULT_SETTINGS.lightTheme, "light"));
+    expect(boot()).toBe(app());
+    systemDark = true;
     expect(boot()).toBe(rowFor(DEFAULT_SETTINGS.darkTheme, "dark"));
     expect(boot()).toBe(app());
   });
@@ -216,16 +220,33 @@ describe("theme boot", () => {
       expect(boot()).toBe(rowFor("codex", "light"));
       expect(boot()).toBe(app());
 
-      // Main Ovis app (no ovis-shell meta): unchanged hard dark default
+      // Main Ovis app (no ovis-shell meta): a fresh device follows the OS scheme too
       setShellMeta(false);
       store(null, null);
       systemDark = false;
-      expect(storedAppearance(readStoredAppearance(() => window.localStorage)).theme).toBe("dark");
-      expect(boot()).toBe(rowFor(DEFAULT_SETTINGS.darkTheme, "dark"));
+      expect(storedAppearance(readStoredAppearance(() => window.localStorage)).theme).toBe("system");
+      expect(boot()).toBe(rowFor(DEFAULT_SETTINGS.lightTheme, "light"));
       expect(boot()).toBe(app());
     } finally {
       if (origDoc) Object.defineProperty(globalThis, "document", origDoc);
       else Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
+  test("a record without a theme choice: a dark-only app's palette stays dark, a fresh device follows the OS", () => {
+    systemDark = false;
+    for (const record of [{ palette: "charcoal" }, { palette: "charcoal", paletteLight: "pink" }, { palette: "nope", paletteDark: "nord" }]) {
+      store(record, null);
+      expect(sanitizeSettings(record).theme, JSON.stringify(record)).toBe("dark");
+      expect(boot().mode, JSON.stringify(record)).toBe("dark");
+      expect(boot()).toBe(app());
+    }
+    expect(sanitizeSettings({ palette: "charcoal", paletteLight: "pink" }).lightTheme).toBe("charcoal");
+    for (const record of [{}, { language: "en" }, { darkTheme: "nord", lightTheme: "one-light" }]) {
+      store(record, null);
+      expect(sanitizeSettings(record).theme, JSON.stringify(record)).toBe("system");
+      expect(boot().mode, JSON.stringify(record)).toBe("light");
+      expect(boot()).toBe(app());
     }
   });
 });

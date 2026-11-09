@@ -109,12 +109,12 @@ const BASE: Record<string, string> = {
   "Settings": "设置",
   "PCs": "PC",
   "Chat": "聊天",
-  "Agent default": "代理默认",
+  "Agent default": "Agent 默认",
   "Devices and PCs": "设备和电脑",
   "Access token": "访问 Token",
 
   // ---- shortcuts (lib/shortcuts.ts labels) ----
-  "Command palette": "命令面板",
+  "Command palette": "搜索窗格和命令",
   "Switch chat / terminal": "切换聊天 / 终端",
   "Focus pane input": "聚焦面板输入框",
   "Toggle sidebar": "切换侧边栏",
@@ -129,7 +129,7 @@ const BASE: Record<string, string> = {
   // ---- agent status words (lib/status.ts) ----
   "READY": "就绪",
   "RUN": "运行",
-  "INPUT": "输入",
+  "INPUT": "需回应",
   "DONE": "完成",
   "BG": "后台",
   "—": "—",
@@ -185,7 +185,7 @@ const BASE: Record<string, string> = {
   "Share link": "分享链接",
   "Copy address": "复制地址",
   "Link copied": "已复制链接",
-  "That agent has closed: its workspace is open": "该代理已关闭，已改为打开其工作区",
+  "That agent has closed: its workspace is open": "该 Agent 已关闭，已改为打开其工作区",
   "That link's workspace is closed": "该链接的工作区已关闭",
   "That link's PC is not set up here": "该链接的电脑未在此处设置",
   "Could not sign out. Try again.": "无法退出登录，请重试。",
@@ -213,7 +213,7 @@ const BASE: Record<string, string> = {
   "Rename failed: {reason}": "重命名失败：{reason}",
 
   // ---- PCs sidebar ----
-  "Filter workspaces and agents": "筛选工作区和代理",
+  "Filter workspaces and agents": "筛选工作区和 Agent",
   "Connecting…": "正在连接…",
   "Connected": "已连接",
   "Add a connection": "添加连接",
@@ -227,7 +227,7 @@ const BASE: Record<string, string> = {
   "Checking…": "正在检查…",
   "relay": "中继",
   "direct": "直连",
-  "local": "本地",
+  "local": "PC 内部·隧道",
   "Via a loopback address: this PC, or a tunnel to it": "经由回环地址：本机，或通往它的隧道",
   "Via the Ovis relay": "经由 Ovis 中继",
   "Directly on the same network, not through the relay": "在同一网络上直接连接，不经过中继",
@@ -236,10 +236,10 @@ const BASE: Record<string, string> = {
   "Via Tailscale, or Funnel from the internet": "经由 Tailscale，或经由 Funnel 从互联网连接",
   "Via the local network": "经由局域网",
   "Straight to this address": "直接连接此地址",
-  "{count} waiting for you": "{count} 个等待你回应",
+  "{count} waiting for you": "{count} 个需回应",
   "{count} working": "{count} 个工作中",
   "{count} done": "{count} 个已完成",
-  "Open the next session waiting for you": "打开下一个等待你回应的会话",
+  "Open the next session waiting for you": "打开下一个需回应的窗格",
   "Tab {index} of {count}": "第 {index} 个标签页，共 {count} 个",
   "Tabs of {workspace}": "{workspace} 的标签页",
   "Reconnecting…": "正在重连…",
@@ -250,7 +250,7 @@ const BASE: Record<string, string> = {
 
   // ---- command palette ----
   "Refresh": "刷新",
-  "Search panes and actions": "搜索窗格和操作",
+  "Search panes and actions": "搜索窗格和命令",
   "Search conversation": "搜索对话",
 
   // ---- new workspace ----
@@ -287,7 +287,7 @@ const BASE: Record<string, string> = {
   // ---- prompt card ----
   "Submit": "提交",
   "Recommended": "推荐",
-  "Agents": "代理",
+  "Agents": "Agent",
   "Setup guide": "设置向导",
   "Could not confirm this browser is paired. Check that cookies are enabled, then try again.": "无法确认此浏览器已配对。请检查是否允许 Cookie，然后重试。",
   "New code": "新代码",
@@ -351,7 +351,7 @@ const BASE: Record<string, string> = {
   "Done": "完成",
   "Name": "名称",
   "Recent": "最近",
-  "Needs you": "需要你回应",
+  "Needs you": "需回应",
 
   // ---- phone ----
   "Copy": "复制",
@@ -360,7 +360,7 @@ const BASE: Record<string, string> = {
   "Sending…": "正在发送…",
   // the alerts health notice over the pane and Settings → Alerts say these alike (lib/pushHealth.ts)
   "This device's push subscription is missing. Turn alerts on again.": "此设备的推送订阅不存在。请重新开启提醒。",
-  "The push service retired this device's subscription. Turn alerts on again to make a new one.": "推送服务已停用此设备的订阅。重新开启提醒即可创建新的订阅。",
+  "The push service retired this device's subscription. Turn alerts on again to make a new one.": "此设备的提醒连接已失效。请重新开启提醒以重新连接。",
   "Turn alerts on again": "重新开启提醒",
   "Turning alerts on…": "正在开启提醒…",
   "This device's push subscription was made for another server key. Turn alerts on again to make a new one.": "此设备的推送订阅是用另一个服务器密钥创建的。请重新开启提醒以创建新的订阅。",
@@ -370,9 +370,7 @@ const BASE: Record<string, string> = {
   "Brave would not make a push subscription. Turn on Use Google services for push messaging in Brave's privacy settings, then try again.": "Brave 未创建推送订阅。请在 Brave 的隐私设置中开启“Use Google services for push messaging”，然后重试。",
   "This device would not make a push subscription. Check that push messaging is allowed in its settings, then try again.": "此设备未能创建推送订阅。请确认其设置中允许推送消息，然后重试。",
   "This device can only watch.": "此设备只能查看。",
-  "Needs input": "需要输入",
   "Needs permission": "需要权限",
-  "Finished": "已完成",
   "Open pane": "打开窗格",
   "Quick replies": "快捷回复",
   "Skills": "Skill",
@@ -399,6 +397,7 @@ const BASE: Record<string, string> = {
   "This PC's bridge does not offer this yet": "此电脑的桥接尚未提供此功能。",
   "Move failed: {reason}": "移动失败：{reason}",
   "Pane swap was refused: {reason}": "窗格交换被拒绝：{reason}",
+  "The pane swap could not be completed. Try again.": "无法完成窗格交换。请重试。",
   "The panes are in different tabs.": "窗格位于不同的标签页中。",
   "Choose two different panes.": "请选择两个不同的窗格。",
   "The pane moved to the right instead.": "窗格改为移到了右侧。",
@@ -423,7 +422,7 @@ const BASE: Record<string, string> = {
   // Recover unsent text (components/UnsentText.tsx)
   "Unsent text · {destination}": "未发送的文本 · {destination}",
   "Put in message box adds this text to {destination}. Nothing is sent.": "点击“放入输入框”会将此文本放入 {destination}。不会发送。",
-  "Text you had not sent when herdr restarted. A new herdr gives pane IDs out again, so it waits here rather than in a pane it was not written for. Nothing here is sent.": "herdr 重启时尚未发送的文本。新的 herdr 会重新分配面板 ID，因此这些文本保存在这里，而不会出现在不属于它的面板中。这里不会发送任何内容。",
+  "Text you had not sent when herdr restarted. A new herdr gives pane IDs out again, so it waits here rather than in a pane it was not written for. Nothing here is sent.": "这是重启前未发送的文本。确认目标窗格后再放入输入框。",
   "Put in message box": "放入输入框",
   "Adds the text to this pane's message box. Nothing is sent.": "将文本添加到此面板的输入框中。不会发送。",
   "Message box": "输入框",
@@ -431,7 +430,7 @@ const BASE: Record<string, string> = {
   "Held message": "保留的消息",
   "Held input": "保留的输入",
   "Other accounts": "其他账号",
-  "Plan limits": "套餐限额",
+  "Plan limits": "显示套餐用量",
   "Auto": "自动",
   "Hub request failed": "中心请求失败",
   "On this PC": "本机",

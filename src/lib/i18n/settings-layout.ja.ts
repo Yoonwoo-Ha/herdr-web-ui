@@ -4,7 +4,7 @@
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
 export const SETTINGS_LAYOUT_JA: Record<string, string> = {
-  "Search settings": "設定を検索",
+  "Search settings": "すべての設定を検索",
   "No settings match.": "一致する設定はありません。",
   "Search results": "検索結果",
   "Open {page}": "{page} を開く",

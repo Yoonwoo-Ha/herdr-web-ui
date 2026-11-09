@@ -85,6 +85,18 @@ describe("the command palette on a PC the Herdr app lays out", () => {
     expect(await rows(TUI, "p3", ">move tab")).toEqual(["Move tab to w1"]);
   });
 
+  it("keeps the footer's path line when a settings action replaces a pane under the pointer", async () => {
+    await rows(TUI, "p1", "theme");
+    const path = () => renderer!.root.findByProps({ className: "palette-footer-path" });
+    // This fixture's pane has no cwd either: the empty path still reserves the second line.
+    expect(path().children).toEqual([]);
+    const settings = renderer!.root.findByProps({ "data-section": "settings-pages" });
+    const first = settings.findAllByProps({ role: "option" })[0]!;
+    await act(async () => first.props.onMouseMove());
+    expect(path().children).toEqual([]);
+    expect(renderer!.root.findByProps({ className: "palette-footer-place" }).children).toEqual(["Appearance"]);
+  });
+
   it("keeps Rename tab where a lone tab draws no row, whose dialog stands in for the row's field", async () => {
     phone = true;
     expect(await rows(TUI, "p3", ">rename tab")).toEqual(["Rename tab"]);

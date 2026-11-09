@@ -35,8 +35,8 @@
 .agents-head .btn svg,
 .agents-detail-head .btn svg,
 .agents-row-action svg {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
 }
 
 .agents-card {
@@ -92,7 +92,7 @@
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-half);
   min-width: 0;
 }
 
@@ -120,9 +120,9 @@
 .agents-state.is-none::before {
   content: "";
   display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin: -2px var(--space-2) 0 0;
+  width: var(--dot-size-sm);
+  height: var(--dot-size-sm);
+  margin: calc(-1 * var(--space-half)) var(--space-2) 0 0;
   border-radius: var(--radius-pill);
   vertical-align: middle;
 }
@@ -251,8 +251,8 @@
 }
 
 .agents-more-chevron {
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
   transition: transform var(--dur-fast) ease;
 }
 

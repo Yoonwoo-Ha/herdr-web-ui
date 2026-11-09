@@ -1,9 +1,11 @@
+// allow: SIZE_OK - selection anchoring and end following share one scroll-owner state machine.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
 import { ChatRowMemoryContext, chatRowMemory, type ChatRowMemory } from "../lib/chatRowState.tsx";
 import { dropPendingListScroll, listEndPadded } from "../lib/followScroll.ts";
 import { chatSelectionClipboardPayload } from "../lib/markdownClipboard.ts";
+import { usePageVisible } from "../lib/visibility.ts";
 // ChatTimeline.css is imported by ChatView: the frame and the loading state need it before this chunk
 
 /** a selection reaching the transcript's footer, which is no row */
@@ -84,7 +86,12 @@ export interface ChatTimelineProps<Row extends ChatTimelineRow> {
 }
 
 /** One scroll owner; selected and focused rows stay real DOM nodes outside its window. */
-export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source, scroller, listRef, following, manualLayout, selecting, memories, header, footer, label, onScroll, onFollowed, onOpen, renderRow }: ChatTimelineProps<Row>) {
+export function ChatTimeline<Row extends ChatTimelineRow>(given: ChatTimelineProps<Row>) {
+  // Keep the list's measured rows while hidden; apply the latest input together on return (IS-092).
+  const visible = usePageVisible();
+  const drawn = useRef(given);
+  if (visible) drawn.current = given;
+  const { rows, scope, source, scroller, listRef, following, manualLayout, selecting, memories, header, footer, label, onScroll, onFollowed, onOpen, renderRow } = drawn.current;
   const [selectionKeys, setSelectionKeys] = useState<string[]>([]);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   useLayoutEffect(() => {

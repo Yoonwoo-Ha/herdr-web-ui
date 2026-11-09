@@ -112,7 +112,7 @@ const BASE: Record<string, string> = {
   "Access token": "アクセストークン",
 
   // ---- shortcuts (lib/shortcuts.ts labels) ----
-  "Command palette": "コマンドパレット",
+  "Command palette": "ペインとコマンドを検索",
   "Switch chat / terminal": "チャット / ターミナルを切り替え",
   "Focus pane input": "ペインの入力欄にフォーカス",
   "Toggle sidebar": "サイドバーの切り替え",
@@ -125,9 +125,9 @@ const BASE: Record<string, string> = {
   "Next workspace": "次のワークスペース",
 
   // ---- agent status words (lib/status.ts) ----
-  "READY": "待機",
+  "READY": "準備完了",
   "RUN": "実行中",
-  "INPUT": "入力待ち",
+  "INPUT": "応答待ち",
   "DONE": "完了",
   "BG": "BG待ち",
   "—": "—",
@@ -225,7 +225,7 @@ const BASE: Record<string, string> = {
   "Checking…": "確認しています…",
   "relay": "リレー",
   "direct": "直接",
-  "local": "ローカル",
+  "local": "PC内部·トンネル",
   "Via a loopback address: this PC, or a tunnel to it": "ループバックアドレス経由: このPC、またはそこへのトンネル",
   "Via the Ovis relay": "Ovis リレー経由",
   "Directly on the same network, not through the relay": "同じネットワークでリレーを通さず直接接続",
@@ -237,7 +237,7 @@ const BASE: Record<string, string> = {
   "{count} waiting for you": "応答待ち {count} 件",
   "{count} working": "作業中 {count} 件",
   "{count} done": "完了 {count} 件",
-  "Open the next session waiting for you": "応答を待っている次のセッションを開く",
+  "Open the next session waiting for you": "次の応答待ちのペインを開く",
   "Tab {index} of {count}": "タブ {index}/{count}",
   "Tabs of {workspace}": "{workspace} のタブ",
   "Reconnecting…": "再接続しています…",
@@ -248,7 +248,7 @@ const BASE: Record<string, string> = {
 
   // ---- command palette ----
   "Refresh": "更新",
-  "Search panes and actions": "ペインと操作を検索",
+  "Search panes and actions": "ペインとコマンドを検索",
   "Search conversation": "会話を検索",
 
   // ---- new workspace ----
@@ -349,7 +349,7 @@ const BASE: Record<string, string> = {
   "Done": "完了",
   "Name": "名前",
   "Recent": "最近",
-  "Needs you": "応答が必要",
+  "Needs you": "応答待ち",
 
   // ---- phone ----
   "Copy": "コピー",
@@ -358,7 +358,7 @@ const BASE: Record<string, string> = {
   "Sending…": "送信中…",
   // the alerts health notice over the pane and Settings → Alerts say these alike (lib/pushHealth.ts)
   "This device's push subscription is missing. Turn alerts on again.": "このデバイスのプッシュ通知の登録がありません。通知をもう一度オンにしてください。",
-  "The push service retired this device's subscription. Turn alerts on again to make a new one.": "プッシュサービスがこのデバイスの登録を無効にしました。通知をもう一度オンにすると新しく登録します。",
+  "The push service retired this device's subscription. Turn alerts on again to make a new one.": "このデバイスの通知の接続が切れました。通知をもう一度オンにして、接続し直してください。",
   "Turn alerts on again": "通知をもう一度オンにする",
   "Turning alerts on…": "通知をオンにしています…",
   "This device's push subscription was made for another server key. Turn alerts on again to make a new one.": "このデバイスのプッシュ通知の登録は別のサーバーキーで作られています。通知をもう一度オンにすると新しく登録します。",
@@ -368,9 +368,7 @@ const BASE: Record<string, string> = {
   "Brave would not make a push subscription. Turn on Use Google services for push messaging in Brave's privacy settings, then try again.": "Brave がプッシュ通知の登録を作成しませんでした。Brave のプライバシー設定で「Use Google services for push messaging」をオンにしてから、もう一度お試しください。",
   "This device would not make a push subscription. Check that push messaging is allowed in its settings, then try again.": "このデバイスでプッシュ通知の登録を作成できませんでした。設定でプッシュメッセージが許可されているか確認してから、もう一度お試しください。",
   "This device can only watch.": "この端末は閲覧のみできます。",
-  "Needs input": "入力が必要",
   "Needs permission": "許可が必要",
-  "Finished": "完了",
   "Open pane": "ペインを開く",
   "Quick replies": "クイック返信",
   "Skills": "スキル",
@@ -397,6 +395,7 @@ const BASE: Record<string, string> = {
   "This PC's bridge does not offer this yet": "このPCのブリッジはまだこの機能に対応していません。",
   "Move failed: {reason}": "移動できませんでした: {reason}",
   "Pane swap was refused: {reason}": "ペインの入れ替えが拒否されました: {reason}",
+  "The pane swap could not be completed. Try again.": "ペインを入れ替えられませんでした。もう一度お試しください。",
   "The panes are in different tabs.": "ペインが別々のタブにあります。",
   "Choose two different panes.": "異なる2つのペインを選んでください。",
   "The pane moved to the right instead.": "ペインは代わりに右側へ移動しました。",
@@ -420,7 +419,7 @@ const BASE: Record<string, string> = {
   "Selected": "選択中",
   // Recover unsent text (components/UnsentText.tsx)
   "Unsent text · {destination}": "未送信のテキスト · {destination}",
-  "Text you had not sent when herdr restarted. A new herdr gives pane IDs out again, so it waits here rather than in a pane it was not written for. Nothing here is sent.": "herdr が再起動したときに送信していなかったテキストです。新しい herdr はペイン ID を再び割り当てるため、別のペインに出ないようここに保管しています。ここからは何も送信されません。",
+  "Text you had not sent when herdr restarted. A new herdr gives pane IDs out again, so it waits here rather than in a pane it was not written for. Nothing here is sent.": "再起動前に送信されなかったテキストです。対象のペインを確認してから入力欄に入れてください。",
   "Put in message box adds this text to {destination}. Nothing is sent.": "「入力欄に入れる」を押すと {destination} にテキストが入ります。送信はしません。",
   "Put in message box": "入力欄に入れる",
   "Adds the text to this pane's message box. Nothing is sent.": "このペインの入力欄にテキストを追加します。送信はしません。",
@@ -429,7 +428,7 @@ const BASE: Record<string, string> = {
   "Held message": "保留中のメッセージ",
   "Held input": "保持した入力",
   "Other accounts": "その他のアカウント",
-  "Plan limits": "プランの上限",
+  "Plan limits": "プランの使用量を表示",
   "Auto": "自動",
   "Hub request failed": "ハブのリクエストに失敗しました",
   "On this PC": "このPC",
