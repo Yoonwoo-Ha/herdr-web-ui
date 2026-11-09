@@ -311,24 +311,30 @@ export function createServer(
   // a sign-in runs in a herdr tab, which outlives this server: the next one must know its home is taken (#2313)
   usageLogin.persistTo(stateDir);
   const usage = options.usage ?? new UsageService(undefined, undefined, (refresh, skipped) => cliProxy.report(refresh, skipped));
-  const usageAccounts = new UsageAccountList(stateDir, usage);
+  // a removed or restored account changes which Hub accounts stay unread, saved at once (#3427)
+  const usageAccounts = new UsageAccountList(stateDir, usage, () => cliProxy.hiddenChanged());
   const hiddenAccounts = (hidden: unknown): Set<string> => new Set(Array.isArray(hidden) ? hidden.filter((key): key is string => typeof key === "string") : []);
   // an account hidden in Settings (the shared usageHidden) or removed from Ovis has its sign-in looked up no more (#3333)
+  // whether the last read of the removed list succeeded: while it does not, the Hub forgets no hidden account (#3428)
+  let removedReadable = true;
   const skippedAccounts = () => {
     let removed: string[] = [];
     // an unreadable list skips nothing; the report says why
-    try { removed = usageAccounts.removed(); } catch { /* UsageAccountList.report warns */ }
+    try { removed = usageAccounts.removed(); removedReadable = true; } catch { removedReadable = false; /* UsageAccountList.report warns */ }
     return new Set([...hiddenAccounts(preferences.get().settings.usageHidden), ...removed]);
   };
   usage.skipAccounts(skippedAccounts);
   // a Hub sign-in keeps the rows of the accounts hidden now, not only of those the last report skipped
-  cliProxy.skipAccounts(skippedAccounts);
+  cliProxy.skipAccounts(skippedAccounts, () => removedReadable);
   // an account shown again is looked up now, not at the browser's next poll; hiding one needs no read,
   // and with Plan limits off nothing is read at all (gh auth token included)
   let usageHidden = hiddenAccounts(preferences.get().settings.usageHidden);
   preferences.subscribe((next) => {
     const before = usageHidden;
     usageHidden = hiddenAccounts(next.settings.usageHidden);
+    // which Hub account each hidden key is, saved now and with Plan limits off too: a restart before any report keeps it (#3427)
+    // and again at every change while its last save failed: a retried hide is refused until it is saved (#3428)
+    if (before.size !== usageHidden.size || [...before].some((key) => !usageHidden.has(key)) || cliProxy.hiddenUnsaved()) cliProxy.hiddenChanged();
     if (!next.settings.showUsage || ![...before].some((key) => !usageHidden.has(key))) return;
     usage.report().catch((error: unknown) => console.warn("usage: could not be read after the hidden accounts changed", error instanceof Error ? error.message : String(error)));
   });
