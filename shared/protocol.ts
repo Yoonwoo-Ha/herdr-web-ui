@@ -189,8 +189,8 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *                                            install only, while it checks or builds (install_cancellable); 400 invalid_update_cancel,
  *                                            409 update_restart_required, or 409 update_not_cancellable alike for a wrong or expired
  *                                            install_id and for no update running (supervisor IPC: update-cancel-v2)
- *                                            (the bridge token may cancel any install that builds there, as it may start one: it is this
- *                                            PC owner's own connection server, which asks only for an install it requested)
+ *                                            (the bridge token may cancel only an install it asked for, by the install_id its
+ *                                            202 gave: never another device's, nor one the PC's own Settings started)
  *         (at most 1 KiB): 400 invalid_update_install for a missing or malformed revision,
  *         409 update_restart_required where the supervisor does not advertise
  *         revision_bound_install, 409 update_offer_changed when the offer is no longer that

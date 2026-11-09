@@ -16,6 +16,7 @@ import { labelOmoPanes } from "./conversation.ts";
 import type { CompletionTracker } from "./completion.ts";
 import { HerdrProfileState, herdrMachineId } from "./herdr-profile-state.ts";
 import { sameSshSession, type HerdrMachineProfile } from "./herdr-profiles.ts";
+import { appBuild } from "./app-revision.ts";
 import { validateTarget } from "./machine-security.ts";
 import { writePrivateState } from "./private-state.ts";
 import { holdsDocument, readStateDocument, setAsideDamaged } from "./state-document.ts";
@@ -1003,7 +1004,8 @@ export class MachineManager {
         // the build shown is this app's own (its revision): another build of that version the PC offers is never adopted
         const offered = this.jobs.get(current.id)?.offeredRevision;
         if (!offered) return UNREAD_RELEASE;
-        const revision = request.revision ?? (process.env["OVIS_REVISION"] || undefined);
+        // this app's own build in every runtime (the desktop app's server too, which no supervisor runs: #3400)
+        const revision = request.revision ?? appBuild.revision();
         if (!revision) return "This app is not a release build, so it cannot tell which build of its release it showed; update that PC from its own Settings → Updates.";
         if (!request.revision && offered !== revision) return `That PC offers another build of v${APP_VERSION} than this app's, the one shown. Look at it again, then update.`;
         current = start(true, revision); request.onJob?.(current.id); result = await ended(current);

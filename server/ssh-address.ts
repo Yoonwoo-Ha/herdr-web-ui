@@ -13,8 +13,8 @@ const kept = new Map<string, { address: string | null; at: number }>();
 
 /**
  * The PC an SSH target reaches, as OpenSSH resolves it (`ssh -G`, which reads the config and connects to nothing):
- * `user@hostname:port`. Two aliases of one host, or a port given and the default 22, are the same PC. When ssh cannot
- * tell, the target's own words stand: its user (or this account's) at its host, on its port or 22.
+ * `user@hostname:port`. Two aliases of one host, or a port given and the default 22, are the same PC. Resolved only in the
+ * background: undefined until its lookup ends, null where ssh -G failed (samePc says how each is compared then).
  */
 export function sshAddress(target: SshTarget): string | null | undefined {
   const hit = kept.get(keyOf(target));
