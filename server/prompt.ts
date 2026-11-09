@@ -820,6 +820,53 @@ async function piOwnsInput(paneId: string): Promise<boolean> {
     || agentProcesses([entry], "pi").length > 0 || agentProcesses([entry], "omo").length > 0);
 }
 
+/**
+ * Whether Hermes holds the pane's input (it is the pane's foreground process), not a shell it was
+ * suspended behind (Ctrl+Z), where herdr still names the pane Hermes and anything run there can show an
+ * approval's text. Unknown (herdr did not answer) is not Hermes's, and neither is Windows, which lists no
+ * foreground process group: its approval stays for the terminal there, as one this reader leaves out.
+ */
+async function hermesOwnsInput(paneId: string): Promise<boolean> {
+  if (process.platform === "win32") return false;
+  const info = await paneProcessInfo(paneId).catch(() => null);
+  return (info?.foreground_processes ?? []).some(isHermesForeground);
+}
+
+/**
+ * The foreground process is Hermes itself: its own executable, or Python running Hermes's entry script as the
+ * script (the first argument that is not an option). isHermesProcess also takes a Python with "hermes" anywhere in its
+ * arguments (`python3 -c '…' /tmp/hermes`), which may label a pane but must not let it take an approval's keys.
+ */
+export function isHermesForeground(entry: { name?: string | null; argv0?: string | null; argv?: readonly string[] | null }): boolean {
+  const named = (value: string) => {
+    const lower = value.toLowerCase();
+    return lower === "hermes" || lower === "hermes.exe" || lower.endsWith("/hermes") || lower.endsWith("\\hermes.exe");
+  };
+  const argv = entry.argv ?? [];
+  const first = argv[0] ?? entry.argv0 ?? entry.name ?? "";
+  if (named(first)) return true;
+  const interpreter = (first.split(/[\\/]/).pop() ?? "").toLowerCase();
+  if (!/^python[\d.]*(?:\.exe)?$/u.test(interpreter)) return false;
+  // Python's own options before the script, read as Python reads them, combined flags included (-uX opt): -c and -m
+  // run something else, -X/-W/-Q take a value (the rest of the argument, or the next one), and a long option this
+  // does not know may take one too, so it is no Hermes
+  for (let at = 1; at < argv.length; at += 1) {
+    const arg = argv[at]!;
+    if (arg === "--") return named(argv[at + 1] ?? "");
+    if (arg.startsWith("--")) return false;
+    if (!arg.startsWith("-") || arg === "-") return named(arg);
+    for (let flag = 1; flag < arg.length; flag += 1) {
+      const option = arg[flag]!;
+      if (option === "c" || option === "m") return false;
+      if (option === "X" || option === "W" || option === "Q") {
+        if (flag === arg.length - 1) at += 1;
+        break;
+      }
+    }
+  }
+  return false;
+}
+
 /** A move between a form's questions ran out of its request's time, or its asking ended: no further key. */
 class MoveLapsed extends KeyRefused {}
 
@@ -1146,6 +1193,13 @@ async function readKnownPrompt(
   }
   // every omp card answers by keys, and so would a fallback card: offered only while omp holds the input
   if (agent === "omp" && (prompt !== null || pane.agent_status === "blocked") && !(await ompOwnsInput(paneId))) {
+    return { prompt: null, screen, suppressFallback: true };
+  }
+  // Hermes's approval answers by keys that grant or refuse: offered only while Hermes holds the input.
+  // Looked at before the read that settles a key, never after it: a look between that read's check and
+  // the key would let a cursor moved meanwhile take the Enter. A Hermes suspended during that read takes
+  // that one key at the shell's fresh prompt, where an arrow or Enter runs nothing, and refuses the next
+  if (agent === "hermes" && prompt !== null && parsedByPublicPrompt.get(prompt)?.responder === "hermes-approval" && !(await hermesOwnsInput(paneId))) {
     return { prompt: null, screen, suppressFallback: true };
   }
   // and every card pi's own dialogs and questionnaires draw, which answer by keys (pi-ask's form answers

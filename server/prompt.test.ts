@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HerdrPane, InteractivePrompt } from "../shared/protocol.ts";
 
-import { answerKeys, hermesInputDraft, claudeClearableDraft, claudeInputBoxText, claudeInputDraft, claudeInputEmpty, historyEndShowsLive, viewportShowsLive, removedInvisible, noteSubmitted, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted, piListsTemplate, piRunsCommand, OpenCodePromptState, shownPromptText } from "./prompt.ts";
+import { answerKeys, hermesInputDraft, isHermesForeground, claudeClearableDraft, claudeInputBoxText, claudeInputDraft, claudeInputEmpty, historyEndShowsLive, viewportShowsLive, removedInvisible, noteSubmitted, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted, piListsTemplate, piRunsCommand, OpenCodePromptState, shownPromptText } from "./prompt.ts";
 import { rememberPaneCommands } from "./commands.ts";
 import { registry } from "./dialogs/registry.ts";
 import { gjcCustomEditorMatches } from "./dialogs/fallback.ts";
@@ -4364,6 +4364,8 @@ describe("an answer and the menu it was made for", () => {
     ompStopped?: boolean;
     /** a pi pane's pi has ended: herdr still names the pane pi, its foreground is the shell */
     piGone?: boolean;
+    /** a Hermes pane's Hermes is suspended behind its shell (Ctrl+Z): herdr still names the pane hermes, its foreground is the shell */
+    hermesStopped?: boolean;
   }
 
   async function withPane(agent: string, status: string, screen: string, run: (pane: Pane) => Promise<void>): Promise<void> {
@@ -4405,6 +4407,7 @@ describe("an answer and the menu it was made for", () => {
         if (request.method === "pane.process_info") return answer({ process_info: { foreground_processes: pane.omo?.live ? [{ pid: pane.omo.pid, argv: ["omo"] }]
           : pane.agent === "omp" ? [pane.ompStopped ? { pid: 4100, argv: ["/bin/bash"] } : { pid: 4242, argv: ["omp"] }]
           : pane.agent === "pi" ? [pane.piGone ? { pid: 4100, argv: ["/bin/bash"] } : { pid: 4343, argv: ["node", "/usr/local/bin/pi"] }]
+          : pane.agent === "hermes" ? [pane.hermesStopped ? { pid: 4100, argv: ["/bin/zsh"] } : { pid: 4444, argv: ["/usr/local/bin/hermes"] }]
           // a Codex pane runs Codex: its rollout is read only while one does
           : pane.agent === "codex" ? [{ pid: 2147483647, argv: ["/usr/bin/codex"] }] : [] } });
         // a pane whose scroll herdr does not report: a colored read counts when its text is the live screen's
@@ -6903,6 +6906,70 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
       expect(pane.sent).toEqual([]);
       expect((await card())!.id).not.toBe(first.id);
     });
+  });
+
+  // #857: Hermes's dangerous-command approval (dialogs/hermes-approval.test.ts), answered with its own arrows and Enter
+  test("answers Hermes's approval by moving to the row picked, seen there before the Enter", async () => {
+    const hermes = (name: string) => readFileSync(new URL(`./fixtures/hermes-approval/${name}.txt`, import.meta.url), "utf8");
+    const labels = ["Allow once", "Allow for this session", "Add to permanent allowlist", "Deny"];
+    const at = (row: number) => hermes("once-120").split("\n").map((line) => {
+      const index = labels.findIndex((label) => line.includes(`. ${label} `));
+      return index < 0 ? line : `│ ${index === row ? "❯" : " "}${line.slice(3)}`;
+    }).join("\n");
+    await withPane("hermes", "blocked", at(0), async (pane) => {
+      let cursor = 0;
+      pane.onSent = (sent) => { if (sent === "down") pane.screen = at(++cursor); };
+      const prompt = (await card())!;
+      expect(prompt.kind).toBe("approval");
+      expect(await answer(prompt.id, { option_index: 3 })).toEqual({ status: 200, code: undefined });
+      expect(pane.sent).toEqual(["down", "down", "down", "enter"]);
+    });
+    // the cursor moved away under the arrows (a key pressed in the terminal meanwhile): the read before Enter sees
+    // it off the row picked, and no Enter is pressed
+    await withPane("hermes", "blocked", at(0), async (pane) => {
+      let cursor = 0;
+      pane.onSent = (sent) => { if (sent === "down") { cursor += 1; pane.screen = at(cursor === 3 ? 1 : cursor); } };
+      const prompt = (await card())!;
+      expect(await answer(prompt.id, { option_index: 3 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual(["down", "down", "down"]);
+    });
+    // another command asked meanwhile: nothing is pressed
+    await withPane("hermes", "blocked", at(0), async (pane) => {
+      const prompt = (await card())!;
+      pane.screen = at(0).replace("│ rm -rf ./scratch  ", "│ rm -rf ./other    ");
+      expect(await answer(prompt.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual([]);
+    });
+    // a panel that cut its command is left to the terminal, with no generic card of raw keys either
+    await withPane("hermes", "blocked", hermes("cut-38"), async (pane) => {
+      expect(await card()).toBeNull();
+      expect(pane.sent).toEqual([]);
+    });
+    // the panel's text in a shell that Hermes was suspended behind (Ctrl+Z), herdr still naming the pane hermes: no card
+    await withPane("hermes", "idle", at(0), async (pane) => {
+      pane.hermesStopped = true;
+      expect(await card()).toBeNull();
+    });
+    // and Hermes suspended between the card and the answer: nothing is pressed
+    await withPane("hermes", "blocked", at(0), async (pane) => {
+      const prompt = (await card())!;
+      pane.hermesStopped = true;
+      expect(await answer(prompt.id, { option_index: 0 })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual([]);
+    });
+  });
+
+  test("takes only Hermes itself as the foreground that may take an approval's keys", () => {
+    for (const argv of [["/usr/local/bin/hermes"], ["hermes"], ["/usr/bin/python3", "/home/u/.local/bin/hermes", "chat"], ["python3.14", "-u", "/opt/hermes/bin/hermes"],
+      ["python3", "-X", "utf8", "/opt/hermes/bin/hermes"], ["python3", "-IsX", "utf8", "/opt/hermes/bin/hermes"]]) {
+      expect([argv, isHermesForeground({ argv })]).toEqual([argv, true]);
+    }
+    // "hermes" as an argument of something else, or Python running other code
+    for (const argv of [["python3", "-c", "print(1)", "/tmp/hermes"], ["python3", "-m", "http.server", "hermes"], ["python3", "/tmp/forge.py", "/tmp/hermes"], ["/bin/zsh"], ["node", "/tmp/hermes"],
+      // combined flags: /tmp/hermes is -X's value, and -c's code runs
+      ["python3", "-uX", "/tmp/hermes", "-c", "print(1)"], ["python3", "-uc", "print(1)", "/tmp/hermes"], ["python3", "--check-hash-based-pycs", "always", "/tmp/hermes"]]) {
+      expect([argv, isHermesForeground({ argv })]).toEqual([argv, false]);
+    }
   });
 
   test("logs prompt answer requests with pane_id, prompt_matched and outcome", async () => {
