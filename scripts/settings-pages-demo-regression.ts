@@ -434,6 +434,76 @@ async function heldGroupLanding(browser: import("playwright-core").Browser, url:
   }
 }
 
+/**
+ * At 1440: a press on the page already open leaves nothing that takes Back from the key bar editor
+ * away from Edit key bar; a search result whose group the server fills in (Also send to) is landed on
+ * once the group comes; the OpenAI key's field drawn again empty by a search keeps Save waiting for a
+ * key; and Check again keeps the focus its press gave it while it reads and after.
+ */
+async function focusAndLandings(browser: import("playwright-core").Browser, url: string): Promise<void> {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en" });
+  try {
+    await context.addInitScript((settings) => localStorage.setItem("ovis:settings", settings), JSON.stringify(SETTINGS));
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(url);
+    await page.locator(".conn-live").waitFor({ state: "attached" });
+    await openSettings(page);
+    const dialog = dialogOf(page);
+    const focusedOn = (selector: string) => page.evaluate((selector) => document.activeElement?.matches(selector) ?? false, selector);
+
+    await openSettingsPage(page, "Terminal");
+    await dialog.getByRole("tab", { name: "Terminal", exact: true }).click();
+    await dialog.getByRole("button", { name: "Edit key bar", exact: true }).click();
+    await page.getByRole("dialog", { name: "Key bar", exact: true }).waitFor();
+    await page.locator(".settings-dialog").getByRole("button", { name: "Back to settings", exact: true }).click();
+    await dialog.getByRole("tabpanel", { name: "Terminal", exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Edit key bar", "after a press on the open page's tab, Back from the key bar editor returns to Edit key bar");
+
+    const search = dialog.getByRole("searchbox", { name: "Search settings", exact: true });
+    const results = dialog.getByRole("region", { name: "Search results", exact: true });
+    await search.fill("webhook");
+    await results.locator("[data-section='alert-webhook']").waitFor();
+    await results.getByRole("button", { name: "Open Alerts", exact: true }).click();
+    await dialog.getByRole("tabpanel", { name: "Alerts", exact: true }).waitFor();
+    await page.waitForFunction(() => (document.activeElement as HTMLElement | null)?.dataset.section === "alert-webhook", undefined, { timeout: 10_000 });
+
+    await search.fill("openai api key");
+    const key = results.locator('input[aria-label="OpenAI API key"]');
+    const save = results.getByRole("button", { name: "Save key", exact: true });
+    await key.fill("sk-fixture");
+    assert.equal(await save.isEnabled(), true, "a typed key can be saved");
+    await search.fill("zzqxv nothing");
+    await dialog.getByRole("status").filter({ hasText: "No settings match." }).waitFor();
+    await search.fill("openai api key");
+    await key.waitFor();
+    assert.equal(await key.inputValue(), "", "the key's field comes back empty");
+    assert.equal(await save.isDisabled(), true, "Save waits for a key typed again");
+
+    await search.fill("");
+    await openSettingsPage(page, "Agents");
+    await page.evaluate(() => {
+      const passing = window.fetch, held: (() => void)[] = [];
+      (window as unknown as { releaseCatalog: () => void }).releaseCatalog = () => { window.fetch = passing; for (const go of held.splice(0)) go(); };
+      window.fetch = (input, init) => new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href).pathname === "/api/agent-catalog"
+        ? new Promise<Response>((resolve) => held.push(() => resolve(passing(input, init))))
+        : passing(input, init);
+    });
+    await dialog.getByRole("button", { name: "Check again", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await dialog.getByRole("button", { name: "Checking…", exact: true }).waitFor();
+    assert.equal(await focusedOn(".agents-check-again"), true, "a pressed Check again keeps the focus while it reads");
+    await page.evaluate(() => (window as unknown as { releaseCatalog: () => void }).releaseCatalog());
+    await dialog.getByRole("button", { name: "Check again", exact: true }).waitFor();
+    assert.equal(await focusedOn(".agents-check-again"), true, "and once the read lands");
+    assert.deepEqual(errors, []);
+    console.log("PASS at 1440 a no-op tab press, a group the server fills in, a key field drawn again and Check again keep the focus and Save where they belong");
+  } finally {
+    await context.close();
+  }
+}
+
 const checkSelectArrows = async (page: Page): Promise<void> => {
   const controls = await page.locator(".settings-select").evaluateAll((nodes) => nodes.map((select) => {
     const arrow = select.parentElement?.querySelector("svg");
@@ -504,7 +574,7 @@ async function dialogSearch(browser: import("playwright-core").Browser, url: str
 
       // Escape empties a search from a result too, not only from the field
       await search.fill("sound");
-      await results.getByRole("switch", { name: "Sound", exact: true }).focus();
+      await results.getByRole("switch", { name: "Play sounds", exact: true }).focus();
       await page.keyboard.press("Escape");
       assert.equal(await search.inputValue(), "", `${width}px: Escape on a result empties the search`);
       assert.equal(await search.evaluate((field) => field === document.activeElement), true, `${width}px: the field takes the focus back`);
@@ -1731,6 +1801,7 @@ try {
       await runtimeInUse(browser, url);
       await alertChipsReset(browser, url);
       await installedNotes(browser, url);
+      await focusAndLandings(browser, url);
       await heldGroupLanding(browser, devUrl);
     } finally {
       await browser.close();

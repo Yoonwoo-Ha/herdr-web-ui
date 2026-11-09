@@ -91,9 +91,12 @@
   align-self: flex-start;
   align-items: center;
   gap: var(--space-1);
+  min-width: var(--pointer-target);
+  min-height: var(--pointer-target);
   padding: 0;
   background: transparent;
   border: 0;
+  border-radius: var(--radius-sm);
   color: var(--text-strong);
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
@@ -304,8 +307,8 @@
 
 .settings-integration-check {
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: var(--icon-size);
+  height: var(--icon-size);
   color: var(--status-done);
 }
 
@@ -318,9 +321,26 @@
 }
 
 .settings-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--pointer-target);
   color: var(--accent);
   font-size: var(--fs-xs);
   overflow-wrap: anywhere;
+}
+
+.settings-telemetry details:not([open]) > :not(summary) {
+  display: none;
+}
+
+.settings-telemetry details > summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--pointer-target);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
 }
 
 /* a column, not a grid: a grid's track is as wide as a text field asks to be, and on a phone
@@ -494,8 +514,28 @@
   }
 
   .usage-accounts-actions .icon-button svg {
-    width: 16px;
-    height: 16px;
+    width: var(--icon-size-md);
+    height: var(--icon-size-md);
+  }
+}
+
+@media (pointer: coarse) {
+  .settings-dialog .input {
+    min-height: var(--touch-target);
+  }
+
+  .settings-search-page-title {
+    min-width: var(--touch-target);
+    min-height: var(--touch-target);
+  }
+
+  .settings-link {
+    min-width: var(--touch-target);
+    min-height: var(--touch-target);
+  }
+
+  .settings-telemetry details > summary {
+    min-height: var(--touch-target);
   }
 }
 
@@ -671,7 +711,12 @@
   cursor: pointer;
 }
 
-.settings-font-option:hover,
+@media (hover: hover) {
+  .settings-font-option:hover {
+    background: var(--bg-hover);
+  }
+}
+
 .settings-font-option:focus-visible {
   background: var(--bg-hover);
 }

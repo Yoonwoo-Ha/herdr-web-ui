@@ -38,4 +38,16 @@ export const SETTINGS_LAYOUT_ZH: Record<string, string> = {
 
   // the one-line conditions Settings' bare pages show under a row's name (design pass G-095 to G-098)
   "By state applies to this device; the other orders to every browser.": "按状态仅对此设备生效，其他排序对所有浏览器生效。",
+  "Auto: the chat on a touch screen, the terminal elsewhere.": "自动：触摸屏上打开聊天，其他设备上打开终端。",
+  "Beside the pane needs a wide window; on this screen a file opens in a popup.": "在窗格旁打开需要较宽的窗口；在此屏幕上文件会以弹窗打开。",
+  "Auto: on a desktop's chat only, where dictation can work.": "自动：仅在可以听写的桌面聊天中显示。",
+  "Separate: leaving Ovis keeps the pane attached; herdr's selection stays independent.": "分开：离开 Ovis 后仍保持窗格连接，herdr 的选择独立进行。",
+  "Use alongside: leaving Ovis releases an unused pane to herdr after a short delay; herdr's selection stays independent.": "一起使用：离开 Ovis 后，未使用的窗格会在短暂延迟后交还给 herdr，herdr 的选择独立进行。",
+  "Follow its focus: leaving Ovis releases an unused pane after a short delay; this view follows herdr's selection.": "跟随焦点：离开 Ovis 后，未使用的窗格会在短暂延迟后交还给 herdr，此视图跟随 herdr 的选择。",
+  "Any turn finished takes in the long ones.": "开启每回合完成后，长回合也会一并提醒。",
+  "Groups you name in the Agents list, in every browser.": "把代理列表分成你命名的分组。对所有浏览器生效。",
+  "Each lock is turned on from the pinned agent's own menu.": "锁定在固定代理自己的菜单中逐个开启。",
+  "A drag in a Codex pane selects through its whole history; Shift+drag still copies in Ovis.": "在 Codex 窗格中拖动会在完整历史中选择；Shift+拖动仍在 Ovis 中复制。",
+  "Opens the side conversations an OMP session saved with /btw.": "从输入框打开 OMP 会话用 /btw 保存的旁支对话。",
+  "A subagent counts as running until the session that started it is told it ended.": "子代理即使空闲，也在启动它的会话被告知结束前算作运行中。",
 };

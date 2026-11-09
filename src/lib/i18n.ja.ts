@@ -85,6 +85,8 @@ const BASE: Record<string, string> = {
   "{n} min ago": "{n} 分前",
   "{n} h ago": "{n} 時間前",
   "Remove": "削除",
+  "Remove {provider}": "{provider} 削除",
+  "Sign in to use this PC from your phone and your other PCs.|account group": "サインインすると、スマートフォンやほかの PC からもこの PC を使えます。",
   "Remove {name}": "{name} を削除",
   "Save": "保存",
   "Goal": "目標",

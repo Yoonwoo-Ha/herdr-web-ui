@@ -21,8 +21,14 @@
   margin: 0;
   padding: 0 var(--settings-inset);
   color: var(--text-dim);
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-caps);
+}
+
+.settings-fold:not([open]) > :not(summary),
+.settings-details:not([open]) > :not(summary) {
+  display: none;
 }
 
 /* a page's folded groups (SettingsFold): one quiet line at the page's end, a caption's size and colour, that
@@ -45,7 +51,12 @@
   display: none;
 }
 
-.settings-fold > summary:hover,
+@media (hover: hover) {
+  .settings-fold > summary:hover {
+    color: var(--text-strong);
+  }
+}
+
 .settings-fold > summary:focus-visible {
   color: var(--text-strong);
 }
@@ -162,10 +173,13 @@
 /* the ↺ beside a label whose value moved off its default */
 .settings-reset {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  min-width: var(--pointer-target);
+  min-height: var(--pointer-target);
+  width: var(--pointer-target);
+  height: var(--pointer-target);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -174,9 +188,11 @@
   cursor: pointer;
 }
 
-.settings-reset:hover {
-  background: var(--bg-hover);
-  color: var(--text-strong);
+@media (hover: hover) {
+  .settings-reset:hover {
+    background: var(--bg-hover);
+    color: var(--text-strong);
+  }
 }
 
 .settings-reset svg {
@@ -192,6 +208,7 @@
   padding: 4px 2px;
   margin: -4px -2px;
   overflow-x: auto;
+  scroll-padding-inline: var(--space-half);
   scroll-snap-type: x proximity;
   scrollbar-width: none;
 }
@@ -210,13 +227,15 @@
 }
 
 .theme-card {
+  box-sizing: border-box;
   display: flex;
   flex: 0 0 96px;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding: 0;
-  border: 0;
+  padding: var(--space-1);
+  border: var(--hairline) solid transparent;
+  border-radius: var(--radius-md);
   background: none;
   color: var(--text-dim);
   font: inherit;
@@ -227,6 +246,8 @@
 }
 
 .theme-card[aria-checked="true"] {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
   color: var(--text-strong);
   font-weight: var(--fw-medium);
 }
@@ -235,27 +256,19 @@
 .theme-card-art {
   position: relative;
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
   aspect-ratio: 16 / 10;
-  padding: 4px;
+  padding: var(--space-1);
   overflow: hidden;
   border: var(--hairline) solid;
-  border-radius: var(--radius-md);
-  outline: 2px solid transparent;
-  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
-.theme-card:hover .theme-card-art {
-  outline-color: var(--border-strong);
-}
-
-.theme-card[aria-checked="true"] .theme-card-art,
-.theme-card:focus-visible .theme-card-art {
-  outline-color: var(--accent);
-}
-
-.theme-card:focus-visible {
-  outline: none;
+@media (hover: hover) {
+  .theme-card:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
 }
 
 .theme-card-side,
@@ -265,7 +278,7 @@
   gap: 3px;
   padding: 4px;
   border: var(--hairline) solid;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .theme-card-side {
@@ -294,11 +307,11 @@
 }
 
 .theme-card-art b {
-  width: 8px;
-  height: 8px;
+  width: var(--space-2);
+  height: var(--space-2);
   margin-top: auto;
   margin-left: auto;
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
 }
 
 .theme-card-name {
@@ -318,6 +331,23 @@
   min-width: 0;
 }
 
+@media (hover: hover) {
+  /* the arrows' footprints are cut out of the row rather than reserved by its margins, so nothing
+     moves when an arrow comes or goes; the snap padding keeps every stop clear of them */
+  .theme-cards {
+    scroll-padding-inline: calc(var(--space-5) + var(--space-half));
+    clip-path: inset(0 var(--theme-strip-clip-end, 0) 0 var(--theme-strip-clip-start, 0));
+  }
+
+  .theme-strip-frame:has(> .theme-strip-arrow.is-start) > .theme-cards {
+    --theme-strip-clip-start: calc(var(--space-5) + var(--space-half));
+  }
+
+  .theme-strip-frame:has(> .theme-strip-arrow.is-end) > .theme-cards {
+    --theme-strip-clip-end: calc(var(--space-5) + var(--space-half));
+  }
+}
+
 .theme-strip-arrow {
   position: absolute;
   top: 30px;
@@ -325,7 +355,7 @@
   width: 28px;
   height: 28px;
   border: var(--hairline) solid var(--border-strong);
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-card);
 }
@@ -457,9 +487,11 @@
   color: var(--text);
 }
 
-/* under a row's name it takes the sentence's size; elsewhere (a dialog's warning) it keeps its own */
+/* under a row's name it takes the sentence's size; elsewhere (a dialog's warning) it keeps its own.
+   A chips row keeps its name on one line (below); the condition is a sentence and wraps. */
 .settings-row-text > .settings-condition {
   font-size: var(--fs-xs);
+  white-space: normal;
 }
 
 /* one sentence at rest; its conditions and exceptions open under it (DESIGN.md: messages say
@@ -469,6 +501,9 @@
 }
 
 .settings-details > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--pointer-target);
   width: fit-content;
   color: var(--text-dim);
   font-size: var(--fs-xs);
@@ -494,21 +529,9 @@
   margin-bottom: var(--space-1);
 }
 
-/* fingers: the line keeps its height; an invisible expander reaches the target's height, as the
-   segmented options do (styles.css). The opened text is positioned so its link stays on top. */
 @media (pointer: coarse) {
   .settings-details > summary {
-    position: relative;
-  }
-
-  .settings-details > summary::after {
-    content: "";
-    position: absolute;
-    inset: calc((var(--fs-xs) * var(--lh-base) - var(--touch-target)) / 2) 0;
-  }
-
-  .settings-details > summary + * {
-    position: relative;
+    min-height: var(--touch-target);
   }
 }
 
@@ -724,7 +747,7 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: var(--space-1);
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -741,6 +764,12 @@
   font: inherit;
   font-size: var(--fs-sm);
   cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .settings-chip {
+    min-height: var(--touch-target);
+  }
 }
 
 .settings-chip[aria-pressed="true"] {
@@ -776,6 +805,20 @@
 .settings-row:has(> .settings-chips) > .settings-row-text {
   flex: none;
   white-space: nowrap;
+}
+
+/* ...unless a condition sentence sits under the name: then the name's column takes at most the left
+   half and the sentence wraps in it, so the chips keep their half instead of a sliver (G-096) */
+.settings-row:has(> .settings-chips) > .settings-row-text:has(> .settings-condition) {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+}
+
+@media (max-width: 640px) {
+  .settings-row.is-wide:has(> .settings-chips) > .settings-row-text:has(> .settings-condition) {
+    max-width: none;
+  }
 }
 
 .settings-row > .settings-chips {

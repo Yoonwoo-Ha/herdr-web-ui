@@ -38,4 +38,16 @@ export const SETTINGS_LAYOUT_JA: Record<string, string> = {
 
   // the one-line conditions Settings' bare pages show under a row's name (design pass G-095 to G-098)
   "By state applies to this device; the other orders to every browser.": "状態別はこのデバイスだけに、ほかの並び順はすべてのブラウザーに適用されます。",
+  "Auto: the chat on a touch screen, the terminal elsewhere.": "自動: タッチ画面ではチャット、それ以外ではターミナルで開きます。",
+  "Beside the pane needs a wide window; on this screen a file opens in a popup.": "ペインの横に開くには広いウィンドウが必要です。この画面ではファイルはポップアップで開きます。",
+  "Auto: on a desktop's chat only, where dictation can work.": "自動: 音声入力が使えるデスクトップのチャットでのみ表示します。",
+  "Separate: leaving Ovis keeps the pane attached; herdr's selection stays independent.": "別々: Ovis から離れてもペインの接続を保ち、herdr の選択は別々に扱います。",
+  "Use alongside: leaving Ovis releases an unused pane to herdr after a short delay; herdr's selection stays independent.": "併用: Ovis から離れると、使っていないペインを少し後に herdr へ返し、herdr の選択は別々に扱います。",
+  "Follow its focus: leaving Ovis releases an unused pane after a short delay; this view follows herdr's selection.": "フォーカスに追従: Ovis から離れると、使っていないペインを少し後に herdr へ返し、この画面は herdr の選択に追従します。",
+  "Any turn finished takes in the long ones.": "毎ターンの完了をオンにすると、長いターンも含めて通知します。",
+  "Groups you name in the Agents list, in every browser.": "エージェント一覧を自分で名前を付けたグループに分けます。すべてのブラウザーに適用されます。",
+  "Each lock is turned on from the pinned agent's own menu.": "ロックは固定したエージェントのメニューから個別にオンにします。",
+  "A drag in a Codex pane selects through its whole history; Shift+drag still copies in Ovis.": "Codex ペインでのドラッグは履歴全体から選択します。Shift+ドラッグは引き続き Ovis でコピーします。",
+  "Opens the side conversations an OMP session saved with /btw.": "OMP セッションが /btw で保存したサイド会話を入力欄から開きます。",
+  "A subagent counts as running until the session that started it is told it ended.": "サブエージェントが待機しても、起動元のセッションに終了が伝わるまで実行中とみなします。",
 };

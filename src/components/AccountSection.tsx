@@ -430,11 +430,13 @@ export function AccountSection({ onAccount, welcome, recheck = 0 }: {
   }
 
   return (
-    <SettingsGroup title={t("Account")} section="account">
+    <SettingsGroup title={t("Account")} section="account" keepNote note={view.kind === "signed-out" ? t("Sign in to use this PC from your phone and your other PCs.|account group") : undefined}>
       {signInParts}
       {view.kind === "signed-in" && (
         <>
-          <SettingsRow label={t("Signed in with {provider}", { provider: PROVIDER_NAMES[view.provider] })}>
+          {/* which account: the service keeps no login or email, so its id names it, whole in the tooltip (G-106) */}
+          <SettingsRow label={t("Signed in with {provider}", { provider: PROVIDER_NAMES[view.provider] })}
+            description={<span title={view.account}>{t("Account")} <code className="account-id">{view.account.length > 12 ? `${view.account.slice(0, 12)}…` : view.account}</code></span>}>
             <button type="button" className="btn" onClick={signOut}>{t("Sign out of {provider}", { provider: PROVIDER_NAMES[view.provider] })}</button>
           </SettingsRow>
           {view.methods !== null && (
@@ -448,9 +450,10 @@ export function AccountSection({ onAccount, welcome, recheck = 0 }: {
                       <span>{PROVIDER_NAMES[method.provider]}</span>
                       <span className="settings-description">{t("Added {date}", { date: new Date(method.added_at).toLocaleDateString(currentLocale()) })}</span>
                     </span>
-                    {/* the method this device signed in with stays: removing it would end this sign-in */}
+                    {/* the method this device signed in with stays: removing it would end this sign-in. The button names
+                        what it removes (G-174) */}
                     {view.methods !== null && view.methods.length > 1 && method.provider !== view.provider && (
-                      <button type="button" className="btn" onClick={() => removeMethod(method.provider)}>{t("Remove")}</button>
+                      <button type="button" className="btn" onClick={() => removeMethod(method.provider)}>{t("Remove {provider}", { provider: PROVIDER_NAMES[method.provider] })}</button>
                     )}
                   </li>
                 ))}

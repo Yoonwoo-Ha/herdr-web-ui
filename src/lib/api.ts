@@ -1166,7 +1166,19 @@ export async function fetchAgentKinds(machineId = "local"): Promise<AgentKind[]>
 
 /** GET /api/agent-catalog: every agent Ovis can install, with that PC's commands and what it has installed. */
 export async function fetchAgentCatalog(machineId = "local", signal?: AbortSignal): Promise<AgentCatalogResponse> {
-  return getJson<AgentCatalogResponse>(machinePath(machineId, "agent-catalog"), { signal, cache: "no-store" });
+  // bounded to 30 s, so a read that never answers ends and Check again can try again; joined by
+  // hand, as verifySourceBoot's: AbortSignal.any needs Safari 17.4
+  const bounded = new AbortController();
+  const end = () => bounded.abort();
+  const timer = setTimeout(end, 30_000);
+  if (signal?.aborted) end();
+  else signal?.addEventListener("abort", end, { once: true });
+  try {
+    return await getJson<AgentCatalogResponse>(machinePath(machineId, "agent-catalog"), { signal: bounded.signal, cache: "no-store" });
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", end);
+  }
 }
 
 /** POST /api/agent-catalog/install: opens a tab on that PC and types the agent's official command there. */
