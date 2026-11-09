@@ -18,7 +18,7 @@ import { readableColor } from "../src/lib/terminalFold.ts";
 import { openSettingsPage } from "./settings-page.ts";
 
 interface Frame { type: string; pane_id?: string; data?: string; text?: string; features?: string[] }
-interface GhosttyFixture { inputs: Frame[]; print(data: string): void }
+interface GhosttyFixture { inputs: Frame[]; print(data: string): void; geometry(cols: number, rows: number): void }
 interface RulerColumns { latin: number; hangul: number; after: number }
 declare global { interface Window { ghosttyFixture: GhosttyFixture; ghosttyRuler?: () => RulerColumns } }
 
@@ -35,6 +35,7 @@ function installGhosttyFixture(): void {
   const state: GhosttyFixture = {
     inputs: [],
     print: (data) => { for (const socket of sockets) if (pane) socket.push({ type: "pty-data", fixture: "ghostty", pane_id: pane, data }); },
+    geometry: (cols, rows) => { for (const socket of sockets) if (pane) socket.push({ type: "pane-geometry", pane_id: pane, cols, rows }); },
   };
   window.ghosttyFixture = state;
   const Demo = window.WebSocket;
@@ -344,6 +345,33 @@ try {
             await columnsKept("back from Chat");
           }
         }
+        // the chat lens adopts the pane's grid as another device sizes it. xterm's renderer is paused under it: it tells a resize
+        // at once but resizes its screen from an idle task, and the screen sits in a `content-visibility: hidden` subtree where
+        // no ResizeObserver fires. A grid widened and given back under Chat left a layer sized from the screen measuring the
+        // wide screen against this device's columns, every cell three times its glyph once back (#3366)
+        const grid = await page.evaluate(() => {
+          const layer = document.querySelector(".pane-frame.is-current .ghostty-layer")!;
+          const screen = document.querySelector<HTMLElement>(".pane-frame.is-current .xterm-screen")!;
+          const cell = (name: string) => parseFloat(getComputedStyle(layer).getPropertyValue(name));
+          return { cols: Math.round(screen.offsetWidth / cell("--ghostty-cw")), rows: Math.round(screen.offsetHeight / cell("--ghostty-ch")), width: screen.style.width };
+        });
+        await page.getByRole("radio", { name: "Chat", exact: true }).or(page.getByRole("button", { name: "Chat", exact: true })).first().click();
+        // the grid is hidden under the lens, and xterm has seen it leave view, before another device sizes it
+        await page.waitForFunction(() => getComputedStyle(document.querySelector(".pane-frame.is-current .pane-terminal")!).contentVisibility === "hidden", undefined, { timeout: 5000 });
+        await settled(page);
+        await page.evaluate(({ cols, rows }) => window.ghosttyFixture.geometry(cols * 3, rows), grid);
+        await page.waitForFunction((width) => document.querySelector<HTMLElement>(".pane-frame.is-current .xterm-screen")!.style.width !== width, grid.width);
+        await page.evaluate(({ cols, rows }) => window.ghosttyFixture.geometry(cols, rows), grid);
+        await page.getByRole("radio", { name: "Terminal", exact: true }).or(page.getByRole("button", { name: "Terminal", exact: true })).first().click();
+        await page.locator(".pane-frame.is-current .pane-terminal[data-renderer='ghostty']").waitFor();
+        // xterm resizes its screen from an idle task: compare cells once the screen is the given-back grid's again
+        await page.waitForFunction((width) => document.querySelector<HTMLElement>(".pane-frame.is-current .xterm-screen")!.style.width === width, grid.width, { timeout: 5000 });
+        const cells = await page.evaluate((cols) => ({
+          layer: parseFloat(getComputedStyle(document.querySelector(".pane-frame.is-current .ghostty-layer")!).getPropertyValue("--ghostty-cw")),
+          xterm: document.querySelector<HTMLElement>(".pane-frame.is-current .xterm-screen")!.offsetWidth / cols,
+        }), grid.cols);
+        assert.ok(Math.abs(cells.layer - cells.xterm) < 0.01, `core, back from Chat after a grid widened and given back there: the layer's cell is xterm's (${JSON.stringify(cells)})`);
+        await columnsKept("back from Chat, where another device widened the grid and gave it back");
         await page.getByRole("button", { name: "Settings", exact: true }).first().click();
         await openSettingsPage(page, "Appearance");
         for (const step of ["Increase", "Increase", "Increase", "Decrease", "Decrease"]) {
