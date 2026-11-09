@@ -30,12 +30,11 @@ const knownAs = (known: readonly string[], identities: readonly string[]): boole
   return emails.length > 0 ? sameAccount(emails, identities) : sameAccount(known, identities);
 };
 /**
- * most identities one remembered account keeps: its newest ones, and beyond them those a row the Hub lists now still
- * carries, so a listed row is not forgotten (#3449), up to IDENTITIES_LISTED_MAX: the saved list must stay one a
- * restart reads (HIDDEN_MAX_BYTES)
+ * most identities one remembered account keeps: its newest ones, and beyond them every one a row the Hub lists now
+ * still carries, so a listed row is never forgotten (#3449, #3453): bounded by the Hub's listing. What is saved is
+ * bounded apart (saveHidden)
  */
 const IDENTITIES_MAX = 6;
-const IDENTITIES_LISTED_MAX = 32;
 /**
  * `known` with what the same account is read as now added, so a later move or email change still tells it; never
  * replaced. An account known by its auth index alone gains a name only from a row shown (`named`): one first listed
@@ -46,23 +45,29 @@ const widened = (known: readonly string[], identities: readonly string[], named:
   const all = [...new Set([...identities.filter((identity) => named || isIndexed(identity)), ...known])];
   const unlisted = all.filter((identity) => !listed.has(identity));
   const dropped = new Set(unlisted.slice(Math.max(0, unlisted.length - Math.max(0, all.length - IDENTITIES_MAX))));
-  return all.filter((identity) => !dropped.has(identity)).slice(0, IDENTITIES_LISTED_MAX);
+  return all.filter((identity) => !dropped.has(identity));
 };
 const isHubKey = (key: string) => key.includes(":cliproxy:");
 /** what a read is decided from: the hidden keys, whether read whole, blind, and which account each hidden key is (a copy) */
-interface ReadView { hidden: ReadonlySet<string>; blind: boolean; accounts: ReadonlyMap<string, readonly string[]> }
+interface ReadView {
+  hidden: ReadonlySet<string>; blind: boolean; accounts: ReadonlyMap<string, readonly string[]>;
+  /** every identity of an account whose key is hidden: a row is checked against it in constant time, not against each account */
+  hiddenIdentities: ReadonlySet<string>;
+}
 /**
  * Whether `view` keeps the account `identities`, under `key`, unread. Hidden is decided by account, the file name only a
  * hint (#3423): an account hidden under any key stays unread under whatever name it has now; under a hidden key's name,
  * only an account known to be another than the one hidden is read anew.
  */
 const unreadableIn = (view: ReadView, key: string, identities: readonly string[]): boolean => {
-  if (view.blind || [...view.accounts].some(([hiddenKey, known]) => view.hidden.has(hiddenKey) && sameAccount(known, identities))) return true;
+  if (view.blind || identities.some((identity) => view.hiddenIdentities.has(identity))) return true;
   const named = view.accounts.get(key);
   return view.hidden.has(key) && (named === undefined || sameAccount(named, identities));
 };
 /** why no Hub account is read while blind (CLIProxyService.blind): shown where Settings shows the Hub's state */
 const BLIND_PROBLEM = "Hidden accounts could not be told apart, so no hub account is read. Show again each hidden hub account, or save the hub again to read them by file name.";
+/** in a saved list's partial keys: every hidden key, when not even the keys fit (no Hub key looks like this) */
+const EVERY_KEY = "*";
 /** a saved hidden list larger than this is no list this server wrote */
 const HIDDEN_MAX_BYTES = 64 * 1024;
 /** the size of the file writePrivateState writes for `document` (indented JSON and a final newline): what a start reads */
@@ -141,6 +146,13 @@ export class CLIProxyService {
   /** the last save of the hidden list failed: the next change of the preferences tries again, and fails while it does */
   private hiddenSaveFailed = false;
   private hiddenWhole: () => boolean = () => true;
+  /**
+   * The hidden keys whose account a saved list holds only in part, its auth indexes cut so the list fits (#3453): while
+   * one is hidden, a start that read that list stays blind until it is shown again or the Hub is saved again. Never
+   * taken from a file the Hub lists under its name, its account being known.
+   */
+  private partial = new Set<string>();
+  private isPartial(key: string): boolean { return this.partial.has(key) || this.partial.has(EVERY_KEY); }
   /** every identity a row of the last completed report carries: what fitHidden never drops */
   private listed: ReadonlySet<string> = new Set();
 
@@ -192,9 +204,12 @@ export class CLIProxyService {
     // Not while the hidden list is read only in part (a key left out has no file name to keep unread), and not unsaved:
     // a restart would find the list still blind, so the save says it failed and blind holds here too
     if (this.blind && this.hiddenWhole()) {
+      const partial = this.partial;
       this.blind = false;
+      this.partial = new Set();
       if (!this.saveHidden()) {
         this.blind = true;
+        this.partial = partial;
         throw new CLIProxyError("cliproxy_hidden_unsaved", 500, "Could not save which Hub accounts are hidden");
       }
     }
@@ -269,28 +284,37 @@ export class CLIProxyService {
     const keys = isJsonObject(value) ? value["keys"] : null;
     const strings = (list: unknown): list is string[] => Array.isArray(list) && list.every((item) => typeof item === "string");
     if (!isJsonObject(value) || !isJsonObject(accounts) || !strings(keys) || typeof value["blind"] !== "boolean"
-      || !Object.values(accounts).every((identities) => strings(identities) && identities.length > 0)) {
+      || !Object.values(accounts).every((identities) => strings(identities) && identities.length > 0)
+      || (value["partial"] !== undefined && !strings(value["partial"]))) {
       this.blind = true;
       console.warn("cliproxy: the saved hidden accounts are not a list; no Hub account is read while a hidden one is unknown");
       return;
     }
     for (const [key, identities] of Object.entries(accounts)) this.hiddenAccounts.set(key, identities as string[]);
     this.covered = new Set(keys);
+    this.partial = new Set(value["partial"] as string[] | undefined);
     this.blind = value["blind"];
     if (value["hub"] !== this.hub()) this.forgetIndexed();
     this.savedHidden = this.hiddenDocument();
   }
 
   private hiddenDocument(): string {
-    return JSON.stringify({ hub: this.hub(), accounts: Object.fromEntries(this.hiddenAccounts), keys: [...this.covered ?? []], blind: this.blind });
+    return JSON.stringify({ hub: this.hub(), accounts: Object.fromEntries(this.hiddenAccounts), keys: [...this.covered ?? []], blind: this.blind,
+      ...(this.partial.size > 0 ? { partial: [...this.partial] } : {}) });
   }
 
   /** Saves the hidden list when it changed; a failed save is tried again at the next sync. false: not saved. */
   private saveHidden(): boolean {
     if (this.hiddenDocument() === this.savedHidden) return true;
     try {
-      // never a list a start refuses (HIDDEN_MAX_BYTES): it would read no Hub account (#3449). One that cannot fit is a failed save
-      if (!this.fitHidden()) throw new Error("the hidden accounts do not fit in a saved list");
+      // never a list a start refuses (HIDDEN_MAX_BYTES): it would read no Hub account (#3449). One that cannot fit is a failed
+      // save, and not left to the older list either: knowing less of these accounts, a restart would read them (#3453)
+      if (!this.fitHidden()) {
+        // not even the hidden keys fit: every hidden key is partial, and nothing of them is kept
+        const blind = this.blindDocument() ?? JSON.stringify({ hub: this.hub(), accounts: {}, keys: [], blind: true, partial: [EVERY_KEY] });
+        if (blind !== this.savedHidden) { writePrivateState(this.hiddenPath, JSON.parse(blind)); this.savedHidden = blind; }
+        throw new Error("the hidden accounts do not fit in a saved list");
+      }
       const document = this.hiddenDocument();
       writePrivateState(this.hiddenPath, JSON.parse(document));
       this.savedHidden = document;
@@ -327,14 +351,45 @@ export class CLIProxyService {
     return true;
   }
 
+  /**
+   * The hidden list with the accounts that do not fit, largest first, cut to their emails and names (partial, so no
+   * other account under the key's file name is taken for one) or else left out, and blind: the next start reads no Hub
+   * account while such an account is hidden, as after a hide whose save never landed. null: not even the hidden keys fit.
+   */
+  private blindDocument(): string | null {
+    const accounts = new Map(this.hiddenAccounts);
+    const partial = new Set(this.partial);
+    const largest = [...accounts.keys()].sort((a, b) => JSON.stringify(accounts.get(b)).length - JSON.stringify(accounts.get(a)).length);
+    const fitting = () => {
+      const document = JSON.stringify({ hub: this.hub(), accounts: Object.fromEntries(accounts), keys: [...this.covered ?? []], blind: true, partial: [...partial] });
+      return savedBytes(document) <= HIDDEN_MAX_BYTES ? document : null;
+    };
+    for (const key of largest) {
+      const document = fitting();
+      if (document !== null) return document;
+      const named = accounts.get(key)!.filter((identity) => !isIndexed(identity));
+      if (named.length > 0) accounts.set(key, named);
+      else accounts.delete(key);
+      partial.add(key);
+    }
+    for (const key of largest) {
+      const document = fitting();
+      if (document !== null) return document;
+      accounts.delete(key);
+    }
+    return fitting();
+  }
+
   /** while blind, a hidden Hub key with no known account, or one a list read in part left out, may be any account: no Hub account is read */
   private blindTo(hidden: ReadonlySet<string>, whole = this.hiddenWhole()): boolean {
-    return this.blind && (!whole || [...hidden].some((key) => isHubKey(key) && !this.hiddenAccounts.has(key)));
+    return this.blind && (!whole || [...hidden].some((key) => isHubKey(key) && (!this.hiddenAccounts.has(key) || this.isPartial(key))));
   }
 
   /** the hidden list as `hidden` and `whole` say, with the accounts known now copied: a later change leaves it as it is */
   private view(hidden: ReadonlySet<string>, whole: boolean): ReadView {
-    return { hidden, blind: !whole || this.blindTo(hidden, whole), accounts: new Map(this.hiddenAccounts) };
+    const accounts = new Map(this.hiddenAccounts);
+    const hiddenIdentities = new Set([...accounts].flatMap(([key, identities]) => (hidden.has(key) ? identities : [])));
+    return { hidden, blind: !whole || this.blindTo(hidden, whole), accounts, hiddenIdentities };
   }
 
   /** whether the last save of the hidden list failed, so a change of the preferences must try it again */
@@ -358,10 +413,12 @@ export class CLIProxyService {
     }
     // a key missing from a list read only in part may still be hidden: it is forgotten only once the whole list says so
     if (whole) for (const key of this.hiddenAccounts.keys()) if (!hidden.has(key)) this.hiddenAccounts.delete(key);
+    // a partial mark goes with its key, whether or not its account was kept; EVERY_KEY once no Hub key is hidden
+    if (whole) for (const key of this.partial) if (key === EVERY_KEY ? ![...hidden].some(isHubKey) : !hidden.has(key)) this.partial.delete(key);
     const hub = [...hidden].filter(isHubKey);
     // a Hub key hidden before this start that the saved list neither covers nor knows was hidden by a save that never landed
     if (!this.checkedCovered) this.checkCovered(hidden, whole);
-    if (this.blind && whole && hub.every((key) => this.hiddenAccounts.has(key))) this.blind = false;
+    if (this.blind && whole && hub.every((key) => this.hiddenAccounts.has(key) && !this.isPartial(key))) this.blind = false;
     this.covered = new Set([...(whole ? [] : (this.covered ?? [])), ...hub]);
     return this.saveHidden();
   }
@@ -506,6 +563,11 @@ export class CLIProxyService {
       let widenedHidden = false;
       const listed = new Set([...learned.values()].flatMap(({ identities }) => identities));
       this.listed = listed;
+      // each hidden account as this report widens it: what it is known by now (a set, so each row is matched in constant
+      // time), whether it has an email, and what each row it matched adds, newest last; widened once, after every row, so a
+      // report is linear in its rows however many of them one account has (#3453)
+      const growing = new Map([...this.hiddenAccounts].map(([hiddenKey, account]) =>
+        [hiddenKey, { known: new Set(account), named: account.some(isEmail), rows: [] as (readonly string[])[] }]));
       for (const [key, { identities, shown, kept }] of learned) {
         if (kept !== undefined) this.identities.set(kept, identities);
         const known = this.shownIdentities.get(key);
@@ -516,11 +578,19 @@ export class CLIProxyService {
         else this.shownIdentities.delete(key);
         // a hidden account read under a new index or name stays unread there after its email changes too; one known by
         // no email (a workspace alone, or a list saved before emails were) gains a name only as a shown one does (#3449)
-        for (const [hiddenKey, account] of this.hiddenAccounts) {
-          if (!knownAs(account, identities)) continue;
-          const next = widened(account, identities, account.some(isEmail), listed);
-          if (next.length !== account.length || next.some((identity, at) => identity !== account[at])) { this.hiddenAccounts.set(hiddenKey, next); widenedHidden = true; }
+        // (knownAs, on the account as widened by the rows before: an email is added only from a row that carries one it has)
+        for (const account of growing.values()) {
+          if (!identities.some((identity) => account.known.has(identity) && (!account.named || isEmail(identity)))) continue;
+          const added = identities.filter((identity) => account.named || isIndexed(identity));
+          for (const identity of added) account.known.add(identity);
+          account.rows.push(added);
         }
+      }
+      for (const [hiddenKey, { named, rows }] of growing) {
+        const account = this.hiddenAccounts.get(hiddenKey);
+        if (account === undefined || rows.length === 0) continue;
+        const next = widened(account, rows.reverse().flat(), named, listed);
+        if (next.length !== account.length || next.some((identity, at) => identity !== account[at])) { this.hiddenAccounts.set(hiddenKey, next); widenedHidden = true; }
       }
       if (widenedHidden) this.saveHidden();
       // a list read only in part let nothing be read: not a fresh read, so the next report reads again, the accounts

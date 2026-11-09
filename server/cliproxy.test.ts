@@ -664,7 +664,122 @@ describe("CLIProxyAPI v8", () => {
       expect(reads().slice(before)).toEqual(["b"]);
     });
 
-    it("reads the Hub after a restart though a hidden account is listed under many files (#3449)", async () => {
+    it("keeps every listed row of a hidden account unread past the identity cap (#3453)", async () => {
+      await configure();
+      await service.report();
+      const hidden = new Set(["claude:cliproxy:claude-a.json"]);
+      service.skipAccounts(() => hidden);
+      service.hiddenChanged();
+      // Alice is listed under 33 auth indexes with the same email
+      for (let at = 0; at < 32; at++) fake.files.push({ ...fake.files[0]!, name: `alice-${at}.json`, auth_index: `m${at}` });
+      service.invalidate();
+      await service.report(false, hidden);
+      // the email changes on her first copy, the oldest one a cap would drop
+      fake.files[2]!.email = "alice-renamed@example.test";
+      const before = reads().length;
+      service.invalidate();
+      await service.report(false, hidden);
+      expect(reads().slice(before)).toEqual(["b"]);
+    });
+
+    it("reads no Hub account after a restart when what was learned of a hidden account could not be saved (#3453)", async () => {
+      await configure();
+      await service.report();
+      const hidden = new Set(["claude:cliproxy:claude-a.json"]);
+      service.skipAccounts(() => hidden);
+      service.hiddenChanged();
+      // Alice moves to an auth index longer than any saved list holds, under the same file name and email
+      fake.files[0]!.auth_index = "x".repeat(70 * 1024);
+      service.invalidate();
+      await service.report(false, hidden);
+      // after a restart, her file name and email change
+      Object.assign(fake.files[0]!, { name: "new.json", email: "alice-renamed@example.test" });
+      const before = reads().length;
+      await restart(hidden);
+      expect(reads().slice(before)).toEqual([]);
+    });
+
+    it("stays blind after a restart that could not save a hidden account whole, whoever takes its file name (#3453)", async () => {
+      await configure();
+      await service.report();
+      const hidden = new Set(["claude:cliproxy:claude-a.json"]);
+      service.skipAccounts(() => hidden);
+      service.hiddenChanged();
+      fake.files[0]!.auth_index = "x".repeat(70 * 1024);
+      service.invalidate();
+      await service.report(false, hidden);
+      // before the restart Alice moves and changes her email, and Bob takes her file name
+      Object.assign(fake.files[0]!, { name: "new.json", email: "alice-renamed@example.test" });
+      fake.files.push({ ...fake.files[0]!, name: "claude-a.json", email: "bob@example.test", auth_index: "z" });
+      const before = reads().length;
+      const restarted = new CLIProxyService(dir);
+      restarted.skipAccounts(() => hidden);
+      await restarted.report(false, hidden);
+      // Bob under her file name is not taken for her: nothing is read at the next report either
+      restarted.invalidate();
+      await restarted.report(false, hidden);
+      expect(reads().slice(before)).toEqual([]);
+    });
+
+    it("reads no Hub account after a restart when even the hidden keys do not fit a saved list (#3453)", async () => {
+      const long = [0, 1, 2].map((at) => `${at}${"l".repeat(25000)}.json`);
+      for (const [at, name] of long.entries()) fake.files.push({ ...fake.files[0]!, name, email: `long-${at}@example.test`, auth_index: `l${at}` });
+      await configure();
+      await service.report();
+      const hidden = new Set(["claude:cliproxy:claude-a.json"]);
+      service.skipAccounts(() => hidden);
+      service.hiddenChanged();
+      // the long-named accounts are hidden too: their keys alone are more than a saved list holds
+      for (const name of long) hidden.add(`claude:cliproxy:${name}`);
+      expect(() => service.hiddenChanged()).toThrow();
+      // Alice, under her file name, moves to index n: learned, never saved; then her email changes and Ovis restarts
+      fake.files[0]!.auth_index = "n";
+      service.invalidate();
+      await service.report(false, hidden);
+      fake.files[0]!.email = "alice-renamed@example.test";
+      const before = reads().length;
+      const restarted = new CLIProxyService(dir);
+      restarted.skipAccounts(() => hidden);
+      await restarted.report(false, hidden);
+      // the second report comes after the hidden keys the Hub lists could be taken for their files
+      restarted.invalidate();
+      await restarted.report(false, hidden);
+      expect(reads().slice(before)).toEqual([]);
+    });
+
+    it("forgets a partial mark once its key is shown again, whether or not its account was kept (#3453)", async () => {
+      await configure();
+      await service.report();
+      let hidden = new Set(["claude:cliproxy:claude-a.json"]);
+      service.skipAccounts(() => hidden);
+      service.hiddenChanged();
+      // a saved list that could not hold Alice: left out, and marked partial
+      const path = join(dir, "cliproxy-hidden.json");
+      writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), accounts: {}, blind: true, partial: ["claude:cliproxy:claude-a.json"] }));
+      const restarted = new CLIProxyService(dir);
+      restarted.skipAccounts(() => hidden);
+      hidden = new Set();
+      restarted.hiddenChanged();
+      expect(JSON.parse(readFileSync(path, "utf8")).partial).toBeUndefined();
+    });
+
+    it("widens a hidden account listed under thousands of files in time linear in them (#3453)", async () => {
+      await configure();
+      await service.report();
+      const hidden = new Set(["claude:cliproxy:claude-a.json"]);
+      service.skipAccounts(() => hidden);
+      service.hiddenChanged();
+      // the fewest fields a Hub file needs, so 10,000 of them fit in one Hub answer
+      for (let at = 0; at < 10000; at++) fake.files.push({ name: `c${at}`, provider: "claude", email: "claude-a@example.test", auth_index: `i${at}` } as (typeof fake.files)[number]);
+      const started = performance.now();
+      for (let at = 0; at < 2; at++) { service.invalidate(); await service.report(false, hidden); }
+      expect(reads().slice(2)).toEqual(["b", "b"]);
+      // time is what is tested (the work is synchronous, so no test timeout can fire): widening each row against the whole
+      // account took about 14 s here, linear takes well under 1 s
+      expect(performance.now() - started).toBeLessThan(5000);
+    });
+
+    it("reads no Hub account after a restart when a hidden account is listed under more files than a saved list holds (#3449, #3453)", async () => {
       await configure();
       await service.report();
       const hidden = new Set(["claude:cliproxy:claude-a.json"]);
@@ -673,10 +788,10 @@ describe("CLIProxyAPI v8", () => {
       for (let at = 0; at < 1200; at++) fake.files.push({ ...fake.files[0]!, name: `alice-${at}.json`, auth_index: `alice-${at}-${"x".repeat(60)}` });
       service.invalidate();
       await service.report(false, hidden);
-      // what is saved stays a list the next start reads: the shown account is read, the hidden one is not
+      // what is saved stays a list the next start reads (#3449), and blind (#3453): no older list knowing less of her is used
       const before = reads().length;
       await restart(hidden);
-      expect(reads().slice(before)).toEqual(["b"]);
+      expect(reads().slice(before)).toEqual([]);
     });
 
     // four hidden accounts, each listed under 31 files with long auth indexes: together more than a saved list may hold
@@ -697,9 +812,10 @@ describe("CLIProxyAPI v8", () => {
 
     it("never saves a hidden list a restart would refuse, however many hidden accounts grow (#3449)", async () => {
       const { hidden } = await listManyHidden();
+      // a list the next start reads, blind: the listed identities do not fit, and the older list knows less (#3453)
       const before = reads().length;
       await restart(hidden);
-      expect(reads().slice(before).sort()).toEqual(["a", "b"]);
+      expect(reads().slice(before)).toEqual([]);
     });
 
     it("saves the hidden list again once identities no listed row carries can be dropped (#3449)", async () => {
