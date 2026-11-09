@@ -175,6 +175,9 @@ describe("composerMessage and submitNote", () => {
     expect(pendingActionUncertain("disconnected", "held")).toBe(true);
     expect(submitNote("held_input", "x")).toBe("Not sent: send or discard the held input first.");
     expect(submitNote("pending_input_unsupported", "x")).toBe("Update this PC to send messages in the next turn. Your draft stayed here.");
+    // Alt+Enter's hold on a PC that cannot hold one: refused by the socket before anything left
+    expect(submitNotTyped("pending_hold_unsupported")).toBe(true);
+    expect(submitNote("pending_hold_unsupported", "x")).toBe("Update this PC to hold messages. Your draft stayed here.");
     // a first message held because its launched agent ended typed nothing, and says so apart from a changed terminal or session, in the client's words (#1547)
     expect(submitNotTyped("first_message_launch_ended")).toBe(true);
     const ended = "The agent started for this message has ended; review the message before sending it";

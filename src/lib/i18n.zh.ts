@@ -320,6 +320,7 @@ const BASE: Record<string, string> = {
 
   // ---- voice input ----
   "Dictate (hold)": "听写（按住）",
+  "Hold message in chat": "在聊天中暂存消息",
   "Voice input needs HTTPS": "语音输入需要 HTTPS",
   // ---- errors (lib/userError.ts) ----
   "This browser is not signed in to this PC any more. Pair it again in Settings → Devices and PCs.": "此浏览器已不再登录此电脑。请在设置 → 设备和电脑中重新配对。",

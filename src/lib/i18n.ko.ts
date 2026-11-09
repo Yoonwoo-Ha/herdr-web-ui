@@ -316,6 +316,7 @@ const BASE: Record<string, string> = {
 
   // ---- voice input ----
   "Dictate (hold)": "받아쓰기 (길게 누르기)",
+  "Hold message in chat": "채팅에서 메시지 보류",
   "Voice input needs HTTPS": "음성 입력에는 HTTPS가 필요합니다",
   // ---- errors (lib/userError.ts) ----
   "This browser is not signed in to this PC any more. Pair it again in Settings → Devices and PCs.": "이 브라우저는 더 이상 이 PC에 로그인되어 있지 않습니다. 설정 → 기기와 PC에서 다시 페어링하세요.",

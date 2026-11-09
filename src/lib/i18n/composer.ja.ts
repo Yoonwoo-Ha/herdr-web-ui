@@ -75,6 +75,7 @@ export const COMPOSER_JA: Record<string, string> = {
   "Waits for Send now": "「今すぐ送信」で送信します",
   "Discard saved copy": "保存したコピーを破棄",
   "Update this PC to send messages in the next turn. Your draft stayed here.": "次のターンにメッセージを送るには、このPCを更新してください。入力したメッセージはここに残っています。",
+  "Update this PC to hold messages. Your draft stayed here.": "メッセージを保留するには、このPCを更新してください。入力したメッセージはここに残っています。",
   "Stop agent": "エージェントを停止",
   "Send message": "メッセージを送信",
   "Not sent: the agent is waiting for an answer in the terminal. Answer it first.": "未送信: エージェントがターミナルで回答を待っています。先に回答してください。",

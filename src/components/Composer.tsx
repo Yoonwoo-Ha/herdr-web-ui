@@ -122,8 +122,9 @@ export interface ComposerProps {
   /** true: sent, clear the box; a string: keep the text and say why; a DraftRefusal: the same, and the
    * note offers to send again with `clearDraft`, which clears that draft from the terminal first, or,
    * where it named none, with `sendAnyway`; a promise settles to any of them */
-  /** `now`: Ctrl+Enter, the queued row's Send now for this message as soon as it is queued (#2596) */
-  onSend: (text: string, clearDraft?: string, sendAnyway?: boolean, agentOnly?: boolean, now?: boolean) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
+  /** `now`: Ctrl+Enter, the queued row's Send now for this message as soon as it is queued (#2596).
+   * `hold`: Alt+Enter, a held row in the queued list that goes only on its Send now */
+  onSend: (text: string, clearDraft?: string, sendAnyway?: boolean, agentOnly?: boolean, now?: boolean, hold?: boolean) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
   /** a Send pressed waits for its claim (the pane's cross-tab lock, granted in a later task): +1 at the press, -1 once the claim ran, sent or not */
   onClaim?: (delta: 1 | -1) => void;
   onAbort: () => void;
@@ -840,8 +841,8 @@ export function Composer({
   }, [placeWaitingMentions]);
 
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over;
-   * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it; `now`: Ctrl+Enter. */
-  const send = useCallback((clearDraft?: string, sendAnyway = false, now = false): boolean => {
+   * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it; `now`: Ctrl+Enter; `hold`: Alt+Enter. */
+  const send = useCallback((clearDraft?: string, sendAnyway = false, now = false, hold = false): boolean => {
     if (composingRef.current) return false;
     if (viewOnly || !connected || uploading || roomless || sending || (text.trim().length === 0 && carried.length === 0)) return false;
     if (terminalTyped?.name === "resume" && onOpenHistory) { setMenuDismissed(true); onOpenHistory(); return true; }
@@ -887,6 +888,7 @@ export function Composer({
         // a message with comments goes only to an agent: a shell would read `> quote` as a redirect
         const agentOnly = sentComments.length > 0 || composerDrafts.isAgentOnly(draftKey);
         const result = now ? onSend(message, clearDraft, sendAnyway, agentOnly, true)
+          : hold ? onSend(message, clearDraft, sendAnyway, agentOnly, false, true)
           : agentOnly ? onSend(message, clearDraft, sendAnyway, true) : onSend(message, clearDraft, sendAnyway);
         if (!(result instanceof Promise)) { settle(result); ended(); return true; }
         // settled outside the lock: it clears the draft before it ends the lease, which a claim reads first
@@ -1110,7 +1112,12 @@ export function Composer({
         acceptSuggestion();
         return;
       }
-      const shouldSend = event.key === "Enter" && (enterSends
+      // Alt+Enter (Option+Enter on a Mac) holds the message in the queued list for its Send now alone, whatever
+      // automatic sending says and also while the agent is idle. The phone layout (a coarse pointer, or a window 640px
+      // wide or less) keeps its line break: Alt+Enter is never a send there either, where Enter sends
+      const altEnter = event.key === "Enter" && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+      const hold = altEnter && !mobile;
+      const shouldSend = !altEnter && event.key === "Enter" && (enterSends
         ? !event.shiftKey && !event.metaKey && !event.ctrlKey
         : (event.metaKey || event.ctrlKey) && !event.shiftKey);
       // a typed pick waits in the card above: the empty box's Enter is its Confirm and Escape its
@@ -1131,11 +1138,11 @@ export function Composer({
       // Claude Code's own key for this during a turn: Ctrl+Enter sends now. Not Cmd on a Mac, and only while
       // Enter sends: with it off, Mod+Enter is the plain send (#2596)
       const sendNow = enterSends && event.key === "Enter" && event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
-      if (!shouldSend && !sendNow) return;
+      if (!shouldSend && !sendNow && !hold) return;
       event.preventDefault();
-      send(undefined, false, sendNow);
+      send(undefined, false, sendNow, hold);
     },
-    [acceptSuggestion, agentStatus, carried.length, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, sendBeside, setTextAndCaret, enterSends, trigger, waitingAnswer],
+    [acceptSuggestion, agentStatus, carried.length, choices, connected, menuDismissed, menuOpen, mobile, offered, onAbort, selectCompletion, selectedIndex, send, sendBeside, setTextAndCaret, enterSends, trigger, waitingAnswer],
   );
 
   const onPaste = useCallback(

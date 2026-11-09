@@ -318,6 +318,7 @@ const BASE: Record<string, string> = {
 
   // ---- voice input ----
   "Dictate (hold)": "音声入力（長押し）",
+  "Hold message in chat": "チャットでメッセージを保留",
   "Voice input needs HTTPS": "音声入力には HTTPS が必要です",
   // ---- errors (lib/userError.ts) ----
   "This browser is not signed in to this PC any more. Pair it again in Settings → Devices and PCs.": "このブラウザーはもうこの PC にサインインしていません。設定 → デバイスと PCでもう一度ペアリングしてください。",

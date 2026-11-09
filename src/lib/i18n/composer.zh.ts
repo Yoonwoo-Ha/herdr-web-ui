@@ -75,6 +75,7 @@ export const COMPOSER_ZH: Record<string, string> = {
   "Waits for Send now": "按“立即发送”后发送",
   "Discard saved copy": "丢弃已保存的副本",
   "Update this PC to send messages in the next turn. Your draft stayed here.": "请更新这台电脑后再发送下一轮消息。草稿仍保留在这里。",
+  "Update this PC to hold messages. Your draft stayed here.": "请更新这台电脑以暂存消息。草稿仍保留在这里。",
   "Stop agent": "停止 Agent",
   "Send message": "发送消息",
   "Not sent: the agent is waiting for an answer in the terminal. Answer it first.": "未发送：Agent 正在终端中等待回答。请先回答。",

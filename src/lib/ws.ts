@@ -1108,8 +1108,9 @@ export class HerdrSocket {
    */
   /** `typed`: from the terminal's input line, typed into the pane like the keyboard (see ClientMessage).
    * `clearDraft`: an immediate send over the draft an input_draft refusal named (ClientMessage `clear_draft`)
-   * `sendAnyway`: an immediate send after a refusal that showed the box (ClientMessage `send_anyway`) */
-  submit(paneId: string, text: string, payload: string, typed = false, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number, agentOnly = false): Promise<SubmitResult> | null {
+   * `sendAnyway`: an immediate send after a refusal that showed the box (ClientMessage `send_anyway`)
+   * `holdOnly`: a hold that must never go on its own (the composer's Alt+Enter): refused, not queued, where the bridge cannot hold */
+  submit(paneId: string, text: string, payload: string, typed = false, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number, agentOnly = false, holdOnly = false): Promise<SubmitResult> | null {
     const socket = this.socket;
     if (!this.connected || socket === null || this.mode === "observe") return null;
     if (resendId !== undefined && sendAnyway) return Promise.resolve({ ok: false, code: "invalid_delivery", message: "Use a held-copy resend id only for an immediate chat message" });
@@ -1122,7 +1123,10 @@ export class HerdrSocket {
       // message as raw typed input, past every check it makes before typing (#1591), so nothing is sent
       if (!this.featuresKnown) return CAPABILITIES_UNKNOWN;
       // hold is decided once the bridge said what it supports: one too old to hold queues it as before
-      if (delivery === "hold" && !this.canHoldMessages()) delivery = "queue";
+      if (delivery === "hold" && !this.canHoldMessages()) {
+        if (holdOnly) return { ok: false, code: "pending_hold_unsupported", message: "Update this PC to hold messages. Nothing was sent." };
+        delivery = "queue";
+      }
       if (delivery === "queue" && !this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to queue messages." };
       // an older bridge ignores agent_only and would type the message into whatever is in front, a shell too
       if (agentOnly && !this.features.has("agent-only")) return { ok: false, code: "agent_only_unsupported", message: "Update this PC to send comments on a reply. Nothing was sent." };
