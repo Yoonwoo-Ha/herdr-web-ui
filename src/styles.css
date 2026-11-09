@@ -1796,9 +1796,17 @@ html:is(:lang(ja), :lang(zh)) body {
 }
 
 /* The two boxes' placeholders are interface copy, not typed text: Korean keeps their words whole
-   too ("넣지 않습니다", never "넣지 않 / 습니다"). The pseudo-element alone takes keep-all, so the box
-   itself, what the user types in it, and the code and terminal subtrees keep the reset above. */
+   too ("넣지 않습니다", never "넣지 않 / 습니다"). The pseudo-element alone takes keep-all, so the
+   terminal's input line and the code and terminal subtrees keep the reset above. */
 html:lang(ko) :is(.composer-text, .composer-measure, .terminal-input-text)::placeholder {
+  word-break: keep-all;
+}
+
+/* What is typed in the message box is a message: Korean keeps its words whole there too, as the
+   transcript and the inline suggestion over the box do (#3374). Its measuring copy breaks the same
+   way, so the box grows to the lines drawn; a path or a command still breaks through the box's own
+   overflow-wrap: anywhere. */
+html:lang(ko) :is(.composer-text, .composer-measure) {
   word-break: keep-all;
 }
 

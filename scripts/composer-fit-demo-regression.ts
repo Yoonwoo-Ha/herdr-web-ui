@@ -1357,6 +1357,41 @@ try {
       });
       console.log("PASS Korean, Japanese and Chinese drafts and wrapped placeholders fit their native text height on phone and desktop");
 
+      // Korean typed in the box keeps each word whole, as the rest of the app and the box's own placeholder do (#3374):
+      // a word that fits a line alone moves to the next line whole instead of being split after a short first word, so
+      // "가 <word> 나" takes three lines, not two, and the box grows to all three.
+      for (const width of [390, 1440]) await withCard(browser, width, { language: "ko", status: "idle", pending: false, model: "gpt-5.6", freezeConversation: true }, async (page) => {
+        const box = page.locator(".composer-text");
+        const word = await box.evaluate(async (node: HTMLTextAreaElement) => {
+          const style = getComputedStyle(node);
+          const syllables = "가나다라마바사아자차카타파하";
+          await document.fonts.load(`${style.fontWeight} ${style.fontSize} ${style.fontFamily}`, syllables);
+          const probe = document.body.appendChild(document.createElement("span"));
+          Object.assign(probe.style, { position: "absolute", visibility: "hidden", whiteSpace: "pre", font: style.font, letterSpacing: style.letterSpacing });
+          const line = node.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+          // the longest word that still fits one line of the box
+          let longest = "";
+          try {
+            for (let index = 0; ; index += 1) {
+              probe.textContent = longest + syllables[index % syllables.length];
+              if (probe.getBoundingClientRect().width > line) break;
+              longest = probe.textContent;
+            }
+          } finally { probe.remove(); }
+          return longest;
+        });
+        await box.fill(`가 ${word} 나`);
+        await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+        const drawn = await box.evaluate((node: HTMLTextAreaElement) => {
+          const style = getComputedStyle(node);
+          const lines = Math.round((node.scrollHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom)) / Number.parseFloat(style.lineHeight));
+          return { lines, fits: node.scrollHeight <= node.clientHeight + 1 };
+        });
+        assert.equal(drawn.lines, 3, `${width}px: "가 ${word} 나" keeps the ${word.length}-syllable word whole on a line of its own`);
+        assert.ok(drawn.fits, `${width}px: the box grows to the three lines its words take`);
+      });
+      console.log("PASS Korean typed in the message box keeps its words whole on phone and desktop");
+
       // Changing the setting in an already-open chat rewraps the existing draft: an automatic
       // box grows and shrinks with it.
       for (const width of [390, 1440]) await withCard(browser, width, { model: "claude-opus-5-5" }, async (page) => {
