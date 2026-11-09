@@ -76,11 +76,36 @@ const ANNOUNCED_LINES = 20;
 
 interface XtermRowRenderer { renderRows(start: number, end: number): void }
 
+type BufferPoint = readonly [x: number, y: number];
+/** xterm's render service: its renderer, and the selection it draws, which a drag moves before onSelectionChange (mouseup) */
+interface XtermRenderService {
+  _renderer?: { value?: XtermRowRenderer };
+  _selectionState?: { start?: BufferPoint; end?: BufferPoint; columnSelectMode?: boolean };
+  handleSelectionChanged?: (start?: BufferPoint, end?: BufferPoint, columnSelectMode?: boolean) => void;
+}
+
+function xtermRenderService(term: Terminal): XtermRenderService | null {
+  return (term as unknown as { _core?: { _renderService?: XtermRenderService } })._core?._renderService ?? null;
+}
+
 /** xterm's DOM renderer, which writes its rows; xterm.js has no public way to stop it drawing */
 function xtermRowRenderer(term: Terminal): XtermRowRenderer | null {
-  const core = (term as unknown as { _core?: { _renderService?: { _renderer?: { value?: XtermRowRenderer } } } })._core;
-  const renderer = core?._renderService?._renderer?.value;
+  const renderer = xtermRenderService(term)?._renderer?.value;
   return renderer && typeof renderer.renderRows === "function" ? renderer : null;
+}
+
+/** a selection as xterm draws it: buffer cells, end column excluded; a column one takes the same columns on every row */
+interface Selection { readonly start: BufferPoint; readonly end: BufferPoint; readonly column: boolean }
+
+/** the columns of buffer line `line` a selection covers, end excluded, or null, as xterm's row factory tells a selected cell */
+function selectedColumns(selection: Selection | null, line: number, cols: number): readonly [number, number] | null {
+  if (!selection) return null;
+  const { start, end, column } = selection;
+  if (line < Math.min(start[1], end[1]) || line > Math.max(start[1], end[1])) return null;
+  const [from, to] = column
+    ? [Math.min(start[0], end[0]), Math.max(start[0], end[0])]
+    : [line === start[1] ? start[0] : 0, line === end[1] ? end[0] : cols];
+  return to > from ? [from, to] : null;
 }
 
 /**
@@ -212,15 +237,29 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
 
   /** every row drawn again from its runs: a new cell size or a late face changes how its glyphs fit */
   const redrawRows = (): void => {
-    rowRuns.forEach((runs, y) => {
-      const row = rowEls[y];
-      if (!row) return;
-      let html = "";
-      for (const run of runs) html += runHtml(run);
-      if (rowHtml[y] === html) return;
-      row.innerHTML = html;
-      rowHtml[y] = html;
-    });
+    const selection = currentSelection();
+    rowRuns.forEach((runs, y) => paintRow(y, runs, selection));
+  };
+
+  const renderService = xtermRenderService(term);
+  const currentSelection = (): Selection | null => {
+    const state = renderService?._selectionState;
+    return state?.start && state.end ? { start: state.start, end: state.end, column: state.columnSelectMode === true } : null;
+  };
+  // the selected columns each row was last drawn with: a selection that moves redraws only the rows it changed on
+  const rowSelected: string[] = [];
+  /** draws row `y` from its runs; false when it came out as it was */
+  const paintRow = (y: number, runs: GhosttyRun[], selection: Selection | null): boolean => {
+    const row = rowEls[y];
+    if (!row) return false;
+    const selected = selectedColumns(selection, term.buffer.active.viewportY + y, term.cols);
+    rowSelected[y] = String(selected);
+    let html = "";
+    for (const run of runs) html += runHtml(run, selected);
+    if (rowHtml[y] === html) return false;
+    row.innerHTML = html;
+    rowHtml[y] = html;
+    return true;
   };
 
   let grid = "";
@@ -295,15 +334,35 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     redrawRows();
   });
 
-  const runHtml = (run: GhosttyRun): string => {
+  /** a run in pieces the selection does or does not cover, each drawn on its own */
+  const runHtml = (run: GhosttyRun, selected: readonly [number, number] | null): string => {
+    if (!selected) return pieceHtml(run, false);
+    const pieces: { run: GhosttyRun; inside: boolean }[] = [];
+    let x = run.x;
+    for (const cell of run.cells) {
+      // a wide cell is selected by its first column alone, as xterm's row factory tells it and its copy takes it: a column
+      // whose edge falls inside the glyph leaves the glyph out when that edge is right of the first column
+      const inside = x >= selected[0] && x < selected[1];
+      const last = pieces.at(-1);
+      if (last?.inside === inside) last.run.cells.push(cell);
+      else pieces.push({ run: { ...run, x, cells: [cell] }, inside });
+      x += cell.wide ? 2 : 1;
+    }
+    return pieces.map((piece) => pieceHtml(piece.run, piece.inside)).join("");
+  };
+
+  const pieceHtml = (run: GhosttyRun, selected: boolean): string => {
     let fg = run.fg, bg = run.bg;
     const theme = themeColors(term);
     if (run.flags & STYLE_INVERSE) [fg, bg] = [bg ?? theme.background, fg ?? theme.foreground];
+    // xterm draws the selection under this layer: a selected cell leaves its background out so the selection shows, as
+    // over a plain cell (#3407), and its text is made readable on the selection, as xterm's rows make it
+    const under = selected ? term.options.theme?.selectionBackground ?? theme.background : bg ?? theme.background;
     // xterm's minimumContrastRatio, as its own rows and a folded mirror draw it (terminalFold.ts cellStyle)
     const drawn = fg;
-    if (fg !== null || bg !== null) {
+    if (fg !== null || bg !== null || selected) {
       const text = fg ?? theme.foreground;
-      const readable = readableColor(text, bg ?? theme.background, term.options.minimumContrastRatio ?? 1);
+      const readable = readableColor(text, under, term.options.minimumContrastRatio ?? 1);
       if (fg !== null || readable !== text) fg = readable;
     }
     // a box, block or Powerline glyph is part of a drawing, its colour against the next one's: xterm keeps it as written
@@ -311,7 +370,7 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     const keepsColour = (text: string): boolean => fg !== drawn && (isBoxGlyph(text) || POWERLINE_GLYPH.test(text));
     // what the run's box alone takes
     const box = [`left:calc(var(--ghostty-cw)*${run.x})`];
-    if (bg) box.push(`background:${bg}`);
+    if (bg && !selected) box.push(`background:${bg}`);
     if (run.flags & STYLE_BOLD) box.push("font-weight:bold");
     // what its text inherits: a faint run dims its text, not its background, as xterm and a folded mirror draw it
     const colours = (colour: string | null): string[] => {
@@ -420,17 +479,17 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     // xterm's own history (a herdr-core server's `terminal-history`): the layer shows the rows xterm shows
     const buffer = term.buffer.active;
     vt.scrollFromBottom(buffer.baseY - buffer.viewportY);
+    const selection = currentSelection();
     const changed = vt.frame((y, runs) => {
-      const row = rowEls[y];
-      if (!row) return;
+      if (!rowEls[y]) return;
       rowRuns[y] = runs;
-      let html = "";
-      for (const run of runs) html += runHtml(run);
       // a row libghostty marks dirty can come out the same (a cursor that moved past it): no DOM write
-      if (rowHtml[y] === html) return;
-      row.innerHTML = html;
-      rowHtml[y] = html;
+      if (!paintRow(y, runs, selection)) return;
       rowText[y] = runs.map((run) => run.cells.map((cell) => cell.text).join("")).join("").trimEnd();
+    });
+    // a selection moves over rows libghostty does not mark dirty: only the rows whose selected columns changed are drawn again
+    rowRuns.forEach((runs, y) => {
+      if (rowSelected[y] !== String(selectedColumns(selection, buffer.viewportY + y, term.cols))) paintRow(y, runs, selection);
     });
     // lines are told from the screen at the bottom, the one a program writes to: a view scrolled back holds a
     // write until it is back there, and a frame that only moved the view tells nothing (#2963)
@@ -531,6 +590,14 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     term.onRender(() => schedule()),
     term.onScroll(() => schedule()),
   ];
+  // xterm redraws its selection on every step of a drag, and tells onSelectionChange only at the release
+  const handleSelectionChanged = renderService?.handleSelectionChanged;
+  if (renderService && handleSelectionChanged) {
+    renderService.handleSelectionChanged = (start, end, columnSelectMode) => {
+      handleSelectionChanged.call(renderService, start, end, columnSelectMode);
+      schedule();
+    };
+  }
   for (const gesture of VIEW_GESTURES) host.addEventListener(gesture, viewMoved, { capture: true, passive: true });
   const screenResize = new ResizeObserver(refit);
   screenResize.observe(screen);
@@ -564,6 +631,7 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
       term.write = write;
       term.reset = reset;
       for (const subscription of subscriptions) subscription.dispose();
+      if (renderService && handleSelectionChanged) renderService.handleSelectionChanged = handleSelectionChanged;
       screenResize.disconnect();
       for (const gesture of VIEW_GESTURES) host.removeEventListener(gesture, viewMoved, { capture: true });
       lateFaces.stop();
