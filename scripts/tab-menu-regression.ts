@@ -97,6 +97,10 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     const paneButton = frame(page, first).locator(".pane-frame-menu");
     assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "0");
     await frame(page, first).focus();
+    // the title is the pane's first Tab stop (Enter or Space on it focuses the pane's input), the menu the next
+    await page.keyboard.press("Tab");
+    assert.equal(await frame(page, first).locator('.pane-frame-title [role="button"]').evaluate((node) => node === document.activeElement), true, "Tab reaches the pane's title first");
+    assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "0", "the title's focus leaves the menu button hidden");
     await page.keyboard.press("Tab");
     assert.equal(await paneButton.evaluate((node) => node === document.activeElement), true, "Tab reaches the pane menu");
     assert.equal(await paneButton.evaluate((node) => getComputedStyle(node).opacity), "1", "keyboard focus reveals the button");
@@ -392,12 +396,14 @@ async function checkDesktop(browser: Browser, origin: string, first: string, sec
     await inactive.waitFor({ state: "detached" });
     await currentPane(page, first);
     assert.equal(await strip.getByRole("tab").count(), 1, "closing an inactive tab preserves the original tab");
-    // the header's row is a browser's tab strip: a hovered resting tab's close closes it alone, at once
+    // the header's row is a browser's tab strip: only the open tab draws its close, even under the pointer, and a
+    // resting tab's middle click closes it alone, at once, as a browser's does
     const closable = await tabCreate({ workspaceId: nativeTab.workspace_id, label: "close-x" });
     const closableTab = page.getByRole("tab", { name: "close-x", exact: true });
     await closableTab.hover();
+    assert.equal(await strip.locator(".tab-strip-item:not(.is-active)").filter({ has: closableTab }).locator(".tab-strip-close:visible").count(), 0, "a hovered resting tab draws no close");
     const closingByX = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/tab/close"));
-    await strip.locator(".tab-strip-item:not(.is-active)").filter({ has: closableTab }).getByRole("button", { name: "Close close-x", exact: true }).click();
+    await closableTab.click({ button: "middle" });
     assert.deepEqual((await closingByX).request().postDataJSON(), { tab_id: closable.tab.tab_id });
     await closableTab.waitFor({ state: "detached" });
     assert.equal(await tab.getAttribute("aria-selected"), "true", "closing another tab by its close keeps the open tab");
@@ -631,7 +637,8 @@ async function checkPhone(browser: Browser, origin: string, first: string, secon
     await sheetsSettled(page);
     const sheetBox = await rect(tabSheet, "the phone's More");
     assert.ok(sheetBox.top >= 0 && sheetBox.bottom <= viewport.height + 1);
-    await tabSheet.getByRole("button", { name: "Rename tab", exact: true }).tap();
+    // the item names the tab it renames beside its words (the sheet's hint)
+    await tabSheet.getByRole("button", { name: /^Rename tab/ }).tap();
     const name = page.getByRole("textbox", { name: "Tab name", exact: true });
     await name.waitFor();
     await page.keyboard.press("Escape");

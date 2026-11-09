@@ -84,7 +84,8 @@ async function press(locator: Locator, scenario: Scenario): Promise<void> {
 async function openMenu(page: Page, group: Locator, scenario: Scenario): Promise<Locator> {
   if (!scenario.touch) await group.locator(".machine-header").hover();
   const manage = group.locator(".machine-manage");
-  assert.equal(await manage.getAttribute("aria-haspopup"), "menu", `${scenario.name} the manage button says it opens a menu`);
+  // the button names the surface it opens: a sheet (a dialog) up to 640px, a popover menu above that (lib/sheets.ts)
+  assert.equal(await manage.getAttribute("aria-haspopup"), scenario.viewport.width <= 640 ? "dialog" : "menu", `${scenario.name} the manage button says what it opens`);
   assert.equal(await manage.getAttribute("aria-expanded"), "false", `${scenario.name} the manage button is closed before the press`);
   await press(manage, scenario);
   await surface(page).waitFor({ state: "visible" });

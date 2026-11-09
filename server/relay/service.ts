@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { DeviceConnection } from "../../shared/access.ts";
 import { encodeOffer } from "../../shared/relay-offer.ts";
 import type { RelayOffer } from "../../shared/relay-offer.ts";
+import { parseRelayPass, relayPassAdmitsNewSessions } from "../../shared/relay-pass.ts";
 import { GLOBAL_RELAY, REGIONAL_RELAYS } from "../../shared/relay-regions.ts";
 import type { RelayErrorCode, RelayStatus } from "../../shared/protocol.ts";
 import type { RequestServices } from "../dispatch.ts";
@@ -221,7 +222,17 @@ export class RelayService {
       sessions: (this.link?.sessions ?? 0) + (this.regionalLink?.sessions ?? 0) + (this.directCarrier?.sessions ?? 0),
       blocked: this.blocked, error: this.error, error_code: this.exactErrorCode(),
       ...(this.options.direct ? { direct: { on: this.directEnabled(), carriers: this.directCarrier?.advertised(true) ?? [] } } : {}),
-      ...(this.passKeeper ? { pass: { state: this.passState(this.passKeeper), relay: this.passNotice?.state ?? null, enforce_at: this.passNotice?.enforce_at ?? null, refused: this.passRefused } } : {}) };
+      ...(this.passKeeper ? { pass: { state: this.passState(this.passKeeper), relay: this.passNotice?.state ?? null, enforce_at: this.passNotice?.enforce_at ?? null, refused: this.passRefused, ...this.newSessions() } } : {}) };
+  }
+
+  /**
+   * `new_sessions: false` while the pass the global link sends says new client sessions to this PC are not allowed,
+   * and only while that relay says passes are on and this one holds (`relay` ok): a relay with passes off ignores it.
+   */
+  private newSessions(): { new_sessions?: false } {
+    if (this.passNotice?.state !== "ok") return {};
+    const parsed = parseRelayPass(this.passFor(this.relay));
+    return parsed && !relayPassAdmitsNewSessions(parsed.payload) ? { new_sessions: false } : {};
   }
 
   /** Where getting a pass stands, as the global link sees it: a pass held that its relay does not take is none. */

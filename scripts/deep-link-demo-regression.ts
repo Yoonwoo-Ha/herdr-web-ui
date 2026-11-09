@@ -118,6 +118,10 @@ try {
         await waitSelected(page, INFRA);
         assert.equal(await page.locator('.view-switch button[aria-pressed="true"]').innerText(), "Chat", "the linked lens is the one shown");
         const start = await page.evaluate(() => history.length);
+        const resting = page.locator(".agents-sidebar .agent-resting-label .agent-background-toggle");
+        await resting.waitFor();
+        if (await resting.getAttribute("aria-expanded") === "false") await resting.click();
+        await page.locator('.agents-sidebar .agent-resting-label .agent-background-toggle[aria-expanded="true"]').waitFor();
         await page.locator(`.agents-sidebar .agent-item[data-pane="${DOCS}"] .agent-select`).click();
         await waitQuery(page, "pane", DOCS);
         assert.equal(await page.evaluate(() => history.length), start + 1, "opening another pane is an entry");
@@ -358,16 +362,17 @@ try {
       // address follows what is typed, and closing the dialog takes it off
       await withPage(browser, `?new=workspace&cwd=${encodeURIComponent("/home/demo/infra")}&name=Fix%20backup&agent=codex`, async (page) => {
         const dialog = page.getByRole("dialog", { name: /New workspace/ });
+        const nameField = dialog.getByRole("textbox", { name: "Optional workspace label", exact: true });
         await dialog.waitFor();
         assert.equal(await page.locator("#new-session-cwd").inputValue(), "/home/demo/infra");
-        assert.equal(await dialog.getByRole("textbox", { name: "Name" }).inputValue(), "Fix backup");
+        assert.equal(await nameField.inputValue(), "Fix backup");
         await dialog.locator(".agent-picker-label", { hasText: /codex/i }).waitFor();
         const workspaces = async () => (await page.evaluate(async () => (await (await fetch("/api/session")).json()).snapshot.workspaces.length)) as number;
         const before = await workspaces();
         await page.waitForTimeout(800); // fixed wait: no workspace may be created by the link
         assert.equal(await workspaces(), before, "a link fills the form; Create is still the user's");
         await waitQuery(page, "name", "Fix backup");
-        await dialog.getByRole("textbox", { name: "Name" }).fill("Fix the nightly backup");
+        await nameField.fill("Fix the nightly backup");
         await waitQuery(page, "name", "Fix the nightly backup");
         assert.equal((await query(page))["new"], "workspace");
         await page.keyboard.press("Escape");
@@ -565,12 +570,16 @@ try {
       // the app picked becomes one the user picked must leave it in the modal (#675 review)
       await withPage(browser, `?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}&view=terminal`, async (page) => {
         await waitSelected(page, INFRA);
+        const resting = page.locator(".agents-sidebar .agent-resting-label .agent-background-toggle");
+        await resting.waitFor();
+        if (await resting.getAttribute("aria-expanded") === "false") await resting.click();
+        await page.locator('.agents-sidebar .agent-resting-label .agent-background-toggle[aria-expanded="true"]').waitFor();
         await page.locator(`.agents-sidebar .agent-item[data-pane="${DOCS}"] .agent-select`).click();
         await waitQuery(page, "pane", DOCS);
         // the selected pane closes: the app picks the pane herdr has in front (autoSelected)
         await page.evaluate((pane) => fetch("/api/pane/close", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pane_id: pane }) }), DOCS);
         await page.waitForFunction((pane) => new URLSearchParams(window.location.search).get("pane") !== pane, DOCS);
-        await page.locator(".palette-button").click();
+        await page.keyboard.press("ControlOrMeta+Shift+K");
         const palette = page.getByRole("dialog", { name: "Command palette" });
         await palette.waitFor();
         await page.goBack();
@@ -665,7 +674,7 @@ try {
         // pane menu) Rename pane dialog stays up once the sheet's closing has settled, and Back closes it alone
         await more.tap();
         await page.getByRole("button", { name: "Rename pane", exact: true }).tap();
-        const creation = page.getByRole("dialog", { name: "Rename pane", exact: true });
+        const creation = page.getByRole("dialog", { name: /^Rename pane · / });
         await creation.waitFor();
         await page.waitForTimeout(150); // fixed wait: the Rename pane dialog may not close
         assert.equal(await creation.isVisible(), true, "the Rename pane dialog stays up after the sheet's entry settles");

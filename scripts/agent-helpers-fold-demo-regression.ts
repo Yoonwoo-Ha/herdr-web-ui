@@ -80,6 +80,10 @@ try {
               if (await agents.getAttribute("aria-expanded") === "false") await agents.click();
             }
             await row(page, AGENT).waitFor();
+            // one-line rows (the default) fold the resting agents under "+N resting": the idle helpers this check
+            // reads are among them, so the fold is opened first (this device then keeps it open)
+            const resting = page.locator(".agent-resting-label .agent-background-toggle");
+            if (await resting.count() > 0 && await resting.getAttribute("aria-expanded") === "false") await resting.click();
           };
           const shot = async (name: string) => {
             if (!evidence) return;

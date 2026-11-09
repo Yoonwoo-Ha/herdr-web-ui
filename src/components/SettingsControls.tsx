@@ -30,11 +30,18 @@ export function settingsQueryWords(query: string): string[] {
   return folded(query).split(/\s+/).filter((word) => word !== "");
 }
 
-/** The words a label or description shows, a description built of elements (a sentence and a warning) included. */
+/**
+ * The words a label or description shows, a description built of elements (a sentence and a warning)
+ * included, and the names a row's own controls carry (an input's aria-label, placeholder or title), so a
+ * search finds a row by the field inside it (G-109).
+ */
 function textOf(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(textOf).join(" ");
-  if (isValidElement<{ children?: ReactNode }>(node)) return textOf(node.props.children);
+  if (isValidElement<{ children?: ReactNode; "aria-label"?: unknown; placeholder?: unknown; title?: unknown }>(node)) {
+    const { children, "aria-label": ariaLabel, placeholder, title } = node.props;
+    return [textOf(children), ariaLabel, placeholder, title].filter((part): part is string => typeof part === "string" && part !== "").join(" ");
+  }
   return "";
 }
 
@@ -109,7 +116,7 @@ export function SettingsRow({ label, description, keywords, held = false, htmlFo
   const bare = useContext(SettingsBare);
   const { settings, update } = useSettings();
   const t = useT();
-  if (!held && words.length > 0 && !matchesSettingsQuery(words, label, description, keywords)) return null;
+  if (!held && words.length > 0 && !matchesSettingsQuery(words, label, description, keywords, condition, children)) return null;
   // `reset`: the keys this row sets; once any is off its default, a button beside the label puts them back
   const changed = onReset !== undefined || (reset !== undefined && reset.some((key) => JSON.stringify(settings[key]) !== JSON.stringify(DEFAULT_SETTINGS[key]))) || resetAlso?.changed === true;
   const restore = () => {
@@ -176,24 +183,27 @@ export function Segmented<T extends string>({ label, value, options, onChange, d
   );
 }
 
-/** Several on/off choices of one decision on one line, each a chip that is pressed while on. */
-export function ChipToggles({ label, chips }: { label: string; chips: readonly { label: string; icon?: LucideIcon; on: boolean; onChange: (on: boolean) => void }[] }) {
+/**
+ * Several on/off choices of one decision on one line, each a chip that is pressed while on. `title`: what the
+ * chip means in full, shown as its tooltip (the one-minute rule of Long turn finished, G-096).
+ */
+export function ChipToggles({ label, chips }: { label: string; chips: readonly { label: string; title?: string; icon?: LucideIcon; on: boolean; onChange: (on: boolean) => void }[] }) {
   return (
     <div className="settings-chips" role="group" aria-label={label}>
       {chips.map((chip) => (
-        <button key={chip.label} type="button" className="settings-chip" aria-pressed={chip.on} onClick={() => chip.onChange(!chip.on)}>{chip.icon && <chip.icon aria-hidden="true" />}{chip.label}</button>
+        <button key={chip.label} type="button" className="settings-chip" aria-pressed={chip.on} title={chip.title} onClick={() => chip.onChange(!chip.on)}>{chip.icon && <chip.icon aria-hidden="true" />}{chip.label}</button>
       ))}
     </div>
   );
 }
 
-/** A number moved one step at a time between its limits, shown as `text`. */
+/** A number moved one step at a time between its limits, shown as `text`. The glyph buttons carry their names as tooltips too (G-167). */
 export function Stepper({ label, value, text, min, max, decreaseLabel, increaseLabel, onChange }: { label: string; value: number; text: string; min: number; max: number; decreaseLabel: string; increaseLabel: string; onChange: (value: number) => void }) {
   return (
     <div className="settings-stepper" role="group" aria-label={label}>
-      <button type="button" className="icon-button" aria-label={decreaseLabel} disabled={value <= min} onClick={() => onChange(value - 1)}><Minus aria-hidden="true" /></button>
+      <button type="button" className="icon-button" aria-label={decreaseLabel} title={decreaseLabel} disabled={value <= min} onClick={() => onChange(value - 1)}><Minus aria-hidden="true" /></button>
       <output aria-live="polite">{text}</output>
-      <button type="button" className="icon-button" aria-label={increaseLabel} disabled={value >= max} onClick={() => onChange(value + 1)}><Plus aria-hidden="true" /></button>
+      <button type="button" className="icon-button" aria-label={increaseLabel} title={increaseLabel} disabled={value >= max} onClick={() => onChange(value + 1)}><Plus aria-hidden="true" /></button>
     </div>
   );
 }

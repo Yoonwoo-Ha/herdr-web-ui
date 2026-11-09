@@ -4,7 +4,7 @@
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
 export const SETTINGS_LAYOUT_ZH: Record<string, string> = {
-  "Search settings": "搜索设置",
+  "Search settings": "搜索所有设置",
   "No settings match.": "没有匹配的设置。",
   "Search results": "搜索结果",
   "Open {page}": "打开 {page}",
@@ -15,13 +15,15 @@ export const SETTINGS_LAYOUT_ZH: Record<string, string> = {
   "Later themes": "下一组主题",
   "More settings": "更多设置",
   "Experimental": "实验功能",
+  "Start a replaced server again": "重新启动被替换的服务器",
+  "When installing Ovis over SSH in place of one started by hand fails or is cancelled, start that one again as it was. When off, it stays stopped, as before.": "通过 SSH 替换手动启动的 Ovis 时，如果安装失败或被取消，则按原样重新启动该服务器。关闭时，它会像以前一样保持停止。",
   "{count} changed": "已更改 {count} 项",
   "By state": "按状态",
   "Hidden": "隐藏",
   "Folded": "折叠",
   "Expanded": "展开",
   "Both": "两者",
-  "Activity keeps a waiting agent on top, then the one that changed last. By state lists the agents above the workspaces on this device: the ones that need you first, then working, done and idle. herdr's own order is not changed.": "按活动排序会把等待回复的代理放在最上面，其次是最近有变化的。按状态会在此设备上把代理列在工作区上方：先是需要你处理的，然后是工作中、已完成和空闲的。herdr 自身的顺序不会改变。",
+  "Waiting first keeps herdr's order with the agents that need you on top, and folds the resting ones under one line. Activity keeps a waiting agent on top, then the one that changed last. By state lists the agents above the workspaces on this device: the ones that need you first, then working, done and idle. herdr's own order is not changed.": "等待的优先会保持 herdr 的顺序，只把需要你处理的代理移到最上面，并把空闲的代理折叠到一行下。按活动排序会把等待回复的代理放在最上面，其次是最近有变化的。按状态会在此设备上把代理列在工作区上方：先是需要你处理的，然后是工作中、已完成和空闲的。herdr 自身的顺序不会改变。",
   "The agent's reasoning blocks: left out, folded to one line, or open. One you open or fold stays that way for its message.": "代理的推理块：不显示、折叠为一行或展开。你手动展开或折叠的块在该消息中保持不变。",
   "Drops fillers and fixes spacing; code and paths stay as spoken. Where it is off, the text stays exactly as transcribed.": "去掉口头填充词并修正空格；代码和路径保持原样。关闭的地方保留转写原文。",
   "Alert me when": "提醒我",
@@ -33,4 +35,19 @@ export const SETTINGS_LAYOUT_ZH: Record<string, string> = {
   "In use": "使用中",
   "herdr's TUI server is not running: start herdr after the switch.": "herdr 的 TUI 服务器未运行：切换后请启动 herdr。",
   "herdr's TUI server is not running.": "herdr 的 TUI 服务器未运行。",
+
+  // the one-line conditions Settings' bare pages show under a row's name (design pass G-095 to G-098)
+  "By state applies to this device; the other orders to every browser.": "按状态仅对此设备生效，其他排序对所有浏览器生效。",
+  "Auto: the chat on a touch screen, the terminal elsewhere.": "自动：触摸屏上打开聊天，其他设备上打开终端。",
+  "Beside the pane needs a wide window; on this screen a file opens in a popup.": "在窗格旁打开需要较宽的窗口；在此屏幕上文件会以弹窗打开。",
+  "Auto: on a desktop's chat only, where dictation can work.": "自动：仅在可以听写的桌面聊天中显示。",
+  "Separate: leaving Ovis keeps the pane attached; herdr's selection stays independent.": "分开：离开 Ovis 后仍保持窗格连接，herdr 的选择独立进行。",
+  "Use alongside: leaving Ovis releases an unused pane to herdr after a short delay; herdr's selection stays independent.": "一起使用：离开 Ovis 后，未使用的窗格会在短暂延迟后交还给 herdr，herdr 的选择独立进行。",
+  "Follow its focus: leaving Ovis releases an unused pane after a short delay; this view follows herdr's selection.": "跟随焦点：离开 Ovis 后，未使用的窗格会在短暂延迟后交还给 herdr，此视图跟随 herdr 的选择。",
+  "Any turn finished takes in the long ones.": "开启每回合完成后，长回合也会一并提醒。",
+  "Groups you name in the Agents list, in every browser.": "把代理列表分成你命名的分组。对所有浏览器生效。",
+  "Each lock is turned on from the pinned agent's own menu.": "锁定在固定代理自己的菜单中逐个开启。",
+  "A drag in a Codex pane selects through its whole history; Shift+drag still copies in Ovis.": "在 Codex 窗格中拖动会在完整历史中选择；Shift+拖动仍在 Ovis 中复制。",
+  "Opens the side conversations an OMP session saved with /btw.": "从输入框打开 OMP 会话用 /btw 保存的旁支对话。",
+  "A subagent counts as running until the session that started it is told it ended.": "子代理即使空闲，也在启动它的会话被告知结束前算作运行中。",
 };

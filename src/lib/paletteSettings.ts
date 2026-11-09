@@ -33,7 +33,7 @@ export function settingsPageEntries(t: Translate): SettingsPageEntry[] {
     { id: "agents", label: t("Agents"), aliases: [t("agents hooks claude codex install"), t("plan limits quota meters"), t("Subscription usage"), t("Agent integrations"), t("Permission mode"), t("Sandbox and approvals")].join(" ") },
     { id: "shortcuts", label: t("Shortcuts"), aliases: t("keyboard keys bindings hotkeys") },
     { id: "devices", label: t("Devices and PCs"), aliases: t("phone install keep screen on app") },
-    { id: "experimental", label: t("Experimental"), aliases: `${t("Named agent groups")} ${t("Lock pinned agents")} ${t("Codex panes: let Codex select and scroll")} ${t("OMP: side conversations chip")}` },
+    { id: "experimental", label: t("Experimental"), aliases: `${t("Start a replaced server again")} ${t("Named agent groups")} ${t("Lock pinned agents")} ${t("Codex panes: let Codex select and scroll")} ${t("OMP: side conversations chip")}` },
     { id: "about", label: t("About"), aliases: t("version update release herdr") },
     { id: "chat", section: "voice", label: t("Voice input"), aliases: t("dictation microphone speech openai") },
     { id: "chat", section: "voice-more", label: t("Dictation language"), aliases: "" },

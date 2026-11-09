@@ -32,7 +32,7 @@ const evidence = join(process.env["UI_EVIDENCE_DIR"] || join(repo, "evidence"), 
 mkdirSync(evidence, { recursive: true });
 
 interface Recorded { url: string; body: Record<string, unknown> }
-interface QaWindow { qaRequests: Recorded[]; qaHold: boolean; qaRelease: () => void; qaSubmits: string[]; qaDrop: () => void; qaOldBridge: boolean; qaSkillsBusy: Record<string, number>; qaSkillsBusyServed: number }
+interface QaWindow { qaRequests: Recorded[]; qaHold: boolean; qaRelease: () => void; qaSubmits: string[]; qaDrop: () => void; qaSockets: WebSocket[]; qaOldBridge: boolean; qaSkillsBusy: Record<string, number>; qaSkillsBusyServed: number }
 
 const settled = (page: Page) => page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => undefined))).then(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())))));
 const recorded = (page: Page) => page.evaluate(() => (window as unknown as QaWindow).qaRequests);
@@ -42,7 +42,7 @@ const submits = (page: Page) => page.evaluate(() => (window as unknown as QaWind
 async function openChat(page: Page, url: string): Promise<void> {
   await page.goto(url);
   await page.locator(".conn-live").waitFor({ state: "attached" });
-  await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+  await page.locator(".view-switch").getByRole("button", { name: "Chat", exact: true }).click();
   await page.locator(".pane-frame.is-current .terminal-stack.is-chat").waitFor();
 }
 
@@ -350,7 +350,9 @@ try {
         await dialog.waitFor({ state: "detached" });
         await page.locator(".pane-frame.is-current .pending-message-bubble", { hasText: "Reconnect me" }).waitFor();
         await page.evaluate(() => (window as unknown as QaWindow).qaDrop());
-        await page.locator(".conn-live").waitFor({ state: "detached" });
+        // a drop the connection is back from within the reconnect grace is not said (src/lib/reconnectGrace.ts): the
+        // socket opened after the drop is what shows the reconnect
+        await page.waitForFunction(() => (window as unknown as QaWindow).qaSockets.some((socket) => socket.readyState === WebSocket.OPEN));
         await page.locator(".conn-live").waitFor({ state: "attached" });
         const turn = page.locator(".pane-frame.is-current .chat-turn", { hasText: "Reconnect me" });
         // the agent rests with the message held, not typed: the note says why, and Send now and Discard are offered

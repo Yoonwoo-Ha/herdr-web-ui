@@ -398,6 +398,77 @@ describe("herdr-core adapter", () => {
     expect(core.closed).toContain(channel);
   });
 
+  // hc 0.1.17 on old-desktop, 2026-11-08: Letta Code reports nothing, and hc tells each new program in front as a `foreground` event
+  it("names an agent that reports nothing from the process in front, in its status and as that process changes", async () => {
+    let channel = 0;
+    const letta = { pid: 11, name: "node", argv: ["node", "/home/u/npm/node_modules/.bin/letta"] };
+    const { socket, cores } = await setup([terminal("t1")], {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: [terminal("t1", { argv: ["bash"], foreground: letta })] };
+      },
+    });
+    const frames: EventFrame[] = [];
+    const started = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.updated" }, { type: "pane.agent_status_changed", pane_id: "t1" }], {
+      onEvent: (frame) => frames.push(frame),
+      onStarted: () => started.resolve(),
+      onClose: () => ended.resolve(),
+    }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores[0]!;
+    core.notify(channel, "event", { seq: 2, type: "status", terminal: "t1", data: { status: { state: "working" } } });
+    // the same program again changes nothing
+    core.notify(channel, "event", { seq: 3, type: "foreground", terminal: "t1", data: { ...letta, pid: 12 } });
+    core.notify(channel, "event", { seq: 4, type: "foreground", terminal: "t1", data: { pid: 13, name: "bash", argv: ["bash"] } });
+    core.notify(channel, "event", { seq: 5, type: "foreground", terminal: "t1", data: { pid: 14, name: "devin", argv: ["devin"] } });
+    core.notify(channel, "missed", { seq: 9, terminals: [] });
+    await ended.promise;
+    expect(frames).toEqual([
+      { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: "letta" } },
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } },
+      { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: null } },
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } },
+      { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: "devin" } },
+    ]);
+  });
+
+  // letta-code 0.34.44 on old-desktop, 2026-11-08: its title carries a spinner frame while a turn runs
+  it("asks for a fresh snapshot when a Letta that reports nothing starts or stops its spinner title, and only then", async () => {
+    let channel = 0;
+    const letta = { pid: 11, name: "letta", argv: ["letta"] };
+    const { socket, cores } = await setup([terminal("t1"), terminal("t2")], {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: [terminal("t1", { foreground: letta, title: "Tutor" }), terminal("t2", { foreground: letta, title: "Tutor", status: { app: "letta", state: "idle" } }), terminal("t3", { foreground: letta, title: "Tutor", status: { app: "letta", state: "error" } })] };
+      },
+    });
+    const frames: EventFrame[] = [];
+    const started = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.updated" }], { onEvent: (frame) => frames.push(frame), onStarted: () => started.resolve(), onClose: () => ended.resolve() }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores[0]!;
+    const title = (seq: number, terminal: string, value: string) => core.notify(channel, "event", { seq, type: "title", terminal, data: { title: value } });
+    title(2, "t1", "⠋ Tutor");
+    title(3, "t1", "⠙ Tutor");
+    title(4, "t1", "Tutor");
+    // a Letta that reports its own status keeps it: its title asks for nothing
+    title(5, "t2", "⠋ Tutor");
+    // a report whose word says nothing (an error) gives no status: the title still speaks
+    title(6, "t3", "⠋ Tutor");
+    core.notify(channel, "missed", { seq: 9, terminals: [] });
+    await ended.promise;
+    expect(frames).toEqual([
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } },
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } },
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t3" } },
+    ]);
+  });
+
 it("asks for a fresh snapshot when a report's kind, message or progress changes, and only then", async () => {
     let channel = 0;
     const { socket, cores } = await setup([terminal("t1")], {
@@ -1535,6 +1606,42 @@ describe("another machine of the core, as its own PC (#2497)", () => {
       await agentStart({ name: "x", kind: "claude", paneId: "t1" }, ready.socket);
       expect(ready.cores[0]!.typed.map((write) => write.text).join("")).toBe("\u0015'claude'\r");
     }
+  });
+
+  // hc names no platform: that machine's is read off its folders, the process in front's first (#3319)
+  it("names that machine's process in front by its own platform, and again as a foreground event tells a new folder", async () => {
+    let channel = 0;
+    const shim = { pid: 42, name: "letta.cmd", argv: ["letta.cmd"] };
+    const { socket, cores } = await setup(listed(), {
+      "events.subscribe": () => {
+        channel = cores.at(-1)!.channel();
+        return { channel, seq: 1, terminals: [terminal("lab/t1", { cwd: "", foreground: shim })] };
+      },
+    }, undefined, "lab");
+    const frames: EventFrame[] = [];
+    const started = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const subscription = subscribeEvents([{ type: "pane.updated" }, { type: "pane.agent_status_changed", pane_id: "t1" }], {
+      onEvent: (frame) => frames.push(frame),
+      onStarted: () => started.resolve(),
+      onClose: () => ended.resolve(),
+    }, socket);
+    cleanups.push(() => subscription.close());
+    await started.promise;
+    const core = cores.at(-1)!;
+    // no folder yet: a shim names no one
+    core.notify(channel, "event", { seq: 2, type: "status", terminal: "lab/t1", data: { status: { state: "working" } } });
+    core.notify(channel, "event", { seq: 3, type: "foreground", terminal: "lab/t1", data: { ...shim, pid: 43, cwd: "C:\\Users\\u" } });
+    core.notify(channel, "event", { seq: 4, type: "foreground", terminal: "lab/t1", data: { pid: 44, name: "cmd", argv: ["cmd"], cwd: "/home/u" } });
+    core.notify(channel, "missed", { seq: 9, terminals: [] });
+    await ended.promise;
+    expect(frames).toEqual([
+      { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: null } },
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } },
+      { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: "letta" } },
+      { event: "pane.updated", data: { type: "pane_updated", pane_id: "t1" } },
+      { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: "cmd" } },
+    ]);
   });
 
   it("streams that machine's events as its own, and none of this PC's or another machine's", async () => {

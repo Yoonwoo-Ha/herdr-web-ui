@@ -7,7 +7,12 @@
  *
  * Text form: `ovp1.<payload>.<signature>`, both base64url without padding. The signature is Ed25519
  * (WebCrypto) over the ASCII bytes `ovis-relay-pass/1.` followed by the payload's base64url text.
- * The payload is JSON with exactly `v`, `kid`, `aud`, `sid`, `iat` and `exp` (seconds).
+ * The payload is JSON with exactly `v` (1), `kid`, `aud`, `sid`, `iat` and `exp` (seconds), or a v2
+ * payload: those fields with `v` 2 and `new`, 1 when new client sessions to the PC are allowed and 0
+ * when they are not for the pass's lifetime. A v1 pass allows them. Relays parse and carry `new` but
+ * do not enforce it yet: that comes with a later relay change. The prefix and signing prefix stay `1`: the signature covers the payload's
+ * text, `v` and `new` included, so a v2 pass cannot be passed off as v1 or have `new` edited, and a
+ * relay that knows only v1 refuses a v2 pass by its shape.
  */
 
 /** The upgrade request header a PC sends its pass in; never the URL. */
@@ -34,13 +39,18 @@ const HEX32 = /^[0-9a-f]{32}$/;
 const KID = /^[0-9a-f]{8}$/;
 const B64URL = /^[A-Za-z0-9_-]+$/;
 
-export interface RelayPassPayload {
-  readonly v: 1;
+interface RelayPassFields {
   readonly kid: string;
   readonly aud: typeof RELAY_PASS_AUDIENCE;
   readonly sid: string;
   readonly iat: number;
   readonly exp: number;
+}
+export type RelayPassPayload = (RelayPassFields & { readonly v: 1 }) | (RelayPassFields & { readonly v: 2; readonly new: 0 | 1 });
+
+/** Whether this pass allows new client sessions to the PC it is for. */
+export function relayPassAdmitsNewSessions(payload: RelayPassPayload): boolean {
+  return payload.v === 1 || payload.new === 1;
 }
 
 export type RelayPassCheck =
@@ -67,7 +77,9 @@ function isPayload(value: unknown): value is RelayPassPayload {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const fields = value as Record<string, unknown>;
   const keys = Object.keys(fields);
-  return keys.length === 6 && fields["v"] === 1 && typeof fields["kid"] === "string" && KID.test(fields["kid"])
+  const version = keys.length === 6 && fields["v"] === 1
+    || keys.length === 7 && fields["v"] === 2 && (fields["new"] === 0 || fields["new"] === 1);
+  return version && typeof fields["kid"] === "string" && KID.test(fields["kid"])
     && fields["aud"] === RELAY_PASS_AUDIENCE && typeof fields["sid"] === "string" && HEX32.test(fields["sid"])
     && Number.isSafeInteger(fields["iat"]) && Number.isSafeInteger(fields["exp"])
     && (fields["exp"] as number) > (fields["iat"] as number);
@@ -95,9 +107,13 @@ export function importRelayPassKey(hex: string): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", raw, { name: "Ed25519" }, false, ["verify"]);
 }
 
+/** What else a pass says: with `newSessions` it is a v2 pass whose `new` follows it, without it a v1 pass. */
+export interface RelayPassSignOptions { readonly newSessions?: boolean }
+
 /** Signs a pass for `sid`, good from `now` (seconds) for `lifetime` seconds. The account service's side. */
-export async function signRelayPass(key: CryptoKey, kid: string, sid: string, now: number, lifetime = RELAY_PASS_LIFETIME_S): Promise<string> {
-  const payload: RelayPassPayload = { v: 1, kid, aud: RELAY_PASS_AUDIENCE, sid, iat: now, exp: now + lifetime };
+export async function signRelayPass(key: CryptoKey, kid: string, sid: string, now: number, lifetime = RELAY_PASS_LIFETIME_S, options: RelayPassSignOptions = {}): Promise<string> {
+  const fields = { kid, aud: RELAY_PASS_AUDIENCE, sid, iat: now, exp: now + lifetime } as const;
+  const payload: RelayPassPayload = options.newSessions === undefined ? { v: 1, ...fields } : { v: 2, ...fields, new: options.newSessions ? 1 : 0 };
   if (!isPayload(payload)) throw new Error("Invalid relay pass fields");
   const body = toBase64url(encoder.encode(JSON.stringify(payload)));
   const signature = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, key, encoder.encode(SIGNING_PREFIX + body)));

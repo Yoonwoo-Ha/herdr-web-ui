@@ -4,7 +4,7 @@
  * so a key lives in only one of them; its header lists the settings files and the register.
  */
 export const SETTINGS_LAYOUT_JA: Record<string, string> = {
-  "Search settings": "設定を検索",
+  "Search settings": "すべての設定を検索",
   "No settings match.": "一致する設定はありません。",
   "Search results": "検索結果",
   "Open {page}": "{page} を開く",
@@ -15,13 +15,15 @@ export const SETTINGS_LAYOUT_JA: Record<string, string> = {
   "Later themes": "次のテーマ",
   "More settings": "その他の設定",
   "Experimental": "試験的な機能",
+  "Start a replaced server again": "置き換えたサーバーを再起動",
+  "When installing Ovis over SSH in place of one started by hand fails or is cancelled, start that one again as it was. When off, it stays stopped, as before.": "手動で起動した Ovis を SSH で置き換えるインストールが失敗またはキャンセルされたら、そのサーバーを元どおりに再起動します。オフのときは以前と同じく停止したままです。",
   "{count} changed": "{count} 件変更",
   "By state": "状態別",
   "Hidden": "非表示",
   "Folded": "折りたたみ",
   "Expanded": "展開",
   "Both": "両方",
-  "Activity keeps a waiting agent on top, then the one that changed last. By state lists the agents above the workspaces on this device: the ones that need you first, then working, done and idle. herdr's own order is not changed.": "アクティビティ順では、応答待ちのエージェントを先頭に、次に最近変化した順に並べます。状態別では、このデバイスでエージェントをワークスペースの上に表示します。対応が必要なものが先で、次に作業中、完了、待機の順です。herdr 自体の順序は変わりません。",
+  "Waiting first keeps herdr's order with the agents that need you on top, and folds the resting ones under one line. Activity keeps a waiting agent on top, then the one that changed last. By state lists the agents above the workspaces on this device: the ones that need you first, then working, done and idle. herdr's own order is not changed.": "応答待ちを先頭では、herdr の順序のまま、対応が必要なエージェントだけを先頭に移し、休止中のエージェントは 1 行にまとめて折りたたみます。アクティビティ順では、応答待ちのエージェントを先頭に、次に最近変化した順に並べます。状態別では、このデバイスでエージェントをワークスペースの上に表示します。対応が必要なものが先で、次に作業中、完了、待機の順です。herdr 自体の順序は変わりません。",
   "The agent's reasoning blocks: left out, folded to one line, or open. One you open or fold stays that way for its message.": "エージェントの推論ブロックを、表示しない・1 行に折りたたむ・展開する、から選びます。自分で開いたり折りたたんだりしたブロックは、そのメッセージではそのままです。",
   "Drops fillers and fixes spacing; code and paths stay as spoken. Where it is off, the text stays exactly as transcribed.": "言いよどみを除き、スペースを整えます。コードとパスは話したとおりに残します。オフの場所では書き起こしたままにします。",
   "Alert me when": "通知するとき",
@@ -33,4 +35,19 @@ export const SETTINGS_LAYOUT_JA: Record<string, string> = {
   "In use": "使用中",
   "herdr's TUI server is not running: start herdr after the switch.": "herdr の TUI サーバーは動いていません。切り替えた後で herdr を起動してください。",
   "herdr's TUI server is not running.": "herdr の TUI サーバーは動いていません。",
+
+  // the one-line conditions Settings' bare pages show under a row's name (design pass G-095 to G-098)
+  "By state applies to this device; the other orders to every browser.": "状態別はこのデバイスだけに、ほかの並び順はすべてのブラウザーに適用されます。",
+  "Auto: the chat on a touch screen, the terminal elsewhere.": "自動: タッチ画面ではチャット、それ以外ではターミナルで開きます。",
+  "Beside the pane needs a wide window; on this screen a file opens in a popup.": "ペインの横に開くには広いウィンドウが必要です。この画面ではファイルはポップアップで開きます。",
+  "Auto: on a desktop's chat only, where dictation can work.": "自動: 音声入力が使えるデスクトップのチャットでのみ表示します。",
+  "Separate: leaving Ovis keeps the pane attached; herdr's selection stays independent.": "別々: Ovis から離れてもペインの接続を保ち、herdr の選択は別々に扱います。",
+  "Use alongside: leaving Ovis releases an unused pane to herdr after a short delay; herdr's selection stays independent.": "併用: Ovis から離れると、使っていないペインを少し後に herdr へ返し、herdr の選択は別々に扱います。",
+  "Follow its focus: leaving Ovis releases an unused pane after a short delay; this view follows herdr's selection.": "フォーカスに追従: Ovis から離れると、使っていないペインを少し後に herdr へ返し、この画面は herdr の選択に追従します。",
+  "Any turn finished takes in the long ones.": "毎ターンの完了をオンにすると、長いターンも含めて通知します。",
+  "Groups you name in the Agents list, in every browser.": "エージェント一覧を自分で名前を付けたグループに分けます。すべてのブラウザーに適用されます。",
+  "Each lock is turned on from the pinned agent's own menu.": "ロックは固定したエージェントのメニューから個別にオンにします。",
+  "A drag in a Codex pane selects through its whole history; Shift+drag still copies in Ovis.": "Codex ペインでのドラッグは履歴全体から選択します。Shift+ドラッグは引き続き Ovis でコピーします。",
+  "Opens the side conversations an OMP session saved with /btw.": "OMP セッションが /btw で保存したサイド会話を入力欄から開きます。",
+  "A subagent counts as running until the session that started it is told it ended.": "サブエージェントが待機しても、起動元のセッションに終了が伝わるまで実行中とみなします。",
 };

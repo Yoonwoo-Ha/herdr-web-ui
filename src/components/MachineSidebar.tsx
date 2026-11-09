@@ -8,7 +8,6 @@ import { describeProgress } from "../lib/bridgeProgress.ts";
 import { keepDismissed, noticeKey, readDismissed, waitingMachines, writeDismissed } from "../lib/machineNotice.ts";
 import type { AppActions } from "../lib/actions.ts";
 import { Sidebar } from "./Sidebar.tsx";
-import { MachineStats } from "./MachineStats.tsx";
 import { AgentSidebar } from "./AgentSidebar.tsx";
 import { SidebarSplit } from "./SidebarSplit.tsx";
 import { storedSidebarSplit, storeSidebarSplit, type SplitFold, type SplitOrder } from "../lib/sidebarSplit.ts";
@@ -23,12 +22,18 @@ import { useEdgeFades } from "../lib/useEdgeFades.ts";
 import "./Machines.css";
 import "./SidebarSections.css";
 import { useT } from "../lib/i18n.ts";
+import { FoundHerdrChoices } from "./FoundHerdrChoices.tsx";
 import { useSettings } from "../lib/settings.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
-import { machineErrorText, saysHerdrAway } from "../lib/userError.ts";
+import { machineErrorText, saysHerdrAway, sshFailure } from "../lib/userError.ts";
+import { useMediaQuery } from "../lib/useMediaQuery.ts";
+import { SHEET_QUERY } from "../lib/sheets.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { serverIdOfPath, shellMode } from "../lib/shellMode.ts";
 import { canHideMachine, HIDDEN_MACHINES_MAX, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
+
+/** the release a PC's own Ovis offers as its card shows it: an update installs only that one (docs/remote-pcs.md) */
+const shownRevision = (machine: Machine) => machine.ovis_update?.revision ? { revision: machine.ovis_update.revision } : undefined;
 
 /**
  * Which list of PCs this page goes back to, when it shows one PC of a phone's list: the phone app's
@@ -53,7 +58,7 @@ export const STATE_WORD: Readonly<Record<MachineState, string>> = {
 
 /** `activity`: App's live counters per PC and finishes looked at here; both sidebar lists draw from it.
  *  `machines` are the PCs this device shows (Settings → Devices and PCs chooses them) */
-interface Props { machines: Machine[]; /** every PC of the roster, the hidden ones too: Manage PC's Hide on this device keeps those hidden (lib/hiddenMachines.ts) */ allMachines?: Machine[]; selectedMachineId: string; selectedPaneId: string | null; activity: SidebarActivity; actions: AppActions; watching?: boolean; /** whether the Herdr app's window owns a PC's workspaces (lib/machineContext.tsx AppLayoutContext); none without it */ appLayout?: (machineId: string) => LayoutOffer; /** a phone's drawer is out: closing it clears the filter */ drawerOpen?: boolean; /** counts the command palette's Filter workspaces and agents: each new count shows the field and focuses it */ filterRequest?: number;/** each open, connected PC shows its CPU, memory and disk (lib/settings.ts pcLoadOn) */ pcLoad?: boolean; /** the sidebar is on screen (a wide window's that is not hidden, a phone's open drawer): the PC load is asked for only then */ shown?: boolean; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void; /** a sign-in tab the usage popover opened */ onUsageLogin(paneId: string): void }
+interface Props { machines: Machine[]; /** every PC of the roster, the hidden ones too: Manage PC's Hide on this device keeps those hidden (lib/hiddenMachines.ts) */ allMachines?: Machine[]; selectedMachineId: string; selectedPaneId: string | null; activity: SidebarActivity; actions: AppActions; watching?: boolean; /** whether the Herdr app's window owns a PC's workspaces (lib/machineContext.tsx AppLayoutContext); none without it */ appLayout?: (machineId: string) => LayoutOffer; /** a phone's drawer is out: closing it clears the filter */ drawerOpen?: boolean; /** counts the command palette's Filter workspaces and agents: each new count shows the field and focuses it */ filterRequest?: number; onSelect(machineId: string, paneId: string | null): void; onNew(machineId: string): void; onSetup(machine: Machine, update?: boolean): void; /** a sign-in tab the usage popover opened */ onUsageLogin(paneId: string): void }
 export function MachineSidebar(props: Props) {
   const t = useT();
   const activity = props.activity;
@@ -183,6 +188,17 @@ export function MachineSidebar(props: Props) {
     settleFrame.current = requestAnimationFrame(() => { if (emptyField.current && !insideSidebar(document.activeElement)) closeFilter(); });
   };
   const drawerOpen = props.drawerOpen === true;
+  // ↑/↓ step between the sidebar's rows, workspaces and agents alike, as a list does (Alt+↑/↓ still moves a workspace)
+  const stepRows = (event: KeyboardEvent<HTMLDivElement>) => {
+    if ((event.key !== "ArrowUp" && event.key !== "ArrowDown") || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const target = event.target as HTMLElement;
+    if (!target.matches(".workspace-select, .agent-select")) return;
+    const rows = [...(shell.current?.querySelectorAll<HTMLElement>(".workspace-select, .agent-select:not([disabled])") ?? [])].filter((row) => row.getClientRects().length > 0);
+    const next = rows[rows.indexOf(target) + (event.key === "ArrowDown" ? 1 : -1)];
+    if (!next) return;
+    event.preventDefault();
+    next.focus();
+  };
   // The PCs this device keeps out are chosen in Settings → Devices and PCs → Show in sidebar
   // (lib/hiddenMachines.ts); the list has no head of its own, so it starts right under the logo.
   const hiddenIds = useHiddenMachines();
@@ -237,7 +253,7 @@ export function MachineSidebar(props: Props) {
   // Settings → Devices and PCs. The filter above the lists is a row of the same grid, one field and its clear, never
   // taller than a row.
   const agentList = <AgentSidebar key="agents" foldRequest={agentsFold} listId={agentsListId} machines={props.machines} selectedMachineId={props.selectedMachineId} selectedPaneId={props.selectedPaneId} stateWord={(machine) => t(STATE_WORD[machine.state])} watching={props.watching} onSelect={props.onSelect} />;
-  return <SidebarActivityProvider value={activity}><SidebarFilterProvider value={filterView}><div ref={shell} className={`sidebar-shell${order === "agents" ? " is-agents-first" : ""}`} onBlur={onSidebarBlur}>
+  return <SidebarActivityProvider value={activity}><SidebarFilterProvider value={filterView}><div ref={shell} className={`sidebar-shell${order === "agents" ? " is-agents-first" : ""}`} onBlur={onSidebarBlur} onKeyDown={stepRows}>
     {filterShown && <div className="sidebar-filter" role="search" aria-label={t("Filter workspaces and agents")}>
       {/* a glass in the field says what it is, as VS Code's and macOS's search fields do: no word beside it */}
       <Search className="sidebar-filter-glass" aria-hidden="true" />
@@ -320,6 +336,10 @@ export function manageActions(machine: Pick<Machine, "kind" | "herdr_profile_id"
  *  `canHide`/`onHide`: the menu's Hide on this device, under MachineSidebar's rules. */
 function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }: Props & { machine: Machine; headerless?: boolean; canHide: boolean; onHide(): void }) {
   const t = useT();
+  // the compact rows (Settings → Sidebar rows → One line, the default) draw New workspace as its + alone
+  const compact = useSettings().settings.sidebarRows === "one";
+  // Manage PC opens a sheet at a phone's width and a popover above it (RowMenu): the button says which (G-037)
+  const sheet = useMediaQuery(SHEET_QUERY);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(`ovis:pc-collapsed:${machine.id}`) === "1"; } catch { return false; } });
   // Manage PC is a row menu (RowMenu: a popover, a sheet on a phone), as a workspace's ⋯ is. Rename… swaps the
   // name for a field in the header; Remove PC… asks in the dialog a workspace's Close asks in
@@ -336,9 +356,23 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
   // notice (clipped and empty while it shows): its word lands a frame after the line (lib/useAnnouncedText.ts),
   // and every later state change, or the notice clearing, at once
   const stateWord = useAnnouncedText(noticed ? null : t(STATE_WORD[machine.state]));
+  // an SSH failure ssh itself named (lib/userError.ts sshFailure): said in plain words with the host and port it
+  // tried, ssh's own line kept under it to select and copy (G-031); the way back is the PC's Manage menu (G-032)
+  const ssh = !noticed && machine.kind === "ssh" && machine.error !== null ? sshFailure(machine.error) : null;
+  const sshWords = ssh === null ? null : (() => {
+    const where = ssh.host === null ? machine.name : ssh.port === null ? ssh.host : `${ssh.host}:${ssh.port}`;
+    switch (ssh.reason) {
+      case "refused": return t("{where} refused the SSH connection: the PC may be off, or nothing answers on that port.", { where });
+      case "unknown-host": return t("{where} is not a name this web server can look up: check the address.", { where });
+      case "timeout": return t("{where} did not answer in time: check that the PC is on and reachable.", { where });
+      case "unreachable": return t("{where} cannot be reached from this web server: check the network.", { where });
+      case "auth": return t("{where} did not accept this web server's SSH key or password.", { where });
+    }
+  })();
   // the Host's herdr is away (the server's words name the socket it tried): the step to take is on
   // that PC, not in this browser, so it follows the words
-  const nextStep = !noticed && machine.kind === "local" && machine.error !== null && saysHerdrAway(machine.error) ? t("Start herdr on this PC, or check HERDR_SOCKET.") : null;
+  const nextStep = !noticed && machine.kind === "local" && machine.error !== null && saysHerdrAway(machine.error) ? t("Start herdr on this PC, or check HERDR_SOCKET.")
+    : ssh !== null ? t("Reconnect or change its address from Manage PC, the sliders beside its name.") : null;
   // one request at a time: a double-clicked Disconnect/Connect can otherwise race and leave this
   // UI's idea of the state opposite the server's until the next refetch
   const [busy, setBusy] = useState(false);
@@ -406,16 +440,19 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
     try { localStorage.setItem(`ovis:pc-collapsed:${machine.id}`, collapsed ? "0" : "1"); } catch {}
   };
   // what the header says at rest, in the +'s cell that a hover or the focus gives its actions: how many agents
-  // run on this PC, the rows the Agents list holds for it
+  // the Agents list holds for this PC, whatever they are doing (G-018: a resting agent is not "running")
   const agentCount = useMemo(() => sidebarAgents(machine.snapshot).length, [machine.snapshot]);
-  // the PC's name is the head of its workspaces, and the caret beside its + the one fold over them
-  return <section className={`machine-group${props.selectedMachineId === machine.id ? " is-current" : ""}${online ? "" : " is-offline"}${context ? " is-filter-context" : ""}${headerless ? " is-headerless" : ""}${folded ? " is-folded" : ""}`} hidden={hidden} aria-label={t("PC {name}", { name: machine.name })}>
-    {!headerless && <header className="machine-header">
-      {/* a pointer folds the PC from anywhere on its name, as the caret does; the keyboard has the caret. While the
-          name is a field (Rename…), a press in it places the caret instead */}
-      <div className="machine-title" onClick={renaming ? undefined : toggle}>
-        <span className="sidebar-mark" aria-hidden="true"><Monitor /></span>
-        {renaming ? <input
+  const current = props.selectedMachineId === machine.id;
+  // a watching device is refused a new workspace (G-040): the + stays where it is, disabled, and says why
+  const canCreate = online && !props.watching;
+  const createTitle = props.watching ? `${t("New workspace")} · ${t("View only")}` : t("New workspace");
+  const foldLabel = folded ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name });
+  // the name and its state dot: the whole title folds the PC, as a button (G-036), so the keyboard and a screen
+  // reader reach it as one control; the caret beside the + draws the same fold and is not a second stop. While the
+  // name is a field (Rename…), the title is a plain box and a press in it places the caret instead
+  const titleBody = <>
+    <span className="sidebar-mark" aria-hidden="true"><Monitor /></span>
+    {renaming ? <input
           className="input machine-rename-input"
           aria-label={t("PC name")}
           data-own-escape=""
@@ -433,44 +470,57 @@ function MachineGroup({ machine, headerless = false, canHide, onHide, ...props }
             endRename(event.key === "Enter");
             manageButton.current?.focus({ preventScroll: true });
           }}
-        /> : <span className="machine-name">{machine.name}</span>}
-        {/* the computer this app's server runs on; on a phone "this PC" read as the phone */}
-        {machine.kind === "local" && <span className="machine-kind" title={t("The computer this app runs on")}>{t("Host")}</span>}
-        <span className={`machine-dot is-${machine.action_required === "setup" ? "setup" : machine.state}`} title={machine.action_required === "setup" ? t("Setup needed") : t(STATE_WORD[machine.state])} aria-hidden="true" />
-      </div>
+    /> : <span className="machine-name" title={machine.name}>{machine.name}</span>}
+    {/* the computer this app's server runs on; on a phone "this PC" read as the phone */}
+    {machine.kind === "local" && <span className="machine-kind" title={t("The computer this app runs on")}>{t("Host")}</span>}
+    <span className={`machine-dot is-${machine.action_required === "setup" ? "setup" : machine.state}`} title={machine.action_required === "setup" ? t("Setup needed") : t(STATE_WORD[machine.state])} aria-hidden="true" />
+  </>;
+  // the PC's name is the head of its workspaces, and the caret beside its + the one fold over them
+  return <section className={`machine-group${current ? " is-current" : ""}${online ? "" : " is-offline"}${context ? " is-filter-context" : ""}${headerless ? " is-headerless" : ""}${folded ? " is-folded" : ""}${compact ? "" : " is-two-line"}`} hidden={hidden} aria-label={t("PC {name}", { name: machine.name })}>
+    {!headerless && <header className={`machine-header${compact ? " is-compact" : ""}`}>
+      {renaming
+        ? <div className="machine-title">{titleBody}</div>
+        : <button type="button" className={`machine-title${current ? " is-current" : ""}`} aria-expanded={!folded} aria-label={foldLabel} title={machine.name} aria-current={current ? "true" : undefined} onClick={toggle}>{titleBody}</button>}
       {/* only a connected PC counts: a disconnected one keeps its last snapshot, whose agents may long be gone; no
           tooltip, as a pointer never reaches the count (SidebarSections.css) */}
-      {online && agentCount > 0 && <SidebarCount className="machine-agent-count" n={agentCount} words={agentCount === 1 ? t("1 agent running") : t("{n} agents running", { n: agentCount })} tooltip={false} />}
-      {machine.kind !== "local" && <button ref={manageButton} type="button" className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-haspopup="menu" aria-expanded={menu !== null} onClick={(event) => setMenu(menu === null ? event.currentTarget : null)}><SlidersHorizontal aria-hidden="true" /></button>}
-      {/* the fold over this PC's workspaces sits beside the + */}
-      <button className="sidebar-row-action machine-toggle" aria-expanded={!folded} aria-label={folded ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} title={folded ? t("Expand {name}", { name: machine.name }) : t("Collapse {name}", { name: machine.name })} onClick={toggle}>{folded ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}</button>
-      <button className="sidebar-row-action machine-new" disabled={!online} aria-label={t("New workspace on {name}", { name: machine.name })} title={t("New workspace")} onClick={() => props.onNew(machine.id)}><Plus aria-hidden="true" /></button>
+      {online && agentCount > 0 && <SidebarCount className="machine-agent-count" n={agentCount} words={agentCount === 1 ? t("1 agent") : t("{n} agents", { n: agentCount })} tooltip={false} />}
+      {machine.kind !== "local" && <button ref={manageButton} type="button" className="sidebar-row-action machine-manage" aria-label={t("Manage {name}", { name: machine.name })} title={t("Manage PC")} aria-haspopup={sheet ? "dialog" : "menu"} aria-expanded={menu !== null} onClick={(event) => setMenu(menu === null ? event.currentTarget : null)}><SlidersHorizontal aria-hidden="true" /></button>}
+      {/* the fold's caret beside the +: it draws the title button's state and presses as it does, out of the keyboard's
+          and a screen reader's way, since the title is the one fold control (G-036) */}
+      <button className="sidebar-row-action machine-toggle" tabIndex={-1} aria-hidden="true" aria-expanded={!folded} aria-label={foldLabel} title={foldLabel} onClick={toggle}>{folded ? <ChevronRight aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}</button>
+      <button className="sidebar-row-action machine-new" disabled={!canCreate} aria-label={t("New workspace on {name}", { name: machine.name })} title={createTitle} onClick={() => props.onNew(machine.id)}><Plus aria-hidden="true" /></button>
     </header>}
-    {/* connected is the norm and says nothing new; every other state is spelled out */}
+    {/* connected is the norm and says nothing new; every other state is spelled out. A failure is an alert, a
+        connection in progress a status (G-044): one live region, its role following the state */}
     {noticed && <MachineActionNotice machine={machine} onSetup={props.onSetup} />}
-    <p className={`machine-state is-${machine.state}${online || stateWord === null ? " visually-hidden" : ""}`} role="status" title={noticed || machine.error === null ? undefined : machineErrorText(machine.error, t)}>
+    <p className={`machine-state is-${machine.state}${online || stateWord === null ? " visually-hidden" : ""}`} role={machine.state === "error" ? "alert" : "status"} title={noticed || machine.error === null ? undefined : machineErrorText(machine.error, t)}>
       <span className="machine-state-word">{stateWord}</span>
-      {!noticed && machine.error && <span className="machine-state-detail">{machineErrorText(machine.error, t)}</span>}
+      {!noticed && machine.error && <span className="machine-state-detail">{sshWords ?? machineErrorText(machine.error, t)}</span>}
+      {/* ssh's own words, whole, to select and copy (G-030, G-031) */}
+      {sshWords !== null && <code className="machine-state-raw">{machine.error}</code>}
       {nextStep !== null && <span className="machine-state-next">{nextStep}</span>}
     </p>
-    {/* a herdr-core machine's server runs on this PC, which cannot read that machine's load (server/system-stats.ts) */}
-    {props.pcLoad && online && !folded && !noticed && machine.kind !== "hc" && <MachineStats machine={machine} active={props.shown !== false && !hidden} />}
     {/* the menu's head names the PC and how it is reached; a PC herdr or herdr-core manages says where the rest is done */}
     {menu && <RowMenu anchor={menu} title={machine.name} items={manageItems()} onClose={closeMenu} header={<span className="machine-menu-head">
       <span className="machine-menu-name">{machine.name}</span>
       <span className="machine-menu-state">{stateLine}</span>
+      {machine.runtime && <span className="machine-menu-note">{t("Runtime: {runtime}", { runtime: machine.runtime })}</span>}
       {manageNote !== null && <span className="machine-menu-note">{manageNote}</span>}
     </span>} />}
     {confirmRemove && <ConfirmDialog title={t("Remove PC {name}?", { name: machine.name })} body={t(machine.kind === "relay" ? "Removes this PC here. To end its access too, revoke it under Phone & devices on that PC." : "Removes this registration. Remote sessions keep running.")} confirmLabel={t("Remove PC")}
       onConfirm={async () => { await mutate("DELETE", undefined, true); setConfirmRemove(false); }} onClose={() => setConfirmRemove(false)} />}
     {error && <p className="machine-error" role="alert">{error}</p>}
-    {/* under a filter a folded PC's roster is mounted, hidden, so the branches it reads can be found */}
-    {(!folded || filtered !== null) && <div className={online ? "" : "machine-offline"} inert={!online} hidden={folded}>
-      {!online && !machine.snapshot ? <p className="tree-state machine-empty" role="status">{t("No saved sessions")}</p> : <MachineContext.Provider value={machine.id}><AppLayoutContext.Provider value={props.appLayout?.(machine.id) ?? FULL_LAYOUT}><Sidebar snapshot={machine.snapshot} online={online} selectedPaneId={props.selectedMachineId === machine.id ? props.selectedPaneId : null} actions={actions} watching={props.watching} /></AppLayoutContext.Provider></MachineContext.Provider>}
+    {/* a PC that is away with nothing saved of it: the line says so once the wait is over (disconnected, or
+        failed), never beside "Connecting…" (G-150), and outside the faded roster, at full contrast (G-029) */}
+    {!folded && !online && !machine.snapshot && (machine.state === "disconnected" || machine.state === "error") && <p className="tree-state machine-empty" role="status">{t("No saved sessions")}</p>}
+    {/* under a filter a folded PC's roster is mounted, hidden, so the branches it reads can be found; a connected PC whose
+        roster has not come yet draws the roster too, which says it is loading */}
+    {(!folded || filtered !== null) && (machine.snapshot !== null || online) && <div className={online ? "" : "machine-offline"} inert={!online} hidden={folded}>
+      <MachineContext.Provider value={machine.id}><AppLayoutContext.Provider value={props.appLayout?.(machine.id) ?? FULL_LAYOUT}><Sidebar snapshot={machine.snapshot} online={online} selectedPaneId={props.selectedMachineId === machine.id ? props.selectedPaneId : null} actions={actions} watching={props.watching} /></AppLayoutContext.Provider></MachineContext.Provider>
     </div>}
     {/* the header's +, as the list's last row, also while the roster loads: an empty roster has its own New
-        workspace, and a filtered list shows only what was looked for */}
-    {headerless && online && machine.snapshot?.workspaces.length !== 0 && !filter.active && <button type="button" className="machine-new-row" onClick={() => props.onNew(machine.id)}><span className="sidebar-mark" aria-hidden="true"><Plus /></span><span className="machine-new-row-label">{t("New workspace")}</span></button>}
+        workspace, and a filtered list shows only what was looked for; a watching device sees it disabled (G-040) */}
+    {headerless && !compact && online && machine.snapshot?.workspaces.length !== 0 && !filter.active && <button type="button" className={`machine-new-row${compact ? " is-compact" : ""}`} disabled={!canCreate} aria-label={compact ? t("New workspace") : undefined} title={compact || props.watching ? createTitle : undefined} onClick={() => props.onNew(machine.id)}><span className="sidebar-mark" aria-hidden="true"><Plus /></span>{!compact && <span className="machine-new-row-label">{t("New workspace")}</span>}</button>}
   </section>;
 }
 
@@ -528,6 +578,7 @@ function MachineActionNotice({ machine, onSetup }: { machine: Machine; onSetup(m
   </div>;
   // another app's bridge runs on this PC: neither an update from here nor an approval fixes that,
   // so it is named as what it is, with the server's reason and a plain reconnect
+  if (machine.action_required === "choose_herdr" && (machine.found_herdr_sessions || machine.found_ovis) && machine.target) return <FoundHerdrChoices sessions={machine.found_herdr_sessions ?? []} ownOvis={machine.found_ovis} coreRefusal={machine.target.own_ovis && !machine.found_ovis?.length && machine.error ? machineErrorText(machine.error, t) : undefined} busy={busy || !machine.enabled} onChoose={(choice) => onSetup({ ...machine, target: { ...machine.target!, ...choice, ...(machine.herdr_profile_id ? { session: machine.target?.session } : {}) } }, false)} />;
   if (machine.action_required === "bridge_conflict") return <div className="machine-action" role="alert">
     <p className="machine-action-text"><strong>{t("Bridge connection conflict")}</strong><span>{t("Update the apps connected to this PC to the same version, or disconnect the other app, then reconnect here. Sessions keep running.")}</span>{machine.error && <span className="machine-action-reason">{machineErrorText(machine.error, t)}</span>}</p>
     <button type="button" className="btn btn-primary" onClick={() => onSetup(machine, false)}>{t("Reconnect")}</button>
@@ -543,7 +594,7 @@ function MachineActionNotice({ machine, onSetup }: { machine: Machine; onSetup(m
       {failure && <span className="machine-action-reason">{machineErrorText(failure, t)}</span>}
     </p>
     <div className="machine-action-buttons">
-      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => machineRequest(`/${encodeURIComponent(machine.id)}/update-bridge`, "POST").catch((e) => { if (!machine.herdr_profile_id) throw e; onSetup(machine, true); }))}>{own.latest_version ? t("Update this PC's Ovis to v{version}", { version: own.latest_version }) : t("Update this PC's Ovis")}</button>
+      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => machineRequest(`/${encodeURIComponent(machine.id)}/update-bridge`, "POST", shownRevision(machine)).catch((e) => { if (!machine.herdr_profile_id) throw e; onSetup(machine, true); }))}>{own.latest_version ? t("Update this PC's Ovis to v{version}", { version: own.latest_version }) : t("Update this PC's Ovis")}</button>
       <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => onSetup(machine, true)}>{t("Sign in and update…")}</button>
     </div>
     {error && <p className="machine-error" role="alert">{error}</p>}
@@ -567,7 +618,7 @@ function MachineActionNotice({ machine, onSetup }: { machine: Machine; onSetup(m
     </p>
     {update ? <div className="machine-action-buttons">
       {/* a PC saved in herdr that has not connected yet is refused a direct update: its dialog connects first */}
-      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => machineRequest(`/${encodeURIComponent(machine.id)}/update-bridge`, "POST").catch((e) => { if (!machine.herdr_profile_id) throw e; onSetup(machine, true); }))}>{t("Update bridge")}</button>
+      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => machineRequest(`/${encodeURIComponent(machine.id)}/update-bridge`, "POST", shownRevision(machine)).catch((e) => { if (!machine.herdr_profile_id) throw e; onSetup(machine, true); }))}>{t("Update bridge")}</button>
       {/* a PC that needs a password or a new host key goes through its dialog */}
       <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => onSetup(machine, true)}>{t("Sign in and update…")}</button>
     </div> : <button type="button" className="btn btn-primary" onClick={() => onSetup(machine, false)}>{t("Set up web access")}</button>}
@@ -649,7 +700,7 @@ export function MachineActionBanner({ machines, onSetup }: { machines: Machine[]
   const failure = ownUpdateFailure(first);
   return <div className="update-notice" role="status">
     <span title={failure === null ? undefined : machineErrorText(failure, t)}>{own ? t(failure ? "Updating {name}'s own Ovis failed{others}." : own.updatable ? "{name}'s own Ovis needs an update to reconnect{others}." : "{name}'s own Ovis needs an update on that PC{others}.", { name: first.name, others }) : t(startupFailed ? "Windows desktop startup failed on {name}{others}." : login ? "{name} is waiting for Windows sign-in{others}." : conflict ? "{name} has a bridge connection conflict{others}." : update ? "{name} needs a bridge update to reconnect{others}." : "{name} needs web access setup{others}.", { name: first.name, others })}</span>
-    <button type="button" className="btn" onClick={() => update ? void machineRequest(`/${encodeURIComponent(first.id)}/update-bridge`, "POST").catch(() => onSetup(first, true)) : onSetup(first, false)}>{own ? t(own.updatable ? "Update this PC's Ovis" : "Reconnect") : t(login || startupFailed ? "Review startup options" : conflict ? "Reconnect" : update ? "Update bridge" : "Set up web access")}</button>
+    <button type="button" className="btn" onClick={() => update ? void machineRequest(`/${encodeURIComponent(first.id)}/update-bridge`, "POST", shownRevision(first)).catch(() => onSetup(first, true)) : onSetup(first, false)}>{own ? t(own.updatable ? "Update this PC's Ovis" : "Reconnect") : t(login || startupFailed ? "Review startup options" : conflict ? "Reconnect" : update ? "Update bridge" : "Set up web access")}</button>
     <button type="button" className="icon-button update-notice-dismiss" aria-label={t("Dismiss")} title={t("Dismiss")} onClick={() => { const next = [...dismissed, ...waiting.map(noticeKey)]; setDismissed(next); writeDismissed(next); }}><X /></button>
   </div>;
 }

@@ -546,20 +546,21 @@ const CONTINUED_TAIL_BYTES = 64 * 1024;
  * user or assistant turn after it. Only the file's tail is read, since this runs on every lookup.
  * A file that cannot be read names no continuation: its own reader reports the failure.
  */
-async function transcriptTail(path: string): Promise<string | null> {
+/** A transcript's tail and the exact `dev:ino` of the file it was read from (#3402). */
+async function transcriptTail(path: string): Promise<{ text: string; identity: string } | null> {
   try {
     // no links and no blocking: a FIFO in its place must not hold the lookup (as branchedFrom)
     const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
     try {
-      const info = await file.stat();
+      const info = await file.stat({ bigint: true });
       if (!info.isFile()) return null;
-      const size = info.size;
+      const size = Number(info.size);
       const start = Math.max(0, size - CONTINUED_TAIL_BYTES);
       const buffer = Buffer.alloc(size - start);
       const { bytesRead } = await file.read(buffer, 0, buffer.length, start);
       const text = buffer.subarray(0, bytesRead).toString("utf8");
       // a tail that starts mid-line drops that partial line
-      return start > 0 ? text.slice(text.indexOf("\n") + 1) : text;
+      return { text: start > 0 ? text.slice(text.indexOf("\n") + 1) : text, identity: `${info.dev}:${info.ino}` };
     } finally {
       await file.close();
     }
@@ -568,11 +569,12 @@ async function transcriptTail(path: string): Promise<string | null> {
   }
 }
 
-async function continuedInSession(path: string): Promise<string | null> {
-  const text = await transcriptTail(path);
-  if (text === null) return null;
+/** The session a transcript continues in (or null), and the exact identity of the file whose tail said so (#3402). */
+async function continuedInSession(path: string): Promise<{ next: string | null; identity: string | null }> {
+  const tail = await transcriptTail(path);
+  if (tail === null) return { next: null, identity: null };
   let continued: string | null = null;
-  for (const line of text.split("\n")) {
+  for (const line of tail.text.split("\n")) {
     // every record is read as JSON reads it, however its keys are written (#2130)
     if (line.trim() === "") continue;
     try {
@@ -583,7 +585,7 @@ async function continuedInSession(path: string): Promise<string | null> {
       }
     } catch { /* a torn tail line cannot name the active session */ }
   }
-  return continued;
+  return { next: continued, identity: tail.identity };
 }
 
 /**
@@ -593,7 +595,7 @@ async function continuedInSession(path: string): Promise<string | null> {
  * single match is taken, and the job's state.json, when it names a transcript, must agree.
  */
 async function backgroundJobTranscript(path: string, configDir: string): Promise<string | null> {
-  const text = await transcriptTail(path);
+  const text = (await transcriptTail(path))?.text ?? null;
   if (text === null) return null;
   // each continued-in record claims only the output printed since the previous record, so an
   // earlier /resume's job id never names a later continuation
@@ -1196,6 +1198,8 @@ export async function claudeForegroundSession(
  */
 export async function claudeTranscriptFile(
   home: string, session: string, cwds: readonly (string | null | undefined)[], configDir = join(home, ".claude"), live: string | null = null,
+  /** filled with each file whose tail was read, by path: the exact identity it was proven through (#3402) */
+  proofs?: Map<string, string>,
 ): Promise<string | null> {
   const projects = join(configDir, "projects");
   const locate = async (id: string): Promise<string | null> => {
@@ -1225,19 +1229,29 @@ export async function claudeTranscriptFile(
   };
 
   /** `from`: the file checked to be a branch, whose continuations are taken beside it first (#2130) */
-  const follow = async (start: string, seen: Set<string>, from?: string): Promise<string | null> => {
+  /** `prove`: whether the tail it reads proves the path it returns; a branch walk's own evidence is read apart (#3402) */
+  const follow = async (start: string, seen: Set<string>, from?: string, prove = true): Promise<string | null> => {
+    // this walk's own reads: the path it returns carries this walk's proof, or none, never another walk's
+    const walk = new Map<string, string>();
+    const settle = (found: string): string => {
+      proofs?.delete(found);
+      const identity = walk.get(found);
+      if (prove && identity !== undefined) proofs?.set(found, identity);
+      return found;
+    };
     seen.add(start);
     let path = from ?? await locate(start);
     while (path !== null) {
-      const next = await continuedInSession(path);
-      if (next === null || seen.has(next)) return path;
+      const { next, identity } = await continuedInSession(path);
+      if (identity !== null) walk.set(path, identity);
+      if (next === null || seen.has(next)) return settle(path);
       seen.add(next);
       // a branch's continuation goes on beside it: the same id in a project an earlier cwd names is another
       // conversation (#2130). One whose file is not there keeps the transcript that named it, unless a
       // /resume of a background session names that job's own transcript
       const beside = join(dirname(path), `${next}.jsonl`);
       const nextPath = (from !== undefined && await isFile(beside) ? beside : await locate(next)) ?? await backgroundJobTranscript(path, configDir);
-      if (nextPath === null) return path;
+      if (nextPath === null) return settle(path);
       path = nextPath;
     }
     return null;
@@ -1266,7 +1280,8 @@ export async function claudeTranscriptFile(
     if (parent === null) return path;
     if (seen.has(parent)) {
       // from the very file found to be the branch: the same id may name another file elsewhere
-      try { return await follow(live, seen, livePath!) ?? path; } catch { return path; }
+      // the branch was told by branchedFrom's own read, not this tail's: the path it gives carries no proof (#3402)
+      try { return await follow(live, seen, livePath!, false) ?? path; } catch { return path; }
     }
     branch = await inProject(parent);
   }

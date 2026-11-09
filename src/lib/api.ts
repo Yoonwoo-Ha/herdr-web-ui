@@ -445,7 +445,7 @@ const UNUSABLE_ANSWER: Readonly<Record<string, () => string>> = {
   remote_response_invalid: () => t("The other PC's answer could not be read"),
 };
 
-async function errorFrom(url: string, response: Response): Promise<ApiError> {
+export async function errorFrom(url: string, response: Response): Promise<ApiError> {
   let detail = response.statusText;
   let code: string | null = null;
   try {
@@ -1166,7 +1166,19 @@ export async function fetchAgentKinds(machineId = "local"): Promise<AgentKind[]>
 
 /** GET /api/agent-catalog: every agent Ovis can install, with that PC's commands and what it has installed. */
 export async function fetchAgentCatalog(machineId = "local", signal?: AbortSignal): Promise<AgentCatalogResponse> {
-  return getJson<AgentCatalogResponse>(machinePath(machineId, "agent-catalog"), { signal, cache: "no-store" });
+  // bounded to 30 s, so a read that never answers ends and Check again can try again; joined by
+  // hand, as verifySourceBoot's: AbortSignal.any needs Safari 17.4
+  const bounded = new AbortController();
+  const end = () => bounded.abort();
+  const timer = setTimeout(end, 30_000);
+  if (signal?.aborted) end();
+  else signal?.addEventListener("abort", end, { once: true });
+  try {
+    return await getJson<AgentCatalogResponse>(machinePath(machineId, "agent-catalog"), { signal: bounded.signal, cache: "no-store" });
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", end);
+  }
 }
 
 /** POST /api/agent-catalog/install: opens a tab on that PC and types the agent's official command there. */
@@ -1584,7 +1596,8 @@ export async function verifySourceBoot(machineId: string, signal: AbortSignal): 
   }
 }
 export async function machineRequest<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const response = await apiFetch(`/api/machines${path}`, { method, headers: { "content-type": "application/json", "x-herdr-machine": "1" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  // x-herdr-update: an owner's actions on its PCs (updates, turning one on, approving an install) need it, as this PC's own updates do
+  const response = await apiFetch(`/api/machines${path}`, { method, headers: { "content-type": "application/json", "x-herdr-machine": "1", "x-herdr-update": "1" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   if (!response.ok) throw await errorFrom("/api/machines", response);
   return response.json();
 }

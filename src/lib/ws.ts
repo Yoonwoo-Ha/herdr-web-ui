@@ -161,6 +161,8 @@ export class HerdrSocket {
   private retries = 0;
   /** When this connection opened; a brief open must not restart a flapping connection's retries. */
   private openedAt: number | null = null;
+  /** when the last open connection ended; null while one is open or none ever was. Failed attempts since leave it */
+  private lostAt: number | null = null;
   private reconnectTimer: number | null = null;
   /** the deadline of the attempt still in CONNECTING */
   private connectTimer: number | null = null;
@@ -282,6 +284,11 @@ export class HerdrSocket {
     return this.openedAt;
   }
 
+  /** when the open connection this one had ended (Date.now()), however many attempts failed since; null while open or before any */
+  get lostSince(): number | null {
+    return this.lostAt;
+  }
+
   get connected(): boolean {
     return this.socket?.readyState === SOCKET_OPEN;
   }
@@ -366,6 +373,7 @@ export class HerdrSocket {
       this.connectionState = "open";
       this.trace.record("open", { elapsed_ms: Date.now() - started });
       this.openedAt = Date.now();
+      this.lostAt = null;
       this.lastFrameAt = this.openedAt;
       this.watchIdle(socket);
       // the path is back: reads sent on the lost one would hold the browser's connections to the server
@@ -567,6 +575,7 @@ export class HerdrSocket {
     this.machineEventsOffered = null;
     if (this.submits.size > 0) this.trace.record("submit_disconnect", { pending: this.submits.size }, true);
     if (this.openedAt !== null && Date.now() - this.openedAt >= STABLE_CONNECTION_MS) this.retries = 0;
+    if (this.openedAt !== null) this.lostAt = Date.now();
     this.openedAt = null;
     this.socket = null;
     this.clearConnectTimer();
@@ -1099,8 +1108,9 @@ export class HerdrSocket {
    */
   /** `typed`: from the terminal's input line, typed into the pane like the keyboard (see ClientMessage).
    * `clearDraft`: an immediate send over the draft an input_draft refusal named (ClientMessage `clear_draft`)
-   * `sendAnyway`: an immediate send after a refusal that showed the box (ClientMessage `send_anyway`) */
-  submit(paneId: string, text: string, payload: string, typed = false, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number, agentOnly = false): Promise<SubmitResult> | null {
+   * `sendAnyway`: an immediate send after a refusal that showed the box (ClientMessage `send_anyway`)
+   * `holdOnly`: a hold that must never go on its own (the composer's Alt+Enter): refused, not queued, where the bridge cannot hold */
+  submit(paneId: string, text: string, payload: string, typed = false, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number, agentOnly = false, holdOnly = false): Promise<SubmitResult> | null {
     const socket = this.socket;
     if (!this.connected || socket === null || this.mode === "observe") return null;
     if (resendId !== undefined && sendAnyway) return Promise.resolve({ ok: false, code: "invalid_delivery", message: "Use a held-copy resend id only for an immediate chat message" });
@@ -1113,7 +1123,10 @@ export class HerdrSocket {
       // message as raw typed input, past every check it makes before typing (#1591), so nothing is sent
       if (!this.featuresKnown) return CAPABILITIES_UNKNOWN;
       // hold is decided once the bridge said what it supports: one too old to hold queues it as before
-      if (delivery === "hold" && !this.canHoldMessages()) delivery = "queue";
+      if (delivery === "hold" && !this.canHoldMessages()) {
+        if (holdOnly) return { ok: false, code: "pending_hold_unsupported", message: "Update this PC to hold messages. Nothing was sent." };
+        delivery = "queue";
+      }
       if (delivery === "queue" && !this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to queue messages." };
       // an older bridge ignores agent_only and would type the message into whatever is in front, a shell too
       if (agentOnly && !this.features.has("agent-only")) return { ok: false, code: "agent_only_unsupported", message: "Update this PC to send comments on a reply. Nothing was sent." };

@@ -120,7 +120,7 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     await page.goto(`${origin}/?pane=${encodeURIComponent(first)}`);
     await page.locator(".conn-live").waitFor();
     await page.locator(".app-header .context-tabs").waitFor();
-    await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+    await page.getByTitle(/^Chat transcript \(.+\)$/).click();
     const firstFrame = page.locator(`[data-layout-pane=${JSON.stringify(first)}]`);
     const composer = firstFrame.getByRole("textbox", { name: "Message", exact: true });
     await composer.waitFor();
@@ -136,7 +136,7 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); (window as unknown as KeyboardQA).keyboardQA(null); });
     await page.waitForFunction(() => !document.documentElement.hasAttribute("data-keyboard"));
 
-    await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+    await page.getByTitle(/^Live terminal \(.+\)$/).click();
     await firstFrame.locator(".key-bar").waitFor();
     assert.equal(await page.locator(".pane-frame:visible").count(), 1, "a phone shows the split tab's open pane alone");
     assert.equal(await page.locator(".pane-frame").count(), 2, "and keeps its sibling mounted");

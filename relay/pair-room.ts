@@ -21,7 +21,7 @@
  * joins never needs a pass.
  */
 import { IDLE_MS, KEEPALIVE_PING, KEEPALIVE_PONG, WIRE_VERSION, passRefusal, type Frame } from "./core.ts";
-import { RELAY_PASS_CLOSE, RELAY_PASS_EXPIRED, RELAY_PASS_REQUIRED, RELAY_PASS_SKEW_S } from "../shared/relay-pass.ts";
+import { RELAY_PASS_CLOSE, RELAY_PASS_EXPIRED, RELAY_PASS_INVALID, RELAY_PASS_REQUIRED, RELAY_PASS_SKEW_S } from "../shared/relay-pass.ts";
 import { SERVER_KEY_INVALID, SERVER_KEY_MISMATCH, SERVER_PROOF_CLOSE, SERVER_PROOF_MS, deriveServerId, proofKey, serverChallenge, verifyServerProof } from "../shared/relay-server-proof.ts";
 import { passMode, type PassPolicy, type PassResult } from "./pass.ts";
 
@@ -100,10 +100,15 @@ export interface PairInfo {
   lastGuest?: number;
   /** a host still proving its PC key: it holds no nameplate until it answers (its deadline is `expires`) */
   proof?: { expected: string; expires: number };
-  /** a host let in with a pass that holds: when it expires (ms) */
+  /** a host let in with a pass that holds: when it expires (ms), its key id and the server_id it is for, re-checked against the relay's current keys and revocations */
   pass_exp?: number;
+  pass_kid?: string;
+  server_id?: string;
   ended?: true;
 }
+
+/** what a host let in with a pass that holds keeps of it */
+type HostPass = Required<Pick<PairInfo, "pass_exp" | "pass_kid" | "server_id">>;
 
 /** how long after its pass's expiry a host keeps its nameplate, for clocks that differ */
 const PASS_SKEW_MS = RELAY_PASS_SKEW_S * 1000;
@@ -115,6 +120,8 @@ export function isPairInfo(value: unknown): value is PairInfo {
   return (info["pair"] === "host" || info["pair"] === "guest") && typeof info["deadline"] === "number" && typeof info["seen"] === "number"
     && (proof === undefined || (typeof proof === "object" && proof !== null && typeof proof["expected"] === "string" && typeof proof["expires"] === "number"))
     && (info["pass_exp"] === undefined || typeof info["pass_exp"] === "number")
+    && (info["pass_kid"] === undefined || typeof info["pass_kid"] === "string")
+    && (info["server_id"] === undefined || typeof info["server_id"] === "string")
     && (info["attempt"] === undefined || (typeof info["attempt"] === "string" && /^[0-9a-f]{32}$/.test(info["attempt"])))
     && (info["guests"] === undefined || typeof info["guests"] === "number")
     && (info["lastGuest"] === undefined || typeof info["lastGuest"] === "number")
@@ -166,15 +173,26 @@ export class PairRoom<S extends object> {
     const policy = this.host.pass;
     if (!policy || info.pair !== "host" || passMode(policy, now) !== "enforce") return null;
     if (info.pass_exp === undefined) return RELAY_PASS_REQUIRED;
+    // a pass under a key the relay no longer trusts, or for a PC it revoked since, holds no longer.
+    // A host the version before this check admitted kept no key id or server_id (hibernated sockets
+    // outlive a deploy), so neither check can name it. Any revocation in the current settings may be
+    // its PC, so it closes rather than guess and re-admits through the check that follows; a key
+    // removed from them it cannot be matched against at all, so its pass's expiry and hold()'s
+    // deadline of PAIR_HOST_MS (11 minutes) are what hold it otherwise.
+    if (info.pass_kid === undefined) {
+      if (policy.revoked.size > 0) return RELAY_PASS_INVALID;
+      return now < info.pass_exp + PASS_SKEW_MS ? null : RELAY_PASS_EXPIRED;
+    }
+    if (!policy.keys.has(info.pass_kid) || info.server_id === undefined || policy.revoked.has(info.server_id)) return RELAY_PASS_INVALID;
     return now < info.pass_exp + PASS_SKEW_MS ? null : RELAY_PASS_EXPIRED;
   }
 
-  /** When `lapsed` may next change for a host: the start of enforcement, or its pass running out. */
+  /** When `lapsed` may next change for a host: the start of enforcement (whatever its pass, which nothing checks before), or once enforced its pass running out. */
   private passDue(info: PairInfo, now: number): number {
     const policy = this.host.pass;
     if (!policy || policy.mode === "off" || info.pair !== "host") return Infinity;
-    const enforcing = policy.mode === "grace" && policy.enforceAt !== null && now < policy.enforceAt ? policy.enforceAt : Infinity;
-    return Math.min(enforcing, info.pass_exp === undefined ? Infinity : info.pass_exp + PASS_SKEW_MS);
+    if (passMode(policy, now) !== "enforce") return policy.enforceAt ?? Infinity;
+    return info.pass_exp === undefined ? Infinity : info.pass_exp + PASS_SKEW_MS;
   }
 
   /** Closes the room's host 4402 when its pass no longer lets it hold the nameplate (its guest goes with it), whatever the sweep's timing. */
@@ -213,8 +231,9 @@ export class PairRoom<S extends object> {
       if (refused !== null) return this.end(socket, RELAY_PASS_CLOSE, refused);
       // a host still proving counts: one at a time may try for a nameplate
       if (this.find("host", socket)) return this.end(socket, PAIR_CLOSE.TAKEN, "this code is in use");
-      const passExp = request.pass?.state === "ok" ? request.pass.exp : undefined;
-      if (!request.key) return this.hold(socket, now, passExp);
+      const pass: HostPass | undefined = request.pass?.state === "ok" && request.pass.exp !== undefined && request.pass.kid !== undefined && request.key
+        ? { pass_exp: request.pass.exp, pass_kid: request.pass.kid, server_id: request.key.server_id } : undefined;
+      if (!request.key) return this.hold(socket, now, pass);
       const key = proofKey(request.key.public_key);
       if (!key || deriveServerId(key) !== request.key.server_id) return this.end(socket, SERVER_PROOF_CLOSE, SERVER_KEY_MISMATCH);
       let challenge: ReturnType<typeof serverChallenge>;
@@ -222,7 +241,7 @@ export class PairRoom<S extends object> {
       try { challenge = serverChallenge(key, { server_id: request.key.server_id, role: "pair-host", connection_id: request.nameplate }); }
       catch { return this.end(socket, SERVER_PROOF_CLOSE, SERVER_KEY_INVALID); } // a low-order X25519 point
       const expires = now + SERVER_PROOF_MS;
-      this.placeHost(socket, { pair: "host", deadline: expires, seen: now, proof: { expected: challenge.expected, expires }, ...(passExp === undefined ? {} : { pass_exp: passExp }) }, now);
+      this.placeHost(socket, { pair: "host", deadline: expires, seen: now, proof: { expected: challenge.expected, expires }, ...pass }, now);
       this.host.send(socket, challenge.frame);
       return;
     }
@@ -240,8 +259,8 @@ export class PairRoom<S extends object> {
   }
 
   /** The host holds the nameplate from now: devices may join it. */
-  private hold(socket: S, now: number, passExp: number | undefined): void {
-    this.placeHost(socket, { pair: "host", deadline: now + PAIR_HOST_MS, seen: now, guests: 0, ...(passExp === undefined ? {} : { pass_exp: passExp }) }, now);
+  private hold(socket: S, now: number, pass: HostPass | undefined): void {
+    this.placeHost(socket, { pair: "host", deadline: now + PAIR_HOST_MS, seen: now, guests: 0, ...pass }, now);
     this.host.send(socket, JSON.stringify({ type: "waiting" }));
   }
 
@@ -257,7 +276,8 @@ export class PairRoom<S extends object> {
     // a host proving its key: its first frame is the answer, compared in constant time; anything else, or late, is refused
     if (info.proof) {
       if (now >= info.proof.expires || !verifyServerProof(frame, info.proof.expected)) return this.end(socket, SERVER_PROOF_CLOSE, "invalid or expired server proof");
-      return this.hold(socket, now, info.pass_exp);
+      const { pass_exp, pass_kid, server_id } = info;
+      return this.hold(socket, now, pass_exp !== undefined && pass_kid !== undefined && server_id !== undefined ? { pass_exp, pass_kid, server_id } : undefined);
     }
     // past its deadline a socket passes nothing on, whenever the next sweep comes
     if (now >= info.deadline) return this.end(socket, PAIR_CLOSE.EXPIRED, "time ran out");

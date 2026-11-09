@@ -409,6 +409,15 @@ export function herdrMayListen(socketPath: string = herdrSocketPath()): Promise<
   });
 }
 
+/** Discovery offers only a socket this account actually connected to, never a permission error. */
+export async function herdrAcceptsConnection(socketPath: string): Promise<boolean> {
+  try {
+    const socket = await Bun.connect({ unix: socketAddress(socketPath), socket: { data() {} } });
+    socket.end();
+    return true;
+  } catch { return false; }
+}
+
 export async function ping(socketPath?: string): Promise<HerdrIdentity> {
   const result = await herdrRpc<{ version: string; protocol: number; capabilities?: Record<string, unknown> }>("ping", {}, socketPath);
   const attach = terminalAttachSupported(result.capabilities);
@@ -815,7 +824,18 @@ export type ProcessInfo = PaneProcessInfo;
  * `pane_id`: given `target`, herdr silently answers for the focused pane. Rejects as herdrRpc does.
  */
 export async function paneProcessInfo(paneId: string, socketPath?: string): Promise<ProcessInfo | undefined> {
-  return (await herdrRpc("pane.process_info", { pane_id: paneId }, socketPath)).process_info;
+  const askedAt = Date.now();
+  const info = (await herdrRpc("pane.process_info", { pane_id: paneId }, socketPath)).process_info;
+  if (info) processInfoAsks.set(info, askedAt);
+  return info;
+}
+
+/** When each answer paneProcessInfo gave was asked for (Date.now, taken before the ask): herdr's sample is no older. */
+const processInfoAsks = new WeakMap<ProcessInfo, number>();
+
+/** When `info` was asked of herdr, or undefined for an answer paneProcessInfo did not give. */
+export function processInfoAskedAt(info: ProcessInfo): number | undefined {
+  return processInfoAsks.get(info);
 }
 
 /** The agent herdr tracks in a pane (`agent.get`), including the session it reported. */

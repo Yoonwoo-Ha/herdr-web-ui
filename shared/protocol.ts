@@ -107,6 +107,10 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
 /** Machine API (same token gate; mutations require X-Herdr-Machine: 1 + same origin)
  * GET /api/health?scope=bridge -> BridgeHealth, never waits for herdr (a driving owner is told herdr_runtime too)
  * GET /api/bridge -> authenticated BridgeIdentity (socket + runtime compatibility)
+ * GET /api/bridge?discover=herdr -> owner/bridge-token only; also found_herdr_sessions on this account.
+ * SetupRequest.own_ovis chooses a registered Ovis by socket identity, reverified over SSH each time;
+ * mutually exclusive with herdr_socket/start_new_herdr. choose_herdr offers found_ovis beside sessions.
+ * Machine/SetupJob.runtime names the verified runtime (herdr or herdr-core); absent until known.
  * GET /api/machines -> MachineRoster { machines: Machine[] }; GET /api/machines/events -> MachineEvent SSE
  * GET /api/machines?verify_source_boot=:id -> MachineRoster with verified_source_boot { machine_id, boot_id }:
  *   the boot id of the server behind that PC, asked for during this request (the local one directly,
@@ -184,7 +188,13 @@ export type { DevicePairedEvent, DeviceRemovedEvent, PairingIntent, RelayPairing
  *  GET    /api/updates                   -> UpdateStatus (shared/update.ts), no-store; to the bridge
  *         token (which cannot read /api/access) also `port` and `serving_url`, where it answers
  *  POST   /api/updates/check             -> 202 { accepted: true }
- *  POST   /api/updates/install           -> 202 { accepted: true }; UpdateInstallRequest JSON body
+ *  POST   /api/updates/install           -> 202 { accepted: true, install_id }; UpdateInstallRequest JSON body
+ *  POST   /api/updates/cancel            -> 202 { accepted: true }; { install_id } JSON body, as the install's 202 gave it: stops that
+ *                                            install only, while it checks or builds (install_cancellable); 400 invalid_update_cancel,
+ *                                            409 update_restart_required, or 409 update_not_cancellable alike for a wrong or expired
+ *                                            install_id and for no update running (supervisor IPC: update-cancel-v2)
+ *                                            (the bridge token may cancel only an install it asked for, by the install_id its
+ *                                            202 gave: never another device's, nor one the PC's own Settings started)
  *         (at most 1 KiB): 400 invalid_update_install for a missing or malformed revision,
  *         409 update_restart_required where the supervisor does not advertise
  *         revision_bound_install, 409 update_offer_changed when the offer is no longer that
@@ -594,6 +604,8 @@ export interface RelayStatus {
     readonly enforce_at: string | null;
     /** the relay refused this PC for its pass (4402) and it has not been let in since */
     readonly refused: boolean;
+    /** false while the pass in use says new client sessions to this PC are not allowed and the relay says it holds; absent otherwise */
+    readonly new_sessions?: false;
   };
 }
 

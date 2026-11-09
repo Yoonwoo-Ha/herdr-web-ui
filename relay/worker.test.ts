@@ -992,6 +992,102 @@ describe("relay pass", () => {
     expect(proving.closedWith).toEqual({ code: 4402, reason: "relay pass required" });
   });
 
+  test("a pairing host does not outlive its PC's revocation or its pass key's removal", async () => {
+    const keyed = `role=host&server_id=${SERVER}&public_key=${PC.publicKey}`;
+    for (const extra of [{ RELAY_PASS_REVOKED: SERVER }, { RELAY_PASS_KEYS: `deadbeef:${keys.split(":")[1]}` }] as Record<string, string>[]) {
+      const fake = fakeState();
+      const first = await world("enforce", undefined, fake);
+      const host = await first.openPair(keyed, await passFor());
+      first.box.room.webSocketMessage(host, answerServerChallenge(host.sent.shift(), PC.secretKey, { server_id: SERVER, role: "pair-host", connection_id: "AB1" })!);
+      expect(host.json(0)).toEqual({ type: "waiting" });
+      // a deploy with the new settings: the next arrival finds the host's pass no longer holds
+      const w = await world("enforce", undefined, fake, extra);
+      const guest = await w.openPair("role=guest");
+      expect(host.closedWith).toEqual({ code: 4402, reason: "relay pass invalid" });
+      expect(guest.closedWith?.code).toBe(4404);
+    }
+  });
+
+  test("a pairing host's guest goes with it once its PC is revoked: at its next frame, or at the next alarm", async () => {
+    const keyed = `role=host&server_id=${SERVER}&public_key=${PC.publicKey}`;
+    for (const by of ["frame", "alarm"] as const) {
+      const fake = fakeState();
+      const first = await world("enforce", undefined, fake);
+      const host = await first.openPair(keyed, await passFor());
+      first.box.room.webSocketMessage(host, answerServerChallenge(host.sent.shift(), PC.secretKey, { server_id: SERVER, role: "pair-host", connection_id: "AB1" })!);
+      const guest = await first.openPair("role=guest");
+      expect(host.json(1)).toMatchObject({ type: "guest" });
+      const w = await world("enforce", undefined, fake, { RELAY_PASS_REVOKED: SERVER });
+      const sent = host.sent.length;
+      if (by === "frame") w.box.room.webSocketMessage(guest, new Uint8Array([1, 2, 3]).buffer);
+      else await w.box.room.alarm();
+      expect(host.closedWith).toEqual({ code: 4402, reason: "relay pass invalid" });
+      expect(guest.closedWith?.code).toBe(1001);
+      expect(host.sent).toHaveLength(sent);
+    }
+  });
+
+  test("a pairing host admitted before its key id was kept stays until its pass runs out", async () => {
+    const keyed = `role=host&server_id=${SERVER}&public_key=${PC.publicKey}`;
+    const fake = fakeState();
+    const first = await world("enforce", undefined, fake);
+    const host = await first.openPair(keyed, await passFor());
+    first.box.room.webSocketMessage(host, answerServerChallenge(host.sent.shift(), PC.secretKey, { server_id: SERVER, role: "pair-host", connection_id: "AB1" })!);
+    // the attachment as the previous relay version saved it: the pass's expiry only
+    const { pass_kid: _kid, server_id: _id, ...legacy } = host.deserializeAttachment() as Record<string, unknown>;
+    host.serializeAttachment(legacy);
+    await first.evict();
+    expect((await first.openPair("role=guest")).closedWith).toBeNull();
+    expect(host.closedWith).toBeNull();
+    expect(host.json(1)).toMatchObject({ type: "guest" });
+  });
+
+  test("a pairing host admitted before its key id was kept goes once the settings revoke a PC: at its next arrival, frame or alarm", async () => {
+    const keyed = `role=host&server_id=${SERVER}&public_key=${PC.publicKey}`;
+    for (const by of ["arrival", "frame", "alarm"] as const) {
+      const fake = fakeState();
+      const first = await world("enforce", undefined, fake);
+      const host = await first.openPair(keyed, await passFor());
+      first.box.room.webSocketMessage(host, answerServerChallenge(host.sent.shift(), PC.secretKey, { server_id: SERVER, role: "pair-host", connection_id: "AB1" })!);
+      expect(host.json(0)).toEqual({ type: "waiting" });
+      // the attachment as the previous relay version saved it: the pass's expiry only
+      const { pass_kid: _kid, server_id: _id, ...legacy } = host.deserializeAttachment() as Record<string, unknown>;
+      host.serializeAttachment(legacy);
+      await first.evict();
+      // a deploy that revokes the PC: nothing on the attachment names it, so any revocation may
+      const w = await world("enforce", undefined, fake, { RELAY_PASS_REVOKED: SERVER });
+      if (by === "arrival") expect([by, (await w.openPair("role=guest")).closedWith?.code]).toEqual([by, 4404]);
+      else if (by === "frame") w.box.room.webSocketMessage(host, new Uint8Array([1, 2, 3]).buffer);
+      else await w.box.room.alarm();
+      expect([by, host.closedWith]).toEqual([by, { code: 4402, reason: "relay pass invalid" }]);
+    }
+  });
+
+  test("a pairing host whose pass holds crosses into enforcement, then wakes the room only at its own times", async () => {
+    const enforceAt = T0 + 1000;
+    const w = await world("grace", new Date(enforceAt).toISOString());
+    const host = await w.openPair(`role=host&server_id=${SERVER}&public_key=${PC.publicKey}`, await passFor());
+    expect(w.fake.state.alarm).toBe(enforceAt);
+    w.box.room.webSocketMessage(host, answerServerChallenge(host.sent.shift(), PC.secretKey, { server_id: SERVER, role: "pair-host", connection_id: "AB1" })!);
+    setSystemTime(new Date(enforceAt));
+    w.fake.keepalive.set(host, new Date(enforceAt));
+    await w.box.room.alarm();
+    expect(host.closedWith).toBeNull();
+    expect(w.fake.state.alarm).toBe(enforceAt + IDLE_MS);
+  });
+
+  test("in grace a pairing host whose pass ran out does not wake the room every second", async () => {
+    const w = await world("grace", new Date(T0 + 24 * 3_600_000).toISOString());
+    const host = await w.openPair(`role=host&server_id=${SERVER}&public_key=${PC.publicKey}`, await passFor(SERVER, T0 - RELAY_PASS_LIFETIME_S * 1000 + 60_000));
+    w.box.room.webSocketMessage(host, answerServerChallenge(host.sent.shift(), PC.secretKey, { server_id: SERVER, role: "pair-host", connection_id: "AB1" })!);
+    const lapse = T0 + 60_000 + RELAY_PASS_SKEW_S * 1000;
+    setSystemTime(new Date(lapse));
+    w.fake.keepalive.set(host, new Date(lapse));
+    await w.box.room.alarm();
+    expect(host.closedWith).toBeNull();
+    expect(w.fake.state.alarm).toBe(lapse + IDLE_MS);
+  });
+
   test("a check result the request itself carries is never trusted", async () => {
     const w = await world("enforce");
     const forged = JSON.stringify({ state: "ok", exp: T0 + 3_600_000 });

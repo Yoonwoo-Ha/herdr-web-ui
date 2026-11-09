@@ -219,7 +219,8 @@ export class RelayPassKeeper {
       const { challenge_id: challengeId, frame } = await challenge.json() as { challenge_id?: unknown; frame?: unknown };
       const answer = answerServerChallenge(frame, importSecretKey(identity.secret_key), { server_id: identity.server_id, role: "account", connection_id: typeof challengeId === "string" ? challengeId : null });
       if (!answer || typeof challengeId !== "string") return this.failed(null);
-      const response = await post("/v1/pc/relay-pass", { server_id: identity.server_id, challenge_id: challengeId, proof: answer, account });
+      // the pass forms this PC reads (shared/relay-pass.ts): the service signs v2 only for a PC that names it
+      const response = await post("/v1/pc/relay-pass", { server_id: identity.server_id, challenge_id: challengeId, proof: answer, account, pass_versions: [1, 2] });
       if (this.stopped) return;
       if (response.status === 403 || response.status === 409) {
         const code = ((await response.json().catch(() => null)) as { error?: { code?: unknown } } | null)?.error?.code;

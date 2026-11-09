@@ -9,7 +9,7 @@ import type { OrderSequence } from "./order-sequence.ts";
 import type { DevicePairedEvent, DeviceRemovedEvent, HealthAuth, RelayPairingsEvent, RemotePairingsEvent, SecuritySummary, SessionSnapshot } from "../shared/protocol.ts";
 import { DEFAULT_PORT } from "../shared/protocol.ts";
 import { authClient, deviceAuthorizationValue, deviceCookieValue, bearerMatches, handleAuthRequest, isAuthenticated, isSecureRequest, parseCookies, presentedToken, presentedTokenHeld, recordPresentedTokenFailure, requiresAuth, unauthorizedJson } from "./auth.ts";
-import { bindScope, cameThroughProxy, decideAccess, forwardingHeaders, inTailnet, isLoopbackAddress, isServeOwnerRequest, lanExposed, observedIngress } from "./access.ts";
+import { bindScope, cameThroughProxy, decideAccess, forwardingHeaders, inTailnet, isLoopbackAddress, isServeOwnerRequest, lanExposed, observedIngress, ownerAccess } from "./access.ts";
 import { type DeviceStore, handleDeviceRequest, newStreamKey, sameBrowser, streamCookie, streamKeys, type DeviceMatch } from "./devices.ts";
 import { handlePreferencesRequest, type PreferenceStore } from "./preferences.ts";
 import { handleSeenRequest, type SeenStore } from "./seen.ts";
@@ -33,7 +33,7 @@ import { textEditAllowed } from "./file-edit.ts";
 import { handleFileRequest } from "./file-routes.ts";
 import { BACKGROUND_AGENT_PATH, handleBackgroundAgentRequest } from "./background-agent.ts";
 import { paneGet, ping } from "./herdr/client.ts";
-import { RUNTIME_MOVE_PATH } from "./runtime-move.ts";
+import { RUNTIME_MOVE_PATH, RUNTIME_MOVE_ROUTE } from "./runtime-move.ts";
 import type { StopRefusal } from "./runtime-move-service.ts";
 import type { MoveService } from "./runtime-move-service.ts";
 import { handlePushRequest } from "./push.ts";
@@ -59,6 +59,7 @@ import type { UsageAccountList } from "./usage-account-list.ts";
 import { handleVoiceRequest } from "./voice.ts";
 import { BRIDGE_PROTOCOL } from "../shared/machines.ts";
 import { bridgeIdentity } from "./bridge.ts";
+import { discoverHerdrSessions } from "./herdr-discovery.ts";
 import { handleMachineRequest, nonCanonicalPath, slowMachinePath, type EventStreamBudget } from "./machine-api.ts";
 import { handleSessionHistoryRequest, handleSessionResumeRequest, SESSION_HISTORY_PATH, SESSION_RESUME_PATH } from "./session-history-routes.ts";
 import type { PiSessionReader } from "./pi-session-metadata.ts";
@@ -162,8 +163,11 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   // replaced (server/machines.ts ownOffer). An install still names the offered revision and the
   // custom header (update-api.ts), and whoever holds the token already drives every pane here. Only those two
   // requests, each by its own method and with no query: the token opens nothing else of these routes (#2054)
-  const bridgeUpdatePath = url.search === "" && (pathname === "/api/updates" ? request.method === "GET" : pathname === "/api/updates/install" && request.method === "POST");
-  const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === SESSION_HISTORY_PATH || pathname === SESSION_RESUME_PATH || pathname === "/api/agents" || pathname === "/api/agent-catalog" || pathname === INSTALL_PATH || pathname === SIGN_IN_PATH || pathname === "/api/agent/rename" || pathname === "/api/agent/commands" || pathname === "/api/integrations" || (pathname === "/api/system" && request.method === "GET") || pathname === "/api/usage/statusline" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname === "/ws" || bridgeUpdatePath;
+  const bridgeUpdatePath = url.search === "" && (pathname === "/api/updates" ? request.method === "GET" : (pathname === "/api/updates/install" || pathname === "/api/updates/cancel") && request.method === "POST");
+  // the same server runs the move to herdr-core here for the person on its side (docs/runtime-move.md,
+  // "On another PC"); each move route still asks for the app's own header and no query (updateRequestAllowed)
+  const bridgeMovePath = RUNTIME_MOVE_ROUTE.test(pathname);
+  const bridgePath = pathname === "/api/bridge" || pathname === "/api/session" || pathname === SESSION_HISTORY_PATH || pathname === SESSION_RESUME_PATH || pathname === "/api/agents" || pathname === "/api/agent-catalog" || pathname === INSTALL_PATH || pathname === SIGN_IN_PATH || pathname === "/api/agent/rename" || pathname === "/api/agent/commands" || pathname === "/api/integrations" || (pathname === "/api/system" && request.method === "GET") || pathname === "/api/usage/statusline" || pathname === "/api/plugins/actions" || pathname === "/api/plugin/action" || pathname.startsWith("/api/pane/") || pathname.startsWith("/api/workspace/") || pathname.startsWith("/api/worktree/") || pathname.startsWith("/api/tab/") || pathname === "/api/layout/ratio" || pathname.startsWith("/api/fs/") || pathname === "/ws" || bridgeUpdatePath || bridgeMovePath;
   const ip = relayPeer === undefined ? ctx.requestIP(request) : null;
   const loopback = ip !== null && isLoopbackAddress(ip.address);
   const forwarded = relayPeer === undefined && cameThroughProxy(request.headers);
@@ -349,8 +353,15 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
 
   if (pathname === "/api/bridge") {
     setRequestRoute(pathname);
-    if (token === "" && !bridgeAuthorized) return unauthorizedJson();
-    try { return jsonResponse(await bridgeIdentity(sidecar)); } catch (error) { return errorResponse(error); }
+    const discover = url.searchParams.get("discover") === "herdr";
+    // discovery is the owner's (a paired driving device, their Tailscale login, this PC) or the bridge token's, on a
+    // tokenless installation too; the identity alone stays the bridge token's there
+    if (discover && !bridgeAuthorized && !ownerAccess(access)) return jsonResponse({ error: { code: "forbidden", message: "Only the owner can discover this PC's sessions" } }, 403);
+    if (token === "" && !bridgeAuthorized && !discover) return unauthorizedJson();
+    try {
+      const identity = await bridgeIdentity(sidecar);
+      return jsonResponse(discover ? { ...identity, found_herdr_sessions: await discoverHerdrSessions() } : identity);
+    } catch (error) { return errorResponse(error); }
   }
   if (pathname === "/api/machines" || pathname.startsWith("/api/machines/")) {
     if (!machines) return jsonResponse({ error: { code: "bridge_only", message: "Manage PCs on the connection server" } }, 404);
@@ -363,7 +374,9 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     } else {
       // a worktree made with an agent waits on git and then agent.start, up to 150 s on the PC, and a
       // resume on agent.start and then its store check (machine-api.ts slowMachinePath)
-      ctx.timeout(request, pathname === "/api/machines/events" ? 0 : slowMachinePath(pathname.split("/").slice(4).join("/")) ? 180 : 80);
+      // a move's install there is waited for 200 s (machine-api.ts): this connection is held a little longer still
+      const machinePathAsked = pathname.split("/").slice(4).join("/");
+      ctx.timeout(request, pathname === "/api/machines/events" ? 0 : machinePathAsked === "runtime/move/install" ? 210 : slowMachinePath(machinePathAsked) ? 180 : 80);
       const deviceId = access.level === "full" ? access.device?.id : undefined;
       // a device's enrollment is news to every stream but the new device's own: one the stream's
       // device cookie names, or one this browser asked for itself (its stream key, server/devices.ts),
@@ -391,7 +404,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
         if (!approver) listener({ type: "relay-pairings", pairings: [] });
         return () => { stopPaired(); stopRemoved?.(); stopRelay?.(); };
       } };
-      const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : portalRecheckMs !== undefined ? (close) => { const timer = setTimeout(close, portalRecheckMs); return () => clearTimeout(timer); } : undefined, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget);
+      const response = await handleMachineRequest(request, machines, deviceId ? (close) => devices.onRevoke(deviceId, close) : portalRecheckMs !== undefined ? (close) => { const timer = setTimeout(close, portalRecheckMs); return () => clearTimeout(timer); } : undefined, preferences, readOnly, herdrSidebar, seen, pairings, ctx.relayBodyBudget, ownerAccess(access));
       response.headers.set("cache-control", "no-store");
       if (issuedKey !== null && response.ok) response.headers.append("set-cookie", streamCookie(issuedKey, isSecureRequest(request)));
       return response;
@@ -483,6 +496,12 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     } catch (error) { return errorResponse(error); }
   }
 
+  // installing an update on this PC (Ovis or herdr; a check installs too where OVIS_AUTO_UPDATE=1) is the owner's, as changing its PCs is (machine-api.ts): from any device
+  // he signed in or paired himself. The connection server's bridge token asks its own install by revision (bridgeUpdatePath)
+  if (request.method === "POST" && (pathname === "/api/updates/install" || pathname === "/api/updates/cancel" || pathname === "/api/updates/check" || pathname === "/api/herdr/update") && !ownerAccess(access) && !(bridgeAuthorized && bridgeUpdatePath)) {
+    setRequestRoute(pathname);
+    return jsonResponse({ error: { code: "forbidden", message: "Only the owner's own signed-in or paired devices can update this PC, from this app's own page." } }, 403);
+  }
   if (pathname === "/api/updates" || pathname.startsWith("/api/updates/")) {
     // the bridge token cannot read /api/access: where this server answers comes with its update status (#2191)
     // the port is this server's own; a tailscale that cannot be read only leaves the https address out
@@ -584,7 +603,8 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     // Only a driving owner is told: a session name can name a project, which a watching device or a
     // stranger on an open install has no need to read
     const owner = access.level === "full" && access.role === "drive" && access.via !== "open";
-    const herdr_runtime = owner ? options.runtimeService?.facts() : undefined;
+    // the connection server that reaches this PC with its bridge token shows its move badge from them
+    const herdr_runtime = owner || bridgeAuthorized ? options.runtimeService?.facts() : undefined;
     // the boot id lets the launcher know its own new bridge without waiting on herdr (server/supervisor.ts);
     // the runtime facts ride along, so Settings can switch back while herdr's TUI is stopped
     if (url.searchParams.get("scope") === "bridge") return jsonResponse({ ok: true, auth, bridge_protocol: BRIDGE_PROTOCOL, ...relay, ...(security ? { security } : {}), web_ui: { boot_id: bootId }, runtime: runtime(), ...(options.launchAccepted ? { accepted: options.launchAccepted() } : {}), ...(herdr_runtime ? { herdr_runtime } : {}) }, 200, securityHeaders);
@@ -620,11 +640,19 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     return answer.ok ? jsonResponse({ accepted: true }, 202) : jsonResponse({ error: { code: answer.code, message: answer.message } }, answer.status);
   }
 
+  // who may move this PC's runtime: a driving owner, or the connection server holding the bridge token,
+  // which already drives every pane here. A Portal visitor never, whatever its role. A relay device that
+  // drives may: a connection server reaches a PC added through the relay as one
+  const moveDriver = bridgeAuthorized || access.level === "full" && access.role === "drive" && access.via !== "open" && access.via !== "portal";
+
   if (pathname === `${RUNTIME_MOVE_PATH}/install`) {
     setRequestRoute(pathname);
     // downloads and runs a program on this PC: the runtime switch's own boundary, and only from this app's page
-    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can install herdr-core" } }, 403);
+    if (!moveDriver) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can install herdr-core" } }, 403);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
+    // its download alone may take 120 s (herdr-core/install.ts): the answer outlasts the usual minute, as
+    // another PC's proxy waits for it (machine-api.ts slowMachinePath)
+    ctx.timeout(request, 180);
     if (!updateRequestAllowed(request)) return jsonResponse({ error: { code: "forbidden", message: "an install must come from this app's own page" } }, 403);
     const move = ctx.services.runtimeMove;
     if (!move) return jsonResponse({ error: { code: "runtime_locked", message: "this server cannot switch its runtime" } }, 409);
@@ -640,7 +668,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === `${RUNTIME_MOVE_PATH}/stop`) {
     setRequestRoute(pathname);
     // ends a command in a pane of this PC: the move's own boundary, and only from this app's page
-    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can end a pane's command" } }, 403);
+    if (!moveDriver) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can end a pane's command" } }, 403);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
     if (!updateRequestAllowed(request)) return jsonResponse({ error: { code: "forbidden", message: "a stop must come from this app's own page" } }, 403);
     const move = ctx.services.runtimeMove;
@@ -665,7 +693,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === `${RUNTIME_MOVE_PATH}/stop-all`) {
     setRequestRoute(pathname);
     // ends commands in panes of this PC: the move's own boundary, and only from this app's page
-    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can end a pane's command" } }, 403);
+    if (!moveDriver) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can end a pane's command" } }, 403);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
     if (!updateRequestAllowed(request)) return jsonResponse({ error: { code: "forbidden", message: "a stop must come from this app's own page" } }, 403);
     const move = ctx.services.runtimeMove;
@@ -690,7 +718,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   if (pathname === RUNTIME_MOVE_PATH) {
     setRequestRoute(pathname);
     // folders and conversation ids of every pane, and agents ended and started: the runtime switch's own boundary
-    if (!(access.level === "full" && access.role === "drive" && access.via !== "open")) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can move its runtime" } }, 403);
+    if (!moveDriver) return jsonResponse({ error: { code: "forbidden", message: "only a device that drives this PC can move its runtime" } }, 403);
     const move = ctx.services.runtimeMove;
     if (!move) return jsonResponse({ error: { code: "runtime_locked", message: "this server cannot switch its runtime" } }, 409);
     if (request.method === "GET") {
@@ -706,6 +734,10 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     try {
       const refused = await move.start(revision);
       if (refused === null) return jsonResponse({ accepted: true }, 202);
+      // another Ovis server of this herdr session (the PC's own, or a connection server's bridge) moves it
+      if (refused === "locked") return jsonResponse({ error: { code: "already_moving", message: "Another Ovis on this PC is moving this herdr session already: its own page, or a connection server reaching it. Wait for that move to end; a holder that stopped lets go on its own." } }, 409);
+      // why the lock cannot be taken here, in MoveLockUnsafe's own words (none names a path)
+      if (typeof refused === "object") return jsonResponse({ error: { code: "move_lock_unsafe", message: refused.lock_unsafe } }, 409);
       return jsonResponse({ error: { code: refused, message: refused === "plan_changed" ? "the panes changed since the plan was shown: look again" : refused === "already_moving" ? "a move is already waiting or running" : refused === "runtime_switching" ? "the server is switching its runtime: try again once it is back" : "no move to herdr-core is offered here" } }, 409);
     } catch (error) {
       return errorResponse(error);

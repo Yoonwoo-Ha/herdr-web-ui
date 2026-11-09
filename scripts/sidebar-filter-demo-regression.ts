@@ -173,7 +173,7 @@ async function rosterView(page: Page) {
 
 /** Everything this page keeps: folds, pins and the rest, to prove a filter writes none of it and the query is nowhere. */
 const storageView = (page: Page) => page.evaluate(() => {
-  const read = (store: Storage) => Object.fromEntries(Object.keys(store).sort().map((key) => [key, store.getItem(key)]));
+  const read = (store: Storage) => Object.fromEntries(Object.keys(store).filter((key) => key !== "ovis:chat-positions").sort().map((key) => [key, store.getItem(key)]));
   return { local: read(localStorage), session: read(sessionStorage) };
 });
 
@@ -447,6 +447,9 @@ async function happyPath(browser: Browser, scene: Scene): Promise<void> {
   const pins = JSON.stringify([`local:workspace:w1H`, `build:${panes.omp}`]);
   const { context, page, errors } = await newPage(browser, scene, `pane=${encodeURIComponent(WEB)}`, { "ovis:sidebar-agent-pins": pins });
   try {
+    // the demo ends the api pane's turn a few seconds after load (site/demo/transport.ts) and the Agents list reorders
+    // when it does: the roster every later step is compared with is the one after that, the Laptop's row done
+    await page.locator(`.agents-sidebar .agent-item[data-machine="local"][data-pane="${panes.api}"] [data-status="done"]`).waitFor({ state: "attached", timeout: 15_000 });
     const before = await rosterView(page);
     const storageBefore = await storageView(page);
     assert.equal(before.groups.map((group) => group.name).join(","), "Laptop,Build PC", `${name}: two connected PCs`);

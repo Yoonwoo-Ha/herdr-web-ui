@@ -7,7 +7,7 @@
  * the providers the service says it offers get a button. Elsewhere, and with the account off, none
  * of this.
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { listThisPc, thisPcInNoAccount } from "../lib/account/addThisPc.ts";
 import { desktopAccount, desktopProviders, desktopSignIn } from "../lib/account/desktop.ts";
@@ -34,7 +34,7 @@ type View =
 const isDeviceProvider = (provider: AccountProvider): provider is DeviceProvider => (DEVICE_PROVIDERS as readonly string[]).includes(provider);
 
 /** The link page as a person reads it off the screen: account.ovis.sh/link. */
-const linkAddress = (uri: string): string => { const url = new URL(uri); return url.host + url.pathname; };
+export const linkAddress = (uri: string): string => { const url = new URL(uri); return url.host + url.pathname; };
 
 /** The pairing window this screen keeps open is reopened a minute before its ten minutes end. */
 const RELIST_MS = 9 * 60_000;
@@ -147,8 +147,8 @@ export interface AccountState {
 /** the phone and Mac apps sign in their own way, never with a code from a PC's page */
 const pcServiceHere = (): string | null => desktopAccount() === null && !inNativeApp() && !inMacApp() ? pcAccountServiceOf(document, window.isSecureContext) : null;
 
-/** whether this page can sign in to the account: the desktop app's bridge, or the account service a PC's page names */
-export const accountOffered = (): boolean => desktopAccount() !== null || pcServiceHere() !== null;
+/** the account service this page signs in with: the desktop app's, or the one a PC's page names; null for none */
+export const accountServiceHere = (): string | null => desktopAccount()?.service ?? pcServiceHere();
 
 /**
  * The first-run welcome's sign-in (components/SetupGuide.tsx): the same sign-in in a box of its own,
@@ -159,7 +159,7 @@ export interface WelcomeAccount { lead: ReactNode; later: ReactNode }
 /** `onAccount`: the page lists the account's PCs itself (My devices), so this group does not */
 export function AccountSection({ onAccount, welcome, recheck = 0 }: {
   onAccount?: (state: AccountState) => void; welcome?: WelcomeAccount;
-  /** bumped to ask the account service again now (Settings bumps it when Add a connection opens) */
+  /** bumped to ask the account service again now, and read the sign-in again (Settings bumps it when Add a connection opens, and once its relay tab signed in) */
   recheck?: number;
 } = {}) {
   const t = useT();
@@ -219,7 +219,17 @@ export function AccountSection({ onAccount, welcome, recheck = 0 }: {
     }
   }, [t]);
 
-  useEffect(() => { if (offered) void load(); }, [offered, load]);
+  const recheckAccount = useEffectEvent(() => {
+    switch (view.kind) {
+      case "device-code":
+      case "signing-in": return;
+      case "loading":
+      case "signed-out":
+      case "signed-in": if (offered) void load(); return;
+      default: view satisfies never;
+    }
+  });
+  useEffect(() => { recheckAccount(); }, [offered, load, recheck]);
   useEffect(() => {
     onAccount?.({ signedIn: view.kind === "signed-in", account: view.kind === "signed-in" ? view.account : null, pcs: view.kind === "signed-in" ? view.pcs : null, reachable: !unreachable });
   }, [onAccount, view, unreachable]);
@@ -420,11 +430,13 @@ export function AccountSection({ onAccount, welcome, recheck = 0 }: {
   }
 
   return (
-    <SettingsGroup title={t("Account")} section="account">
+    <SettingsGroup title={t("Account")} section="account" keepNote note={view.kind === "signed-out" ? t("Sign in to use this PC from your phone and your other PCs.|account group") : undefined}>
       {signInParts}
       {view.kind === "signed-in" && (
         <>
-          <SettingsRow label={t("Signed in with {provider}", { provider: PROVIDER_NAMES[view.provider] })}>
+          {/* which account: the service keeps no login or email, so its id names it, whole in the tooltip (G-106) */}
+          <SettingsRow label={t("Signed in with {provider}", { provider: PROVIDER_NAMES[view.provider] })}
+            description={<span title={view.account}>{t("Account")} <code className="account-id">{view.account.length > 12 ? `${view.account.slice(0, 12)}…` : view.account}</code></span>}>
             <button type="button" className="btn" onClick={signOut}>{t("Sign out of {provider}", { provider: PROVIDER_NAMES[view.provider] })}</button>
           </SettingsRow>
           {view.methods !== null && (
@@ -438,9 +450,10 @@ export function AccountSection({ onAccount, welcome, recheck = 0 }: {
                       <span>{PROVIDER_NAMES[method.provider]}</span>
                       <span className="settings-description">{t("Added {date}", { date: new Date(method.added_at).toLocaleDateString(currentLocale()) })}</span>
                     </span>
-                    {/* the method this device signed in with stays: removing it would end this sign-in */}
+                    {/* the method this device signed in with stays: removing it would end this sign-in. The button names
+                        what it removes (G-174) */}
                     {view.methods !== null && view.methods.length > 1 && method.provider !== view.provider && (
-                      <button type="button" className="btn" onClick={() => removeMethod(method.provider)}>{t("Remove")}</button>
+                      <button type="button" className="btn" onClick={() => removeMethod(method.provider)}>{t("Remove {provider}", { provider: PROVIDER_NAMES[method.provider] })}</button>
                     )}
                   </li>
                 ))}

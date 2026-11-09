@@ -40,9 +40,22 @@
 .agent-section-count {
   width: var(--side-box);
   margin-left: auto;
-  font-size: var(--fs-xs);
+  font-size: var(--fs-meta);
   font-variant-numeric: tabular-nums;
   text-align: center;
+}
+
+/* the folded list still says how many of its agents wait for the reader (G-016), in the state's colour,
+   inside the head's own text: the caret and the head keep their place */
+.agent-section-waiting {
+  min-width: 0;
+  margin-inline-start: var(--space-2);
+  overflow: hidden;
+  color: var(--status-blocked);
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-list {
@@ -59,7 +72,7 @@
   margin: var(--space-2) 0 0;
   padding-left: var(--side-box);
   color: var(--text-dim);
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tracking-caps);
   line-height: var(--lh-tight);
@@ -91,7 +104,7 @@
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tracking-caps);
   line-height: var(--lh-tight);
@@ -117,7 +130,7 @@
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: var(--fs-2xs);
+  font-size: var(--fs-meta);
   font-weight: var(--fw-semibold);
   letter-spacing: var(--tracking-caps);
   line-height: var(--lh-tight);
@@ -202,6 +215,7 @@
 /* The trailing padding keeps the state cell, which the row draws at its right edge after the ⋯, as
    a workspace row does; the fill is the whole row's. */
 .agent-item {
+  --row-fill: var(--bg-panel);
   position: relative;
   display: flex;
   align-items: center;
@@ -226,14 +240,15 @@
   cursor: pointer;
 }
 
-.agent-row:focus-visible { outline-offset: calc(var(--ring-offset) * -1); }
+/* the common ring, 2px outside the row (G-034); scroll-margin keeps it in view at the list's edges */
+.agent-row:focus-visible { outline-offset: var(--ring-offset); scroll-margin-block: calc(var(--ring-offset) + var(--space-1)); }
 .agent-row:disabled { cursor: default; }
 
 @media (hover: hover) {
-  .agent-item:has(> .agent-row:enabled):hover { background: var(--side-hover); }
+  .agent-item:has(> .agent-row:enabled):hover { --row-fill: var(--side-hover); background: var(--side-hover); }
 }
 
-.agent-item.is-selected { background: var(--side-selected); }
+.agent-item.is-selected { --row-fill: var(--side-selected); background: var(--side-selected); }
 
 /* as a workspace row's in forced colors (Sidebar.css): a Highlight leading bar instead of the erased fill,
    drawn inside the row, since the list scrolls and would clip anything pulled into its edge; beside the focus
@@ -253,8 +268,9 @@
   }
 }
 
-/* As a workspace row's: the ⋯ takes no room until the row is hovered, focused, selected or its
-   menu is open, and stays in the focus order, since the menu hands the focus back to it. */
+/* As a workspace row's: the ⋯ takes no room until the row is hovered, focused or its menu is open, and
+   stays in the focus order, since the menu hands the focus back to it. On touch and in the drawer the
+   selected row keeps it too; a desktop shows it under the pointer and the keyboard alone (G-021). */
 .agent-actions {
   display: flex;
   align-items: center;
@@ -262,14 +278,16 @@
   width: 0;
   overflow: hidden;
   opacity: 0;
+  /* out of the accessibility tree and the tab order while unseen: the row's selector is its one stop */
+  visibility: hidden;
 }
 
 .agent-item:focus-within > .agent-actions,
-.agent-item.is-selected > .agent-actions,
 .agent-actions:has([aria-expanded="true"]) {
   width: auto;
   overflow: visible;
   opacity: 1;
+  visibility: visible;
 }
 
 @media (hover: hover) {
@@ -277,12 +295,17 @@
     width: auto;
     overflow: visible;
     opacity: 1;
+    visibility: visible;
   }
 }
 
-/* as a workspace row's (Sidebar.css): no "..." button where there is a mouse and room for a right-click */
-@media (pointer: fine) and (min-width: 769px) {
-  .agent-actions { display: none; }
+@media (pointer: coarse), (max-width: 768px) {
+  .agent-item.is-selected > .agent-actions {
+    width: auto;
+    overflow: visible;
+    opacity: 1;
+    visibility: visible;
+  }
 }
 
 .agent-copy {
@@ -305,13 +328,15 @@
   white-space: nowrap;
 }
 
+/* an agent's name is navigation: a step back from its state (G-042); the selected row's in the strong ink and
+   a heavier weight, so the selection is not colour alone (G-035) */
 .agent-title {
-  color: var(--text);
+  color: var(--text-dim);
   font-size: var(--fs-md);
   font-weight: var(--fw-regular);
 }
 
-.agent-item.is-selected .agent-title { color: var(--text-strong); }
+.agent-item.is-selected .agent-title { color: var(--text-strong); font-weight: var(--fw-selected); }
 
 .agent-title-line {
   display: flex;
@@ -354,9 +379,36 @@
 
 .agents-sidebar.is-one-line .agent-title-line { flex: 0 1 auto; }
 
+/* the place gives way down to a couple of letters and its ellipsis, never a stray letter; the title then */
 .agents-sidebar.is-one-line .agent-context {
   flex: 1 1 0;
-  min-width: 0;
+  min-width: 2.5em;
+}
+
+/* as a compact workspace row's: the state at the row's end in a cell its glyph's size, and under a pointer the ⋯
+   over that cell, so the title and the place never move when it shows (Sidebar.css) */
+.agents-sidebar.is-one-line .agent-item { padding-right: var(--space-6); }
+
+.agents-sidebar.is-one-line .agent-row > .agent-row-state { width: var(--space-6); }
+
+/* the badge fills that cell: a state that draws nothing (ready, unknown) keeps its box, label and tooltip */
+.agents-sidebar.is-one-line .agent-row > .agent-row-state > .sidebar-status {
+  flex-basis: 100%;
+  width: 100%;
+}
+
+/* the ⋯ shows just before the state's cell, over the end of the row's words, which fade out under it into the row's own
+   fill (--row-fill, set with each fill above): the state stays in sight and nothing moves */
+@media (hover: hover) and (pointer: fine) and (min-width: 769px) {
+  .agents-sidebar.is-one-line .agent-item > .agent-actions {
+    position: absolute;
+    inset-block: 0;
+    right: var(--space-6);
+    padding-inline-start: var(--space-4);
+    background: linear-gradient(to right, transparent, var(--row-fill) var(--space-4));
+  }
+
+  .agents-sidebar.is-one-line .agent-item > .agent-actions .sidebar-row-action { width: var(--space-6); }
 }
 
 /* a helper an agent started (herdr-core's parent) reads under that agent on one line, a workspace
@@ -480,6 +532,7 @@
     width: auto;
     overflow: visible;
     opacity: 1;
+    visibility: visible;
   }
 }
 
@@ -491,4 +544,31 @@
 @media (hover: none) and (pointer: coarse) {
   .agent-row:enabled:active { opacity: 1; }
   .agent-item:has(> .agent-row:enabled:active) { background: var(--side-hover); }
+}
+
+/* Settings → Sidebar rows → One line (the default), as herdr-app's list: a row's counts, marks and the agent's own
+   words show under the pointer or the focus (what the user turned on, the context ring and plugin values, stays) (a finger, which cannot point, keeps them); a waiting row says how long it has waited, dim before its state */
+@media (pointer: fine) {
+  .agents-sidebar.is-compact { --side-row: calc(var(--control-h) - var(--space-1) - var(--hairline) * 2); }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agents-sidebar.is-compact .agent-item:not(:hover, :focus-within) :is(.agent-row-status > :not(.sidebar-filter-note, .context-count), .agent-blocked, .agent-progress) {
+    /* out of sight, still read by a screen reader */
+    position: absolute;
+    width: var(--hairline);
+    height: var(--hairline);
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+.agent-since {
+  flex: 0 0 auto;
+  padding-inline: var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }

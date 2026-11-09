@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, type Page } from "playwright-core";
+import { chromium, type Locator, type Page } from "playwright-core";
 import type { ConversationTurn } from "../shared/protocol.ts";
 import type {} from "./chat-virtual-fixture.tsx";
 
@@ -82,6 +82,16 @@ async function settleBottom(page: Page) {
     const node = document.querySelector(".chat-view");
     return node && node.scrollHeight - node.clientHeight - node.scrollTop <= 1;
   });
+}
+/** Back to the end by the chat's own button, then until the chat follows it and this pane's stored place says so: what a reload after it opens at. */
+async function toFollowedEnd(page: Page, jump: Locator) {
+  await jump.click();
+  await jump.waitFor({ state: "detached" });
+  // the list's own scroll to its end can stop short by less than the layout allowance, which the chat
+  // follows from: the reader, following now, scrolls the rest of the way
+  await page.locator(".chat-view").evaluate((node) => { node.scrollTop = node.scrollHeight; });
+  await settleBottom(page);
+  await page.waitForFunction(() => (JSON.parse(sessionStorage.getItem("ovis:chat-positions") ?? "[]") as [string, { atEnd: boolean }][]).some(([id, place]) => id === "same-pane" && place.atEnd));
 }
 async function update(page: Page) {
   const response = page.waitForResponse((response) => response.url().includes("/conversation?") && !new URL(response.url()).searchParams.has("before"));
@@ -699,6 +709,11 @@ try {
     await shot(page, `restored-work-${width}-${theme}`);
     console.log(`PASS ${width} ${theme}: outside-row selection, focused row, disclosures and the whole output survive eviction`);
 
+    // the reload below is a reader's who follows the end: one scrolled up gets their place back
+    // (chatScrollMemory). The view at its end is not yet the chat's word that the reader follows it (a
+    // reader who opened work stays away there, and a later scroll remembers a row): Jump to latest is,
+    // and the place it remembers
+    await toFollowedEnd(page, page.locator(".chat-virtual-jump"));
     await page.reload();
     await page.getByText("REVISION-102", { exact: true }).waitFor();
     await settleBottom(page);
@@ -788,6 +803,9 @@ try {
       assert.equal(await retained.locator(".work-row-head").getAttribute("aria-expanded"), "true");
       assert.ok(Math.abs(await retained.evaluate((row) => row.getBoundingClientRect().top) - y) <= 1, "sliding latest page preserves the logical reading anchor");
       await page.evaluate(() => getSelection()?.removeAllRanges());
+      // the next reload is a following reader's, as REVISION-102's above: this reader is scrolled up at
+      // ROW-497, and a reload gives that place back (chatScrollMemory)
+      await toFollowedEnd(page, page.getByRole("button", { name: "New messages" }));
       console.log(`PASS ${width} ${theme}: unheld newest cursor slides from ${origin ? "origin" : "a page"} without moving row identity, selection, disclosure or reading anchor`);
     }
     if (theme === "dark") {

@@ -1,3 +1,4 @@
+// allow: SIZE_OK - the overlay's drawing and cleanup share its terminal and renderer state.
 /**
  * libghostty-vt draws every xterm terminal's screen, Kitty graphics pictures included, while xterm stays
  * the engine under it. xterm draws by itself only where this layer cannot: a module that does not load or
@@ -14,6 +15,7 @@ import { terminalDrawsPictures } from "../terminalImages.ts";
 import { followLateFaces, glyphFit, iconScale, oversizedIcon } from "../terminalGlyphs.ts";
 import { readableColor } from "../terminalFold.ts";
 import { isBoxGlyph } from "../terminalBoxGlyphs.ts";
+import { requestShownFrame } from "../shownFrame.ts";
 import { VIEW_MOVED_EVENT } from "./viewMoved.ts";
 import { GhosttyVt, STYLE_BOLD, STYLE_FAINT, STYLE_INVERSE, STYLE_INVISIBLE, STYLE_ITALIC, STYLE_STRIKE, STYLE_UNDERLINE_MASK, type GhosttyColors, type GhosttyImage, type GhosttyRun } from "./vt.ts";
 
@@ -79,6 +81,18 @@ function xtermRowRenderer(term: Terminal): XtermRowRenderer | null {
   const core = (term as unknown as { _core?: { _renderService?: { _renderer?: { value?: XtermRowRenderer } } } })._core;
   const renderer = core?._renderService?._renderer?.value;
   return renderer && typeof renderer.renderRows === "function" ? renderer : null;
+}
+
+/**
+ * xterm's cell in device pixels, which follows the font alone, or null before it measured one. While its renderer is
+ * paused (out of view) xterm tells a resize at once but resizes its screen later, from an idle task, so the screen
+ * measured then is the old grid's. Under the chat lens the pane sits in a `content-visibility: hidden` subtree, where
+ * the browser skips ResizeObserver, so nothing measured the screen again: the old screen over the new columns stuck (#3366).
+ */
+function xtermDeviceCell(term: Terminal): { width: number; height: number } | null {
+  const core = (term as unknown as { _core?: { _renderService?: { dimensions?: { device?: { cell?: { width: number; height: number } } } } } })._core;
+  const cell = core?._renderService?.dimensions?.device?.cell;
+  return cell && cell.width > 0 && cell.height > 0 ? cell : null;
 }
 
 /** xterm.js 6's own ANSI colours, which it draws with wherever the theme names none (the dark palettes name none) */
@@ -149,11 +163,15 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
   const rowRuns: GhosttyRun[][] = [];
   let cellW = 0;
   let cellH = 0;
-  let frameQueued = false;
+  let cancelFrame: (() => void) | null = null;
   const decoded = new Map<string, HTMLCanvasElement>();
 
   const metrics = (): void => {
-    const box = screen.getBoundingClientRect();
+    // the screen xterm draws for the grid it has now, rounded as its DomRenderer rounds it
+    const device = xtermDeviceCell(term);
+    const box = device
+      ? { width: Math.round(device.width * term.cols / (window.devicePixelRatio || 1)), height: Math.round(device.height * term.rows / (window.devicePixelRatio || 1)) }
+      : screen.getBoundingClientRect();
     cellW = box.width / term.cols;
     cellH = box.height / term.rows;
     const font = term.options.fontFamily ?? "monospace";
@@ -442,13 +460,13 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
   };
 
   const schedule = (): void => {
-    if (frameQueued || disposed) return;
-    frameQueued = true;
-    requestAnimationFrame(() => {
-      frameQueued = false;
+    if (cancelFrame !== null || disposed) return;
+    cancelFrame = requestShownFrame(() => {
+      cancelFrame = null;
       draw();
     });
   };
+  const cancelPaint = (): void => { cancelFrame?.(); };
 
   // every byte xterm is given, libghostty is given first, in the same order
   const write = term.write.bind(term);
@@ -490,6 +508,7 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
   } catch (error) {
     // the caller falls back to xterm: it gets its own write and reset back, so nothing reaches the freed module
     disposed = true;
+    cancelPaint();
     term.write = write;
     term.reset = reset;
     lateFaces.stop();
@@ -538,6 +557,7 @@ export async function attachGhosttyOverlay(term: Terminal, host: HTMLElement, ta
     dispose: () => {
       if (disposed) return;
       disposed = true;
+      cancelPaint();
       delete host.dataset["renderer"];
       unmuteXtermRows();
       term.refresh(0, term.rows - 1);

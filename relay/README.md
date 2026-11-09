@@ -110,7 +110,11 @@ pairing hosts, in a release most PCs run.
 - **The pass.** `ovp1.<payload>.<signature>`, base64url. The payload is JSON with exactly `v` (1),
   `kid`, `aud` (`ovis-relay`), `sid` (the PC's `server_id`), `iat` and `exp` (seconds; 48 hours
   apart, and a relay refuses one good for longer); the signature is Ed25519 over `ovis-relay-pass/1.` followed by the payload's text. It names
-  no account.
+  no account. A v2 payload has the same fields with `v` 2 and one more, `new`: 1 when new client
+  sessions to the PC are allowed, 0 when they are not for the pass's lifetime; a v1 pass allows
+  them. The prefix stays `ovp1.`: the signature covers the payload, `v` and `new` included. The
+  relay accepts both forms and parses `new`, but does not act on it yet: that is enforced by a
+  later relay change.
 - **Sending it.** The PC puts it in the `x-ovis-relay-pass` header of every PC socket's upgrade
   (control, data, warm), never in the URL. A pass alone opens nothing: the socket still answers the
   server challenge for that `server_id`'s key, so a copied pass is no use without the PC's secret key.
@@ -152,8 +156,14 @@ pairing hosts, in a release most PCs run.
   it offers (or offering none) closes `4402`, on Cloudflare in the Worker; a device that types a code
   never needs one. A host keeps its nameplate only while that holds: once enforcement begins, or its
   pass runs out (5 minutes allowed for clocks), it closes `4402` with its device, at the alarm set for
-  that moment or at the next frame or arrival in the room, whichever comes first. The PC then opens
-  the nameplate again with the pass it holds now.
+  that moment or at the next frame or arrival in the room, whichever comes first; once the relay
+  revokes its PC or no longer trusts its pass's key, at the next frame, arrival or alarm that the new
+  settings reach: after a deploy, a Durable Object may run the previous version and its settings for
+  a few minutes, and a host admitted by a version older than this check names no pass key or PC. Any
+  revocation in the settings closes it the same way (nothing on it says which PC was revoked); a key
+  removed from the settings cannot be matched against one, so without a revocation it is held to its
+  pass's expiry and its 11-minute deadline. The PC then opens the nameplate again with the pass it
+  holds now.
 - **Storage.** With passes off, and for pairing rooms always, the Durable Object never reads its
   storage.
 

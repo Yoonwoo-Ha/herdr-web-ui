@@ -230,7 +230,7 @@ async function tapAnyway(key: Locator): Promise<void> {
 async function tabTo(page: Page): Promise<string[]> {
   await lineOf(page).focus();
   const stops: string[] = [];
-  for (let step = 0; step < 4; step++) {
+  for (let step = 0; step < 6; step++) {
     const stop = await page.evaluate(() => {
       const active = document.activeElement as HTMLElement | null;
       return { name: active?.getAttribute("aria-label") ?? active?.className ?? "none", control: active?.matches('.pane-frame:not(.is-hidden) .key-bar [data-key="keyboard"]:focus-visible') === true };
@@ -331,8 +331,9 @@ async function currentModeKeyboard(browser: Browser): Promise<Record<string, unk
       cycles.push({ mode, field, draft, before, shown, up, hidden, down, after, framesDuring: after.frames.slice(before.frames.length) });
       console.log(`PASS keyboard control, ${mode} mode: Show focuses ${field} in the tap, measured up/down state, Hide blurs it, grid ${before.grid.rows} rows kept, no input/keys/resize/take-over frame, mode and settings unchanged`);
     }
-    // a hardware keyboard reaches the control by Tab from the input line (past its Enter button) and
-    // presses it with Enter, the native button's own activation: Show focuses the line again
+    // a hardware keyboard reaches the control by Tab from the input line (past its Insert and Enter
+    // buttons, the Input line switch and Paste: the bar's app commands are Tab stops in both modes)
+    // and presses it with Enter, the native button's own activation: Show focuses the line again
     await switchMode(page, "line");
     await blur(page);
     const routeBefore = await control(page);
@@ -970,7 +971,8 @@ async function captureSet(browser: Browser, dir: string): Promise<Capture[]> {
       await socket(page, { type: "input-ready", pane_id: panes.shell });
       await ready(page);
       // offline, held through its capture: the clock stops before the socket goes, so the reconnect it
-      // schedules waits until resumed, and the state is read on both sides of the screenshot
+      // schedules waits until resumed, and the state is read on both sides of the screenshot. The header still
+      // says live: a drop is said only once it outlasts the grace (src/lib/reconnectGrace.ts), whose clock stopped too
       await page.clock.pauseAt(await page.evaluate(() => Date.now()) + FLUSH_MS);
       await page.evaluate(() => { (window as unknown as QaWindow).recordedSockets.at(-1)!.close(); });
       await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('.pane-frame:not(.is-hidden) .key-bar [data-key="keyboard"]')?.disabled === true);
@@ -979,9 +981,14 @@ async function captureSet(browser: Browser, dir: string): Promise<Capture[]> {
         document.querySelector(".conn-reconnecting") !== null,
         document.querySelector(".conn-live") !== null,
       ]);
-      assert.deepEqual(await offlineNow(), [true, true, false], "offline before the capture: control disabled, header reconnecting");
-      await shot(page, `390-${theme}-disabled-offline`, meta("direct typing, the connection dropped (reconnect held): the bar and the control disabled, the header reconnecting"), true);
-      assert.deepEqual(await offlineNow(), [true, true, false], "still offline after the capture: the screenshot shows the offline state");
+      assert.deepEqual(await offlineNow(), [true, false, true], "offline before the capture: control disabled, header not yet saying it within the grace");
+      await shot(page, `390-${theme}-disabled-offline`, meta("direct typing, the connection dropped (reconnect held, inside the grace): the bar and the control disabled"), true);
+      assert.deepEqual(await offlineNow(), [true, false, true], "still offline after the capture: the screenshot shows the offline state");
+      // a key pressed meanwhile ends the grace at once, the clock still stopped: the person acting is told the
+      // connection is down (a bare Shift, so nothing is typed into the held draft)
+      await page.keyboard.press("Shift");
+      await page.waitForFunction(() => document.querySelector(".conn-reconnecting") !== null && document.querySelector(".conn-live") === null);
+      await page.getByText("Reconnecting to Ovis…").waitFor();
       await page.clock.resume();
       await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('.pane-frame:not(.is-hidden) .key-bar [data-key="keyboard"]')?.disabled === false, undefined, { timeout: 20_000 });
       await role(page, "observe");

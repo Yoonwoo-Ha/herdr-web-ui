@@ -60,8 +60,10 @@
   border: 0;
   cursor: pointer;
 }
-.update-notice-text:hover,
 .update-notice-text:focus-visible { text-decoration: underline; }
+@media (hover: hover) {
+  .update-notice-text:hover { text-decoration: underline; }
+}
 
 /* the reload warning is read in full on a phone: its sentence wraps instead of being cut */
 .update-notice.is-line.is-warning { flex-wrap: wrap; }
@@ -69,6 +71,19 @@
 
 .update-notice-dismiss {
   margin-inline-end: calc(var(--space-2) * -1);
+}
+
+/* a phone's notices (install hint, alerts, update): their 44px buttons set the height, so the line's own
+   padding stays small; the buttons keep their size and place (G-195, G-103) */
+@media (pointer: coarse) {
+  .update-notice {
+    padding-block: var(--space-1);
+  }
+
+  /* the sentence that is a button takes a tap over the line's whole height, as its buttons do */
+  .update-notice.is-line > .update-notice-text {
+    min-height: var(--touch-target);
+  }
 }
 
 .update-progress {

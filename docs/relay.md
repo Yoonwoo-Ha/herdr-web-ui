@@ -190,8 +190,9 @@ then waits for the approval. A PC that declines, or does not approve in time, le
 
 **Pairing with a typed code.** For a device with no camera pointed at the PC, **Show a code to
 type** under the QR code shows ten characters, `XXXXX-XXXXX` (Crockford base32: no I, L, O or U;
-O, I and L typed are read as 0, 1 and 1), and **Pair with a code** on app.ovis.sh's front page takes
-them. The code finds the PC and hands the device the same offer the QR code carries, then the
+O, I and L typed are read as 0, 1 and 1), and **Pair with a code** on app.ovis.sh takes them
+(on its front page, or behind **Pair with a QR or code** on the sign-in screen when the account
+service runs). The code finds the PC and hands the device the same offer the QR code carries, then the
 device pairs with the six-digit code in it as a scanned QR code does: nothing else admits it
 ([`shared/relay-pair-code.ts`](../shared/relay-pair-code.ts),
 [`server/relay/pair-code.ts`](../server/relay/pair-code.ts),
@@ -704,6 +705,10 @@ run yourself need no account and no pass.
   (`4402`, or `invalid`/`expired` in `sync`) is dropped and a new one asked for at once, at most once
   a minute. The service gives one only
   when that account lists the PC, so another account listing it neither charges nor blocks it.
+  The request names the pass forms the PC reads (`pass_versions: [1, 2]`): the service signs a v2
+  pass (one that can say new client sessions to the PC are not allowed) only for a PC that names
+  it, and only once every relay runs a version that reads it. An older PC names none and gets v1.
+  Relays accept v2 but do not act on `new` yet: that is enforced by a later relay change.
 - **Keeping it.** The pass lasts 48 hours. The PC keeps it in `relay/pass.json` (readable by your user
   only), so a restart or an account service outage costs nothing while it holds, and asks for the
   next one after 12 hours, backing off (and honoring `Retry-After`) when the service does not answer.
@@ -720,7 +725,9 @@ run yourself need no account and no pass.
   then stops reconnecting until it gets a pass, and reconnects as soon as it does. `GET /api/relay`
   says where it stands in `pass`: `state` (`ok`, `no_account`, `not_listed`, `limit` or
   `unavailable`), what the relay last said of it (`relay`), and from when the relay will need it
-  (`enforce_at`). `pass` is absent on a relay that is not Ovis's, and with
+  (`enforce_at`). `new_sessions: false` there means the pass in use says new client sessions to this
+  PC are not allowed for the pass's lifetime (enforced by a later relay change), shown only while
+  the relay says passes are on and this one holds (`relay` `ok`); it is absent otherwise. `pass` is absent on a relay that is not Ovis's, and with
   `OVIS_ACCOUNT_SERVICE_URL=off`. `error_code` says which of the reasons below it is.
 
 ## Why it is not online

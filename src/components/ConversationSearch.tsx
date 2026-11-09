@@ -38,6 +38,8 @@ interface ConversationSearchProps {
   agent: string | null;
   /** the history the chat shows: the search reads that one, and a replaced one is said */
   historyId: string | undefined;
+  /** the pane's own name, as the header shows it: the field says whose conversation it searches; null or the pane id: none to say */
+  title?: string | null;
   onClose: () => void;
   /** brings the picked turn into the chat; the dialog closes once it is there */
   onPick: (match: ConversationSearchMatch) => Promise<RevealResult>;
@@ -49,7 +51,7 @@ interface ConversationSearchProps {
  * chat searches the same parts on its server; this lists the matches instead of stepping through
  * them, and marks nothing in the chat.
  */
-export function ConversationSearch({ paneId, agent, historyId, onClose, onPick }: ConversationSearchProps) {
+export function ConversationSearch({ paneId, agent, historyId, title = null, onClose, onPick }: ConversationSearchProps) {
   const t = useT();
   const today = useLocalDay();
   const { searchPaneConversation } = useMachineApi();
@@ -141,7 +143,9 @@ export function ConversationSearch({ paneId, agent, historyId, onClose, onPick }
     document.getElementById(`conversation-search-${active}`)?.scrollIntoView({ block: "nearest" });
   }, [active]);
 
-  const status = search === null ? t("Type a word from a message or an answer.")
+  // before a search: what the field reaches (the placeholder says whose conversation), and the
+  // floor a query must pass once something is typed
+  const status = search === null ? (query.trim().length > 0 ? t("Type at least {n} characters.", { n: MIN_QUERY }) : t("Finds a word in what you wrote and in the answers, earlier messages included."))
     : search.state === "unsupported" ? t("This PC's bridge cannot search conversations yet. Update it to search here.")
     : search.state === "changed" ? t("The conversation was replaced while it was searched.")
     : search.state === "failed" ? t("Couldn't search the conversation.")
@@ -149,6 +153,8 @@ export function ConversationSearch({ paneId, agent, historyId, onClose, onPick }
     : search.state === "capped" ? t("Showing the newest {n} matches.", { n: MAX_RESULTS })
     : matches.length === 0 ? t("No message or answer holds this.")
     : t("Searched the whole conversation.");
+  // displayPaneTitle falls back to the pane id for a pane with nothing else to call it
+  const paneName = title !== null && title.trim() !== "" && title.trim() !== paneId ? title.trim() : null;
   const pickLine = picking === null ? null
     : picking.result === null ? t("Loading earlier messages…")
     : picking.result === "missing" ? t("This message is no longer in the conversation.")
@@ -158,10 +164,10 @@ export function ConversationSearch({ paneId, agent, historyId, onClose, onPick }
     <div className="modal-scrim palette-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section ref={surface} className="menu command-palette conversation-search" role="dialog" aria-modal="true" aria-label={t("Search conversation")}>
         <div className="palette-search">
-          <input ref={inputRef} className="input" type="search" value={query} maxLength={MAX_SEARCH_QUERY} placeholder={t("Search messages and answers…")} aria-label={t("Search conversation")}
+          <input ref={inputRef} className="input" type="search" value={query} maxLength={MAX_SEARCH_QUERY} placeholder={paneName === null ? t("Search messages and answers…") : t("Search in {pane}…", { pane: paneName })} aria-label={t("Search conversation")}
             aria-controls="conversation-search-results" aria-activedescendant={matches.length > 0 ? `conversation-search-${Math.min(active, matches.length - 1)}` : undefined}
             onKeyDown={onInputKeyDown} onChange={(event) => setQuery(event.target.value)} />
-          <button type="button" className="icon-button" aria-label={t("Close search")} onClick={onClose}><X /></button>
+          <button type="button" className="icon-button" aria-label={t("Close search")} title={t("Close search")} onClick={onClose}><X /></button>
         </div>
         <div className="palette-results" id="conversation-search-results" role="listbox" aria-label={t("Matching messages")}>
           {matches.map((match, index) => {
