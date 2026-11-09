@@ -9,6 +9,7 @@ import { moveDestinations } from "../lib/layoutTargets.ts";
 import { useAppLayout, useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { PANE_DRAG_TYPE, paneDragData, type SplitSide } from "../lib/split.ts";
 import { PaneSubmitRetention } from "../lib/paneSubmitRetention.ts";
+import { keepPressedButtonClick } from "../lib/pressedButton.ts";
 import { PaneCachedContext, PanePresentedContext, PaneShownContext, PaneSubmitContext, PaneWatchedContext } from "../lib/paneSubmitContext.ts";
 import { cachedPaneCells, visitPaneTab } from "../lib/paneTabCache.ts";
 import { routeMissing } from "../lib/api.ts";
@@ -192,6 +193,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   };
   // a long press on a touch screen is the phone's own: select text, copy (the tab's menu has the pane's actions)
   const touchPress = useRef(false);
+  const pressedButton = useRef<AbortController | null>(null);
   const context = (event: MouseEvent<HTMLElement>, target: HerdrPane): void => {
     const pointer = (event.nativeEvent as Partial<globalThis.PointerEvent>).pointerType;
     // Android Chrome ends a dragged text selection with a second contextmenu typed "mouse" and no
@@ -408,6 +410,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
           // A right press must not change focus before the menu's Swap with focused pane.
           if (event.button === 0 && !paneContextPress(event, apple) && !active) {
             onSelect(item.pane_id, false);
+            keepPressedButtonClick(event, pressedButton);
           }
           const element = event.target instanceof Element ? event.target : null;
           const titleOrFrame = element?.closest(".pane-frame-head") || element === event.currentTarget;
