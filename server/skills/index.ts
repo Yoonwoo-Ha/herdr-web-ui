@@ -12,6 +12,7 @@ import { source as grok } from "./grok.ts";
 import { source as hermes } from "./hermes.ts";
 import { source as agy } from "./agy.ts";
 import { source as copilot } from "./copilot.ts";
+import { source as letta } from "./letta.ts";
 
 export interface ProcessRoots {
   readonly agentDir?: string | null;
@@ -56,4 +57,4 @@ const omoFirstByName: AgentCommandSource = {
     return omo.discover(ctx).filter(({ name }) => !names.has(name) && Boolean(names.add(name)));
   },
 };
-export const AGENT_SOURCES: Record<string, AgentCommandSource> = { omo: omoFirstByName, claude, codex, pi, cmd, omp, gjc, opencode, devin, grok, hermes, agy, copilot };
+export const AGENT_SOURCES: Record<string, AgentCommandSource> = { omo: omoFirstByName, claude, codex, pi, cmd, omp, gjc, opencode, devin, grok, hermes, agy, copilot, letta };
