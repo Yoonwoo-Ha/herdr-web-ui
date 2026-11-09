@@ -472,7 +472,7 @@ export function createServer(
   const services: RequestServices = {
     runtimeMove: options.runtimeService ? moveService({
       stateDir, port: server.port ?? DEFAULT_PORT, serving: runtime, facts: () => options.runtimeService?.facts(),
-      lock: { path: moveLockPath(herdrSocketPath()), bootId },
+      lock: { path: moveLockPath(herdrSocketPath()) },
       stores: { codexHome: options.codexHome, opencodeDb: options.opencodeDb, hermesHome: options.hermesHome, piReader },
       holdsPending: core.holdsPending,
       inputEmpty: core.inputEmpty,

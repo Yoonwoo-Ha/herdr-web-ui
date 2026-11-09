@@ -46,7 +46,7 @@ export interface MoveServiceOptions {
    * the herdr session's move lock (runtime-move-lock.ts) and this server lifetime's boot id: another Ovis
    * serving the same session (a connection server's bridge, say) cannot move it at the same time
    */
-  lock: { path: string; bootId: string };
+  lock: { path: string };
   /** installs herdr-core where the PC has none (server/herdr-core/install.ts), so the move can be offered */
   installer?: HcInstaller;
   /** what a stop of a busy pane reads and signals; herdr and this PC unless a test stands in */
@@ -82,8 +82,8 @@ export interface HcInstaller {
 export interface MoveService {
   read: () => Promise<MovePlanResponse>;
   /** starts the move, or waits for every pane to be done first; an error code when it cannot */
-  /** `locked`: another Ovis server is moving this herdr session; `lock_unsafe`: its lock's folder is a symlink or not this user's */
-  start: (revision: string) => Promise<"plan_changed" | "unavailable" | "already_moving" | "locked" | "lock_unsafe" | "runtime_switching" | null>;
+  /** `locked`: another Ovis server is moving this herdr session; `lock_unsafe`: its lock cannot be taken here, and why (MoveLockUnsafe's own words) */
+  start: (revision: string) => Promise<"plan_changed" | "unavailable" | "already_moving" | "locked" | { lock_unsafe: string } | "runtime_switching" | null>;
   cancel: () => void;
   /**
    * Ends the command a shell pane runs while the move waits, as the person would: Ctrl+C in the pane's
@@ -501,7 +501,7 @@ export function moveService(options: MoveServiceOptions): MoveService {
           // the server stopped while the lock was taken: it lets go at once
           if (stopped) { release(); return "unavailable"; }
         } catch (error) {
-          if (error instanceof MoveLockUnsafe) return "lock_unsafe";
+          if (error instanceof MoveLockUnsafe) return { lock_unsafe: error.message };
           throw error;
         }
         if (current.ready) { void go(current); return null; }

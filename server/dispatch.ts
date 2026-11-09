@@ -32,9 +32,8 @@ import { forgetPageMedia } from "./file-view.ts";
 import { textEditAllowed } from "./file-edit.ts";
 import { handleFileRequest } from "./file-routes.ts";
 import { BACKGROUND_AGENT_PATH, handleBackgroundAgentRequest } from "./background-agent.ts";
-import { paneGet, ping, herdrSocketPath } from "./herdr/client.ts";
+import { paneGet, ping } from "./herdr/client.ts";
 import { RUNTIME_MOVE_PATH, RUNTIME_MOVE_ROUTE } from "./runtime-move.ts";
-import { MOVE_LOCK_UNSAFE, moveLockPath } from "./runtime-move-lock.ts";
 import type { StopRefusal } from "./runtime-move-service.ts";
 import type { MoveService } from "./runtime-move-service.ts";
 import { handlePushRequest } from "./push.ts";
@@ -728,8 +727,9 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
       const refused = await move.start(revision);
       if (refused === null) return jsonResponse({ accepted: true }, 202);
       // another Ovis server of this herdr session (the PC's own, or a connection server's bridge) moves it
-      if (refused === "locked") return jsonResponse({ error: { code: "already_moving", message: `Another Ovis on this PC is moving this herdr session already. If none is (one that stopped without telling), delete ${moveLockPath(herdrSocketPath())} on this PC and try again.` } }, 409);
-      if (refused === "lock_unsafe") return jsonResponse({ error: { code: "move_lock_unsafe", message: MOVE_LOCK_UNSAFE } }, 409);
+      if (refused === "locked") return jsonResponse({ error: { code: "already_moving", message: "Another Ovis on this PC is moving this herdr session already: its own page, or a connection server reaching it. Wait for that move to end; a holder that stopped lets go on its own." } }, 409);
+      // why the lock cannot be taken here, in MoveLockUnsafe's own words (none names a path)
+      if (typeof refused === "object") return jsonResponse({ error: { code: "move_lock_unsafe", message: refused.lock_unsafe } }, 409);
       return jsonResponse({ error: { code: refused, message: refused === "plan_changed" ? "the panes changed since the plan was shown: look again" : refused === "already_moving" ? "a move is already waiting or running" : refused === "runtime_switching" ? "the server is switching its runtime: try again once it is back" : "no move to herdr-core is offered here" } }, 409);
     } catch (error) {
       return errorResponse(error);
