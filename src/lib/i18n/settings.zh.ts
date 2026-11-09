@@ -113,6 +113,7 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Context left on agent rows": "在代理行显示剩余上下文",
   "On this device, show the context ring from the chat's composer on each agent row, for the agents whose context window is known (Claude Code and Codex). It turns red at 20% left or less.": "在此设备上，把聊天输入框的上下文圆环也显示在每个代理行上，仅限能得知上下文窗口大小的代理（Claude Code 和 Codex）。剩余 20% 或更少时变为红色。",
   "Agents order": "代理排序",
+  "Waiting first": "等待的优先",
   "Workspaces": "工作区顺序",
   "Activity": "按活动",
   "Agent logos": "代理标志",

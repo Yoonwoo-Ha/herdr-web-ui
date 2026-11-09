@@ -17,6 +17,8 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Unpin workspace": "워크스페이스 고정 해제",
   "Pinned": "고정됨",
   "Background agents": "백그라운드 에이전트",
+  "+{n} background": "+{n} 백그라운드",
+  "+{n} resting": "+{n} 쉬는 중",
   "Background workspaces": "백그라운드 워크스페이스",
   "Helpers": "도우미",
   "Helpers of {title}": "{title}의 도우미",
@@ -70,6 +72,7 @@ export const SIDEBAR_KO: Record<string, string> = {
   "Working": "작업 중",
   "Idle": "대기",
   "{count} need you": "{count}개가 기다림",
+  "Agent state unknown": "에이전트 상태 알 수 없음",
   "Move to {group}": "{group}(으)로 옮기기",
   "Remove from {group}": "{group}에서 빼기",
 };

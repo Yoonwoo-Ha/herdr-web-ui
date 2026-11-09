@@ -420,6 +420,9 @@ try {
   // The test session's only PC is the Host, drawn without its header: no caret folds it, and its + is the New
   // workspace row under the workspaces. A PC's fold over Agents, with two PCs, is in sidebar-spacing-demo-regression.ts.
   await herdrRpc("pane.report_agent", { pane_id: paneB, source: "manual", agent: "codex", state: "idle" });
+  const resting = page.locator(".agents-sidebar .agent-resting-label .agent-background-toggle");
+  if (await resting.getAttribute("aria-expanded") === "false") await resting.click();
+  await page.locator('.agents-sidebar .agent-resting-label .agent-background-toggle[aria-expanded="true"]').waitFor();
   await agentRow(paneB).waitFor();
   assert.equal(await page.locator(".machine-group .machine-header").count(), 0, "the lone Host is drawn without its header");
   assert.equal(await page.locator(".machine-group .machine-new-row").count(), 1, "its + is the New workspace row");
@@ -454,6 +457,9 @@ try {
     const offlinePage = await offlineContext.newPage();
     offlineEvidence = evidenceDirectory ? await watchBrowserEvidence(offlineContext, offlinePage, "offline-cached-roster") : undefined;
     await offlinePage.goto(`${origin}/?pane=${encodeURIComponent(paneA)}`);
+    const offlineResting = offlinePage.locator(".agents-sidebar .agent-resting-label .agent-background-toggle");
+    if (await offlineResting.getAttribute("aria-expanded") === "false") await offlineResting.click();
+    await offlinePage.locator('.agents-sidebar .agent-resting-label .agent-background-toggle[aria-expanded="true"]').waitFor();
     const offlineAgent = offlinePage.locator(`.agents-sidebar .agent-item[data-machine="local"][data-pane="${paneB}"] .agent-select`);
     await offlineAgent.waitFor();
     assert.equal(await offlineAgent.isDisabled(), true, "a cached offline agent cannot select its pane");
@@ -1572,7 +1578,7 @@ try {
   worktreeWorkspaces.push(initialWorktree.workspace_id);
   const initialRow = page.locator(`.worktree-children .workspace-group[data-workspace="${initialWorktree.workspace_id}"]`);
   await until(async () => await initialRow.locator(".workspace-name").textContent() === "Existing checkout", "a named worktree's row is titled by its workspace name");
-  assert.equal(await initialRow.locator(".worktree-workspace-label").textContent(), "browser/initial", "the list API discovers an existing worktree's exact branch, said after the name");
+  assert.equal(await initialRow.locator(".workspace-branch-tail").textContent(), "browser/initial", "the list API discovers an existing worktree's branch, said dim at the row's end (a prefix that is no kind of change stays)");
   assert.equal(await repoRow.locator(".workspace-name").textContent(), "ovis-test-repo", "the parent keeps its workspace name");
   // An inventory read from before creation must not erase the branch supplied by the create response (#2661: one read per PC).
   let releaseWorktreeList!: () => void;
@@ -1640,7 +1646,7 @@ try {
   assert.equal(await repoRow.locator(".workspace-select").getAttribute("draggable"), "true", "the parent workspace row supports dragging");
   assert.equal(await childHeader.locator(".workspace-select").getAttribute("draggable"), "true", "the branch workspace row supports dragging");
   await until(async () => await childHeader.locator(".workspace-name").textContent() === "Sidebar redesign", "a newly created child is titled by the name it was given");
-  assert.equal(await childHeader.locator(".worktree-workspace-label").textContent(), "browser/sidebar", "its exact branch, slash included, follows the name");
+  assert.equal(await childHeader.locator(".workspace-branch-tail").textContent(), "browser/sidebar", "its branch follows the name at the row's end");
   assert.equal(await repoRow.locator(".workspace-toggle").getAttribute("aria-expanded"), "true", "creation expands a previously folded parent");
   assert.equal(await page.locator(`.workspace-group[data-workspace="${repoWorkspace.workspace.workspace_id}"] + .worktree-children > .workspace-list > .workspace-group`).count(), 2,
     "existing and newly created branches share their repository workspace");
@@ -1648,7 +1654,7 @@ try {
   assert.equal(staleWorktreeListFinished, false, "the create response displays the branch before the pending list finishes");
   releaseWorktreeList();
   await until(() => staleWorktreeListFinished && freshWorktreeListFinished, "the stale inventory is followed by a fresh one");
-  assert.equal(await childHeader.locator(".worktree-workspace-label").textContent(), "browser/sidebar", "a pre-create inventory cannot erase the new branch");
+  assert.equal(await childHeader.locator(".workspace-branch-tail").textContent(), "browser/sidebar", "a pre-create inventory cannot erase the new branch");
   assert.equal(await childHeader.locator(".workspace-name").textContent(), "Sidebar redesign", "nor the name it was given");
   await page.unroute("**/api/worktree/inventory?*");
   await childHeader.locator(".workspace-select").click({ button: "right" });
@@ -1659,7 +1665,7 @@ try {
   await worktreeRename.press("Enter");
   await until(async () => await childHeader.locator(".workspace-name").textContent() === "Sidebar renamed", "the child workspace is renamed in its row title");
   assert.equal(await childHeader.locator(".workspace-select").getAttribute("draggable"), "true", "row dragging returns after editing finishes");
-  assert.equal(await childHeader.locator(".worktree-workspace-label").textContent(), "browser/sidebar", "renaming a workspace preserves its actual git branch");
+  assert.equal(await childHeader.locator(".workspace-branch-tail").textContent(), "browser/sidebar", "renaming a workspace preserves its actual git branch");
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "worktree-branches-sidebar.png") });
   // a workspace row's menu also opens from a right-click on the row
   await repoRow.locator(".workspace-select").click({ button: "right" });
@@ -2434,7 +2440,12 @@ try {
   // closed from the row's menu, which a desktop opens with the context-menu key or a right-click
   // (it draws no row ⋯); the workspace's pane goes with it, so a confirm asks first
   const selectedRow = page.locator(".pane-item.is-selected .pane-select");
-  assert.equal(await page.locator(".pane-item.is-selected .row-menu-toggle").isVisible(), false, "a desktop draws no row ⋯");
+  // a desktop draws the row's ⋯ under the pointer and the keyboard alone: away from both, the row is its selector
+  await page.mouse.move(640, 400);
+  assert.equal(await page.locator(".pane-item.is-selected .row-menu-toggle").isVisible(), false, "a desktop draws no row ⋯ at rest");
+  await selectedRow.hover();
+  assert.equal(await page.locator(".pane-item.is-selected .row-menu-toggle").isVisible(), true, "the row's ⋯ shows under the pointer");
+  await page.mouse.move(640, 400);
   await selectedRow.focus();
   await contextMenuKey(page);
   const rowMenu = page.getByRole("menu");

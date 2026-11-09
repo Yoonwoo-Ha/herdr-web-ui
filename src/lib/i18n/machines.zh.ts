@@ -5,8 +5,14 @@
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const MACHINES_ZH: Record<string, string> = {
-  "1 agent running": "1 个代理运行中",
-  "{n} agents running": "{n} 个代理运行中",
+  "1 agent": "1 个代理",
+  "{n} agents": "{n} 个代理",
+  "{where} refused the SSH connection: the PC may be off, or nothing answers on that port.": "{where} 拒绝了 SSH 连接：PC 可能已关机，或该端口上没有服务响应。",
+  "{where} is not a name this web server can look up: check the address.": "{where} 不是此 Web 服务器能解析的名称：请检查地址。",
+  "{where} did not answer in time: check that the PC is on and reachable.": "{where} 未及时响应：请确认 PC 已开机且可以访问。",
+  "{where} cannot be reached from this web server: check the network.": "此 Web 服务器无法访问 {where}：请检查网络。",
+  "{where} did not accept this web server's SSH key or password.": "{where} 未接受此 Web 服务器的 SSH 密钥或密码。",
+  "Reconnect or change its address from Manage PC, the sliders beside its name.": "要重新连接或更改地址，请打开名称旁滑块图标的“管理 PC”菜单。",
   "Keep this dialog open until the PC connects.": "请保持此对话框打开，直到 PC 连接成功。",
   "Waiting for Windows sign-in": "正在等待 Windows 登录",
   "Windows desktop startup failed": "Windows 桌面启动失败",

@@ -240,6 +240,90 @@
   --droplet-mark-bg: rgba(255, 255, 255, 0.1);
   --droplet-ring: rgba(255, 255, 255, 0.1);
   --droplet-shadow: rgba(0, 0, 0, 0.35);
+
+  /* semantic surface & navigation hierarchy roles (G-152, G-162) */
+  --surface-canvas: var(--bg);
+  --surface-chrome: var(--bg-panel);
+  --surface-raised: var(--bg-elevated);
+  --surface-overlay: var(--bg-elevated);
+  --bg-nav: var(--bg);
+
+  /* control edge, status & marker contrast roles >= 3:1 (G-028, G-074, G-148, G-194) */
+  --border-input: color-mix(in srgb, var(--text-dim) 78%, var(--border-strong));
+  --border-contrast: var(--border-strong);
+  --status-reconnecting: var(--notice);
+  --status-marker-idle: var(--text-dim);
+  --status-ink: var(--bg-panel);
+  --minimap-tick: var(--text-dim);
+  --switch-thumb-on: var(--primary);
+  --switch-track-bg: color-mix(in srgb, var(--text) 9%, transparent);
+  --breathe-min-opacity: 0.68;
+
+  /* overlay & control shadows without double border ring (G-153, G-157) */
+  --shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.28);
+  --shadow-thumb: 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 var(--hairline) color-mix(in srgb, var(--text) 10%, transparent);
+
+  /* browser surface roles: selection, caret, scrollbar (G-156) */
+  --selection-bg: color-mix(in srgb, var(--accent) 28%, transparent);
+  --selection-text: var(--text-strong);
+  --caret-color: var(--accent);
+  --scrollbar-thumb: var(--border-strong);
+  --scrollbar-track: transparent;
+
+  /* type hierarchy, reading floor & numeric roles (G-035, G-039, G-053, G-155, G-163) */
+  --fs-meta: calc(12px * var(--ui-scale));
+  --fs-reading: var(--fs-chat);
+  --fs-dense-row: var(--fs-md);
+  --fs-section-title: calc(17px * var(--ui-scale));
+  --fs-h3: calc(19px * var(--ui-scale));
+  --fs-h2: calc(24px * var(--ui-scale));
+  --fs-h1: calc(30px * var(--ui-scale));
+  --lh-heading: 1.25;
+  --fw-selected: var(--fw-semibold);
+  --font-numeric: tabular-nums;
+
+  /* sub-grid spacing, radius, component size & focus/motion roles (G-051, G-076, G-133, G-153) */
+  --space-half: 2px;
+  --space-px-3: 3px;
+  --space-1-5: 6px;
+  --space-2-5: 10px;
+  --radius-xs: 4px;
+  --bar-control-h: 28px;
+  --tab-h: calc(var(--control-h) - 5px);
+  --tab-min-w: 120px;
+  --tab-max-w: 220px;
+  --tab-more-w: 52px;
+  --status-bar-h: 28px;
+  --pane-bar-h: 30px;
+  --split-hit-w: 8px;
+  --menu-w-sm: 208px;
+  --menu-w: 280px;
+  --menu-w-wide: 420px;
+  --popover-w: 360px;
+  --sheet-row-h: 48px;
+  --sheet-grip-w: 36px;
+  --sheet-grip-h: 4px;
+  --icon-size-xs: 12px;
+  --icon-size-sm: 14px;
+  --icon-size-md: 16px;
+  --dot-size-sm: 6px;
+  --thumb-w: 40px;
+  --thumb-h: 24px;
+  --dialog-w-sm: 360px;
+  --dialog-w-md: 420px;
+  --dialog-w-form: 525px;
+  --dialog-w: 560px;
+  --dialog-w-lg: 1100px;
+  --dialog-w-xl: 1400px;
+  --dialog-max-h: 720px;
+  --outline-w: 240px;
+  --file-panel-min-w: 320px;
+  --qr-size: 132px;
+  --guide-w: 552px;
+  --voice-wave-h: 20px;
+  --kbd-h: 18px;
+  --btn-submit-min-w: 88px;
+  --ring-inset-offset: -2px;
 }
 
 [data-theme="light"] {

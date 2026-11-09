@@ -5,8 +5,14 @@
  * Register and fixed terms follow ../i18n.ko.ts; a key another feature also uses goes there.
  */
 export const MACHINES_KO: Record<string, string> = {
-  "1 agent running": "실행 중인 에이전트 1개",
-  "{n} agents running": "실행 중인 에이전트 {n}개",
+  "1 agent": "에이전트 1개",
+  "{n} agents": "에이전트 {n}개",
+  "{where} refused the SSH connection: the PC may be off, or nothing answers on that port.": "{where}이(가) SSH 연결을 거부했습니다. PC가 꺼져 있거나 그 포트에서 응답하는 것이 없을 수 있습니다.",
+  "{where} is not a name this web server can look up: check the address.": "{where}은(는) 이 웹 서버가 찾을 수 없는 이름입니다. 주소를 확인하세요.",
+  "{where} did not answer in time: check that the PC is on and reachable.": "{where}이(가) 제때 응답하지 않았습니다. PC가 켜져 있고 연결 가능한지 확인하세요.",
+  "{where} cannot be reached from this web server: check the network.": "이 웹 서버에서 {where}에 닿을 수 없습니다. 네트워크를 확인하세요.",
+  "{where} did not accept this web server's SSH key or password.": "{where}이(가) 이 웹 서버의 SSH 키나 비밀번호를 받아들이지 않았습니다.",
+  "Reconnect or change its address from Manage PC, the sliders beside its name.": "다시 연결하거나 주소를 바꾸려면 이름 옆 슬라이더 아이콘의 PC 관리 메뉴를 여세요.",
   "Keep this dialog open until the PC connects.": "PC가 연결될 때까지 이 대화 상자를 열어 두세요.",
   "Waiting for Windows sign-in": "Windows 로그인 대기 중",
   "Windows desktop startup failed": "Windows 데스크톱에서 시작하지 못했습니다",

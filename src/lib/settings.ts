@@ -24,7 +24,7 @@ export type Density = "compact" | "comfortable";
 /** One line names the workspace; two lines say what its pane is doing, with the workspace under it. */
 export type SidebarRows = "one" | "two";
 /** the Agents list's order: herdr's workspace order, or a waiting agent first and then the latest change */
-export type AgentOrder = "workspace" | "activity";
+export type AgentOrder = "waiting" | "workspace" | "activity";
 /** Settings → Within a state: how each state group of the Agents list is ordered (lib/agentRoster.ts) */
 export const AGENT_GROUP_SORTS = ["wait", "recent", "name"] as const;
 export type AgentGroupSort = (typeof AGENT_GROUP_SORTS)[number];
@@ -317,7 +317,9 @@ export function telemetrySettingsSnapshot(settings: Settings): TelemetrySettings
     theme: settings.theme,
     density: settings.density,
     sidebarRows: settings.sidebarRows,
-    agentOrder: settings.agentOrder,
+    // Waiting first is herdr's workspace order with the waiting agents lifted: reported as that order, so the
+    // receiver's schema (shared/telemetry.ts, changed only with its deploy) keeps accepting the snapshot
+    agentOrder: settings.agentOrder === "waiting" ? "workspace" : settings.agentOrder,
     agentMarks: settings.agentMarks,
     statusIndicators: settings.statusIndicators,
     palette: settings.palette,
@@ -450,7 +452,8 @@ export const DEFAULT_SETTINGS: Settings = {
   foldHelpers: false,
   sidebarAgentTree: false,
   pcLoad: null,
-  agentOrder: "workspace",
+  // the Agents list's order (the workspace list keeps herdr's): the agents that need you first, the resting ones folded
+  agentOrder: "waiting",
   agentGroups: false,
   agentGroupSort: "wait",
   agentMarks: "color",
@@ -675,7 +678,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     foldHelpers: typeof record["foldHelpers"] === "boolean" ? record["foldHelpers"] : DEFAULT_SETTINGS.foldHelpers,
     sidebarAgentTree: typeof record["sidebarAgentTree"] === "boolean" ? record["sidebarAgentTree"] : DEFAULT_SETTINGS.sidebarAgentTree,
     pcLoad: typeof record["pcLoad"] === "boolean" ? record["pcLoad"] : null,
-    agentOrder: record["agentOrder"] === "workspace" || record["agentOrder"] === "activity" ? record["agentOrder"] : DEFAULT_SETTINGS.agentOrder,
+    agentOrder: record["agentOrder"] === "waiting" || record["agentOrder"] === "workspace" || record["agentOrder"] === "activity" ? record["agentOrder"] : DEFAULT_SETTINGS.agentOrder,
     agentGroups: typeof record["agentGroups"] === "boolean" ? record["agentGroups"] : DEFAULT_SETTINGS.agentGroups,
     agentGroupSort: AGENT_GROUP_SORTS.includes(record["agentGroupSort"] as AgentGroupSort) ? record["agentGroupSort"] as AgentGroupSort : DEFAULT_SETTINGS.agentGroupSort,
     agentMarks: record["agentMarks"] === "color" || record["agentMarks"] === "mono" ? record["agentMarks"] : DEFAULT_SETTINGS.agentMarks,

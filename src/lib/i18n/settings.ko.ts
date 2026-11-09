@@ -113,6 +113,7 @@ export const SETTINGS_KO: Record<string, string> = {
   "Context left on agent rows": "에이전트 행에 남은 컨텍스트",
   "On this device, show the context ring from the chat's composer on each agent row, for the agents whose context window is known (Claude Code and Codex). It turns red at 20% left or less.": "이 기기에서 채팅 입력칸의 컨텍스트 링을 각 에이전트 행에도 보여 줍니다. 컨텍스트 창 크기를 알 수 있는 에이전트(Claude Code, Codex)만 표시하며, 20% 이하로 남으면 빨간색이 됩니다.",
   "Agents order": "에이전트 정렬",
+  "Waiting first": "응답 필요 먼저",
   "Workspaces": "워크스페이스순",
   "Activity": "활동순",
   "Agent logos": "에이전트 로고",

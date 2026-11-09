@@ -5,8 +5,14 @@
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const MACHINES_JA: Record<string, string> = {
-  "1 agent running": "実行中のエージェント: 1 件",
-  "{n} agents running": "実行中のエージェント: {n} 件",
+  "1 agent": "エージェント: 1 件",
+  "{n} agents": "エージェント: {n} 件",
+  "{where} refused the SSH connection: the PC may be off, or nothing answers on that port.": "{where} が SSH 接続を拒否しました。PC の電源が切れているか、そのポートで応答するものがない可能性があります。",
+  "{where} is not a name this web server can look up: check the address.": "{where} はこのウェブサーバーが解決できない名前です。アドレスを確認してください。",
+  "{where} did not answer in time: check that the PC is on and reachable.": "{where} が時間内に応答しませんでした。PC の電源が入っていて到達できるか確認してください。",
+  "{where} cannot be reached from this web server: check the network.": "このウェブサーバーから {where} に到達できません。ネットワークを確認してください。",
+  "{where} did not accept this web server's SSH key or password.": "{where} がこのウェブサーバーの SSH 鍵またはパスワードを受け付けませんでした。",
+  "Reconnect or change its address from Manage PC, the sliders beside its name.": "再接続やアドレスの変更は、名前の横のスライダーアイコンから開く PC の管理メニューで行えます。",
   "Keep this dialog open until the PC connects.": "PC が接続されるまで、このダイアログを開いたままにしてください。",
   "Waiting for Windows sign-in": "Windows へのサインインを待機中",
   "Windows desktop startup failed": "Windows デスクトップでの起動に失敗しました",

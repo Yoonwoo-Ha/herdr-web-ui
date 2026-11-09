@@ -113,6 +113,7 @@ export const SETTINGS_JA: Record<string, string> = {
   "Context left on agent rows": "エージェント行に残りのコンテキスト",
   "On this device, show the context ring from the chat's composer on each agent row, for the agents whose context window is known (Claude Code and Codex). It turns red at 20% left or less.": "このデバイスで、チャット入力欄のコンテキストリングを各エージェント行にも表示します。コンテキストウィンドウの大きさがわかるエージェント（Claude Code と Codex）だけに表示され、残りが 20% 以下になると赤くなります。",
   "Agents order": "エージェントの並び順",
+  "Waiting first": "応答待ちを先頭",
   "Workspaces": "ワークスペース順",
   "Activity": "アクティビティ順",
   "Agent logos": "エージェントのロゴ",
