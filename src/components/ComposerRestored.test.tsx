@@ -143,6 +143,61 @@ it.each([
   if (enterSends === true || layout === "narrow") expect(await pressIn({}, "working", layout, enterSends)).toEqual([[undefined, undefined]]);
 });
 
+// #3460: with Enter sends off, Ctrl/Cmd+Enter sends but not with Alt held: AltGr (Ctrl+Alt on Windows) and Cmd+Option
+// leave the key to the box, as they do where Enter sends
+it.each([
+  ["Ctrl+Alt+Enter with Enter sends off", { ctrlKey: true, altKey: true }, false, []],
+  ["Cmd+Option+Enter with Enter sends off", { metaKey: true, altKey: true }, false, []],
+  ["Ctrl+Enter with Enter sends off", { ctrlKey: true }, false, [[undefined, undefined]]],
+  ["Cmd+Enter with Enter sends off", { metaKey: true }, false, [[undefined, undefined]]],
+  ["Ctrl+Alt+Enter where Enter sends", { ctrlKey: true, altKey: true }, true, []],
+  ["Enter where Enter sends", {}, true, [[undefined, undefined]]],
+] as const)("%s sends only without Alt", async (_name, keys, enterSends, expected) => {
+  expect(await pressIn(keys, "working", "desktop", enterSends)).toEqual(expected.map((call) => [...call]));
+  expect(prevented).toBe(expected.length > 0);
+});
+
+// #3460: with the completion menu open, Ctrl/Cmd+Enter with Alt (AltGr on Windows, Cmd+Option on a Mac) picks nothing and
+// leaves the key to the box, as it sends nothing without the menu; Enter, Tab and Alt+Enter alone still pick
+async function pressInMenu(keys: Record<string, unknown>, enterSends: boolean, key = "Enter"): Promise<{ sends: number; text: string }> {
+  let sends = 0;
+  prevented = false;
+  // the open menu scrolls its highlighted row into view
+  Object.assign(document, { getElementById: () => null });
+  spyOn(settingsModule, "useSettings").mockImplementation(() => ({ settings: { ...settingsModule.DEFAULT_SETTINGS, showUsage: false, enterSends }, resolvedLanguage: "en" }) as ReturnType<typeof settingsModule.useSettings>);
+  spyOn(commandsModule, "usePaneCommands").mockReturnValue([{ name: "review", description: "Review the changes", source: "user" }]);
+  const props: ComposerProps = { paneId: pane, agent: "claude", agentStatus: "working", connected: true, autoFocus: false, onSend: () => { sends += 1; return true; }, onAbort() {}, onUploadImage: async () => "" };
+  composerDrafts.set(draftKey, "/rev");
+  await act(async () => { renderer = create(<Composer {...props} />); });
+  expect(renderer!.root.findAll((node) => node.props.role === "listbox").length).toBeGreaterThan(0);
+  const box = renderer!.root.findAll((node) => node.type === "textarea" && node.props.onKeyDown !== undefined)[0]!;
+  await act(async () => {
+    box.props.onKeyDown({ key, shiftKey: false, altKey: false, metaKey: false, ctrlKey: false, repeat: false, nativeEvent: { isComposing: false, keyCode: 13 }, preventDefault() { prevented = true; }, ...keys });
+  });
+  return { sends, text: composerDrafts.read(draftKey).text };
+}
+
+for (const enterSends of [false, true]) {
+  it.each([
+    ["Ctrl+Alt+Enter", { ctrlKey: true, altKey: true }],
+    ["Cmd+Option+Enter", { metaKey: true, altKey: true }],
+  ] as const)(`%s with the completion menu open picks nothing (Enter sends ${enterSends})`, async (_name, keys) => {
+    expect(await pressInMenu(keys, enterSends)).toEqual({ sends: 0, text: "/rev" });
+    expect(prevented).toBe(false);
+  });
+
+  it.each([
+    ["Enter", {}, "Enter"],
+    ["Tab", {}, "Tab"],
+    ["Alt+Enter", { altKey: true }, "Enter"],
+  ] as const)(`%s with the completion menu open still picks the highlighted command (Enter sends ${enterSends})`, async (_name, keys, key) => {
+    const { sends, text } = await pressInMenu(keys, enterSends, key);
+    expect(sends).toBe(0);
+    expect(text.startsWith("/review")).toBe(true);
+    expect(prevented).toBe(true);
+  });
+}
+
 it("keeps the draft and says why when a hold is refused", async () => {
   const calls: unknown[][] = [];
   const refusal = "Update this PC to hold messages. Your draft stayed here.";
