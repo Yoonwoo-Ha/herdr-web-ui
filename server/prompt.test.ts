@@ -2964,6 +2964,26 @@ Which approach?
     // a question line written exactly as the status row is: neither is blanked, so a change to both is another card
     const echoed = (status: string) => [status, "", "❯ 1. Yes", "  2. No", "", "Enter to select · ↑/↓ to navigate · Esc to cancel", "", status].join("\n");
     expect(ompId(echoed(row("⠋ 1m 0s")))).not.toBe(ompId(echoed(row("⠋ 2m 0s"))));
+    // every status-line preset omp draws, as the repo's fixtures hold them: the spinner and time tick, the rest stays (#3416)
+    const presets: [string, string, string][] = [
+      ["unicode", " ⠸ 0s > ⬢ Approval fixture > 📁 …/cwd ▶──6%──╎─┃─", " ⠹ 1s > ⬢ Approval fixture > 📁 …/cwd ▶──6%──╎─┃─"],
+      ["ascii", " / 0s > [M] Approval fixture > [D] …/cwd >--6%----:--|-", " - 1s > [M] Approval fixture > [D] …/cwd >--6%----:--|-"],
+      ["nerd", "  ⠴ 0s   Approval fixture   …/cwd ──6%──", "  ⠦ 1m 2s   Approval fixture   …/cwd ──6%──"],
+      ["box", "╭── ⠸ 1s > ⬢ Shape fixture > 🗑 …/cwd ▶──6%──", "╭── ⠹ 2s > ⬢ Shape fixture > 🗑 …/cwd ▶──6%──"],
+    ];
+    for (const [name, before, after] of presets) {
+      expect(ompId(underStatus(before)), name).toBe(ompId(underStatus(after)));
+      // the model the row names is still part of the card
+      expect(ompId(underStatus(before)), name).not.toBe(ompId(underStatus(before.replace(/(Approval|Shape) fixture/, "Other model"))));
+    }
+    // the default preset with the user's context segment turned off: a braille frame and a time still tick, with no gauge
+    const bare = (lead: string) => ` ${lead} · ⬢ Ask fixture · 🗑 …/home/fixture`;
+    expect(ompId(underStatus(bare("⠋ 6m 0s")))).toBe(ompId(underStatus(bare("⠙ 6m 1s"))));
+    expect(ompId(underStatus(bare("⠋ 6m 0s")))).not.toBe(ompId(underStatus(bare("⠋ 6m 0s").replace("Ask fixture", "Other model"))));
+    // a question that only looks like a frame and a time is read as written: it has no context gauge
+    for (const [before, after] of [["- 5s delay before production?", "- 30s delay before production?"], ["| 5s timeout", "| 30s timeout"]]) {
+      expect(ompId(underStatus(before!)), before).not.toBe(ompId(underStatus(after!)));
+    }
   });
 
   test("makes another card of anything else that changed, on a working line too", () => {
