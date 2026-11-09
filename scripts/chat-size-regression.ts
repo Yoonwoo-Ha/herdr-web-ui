@@ -695,6 +695,8 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
         }
         page = await openRecording(browser, contexts, origin, scenario === "held" ? heldPane : first,
           { viewport: { width: 1000, height: 700 } }, { language: "en", defaultView: queueScenario ? "chat" : "terminal",
+            // These scenarios exercise the automatic queue, which is off until chosen.
+            autoSendQueued: queueScenario,
             releasePaneAway: scenario === "mount-optin" || (!fresh && !reconnect && scenario !== "switch" && scenario !== "idle-off") },
           fresh, async (recording) => {
             // a tab in use from its first attach, on the page clock from the start: its quiet spell is counted there

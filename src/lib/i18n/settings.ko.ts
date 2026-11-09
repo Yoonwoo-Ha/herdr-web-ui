@@ -6,6 +6,7 @@
  */
 export const SETTINGS_KO: Record<string, string> = {
   "Direct typing": "직접 입력",
+  "Microphone permission was denied": "마이크 권한이 거부되었습니다",
   "Terminal input mode": "터미널 입력 방식",
   "Reset shortcuts": "단축키 초기화",
   "Your browser or operating system may intercept {keys}.": "브라우저나 운영체제가 {keys} 입력을 가로챌 수 있습니다.",

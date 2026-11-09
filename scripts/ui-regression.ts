@@ -130,7 +130,8 @@ try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   await context.addInitScript((ids) => {
     // only the first load: a reload must keep what Settings stored, such as the language
-    if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+    // The pending-input cases exercise automatic queue delivery, which is opt-in.
+    if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", autoSendQueued: true }));
     for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "chat");
   }, panes);
   await context.addInitScript(rewriteMachinesFrames);

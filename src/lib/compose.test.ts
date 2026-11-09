@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { skillSyntax } from "../../shared/skill-syntax.ts";
 import { agentDisplayLabel, claudeMainAtRest, composerDelivery, composerMessage, composerSendShown, composerPayload, composerModelDraw, composerStatusCompact, composerStatusHint, composerStatusWord, COMPOSER_STATUS_COMPACT_BELOW, contextLeftPercent, formatTokens, imageMention, insertLeadingMention, insertNote, MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, rankSlashCommands, submitNote, submitNotTyped, submitRefusal, sameMessage, pendingActionUncertain, draftSendNote, endsWithTurn, stoppedTurn } from "./compose.ts";
-import { briefDescription, COMMAND_GROUPS, commandGroup, commandsForTrigger, slashCommandReplacement, terminalCommand, typedTerminalCommand } from "./compose.ts";
+import { briefDescription, COMMAND_GROUPS, commandGroup, commandsForTrigger, namesHiddenCommand, slashCommandReplacement, terminalCommand, typedTerminalCommand } from "./compose.ts";
 import type { ConversationTurn, SlashCommand } from "../../shared/protocol.ts";
 import { activeTrigger, applyCompletion, type ActiveTrigger } from "./mentions.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -684,4 +684,17 @@ describe("claudeMainAtRest", () => {
     expect(claudeMainAtRest("ready", ["  ⏵⏵ auto mode on · ← 2 agents"])).toBe(false);
     expect(claudeMainAtRest("ready", ["  ────────────────", "  ⏵⏵ auto mode on"])).toBe(false);
   });
+});
+
+it("takes a word naming a command the menu hides for a command, never for one no command matches", () => {
+  const commands: SlashCommand[] = [
+    { name: "heapdump", description: "Write a heap snapshot", source: "builtin", visibility: "agent-hidden" },
+    { name: "help", description: "Show help", source: "builtin" },
+  ];
+  expect(namesHiddenCommand(commands, "heapdump")).toBe(true);
+  expect(namesHiddenCommand(commands, "Heap")).toBe(true);
+  // a listed command is the menu's to show, and a word no command starts is unmatched
+  expect(namesHiddenCommand(commands, "help")).toBe(false);
+  expect(namesHiddenCommand(commands, "deploy")).toBe(false);
+  expect(namesHiddenCommand(commands, "")).toBe(false);
 });

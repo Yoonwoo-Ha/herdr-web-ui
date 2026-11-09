@@ -808,6 +808,15 @@ describe("chat font size", () => {
 
 });
 
+describe("queued messages", () => {
+  it("sends queued messages by themselves unless that was turned off", () => {
+    expect(DEFAULT_SETTINGS.autoSendQueued).toBe(true);
+    expect(sanitizeSettings({}).autoSendQueued).toBe(true);
+    expect(sanitizeSettings({ autoSendQueued: false }).autoSendQueued).toBe(false);
+    expect(sanitizeSettings({ autoSendQueued: "yes" }).autoSendQueued).toBe(true);
+  });
+});
+
 describe("chat width", () => {
   it("is the default lane until one is chosen, and accepts only the four steps", () => {
     expect(DEFAULT_SETTINGS.chatWidth).toBe("default");

@@ -19,7 +19,16 @@
   border-radius: var(--radius-pill);
   color: var(--status-working);
   font-size: var(--fs-xs);
+  /* its figures (the plan's step, the count) change in place without a shift */
+  font-variant-numeric: var(--font-numeric);
   cursor: pointer;
+}
+
+/* a mouse's floor: the chip's own box is the --pointer-target, still a pill in the row's height */
+@media (pointer: fine) {
+  .bg-tasks-toggle {
+    min-height: var(--pointer-target);
+  }
 }
 
 .bg-tasks-toggle svg {
@@ -140,7 +149,7 @@
   bottom: calc(100% + var(--space-2));
   left: 0;
   z-index: var(--z-popover);
-  max-height: max(var(--row-h), min(calc(var(--row-h) * 9), calc(var(--bg-tasks-room, 100vh) - var(--space-2) * 2)));
+  max-height: max(var(--row-h), min(calc(var(--row-h) * 9), calc(var(--bg-tasks-room, 100dvh) - var(--space-2) * 2)));
   overflow-y: auto;
   white-space: normal;
 }
@@ -185,9 +194,14 @@
   flex: none;
 }
 
-.bg-ended-toggle:hover,
 .bg-ended-toggle[aria-expanded="true"] {
   color: var(--text);
+}
+
+@media (hover: hover) {
+  .bg-ended-toggle:hover {
+    color: var(--text);
+  }
 }
 
 .bg-ended-failed {

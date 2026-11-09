@@ -6,6 +6,7 @@
  */
 export const SETTINGS_ZH: Record<string, string> = {
   "Direct typing": "直接输入",
+  "Microphone permission was denied": "麦克风权限已被拒绝",
   "Terminal input mode": "终端输入模式",
   "Reset shortcuts": "重置快捷键",
   "Your browser or operating system may intercept {keys}.": "浏览器或操作系统可能会拦截 {keys}。",

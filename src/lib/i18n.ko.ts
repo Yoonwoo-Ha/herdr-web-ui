@@ -308,12 +308,12 @@ const BASE: Record<string, string> = {
   "The question on screen changed; check it and answer again.": "화면의 질문이 바뀌었습니다. 확인하고 다시 답하세요.",
   "Reconnect": "다시 연결",
   "Discard": "버리기",
+  "Undo": "되돌리기",
   "Held message — review and send": "보관된 메시지. 확인하고 보내세요",
 
 
   // ---- voice input ----
   "Dictate (hold)": "받아쓰기 (길게 누르기)",
-  "Microphone permission was denied": "마이크 권한이 거부되었습니다",
   "Voice input needs HTTPS": "음성 입력에는 HTTPS가 필요합니다",
   // ---- errors (lib/userError.ts) ----
   "This browser is not signed in to this PC any more. Pair it again in Settings → Devices and PCs.": "이 브라우저는 더 이상 이 PC에 로그인되어 있지 않습니다. 설정 → 기기와 PC에서 다시 페어링하세요.",
@@ -414,8 +414,9 @@ const BASE: Record<string, string> = {
   "Forget this PC": "이 PC 잊기",
   "Selected": "선택됨",
   // Recover unsent text (components/UnsentText.tsx)
-  "Unsent text": "보내지 않은 글",
+  "Unsent text · {destination}": "보내지 않은 글 · {destination}",
   "Text you had not sent when herdr restarted. A new herdr gives pane IDs out again, so it waits here rather than in a pane it was not written for. Nothing here is sent.": "herdr가 다시 시작될 때 보내지 않았던 글입니다. 새 herdr는 패널 ID를 다시 나눠 주므로, 그 글이 다른 패널에 나타나지 않도록 여기에 보관합니다. 여기서는 아무것도 보내지 않습니다.",
+  "Put in message box adds this text to {destination}. Nothing is sent.": "입력창에 넣기를 누르면 {destination}에 글이 들어갑니다. 보내지는 않습니다.",
   "Put in message box": "입력창에 넣기",
   "Adds the text to this pane's message box. Nothing is sent.": "이 패널의 입력창에 글을 추가합니다. 보내지는 않습니다.",
   "Message box": "입력창",

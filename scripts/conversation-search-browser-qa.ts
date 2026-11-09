@@ -111,7 +111,7 @@ try {
     await page.evaluate(() => window.searchQa.open());
     await dialog(page).waitFor();
     await search(page, "z");
-    await dialog(page).getByText("Type a word from a message or an answer.").waitFor();
+    await dialog(page).getByText("Type at least 2 characters.").waitFor();
     // newest first, the user's words and the agent's answers only: the tool's output is no match
     await search(page, "ZEBRA");
     await dialog(page).getByText("Searched the whole conversation.").waitFor();

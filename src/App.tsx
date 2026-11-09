@@ -1178,6 +1178,7 @@ export function App() {
                         backgroundWait={item?.background_wait === true}
                         cwd={item?.cwd ?? null}
                         workspaceId={item?.workspace_id ?? null}
+                        workspaceLabel={slotSnapshot?.workspaces.find((workspace) => workspace.workspace_id === item?.workspace_id)?.label ?? null}
                         worktreeRepo={worktreeRepoName(item === null ? undefined : slotSnapshot?.workspaces.find((workspace) => workspace.workspace_id === item.workspace_id))}
                         machineName={machine?.name ?? machineId}
                         view={item ? lensOf(item) : slotView}
@@ -1314,7 +1315,7 @@ export function App() {
       {viewing !== null && !fileDocked && <MachineContext.Provider value={viewing.machineId}>
         <FileViewer key={fileViewerKey(viewing)} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path, presentation })} onKind={reportFileKind} onTogglePresentation={toggleFilePresentation} keyboardActive={!settingsOpen} editable={fileEditable} />
       </MachineContext.Provider>}
-      {unsentFor && <UnsentTextDialog machines={machines} canRecover={unsentFor.pane.agent != null} onClose={closeUnsent} onRecover={recover} />}
+      {unsentFor && <UnsentTextDialog machines={machines} target={unsentFor} canRecover={unsentFor.pane.agent != null} onClose={closeUnsent} onRecover={recover} />}
       <CommandPalette key={selectedMachineId} machines={sidebarMachines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId}
         // a peek shows the terminal: its toggle says Switch to chat, which ends the peek
         view={terminalPeek !== null ? "terminal" : view} actions={actions} watching={auth?.role === "watch"} />

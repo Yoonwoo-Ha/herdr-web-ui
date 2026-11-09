@@ -41,6 +41,14 @@ const openFiles = async (page: import("playwright-core").Page) => {
 // read back first holds still: the follow undid one in looped runs. Steps that check history and
 // presentation, not pointer targeting, wait for the chat and activate the link where it is.
 const transcriptSettled = (page: Page) => page.locator(".chat-frame[data-pane-content]").waitFor({ state: "attached" });
+// A reload opens the chat where the reader left it (chatScrollMemory): one who clicked a link above the
+// end comes back there, and the chat presents nothing away from the end. The reloads before a step that
+// waits for the chat are a following reader's: the end, once the chat remembers it.
+const reloadFollowingEnd = async (page: Page): Promise<void> => {
+  await page.evaluate(() => { for (const node of document.querySelectorAll(".chat-view")) node.scrollTop = node.scrollHeight; });
+  await page.waitForFunction(() => (JSON.parse(sessionStorage.getItem("ovis:chat-positions") ?? "[]") as [string, { atEnd: boolean }][]).every(([, place]) => place.atEnd));
+  await page.reload();
+};
 const activateInTranscript = async (page: Page, link: Locator): Promise<void> => {
   await transcriptSettled(page);
   await link.dispatchEvent("click");
@@ -558,7 +566,7 @@ try {
       const { fileOpen: _, ...settings } = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as Record<string, unknown>;
       localStorage.setItem("ovis:settings", JSON.stringify(fileOpen === null ? settings : { ...settings, fileOpen }));
     }, fileOpen);
-    await page.reload();
+    await reloadFollowingEnd(page);
   };
   // with Open files at its default, even text opens in the popup; Beside the pane is a choice
   await setFileOpen(null);
@@ -644,7 +652,7 @@ try {
   assert.ok(Math.abs(stored - (before + 100)) <= 2, `dragging the edge 100px widens the panel 100px: ${before} -> ${stored}`);
   await page.waitForFunction((want) => Math.abs((document.querySelector("aside.file-panel")?.getBoundingClientRect().width ?? 0) - want) <= 1, stored);
   // a reload restores the file from its entry, at the stored width
-  await page.reload();
+  await reloadFollowingEnd(page);
   await panel.getByText("File preview history regression", { exact: true }).waitFor();
   assert.ok(Math.abs(await panelWidth() - stored) <= 1, `a reload keeps the dragged width: ${await panelWidth()} vs ${stored}`);
   // a double-click on the edge puts the default width back and forgets the stored one, so the
@@ -862,7 +870,7 @@ try {
       const { reopenFileOnReturn: _, ...settings } = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as Record<string, unknown>;
       localStorage.setItem("ovis:settings", JSON.stringify(on ? { ...settings, reopenFileOnReturn: true } : settings));
     }, on);
-    await page.reload();
+    await reloadFollowingEnd(page);
     await videoLink.waitFor();
     if (await showSidebar.count()) await showSidebar.click();
     await rowOf(otherPane).waitFor();
@@ -1044,7 +1052,7 @@ try {
   await page.getByRole("button", { name: "notes", exact: true }).click();
   const notes = page.getByRole("dialog", { name: "notes.txt", exact: true });
   await notes.getByText("File preview history regression", { exact: true }).waitFor();
-  await page.reload();
+  await reloadFollowingEnd(page);
   await notes.getByText("File preview history regression", { exact: true }).waitFor();
   await page.goBack();
   await notes.waitFor({ state: "hidden" });
@@ -1217,7 +1225,7 @@ try {
     const settings = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as Record<string, unknown>;
     localStorage.setItem("ovis:settings", JSON.stringify({ ...settings, wrapCode: true }));
   });
-  await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
+  await reloadFollowingEnd(page);
   await page.locator(".conn-live").waitFor();
   // the reloaded chat's follow to its end can take the link from under a pointer
   await activateInTranscript(page, page.getByRole("button", { name: "big code", exact: true }));

@@ -312,12 +312,12 @@ const BASE: Record<string, string> = {
   "The question on screen changed; check it and answer again.": "屏幕上的问题已变化。请查看后重新回答。",
   "Reconnect": "重新连接",
   "Discard": "丢弃",
+  "Undo": "撤销",
   "Held message — review and send": "保留的消息。请检查后发送",
 
 
   // ---- voice input ----
   "Dictate (hold)": "听写（按住）",
-  "Microphone permission was denied": "麦克风权限已被拒绝",
   "Voice input needs HTTPS": "语音输入需要 HTTPS",
   // ---- errors (lib/userError.ts) ----
   "This browser is not signed in to this PC any more. Pair it again in Settings → Devices and PCs.": "此浏览器已不再登录此电脑。请在设置 → 设备和电脑中重新配对。",
@@ -418,7 +418,8 @@ const BASE: Record<string, string> = {
   "Forget this PC": "忘记这台电脑",
   "Selected": "已选择",
   // Recover unsent text (components/UnsentText.tsx)
-  "Unsent text": "未发送的文本",
+  "Unsent text · {destination}": "未发送的文本 · {destination}",
+  "Put in message box adds this text to {destination}. Nothing is sent.": "点击“放入输入框”会将此文本放入 {destination}。不会发送。",
   "Text you had not sent when herdr restarted. A new herdr gives pane IDs out again, so it waits here rather than in a pane it was not written for. Nothing here is sent.": "herdr 重启时尚未发送的文本。新的 herdr 会重新分配面板 ID，因此这些文本保存在这里，而不会出现在不属于它的面板中。这里不会发送任何内容。",
   "Put in message box": "放入输入框",
   "Adds the text to this pane's message box. Nothing is sent.": "将文本添加到此面板的输入框中。不会发送。",

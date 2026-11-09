@@ -6,6 +6,7 @@
  */
 export const SETTINGS_JA: Record<string, string> = {
   "Direct typing": "直接入力",
+  "Microphone permission was denied": "マイクの使用が許可されませんでした",
   "Terminal input mode": "端末入力モード",
   "Reset shortcuts": "ショートカットをリセット",
   "Your browser or operating system may intercept {keys}.": "ブラウザーや OS が {keys} を先に処理する場合があります。",

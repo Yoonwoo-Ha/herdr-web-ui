@@ -228,6 +228,12 @@ export function commandListed(command: SlashCommand): boolean {
   return command.visibility !== "agent-hidden";
 }
 
+/** Whether a typed word is, or starts, a command the menu hides: it is a command all the same, never one "no command matches". */
+export function namesHiddenCommand(commands: readonly SlashCommand[], query: string): boolean {
+  const word = query.toLowerCase();
+  return word !== "" && commands.some((command) => !commandListed(command) && command.name.toLowerCase().startsWith(word));
+}
+
 /**
  * A command the agent runs in the terminal, which the chat can start but cannot finish: the
  * catalog says so (`visibility: "terminal"`, or a bare form whose interaction is the terminal,

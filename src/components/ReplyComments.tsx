@@ -133,12 +133,20 @@ export function ReplyCommentAction({ scroller, storageKey, paneKey }: { scroller
     const box = host.getBoundingClientRect();
     const touch = pointer.current?.touch ?? matchMedia("(pointer: coarse)").matches;
     const mouse = !touch && pointer.current !== null ? pointer.current : null;
+    // on a phone the frame runs on under a grown composer: the offer keeps to the part still in sight, above it
+    const composer = host.closest(".pane-frame")?.querySelector(".composer")?.getBoundingClientRect();
+    const bottom = composer !== undefined && composer.height > 0 ? Math.min(box.bottom, composer.top) : box.bottom;
+    // a touch screen draws the offer taller than OFFER_H (its targets): once drawn, its own height counts
+    const height = Math.max(OFFER_H, host.querySelector<HTMLElement>(".selection-offer")?.offsetHeight ?? 0);
     let top = mouse !== null ? mouse.y + EDGE : last.bottom + (touch ? HANDLE_ROOM : EDGE);
-    if (top + OFFER_H > box.bottom - EDGE) top = first.top - OFFER_H - (touch ? HANDLE_ROOM : EDGE);
+    if (top + height > bottom - EDGE) top = first.top - height - (touch ? HANDLE_ROOM : EDGE);
     const x = mouse !== null ? mouse.x : last.right;
     const left = Math.min(Math.max(x - box.left - OFFER_W / 2, EDGE), Math.max(box.width - OFFER_W - EDGE, EDGE));
-    setOffer({ quote, left, top: Math.min(Math.max(top - box.top, EDGE), Math.max(box.height - OFFER_H - EDGE, EDGE)) });
+    setOffer({ quote, left, top: Math.min(Math.max(top - box.top, EDGE), Math.max(bottom - box.top - height - EDGE, EDGE)) });
   }, [scroller]);
+  // the first placement counted OFFER_H: once the offer is drawn (taller on a touch screen), it is placed again by its own height, before it is painted
+  const offerShown = offer !== null;
+  useLayoutEffect(() => { if (offerShown) place(); }, [offerShown, place]);
 
   // on the document, the scroller looked up as each event comes: the chat's timeline can arrive after this mounts
   useEffect(() => {

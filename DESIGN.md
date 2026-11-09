@@ -3184,7 +3184,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   provider as a read-only usage reference inside the model pill. Plan-wide five-hour session is
   preferred, with weekly fallback; scoped, failed and unavailable limits do not substitute.
   The title names the account and reset times. This is not active-account detection. Mobile and
-  remote panes omit it. The context ring is inert on mobile; details stay on desktop.
+  remote panes omit it. The context ring only shows: its number is in the tooltip, and a press does nothing.
 - Working Send on a supporting bridge adds a pending message above the input card, before the
   prompt dock. `PendingMessages` uses the chat's column and neutral user-bubble surface: plain
   text aligned right, with no outer card. Its scrolling stack is capped by `--pending-max-h`

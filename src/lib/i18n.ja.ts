@@ -310,12 +310,12 @@ const BASE: Record<string, string> = {
   "The question on screen changed; check it and answer again.": "画面上の質問が変わりました。確認してもう一度回答してください。",
   "Reconnect": "再接続",
   "Discard": "破棄",
+  "Undo": "元に戻す",
   "Held message — review and send": "保持中のメッセージ。確認して送信してください",
 
 
   // ---- voice input ----
   "Dictate (hold)": "音声入力（長押し）",
-  "Microphone permission was denied": "マイクの使用が許可されませんでした",
   "Voice input needs HTTPS": "音声入力には HTTPS が必要です",
   // ---- errors (lib/userError.ts) ----
   "This browser is not signed in to this PC any more. Pair it again in Settings → Devices and PCs.": "このブラウザーはもうこの PC にサインインしていません。設定 → デバイスと PCでもう一度ペアリングしてください。",
@@ -416,8 +416,9 @@ const BASE: Record<string, string> = {
   "Forget this PC": "このPCを削除",
   "Selected": "選択中",
   // Recover unsent text (components/UnsentText.tsx)
-  "Unsent text": "未送信のテキスト",
+  "Unsent text · {destination}": "未送信のテキスト · {destination}",
   "Text you had not sent when herdr restarted. A new herdr gives pane IDs out again, so it waits here rather than in a pane it was not written for. Nothing here is sent.": "herdr が再起動したときに送信していなかったテキストです。新しい herdr はペイン ID を再び割り当てるため、別のペインに出ないようここに保管しています。ここからは何も送信されません。",
+  "Put in message box adds this text to {destination}. Nothing is sent.": "「入力欄に入れる」を押すと {destination} にテキストが入ります。送信はしません。",
   "Put in message box": "入力欄に入れる",
   "Adds the text to this pane's message box. Nothing is sent.": "このペインの入力欄にテキストを追加します。送信はしません。",
   "Message box": "入力欄",
