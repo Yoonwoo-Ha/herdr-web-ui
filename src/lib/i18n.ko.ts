@@ -114,6 +114,8 @@ const BASE: Record<string, string> = {
   // ---- settings ----
   "Settings": "설정",
   "PCs": "PC",
+  "PC {name}": "PC {name}",
+  "PCs, {n} of {m} connected": "PC {m}대 중 {n}대 연결됨",
   "Chat": "채팅",
   "Agent default": "에이전트 기본값",
   "Devices and PCs": "기기와 PC",
@@ -548,6 +550,7 @@ const BASE: Record<string, string> = {
   "Search": "검색",
   "Choose one from the list to open its chat here.": "목록에서 하나를 고르면 채팅이 여기에 열립니다.",
   "Agent inbox": "에이전트 인박스",
+  "Inbox mode": "인박스 모드",
   "Open agent inbox": "에이전트 인박스 열기",
   "Back to Ovis": "Ovis로 돌아가기",
   "Remove PC": "PC 제거",

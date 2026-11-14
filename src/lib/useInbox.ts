@@ -126,6 +126,12 @@ export function wayInOpensThread({ hasRow, view, peek, drawnPanes, splitShown }:
   return hasRow && !splitShown && drawnPanes === 1 && view === "chat" && !peek;
 }
 
+/** What the list lets the shell ask of it (components/InboxList.tsx), for as long as it is drawn. */
+export interface InboxListHandle {
+  /** to the list's top, with the keyboard's focus on the list: the press on the rail's current place (components/InboxRail.tsx) */
+  toTop(): void;
+}
+
 /** The history entry's mark that it was pushed on leaving the list: Back on such an entry returns to it. */
 export const INBOX_FROM_KEY = "ovis:from-inbox";
 
@@ -214,6 +220,8 @@ export function useInbox({ on, initialLink, drawerOpenRef }: {
   const [query, setQuery] = useState(kept.query);
   /** the list's scroll offset, kept while a thread is open, while the mode is left, and over a reload */
   const scroll = useRef(kept.scroll);
+  /** the list drawn now, which the mode's rail asks for its top */
+  const list = useRef<InboxListHandle>(null);
   const listRef = useRef({ filter, query });
   listRef.current = { filter, query };
   useEffect(() => { keepList({ filter, query, scroll: scroll.current }); }, [filter, query]);
@@ -234,5 +242,5 @@ export function useInbox({ on, initialLink, drawerOpenRef }: {
   const [summaryReads] = useState(newSummaryReads);
   /** whether the drawer or the list covers the selected pane: its finishes are not read, its alerts not held back */
   const coveredRef = useMemo(() => ({ get current(): boolean { return drawerOpenRef.current === true || shownRef.current; } }) as RefObject<boolean>, [drawerOpenRef]);
-  return { enabled, shown, cold, shownRef, enabledRef, coveredRef, show, leave, back, filter, setFilter, query, setQuery, scroll, questionReads, summaryReads, focus: { opening, taken: focusTaken } };
+  return { enabled, shown, cold, shownRef, enabledRef, coveredRef, show, leave, back, filter, setFilter, query, setQuery, scroll, list, questionReads, summaryReads, focus: { opening, taken: focusTaken } };
 }
