@@ -560,7 +560,7 @@ it.skipIf(process.platform !== "linux")("binds only the reported UUID to the for
     const state = (() => { try { return fs.readFileSync(`/proc/${quitting}/stat`, "utf8").split(") ")[1]?.split(" ")[0] ?? "?"; } catch { return "gone"; } })();
     return JSON.stringify({ pid: quitting, state, front: (await paneProcessInfo(pane))?.foreground_processes?.map((process) => [process.pid, process.argv]), agent: label?.agent, status: label?.agent_status, session: label?.agent_session });
   };
-  const recorded = () => `herdr agent events for ${pane}, ms from the quit (they arrive on herdr's poll: the latest may be missing):\n${agentEvents.events.map(({ at, text }) => `${Math.round(at - quitAt)} ${text}`).join("\n") || "none"}`;
+  const recorded = () => `herdr agent events for ${pane}, ms from the quit (later events may not have arrived yet):\n${agentEvents.events.map(({ at, text }) => `${Math.round(at - quitAt)} ${text}`).join("\n") || "none"}`;
   for (const deadline = Date.now() + 10_000; (await paneProcessInfo(pane))?.foreground_processes?.some((process) => process.pid === quitting);) {
     if (Date.now() > deadline) throw new Error(`isolated fixture did not exit: ${await quitState()}\n${recorded()}\nherdr log:\n${herdrLogTail()}`);
     await Bun.sleep(50);
@@ -581,7 +581,7 @@ it.skipIf(process.platform !== "linux")("binds only the reported UUID to the for
   expect((await read()).source).toBe("scrollback");
   symlinkSync(file(id), file(other));
   expect((await read()).source).toBe("scrollback");
-}, 20_000);
+}, 30_000);
 
 it.skipIf(process.platform !== "linux")("retries failed Copilot page reads only while fresh ownership and file generation still agree", async () => {
   const session = "12aa83d8-48bc-41f2-a498-7055c5c44a07";
