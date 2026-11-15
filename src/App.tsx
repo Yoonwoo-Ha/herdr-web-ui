@@ -134,6 +134,7 @@ import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { CrashProbe, RegionCrash } from "./components/AppCrash.tsx";
 import { RenderBoundary } from "./components/RenderBoundary.tsx";
 import { lensOwner, storedView, usePaneLens, usePaneLensState, usePaneViewPicks } from "./lib/usePaneLens.ts";
+import { useShownCount } from "./lib/usageCounters.ts";
 import { useSplitLayout, useSplitRecheck, useSplitState } from "./lib/useSplitView.ts";
 import { linkSelects, useLinkLanding, useMachineGone, useNotificationTargets, useSelectedLayout, useSelectedMachine, useSelectedPane, useSelectionMark, useSelectionState, useSelectPane, useSelectTarget } from "./lib/useSelection.ts";
 import { useAddressBar } from "./lib/useAddressBar.ts";
@@ -538,8 +539,11 @@ export function App() {
   // and one for how long each agent has been in its state: stamped here, read by the lists (lib/useAgentStateSince.ts)
   useAgentStateStamping(machines, activity);
 
-  const { pickView, setView } = usePaneViewPicks({ setViewPicks, setNotificationViewTarget, setTerminalPeek, setLens, setAutoSelected, selectedPaneId, selectedMachineId });
+  const agentOf = (machineId: string, paneId: string) => machines.find((machine) => machine.id === machineId)?.snapshot?.panes.find((pane) => pane.pane_id === paneId)?.agent;
+  const { pickView, setView } = usePaneViewPicks({ setViewPicks, setNotificationViewTarget, setTerminalPeek, setLens, setAutoSelected, selectedPaneId, selectedMachineId, view, agentOf });
   const { unsentFor, openUnsent, closeUnsent, recover } = useUnsentRecovery({ selectedMachineId, selectedPaneId, setView, pickView });
+  // the Chat/Terminal switch in the header (or the thread's top), and each half's own in a split
+  useShownCount("view_switch_header", selectedPane !== null && !inbox.shown, selectedMachineId);
   // on a phone a peek is a step of its own: Back takes the chat back, as it closes a sheet. It stays
   // up under a sheet or Settings opened over it: their close, or a Back, comes back to the peek
   usePhoneSheetBack(() => endPeek(), terminalPeek !== null, true);
@@ -639,7 +643,7 @@ export function App() {
       },
       setView,
       // a peek shows the terminal over the chat: the shortcut takes the chat back, the lens stays Chat
-      toggleView: () => { if (terminalPeek !== null) endPeek(); else setView(view === "chat" ? "terminal" : "chat"); setDrawerOpen(false); },
+      toggleView: (source) => { if (terminalPeek !== null) endPeek(); else setView(view === "chat" ? "terminal" : "chat", source); setDrawerOpen(false); },
       focusInput: () => { if (!inbox.shown) paneControls.current?.focusInput(); },
       scrollPage: (direction) => paneControls.current?.scrollPage(direction),
       openNewSession: () => {
@@ -737,7 +741,7 @@ export function App() {
         if (selectedPaneId === null) return;
         // a peek already shows the pane's terminal: find searches it there, and the peek (its return,
         // and the lens and address under it) stays
-        if (terminalPeek?.paneId !== selectedPaneId || terminalPeek.machineId !== selectedMachineId) setView("terminal");
+        if (terminalPeek?.paneId !== selectedPaneId || terminalPeek.machineId !== selectedMachineId) setView("terminal", null);
         setDrawerOpen(false);
         setFindRequest((request) => ({ paneId: selectedPaneId, serial: request.serial + 1 }));
       },
@@ -977,6 +981,7 @@ export function App() {
   // shows its list
   const threadDrawn = inMode && !inbox.shown;
   const paneSplit = splitOn && !threadDrawn;
+  useShownCount("view_switch_pane", paneSplit, selectedMachineId);
   const listScreen = inMode && inbox.shown && !inboxWide;
   // a phone thread that shows its terminal, where the classic shell would draw the pane's own tab row over it: the
   // thread keeps that row's room free, so the terminal's box, and its pty's size, are the ones classic gives it
@@ -1202,18 +1207,18 @@ export function App() {
             a thumb that slides to it (Apple's segmented control). Mod+Shift+J switches too */}
         {selectedPane && (isSheetWidth || inMode) && !inbox.shown && (
           <LensToggle view={view} peek={terminalPeek !== null} terminalAttach={terminalAttach} thread={inMode}
-            title={(label) => shortcutTitle(label, "toggle-view")} onToggle={actions.toggleView} />
+            title={(label) => shortcutTitle(label, "toggle-view")} onToggle={() => actions.toggleView("header")} />
         )}
         {selectedPane && !isSheetWidth && !inMode && (
           <div className="view-switch" data-view={view} role="group" aria-label={`${t("Chat")} / ${t("Terminal")}`}>
             <button type="button" className="lens-option is-chat" aria-pressed={view === "chat"} aria-label={t("Chat")} title={shortcutTitle(t("Chat transcript"), "toggle-view")}
-              onClick={() => { setView("chat"); setDrawerOpen(false); }}>
+              onClick={() => { setView("chat", "header"); setDrawerOpen(false); }}>
               <MessageCircle aria-hidden="true" />
               <span className="lens-label">{t("Chat")}</span>
             </button>
             <button type="button" className="lens-option is-terminal" aria-pressed={view === "terminal"} aria-label={terminalAttach ? t("Terminal") : `${t("Terminal")} · ${t("soon")}`}
               title={!terminalAttach ? t("Live terminal: coming to Windows PCs once herdr can attach there") : shortcutTitle(t("Live terminal"), "toggle-view")}
-              onClick={() => { setView("terminal"); setDrawerOpen(false); }}>
+              onClick={() => { setView("terminal", "header"); setDrawerOpen(false); }}>
               <SquareTerminal aria-hidden="true" />
               <span className="lens-label">{t("Terminal")}</span>
               {!terminalAttach && <span className="pill pill-soon">{t("soon")}</span>}
@@ -1345,7 +1350,7 @@ export function App() {
             thread={!inbox.shown && selectedPane !== null && note === null ? { machines, activity, machineId: selectedMachineId, pane: selectedPane, connection: headerConnection, watching: auth?.role === "watch", severalPcs: sidebarMachines.length > 1 } : null}
             controls={!inbox.shown && selectedPane !== null ? <>
               <LensToggle view={view} peek={terminalPeek !== null} terminalAttach={terminalAttach} thread round
-                title={(label) => shortcutTitle(label, "toggle-view")} onToggle={actions.toggleView} />
+                title={(label) => shortcutTitle(label, "toggle-view")} onToggle={() => actions.toggleView("header")} />
               {moreButton(true)}
             </> : moreButton(true)} />}
           {(inbox.shown && inbox.cold ? [] : shownSlots).map((slot) => {
@@ -1377,7 +1382,7 @@ export function App() {
             const toggleSlotView = (): void => {
               if (slotPeek !== null) { endPeek(slotPeek); return; }
               const next = slotView === "chat" ? "terminal" : "chat";
-              if (active) setView(next); else if (pane) pickView(machineId, pane.pane_id, next);
+              if (active) setView(next, "pane"); else if (pane) pickView(machineId, pane.pane_id, next, "pane");
             };
             // a half's own lens and close sit at the end of its tab strip. The row's free end is the
             // half's grip: its pane, dropped on a half of the pane area, opens there too (dockSide)
@@ -1487,7 +1492,7 @@ export function App() {
                         machineName={machine?.name ?? machineId}
                         view={item ? lensOf(item) : slotView}
                         // the composer's way to the terminal: the selected pane's lens, or the pane's own remembered one
-                        onOpenTerminal={item ? () => { if (active && item.pane_id === selectedPaneId) setView("terminal"); else pickView(machineId, item.pane_id, "terminal"); } : undefined}
+                        onOpenTerminal={item ? () => { if (active && item.pane_id === selectedPaneId) setView("terminal", "pane"); else pickView(machineId, item.pane_id, "terminal", "pane"); } : undefined}
                         // a terminal command's peek, for the active half's selected pane alone (lib/terminalPeek.ts)
                         peek={active && item?.pane_id === selectedPaneId ? peekFor(terminalPeek, slot, machineId, item.pane_id) : null}
                         onPeek={active && item && item.pane_id === selectedPaneId && attach ? (request: PeekRequest) => setTerminalPeek({ ...request, slot, machineId, paneId: item.pane_id }) : undefined}
@@ -1562,7 +1567,7 @@ export function App() {
           closeNewSession();
           if (agentStarted) actions.agentStarted(newSessionMachineId, paneId);
           // the first message waits in the chat's box: the pane opens on it, whatever lens the page would pick
-          if (messageWaits) pickView(newSessionMachineId, paneId, "chat");
+          if (messageWaits) pickView(newSessionMachineId, paneId, "chat", null);
           selectTarget(newSessionMachineId, paneId);
           void load();
         }}

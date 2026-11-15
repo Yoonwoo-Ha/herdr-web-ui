@@ -5,7 +5,9 @@
  * kinds of screen and ways in of its visits, and its prompt answers and pane alerts counted by
  * `tally`, both only once the current notice was shown); a later visit that day resends it when a
  * new kind of agent appeared, or the usage changed and USAGE_RESEND_MS passed since it last went
- * (an earlier resend carries the usage already sent). No event or message goes out before the app has
+ * (an earlier resend carries the usage already sent). Once a day has ended, its counts message (the fixed
+ * controls a browser said it used that day, `tallyCounts`) goes once, as buckets; a day's exact numbers stay
+ * here, and they are dropped when the switch is turned off. No event or message goes out before the app has
  * shown its notice once, while the switch is off, or where the environment says not to.
  * Events include the latest browser's schema-validated settings snapshot; free-form strings and
  * account identifiers are summarized or omitted by the browser's projection.
@@ -15,13 +17,14 @@
 import { randomUUID } from "node:crypto";
 import { accessSync, constants, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { ACTIVE_LATE_DAYS, emptyUsage, harnessOf, sameUsage, TELEMETRY_COUNT_MAX, telemetryHarnesses, telemetrySettings, telemetrySurface, telemetryUsage, type InstallMethod, type TelemetryActive, type TelemetryChange, type TelemetryEvent, type TelemetryHarness, type TelemetryIngress, type TelemetryRuntime, type TelemetrySettings, type TelemetryStatus, type TelemetrySurface, type TelemetryUsage, type TelemetryUsageCount } from "../shared/telemetry.ts";
-import { NOTICE_VERSION } from "../shared/telemetry-notice.ts";
+import { ACTIVE_LATE_DAYS, countBucket, COUNTS_LATE_DAYS, emptyUsage, harnessOf, sameUsage, TELEMETRY_COUNT_MAX, TELEMETRY_COUNTERS, TELEMETRY_SHOWN, telemetryCountsChange, telemetryHarnesses, telemetrySettings, telemetrySurface, telemetryUsage, type InstallMethod, type TelemetryActive, type TelemetryBucket, type TelemetryChange, type TelemetryCounter, type TelemetryCounts, type TelemetryCountsChange, type TelemetryEvent, type TelemetryHarness, type TelemetryIngress, type TelemetryRuntime, type TelemetrySettings, type TelemetryShown, type TelemetryStatus, type TelemetrySurface, type TelemetryUsage, type TelemetryUsageCount, type TelemetryWidthCounts } from "../shared/telemetry.ts";
+import { COUNTS_ON, NOTICE_VERSION } from "../shared/telemetry-notice.ts";
 import { badRequest, errorResponse, isJsonObject, jsonResponse } from "./http.ts";
 import { updateRequestAllowed } from "./update-api.ts";
 
 export const TELEMETRY_URL = "https://herdr-web-ui-telemetry.devswha.workers.dev/v1/events";
 export const ACTIVE_URL = "https://herdr-web-ui-telemetry.devswha.workers.dev/v1/active";
+export const COUNTS_URL = "https://herdr-web-ui-telemetry.devswha.workers.dev/v1/counts";
 const FILE = "telemetry.json";
 /**
  * The switch turned off, as a file of its own beside FILE that only the switch writes or removes. Every other
@@ -34,7 +37,7 @@ const SEND_TIMEOUT_MS = 10_000;
 const START_DELAY_MS = 15_000;
 /** after the notice was shown, time to read it and press Turn off before the first event goes */
 export const NOTICE_GRACE_MS = 10 * 60_000;
-const TELEMETRY_CHANGE_KEYS = new Set(["enabled", "notice_seen", "notice_version", "settings", "alert_opened"]);
+const TELEMETRY_CHANGE_KEYS = new Set(["enabled", "notice_seen", "notice_version", "settings", "alert_opened", "counts"]);
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 /** today's usage (its kinds of screen and ways in as much as its counts) changes on the wire at most this often, and only with a
  * visit: a resend for a new kind of agent in between carries the usage already sent, so no message tells when a count changed */
@@ -105,6 +108,55 @@ function withoutUsage(days: ActiveDay[]): ActiveDay[] {
   return days.filter((entry) => entry.visited).map((entry) => ({ ...entry, usage: emptyUsage(), sent_usage: entry.sent_usage === null ? null : emptyUsage(), wire_usage: entry.wire_usage === null ? null : emptyUsage() }));
 }
 
+/** One width's day as counted here: exact counts (to TELEMETRY_COUNT_MAX) and the controls shown. */
+interface WidthTally {
+  counts: Partial<Record<TelemetryCounter, number>>;
+  shown: TelemetryShown[];
+}
+
+/** A UTC day's counts not yet delivered: the app's version that day, and each width it was used at. */
+interface CountDay {
+  day: string;
+  version: string;
+  narrow: WidthTally | null;
+  wide: WidthTally | null;
+}
+
+function readTally(value: unknown): WidthTally | null {
+  if (!isJsonObject(value) || !isJsonObject(value["counts"]) || !Array.isArray(value["shown"])) return null;
+  const counts: Partial<Record<TelemetryCounter, number>> = {};
+  for (const [name, count] of Object.entries(value["counts"])) {
+    if ((TELEMETRY_COUNTERS as readonly string[]).includes(name) && typeof count === "number" && Number.isInteger(count) && count >= 1) counts[name as TelemetryCounter] = Math.min(count, TELEMETRY_COUNT_MAX);
+  }
+  const shown = [...new Set(value["shown"].filter((name): name is TelemetryShown => typeof name === "string" && (TELEMETRY_SHOWN as readonly string[]).includes(name)))].sort();
+  return { counts, shown };
+}
+
+function readCountDays(value: unknown): CountDay[] {
+  if (!Array.isArray(value)) return [];
+  const days: CountDay[] = [];
+  for (const item of value) {
+    if (!isJsonObject(item) || typeof item["day"] !== "string" || !DAY.test(item["day"]) || typeof item["version"] !== "string") continue;
+    if (days.some((known) => known.day === item["day"])) continue;
+    const narrow = item["narrow"] === null ? null : readTally(item["narrow"]);
+    const wide = item["wide"] === null ? null : readTally(item["wide"]);
+    if (narrow === null && wide === null) continue;
+    days.push({ day: item["day"], version: item["version"], narrow, wide });
+  }
+  return days.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+}
+
+/** A width's day as it leaves this PC: each counter used as its bucket, in name order, and the shown controls. */
+function widthCounts(tally: WidthTally | null): TelemetryWidthCounts | null {
+  if (tally === null) return null;
+  const counts: Partial<Record<TelemetryCounter, TelemetryBucket>> = {};
+  for (const name of (Object.keys(tally.counts) as TelemetryCounter[]).sort()) {
+    const bucket = countBucket(tally.counts[name] ?? 0);
+    if (bucket !== 0) counts[name] = bucket;
+  }
+  return { counts, shown: [...tally.shown] };
+}
+
 interface Saved {
   install_id: string;
   enabled: boolean;
@@ -120,6 +172,8 @@ interface Saved {
   /** the usage in `active` was counted only after the current notice. A file without it (an older build's) may hold usage
    * counted before the notice, so its usage is dropped when read; so is any usage while the current notice is unseen */
   usage_after_notice: true;
+  /** days whose counts were not delivered yet, ascending, no older than COUNTS_LATE_DAYS; counted only after the current notice */
+  counts: CountDay[];
 }
 
 type Env = Record<string, string | undefined>;
@@ -182,6 +236,12 @@ function telemetryChange(value: unknown): TelemetryChange | null {
           if (descriptor.value !== true) return null;
           clean.alert_opened = true;
           break;
+        case "counts": {
+          const counts = telemetryCountsChange(descriptor.value);
+          if (!counts) return null;
+          clean.counts = counts;
+          break;
+        }
       }
     }
     if (clean.notice_seen === true && clean.notice_version !== NOTICE_VERSION) return null;
@@ -229,6 +289,8 @@ function readSaved(file: string, offFile: string): Saved | null {
       settings: telemetrySettings(value["settings"]),
       active: noticeSeenAt !== null && value["usage_after_notice"] === true ? active : withoutUsage(active),
       usage_after_notice: true,
+      // counted only once the current notice was shown: a file whose notice is older keeps none
+      counts: noticeSeenAt === null ? [] : readCountDays(value["counts"]),
     };
   } catch { return null; }
 }
@@ -244,6 +306,8 @@ export class Telemetry {
   private activeAgainVisit = false;
   private activeAbort?: AbortController;
   private activeTimer?: Timer;
+  private countsSending: Promise<void> | null = null;
+  private countsAbort?: AbortController;
   private readonly file: string;
   private readonly offFile: string;
   /** false when the state file could not be written: then nothing is sent (it could not be remembered) */
@@ -256,6 +320,9 @@ export class Telemetry {
     fetch: typeof fetch;
     url?: string;
     activeUrl?: string;
+    countsUrl?: string;
+    /** whether buttons are counted; COUNTS_ON (this build's notice says so) when unset. Tests turn it on */
+    countsOn?: boolean;
     platform?: string;
     arch?: string;
     /** the version the running release replaced, as the supervisor told it; null when none did */
@@ -273,7 +340,7 @@ export class Telemetry {
     // a first run's state directory is made before the mark is looked for: one that is not there reads off (offMarked)
     try { mkdirSync(options.stateDir, { recursive: true, mode: 0o700 }); } catch { /* not made: offMarked reads off */ }
     const saved = readSaved(this.file, this.offFile);
-    this.saved = saved ?? { install_id: randomUUID(), enabled: !offMarked(this.offFile), notice_seen_at: null, notice_version: NOTICE_VERSION, reported_version: null, settings: null, active: [], usage_after_notice: true };
+    this.saved = saved ?? { install_id: randomUUID(), enabled: !offMarked(this.offFile), notice_seen_at: null, notice_version: NOTICE_VERSION, reported_version: null, settings: null, active: [], usage_after_notice: true, counts: [] };
     if (!saved) {
       try { this.persist(); } catch (error) {
         // the app still starts; telemetry just stays silent
@@ -308,7 +375,7 @@ export class Telemetry {
 
   private schedule(ms: number): void {
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => void this.report(), ms);
+    this.timer = setTimeout(() => { void this.report(); void this.flushCounts(); }, ms);
     this.timer.unref?.();
   }
 
@@ -319,9 +386,18 @@ export class Telemetry {
     const today = new Date(this.now());
     const cutoff = utcDay(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - ACTIVE_LATE_DAYS));
     const kept = this.saved.active.filter((entry) => entry.day >= cutoff);
-    if (kept.length === this.saved.active.length) return false;
+    const countsCutoff = utcDay(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - COUNTS_LATE_DAYS));
+    const counts = this.saved.counts.filter((entry) => entry.day >= countsCutoff);
+    if (kept.length === this.saved.active.length && counts.length === this.saved.counts.length) return false;
     this.saved.active = kept;
+    this.saved.counts = counts;
     return true;
+  }
+
+  /** a day's counts message as it would be sent; a day with none counted has both widths null */
+  private countsMessage(day: string): TelemetryCounts {
+    const entry = this.saved.counts.find((known) => known.day === day);
+    return { event: "counts", day, install_id: this.saved.install_id, version: entry?.version ?? this.options.version, narrow: widthCounts(entry?.narrow ?? null), wide: widthCounts(entry?.wide ?? null) };
   }
 
   private activeMessage(entry?: { day: string; harnesses: TelemetryHarness[]; usage: TelemetryUsage }): TelemetryActive {
@@ -367,6 +443,7 @@ export class Telemetry {
       notice_seen: this.saved.notice_seen_at !== null,
       next: this.pending(),
       active: this.activeMessage(this.saved.active.find((entry) => entry.day === utcDay(this.now()))),
+      ...(this.countsOn() ? { counts: this.countsMessage(utcDay(this.now())) } : {}),
     };
   }
 
@@ -375,11 +452,13 @@ export class Telemetry {
     if (!clean) throw new TypeError("Invalid telemetry change");
     // turned off while an event is on its way: stop it before anything is read or written (a read may write the mark), and
     // even if OFF_FILE cannot be written
-    if (clean.enabled === false) { this.abort?.abort(); this.activeAbort?.abort(); }
+    if (clean.enabled === false) { this.abort?.abort(); this.activeAbort?.abort(); this.countsAbort?.abort(); }
     this.refresh();
     // off is marked before FILE is written, whatever another server writes to FILE meanwhile
     if (clean.enabled === false) this.markOff();
     if (clean.enabled !== undefined) this.saved.enabled = clean.enabled;
+    // counts not delivered yet go with the off: turned on again, nothing counted before it is sent
+    if (clean.enabled === false) this.saved.counts = [];
     // kept for the next install/update event; telling it sends nothing by itself
     if (clean.settings !== undefined) this.saved.settings = clean.settings;
     if (clean.notice_seen && this.saved.notice_seen_at === null) this.saved.notice_seen_at = new Date(this.now()).toISOString();
@@ -393,9 +472,15 @@ export class Telemetry {
       // a tap alone sends nothing: the day's next visit carries it, so no message tells when it was
       if (Object.keys(clean).length === 1) return this.status();
     }
+    if (clean.counts) {
+      this.tallyCounts(clean.counts);
+      // a browser's counts alone send nothing: a finished day goes at a start or a visit, so no message tells when a button was pressed
+      if (Object.keys(clean).length === 1) return this.status();
+    }
     void this.report();
     // visits already recorded but held back by the notice, the switch or a failure
     void this.flushActive();
+    void this.flushCounts();
     return this.status();
   }
 
@@ -430,8 +515,94 @@ export class Telemetry {
     }
   }
 
+  /**
+   * Adds what a browser used in one width to today's counts (each to TELEMETRY_COUNT_MAX) under the running
+   * version; never while usage is not counted (off, blocked, or the current notice not shown), so nothing
+   * pressed before the notice is kept. It sends nothing by itself.
+   */
+  tallyCounts(change: TelemetryCountsChange): void {
+    if (!this.countsOn() || !this.countingUsage()) return;
+    const day = utcDay(this.now());
+    this.prune();
+    let entry = this.saved.counts.find((known) => known.day === day);
+    if (!entry) {
+      entry = { day, version: this.options.version, narrow: null, wide: null };
+      this.saved.counts = [...this.saved.counts, entry].sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+    }
+    // the version that day: an update in the middle of it names the later one
+    entry.version = this.options.version;
+    const tally = entry[change.width] ?? { counts: {}, shown: [] };
+    for (const [name, add] of Object.entries(change.add) as [TelemetryCounter, number][]) {
+      tally.counts[name] = Math.min((tally.counts[name] ?? 0) + add, TELEMETRY_COUNT_MAX);
+    }
+    tally.shown = [...new Set([...tally.shown, ...change.shown])].sort();
+    entry[change.width] = tally;
+    try { this.persist(); } catch (error) {
+      console.error(`telemetry: the counts could not be recorded (${message(error)})`);
+    }
+  }
+
+  /**
+   * Delivers each recorded day that has ended, oldest first, once: a delivered day is forgotten. No sooner than
+   * NOTICE_GRACE_MS after the notice; a failure is logged and tried again at the next start or visit.
+   */
+  private countsOn(): boolean { return this.options.countsOn ?? COUNTS_ON; }
+
+  /** whether a browser's counts are taken at all: not while this build's notice does not say so, where they are refused as before */
+  takesCounts(): boolean { return this.countsOn(); }
+
+  private flushCounts(): Promise<void> {
+    if (!this.countsOn()) return Promise.resolve();
+    if (this.countsSending) return this.countsSending;
+    if (!this.writable) return Promise.resolve();
+    this.refresh();
+    const seen = this.saved.notice_seen_at === null ? NaN : Date.parse(this.saved.notice_seen_at);
+    if (!this.saved.enabled || Number.isNaN(seen) || this.blocked()) return Promise.resolve();
+    if (this.now() < seen + (this.options.noticeGraceMs ?? NOTICE_GRACE_MS)) return Promise.resolve();
+    if (this.prune()) {
+      try { this.persist(); } catch (error) {
+        console.error(`telemetry: ${this.file} could not be written (${message(error)})`);
+        return Promise.resolve();
+      }
+    }
+    const today = utcDay(this.now());
+    const due = this.saved.counts.filter((entry) => entry.day < today).map((entry) => this.countsMessage(entry.day));
+    if (due.length === 0) return Promise.resolve();
+    const abort = new AbortController();
+    this.countsAbort = abort;
+    this.countsSending = (async () => {
+      try {
+        for (const counts of due) {
+          // right before it goes: turned off here or by another server on the same state directory meanwhile
+          if (abort.signal.aborted || offMarked(this.offFile)) return;
+          try {
+            const response = await this.options.fetch(this.options.countsUrl ?? COUNTS_URL, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(counts),
+              signal: AbortSignal.any([abort.signal, AbortSignal.timeout(SEND_TIMEOUT_MS)]),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          } catch (error) {
+            if (!abort.signal.aborted) console.error(`telemetry: the counts message was not delivered (${message(error)})`);
+            return;
+          }
+          this.refresh();
+          this.saved.counts = this.saved.counts.filter((entry) => entry.day !== counts.day);
+          this.persist();
+        }
+      } catch (error) {
+        console.error(`telemetry: ${this.file} could not be written (${message(error)})`);
+      }
+    })().finally(() => {
+      this.countsSending = null;
+      this.countsAbort = undefined;
+    });
+    return this.countsSending;
+  }
+
   start(): void { this.schedule(START_DELAY_MS); }
-  stop(): void { clearTimeout(this.timer); this.abort?.abort(); this.activeTimer?.clear(); this.activeAbort?.abort(); }
+  stop(): void { clearTimeout(this.timer); this.abort?.abort(); this.activeTimer?.clear(); this.activeAbort?.abort(); this.countsAbort?.abort(); }
 
   /**
    * A browser visit: records today (the day of this call, even when the agents arrive after
@@ -489,6 +660,7 @@ export class Telemetry {
           }
         }
       }
+      void this.flushCounts();
       return this.flushActive(true);
     })();
   }
@@ -648,7 +820,8 @@ export async function handleTelemetryRequest(request: Request, telemetry?: Telem
   try { body = JSON.parse(text); } catch { return badRequest("invalid_json", "The body is not JSON"); }
   if (!isJsonObject(body)) return badRequest("invalid_body", "Send an object");
   const change = telemetryChange(body);
-  if (!change) return badRequest("invalid_body", "Send enabled, settings, or the current notice acknowledgement");
+  // a counts change is refused as any unknown key was before, while this build counts nothing
+  if (!change || (change.counts !== undefined && !telemetry.takesCounts())) return badRequest("invalid_body", "Send enabled, settings, or the current notice acknowledgement");
   try { return reply(telemetry.change(change)); }
   catch (error) { return errorResponse(error); }
 }

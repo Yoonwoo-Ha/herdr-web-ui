@@ -303,7 +303,7 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
           actions.openFind();
           break;
         case "toggle-view":
-          actions.toggleView();
+          actions.toggleView("shortcut");
           break;
         case "focus-input":
           actions.focusInput();
