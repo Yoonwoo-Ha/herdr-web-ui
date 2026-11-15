@@ -10,7 +10,7 @@
  * skill the same way, and stops at the sender's own refusal.
  */
 import { afterAll, beforeAll, expect, it, spyOn } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
@@ -151,12 +151,11 @@ async function firstMessage(label: string, session: string | null, cwd = root) {
   const sent = frame((item) => item.type === "pending-messages" && item.removed?.some((entry: any) => entry.id === message.id && entry.outcome === "sent"), "the first message was not sent");
   await herdrRpc("pane.report_agent", { pane_id: pane, source: "herdr:opencode", agent: "opencode", ...reported, state: "idle" });
   await sent;
-  // the Enter after the message, as the stand-in records it
-  await new Promise<void>((resolve, reject) => {
-    const watcher = watch(root, () => { if (typed(label).endsWith("\r")) { clearTimeout(timer); watcher.close(); resolve(); } });
-    const timer = setTimeout(() => { watcher.close(); reject(new Error(`no Enter after the message: ${JSON.stringify(typed(label))}`)); }, 5_000);
-    if (typed(label).endsWith("\r")) { clearTimeout(timer); watcher.close(); resolve(); }
-  });
+  // the Enter after the message, as the stand-in records it: read its log, as fs.watch can miss the last append
+  for (const deadline = Date.now() + 5_000; !typed(label).endsWith("\r");) {
+    if (Date.now() > deadline) throw new Error(`no Enter after the message: ${JSON.stringify(typed(label))}`);
+    await Bun.sleep(25);
+  }
   const shown = await (await fetch(`http://127.0.0.1:${server.port}/api/pane/prompt?pane_id=${encodeURIComponent(pane)}`)).json() as PanePromptResponse;
   socket.close();
   return { typed: typed(label), outcomes: shown.outcomes ?? [] };
