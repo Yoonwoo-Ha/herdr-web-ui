@@ -19,7 +19,7 @@ import { HERDR_PREFIX_ACTIONS, type HerdrKeys, type HerdrPrefixAction } from "..
 import { WEB_LINK_TARGETS } from "../lib/webPanel.ts";
 import { FILE_OPEN_TARGETS } from "../lib/filePresentation.ts";
 import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, VOICE_ENGINES, enterSendsOn, phoneInboxOn, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
-import { isThemeId, pickTheme, rowFor, THEME_IDS, type DrawnTheme, type Mode, type ThemeId } from "../lib/themes.ts";
+import { isThemeId, pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
 import { chosenTheme, customRow, customRowId, type CustomTheme } from "../lib/customThemes.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT, type Translate } from "../lib/i18n.ts";
 import { focusInOtherModal, useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -31,6 +31,7 @@ import { FoldHelpersRow } from "./FoldHelpersRow.tsx";
 import { FilesPanelRow } from "./FilesPanelRow.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { ThemeFiles, themeLabel } from "./ThemeFiles.tsx";
+import { THEME_NAMES, ThemeCard } from "./ThemeCard.tsx";
 import { ChipToggles, SettingsBare, Segmented, SettingsFold, SettingsGroup, SettingsQuery, SettingsRow, SettingsSelect, Stepper, Toggle, settingsQueryWords, useSettingsRowSentence } from "./SettingsControls.tsx";
 import { PcLoadSetting } from "./MachineStats.tsx";
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "../lib/fontFamily.ts";
@@ -333,55 +334,6 @@ function shownBy(entry: SettingsLevel | null): { page: SettingsPage | null; keyB
   return page === null && entry.page !== null ? null : { page, keyBar: entry.keyBar && page === "terminal" };
 }
 
-/** What each theme is called: the color words are translated, the brand names stay as their projects write them. */
-const THEME_NAMES: Record<ThemeId, string> = {
-  amber: "Amber",
-  charcoal: "Charcoal",
-  codex: "Codex",
-  catppuccin: "Catppuccin",
-  "catppuccin-latte": "Catppuccin Latte",
-  "tokyo-night": "Tokyo Night",
-  "black": "Black",
-  "tokyo-night-day": "Tokyo Night Day",
-  gruvbox: "Gruvbox",
-  "gruvbox-light": "Gruvbox Light",
-  "one-dark": "One Dark",
-  "one-light": "One Light",
-  solarized: "Solarized",
-  "solarized-light": "Solarized Light",
-  kanagawa: "Kanagawa",
-  "kanagawa-lotus": "Kanagawa Lotus",
-  "rose-pine": "Rosé Pine",
-  "rose-pine-dawn": "Rosé Pine Dawn",
-  dracula: "Dracula",
-  nord: "Nord",
-  vesper: "Vesper",
-};
-
-/**
- * One theme as a small picture of the app in its own colours, a sidebar beside a pane, its name under it (the cards T3 Code
- * and herdr-app show). `row` is what the theme draws on `side`: a built-in theme's row, or an imported theme's (lib/customThemes.ts).
- */
-function ThemeCard({ card, name, row, side, checked, onPick }: { card: string; name: string; row: DrawnTheme; side: Mode; checked: boolean; onPick: () => void }) {
-  const t = useT();
-  const c = row.preview;
-  // a theme of the other kind says so: it draws that way on this side; every card's tooltip carries its
-  // whole name, as the name under the picture may be cut (G-204)
-  const kind = row.mode === side ? undefined : `${name} · ${t(row.mode === "dark" ? "Dark" : "Light")}`;
-  return (
-    <button type="button" role="radio" aria-checked={checked} aria-label={kind} title={kind ?? name} tabIndex={checked ? 0 : -1} className="theme-card" data-theme-card={card} onClick={onPick}>
-      <span className="theme-card-art" aria-hidden="true" style={{ background: row.bg, borderColor: c.border }}>
-        <span className="theme-card-side" style={{ background: row.bgPanel, borderColor: c.border }}>
-          <i style={{ background: c.accent }} /><i style={{ background: c.textDim }} /><i style={{ background: c.textDim }} />
-        </span>
-        <span className="theme-card-pane" style={{ background: c.elevated, borderColor: c.border }}>
-          <i style={{ background: c.text }} /><i style={{ background: c.textDim }} /><b style={{ background: c.primary }} />
-        </span>
-      </span>
-      <span className="theme-card-name">{name}</span>
-    </button>
-  );
-}
 
 /** Sidebar rows, drawn: a workspace on one line, or its agent's line above it */
 function SidebarRowsPreview({ rows }: { rows: "one" | "two" }) {

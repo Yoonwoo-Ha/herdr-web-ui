@@ -5628,8 +5628,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   visible behind it and a step never moves the card's edges. At 640px and below it is the app's bottom
   sheet. It opens by itself once, on a fresh install only (no herdr workspace, no saved settings, no
   shared settings, no paired device); Settings → Agents opens it again. A watching device never sees it.
-- Layout: a 56px head (the app mark and "Set up Ovis" at the left, close at the right; the steps' list
-  joins it in the middle once there is more than one step), a body in two columns (the step at the left,
+- Layout: a 56px head (the app mark and "Set up Ovis" at the left, close at the right; after the welcome
+  the steps' list sits in the middle: Agent, Theme, each a number in a `--border-strong` ring, the current
+  one filled `--primary` with `aria-current="step"`, a done one a `--status-done` check; a phone keeps the
+  numbers and gives the words to screen readers only), a body in two columns (the step at the left,
   5fr; its result or preview at the right, 6fr, a `--bg` panel with a hairline) that is the dialog's one
   scroll owner, and a 64px footer. Below 960px the right column goes under the left. Each step's title is
   `--fs-title` (28px), the one size the app adds for it: the largest a screen's own title took before was
@@ -5657,7 +5659,20 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   and the folder it starts in. With nothing installed the step lists every agent as a tile, dim, with a
   small Install (a download icon alone on a phone, its name kept for screen readers), under "Pick an AI
   coding helper" and "Nothing is installed until you tap Install."
-- Done: "Ovis is ready", what Start will open, and the choices made as rows (`.setup-list`, a
+- The theme step (after the agent, before Done): "Pick a look", the mode as Settings → Appearance has
+  it (System, Light, Dark; under it, on System, which mode this computer is in now, else that the theme
+  applies on every device of this Ovis, as it is a shared setting), then the theme of the side drawn now
+  as a grid of three `ThemeCard`s, the side's own six first and **Show all themes** for the rest (the
+  chosen one is always among those shown). A pick changes the whole app at once, the dialog and the app
+  behind it; the right column's Preview is a miniature of the app with made-up work (three agents waiting,
+  working and done, a chat turn with code, a line of terminal) in the page's own colours, so it is always
+  the theme picked. Settings keeps its one sideways row; the guide's grid shows more at once in the room
+  the step has, as Orca's and Linear's first-run theme steps do. Unlike Settings there is no Dark theme |
+  Light theme switch: the mode above already chooses which side's themes are shown, and a theme picked
+  for the side not drawn would have no preview (Settings → Appearance sets both). An imported theme drawn on the side checks no card, and
+  a pick replaces it, as in Settings. Arrow keys, Home and End pick along the cards, as a radio group's do.
+- Done: "Ovis is ready", what Start will open, and the choices made as rows (the agent, then the theme:
+  the mode and the theme drawn now) (`.setup-list`, a
   `--status-done` check each); Start with … is the primary. Its right column holds Connect your phone
   (below).
 - Install is the one tap: the official installer runs in a terminal tab while a spinner turns on the

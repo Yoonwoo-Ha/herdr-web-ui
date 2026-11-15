@@ -16,7 +16,7 @@
  * with a step at a time) rather than the Claude and Codex apps' page in the main area: the app behind it
  * stays visible, and the card's height never moves between steps.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type ReactNode } from "react";
 import { ArrowRight, Check, ChevronLeft, ChevronRight, CircleCheck, Folder, Gauge, Info, KeyRound, LoaderCircle, Play, RotateCw, Smartphone, Sparkles, SquareTerminal, X } from "lucide-react";
 
 import type { AgentCatalogEntry, AgentCatalogRow } from "../../shared/agent-catalog.ts";
@@ -30,6 +30,8 @@ import { pairThisBrowser, UnconfirmedPairing } from "../lib/pairing.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
 import { recentDirectories } from "../lib/recent-directories.ts";
 import { useSettings } from "../lib/settings.ts";
+import { pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
+import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { agentRows, checkList, foundAgents, installedHere, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, openInFolder, preferredAgent, relayStep, settleDelay, setupView, signedInAgents, turnsUsageOn, type CheckStatus, type GuideEvent, type GuideState, type PcCheck, type PhoneBoxOpening } from "../lib/setupGuideFlow.ts";
 import { focusInOtherModal, nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -40,6 +42,8 @@ import { AccountSection } from "./AccountSection.tsx";
 import { AgentMark } from "./AgentMark.tsx";
 import { AgentTile } from "./AgentTile.tsx";
 import { OvisMark } from "./OvisMark.tsx";
+import { Segmented } from "./SettingsControls.tsx";
+import { ThemeCard, THEME_NAMES } from "./ThemeCard.tsx";
 import { TelemetryNotice } from "./TelemetryControls.tsx";
 import { UsageSignInDialog } from "./UsageSignInDialog.tsx";
 import { QrCode } from "./QrCode.tsx";
@@ -133,6 +137,9 @@ export function SetupGuide(props: SetupGuideProps) {
     return () => { asked.current += 1; window.clearTimeout(settle.current); };
   }, [begun, machineId]); // eslint-disable-line react-hooks/exhaustive-deps
   const check: PcCheck = { checking, catalog, failed: catalogError !== null };
+  // the step shown once the guide is begun: the head's list of steps and the body follow it; the welcome starts it over
+  const [page, setPage] = useState<GuidePage>("agent");
+  useEffect(() => { if (state.step === "welcome") setPage("agent"); }, [state.step]);
   const view = setupView(check);
 
   // the control the dialog gives the keyboard to when it opens: the welcome's first choice, or a step's title
@@ -183,7 +190,7 @@ export function SetupGuide(props: SetupGuideProps) {
   const notice = <TelemetryNotice inline enabled={!hidden} onOpen={props.onOpenTelemetry} />;
   let body: ReactNode;
   if (state.step === "welcome") body = <Welcome dispatch={props.dispatch} onClose={onClose} notice={notice} firstFocus={firstFocus} />;
-  else if (view === "agents" && catalog !== null) body = <Steps catalog={catalog} ready={ready} machineId={machineId} reopened={state.reopened === true} dispatch={props.dispatch} onClose={onClose} onInstalled={agentInstalled} onLookAgain={loadCatalog} onOpenTerminal={props.onOpenTerminal} onOpened={props.onOpened} onOpenSettings={props.onOpenSettings} auth={props.auth} security={props.security} onStarting={props.onStarting} onPaired={props.onPaired} usageOn={turnsUsageOn(props.state)} phoneFirst={!phoneClosed && phoneBoxOpensFirst(props.state, isLoopbackHost(window.location.hostname))} onPhoneClosed={() => setPhoneClosed(true)} notice={notice} firstFocus={firstFocus} />;
+  else if (view === "agents" && catalog !== null) body = <Steps page={page} setPage={setPage} catalog={catalog} ready={ready} machineId={machineId} reopened={state.reopened === true} dispatch={props.dispatch} onClose={onClose} onInstalled={agentInstalled} onLookAgain={loadCatalog} onOpenTerminal={props.onOpenTerminal} onOpened={props.onOpened} onOpenSettings={props.onOpenSettings} auth={props.auth} security={props.security} onStarting={props.onStarting} onPaired={props.onPaired} usageOn={turnsUsageOn(props.state)} phoneFirst={!phoneClosed && phoneBoxOpensFirst(props.state, isLoopbackHost(window.location.hostname))} onPhoneClosed={() => setPhoneClosed(true)} notice={notice} firstFocus={firstFocus} />;
   else body = <CheckStep reopened={state.reopened === true} dispatch={props.dispatch} onClose={onClose} notice={notice} firstFocus={firstFocus}>{view === "failed" ? <CheckFailed error={catalogError} onLookAgain={loadCatalog} /> : <Checking known={known} catalog={catalog} />}</CheckStep>;
 
   return (
@@ -194,7 +201,7 @@ export function SetupGuide(props: SetupGuideProps) {
         <header className="modal-header setup-head">
           <span className="setup-brand" id="setup-dialog-name"><OvisMark width={24} height={24} />{t("Set up Ovis")}</span>
           {/* the steps' list sits here once the guide has more than one step */}
-          <span className="setup-head-middle" />
+          {state.step === "welcome" ? <span className="setup-head-middle" /> : <StepList page={page} />}
           <button type="button" className="icon-button" aria-label={t("Close setup")} title={t("Close setup")} onClick={onClose}><X aria-hidden="true" /></button>
         </header>
         <p className="visually-hidden" role="status">{announced}</p>
@@ -327,7 +334,7 @@ function CheckFailed({ error, onLookAgain }: { error: string | null; onLookAgain
   );
 }
 
-interface StepsProps extends Pick<SetupGuideProps, "onOpenTerminal" | "onOpened" | "onOpenSettings" | "auth" | "security" | "onStarting" | "onPaired" | "onClose" | "dispatch"> {
+interface StepsProps extends Pick<StepState, "page" | "setPage">, Pick<SetupGuideProps, "onOpenTerminal" | "onOpened" | "onOpenSettings" | "auth" | "security" | "onStarting" | "onPaired" | "onClose" | "dispatch"> {
   /** opened again from Settings: no welcome to go back to */
   reopened: boolean;
   /** the line about usage counts, at the end of the step's column */
@@ -348,15 +355,17 @@ interface StepsProps extends Pick<SetupGuideProps, "onOpenTerminal" | "onOpened"
 }
 
 /** The agent step and the Done screen: one place keeps the agent picked and what Start did, for both. */
-function Steps({ catalog, ready, machineId, reopened, notice, dispatch, onClose, onInstalled, onLookAgain, onOpenTerminal, onOpened, onOpenSettings, auth, security, onStarting, onPaired, usageOn, phoneFirst, onPhoneClosed, firstFocus }: StepsProps) {
+function Steps({ page, setPage, catalog, ready, machineId, reopened, notice, dispatch, onClose, onInstalled, onLookAgain, onOpenTerminal, onOpened, onOpenSettings, auth, security, onStarting, onPaired, usageOn, phoneFirst, onPhoneClosed, firstFocus }: StepsProps) {
   const t = useT();
   const { settings, update } = useSettings();
   const agents = agentRows(catalog, ready);
   const installed = agents.filter((agent) => installedHere(agent, ready));
   const [picked, setPicked] = useState<string | null>(null);
   const chosen = installed.find((agent) => agent.id === picked) ?? preferredAgent(installed, ready.at(-1) ?? null);
+  // no agent left to start (Look again found none): the later steps have nothing to finish, so the guide is back on
+  // the agents, and the next pick goes through the steps again rather than jumping to where it was (#3882)
+  useEffect(() => { if (chosen === null && page !== "agent") setPage("agent"); }, [chosen === null, page]); // eslint-disable-line react-hooks/exhaustive-deps
   // the step shown: the agents, or Done with its Start
-  const [page, setPage] = useState<"agent" | "done">("agent");
   const pageBefore = useRef(page);
   useEffect(() => {
     if (pageBefore.current === page) return;
@@ -442,9 +451,26 @@ function Steps({ catalog, ready, machineId, reopened, notice, dispatch, onClose,
   const startLabel = madeWithout !== null ? t("Open the workspace") : chosen !== null ? t("Start with {agent}", { agent: chosen.name }) : t("Start");
   const version = chosen?.state.installed === true ? chosen.state.version : null;
   const signInChosen = chosen !== null && unsigned.some((agent) => agent.id === chosen.id);
+  const systemDark = useMediaQuery("(prefers-color-scheme: dark)");
+  const drawnSide: Mode = settings.theme === "system" ? (systemDark ? "dark" : "light") : settings.theme;
+  const drawnTheme = settings.customThemes[drawnSide] === null ? THEME_NAMES[drawnSide === "dark" ? settings.darkTheme : settings.lightTheme] : null;
+  const themeSummary = [t(settings.theme === "system" ? "System" : settings.theme === "dark" ? "Dark" : "Light"), drawnTheme === null ? null : t(drawnTheme)].filter(Boolean).join(" · ");
   const usageNote = signedIn.length > 0 && (settings.showUsage || usageOn) && <p className="setup-note"><Gauge aria-hidden="true" />{t("Plan usage will show in the sidebar for your signed-in accounts.")}</p>;
   const errorLine = error !== null && <p className="setup-error" role="alert">{error}</p>;
   const signInDialog = signingIn && <UsageSignInDialog request={signingIn} onOpenTerminal={(paneId) => { setSigningIn(null); onOpenTerminal(paneId); }} onSignedIn={() => setSignedHere((done) => [...done, signingIn.provider])} onClose={() => setSigningIn(null)} />;
+
+  if (page === "theme" && chosen !== null) return (
+    <>
+      <ThemeStep firstFocus={firstFocus}>{errorLine}{notice}</ThemeStep>
+      <footer className="modal-footer setup-foot">
+        {madeWithout === null && <button type="button" className="btn btn-ghost" disabled={opening} onClick={() => void start()}>{t("Start now, finish setup later")}</button>}
+        <button type="button" className="btn" disabled={locked} onClick={() => setPage("agent")}><ChevronLeft aria-hidden="true" />{t("Back")}</button>
+        {madeWithout !== null
+          ? <button type="button" className="btn btn-primary" onClick={() => void start()}><Play aria-hidden="true" />{t("Open the workspace")}</button>
+          : <button type="button" className="btn btn-primary" disabled={locked} onClick={() => setPage("done")}>{t("Continue")}<ArrowRight aria-hidden="true" /></button>}
+      </footer>
+    </>
+  );
 
   if (page === "done" && chosen !== null) return (
     <>
@@ -456,6 +482,7 @@ function Steps({ catalog, ready, machineId, reopened, notice, dispatch, onClose,
             : t("Ovis opens a workspace in {folder} and starts {agent}.", { folder, agent: chosen.name })}</p>
           <ul className="setup-list setup-summary">
             <li className="setup-item is-done"><CircleCheck role="img" aria-label={t("Done")} /><span className="setup-summary-row"><span className="setup-summary-name">{t("Agent")}</span><span>{version === null ? chosen.name : `${chosen.name} ${version}`}</span></span></li>
+            <li className="setup-item is-done"><CircleCheck role="img" aria-label={t("Done")} /><span className="setup-summary-row"><span className="setup-summary-name">{t("Theme")}</span><span>{themeSummary}</span></span></li>
           </ul>
           {usageNote}
           {errorLine}
@@ -471,7 +498,7 @@ function Steps({ catalog, ready, machineId, reopened, notice, dispatch, onClose,
         </aside>
       </div>
       <footer className="modal-footer setup-foot">
-        <button type="button" className="btn" disabled={locked} onClick={() => setPage("agent")}><ChevronLeft aria-hidden="true" />{t("Back")}</button>
+        <button type="button" className="btn" disabled={locked} onClick={() => setPage("theme")}><ChevronLeft aria-hidden="true" />{t("Back")}</button>
         <button type="button" className="btn btn-primary" disabled={opening} onClick={() => void start()}><Play aria-hidden="true" />{startLabel}</button>
       </footer>
     </>
@@ -542,10 +569,143 @@ function Steps({ catalog, ready, machineId, reopened, notice, dispatch, onClose,
         {!reopened && <button type="button" className="btn" disabled={locked || busy} onClick={() => dispatch({ type: "back" })}><ChevronLeft aria-hidden="true" />{t("Back")}</button>}
         {madeWithout !== null
           ? <button type="button" className="btn btn-primary" onClick={() => void start()}><Play aria-hidden="true" />{t("Open the workspace")}</button>
-          : <button type="button" className="btn btn-primary" disabled={chosen === null || locked || busy} onClick={() => setPage("done")}>{t("Continue")}<ArrowRight aria-hidden="true" /></button>}
+          : <button type="button" className="btn btn-primary" disabled={chosen === null || locked || busy} onClick={() => setPage("theme")}>{t("Continue")}<ArrowRight aria-hidden="true" /></button>}
       </footer>
       {signInDialog}
     </>
+  );
+}
+
+/** The steps after the welcome; Done is the end of the list, not a step of it. */
+type GuidePage = "agent" | "theme" | "done";
+interface StepState { page: GuidePage; setPage: (page: GuidePage) => void }
+const STEPS: readonly { page: Exclude<GuidePage, "done">; label: string }[] = [{ page: "agent", label: "Agent" }, { page: "theme", label: "Theme" }];
+
+/** The head's list of steps: the one shown is marked current, the ones before it done. */
+function StepList({ page }: { page: GuidePage }) {
+  const t = useT();
+  const at = page === "done" ? STEPS.length : STEPS.findIndex((step) => step.page === page);
+  return (
+    <ol className="setup-steps" aria-label={t("Steps")}>
+      {STEPS.map((step, index) => (
+        <li key={step.page} className={index < at ? "is-done" : undefined} aria-current={index === at ? "step" : undefined}>
+          <span className="setup-steps-mark" {...(index < at ? { role: "img", "aria-label": t("Done") } : { "aria-hidden": true })}>{index < at ? <Check aria-hidden="true" /> : index + 1}</span>
+          <span className="setup-steps-label">{t(step.label)}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/**
+ * A miniature of the app with made-up work in it: three agents in a sidebar (waiting, working, done), a chat turn
+ * with code and a line of terminal. It is drawn in the page's own colours, and the theme step's picks change the
+ * page's, so it always shows the theme chosen. A picture: nothing in it can be reached or read out.
+ */
+function ThemePreview() {
+  const t = useT();
+  const rows = [
+    { agent: "claude", name: "checkout-api", status: "blocked" },
+    { agent: "codex", name: "web-dashboard", status: "working" },
+    { agent: "opencode", name: "docs-site", status: "done" },
+  ] as const;
+  return (
+    <div className="setup-preview" aria-hidden="true" inert>
+      <div className="setup-preview-side">
+        {rows.map((row, index) => (
+          <div key={row.name} className={index === 0 ? "setup-preview-row is-selected" : "setup-preview-row"}>
+            <AgentMark agent={row.agent} size={14} />
+            <span className="setup-preview-name">{row.name}</span>
+            <span className={`badge badge-${row.status} sidebar-status`} data-status={row.status}>
+              {row.status === "blocked" ? <span className="sidebar-status-mark">?</span> : <span className="sidebar-status-dot" />}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="setup-preview-pane">
+        <div className="setup-preview-head">
+          <span className="setup-preview-title"><AgentMark agent="claude" size={14} />{t("Idempotent payments")}</span>
+          <span className="setup-preview-lens"><span className="is-on">{t("Chat")}</span><span>{t("Terminal")}</span></span>
+        </div>
+        <div className="setup-preview-chat">
+          <p className="setup-preview-user">{t("Nice. Now add a metric for replayed requests.")}</p>
+          <p>{t("Adding a counter next to the existing request metrics.")}</p>
+          <pre className="setup-preview-code"><span className="is-keyword">const</span> replays = <span className="is-function">counter</span>(<span className="is-string">"replays_total"</span>);{"\n"}replays.<span className="is-function">inc</span>({"{ route }"});</pre>
+        </div>
+        <pre className="setup-preview-term"><span className="is-dim">$</span> bun test metrics{"\n"}<span className="is-pass">12 pass</span> · 0 fail</pre>
+      </div>
+    </div>
+  );
+}
+
+/** How many of a side's own themes show before Show all themes: two rows of three. */
+const THEMES_FIRST = 6;
+
+/**
+ * The theme step: the mode (System, Light, Dark, as Settings → Appearance has it) and the theme of the side drawn
+ * now. A pick changes the whole app at once, the dialog and the app behind it, so the app itself is the preview;
+ * the side panel shows the chosen theme larger. The theme is a shared setting: every device of this Ovis takes it.
+ */
+function ThemeStep({ firstFocus, children }: { firstFocus: FirstFocus; children: ReactNode }) {
+  const t = useT();
+  const { settings, update } = useSettings();
+  const systemDark = useMediaQuery("(prefers-color-scheme: dark)");
+  const side: Mode = settings.theme === "system" ? (systemDark ? "dark" : "light") : settings.theme;
+  const [all, setAll] = useState(false);
+  const cards = useRef<HTMLDivElement>(null);
+  // an imported theme drawn on this side has no card here: none is checked, and a pick replaces it, as in Settings
+  const current: ThemeId | null = settings.customThemes[side] === null ? (side === "dark" ? settings.darkTheme : settings.lightTheme) : null;
+  const own = THEME_IDS.filter((id) => rowFor(id, side).mode === side);
+  const others = THEME_IDS.filter((id) => rowFor(id, side).mode !== side);
+  const shown = all ? [...own, ...others] : own.slice(0, THEMES_FIRST).concat(current !== null && !own.slice(0, THEMES_FIRST).includes(current) ? [current] : []);
+  const pick = (id: ThemeId): void => update((latest) => ({ ...pickTheme(latest, side, id), customThemes: { ...latest.customThemes, [side]: null } }));
+  // a radio group's arrows pick as they move
+  const step = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const delta = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+    if (delta === 0 && event.key !== "Home" && event.key !== "End") return;
+    // the cards are `shown`, in its order
+    const list = [...(cards.current?.querySelectorAll<HTMLElement>("[data-theme-card]") ?? [])];
+    const at = list.indexOf(document.activeElement as HTMLElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? shown.length - 1 : (at + delta + shown.length) % shown.length;
+    event.preventDefault();
+    const id = shown[next];
+    if (id !== undefined) pick(id);
+    list[next]?.focus();
+  };
+  // the link that showed them goes: the first theme it showed takes the keyboard, as Install another agent's do
+  const allBefore = useRef(all);
+  useEffect(() => {
+    if (allBefore.current === all) return;
+    allBefore.current = all;
+    const first = shown.find((id) => !own.slice(0, THEMES_FIRST).includes(id) && id !== current);
+    if (first !== undefined) cards.current?.querySelector<HTMLElement>(`[data-theme-card="${first}"]`)?.focus({ preventScroll: false });
+  }, [all]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sideLabel = t(side === "dark" ? "Dark theme" : "Light theme");
+  return (
+    <div className="modal-body setup-body">
+      <div className="setup-main">
+        <StepTitle firstFocus={firstFocus}>{t("Pick a look")}</StepTitle>
+        <p className="setup-lead">{t("Change it any time in Settings → Appearance.")}</p>
+        <div className="setup-field">
+          <span className="setup-label" aria-hidden="true">{t("Theme")}</span>
+          <Segmented label={t("Theme")} value={settings.theme} onChange={(theme) => update({ theme })} options={[{ value: "system", label: t("System") }, { value: "light", label: t("Light") }, { value: "dark", label: t("Dark") }]} />
+          <p className="setup-muted">{settings.theme === "system" ? t(side === "dark" ? "Follows this computer. It is dark now." : "Follows this computer. It is light now.") : t("The theme applies on every device that uses this Ovis.")}</p>
+        </div>
+        <div className="setup-field">
+          <span className="setup-label" aria-hidden="true">{sideLabel}</span>
+          <div ref={cards} className="setup-theme-cards" role="radiogroup" aria-label={sideLabel} onKeyDown={step}>
+            {shown.map((id, index) => <ThemeCard key={id} card={id} name={t(THEME_NAMES[id])} row={rowFor(id, side)} side={side} checked={current === id} focusable={current === null ? index === 0 : current === id} onPick={() => pick(id)} />)}
+          </div>
+          {!all && <button type="button" className="setup-link" onClick={() => setAll(true)}>{t("Show all themes")}</button>}
+        </div>
+        {children}
+      </div>
+      <aside className="setup-side" aria-labelledby="setup-theme-preview">
+        <span className="setup-label" id="setup-theme-preview">{t("Preview")}</span>
+        <ThemePreview />
+        <p className="setup-text">{current === null ? sideLabel : `${t(side === "dark" ? "Dark" : "Light")} · ${t(THEME_NAMES[current])}`}</p>
+      </aside>
+    </div>
   );
 }
 

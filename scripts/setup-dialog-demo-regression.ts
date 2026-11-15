@@ -8,8 +8,10 @@
  *   and its close button is named.
  * - The fast path is two clicks from the welcome: I'm new to Ovis, then Start now, finish setup later, which
  *   opens a new workspace with the agent picked for you (one more in the sidebar) and closes the guide.
- * - The full path: Continue leads to Done, whose Start with <agent> is the step's one primary button; Back
- *   returns to the agents, and Escape closes the guide and records it closed (a reload shows no guide).
+ * - The full path: Continue leads to the theme step, whose cards are a radio group (an arrow picks the next
+ *   theme and the whole app takes it at once, the side panel naming it), then to Done, whose Start with
+ *   <agent> is the step's one primary button and whose list names the theme picked. The head lists the
+ *   steps, the current one marked. Back returns to the theme, then to the agents, and Escape closes the guide and records it closed (a reload shows no guide).
  *
  * With UI_EVIDENCE_DIR, each state is captured under setup-dialog/.
  */
@@ -120,7 +122,30 @@ try {
         }
         await shot("2-agent");
 
-        // Continue: Done, its Start the one primary; Back returns to the agents
+        const steps = dialog.getByRole("list", { name: "Steps", exact: true });
+        assert.equal((await steps.locator('[aria-current="step"]').textContent())?.replace(/\s+/g, ""), "1Agent", `the head marks Agent as the current step ${at}`);
+
+        // Continue: the theme step. Its cards are a radio group; an arrow picks the next card and the app takes it at once
+        await footer.getByRole("button", { name: "Continue", exact: true }).click();
+        const look = dialog.getByRole("heading", { name: "Pick a look", exact: true });
+        await look.waitFor();
+        await settled(page);
+        assert.equal(await focusedName(page), "Pick a look", `the theme step's title takes the keyboard ${at}`);
+        assert.equal((await steps.locator('[aria-current="step"]').textContent())?.replace(/\s+/g, ""), "2Theme", `the head marks Theme as the current step ${at}`);
+        const side = theme === "dark" ? "Dark theme" : "Light theme";
+        const cards = dialog.getByRole("radiogroup", { name: side, exact: true });
+        assert.equal(await cards.getByRole("radio", { checked: true }).count(), 1, `one theme checked ${at}`);
+        assert.equal((await dialog.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { pressed: true }).innerText()).trim(), theme === "dark" ? "Dark" : "Light", `the mode shows ${at}`);
+        const paletteBefore = await page.evaluate(() => document.documentElement.dataset["palette"]);
+        await cards.getByRole("radio", { checked: true }).focus();
+        await page.keyboard.press("ArrowRight");
+        await page.waitForFunction((before) => document.documentElement.dataset["palette"] !== before, paletteBefore);
+        const picked = (await cards.getByRole("radio", { checked: true }).innerText()).trim();
+        assert.equal(await focusedName(page), picked, `the arrow moves the keyboard with the pick ${at}`);
+        assert.ok(await dialog.locator(".setup-side").getByText(picked).count() > 0, `the side panel names the theme picked ${at}`);
+        await shot("3-theme");
+
+        // Continue: Done, its Start the one primary, the theme among the choices made; Back returns to the theme, then the agents
         await footer.getByRole("button", { name: "Continue", exact: true }).click();
         await dialog.getByRole("heading", { name: "Ovis is ready", exact: true }).waitFor();
         await settled(page);
@@ -128,7 +153,11 @@ try {
         const primary = dialog.locator(".btn-primary");
         assert.equal(await primary.count(), 1, `one primary button on Done ${at}`);
         assert.equal((await primary.innerText()).trim(), "Start with Claude Code", `Done's Start ${at}`);
-        await shot("3-done");
+        assert.ok(await dialog.locator(".setup-summary").getByText(picked, { exact: false }).count() > 0, `Done lists the theme picked ${at}`);
+        assert.equal(await steps.locator("li.is-done").count(), 2, `both steps are marked done on Done ${at}`);
+        await shot("4-done");
+        await dialog.locator(".setup-foot").getByRole("button", { name: "Back", exact: true }).click();
+        await look.waitFor();
         await dialog.locator(".setup-foot").getByRole("button", { name: "Back", exact: true }).click();
         await title.waitFor();
 
@@ -144,7 +173,7 @@ try {
           await dialog.waitFor({ state: "detached" });
           await page.waitForFunction((count) => document.querySelectorAll(".workspace-group[data-workspace]").length > count, before);
           assert.equal(JSON.parse((await page.evaluate(() => localStorage.getItem("ovis:setup-guide"))) ?? "{}").status, "closed", `the fast path closes the guide ${at}`);
-          await shot("4-started");
+          await shot("5-started");
           console.log(`PASS the guide is a 1200x675 dialog, keyboard inside it, and the fast path opens the first workspace in two clicks (${at})`);
 
           // stepped aside (a pane picked from the palette over it) the guide is no modal: the app's own check for one
