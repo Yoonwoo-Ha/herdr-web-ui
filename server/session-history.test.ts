@@ -1125,6 +1125,24 @@ describe("listSessions", () => {
     expect(resolved).toEqual([SHORT]);
   });
 
+  it("lists omp's sessions from the store its environment moves them to (#3746)", () => {
+    const home = newHome();
+    const write = (store: string, id: string) => {
+      mkdirSync(join(store, FOLDERS.omp!), { recursive: true });
+      writeFileSync(join(store, FOLDERS.omp!, `${id}.jsonl`), piHeader(id) + piPrompt(id));
+    };
+    write(join(home, ".omp", "agent", "sessions"), ID(1));
+    write(join(home, "xdg-data", "omp", "sessions"), ID(2));
+    write(join(home, ".omp-work", "agent", "sessions"), ID(3));
+    const ids = (env: Record<string, string>, platform: NodeJS.Platform = "darwin") => listSessions("omp", CWD, { home, env, platform }).map((row) => row.id);
+    expect(ids({})).toEqual([ID(1)]);
+    expect(ids({ XDG_DATA_HOME: join(home, "xdg-data") })).toEqual([ID(2)]);
+    expect(ids({ XDG_DATA_HOME: join(home, "xdg-data") }, "linux")).toEqual([ID(2)]);
+    expect(ids({ PI_CONFIG_DIR: ".omp-work" })).toEqual([ID(3)]);
+    // an XDG root omp has not migrated to, or one it does not read, keeps the default store
+    expect(ids({ XDG_DATA_HOME: join(home, "nothing-here") })).toEqual([ID(1)]);
+  });
+
   it("finds omp's temp-scoped folder when TEMP is a Windows short-name alias of the cwd's base", () => {
     const home = newHome();
     const shortTemp = "C:\\Users\\LONGUS~1\\AppData\\Local\\Temp";
