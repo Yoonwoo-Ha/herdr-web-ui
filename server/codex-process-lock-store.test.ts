@@ -73,8 +73,8 @@ it.skipIf(process.platform !== "linux").each([
     stdin: "pipe", stdout: "pipe", stderr: "pipe",
   });
   try {
-    const reader = child.stdout.getReader();
-    await reader.read();
+    const reply = lineReader(child.stdout);
+    expect(await reply()).toBe("ready");
     if (replace) {
       renameSync(files[0]!.lock, `${files[0]!.lock}.old`);
       writeFileSync(files[0]!.lock, "replacement");
@@ -85,11 +85,11 @@ it.skipIf(process.platform !== "linux").each([
       // from the pathname or cached from the previous successful lookup.
       child.stdin.write("unlock\n");
       await child.stdin.flush();
-      await reader.read();
+      expect(await reply()).toBe("done");
       expect(await processCodexHome(child.pid)).toBeNull();
       child.stdin.write("lock\n");
       await child.stdin.flush();
-      await reader.read();
+      expect(await reply()).toBe("done");
       expect(await processCodexHome(child.pid)).toBe(homes[0]!);
     }
   } finally {
@@ -98,3 +98,23 @@ it.skipIf(process.platform !== "linux").each([
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * The child's replies, one whole line at a time. `python3 -u` writes a printed word and its newline
+ * separately, so a pipe read can end between them: the newline alone is not the next reply.
+ */
+function lineReader(stdout: ReadableStream<Uint8Array>): () => Promise<string> {
+  const reader = stdout.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  return async () => {
+    while (!text.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`the lock holder exited after writing ${JSON.stringify(text)}`);
+      text += decoder.decode(value, { stream: true });
+    }
+    const line = text.slice(0, text.indexOf("\n"));
+    text = text.slice(line.length + 1);
+    return line;
+  };
+}
