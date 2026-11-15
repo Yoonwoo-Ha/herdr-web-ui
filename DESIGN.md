@@ -5331,6 +5331,19 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   and desktop wheels are not paced. This differs from Zed's locally resized terminal, which scrolls
   a grid it owns: here the grid is herdr's, shared by every attached client, so a report is input
   to a pane other people may be using. No app interaction precedent is claimed for the pacing.
+- A swipe still moving fast when the finger lifts glides on and slows to a stop, as a phone's own
+  pages do (`lib/touchFling.ts`): its speed is the finger's travel over the last 100 ms, none when
+  it held still for 40 ms before the lift, never got 8 px from where it began (a tap that jittered;
+  Android's touch slop, under which no fling starts) or moved slower than 0.3 px/ms (Android's
+  `VelocityTracker` horizon and stopped time), at most 8 px/ms (Android's maximum fling), and it
+  decays by 0.998 per millisecond (UIScrollView's normal deceleration), so a glide travels about
+  half a second of the lift's speed. Each frame's travel becomes wheel steps through the same
+  `wheelSteps` and pacer as the finger's, and the last half step goes when the glide ends. A slow
+  drag still ends where the finger does. Anything that drops a swipe's queued reports stops the
+  glide too, and a glide reaches only the pane and attach its touch began on: a pane switched
+  before the lift gets nothing. Termux's terminal view flings its scrollback the same way. A pan of
+  folded rows or an oversized mirror, done in the browser, does not glide. The wheel speed setting
+  is for wheels and trackpads only: the finger keeps the text under it.
 - The screen a new attach is handed (`pty-data` with `replay: true`: a second tab, a phone, a
   reconnect) is presentation history: xterm draws it byte for byte, and an OSC 52 copy request in
   it is not run again. Output reaches xterm one frame at a time, so the frame being parsed is

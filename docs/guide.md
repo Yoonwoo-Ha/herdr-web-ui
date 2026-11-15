@@ -664,7 +664,9 @@ On a phone:
   buttons. Register a custom combination such as Ctrl+W, choose editing keys or F1–F12, or restore
   the default row. Saved combinations use exactly their selected modifiers; ordinary keys use
   the currently held modifiers. Removing a held modifier button clears it.
-- Dragging the terminal scrolls the real herdr pane.
+- Dragging the terminal scrolls the real herdr pane. A quick flick keeps scrolling after your finger
+  lifts and slows to a stop, as a page does; touching the terminal stops it. **Wheel scroll speed**
+  in Settings → Terminal changes the mouse wheel and trackpad only.
 - **Settings → Phone & devices → Keep screen on** keeps the screen awake while a terminal or chat
   pane is open. It is off by default, releases when the app is hidden, and resumes when
   you return. It needs HTTPS or localhost and browser support; power-saving mode may refuse it.

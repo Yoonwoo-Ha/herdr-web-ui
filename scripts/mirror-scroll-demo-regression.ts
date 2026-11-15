@@ -9,6 +9,7 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { appFaces } from "./app-faces.ts";
 import { shownRows } from "./shown-rows.ts";
+import { FLING_STOPPED_MS } from "../src/lib/touchFling.ts";
 
 interface Frame { type: string; pane_id?: string; text?: string; mode?: string }
 interface MirrorFixture {
@@ -186,12 +187,17 @@ try {
             await settled(page);
             assert.deepEqual((await state(page)).inputs, [], "touch also leaves unknown applications alone");
           }
+          // a quick swipe glides on after the lift (lib/touchFling.ts): the next gestures start once it has stopped
+          await page.waitForFunction(() => document.querySelector("[data-touch-fling]") === null, undefined, { polling: 50, timeout: 15_000 });
           await settled(page);
 
           const touchGesture = async (dx: number, dy: number): Promise<void> => {
             await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
             if (dx !== 0 || dy !== 0) {
               await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x + dx, y: y + dy }] });
+              // held still before the lift, so the drag ends where it is: a lift while it moves would glide on (lib/touchFling.ts)
+              const moved = await page.evaluate(() => performance.now());
+              await page.waitForFunction(([at, still]) => performance.now() - at > still, [moved, FLING_STOPPED_MS * 2] as const, { polling: 10 });
             }
             await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
             await settled(page);
