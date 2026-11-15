@@ -1312,9 +1312,14 @@ EOF
 # said with its commit, without asking GitHub
 ref_not_moved() {
   [ -n "${OVIS_REF:-${HERDR_WEB_UI_REF:-}}" ] || return 0
-  # with no checkout to read (herdr did not name the plugin's root), git -C "" would read the current directory's
+  # with no checkout to read (herdr did not name the plugin's root), git -C "" would read the current directory's; and
+  # in a folder that is not a checkout's top level, git reads the repository around it, whose commit is not the plugin's
   ref_not_moved_at=""
-  [ -z "$1" ] || ref_not_moved_at=$(git -C "$1" rev-parse --short=12 HEAD 2>/dev/null </dev/null) || ref_not_moved_at=""
+  if [ -n "$1" ] && ref_not_moved_at=$(git -C "$1" rev-parse --show-prefix 2>/dev/null </dev/null) && [ -z "$ref_not_moved_at" ]; then
+    ref_not_moved_at=$(git -C "$1" rev-parse --short=12 HEAD 2>/dev/null </dev/null) || ref_not_moved_at=""
+  else
+    ref_not_moved_at=""
+  fi
   say "${ref_not_moved_at:+the installed checkout is at commit $ref_not_moved_at; }OVIS_REF does not move an installed Ovis (INSTALL.md, Update)"
 }
 

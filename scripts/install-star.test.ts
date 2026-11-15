@@ -440,6 +440,19 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
     expect(out).not.toContain(here.slice(0, 12));
   });
 
+  it.concurrent("says no commit for a plugin folder that is not a checkout itself but sits inside another repository", async () => {
+    const pc = new Pc().installed();
+    // the plugin's folder is pc.scratch/plugin: the repository is around it
+    for (const args of [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"]]) {
+      expect(await Bun.spawn(["git", "-C", pc.scratch, ...args], { stdout: "ignore", stderr: "inherit" }).exited).toBe(0);
+    }
+    const around = (await new Response(Bun.spawn(["git", "-C", pc.scratch, "rev-parse", "HEAD"], { stdout: "pipe" }).stdout).text()).trim();
+    const { out, exitCode } = await pc.unattended({ OVIS_REF: "feat/x" });
+    expect(exitCode, out).toBe(0);
+    expect(out).toContain("OVIS_REF does not move an installed Ovis");
+    expect(out).not.toContain(around.slice(0, 12));
+  });
+
   // gh sleeps 60 seconds: the installer ended within RUN_ENDS_WITHIN_MS, so it did not wait for gh, and gh is gone
   it.concurrent("goes on with the link when gh does not answer", async () => {
     const pc = new Pc("hangs");

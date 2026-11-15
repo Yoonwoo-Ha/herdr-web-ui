@@ -542,25 +542,27 @@ $herdrState = if ($null -ne $env:XDG_STATE_HOME) { [IO.Path]::Combine($env:XDG_S
     else { Join-Path $env:USERPROFILE 'AppData\Local\herdr' }
 # A server a start of this plugin recorded that still runs, read without the checkout's packages: its pid in server.pid
 # and the creation time Windows gave it in server.owner (scripts/plugin.ts writes both, and its stop reads them), in the
-# state dir herdr gives the plugin under either id, or in ~\.local\state when it was started by hand. A process under
-# that pid with another creation time is not the server; one whose creation time could not be compared (no server.owner,
-# or none read now) may be, and is given back unverified.
+# state dir herdr gives the plugin under either id, or in ~\.local\state when it was started by hand (ByHand: by any
+# checkout). Each record of a live pid is given back with its file: Reused where that process has another creation time
+# (it is not the server, but a stop that cannot verify it fails on it), unverified where none could be compared (no
+# server.owner, or none read now).
 function Get-RecordedServer {
-    $dirs = @($env:HERDR_PLUGIN_STATE_DIR) + @($pluginId, $legacyId | ForEach-Object { Join-Path $herdrState "plugins\$_" }) +
-        @('ovis', 'herdr-web-ui' | ForEach-Object { Join-Path $env:USERPROFILE ".local\state\$_" })
+    $handDirs = @('ovis', 'herdr-web-ui' | ForEach-Object { Join-Path $env:USERPROFILE ".local\state\$_" })
+    $dirs = @($env:HERDR_PLUGIN_STATE_DIR) + @($pluginId, $legacyId | ForEach-Object { Join-Path $herdrState "plugins\$_" }) + $handDirs
     foreach ($dir in $dirs | Where-Object { $_ }) {
-        $recorded = "$(Get-Content -Raw -LiteralPath (Join-Path $dir 'server.pid') -ErrorAction SilentlyContinue)".Trim()
+        $file = Join-Path $dir 'server.pid'
+        $recorded = "$(Get-Content -Raw -LiteralPath $file -ErrorAction SilentlyContinue)".Trim()
         if ($recorded -notmatch '^\d+$' -or -not (Get-Process -Id $recorded -ErrorAction SilentlyContinue)) { continue }
         $owner = try { Get-Content -Raw -LiteralPath (Join-Path $dir 'server.owner') -ErrorAction Stop | ConvertFrom-Json } catch { $null }
-        $verified = $false
+        $verified = $false; $reused = $false
         if ($owner -and "$($owner.pid)" -eq $recorded -and $owner.birth.platform -eq 'win32') {
             $process = Get-CimInstance Win32_Process -Filter "ProcessId=$recorded" -ErrorAction SilentlyContinue
             if ($process.CreationDate) {
-                if ("$(([DateTimeOffset]$process.CreationDate).ToUnixTimeMilliseconds())" -ne "$($owner.birth.value)") { continue }
-                $verified = $true
+                $reused = "$(([DateTimeOffset]$process.CreationDate).ToUnixTimeMilliseconds())" -ne "$($owner.birth.value)"
+                $verified = -not $reused
             }
         }
-        return [pscustomobject]@{ Id = [int]$recorded; Verified = $verified }
+        [pscustomobject]@{ Id = [int]$recorded; Verified = $verified; Reused = $reused; File = $file; ByHand = $dir -in $handDirs }
     }
 }
 if ($legacy) {
@@ -618,13 +620,18 @@ if (-not $plugin) {
     # .ovis/server/from-source naming its version), after the binary's server is stopped, so the start below runs them.
     $launcherScript = Join-Path $plugin.plugin_root 'scripts\plugin-launch.ts'
     $repairing = $false
-    # the installed checkout's commit, empty where git cannot read it (a plugin linked from a folder that is no git checkout)
+    # the installed checkout's commit, empty where git cannot read it (a plugin linked from a folder that is no git checkout,
+    # or one inside another repository, whose commit is not the plugin's: git names it only at a checkout's top level)
     $installedCommit = ''
     if ($Ref) {
         # git's "not a git repository" is no error of this run: kept off the console, and from the error stream a host
         # under Stop could turn native stderr into (as Run-HerdrInstaller does)
-        $installedCommit = & { $ErrorActionPreference = 'Continue'; "$(& git -C $plugin.plugin_root rev-parse HEAD 2>$null)".Trim() }
-        if ($LASTEXITCODE -ne 0) { $installedCommit = '' }
+        $installedCommit = & {
+            $ErrorActionPreference = 'Continue'
+            $prefix = & git -C $plugin.plugin_root rev-parse --show-prefix 2>$null
+            if ($LASTEXITCODE -eq 0 -and -not "$prefix".Trim()) { "$(& git -C $plugin.plugin_root rev-parse HEAD 2>$null)".Trim() }
+        }
+        if ($LASTEXITCODE -ne 0 -or -not $installedCommit) { $installedCommit = '' }
     }
     if ($Ref -and $Ref -cnotmatch '^v\d+\.\d+\.\d+$' -and (Test-Path -LiteralPath $launcherScript)) {
         $checkoutVersion = (Get-Content -Raw -LiteralPath (Join-Path $plugin.plugin_root 'package.json') | ConvertFrom-Json).version
@@ -634,16 +641,20 @@ if (-not $plugin) {
         # version and commit (the version alone where git could not read it) only once the build finished: `started` there
         # is a build that failed or was cut off, in bun install or over the packages and client of an earlier build. A
         # checkout without a stamp was built by a launcher from before it. Either way a finished build left the packages
-        # and the built client. The version alone counts only where this installer's git cannot read the commit either:
-        # where it can, the checkout may have moved since, and a rebuild here stamps the commit.
+        # and the built client. Where this installer's git cannot read the commit, a stamp of this version counts whatever
+        # commit it names, as the version alone: nothing here can compare it (a launcher from before it read only a
+        # checkout's top level stamped a folder inside another repository with that repository's commit). Where it can,
+        # the version alone does not count: the checkout may have moved since, and a rebuild here stamps the commit.
         $stamp = Join-Path $plugin.plugin_root '.ovis\server\source-build'
         $stamped = if (Test-Path -LiteralPath $stamp) { (Get-Content -Raw -LiteralPath $stamp).Trim() }
         $sourceBuilt = $chosen -eq $checkoutVersion -and (Test-Path -LiteralPath (Join-Path $plugin.plugin_root 'node_modules')) -and
             (Test-Path -LiteralPath (Join-Path $plugin.plugin_root 'dist\index.html')) -and
-            ($null -eq $stamped -or $stamped -eq "$checkoutVersion $installedCommit" -or (-not $installedCommit -and $stamped -eq $checkoutVersion))
+            ($null -eq $stamped -or $stamped -eq "$checkoutVersion $installedCommit" -or (-not $installedCommit -and "$stamped".Split(' ')[0] -eq $checkoutVersion))
         $repairing = -not $sourceBuilt
         if ($repairing) {
-            if (-not $installedCommit) { throw "git could not read the commit of the installed plugin in $($plugin.plugin_root) (is it a git checkout?), so this installer cannot tell whether it is $Ref; nothing was stopped or changed by this run." }
+            # a build to finish in a folder whose commit cannot be read: built as it is by its own launcher, which stamps the
+            # version alone there, and then taken as built
+            if (-not $installedCommit) { throw "git could not read the commit of the installed plugin in $($plugin.plugin_root) (it is no git checkout, or not one's top level), so this installer cannot tell whether it is $Ref; nothing was stopped or changed by this run. To build that folder as it is, stop Ovis (herdr plugin action invoke $pluginId.stop-windows), run `$env:OVIS_FROM_SOURCE = '1'; bun '$launcherScript' install, then run this again." }
             # herdr checks the ref out detached, so the checkout knows its commit, not the branch: the ref is the installed
             # checkout only when it names that commit (a commit id, short ones too, among the checkout's objects, never a ref
             # of that name there, or a branch or tag whose commit on GitHub is it). A rerun keeps the installed plugin, so
@@ -677,13 +688,36 @@ if (-not $plugin) {
                 # downloads failing).
                 $kept = Join-Path $plugin.plugin_root '.ovis\server\bin'
                 $keptBinary = Test-Path -LiteralPath (Join-Path $kept 'ovis-server.exe')
-                # whether a stop ran and stopped: $null where there was nothing to stop it with
+                $keptManifest = Join-Path $kept 'ovis-server.json'
+                $keptVersion = if (Test-Path -LiteralPath $keptManifest) { try { (Get-Content -Raw -LiteralPath $keptManifest | ConvertFrom-Json).version } catch { '' } } else { '' }
+                # whether a stop ran and succeeded: $null where there was nothing to stop it with. Succeeded is not stopped:
+                # scripts/plugin.ts's stop says "stopped Ovis (pid N)" for a server it stopped, and also exits 0 for none.
                 $stopped = $null
+                $stoppedOne = $false
                 if ($keptBinary -or (Test-Path -LiteralPath (Join-Path $plugin.plugin_root 'node_modules'))) {
                     $env:OVIS_FROM_SOURCE = if ($keptBinary) { $null } else { '1' }
-                    & bun $launcherScript stop | Out-Null
+                    # told herdr's state dir for the plugin, as herdr's own stop is: run by hand without it, scripts/plugin.ts takes
+                    # a live record in ~\.local\state first, and would stop a server started by hand, of any checkout. That
+                    # one is refused below by its record, and nothing is built under it.
+                    $givenState = $env:HERDR_PLUGIN_STATE_DIR
+                    if (-not $givenState) { $env:HERDR_PLUGIN_STATE_DIR = Join-Path $herdrState "plugins\$pluginId" }
+                    try { $said = & bun $launcherScript stop } finally { $env:HERDR_PLUGIN_STATE_DIR = $givenState }
                     $stopped = $LASTEXITCODE -eq 0
-                    if (-not $stopped -and $keptBinary) { throw "Could not stop the Ovis the release's binary runs, so the branch was not built. Stop it (herdr plugin action invoke $pluginId.stop-windows, or restart herdr), then run this again." }
+                    $stoppedOne = $stopped -and [bool]($said -match '^stopped ')
+                    if (-not $stopped -and $keptBinary) {
+                        # The launcher runs a kept binary only of this version, checked: another (or one it cannot check)
+                        # sends the stop to the sources, which fail without their packages on every rerun. A record of
+                        # a live pid the stop cannot verify as its server is kept by it, and fails it on every rerun. With no
+                        # live record, the stop reached no server: the binary of this version failed its check (signature,
+                        # executable or client, scripts/server-install.ts verifiedInstall) and the release could not be had again.
+                        $records = @(Get-RecordedServer)
+                        $suspect = @($records | Where-Object { -not $_.Verified })[0]
+                        $recovery = if ($keptVersion -ne $checkoutVersion) { "The release's binary kept in $kept is not this checkout's version ($checkoutVersion), so its stop cannot run: remove that folder, then run this again." }
+                            elseif ($suspect) { "Its record $($suspect.File) names process $($suspect.Id), which the stop could not verify as the Ovis server: if that process is not Ovis, delete that file, then run this again." }
+                            elseif (-not $records) { "No server is recorded as running: the release's binary kept in $kept did not pass its check, and the release could not be fetched again. Remove that folder, then run this again." }
+                            else { "Stop it (herdr plugin action invoke $pluginId.stop-windows, or restart herdr), then run this again. It runs as process $($records[0].Id) (Stop-Process -Id $($records[0].Id) stops it)." }
+                        throw "Could not stop the Ovis the release's binary runs, so the branch was not built. $recovery"
+                    }
                 }
                 # Whether the stop ran, failed or had nothing to run: a server recorded as running would be left serving
                 # under the build (on Windows bun install fails on the files it holds open). scripts/plugin.ts's stop takes
@@ -691,11 +725,14 @@ if (-not $plugin) {
                 # install leaves unable to load the stop (a server of an earlier build may run over them: a rebuild cut off
                 # after vite emptied dist, then another in bun install). Given up: a live server that left no record where
                 # Get-RecordedServer reads is built under; the build's failure then says it may still run.
-                $running = Get-RecordedServer
+                $running = @(Get-RecordedServer | Where-Object { -not $_.Reused })[0]
                 if ($running) {
-                    $byHand = if ($running.Verified) { " It runs as process $($running.Id) (Stop-Process -Id $($running.Id) stops it)." }
-                        else { " Its record names process $($running.Id), which could not be verified as the Ovis server: check what it is before stopping it." }
-                    throw "Ovis still runs from this checkout, so the branch was not built. Stop it (herdr plugin action invoke $pluginId.stop-windows, or restart herdr), then run this again.$byHand"
+                    # a record in ~\.local\state is any hand-started Ovis's, from whichever checkout
+                    $what = if ($running.ByHand) { "An Ovis started by hand is recorded as running in $(Split-Path $running.File), so the branch was not built. Stop it, then run this again." }
+                        else { "Ovis still runs from this checkout, so the branch was not built. Stop it (herdr plugin action invoke $pluginId.stop-windows, or restart herdr), then run this again." }
+                    $named = if ($running.Verified) { " It runs as process $($running.Id) (Stop-Process -Id $($running.Id) stops it)." }
+                        else { " Its record $($running.File) names process $($running.Id), which could not be verified as the Ovis server: check what it is, and if it is not Ovis, delete that file, then run this again." }
+                    throw "$what$named"
                 }
                 if ($stopped -eq $false) { Write-Host 'Ovis: the stop failed; with no release binary and no server recorded as running here, the checkout is built' }
                 $env:OVIS_FROM_SOURCE = '1'
@@ -705,16 +742,22 @@ if (-not $plugin) {
                     # without the marker (taken back below), the launcher's start runs the release's binary where the checkout
                     # keeps this version's (scripts/server-install.ts verifiedInstall, which also checks its signature), as
                     # before this run
-                    $keptManifest = Join-Path $kept 'ovis-server.json'
-                    $keptVersion = if (Test-Path -LiteralPath $keptManifest) { try { (Get-Content -Raw -LiteralPath $keptManifest | ConvertFrom-Json).version } catch { '' } } else { '' }
                     $back = if ($keptVersion -eq $checkoutVersion -and (Test-Path -LiteralPath (Join-Path $kept 'ovis-server.exe')) -and (Test-Path -LiteralPath (Join-Path $kept 'dist\index.html'))) {
                         " Until then, herdr plugin action invoke $pluginId.start-windows starts the release's binary this checkout ran before."
                     } else { '' }
-                    # without a stop that stopped, a server no record named may still run from the checkout, holding its files
-                    $how = if ($stopped) { 'and Ovis is stopped' } else { "and an Ovis no stop reached may still run from this checkout, holding its files open: Get-CimInstance Win32_Process | Where-Object CommandLine -like '*$($plugin.plugin_root)*' finds it, and Stop-Process -Id <its ProcessId> stops it" }
+                    # Without a stop that stopped one, a server no record named may still run from the checkout, holding its
+                    # files; hardly where neither packages nor a release binary were there to run one (nor a stop).
+                    $how = if ($stoppedOne) { 'and Ovis is stopped' }
+                        elseif ($null -eq $stopped) { 'with no server recorded as running, nor packages or a release binary here to run one' }
+                        else { "and an Ovis no stop reached may still run from this checkout, holding its files open: Get-CimInstance Win32_Process | Where-Object CommandLine -like '*$($plugin.plugin_root)*' finds it, and Stop-Process -Id <its ProcessId> stops it" }
                     throw "bun failed (exit $code) building the installed branch, $how. Fix the error above, then run this again with OVIS_REF=$Ref to build it and start Ovis.$back"
                 }
                 $built = $true
+                # the launcher leaves its stamp `started` after a build whose checkout moved to another commit meanwhile (a
+                # pull while bun install ran); it ran 0 all the same, since herdr's own build step runs it too
+                if ("$(Get-Content -Raw -LiteralPath $stamp -ErrorAction SilentlyContinue)".Trim() -eq 'started') {
+                    Write-Host "Ovis: the installed checkout moved to another commit while it was built, so the build is not marked finished, though herdr's next start still runs it as it is; run this again with OVIS_REF naming the commit it is at now to build that one"
+                }
             } finally {
                 $env:OVIS_FROM_SOURCE = $givenSource
                 # the launcher names this version in the marker before it builds: a build that did not finish, failed or
