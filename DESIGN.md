@@ -5636,6 +5636,19 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   "running tasks will be interrupted" confirmation, since nothing here is.
 
 ### Setup guide (`.setup-*`)
+- After it (`SetupProgressRow`, `FirstStartHints`): once this browser has closed a guide it began (past the
+  welcome; not I've used Ovis before, nor an older guide's record), the sidebar's foot has **Setup: N left** above
+  the other footer rows while a part is left (the agent: a workspace here; the phone: a device paired other than this
+  browser, as a relay start or this browser pairing itself closes the device gate without one; the alerts: on and
+  allowed, or nothing to set where the page can have none; a theme is always done), its ring `--status-done` over
+  `--border-strong` for the parts done. It opens the guide at the first part left, as Linear's and Notion's
+  getting-started rows at a sidebar's foot do, and its x hides it for good in this browser. A first run whose
+  agent started arms three first-start hints, shown once its workspace is up, one at a time on the popover
+  surface (`--bg-elevated`, `--shadow-menu`, 320px, a small arrow): beside the pane's Chat | Terminal switch,
+  the sidebar's Agents section, its New workspace row; one this layout does not draw is skipped. They take no
+  keyboard from the pane and are not announced (Next and the close button follow it in the Tab order, the hint
+  drawn at the end of the page), Escape inside one or its x
+  ends them for good, and a phone, whose sidebar is a closed drawer, shows none.
 - A dialog over the app, as Orca's and Linear's first runs are, not a page in the main area (the Claude
   and Codex apps' way, which this guide followed before): `.modal` at a fixed 16:9 size, 1200x675
   (`min(100%, …)` each way), centred, over the app's own scrim, so the app the user is about to use stays

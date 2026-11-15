@@ -75,7 +75,7 @@ export const GUIDE_ZH: Record<string, string> = {
   "Test alert": "测试提醒",
   "This is how an alert from Ovis looks on this computer.": "Ovis 的提醒在这台电脑上就是这样显示的。",
   "Test alert sent. It should be on your screen now.": "测试提醒已发送，现在应该显示在屏幕上。",
-  "{name} is paired. Alerts can reach it too.": "已配对 {name}，提醒也可以发到它上面。",
+  "{name} is paired.": "已配对 {name}。",
   "Not yet": "尚未",
   "Later": "稍后",
   "Connect now": "立即连接",

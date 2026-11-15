@@ -38,12 +38,37 @@ const focusedName = (page: Page) => page.evaluate(() => {
   return active === null ? "" : (active.getAttribute("aria-label") ?? active.innerText ?? "").replace(/\s+/g, " ").trim();
 });
 
+
+/**
+ * A stand-in push service, put in after the demo transport as push-health-demo-regression.ts puts its own: Turn on
+ * alerts makes a subscription the demo's server takes, unless `pushStandIn.fails` is set (Brave with push off).
+ */
+const PUSH_STAND_IN = `<script>(() => {
+  const push = { fails: false };
+  window.pushStandIn = push;
+  let live = null;
+  const pushManager = {
+    getSubscription: async () => live,
+    subscribe: async (options) => {
+      if (push.fails) throw new DOMException("push service off", "NotAllowedError");
+      const endpoint = "https://push.example.test/demo/setup-guide";
+      live = { endpoint, options: { applicationServerKey: options.applicationServerKey }, unsubscribe: async () => { live = null; return true; }, toJSON: () => ({ endpoint, keys: { p256dh: "guide-p256dh", auth: "guide-auth" } }) };
+      return live;
+    },
+  };
+  if (!("serviceWorker" in navigator)) return;
+  Object.defineProperty(globalThis, "PushManager", { value: class PushManager {}, configurable: true });
+  const registration = { pushManager, showNotification: (title) => { (window.shownAlerts ?? []).push(title); return Promise.resolve(); } };
+  Object.defineProperty(navigator.serviceWorker, "ready", { value: Promise.resolve(registration), configurable: true });
+  Object.defineProperty(navigator.serviceWorker, "getRegistration", { value: async () => registration, configurable: true });
+})();</script>`;
+
 let server: ReturnType<typeof Bun.serve> | undefined;
 let browser: Browser | undefined;
 try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
-  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    <script type="module"`));
+  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    ${PUSH_STAND_IN}\n    <script type="module"`));
   server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const path = new URL(request.url).pathname;
     // the app's mark is addressed from the root, where a real server keeps it
@@ -214,6 +239,8 @@ try {
           await dialog.waitFor({ state: "detached" });
           await page.waitForFunction((count) => document.querySelectorAll(".workspace-group[data-workspace]").length > count, before);
           assert.equal(JSON.parse((await page.evaluate(() => localStorage.getItem("ovis:setup-guide"))) ?? "{}").status, "closed", `the fast path closes the guide ${at}`);
+          // a first run whose agent started: the first-start hints wait for its workspace, and the sidebar's setup row may show
+          assert.deepEqual(await page.evaluate(() => [localStorage.getItem("ovis:first-hints"), localStorage.getItem("ovis:setup-row")]), ["pending", "on"], `the fast path arms the hints and the setup row ${at}`);
           await shot("6-started");
           console.log(`PASS the guide is a 1200x675 dialog, keyboard inside it, and the fast path opens the first workspace in two clicks (${at})`);
 
@@ -272,6 +299,8 @@ try {
             const mode = dialog.getByRole("group", { name: "Theme", exact: true });
             await mode.getByRole("button", { name: "Light", exact: true }).click();
             await dialog.getByRole("radiogroup", { name: "Light theme", exact: true }).waitFor();
+            // Nord, kept on the dark side, is no stray card in the light list (#3894 review)
+            assert.equal(await dialog.getByRole("radiogroup", { name: "Light theme", exact: true }).locator("[data-theme-card='nord']").count(), 0, `a theme kept on the dark side is not in the light list ${at}`);
             await mode.getByRole("button", { name: "Dark", exact: true }).click();
             await grid.waitFor();
             // on System, the computer turning light under a focused dark card: the keyboard goes to the light side's cards
@@ -288,6 +317,27 @@ try {
             await mode.getByRole("button", { name: "Dark", exact: true }).click();
             await grid.waitFor();
             console.log(`PASS the theme step's Home and End, Show all themes, a saved theme beyond the first six, the mode switch, and the keyboard kept when the computer turns light (${at})`);
+
+            // push refused by the push service: Turn on alerts says why in Settings' words, stays to try again, and Done
+            // does not list alerts as on (#3894 review)
+            await page.evaluate((guide) => { localStorage.setItem("ovis:setup-guide", guide); (window as unknown as { pushStandIn: { fails: boolean } }).pushStandIn.fails = true; }, WELCOME);
+            await page.reload();
+            await page.evaluate(() => { (window as unknown as { pushStandIn: { fails: boolean } }).pushStandIn.fails = true; });
+            await dialog.getByRole("button", { name: /^I'm new to Ovis/ }).click();
+            await title.waitFor();
+            for (const heading of ["Pick a look", "Stay in touch with your agents"]) {
+              await dialog.locator(".setup-foot").getByRole("button", { name: "Continue", exact: true }).click();
+              await dialog.getByRole("heading", { name: heading, exact: true }).waitFor();
+            }
+            await dialog.getByRole("button", { name: "Turn on alerts", exact: true }).click();
+            await dialog.getByRole("status").filter({ hasText: "push subscription" }).waitFor();
+            assert.equal(await dialog.getByRole("button", { name: "Turn on alerts", exact: true }).count(), 1, `Turn on alerts stays after push failed ${at}`);
+            assert.equal(await dialog.getByRole("button", { name: "Send test", exact: true }).count(), 0, `no Send test while no alert can arrive ${at}`);
+            await dialog.locator(".setup-foot").getByRole("button", { name: "Continue", exact: true }).click();
+            await dialog.getByRole("heading", { name: "Ovis is ready", exact: true }).waitFor();
+            const alertsRow = dialog.locator(".setup-summary li").filter({ hasText: "Alerts" });
+            assert.equal(await alertsRow.evaluate((row) => row.classList.contains("is-done")), false, `Done does not count alerts that cannot arrive ${at}`);
+            console.log(`PASS a refused push subscription is said, keeps Turn on alerts, and Done does not count alerts (${at})`);
           }
 
           // a device paired before the guide (the demo's list) is the phone: the step and Done name it. That this
@@ -301,7 +351,7 @@ try {
             await guide.locator(".setup-foot").getByRole("button", { name: "Continue", exact: true }).click();
             await guide.getByRole("heading", { name: "Pick a look", exact: true }).waitFor();
             await guide.locator(".setup-foot").getByRole("button", { name: "Continue", exact: true }).click();
-            await guide.locator(".setup-side").getByText("Pixel 9 is paired. Alerts can reach it too.", { exact: true }).waitFor();
+            await guide.locator(".setup-side").getByText("Pixel 9 is paired.", { exact: true }).waitFor();
             await guide.locator(".setup-foot").getByRole("button", { name: "Continue", exact: true }).click();
             await guide.getByRole("heading", { name: "Ovis is ready", exact: true }).waitFor();
             const row = guide.locator(".setup-summary li").filter({ hasText: "Phone" });
@@ -394,6 +444,8 @@ try {
       await line.evaluate((node) => node.scrollIntoView({ block: "nearest" }));
       await frames(4);
       assert.equal(await seen(), 0, "a line under Settings is not recorded as seen");
+      // not even tried: a covered line makes no acknowledgement attempt, failed or not (#3894 CodeRabbit)
+      assert.equal(await page.evaluate(() => (window as unknown as { counts: { failed: number } }).counts.failed), 0, "no acknowledgement is attempted while Settings covers the line");
       // Settings closed: the line is in view and uncovered, and is recorded
       await page.keyboard.press("Escape");
       await settings.waitFor({ state: "detached" });

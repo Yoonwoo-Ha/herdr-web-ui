@@ -244,6 +244,7 @@ const BASE: Record<string, string> = {
   "Check now": "立即检查",
   "Check again": "重新检查",
   "Checking…": "正在检查…",
+  "Could not check alerts with this PC.": "无法在这台电脑上检查提醒状态。",
   "relay": "中继",
   "direct": "直连",
   "local": "PC 内部·隧道",
@@ -632,6 +633,15 @@ const BASE: Record<string, string> = {
   "Any turn finished takes in the long ones.": "开启每回合完成后，长回合也会一并提醒。",
   "Stopped on an error": "因错误停止",
   "A turn that ended on an error, as OmO and GJC report it": "OmO 和 GJC 报告的因错误结束的回合",
+  "Next": "下一个",
+  "Setup: {count} left": "还有 {count} 项设置",
+  "Hide setup reminder": "隐藏设置提醒",
+  "Chat and Terminal show the same agent": "聊天和终端显示的是同一个代理",
+  "Terminal is the agent's real screen. Chat shows the same work as a conversation.": "终端是代理的真实屏幕，聊天以对话形式显示同样的工作。",
+  "Agents that wait for you come first": "等你回复的代理排在最前面",
+  "A waiting agent is marked here, whichever workspace it is in.": "无论在哪个工作区，等待中的代理都会在这里标出。",
+  "Start another agent": "再启动一个代理",
+  "A new workspace runs an agent in a folder you choose.": "新工作区会在你选择的文件夹里运行代理。",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

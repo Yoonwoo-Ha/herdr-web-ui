@@ -98,12 +98,14 @@ export function TelemetryNotice({ enabled, onOpen, inline = false }: { enabled: 
       }).then((next) => { submittedSettingsSignature.current = JSON.stringify(snapshot); if (!turnedOff.current) setStatus(next); },
         // a failed record is tried again on the next paint, return to the tab or focus (#3882)
         (error: unknown) => {
-          noticeRecorded.current = false;
+          // a refusal (4xx) stays recorded for the page, so no other copy of the line asks again
+          const retryable = !(error instanceof ApiError) || error.status >= 500;
+          noticeRecorded.current = !retryable;
           console.error("telemetry notice", error);
           // tried again only when it may yet succeed: a network error or a server error, a few times; a refusal
           // (a watching device's 403) is final
           failures += 1;
-          if ((!(error instanceof ApiError) || error.status >= 500) && failures < 3) recorded = false;
+          if (retryable && failures < 3) recorded = false;
         });
     };
     const onVisibility = () => { if (document.visibilityState === "visible") afterPaint(); };

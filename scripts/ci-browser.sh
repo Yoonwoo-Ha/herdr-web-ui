@@ -110,6 +110,7 @@ run_script scripts/ideal-state-idle-regression.ts
 run_script scripts/agent-entry-points-demo-regression.ts
 run_script scripts/agents-sign-in-demo-regression.ts
 run_script scripts/setup-dialog-demo-regression.ts
+run_script scripts/setup-row-demo-regression.ts
 run_script scripts/interface-font-demo-regression.ts
 run_script scripts/file-text-size-demo-regression.ts
 run_script scripts/files-panel-demo-regression.ts

@@ -240,6 +240,7 @@ const BASE: Record<string, string> = {
   "Check now": "지금 확인",
   "Check again": "다시 확인",
   "Checking…": "확인 중…",
+  "Could not check alerts with this PC.": "이 PC에서 알림 상태를 확인하지 못했습니다.",
   "relay": "릴레이",
   "direct": "직접",
   "local": "PC 내부·터널",
@@ -628,6 +629,15 @@ const BASE: Record<string, string> = {
   "Long turns: only work that took a minute or more": "긴 작업: 1분 이상 걸린 작업만",
   "Stopped on an error": "오류로 멈춤",
   "A turn that ended on an error, as OmO and GJC report it": "OmO와 GJC가 알려 주는, 오류로 끝난 턴",
+  "Next": "다음",
+  "Setup: {count} left": "남은 설정 {count}개",
+  "Hide setup reminder": "남은 설정 숨기기",
+  "Chat and Terminal show the same agent": "채팅과 터미널은 같은 에이전트입니다",
+  "Terminal is the agent's real screen. Chat shows the same work as a conversation.": "터미널은 에이전트의 실제 화면이고, 채팅은 같은 작업을 대화로 보여 줍니다.",
+  "Agents that wait for you come first": "답을 기다리는 에이전트가 맨 위에 옵니다",
+  "A waiting agent is marked here, whichever workspace it is in.": "어느 워크스페이스에 있든, 기다리는 에이전트가 여기 표시됩니다.",
+  "Start another agent": "에이전트를 하나 더 시작합니다",
+  "A new workspace runs an agent in a folder you choose.": "새 워크스페이스는 고른 폴더에서 에이전트를 실행합니다.",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

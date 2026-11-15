@@ -17,7 +17,13 @@ import { AccessGate } from "./components/AccessGate.tsx";
 import { AgentMark } from "./components/AgentMark.tsx";
 import { NewSessionDialog } from "./components/NewSessionDialog.tsx";
 import { SetupGuide, SetupGuideResume } from "./components/SetupGuide.tsx";
-import { useSetupGuide } from "./lib/useSetupGuide.ts";
+import { useOtherDevice, useSetupGuide } from "./lib/useSetupGuide.ts";
+import { armHints, browserStorage, setupRowState } from "./lib/firstHints.ts";
+import { alertsHere, alertsSurfaces } from "./lib/setupGuideFlow.ts";
+import { pushSupported, registeredPushEndpoint } from "./lib/push.ts";
+import { confirmation } from "./lib/pushConfirm.ts";
+import { SetupProgressRow } from "./components/SetupProgressRow.tsx";
+import { FirstStartHints } from "./components/FirstStartHints.tsx";
 import { SessionHistory } from "./components/SessionHistory.tsx";
 import { WorktreeRequestDialog } from "./components/WorktreeDialog.tsx";
 import { worktreesStartHere } from "./lib/repositoryWorkspaces.ts";
@@ -70,9 +76,9 @@ import { CRAMPED_QUERY, paneContextPress, soloPane, tabRowHidden } from "./lib/p
 import { useTabSheet } from "./lib/useTabSheet.ts";
 import type { AppActions, PaneView, PaneControls } from "./lib/actions.ts";
 import { removePushSubscription } from "./lib/push.ts";
-import { resetPushHealth } from "./lib/pushHealth.ts";
+import { resetPushHealth, usePushHealth } from "./lib/pushHealth.ts";
 import { useUpdates } from "./lib/updates.ts";
-import { useDesktopUpdate } from "./lib/desktopUpdate.ts";
+import { desktopUpdateBridge, useDesktopUpdate } from "./lib/desktopUpdate.ts";
 import { DesktopUpdateNotice, UpdateNotice } from "./components/UpdateControls.tsx";
 import { LanExposureNotice } from "./components/LanExposureNotice.tsx";
 import { PushHealthNotice } from "./components/PushHealthNotice.tsx";
@@ -361,6 +367,20 @@ export function App() {
     watching: auth?.role === "watch",
   });
   const guideShown = setupGuide.guide !== null && !setupGuide.paused;
+  // the sidebar's Setup: N left (components/SetupProgressRow.tsx), once the guide is gone; the phone is another
+  // device on the server's list, read again when one pairs or goes (pairedNotices, removedNotices)
+  const rowFacts = setupGuide.guide === null && auth?.role !== "watch" && localSnapshot !== null;
+  // read only where the row can show (a guide begun and closed, and not hidden), and drawn once the list answered, so
+  // a paired phone does not count as left for a moment (#3907 review)
+  const rowStore = browserStorage();
+  const rowOn = rowFacts && rowStore !== null && setupRowState(rowStore) === "on";
+  const otherDevicePaired = useOtherDevice(rowOn, [...pairedNotices, ...removedNotices].map((notice) => notice.event_id).join(" "), true);
+  // and once what is known of the alerts is in, by the guide's one rule (lib/setupGuideFlow.ts alertsHere)
+  const alertsHealth = usePushHealth();
+  const rowAlerts = alertsSurfaces(alertsHere({ alertsOn, notifications, desktop: desktopUpdateBridge() !== null, pushSupported: pushSupported(), pushOn, push: { checked: alertsHealth.checked, problem: alertsHealth.health.problem, delivered: alertsHealth.delivered }, confirmed: confirmation(registeredPushEndpoint()) })).row;
+  const setupRow = rowOn && otherDevicePaired !== undefined && rowAlerts !== "wait"
+    ? <SetupProgressRow facts={{ workspace: localSnapshot.workspaces.length > 0, phone: otherDevicePaired !== null, alerts: rowAlerts === "done" }} />
+    : null;
   // the mode's shell. The setup guide stands in the pane's place before any workspace exists: it keeps the classic one
   const inMode = inboxMode.on && !guideShown;
   inboxMode.drawerBlocked.current = inMode;
@@ -1315,7 +1335,7 @@ export function App() {
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
             <ReorderContext.Provider value={reorderCoordinator}><MachineSidebar machines={sidebarMachines} allMachines={machines} watching={auth?.role === "watch"} appLayout={appLayoutOn} drawerOpen={drawerOpen} filterRequest={sidebarFilterRequest} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} activity={activity} actions={actions} onSelect={selectTarget} onUsageLogin={(paneId) => { selectTarget("local", paneId, "terminal"); void load(); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={openNewOn}
-              footerStart={modeOffered ? <InboxFootEntry onOpen={() => { actions.counted?.("inbox", "button"); enterInbox(); }} /> : undefined} /></ReorderContext.Provider>
+              footerStart={<>{setupRow}{modeOffered && <InboxFootEntry onOpen={() => { actions.counted?.("inbox", "button"); enterInbox(); }} />}</>} /></ReorderContext.Provider>
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>}
@@ -1347,7 +1367,9 @@ export function App() {
         {/* the pane's tab, or two tabs side by side (lib/split.ts): a tab dragged down out of its strip,
             or a sidebar row dragged over this area, opens its pane in the half it is dropped on */}
         {/* kept mounted while it steps aside, so a sign-in or a workspace being made goes on where it was; it is this PC's setup */}
-        {setupGuide.guide !== null && <MachineContext.Provider value="local"><SetupGuide auth={auth} security={security} onEnableAlerts={enableNotifications} settingsOpen={settingsOpen} notifications={notifications} hidden={setupGuide.paused} state={setupGuide.guide} dispatch={setupGuide.dispatch} onClose={setupGuide.close} onOpenSettings={(page) => { setSettingsLinkPage(page); setSettingsOpen(true); }}
+        {/* mounted once the guide is gone, so a first run's arming (onOpened, below) is read afresh */}
+        {setupGuide.guide === null && <FirstStartHints active={locked === false} />}
+        {setupGuide.guide !== null && <MachineContext.Provider value="local"><SetupGuide auth={auth} security={security} onEnableAlerts={enableNotifications} settingsOpen={settingsOpen} pushOn={pushOn} notifications={notifications} hidden={setupGuide.paused} state={setupGuide.guide} dispatch={setupGuide.dispatch} onClose={setupGuide.close} onOpenSettings={(page) => { setSettingsLinkPage(page); setSettingsOpen(true); }}
           onOpenTelemetry={() => { setSettingsLinkPage("about"); setSettingsLinkSection("telemetry"); setSettingsOpen(true); }}
           // the tab was just made: picked before the roster has it, the pick would be released as a closed pane
           // picked once the roster has it: only the latest tab the guide asked for, while it is open, Start
@@ -1355,7 +1377,9 @@ export function App() {
           onOpenTerminal={(paneId) => { const at = picks.current; const latest = setupGuide.ticket(); void load().finally(() => { if (latest() && picks.current === at) selectTarget("local", paneId, "terminal"); }); }}
           onStarting={setupGuide.voidTickets}
           onPaired={() => void loadHealth()}
-          onOpened={(paneId, agentStarted) => { if (agentStarted) actions.agentStarted("local", paneId); setupGuide.finish(() => selectTarget("local", paneId)); void load(); }} /></MachineContext.Provider>}
+          onOpened={(paneId, agentStarted) => { if (agentStarted) actions.agentStarted("local", paneId);
+            // the first run's agent is up: the three first-start hints come once its workspace shows
+            if (agentStarted && setupGuide.guide?.reopened !== true) { try { armHints(window.localStorage); } catch { /* no storage: no hints */ } } setupGuide.finish(() => selectTarget("local", paneId)); void load(); }} /></MachineContext.Provider>}
         {guideShown ? null :
         <div ref={paneAreaRef} className={`pane-split${paneSplit ? " is-split" : ""}${inbox.shown ? " is-under-inbox" : ""}`} onDragEnterCapture={paneDragOver} onDragOverCapture={paneDragOver} onDragLeave={paneDragLeave} onDropCapture={paneDrop}>
           {/* the wide thread's zone comes before its pane, after the column: the keyboard follows the drawn order */}

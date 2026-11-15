@@ -242,6 +242,7 @@ const BASE: Record<string, string> = {
   "Check now": "今すぐ確認",
   "Check again": "再確認",
   "Checking…": "確認しています…",
+  "Could not check alerts with this PC.": "このPCで通知の状態を確認できませんでした。",
   "relay": "リレー",
   "direct": "直接",
   "local": "PC内部·トンネル",
@@ -630,6 +631,15 @@ const BASE: Record<string, string> = {
   "Any turn finished takes in the long ones.": "毎ターンの完了をオンにすると、長いターンも含めて通知します。",
   "Stopped on an error": "エラーで停止",
   "A turn that ended on an error, as OmO and GJC report it": "OmO と GJC が報告する、エラーで終わったターン",
+  "Next": "次へ",
+  "Setup: {count} left": "残りの設定 {count} 件",
+  "Hide setup reminder": "残りの設定を隠す",
+  "Chat and Terminal show the same agent": "チャットとターミナルは同じエージェントです",
+  "Terminal is the agent's real screen. Chat shows the same work as a conversation.": "ターミナルはエージェントの実際の画面で、チャットは同じ作業を会話として表示します。",
+  "Agents that wait for you come first": "返事を待つエージェントが一番上に来ます",
+  "A waiting agent is marked here, whichever workspace it is in.": "どのワークスペースにあっても、待っているエージェントはここに表示されます。",
+  "Start another agent": "エージェントをもう一つ始める",
+  "A new workspace runs an agent in a folder you choose.": "新しいワークスペースは、選んだフォルダーでエージェントを動かします。",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
