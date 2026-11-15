@@ -134,7 +134,7 @@ import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { CrashProbe, RegionCrash } from "./components/AppCrash.tsx";
 import { RenderBoundary } from "./components/RenderBoundary.tsx";
 import { lensOwner, storedView, usePaneLens, usePaneLensState, usePaneViewPicks } from "./lib/usePaneLens.ts";
-import { useShownCount } from "./lib/usageCounters.ts";
+import { usageCounters, useCountedInboxWays, useShownCount } from "./lib/usageCounters.ts";
 import { useSplitLayout, useSplitRecheck, useSplitState } from "./lib/useSplitView.ts";
 import { linkSelects, useLinkLanding, useMachineGone, useNotificationTargets, useSelectedLayout, useSelectedMachine, useSelectedPane, useSelectionMark, useSelectionState, useSelectPane, useSelectTarget } from "./lib/useSelection.ts";
 import { useAddressBar } from "./lib/useAddressBar.ts";
@@ -368,8 +368,8 @@ export function App() {
   // the list): one history entry each way, so Back undoes it. On a phone More's item runs while its sheet's own entry
   // is still current: the push takes that entry over (lib/sheetHistory.ts), and no entry is left between. The shell's
   // own part (the drawer put away, the list shown for a mode with no pane) is lib/useInbox.ts useInboxShell.
-  const { leave: leaveMode } = inboxMode;
-  const { enterInbox, returnTo } = useInboxShell({ inMode, shown: inbox.shown, show: inbox.show,
+  const { leave: leaveModeShell } = inboxMode;
+  const { enterInbox: enterInboxShell, returnTo } = useInboxShell({ inMode, shown: inbox.shown, show: inbox.show,
     // the way in opens the thread of the pane the app is on as its row would (InboxList's onOpen below), once the
     // list has covered the panes
     open: () => {
@@ -393,6 +393,9 @@ export function App() {
     focusInput: () => paneControls.current?.focusInput() });
   // offered where the mode is, and not over the setup guide, which has the classic shell to itself
   const modeOffered = !guideShown;
+  // going into the agent inbox and out of it, counted wherever a person asked
+  const { enter: enterInbox, leave: leaveMode } = useCountedInboxWays(enterInboxShell, leaveModeShell);
+  useShownCount("inbox", modeOffered, LOCAL_MACHINE);
 
 
   const unlock = useCallback(() => {
@@ -642,6 +645,11 @@ export function App() {
         if (next) selectPane(next);
       },
       setView,
+      counted: (action, source) => {
+        // split, close pane and new tab act on the selected pane: counted for this PC's own alone
+        if (action === "split" || action === "close_pane" || action === "new_tab") usageCounters.paneUse(`${action}_by_${source}`, selectedMachineId);
+        else usageCounters.count(`${action}_by_${source}`);
+      },
       // a peek shows the terminal over the chat: the shortcut takes the chat back, the lens stays Chat
       toggleView: (source) => { if (terminalPeek !== null) endPeek(); else setView(view === "chat" ? "terminal" : "chat", source); setDrawerOpen(false); },
       focusInput: () => { if (!inbox.shown) paneControls.current?.focusInput(); },
@@ -917,7 +925,7 @@ export function App() {
       .map((item, index) => index === 0 ? { ...item, divider: true } : item),
     ...(foldPane && more ? [{ id: "pane-group", label: t("Pane and tab…"), icon: PanelsTopLeft, divider: true, run: () => openMoreGroup("pane", more.anchor) }] : []),
     // the way into the agent inbox (lib/inboxMode.ts), More's last group at every width
-    ...(modeOffered ? [{ id: "enter-inbox", label: t("Open agent inbox"), icon: Inbox, divider: true, run: enterInbox }] : []),
+    ...(modeOffered ? [{ id: "enter-inbox", label: t("Open agent inbox"), icon: Inbox, divider: true, run: () => { actions.counted?.("inbox", "menu"); enterInbox(); } }] : []),
   ];
   // The inbox mode's More: what still means something in a shell with no drawer, tab row or status bar. On the list
   // only what is the app's own (the list already shows who waits first); in a thread also what is about the thread,
@@ -944,7 +952,7 @@ export function App() {
   ];
   const modeEndItems: RowMenuItem[] = [
     ...fromMore("alerts").map((item) => ({ ...item, divider: false })),
-    { id: "settings", label: t("Settings"), icon: SettingsGlyph, divider: true, run: actions.openSettings },
+    { id: "settings", label: t("Settings"), icon: SettingsGlyph, divider: true, run: () => { actions.counted?.("settings", "menu"); actions.openSettings(); } },
   ];
   const modeAppItems: RowMenuItem[] = [...modeLeadItems, ...modeEndItems];
   // a phone's thread has the one More: the way out and the palette, then the thread's items, then the rest of the app's
@@ -1069,7 +1077,7 @@ export function App() {
   const filesBeside = filesOpen && filesDocked && selectedPane !== null && !filesCovered;
   const toggleFiles = (): void => {
     if (filesBeside) setFilesOpen(false);
-    else revealFiles();
+    else { actions.counted?.("files", "button"); revealFiles(); }
   };
   const filesDialog = (docked: boolean): ReactNode => selectedPane && (
     <FilesDialog docked={docked} covered={docked && filesCovered} panelStart={docked ? <FilePanelResizer width={filePanelWidth} onResize={setFilePanelWidth} /> : undefined}
@@ -1091,7 +1099,7 @@ export function App() {
             .header-side is the sidebar's own top row from 769px (styles.css); below that its
             buttons sit in the bar */}
         <div className="header-side">
-          {wideScreen && !sidebarCollapsed && !inMode && <SidebarBrand dark={resolvedTheme === "dark"} onOpenInbox={modeOffered ? enterInbox : null} />}
+          {wideScreen && !sidebarCollapsed && !inMode && <SidebarBrand dark={resolvedTheme === "dark"} onOpenInbox={modeOffered ? () => { actions.counted?.("inbox", "button"); enterInbox(); } : null} />}
           {inboxBack ? <button type="button" id="inbox-back" className="icon-button inbox-back" aria-label={t("Back")} title={t("Back")} onClick={inbox.back}><ChevronLeft /></button> : <button
             type="button"
             id="drawer-toggle"
@@ -1106,7 +1114,7 @@ export function App() {
           </button>}
           {/* New workspace's + beside the logo, from 769px in one-line rows: it starts one on the selected PC. A phone's
               drawer has none here: each PC's own row carries its +, which says which PC (MachineSidebar.tsx) */}
-          {!inMode && wideScreen && !sidebarCollapsed && settings.sidebarRows !== "two" && <button type="button" className="icon-button new-workspace-button" disabled={auth?.role === "watch" || selectedMachine?.state !== "connected"} aria-label={t("New workspace")} title={auth?.role === "watch" ? `${t("New workspace")} · ${t("View only")}` : t("New workspace")} onClick={() => actions.openNewSession()}>
+          {!inMode && wideScreen && !sidebarCollapsed && settings.sidebarRows !== "two" && <button type="button" className="icon-button new-workspace-button" disabled={auth?.role === "watch" || selectedMachine?.state !== "connected"} aria-label={t("New workspace")} title={auth?.role === "watch" ? `${t("New workspace")} · ${t("View only")}` : t("New workspace")} onClick={() => { actions.counted?.("new_workspace", "button"); actions.openNewSession(); }}>
             <Plus aria-hidden="true" />
           </button>}
           {/* an inbox mode thread's header is Back, its title, the monitor button and More */}
@@ -1119,7 +1127,7 @@ export function App() {
             aria-label={t(sidebarCollapsed ? "Show workspace list" : "Hide workspace list")}
             aria-pressed={!sidebarCollapsed}
             title={shortcutTitle(t("Toggle sidebar"), "toggle-sidebar")}
-            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            onClick={() => { actions.counted?.("sidebar", "button"); setSidebarCollapsed((collapsed) => !collapsed); }}
             ref={peekToggleRef}
             {...peekToggleHandlers}
           >
@@ -1138,8 +1146,8 @@ export function App() {
                 onRenameHandled={clearRenameRequest}
                 closeRequest={closeTabRequest?.machineId === selectedMachineId && closeTabRequest.paneId === selectedPane.pane_id ? closeTabRequest : null}
                 onCloseHandled={clearCloseTabRequest}
-                onNewTab={() => actions.openNewTab()}
-                onNewTerminal={() => actions.openTerminalTab()}
+                onNewTab={() => { actions.counted?.("new_tab", "button"); actions.openNewTab(); }}
+                onNewTerminal={() => { actions.counted?.("new_tab", "button"); return actions.openTerminalTab(); }}
                 onMoveToWorkspace={(tabId, workspaceId) => actions.moveTabToWorkspace({ machineId: selectedMachineId, tabId, workspaceId })}
                 paneActions={(paneId) => {
                   const target = snapshot.panes.find((item) => item.pane_id === paneId);
@@ -1302,7 +1310,7 @@ export function App() {
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
             <ReorderContext.Provider value={reorderCoordinator}><MachineSidebar machines={sidebarMachines} allMachines={machines} watching={auth?.role === "watch"} appLayout={appLayoutOn} drawerOpen={drawerOpen} filterRequest={sidebarFilterRequest} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} activity={activity} actions={actions} onSelect={selectTarget} onUsageLogin={(paneId) => { selectTarget("local", paneId, "terminal"); void load(); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={openNewOn}
-              footerStart={modeOffered ? <InboxFootEntry onOpen={enterInbox} /> : undefined} /></ReorderContext.Provider>
+              footerStart={modeOffered ? <InboxFootEntry onOpen={() => { actions.counted?.("inbox", "button"); enterInbox(); }} /> : undefined} /></ReorderContext.Provider>
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>}
@@ -1438,8 +1446,8 @@ export function App() {
                     onRenameHandled={clearRenameRequest}
                     closeRequest={active && closeTabRequest?.machineId === machineId && closeTabRequest.paneId === pane.pane_id ? closeTabRequest : null}
                     onCloseHandled={clearCloseTabRequest}
-                    onNewTab={() => actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
-                    onNewTerminal={() => actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id })}
+                    onNewTab={() => { usageCounters.paneUse("new_tab_by_button", machineId); actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); }}
+                    onNewTerminal={() => { usageCounters.paneUse("new_tab_by_button", machineId); return actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); }}
                     onMoveToWorkspace={(tabId, workspaceId) => actions.moveTabToWorkspace({ machineId, tabId, workspaceId })}
                     paneActions={active ? (paneId) => {
                       const target = snapshot?.panes.find((item) => item.pane_id === paneId);
@@ -1459,8 +1467,8 @@ export function App() {
                     onOpenInHalf={wideScreen && !threadDrawn ? (id, side) => dockSide({ machineId, paneId: id }, side) : undefined}
                     onRecoverUnsent={(target) => openUnsent({ machineId, pane: target })}
                     onSearchConversation={(target) => searchable(machineId, target, lensOf(target)) && !(slotPeek !== null && target.pane_id === pane?.pane_id) ? () => requestSearch(slot, machineId, target.pane_id) : null}
-                    onNewTab={workspace ? () => actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }) : undefined}
-                    onNewTerminal={workspace ? () => actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }) : undefined}
+                    onNewTab={workspace ? () => { usageCounters.paneUse("new_tab_by_button", machineId); actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); } : undefined}
+                    onNewTerminal={workspace ? () => { usageCounters.paneUse("new_tab_by_button", machineId); return actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); } : undefined}
                     onMoveToWorkspace={(tabId, workspaceId) => actions.moveTabToWorkspace({ machineId, tabId, workspaceId })}
                     tabsInHeader={tabsInHeader || threadDrawn} solo={threadDrawn}
                     renameRequest={active && pane && renameRequest?.machineId === machineId && renameRequest.paneId === pane.pane_id ? renameRequest : null}

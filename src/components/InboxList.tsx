@@ -1,3 +1,4 @@
+import { usageCounters } from "../lib/usageCounters.ts";
 import { useContext, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type Ref, type RefObject } from "react";
 import { Ellipsis, ListFilter, Monitor, Plus, Search, Terminal, TriangleAlert, X } from "lucide-react";
 
@@ -310,6 +311,7 @@ export function InboxList({ ref, machines, activity, watching, wide, filter, onF
     <button type="button" className="icon-button inbox-round inbox-add" aria-label={t("New workspace")} title={t("New workspace")}
       aria-haspopup={connected.length > 1 ? popup : undefined} aria-expanded={connected.length > 1 ? pcMenu !== null : undefined}
       onClick={(event) => {
+        usageCounters.count("new_workspace_by_button");
         if (connected.length === 1) onNew(connected[0]!.id);
         else setPcMenu(pcMenu === null ? event.currentTarget : null);
       }}>
@@ -320,7 +322,7 @@ export function InboxList({ ref, machines, activity, watching, wide, filter, onF
   const filterLabel = filter === "all" ? t("Filter by state") : t("Filter by state: {state}", { state: filterWord(filter) });
   const filterButton = (
     <button type="button" className={`icon-button inbox-round inbox-filter-toggle${filter === "all" ? "" : " is-on"}`} aria-label={filterLabel} title={filterLabel}
-      aria-haspopup={popup} aria-expanded={filterMenu !== null} onClick={(event) => setFilterMenu(filterMenu === null ? event.currentTarget : null)}>
+      aria-haspopup={popup} aria-expanded={filterMenu !== null} onClick={(event) => { if (filterMenu === null) usageCounters.count("inbox_filter"); setFilterMenu(filterMenu === null ? event.currentTarget : null); }}>
       <ListFilter aria-hidden="true" />
     </button>
   );
@@ -345,7 +347,7 @@ export function InboxList({ ref, machines, activity, watching, wide, filter, onF
         {wide ? <>
           {searchField}
           <button type="button" ref={searchToggle} className="icon-button inbox-round inbox-search-toggle" aria-label={searchLabel} title={searchLabel} aria-expanded={searchOpen}
-            onClick={() => { if (!searchOpen) setSearchAsked(true); else if (query === "") setSearchAsked(false); else search.current?.focus(); }}>
+            onClick={() => { if (!searchOpen) { usageCounters.count("inbox_search"); setSearchAsked(true); } else if (query === "") setSearchAsked(false); else search.current?.focus(); }}>
             <Search aria-hidden="true" />
           </button>
           {filterButton}
@@ -400,7 +402,7 @@ export function InboxList({ ref, machines, activity, watching, wide, filter, onF
                     ref={(node) => { if (node) rowNodes.current.set(row.key, node); else rowNodes.current.delete(row.key); }}
                     title={wide ? [row.title, row.line, at === null ? null : `${age} · ${at.toLocaleString(resolvedLanguage)}`].filter((part) => part !== null).join("\n") : undefined}
                     onPointerDown={(event) => { if (event.button === 0 && row.online) pressPane?.(row.machine.id, row.pane.pane_id); }}
-                    onClick={() => onOpen(row.machine.id, row.pane.pane_id)}>
+                    onClick={() => { usageCounters.count("inbox_open"); onOpen(row.machine.id, row.pane.pane_id); }}>
                     <InboxAvatar mark={row.mark} />
                     <span className="inbox-body">
                       <span className="inbox-line">

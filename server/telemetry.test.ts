@@ -1056,6 +1056,28 @@ describe("/api/telemetry", () => {
 });
 
 describe("telemetry counts", () => {
+  test("a day the receiver took is not sent again when its removal could not be written", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "telemetry-"));
+    dirs.push(stateDir);
+    const taken: TelemetryCounts[] = [];
+    // the receiver takes the day, and the state directory turns read-only as it answers: the removal is not written
+    const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url) === TEST_COUNTS_URL) { taken.push(JSON.parse(String(init?.body))); chmodSync(stateDir, 0o500); }
+      return new Response(null, { status: 204 });
+    }) as typeof globalThis.fetch;
+    const { telemetry, clock } = setup({ countsOn: true, stateDir, fetch });
+    seen(telemetry);
+    telemetry.change({ counts: { width: "wide", add: { chat_send: 2 }, shown: [] } });
+    clock.now += 86_400_000;
+    try {
+      await telemetry.active([]);
+      await settled();
+    } finally { chmodSync(stateDir, 0o700); }
+    expect(savedFile(stateDir).counts).toHaveLength(1);
+    await telemetry.active([]);
+    await settled();
+    expect(taken).toHaveLength(1);
+  });
   test("POST counts is refused with 400 while this build counts nothing, as before counts existed", async () => {
     const off = setup({ countsOn: false });
     seen(off.telemetry);

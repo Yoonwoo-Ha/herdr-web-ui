@@ -1,3 +1,4 @@
+import { usageCounters } from "../lib/usageCounters.ts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from "react";
 import { ArchiveRestore, Bot, Columns2, Ellipsis, Eraser, Folder, FolderInput, LockOpen, Maximize2, Minimize2, MoveHorizontal, Pencil, Plus, Rows2, ArrowLeftRight, Terminal, TextSearch, TextWrap, X } from "lucide-react";
 import { createPortal } from "react-dom";
@@ -255,8 +256,8 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     ...(appLayout.arrange && pane && target.pane_id !== pane.pane_id ? [{ id: "swap-focused", label: t("Swap with focused pane"), icon: ArrowLeftRight,
       run: () => run(() => api.swapPaneWith(pane.pane_id, target.pane_id)) }] : []),
     ...(!appLayout.split || target.own_tab ? [] : [
-      { id: "split-right", label: t("Split right"), icon: Columns2, run: () => run(() => split(target, "right")) },
-      { id: "split-down", label: t("Split down"), icon: Rows2, run: () => run(() => split(target, "down")) },
+      { id: "split-right", label: t("Split right"), icon: Columns2, run: () => { usageCounters.paneUse("split_by_menu", machineId); run(() => split(target, "right")); } },
+      { id: "split-down", label: t("Split down"), icon: Rows2, run: () => { usageCounters.paneUse("split_by_menu", machineId); run(() => split(target, "down")); } },
     ]),
     ...(!appLayout.arrange ? [] : [{ id: "zoom", label: t(layout && zoomMode(layout, target.pane_id) === "off" ? "Unzoom pane" : "Zoom pane"), icon: Maximize2,
       run: () => zoom(target) }]),
@@ -328,7 +329,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
           const key = sidebarPinKey(machineId, target.pane_id);
           updateSettings(({ lockedAgents }) => ({ lockedAgents: lockedAgents.filter((held) => held !== key) }));
         } }]
-        : [{ id: "close", label: t("Close pane"), icon: X, danger: true, run: () => requestClose(target) }]),
+        : [{ id: "close", label: t("Close pane"), icon: X, danger: true, run: () => { usageCounters.paneUse("close_pane_by_menu", machineId); requestClose(target); } }]),
     ];
   };
   const items = target ? itemsFor(target) : [];
@@ -487,7 +488,7 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
           {zoomable && !offTab && !paneLocked(item.pane_id) && <button type="button" className="icon-button pane-frame-close" aria-label={t("Close pane")} title={t("Close pane")} disabled={watching}
             // Safari focuses no button a click pressed: focused here, it is the confirmation's opener, which Cancel and Escape hand back to
             // a double click's second press may land on the neighbour that took this corner: only a first press closes
-            onClick={(event) => { if (event.detail > 1) return; event.currentTarget.focus({ preventScroll: true }); requestClose(item); }}><X aria-hidden="true" /></button>}
+            onClick={(event) => { if (event.detail > 1) return; event.currentTarget.focus({ preventScroll: true }); usageCounters.paneUse("close_pane_by_button", machineId); requestClose(item); }}><X aria-hidden="true" /></button>}
         </div>}
         <div className="pane-frame-body"><PaneCachedContext.Provider value={cell.cached && !cell.retained}><PaneWatchedContext.Provider value={cell.cached && !cell.retained && watchedTabs.has(item.tab_id)}><PanePresentedContext.Provider value={!offTab}><PaneShownContext.Provider value={!hidden}>{renderPane(item, active, alone === null && cells.length > 1)}</PaneShownContext.Provider></PanePresentedContext.Provider></PaneWatchedContext.Provider></PaneCachedContext.Provider></div>
       </section>;

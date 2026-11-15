@@ -222,6 +222,12 @@ describe("usage counters", () => {
     counters.flush(false);
     await settle();
     expect([sent.length, asked]).toEqual([1, 0]);
+    // a later yes (Settings asking the status) does not undo it: the page never counts again
+    counters.heard(status());
+    counters.count("chat_send");
+    counters.flush(false);
+    await settle();
+    expect(sent.length).toBe(1);
   });
 
   test("a control drawn before the server's word is told once the word is yes, with nothing else to send", async () => {

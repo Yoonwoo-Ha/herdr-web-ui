@@ -12,7 +12,7 @@
  * notice is ever told. A pane on another PC is not counted, and neither is a switch the app makes by
  * itself. A window at most SHEET_QUERY wide counts as narrow, any other as wide.
  */
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { LOCAL_MACHINE } from "../../shared/machines.ts";
 import { COUNTS_ON } from "../../shared/telemetry-notice.ts";
 import { harnessOf, type TelemetryCounter, type TelemetryCountsChange, type TelemetryShown, type TelemetryStatus, type TelemetryViewSource, type TelemetryWidth } from "../../shared/telemetry.ts";
@@ -44,6 +44,8 @@ export function countingAllowed(status: TelemetryStatus | null): boolean {
 export function createUsageCounters(options: UsageCountersOptions) {
   /** null until the page has heard the server's word; then whether it counts */
   let allowed: boolean | null = null;
+  /** the server refused a batch (a device that can only watch): no later answer turns counting on for this page */
+  let refused = false;
   let asking = false;
   const empty = (): Pending => ({ add: {}, shown: new Set(), keys: [] });
   const pending: Record<TelemetryWidth, Pending> = { narrow: empty(), wide: empty() };
@@ -75,7 +77,7 @@ export function createUsageCounters(options: UsageCountersOptions) {
     if (cancelTimer === null) cancelTimer = options.setTimer(() => { cancelTimer = null; flush(false); }, FLUSH_MS);
   };
   const ready = (): boolean => {
-    if (!options.on) return false;
+    if (!options.on || refused) return false;
     if (allowed === null) ask();
     return allowed === true;
   };
@@ -107,7 +109,7 @@ export function createUsageCounters(options: UsageCountersOptions) {
       // controls are forgotten, so the next batch tells them again; a refusal (a watching device) stops counting here
       options.send({ width, add, shown: [...shown].sort() }, keepalive).then((status) => { if (status) heard(status); }, (error: unknown) => {
         forget(keys);
-        allowed = (error as { status?: unknown } | null)?.status === 403 ? false : null;
+        if ((error as { status?: unknown } | null)?.status === 403) { refused = true; allowed = false; } else allowed = null;
       });
     }
   }
@@ -178,4 +180,12 @@ if (typeof document !== "undefined") {
 /** `name` is drawn while `drawn`, for a pane of `machineId`: told once a day per width while it stays, only for this PC's own panes */
 export function useShownCount(name: TelemetryShown, drawn: boolean, machineId: string): void {
   useEffect(() => drawn && machineId === LOCAL_MACHINE ? usageCounters.draw(name) : undefined, [name, drawn, machineId]);
+}
+
+/** The ways into the agent inbox and out of it, each counted (`inbox_enter`, `inbox_leave`) wherever a person asked. */
+export function useCountedInboxWays(enter: () => void, leave: () => void): { enter: () => void; leave: () => void } {
+  return {
+    enter: useCallback(() => { usageCounters.count("inbox_enter"); enter(); }, [enter]),
+    leave: useCallback(() => { usageCounters.count("inbox_leave"); leave(); }, [leave]),
+  };
 }

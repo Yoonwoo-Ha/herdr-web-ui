@@ -5,6 +5,7 @@
  * (lib/herdrUi.ts). Text fields, dialogs, menus and IME composition keep every key; an app shortcut
  * stays the app's; a key after the prefix that runs nothing goes to the pane as typed.
  */
+import type { TelemetryAction } from "../../shared/telemetry.ts";
 import { useEffect, useState } from "react";
 import { bindingChords, parseHerdrBinding, type HerdrChord, type HerdrKeys, type HerdrPrefixAction } from "../../shared/herdr-keys.ts";
 import type { AppActions } from "./actions.ts";
@@ -76,7 +77,14 @@ export function herdrKeyStep(map: HerdrKeyMap, armed: boolean, event: ShortcutEv
 }
 
 /** `tabRefused`: herdr's refusal of a new tab, said over the pane as the tab strip's button says it */
+/** herdr's prefix actions that are also a button, a menu item or a palette row: counted as the shortcuts are */
+const HERDR_KEY_ACTIONS: Partial<Record<HerdrPrefixAction, TelemetryAction>> = {
+  settings: "settings", new_workspace: "new_workspace", new_tab: "new_tab", split_vertical: "split", split_horizontal: "split", toggle_sidebar: "sidebar",
+};
+
 export function runHerdrAction(actions: AppActions, action: HerdrPrefixAction, index: number | null, tabRefused: (reason: unknown) => void): void {
+  const counted = HERDR_KEY_ACTIONS[action];
+  if (counted) actions.counted?.(counted, "shortcut");
   switch (action) {
     case "help":
     case "workspace_picker":

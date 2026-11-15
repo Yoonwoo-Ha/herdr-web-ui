@@ -136,4 +136,13 @@ describe("the Close pane shortcut", () => {
     expect(() => press({ key: "t" })).not.toThrow();
     expect(tabCloses).toBe(1);
   });
+
+  it("is counted as the shortcut way to close a pane, once a press, and not when the key is passed on", async () => {
+    const counted: string[] = [];
+    await act(async () => { renderer = create(createElement(SettingsProvider, null, createElement(Shortcuts, { actions: { closePane: () => { closes += 1; }, closeTab: () => { tabCloses += 1; }, counted: (action, source) => { counted.push(`${action}:${source}`); } } as AppActions }))); });
+    press();
+    press({ target: element("[role='dialog']") });
+    expect(closes).toBe(1);
+    expect(counted).toEqual(["close_pane:shortcut"]);
+  });
 });

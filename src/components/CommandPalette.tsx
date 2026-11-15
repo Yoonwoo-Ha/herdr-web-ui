@@ -1,3 +1,4 @@
+import type { TelemetryAction } from "../../shared/telemetry.ts";
 import { moveDestinations } from "../lib/layoutTargets.ts";
 import { useAppLayout, MachineContext, useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
@@ -158,6 +159,12 @@ function ShortcutHint({ shortcutId }: { shortcutId?: ShortcutId }) {
   if (keys.length === 0) return null;
   return <span className="palette-shortcut" aria-label={keys.join(" + ")}>{keys.map((key) => <kbd className="kbd" key={key}>{key}</kbd>)}</span>;
 }
+
+/** the rows whose action is also a button, a menu item or a shortcut: counted by how it was taken */
+const PALETTE_ACTIONS: Partial<Record<string, TelemetryAction>> = {
+  new: "new_workspace", "new-tab": "new_tab", "split-right": "split", "split-down": "split", "split-right-open": "split", "split-down-open": "split",
+  "close-pane": "close_pane", sidebar: "sidebar", "inbox-mode": "inbox", settings: "settings", files: "files",
+};
 
 export function CommandPalette({ open, initialQuery = "", onClose, machines, onSelect, snapshot, online, selectedPaneId, view, actions, watching = false, inboxMode = false }: CommandPaletteProps) {
   const t = useT();
@@ -546,6 +553,8 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
     onClose();
   };
   const runAction = (action: PaletteAction): void => {
+    const counted = PALETTE_ACTIONS[action.id];
+    if (counted) actions.counted?.(counted, "palette");
     action.run();
     if (!action.keepOpen) onClose();
   };

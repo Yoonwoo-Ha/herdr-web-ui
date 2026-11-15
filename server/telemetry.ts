@@ -307,6 +307,8 @@ export class Telemetry {
   private activeAbort?: AbortController;
   private activeTimer?: Timer;
   private countsSending: Promise<void> | null = null;
+  /** days the receiver took in this process: never sent again, even if their removal from FILE could not be written */
+  private readonly countsDelivered = new Set<string>();
   private countsAbort?: AbortController;
   private readonly file: string;
   private readonly offFile: string;
@@ -542,15 +544,16 @@ export class Telemetry {
     }
   }
 
-  /**
-   * Delivers each recorded day that has ended, oldest first, once: a delivered day is forgotten. No sooner than
-   * NOTICE_GRACE_MS after the notice; a failure is logged and tried again at the next start or visit.
-   */
   private countsOn(): boolean { return this.options.countsOn ?? COUNTS_ON; }
 
   /** whether a browser's counts are taken at all: not while this build's notice does not say so, where they are refused as before */
   takesCounts(): boolean { return this.countsOn(); }
 
+  /**
+   * Delivers each recorded day that has ended, oldest first, once: a delivered day is forgotten. No sooner than
+   * NOTICE_GRACE_MS after the notice; a failure is logged and tried again at the next start or visit. A day the
+   * receiver took is remembered here too, so one whose removal could not be written is never sent twice.
+   */
   private flushCounts(): Promise<void> {
     if (!this.countsOn()) return Promise.resolve();
     if (this.countsSending) return this.countsSending;
@@ -566,7 +569,7 @@ export class Telemetry {
       }
     }
     const today = utcDay(this.now());
-    const due = this.saved.counts.filter((entry) => entry.day < today).map((entry) => this.countsMessage(entry.day));
+    const due = this.saved.counts.filter((entry) => entry.day < today && !this.countsDelivered.has(entry.day)).map((entry) => this.countsMessage(entry.day));
     if (due.length === 0) return Promise.resolve();
     const abort = new AbortController();
     this.countsAbort = abort;
@@ -587,6 +590,7 @@ export class Telemetry {
             if (!abort.signal.aborted) console.error(`telemetry: the counts message was not delivered (${message(error)})`);
             return;
           }
+          this.countsDelivered.add(counts.day);
           this.refresh();
           this.saved.counts = this.saved.counts.filter((entry) => entry.day !== counts.day);
           this.persist();
