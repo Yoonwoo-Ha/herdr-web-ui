@@ -79,7 +79,7 @@ irm https://ovis.sh/install.ps1 | iex
 
 ## Documentation
 
-- **[User guide](docs/guide.md):** [quick start](docs/guide.md#quick-start) · [supported agents](docs/guide.md#supported-agents) · [phone](docs/guide.md#on-your-phone) · [remote PCs](docs/remote-pcs.md) · [configuration](docs/guide.md#configuration) · [FAQ](docs/guide.md#faq)
+- **[User guide](docs/guide.md):** [quick start](docs/guide.md#quick-start) · [supported agents](docs/guide.md#supported-agents) · [phone](docs/guide.md#on-your-phone) · [remote PCs](docs/remote-pcs.md) · [terminal client](docs/tui.md) · [configuration](docs/guide.md#configuration) · [FAQ](docs/guide.md#faq)
 - **[INSTALL.md](INSTALL.md):** every way to install, step by step.
 - **[Demo](https://ovis.sh/demo/)** · **[Changelog](CHANGELOG.md)**
 
