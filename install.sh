@@ -1016,8 +1016,10 @@ install_lock() {
   trap 'install_unlock; exit 130' INT
   trap 'install_unlock; exit 143' TERM
   # a run cut off between its lock's rename and its removal left that folder: the holder removes it, before its own
-  # rename may need the same name
-  rm -rf "$lock".gone-*
+  # rename may need the same name. A run releasing its lock may be removing the same folder at that moment, and
+  # busybox rm then fails on what the other removed (No such file or directory): neither removal has to succeed, as
+  # whatever is left is the next holder's to remove
+  rm -rf "$lock".gone-* 2>/dev/null || true
 }
 install_unlock() {
   if [ -n "${lock:-}" ] && [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$$" ]; then install_lock_drop; fi
@@ -1027,7 +1029,7 @@ install_unlock() {
 # the pid a moment before the folder: a waiter could claim the lock in that moment (its pid file is created wherever
 # none is), and the folder it holds would then not be removed (Directory not empty), failing the run that let it go
 install_lock_drop() {
-  mv "$lock" "$lock.gone-$$" && rm -rf "$lock.gone-$$"
+  mv "$lock" "$lock.gone-$$" && { rm -rf "$lock.gone-$$" 2>/dev/null || true; }
 }
 
 # Whether the release of $version runs in OVIS_HOME already: its manifest there names it, and the binary
