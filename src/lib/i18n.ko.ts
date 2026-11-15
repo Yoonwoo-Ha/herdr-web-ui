@@ -611,6 +611,23 @@ const BASE: Record<string, string> = {
   "Nord": "Nord",
   "Vesper": "Vesper",
   "Preview": "미리보기",
+  "Alerts off": "알림 꺼짐",
+  "Send test": "테스트 보내기",
+  "Push alerts need HTTPS or localhost, and on iPhone the home-screen app.": "푸시 알림은 HTTPS 또는 localhost가 필요하고, iPhone에서는 홈 화면 앱이어야 합니다.",
+  "Allow notifications in your browser settings, then try again.": "브라우저 설정에서 알림을 허용한 뒤 다시 시도하세요.",
+  "Allow notifications for Ovis in the phone's Settings, then try again.": "휴대폰 설정에서 Ovis 알림을 허용한 뒤 다시 시도하세요.",
+  "Could not send the test notification. Try again.": "테스트 알림을 보내지 못했습니다. 다시 시도하세요.",
+  "Alert me when": "이럴 때 알림",
+  "Long turn finished": "1분 이상 작업 완료",
+  "Any turn finished": "작업 끝날 때마다",
+  "Any turn finished takes in the long ones.": "매번 알림에는 1분 이상 작업도 포함",
+  "Needs input": "응답 필요",
+  "Phone": "폰",
+  "An agent asks you something": "에이전트가 무언가를 물어볼 때",
+  "An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input.": "에이전트가 명령을 실행하거나 파일을 바꾸기 전에 허락을 구할 때. 무엇을 기다리는지 알리지 않는 에이전트는 입력 필요로 알립니다.",
+  "Long turns: only work that took a minute or more": "긴 작업: 1분 이상 걸린 작업만",
+  "Stopped on an error": "오류로 멈춤",
+  "A turn that ended on an error, as OmO and GJC report it": "OmO와 GJC가 알려 주는, 오류로 끝난 턴",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

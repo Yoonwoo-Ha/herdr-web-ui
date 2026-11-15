@@ -4,7 +4,7 @@ import { AGENT_CATALOG, catalogRow, type AgentCatalogRow, type AgentInstallState
 import type { HealthAuth, RelayStatus } from "../../shared/protocol.ts";
 import type { ProviderUsage } from "../../shared/usage.ts";
 import { onSetupGuideRequest, openSetupGuide } from "./setupGuide.ts";
-import { agentRows, autoOpen, CHECK_SETTLE_MS, checkList, checkStatus, foundAgents, guideStep, INSTALL_GIVE_UP_MS, installedHere, openInFolder, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, preferredAgent, readGuide, readSignedIn, relayStep, REOPENED, saveGuide, settleDelay, setupView, signedInAgents, tileState, turnsUsageOn, WELCOME, type FreshFacts, type PcCheck } from "./setupGuideFlow.ts";
+import { agentRows, autoOpen, CHECK_SETTLE_MS, checkList, checkStatus, foundAgents, guideStep, INSTALL_GIVE_UP_MS, installedHere, openInFolder, otherDevice, phoneBoxMode, phoneBoxOpensFirst, phoneBoxStays, phoneWay, preferredAgent, readGuide, readSignedIn, relayStep, REOPENED, saveGuide, settleDelay, setupView, signedInAgents, tileState, turnsUsageOn, WELCOME, type FreshFacts, type PcCheck } from "./setupGuideFlow.ts";
 
 const FRESH: FreshFacts = { workspaces: 0, savedSettings: false, sharedRevision: 0, pairingGate: "open", watching: false };
 
@@ -363,5 +363,15 @@ describe("a reopened guide", () => {
     const saved = new Map<string, string>();
     saveGuide({ setItem: (key, value) => { saved.set(key, value); } }, REOPENED);
     expect(readGuide({ getItem: (key) => saved.get(key) ?? null })).toEqual({ status: "open", state: REOPENED });
+  });
+});
+
+describe("otherDevice", () => {
+  it("names a device paired here other than this browser, and none for this browser alone", () => {
+    const device = (id: string, current: boolean) => ({ id, label: `device ${id}`, role: "drive" as const, created_at: "2026-11-15T00:00:00Z", last_seen_at: null, current });
+    expect(otherDevice([])).toBeNull();
+    // this browser paired itself (the relay's start, Pair this device): no phone yet
+    expect(otherDevice([device("self", true)])).toBeNull();
+    expect(otherDevice([device("self", true), device("phone", false)])).toBe("device phone");
   });
 });

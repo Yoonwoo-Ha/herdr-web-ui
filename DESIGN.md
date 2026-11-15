@@ -5685,8 +5685,18 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   Light theme switch: the mode above already chooses which side's themes are shown, and a theme picked
   for the side not drawn would have no preview (Settings → Appearance sets both). An imported theme drawn on the side checks no card, and
   a pick replaces it, as in Settings. Arrow keys, Home and End pick along the cards, as a radio group's do.
-- Done: "Ovis is ready", what Start will open, and the choices made as rows (the agent, then the theme:
-  the mode and the theme drawn now) (`.setup-list`, a
+- Phone and alerts (after the theme, one step, the owner's pick over two): "Stay in touch with your agents".
+  The left column is this computer: Turn on alerts while the browser has not been asked (App's own
+  enableNotifications, which also subscribes push where there is push), the Alert me when chips of Settings →
+  Alerts (one list, `alertMeWhenChips`; Stopped on an error stays in Settings), and Send test, which shows one alert here
+  at once through the page, as an open tab's alerts come, so it also works in the desktop app, where web push
+  does not reach (Settings → Alerts' test goes through the push service). Alerts the browser refuses say so in
+  `--status-blocked` with how to allow them; a page with no notifications says it needs HTTPS. The right
+  column is the phone: the Connect your phone box that Done had (the relay, its QR code, Paired), open from
+  the start on a first run on the PC as before.
+- Done: "Ovis is ready", what Start will open, and the choices made as rows (the agent; the theme: the mode
+  and the theme drawn now; the phone: the name of a device paired here other than this browser (one paired before, or from the step's box; this browser pairing itself first is not one), or Later with Connect now, which goes back to its step; the
+  alerts chosen, or Alerts off), one column (`.setup-list`, a
   `--status-done` check each); Start with … is the primary. Its right column holds Connect your phone
   (below).
 - Install is the one tap: the official installer runs in a terminal tab while a spinner turns on the
@@ -5696,7 +5706,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   the agent asks for its own when it first starts. On a first run, plan usage turns on by itself for
   accounts already signed in; the guide opened again from Settings changes no setting (nor says it
   will).
-- Done's right column has a plain "Connect your phone", which opens a `--bg-panel` box under it.
+- The phone and alerts step's right column has a plain "Connect your phone", which opens a `--bg-panel` box under it.
   On a first run on the PC itself (the desktop app, or a browser on its loopback) the box is open from
   the start, as a phone is the next device to add; it leads with the relay only, so where the relay
   cannot lead it stays closed instead of sending the page to Settings → Phone untapped. The relay stays
@@ -5717,8 +5727,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   pairing too; one such pairing runs at a time across the guide and Settings, and none runs for a
   browser the server already lists. Where the page has no address a phone can open (the PC's
   loopback), or the server does not say how this browser got in, it opens Settings → Phone instead. Start opens the folder this browser used last, else the server's home, without asking.
-  Alerts are not offered here: they hang on the browser's permission and, on an iPhone, on the app
-  being on the home screen first, so they stay in Settings → Alerts. A failed check says "Couldn't
+  A failed check says "Couldn't
   check this PC" with its error and Look again.
 - The tile is `AgentTile` (`AgentTile.css`), shared with a creation dialog's Add another agent… and
   Settings → Agents, where the PC's agents that can be installed are the same tiles (an

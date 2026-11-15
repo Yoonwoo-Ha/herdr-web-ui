@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ALargeSmall, AppWindow, ArrowDownUp, ArrowLeft, AudioLines, Bell, Bot, Box, Brain, CheckCheck, ChevronLeft, ChevronRight, CircleDot, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink, FileClock, FilePen, Filter, FlaskConical, Gauge, Globe, Image as ImageIcon, Inbox, Info, Keyboard, Languages, Layers, ListCollapse, ListTree, Lock, MessageCircleQuestionMark, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, OctagonX, Palette, PanelLeft, PanelRight, Plus, Puzzle, Rows3, Search, Send, Server, Shapes, ShieldAlert, Smartphone, Sparkles, SquareTerminal, Star, SunMoon, Tag, Tags, TextCursorInput, Timer, Trash2, Type, Volume2, WandSparkles, WrapText, X, type LucideIcon } from "lucide-react";
+import { ALargeSmall, AppWindow, ArrowDownUp, ArrowLeft, AudioLines, Bell, Bot, Box, Brain, ChevronLeft, ChevronRight, CircleDot, ClipboardCopy, ClipboardPaste, Command, CornerDownLeft, ExternalLink, FileClock, FilePen, Filter, FlaskConical, Gauge, Globe, Image as ImageIcon, Inbox, Info, Keyboard, Languages, Layers, ListCollapse, ListTree, Lock, MessageSquare, MessageSquareReply, MessagesSquare, Mic, Monitor, Mouse, MousePointer2, MoveHorizontal, Palette, PanelLeft, PanelRight, Plus, Puzzle, Rows3, Search, Send, Server, Shapes, Smartphone, Sparkles, SquareTerminal, Star, SunMoon, Tag, Tags, TextCursorInput, Trash2, Type, Volume2, WandSparkles, WrapText, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
@@ -42,6 +42,7 @@ import type { UserError } from "../lib/userError.ts";
 import { LOCAL_MACHINE, pcAlertKey, type HerdrCoreFacts, type HerdrRuntimeFacts, type Machine, type MachineSettings, type RuntimeName } from "../../shared/machines.ts";
 import { canHideMachine, isMachineShown, setHiddenMachines, useHiddenMachines, withMachineHidden } from "../lib/hiddenMachines.ts";
 import { alertFiltersChanged, updateAlertFilters, useAlertFilters } from "../lib/alertFilters.ts";
+import { alertMeWhenChips } from "./AlertChips.tsx";
 import { fetchMachines, fetchRemoteAccess, requestRelayOffer, fetchVoiceStatus, machineRequest, saveVoiceConfig, switchRuntime, fetchBridgeHealth } from "../lib/api.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
 import type { PushActionResult } from "../lib/pushHealth.ts";
@@ -753,7 +754,6 @@ function AlertsPage({ onEnableNotifications, machines }: { onEnableNotifications
   const filters = useAlertFilters();
   // the Sound switch as last set: the preview waits for the audio, and must not play once it is off
   const alertSoundWanted = useRef(settings.alertSound);
-  const permission = filters.permission ?? settings.alertInput;
   // herdr-app's rows: each a name and its control. Which alerts come is one decision, so one line of chips
   return (
     <SettingsBare.Provider value={true}>
@@ -765,16 +765,7 @@ function AlertsPage({ onEnableNotifications, machines }: { onEnableNotifications
         keywords={[t("Long turn finished"), t("Any turn finished"), t("Needs input"), t("An agent asks you something"), t("Needs permission"), t("An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input."), t("Finished"), t("Long turns: only work that took a minute or more"), t("Stopped on an error"), t("A turn that ended on an error, as OmO and GJC report it")].join(" ")}
         condition={<span className="settings-condition">{t("Long turns: only work that took a minute or more")} {t("Any turn finished takes in the long ones.")}</span>}
         reset={["alertInput", "alertDone"]}>
-        <ChipToggles label={t("Alert me when")} chips={[
-          { label: t("Needs input"), title: t("An agent asks you something"), icon: MessageCircleQuestionMark, on: settings.alertInput, onChange: (alertInput) => update({ alertInput }) },
-          { label: t("Needs permission"), title: t("An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input."), icon: ShieldAlert, on: permission, onChange: (on) => updateAlertFilters({ permission: on }) },
-          // the two Finished chips are the one setting's two levels, and every turn takes in the long ones:
-          // Any on lights Long too, Any off keeps Long, Long off turns both off. The minute and the
-          // inclusion are on the chips' tooltips and the row's line (G-096)
-          { label: t("Long turn finished"), title: t("Long turns: only work that took a minute or more"), icon: Timer, on: settings.alertDone !== "off", onChange: (on) => update({ alertDone: on ? "long" : "off" }) },
-          { label: t("Any turn finished"), title: t("Any turn finished takes in the long ones."), icon: CheckCheck, on: settings.alertDone === "always", onChange: (on) => update({ alertDone: on ? "always" : "long" }) },
-          { label: t("Stopped on an error"), title: t("A turn that ended on an error, as OmO and GJC report it"), icon: OctagonX, on: filters.error === true, onChange: (error) => updateAlertFilters({ error }) },
-        ]} />
+        <ChipToggles label={t("Alert me when")} chips={alertMeWhenChips(t, settings, filters, update, true)} />
       </SettingsRow>
       {/* a sighted reader sees where the chime plays, which the hidden sentence alone did not say (G-097) */}
       <SettingsRow label={t("Play sounds")} description={t("On this device, an open tab of the app chimes for the alerts chosen above. Turning this on plays the chime once.")} icon={Volume2} condition={<span className="settings-condition">{t("While a tab of the app is open, it chimes for these alerts, also when a Focus or Do Not Disturb silences notifications.")}</span>} reset={["alertSound"]}>

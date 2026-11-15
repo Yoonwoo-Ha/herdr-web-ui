@@ -7,7 +7,7 @@
  * was left open.
  */
 import type { AgentCatalogEntry, AgentCatalogRow } from "../../shared/agent-catalog.ts";
-import type { HealthAuth, RelayStatus } from "../../shared/protocol.ts";
+import type { HealthAuth, PairedDevice, RelayStatus } from "../../shared/protocol.ts";
 import type { SetupStep } from "./agentSetup.ts";
 import type { ProviderUsage } from "../../shared/usage.ts";
 import { isSignIn } from "./usage.ts";
@@ -285,4 +285,9 @@ export function saveGuide(storage: Pick<Storage, "setItem">, state: GuideState |
     storage.setItem(GUIDE_STORAGE_KEY, record);
     return record;
   } catch { return null; /* private mode: the guide lasts for the page */ }
+}
+
+/** The name of a device paired here other than this browser (a phone, another PC's browser), or null: what the guide counts as a phone. */
+export function otherDevice(devices: readonly PairedDevice[]): string | null {
+  return devices.find((device) => !device.current)?.label ?? null;
 }

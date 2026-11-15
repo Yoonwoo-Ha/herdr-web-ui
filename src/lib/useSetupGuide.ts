@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { fetchPreferences } from "./api.ts";
+import { fetchDevices, fetchPreferences } from "./api.ts";
 import { onSetupGuideRequest } from "./setupGuide.ts";
-import { autoOpen, GUIDE_STORAGE_KEY, guideStep, readGuide, readSignedIn, REOPENED, saveGuide, WELCOME, type GuideEvent, type GuideState } from "./setupGuideFlow.ts";
+import { autoOpen, otherDevice, GUIDE_STORAGE_KEY, guideStep, readGuide, readSignedIn, REOPENED, saveGuide, WELCOME, type GuideEvent, type GuideState } from "./setupGuideFlow.ts";
 import { SETTINGS_STORAGE_KEY } from "./themeBoot.ts";
 
 const storage = (): Storage | null => {
@@ -157,4 +157,19 @@ export function useSignedInUsage(ready: readonly string[], read: (refresh: boole
     (run, ms) => { const timer = window.setTimeout(run, ms); return () => window.clearTimeout(timer); },
   ), [readyKey]); // eslint-disable-line react-hooks/exhaustive-deps
   return signedIn;
+}
+
+/**
+ * A device paired here other than this browser (otherDevice), read from the server while `enabled`, and again when
+ * `again` changes; null until it answers, and when it cannot (a watching device, an older server).
+ */
+export function useOtherDevice(enabled: boolean, again?: unknown): string | null {
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    fetchDevices().then((devices) => { if (live) setName(otherDevice(devices)); }, () => { /* not known: none said */ });
+    return () => { live = false; };
+  }, [enabled, again]);
+  return name;
 }

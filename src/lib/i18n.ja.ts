@@ -613,6 +613,23 @@ const BASE: Record<string, string> = {
   "Nord": "Nord",
   "Vesper": "Vesper",
   "Preview": "プレビュー",
+  "Needs input": "応答待ち",
+  "Phone": "スマートフォン",
+  "An agent asks you something": "エージェントが何かを尋ねたとき",
+  "An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input.": "エージェントがコマンドを実行したりファイルを変更したりする前に許可を求めたとき。何を待っているかを伝えないエージェントは「入力が必要」として通知します。",
+  "Long turns: only work that took a minute or more": "長いターン: 1 分以上かかった作業のみ",
+  "Alerts off": "通知オフ",
+  "Send test": "テスト送信",
+  "Push alerts need HTTPS or localhost, and on iPhone the home-screen app.": "プッシュ通知には HTTPS または localhost が必要です。iPhone ではホーム画面に追加したアプリを使ってください。",
+  "Allow notifications in your browser settings, then try again.": "ブラウザーの設定で通知を許可してから、もう一度お試しください。",
+  "Allow notifications for Ovis in the phone's Settings, then try again.": "スマートフォンの設定で Ovis の通知を許可してから、もう一度お試しください。",
+  "Could not send the test notification. Try again.": "テスト通知を送信できませんでした。もう一度お試しください。",
+  "Alert me when": "通知するとき",
+  "Long turn finished": "長いターンの完了",
+  "Any turn finished": "毎ターンの完了",
+  "Any turn finished takes in the long ones.": "毎ターンの完了をオンにすると、長いターンも含めて通知します。",
+  "Stopped on an error": "エラーで停止",
+  "A turn that ended on an error, as OmO and GJC report it": "OmO と GJC が報告する、エラーで終わったターン",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

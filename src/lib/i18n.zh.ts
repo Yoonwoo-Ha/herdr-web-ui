@@ -615,6 +615,23 @@ const BASE: Record<string, string> = {
   "Nord": "Nord",
   "Vesper": "Vesper",
   "Preview": "预览",
+  "Alerts off": "提醒已关闭",
+  "Send test": "发送测试",
+  "Push alerts need HTTPS or localhost, and on iPhone the home-screen app.": "推送通知需要 HTTPS 或 localhost。在 iPhone 上请使用添加到主屏幕的应用。",
+  "Allow notifications in your browser settings, then try again.": "请在浏览器设置中允许通知，然后重试。",
+  "Allow notifications for Ovis in the phone's Settings, then try again.": "请在手机的设置中允许 Ovis 的通知，然后重试。",
+  "Could not send the test notification. Try again.": "无法发送测试通知。请重试。",
+  "Needs input": "需回应",
+  "Phone": "手机",
+  "An agent asks you something": "代理向你提问时",
+  "An agent asks before it runs a command or changes a file. One that does not say so alerts as Needs input.": "代理在运行命令或修改文件前请求许可时。不说明在等待什么的代理按“需要输入”提醒。",
+  "Long turns: only work that took a minute or more": "长任务：仅限耗时 1 分钟或以上的工作",
+  "Alert me when": "提醒我",
+  "Long turn finished": "长回合完成",
+  "Any turn finished": "每回合完成",
+  "Any turn finished takes in the long ones.": "开启每回合完成后，长回合也会一并提醒。",
+  "Stopped on an error": "因错误停止",
+  "A turn that ended on an error, as OmO and GJC report it": "OmO 和 GJC 报告的因错误结束的回合",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
