@@ -19,6 +19,16 @@ A second table, `active`, holds one row per install and UTC day the app was open
 the app was installed, the terminal runtime, the country, and `harnesses`, a JSON array of the kinds of coding agents
 running that day, from the fixed list `TELEMETRY_HARNESSES` in `shared/telemetry.ts` (any other
 agent is `other`). A later message for the same day replaces the version and the harnesses.
+A third table, `counts`, is ready to hold one row per install and UTC day that has ended
+(`POST /v1/counts`); no app sends to it yet, and none will before a notice that says so: the day, the random install ID, the app's version that day, and
+`narrow` and `wide`, the day's use of the app's controls in a window at most 640px wide and in a
+wider one: for each fixed counter name used that day (`TELEMETRY_COUNTERS` in `shared/telemetry.ts`,
+such as `chat_send` or `view_terminal_claude`), a bucket (1: 1-2 times, 2: 3-9, 3: 10-29, 4: 30 or
+more), and the fixed names of the controls shown that day (`TELEMETRY_SHOWN`). It carries no country,
+OS or agent kinds: join `active` on the day and install. The first message for a day stands, and a
+name the Worker does not know is dropped while the rest of the row is kept. No row for a day the
+install was active means its counts are unknown (an older app, the notice not seen, or not sent yet:
+the Worker takes a day up to `COUNTS_LATE_DAYS`, 14, back).
 The Worker itself never reads the sender's address or any header other than the content type, and
 Workers Logs are off (`wrangler.toml`), so no request log keeps the address either.
 
@@ -70,6 +80,13 @@ keep `NULL`):
 ```sh
 bunx wrangler d1 execute herdr-web-ui-telemetry --remote --command "ALTER TABLE events ADD COLUMN runtime TEXT CHECK (runtime IS NULL OR runtime IN ('herdr', 'herdr-core'))"
 bunx wrangler d1 execute herdr-web-ui-telemetry --remote --command "ALTER TABLE active ADD COLUMN runtime TEXT CHECK (runtime IS NULL OR runtime IN ('herdr', 'herdr-core'))"
+```
+
+Then create the `counts` table, before deploying a Worker that writes it (an app since notice
+version 6 sends a finished day's counts; that Worker's insert fails without the table):
+
+```sh
+bunx wrangler d1 execute herdr-web-ui-telemetry --remote --command "CREATE TABLE IF NOT EXISTS counts (day TEXT NOT NULL, install_id TEXT NOT NULL, version TEXT NOT NULL, narrow TEXT CHECK (narrow IS NULL OR json_valid(narrow)), wide TEXT CHECK (wide IS NULL OR json_valid(wide)), PRIMARY KEY (day, install_id)); CREATE INDEX IF NOT EXISTS counts_day ON counts (day);"
 ```
 
 These ALTERs preserve historical rows; their newly added `settings` value remains `NULL` and is
@@ -134,6 +151,15 @@ GROUP BY way.value ORDER BY installs DESC, ingress;
 SELECT day, COUNT(*) AS installs, SUM(json_extract(usage, '$.prompt_answers')) AS prompt_answers,
   SUM(json_extract(usage, '$.alerts_delivered')) AS alerts_delivered, SUM(json_extract(usage, '$.alerts_opened')) AS alerts_opened
 FROM active WHERE usage IS NOT NULL GROUP BY day ORDER BY day;
+-- share of installs that used each counter at least once in the last 7 finished days, per width, among
+-- installs that sent counts at that width; a bucket's lower bound is 1, 3, 10 or 30 uses that day
+SELECT width, item.key AS counter, COUNT(DISTINCT c.install_id) AS installs,
+  ROUND(100.0 * COUNT(DISTINCT c.install_id) / (SELECT COUNT(DISTINCT install_id) FROM counts WHERE day >= date('now', '-7 days') AND day < date('now') AND (CASE width WHEN 'narrow' THEN narrow ELSE wide END) IS NOT NULL), 1) AS percent
+FROM (SELECT 'narrow' AS width UNION ALL SELECT 'wide') AS w
+JOIN counts c ON (CASE w.width WHEN 'narrow' THEN c.narrow ELSE c.wide END) IS NOT NULL
+CROSS JOIN json_each(CASE w.width WHEN 'narrow' THEN c.narrow ELSE c.wide END, '$.counts') AS item
+WHERE c.day >= date('now', '-7 days') AND c.day < date('now')
+GROUP BY width, counter ORDER BY width, installs DESC, counter;
 -- installs per version they last reported
 SELECT version, COUNT(*) FROM (SELECT install_id, MAX(version) AS version FROM events GROUP BY install_id) GROUP BY version ORDER BY version;
 -- OS, architecture and install method

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChartColumn, X } from "lucide-react";
 
-import { NOTICE_VERSION, type TelemetryStatus } from "../../shared/telemetry.ts";
+import { type TelemetryStatus } from "../../shared/telemetry.ts";
+import { NOTICE_VERSION } from "../../shared/telemetry-notice.ts";
 import { ApiError, changeTelemetry, fetchTelemetry } from "../lib/api.ts";
 import { telemetrySettingsSnapshot, useSettings } from "../lib/settings.ts";
 import { useT } from "../lib/i18n.ts";
