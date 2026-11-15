@@ -9,7 +9,7 @@ $originalUserProfile = $env:USERPROFILE
 $originalFromSource = $env:OVIS_FROM_SOURCE
 $env:OVIS_FROM_SOURCE = '1'
 $originalStateHome = $env:XDG_STATE_HOME
-$state = @{ installed = $false; installs = 0; uninstalls = 0; ref = ''; running = $true; started = $false; failInstall = $false; bunVersion = '1.4.2'; failBun = $false; windowsRelease = $true; refId = 'devswha.ovis'; installedId = ''; manifestBlocked = $false; startedLegacy = $false; legacyInstalled = $false; stopStateDirs = @(); handStarted = $false; pluginSource = ''; launcherCalls = @(); failBuild = $false; cutBuild = $null; annotated = @(); moved = @(); offline = $false; releaseDown = $false; noGit = $false; serverRecord = ''; builtUnderServer = $false; gitPrefix = ''; badBinary = $false; headMoves = $false }
+$state = @{ installed = $false; installs = 0; uninstalls = 0; ref = ''; running = $true; started = $false; failInstall = $false; bunVersion = '1.4.2'; failBun = $false; windowsRelease = $true; refId = 'devswha.ovis'; installedId = ''; manifestBlocked = $false; startedLegacy = $false; legacyInstalled = $false; stopStateDirs = @(); handStarted = $false; pluginSource = ''; launcherCalls = @(); failBuild = $false; cutBuild = $null; annotated = @(); moved = @(); offline = $false; releaseDown = $false; noGit = $false; serverRecord = ''; builtUnderServer = $false; gitPrefix = ''; badBinary = $false; headMoves = $false; gitFails = $false }
 $global:herdrInstallOpened = @()
 # gh is a stand-in .cmd, first on PATH: the installer runs gh as a process, and no real star is read or given.
 # mode.txt beside it is what it answers: starred, not, refuses (the star itself), upstream, signed-out, hangs or
@@ -33,8 +33,18 @@ function git {
     $global:LASTEXITCODE = 0
     # herdr's checkout, detached at the commit of the ref it was installed at, which a prefix of it names there
     if ($args[0] -eq '-C' -and $args[2] -eq 'rev-parse') {
-        # a plugin linked from a folder that is no git checkout
-        if ($state.noGit) { $global:LASTEXITCODE = 128; return }
+        # a plugin linked from a folder that is no git checkout, as git says it (the installer asks it untranslated)
+        if ($state.noGit) { Write-Error 'fatal: not a git repository (or any of the parent directories): .git' -ErrorAction Continue; $global:LASTEXITCODE = 128; return }
+        # git failing at the checkout's top level ($state.gitFails): as Git for Windows does, on every call, for a folder
+        # another account owns (its lines as it prints them, the empty one included, and the command quoted for a POSIX
+        # shell where the folder has a space or a quote), or ('other') as for a broken repository
+        if ('other' -eq $state.gitFails) { Write-Error 'fatal: bad object HEAD' -ErrorAction Continue; $global:LASTEXITCODE = 128; return }
+        if ($state.gitFails) {
+            $folder = $args[1] -replace '\\', '/'
+            $quoted = if ($folder -match "[ ']") { "'$($folder -replace "'", "'\''")'" } else { $folder }
+            foreach ($line in "fatal: detected dubious ownership in repository at '$folder'", "'$folder' is owned by:", "`tNT AUTHORITY/SYSTEM (S-1-5-18)", 'but the current user is:', "`tWINVM/someone (S-1-5-21-1-2-3-1000)", 'To add an exception for this directory, call:', '', "`tgit config --global --add safe.directory $quoted") { Write-Error $line -ErrorAction Continue }
+            $global:LASTEXITCODE = 128; return
+        }
         # a plugin folder inside another repository ($state.gitPrefix: its path there): git reads the repository around it
         if ($args[3] -eq '--show-prefix') { return $state.gitPrefix }
         $head = if ($state.gitPrefix) { Get-TestCommit 'the repository around it' } else { Get-TestCommit $state.ref }
@@ -98,10 +108,15 @@ function bun {
             if ($env:OVIS_FROM_SOURCE -ne '1' -and -not $toSource -and $state.badBinary) { $global:LASTEXITCODE = 1; return }
             if (($env:OVIS_FROM_SOURCE -eq '1' -or $toSource) -and -not (Test-Path -LiteralPath (Join-Path $root 'node_modules\all-installed'))) { $global:LASTEXITCODE = 1; return }
             # the record it reads: in the state dir it is told, else ~\.local\state's while a pid is recorded there (a
-            # server started by hand, of any checkout), else herdr's
+            # server started by hand, of any checkout), else herdr's; told the new id's dir with no live record there, the
+            # old id's beside it while a live pid is recorded in it (scripts/plugin.ts runningStateDir). A record of a pid
+            # no process has is no server.
             $handDir = Join-Path $env:USERPROFILE '.local\state\ovis'
+            $live = { param($Dir) $recorded = "$(Get-Content -Raw -LiteralPath (Join-Path $Dir 'server.pid') -ErrorAction SilentlyContinue)".Trim(); $recorded -match '^\d+$' -and [bool](Get-Process -Id $recorded -ErrorAction SilentlyContinue) }
             $readDir = if ($env:HERDR_PLUGIN_STATE_DIR) { $env:HERDR_PLUGIN_STATE_DIR } elseif (Test-Path -LiteralPath (Join-Path $handDir 'server.pid')) { $handDir } else { Join-Path $env:XDG_STATE_HOME 'herdr\plugins\devswha.ovis' }
-            if ($state.serverRecord -and (Split-Path $state.serverRecord) -eq $readDir -and (Test-Path -LiteralPath $state.serverRecord)) {
+            $legacyDir = Join-Path (Split-Path $readDir) 'devswha.herdr-web-ui'
+            if ((Split-Path -Leaf $readDir) -eq 'devswha.ovis' -and -not (& $live $readDir) -and (& $live $legacyDir)) { $readDir = $legacyDir }
+            if ($state.serverRecord -and (Split-Path $state.serverRecord) -eq $readDir -and (& $live $readDir)) {
                 $owner = try { Get-Content -Raw -LiteralPath (Join-Path (Split-Path $state.serverRecord) 'server.owner') -ErrorAction Stop | ConvertFrom-Json } catch { $null }
                 if ("$($owner.birth.value)" -ne "$(([DateTimeOffset](Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CreationDate).ToUnixTimeMilliseconds())") { $global:LASTEXITCODE = 1; return }
                 Remove-Item -LiteralPath $state.serverRecord -Force
@@ -118,9 +133,9 @@ function bun {
             if ($state.cutBuild) { $null = $state.cutBuild.Set(); Start-Sleep -Seconds 60 }
             New-Item -ItemType Directory -Force -Path (Join-Path $root 'node_modules'), (Join-Path $root 'dist') | Out-Null
             Set-Content -LiteralPath (Join-Path $root 'node_modules\all-installed'), (Join-Path $root 'dist\index.html') -Value ''
-            # the version alone where git cannot read the commit (no checkout, or not its top level); `started` left where
-            # HEAD moved while it built ($state.headMoves), the build returning 0 all the same
-            if (-not $state.headMoves) {
+            # the version alone where git reads no commit (no checkout, or not its top level); `started` left where HEAD
+            # moved while it built ($state.headMoves) or git failed ($state.gitFails), the build returning 0 all the same
+            if (-not $state.headMoves -and -not $state.gitFails) {
                 Set-Content -LiteralPath (Join-Path $serverDir 'source-build') -Value $(if ($state.noGit -or $state.gitPrefix) { '1.2.3' } else { "1.2.3 $(Get-TestCommit $state.ref)" })
             }
         }
@@ -273,11 +288,12 @@ exit /b 1
     # the server a start recorded (scripts/plugin.ts's server.pid and server.owner), in the test's own herdr state dir
     $state.serverRecord = Join-Path $env:XDG_STATE_HOME 'herdr\plugins\devswha.ovis\server.pid'
     # a server of this plugin running as this very process, recorded as start records it: its pid, and its creation time
-    # (or another, for a record whose pid another process has taken since; or none, 'none', as a start before server.owner)
+    # (or another, for a record whose pid another process has taken since; or none, 'none', as a start before server.owner),
+    # or as process $Id, recorded without its creation time
     $serverRuns = {
-        param([string]$Birth)
+        param([string]$Birth, [int]$Id = $PID)
         New-Item -ItemType Directory -Force -Path (Split-Path $state.serverRecord) | Out-Null
-        Set-Content -LiteralPath $state.serverRecord -Value $PID
+        Set-Content -LiteralPath $state.serverRecord -Value $Id
         if ($Birth -eq 'none') { return }
         if (-not $Birth) { $Birth = "$(([DateTimeOffset](Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CreationDate).ToUnixTimeMilliseconds())" }
         Set-Content -LiteralPath (Join-Path (Split-Path $state.serverRecord) 'server.owner') -Value (@{ pid = $PID; birth = @{ platform = 'win32'; value = $Birth } } | ConvertTo-Json -Compress)
@@ -402,10 +418,13 @@ exit /b 1
         @{ name = 'a build cut off in bun install over the client of an earlier one'; packages = 'some'; client = $true; stamp = 'started'; calls = 'stop,install 1' },
         @{ name = 'a build cut off in bun install over the client of an earlier one, its server running'; packages = 'some'; client = $true; stamp = 'started'; server = 'alive'; calls = 'stop'; refused = $true },
         @{ name = 'the same, the server recorded without its creation time'; packages = 'some'; client = $true; stamp = 'started'; server = 'unverified'; calls = 'stop'; refused = $true; names = { $state.serverRecord }; recover = { Remove-Item -LiteralPath $state.serverRecord } },
+        # the same, its process being Ovis (a process of the test's own stands for it): the refusal says how to stop it
+        @{ name = 'the same, the process it names being Ovis'; packages = 'some'; client = $true; stamp = 'started'; server = 'unverified'; serverProcess = $true; calls = 'stop'; refused = $true; names = { $state.serverRecord }; recover = { Stop-Process -Id $serverChild.Id; $serverChild.WaitForExit() } },
         @{ name = 'a hand-started Ovis recorded in ~\.local\state, maybe of another checkout'; packages = 'some'; stamp = 'started'; server = 'alive'; byHand = $true; calls = 'stop'; refused = $true; names = { Split-Path $state.serverRecord } },
         @{ name = 'the same, with packages that load the stop: it is left running'; packages = 'all'; stamp = 'started'; server = 'alive'; byHand = $true; calls = 'stop'; refused = $true; names = { Split-Path $state.serverRecord } },
         @{ name = 'a kept release binary of another version over broken packages'; binary = '1.2.2'; packages = 'some'; stamp = 'started'; calls = 'stop'; refused = $true; names = { $keptBin }; recover = { Remove-Item -LiteralPath $keptBin -Recurse -Force } },
         @{ name = "a kept release binary of this version whose stop cannot verify a record another process's pid holds"; binary = $true; server = 'gone'; calls = 'stop'; refused = $true; names = { $state.serverRecord }; recover = { Remove-Item -LiteralPath $state.serverRecord } },
+        @{ name = 'a kept release binary of this version whose stop cannot verify a record without its creation time, the process being Ovis'; binary = $true; server = 'unverified'; serverProcess = $true; calls = 'stop'; refused = $true; names = { $state.serverRecord }; recover = { Stop-Process -Id $serverChild.Id; $serverChild.WaitForExit() } },
         @{ name = 'a finished build of an older launcher'; packages = 'all'; client = $true; calls = '' },
         @{ name = 'a finished build'; packages = 'all'; client = $true; stamp = $finished; calls = '' },
         @{ name = 'a finished build whose packages or client were removed since'; packages = 'all'; stamp = $finished; calls = 'stop,install 1' },
@@ -425,6 +444,25 @@ exit /b 1
             try { bun (Join-Path $pluginRoot 'scripts\plugin-launch.ts') install } finally { $env:OVIS_FROM_SOURCE = $given }
         } },
         @{ name = 'a kept release binary of this version that fails its check, the release out of reach'; binary = $true; badBinary = $true; packages = 'some'; stamp = 'started'; calls = 'stop'; refused = $true; names = { $keptBin }; recover = { Remove-Item -LiteralPath $keptBin -Recurse -Force } },
+        # the cause this run can act on (the binary) named first, then the server started by hand (whose record the test
+        # takes away with its profile, standing for stopping it)
+        @{ name = 'the same, an Ovis started by hand recorded as running too'; binary = $true; badBinary = $true; packages = 'some'; stamp = 'started'; server = 'alive'; byHand = $true; calls = 'stop'; refused = $true; names = { $keptBin; Split-Path $state.serverRecord }; recover = { Remove-Item -LiteralPath $keptBin -Recurse -Force } },
+        # git failing at the checkout's top level: no stamp that names a commit is taken, nothing is stopped or changed,
+        # and git's words are said; the next run, git answering again, decides by the commit
+        @{ name = 'a finished build of another commit, git failing at the checkout this once'; packages = 'all'; client = $true; stamp = "1.2.3 $(Get-TestCommit 'earlier')"; gitFails = 'other'; calls = ''; refused = $true; untouched = $true; names = { 'bad object HEAD'; 'nothing was stopped or changed' }; recover = { <# git answers again #> } },
+        @{ name = 'a build cut off, git failing at the checkout this once'; packages = 'some'; stamp = 'started'; gitFails = 'other'; calls = ''; refused = $true; untouched = $true; names = { 'bad object HEAD' }; recover = { <# git answers again #> } },
+        # a working install git distrusts every time (a folder another account owns), stamped with the version alone by a
+        # launcher that read no commit there: refused, naming the command that trusts the folder; once it is run (the
+        # stand-in answering again), the next run rebuilds once and stamps the commit
+        @{ name = 'a finished build stamped with the version alone, in a folder git does not trust'; packages = 'all'; client = $true; stamp = '1.2.3'; gitFails = $true; trust = $true; calls = ''; refused = $true; untouched = $true; names = { 'dubious ownership' }; recover = { <# git trusts the folder #> } },
+        @{ name = 'a finished build of another commit, in a folder git does not trust'; packages = 'all'; client = $true; stamp = "1.2.3 $(Get-TestCommit 'earlier')"; gitFails = $true; trust = $true; calls = ''; refused = $true; untouched = $true; names = { 'dubious ownership' }; recover = { <# git trusts the folder #> } },
+        # both ids installed: the old id's server, stopped for the move before the checkout is read, is said, with its start
+        @{ name = 'the same, the old id installed too and its server stopped for the move'; packages = 'all'; client = $true; stamp = "1.2.3 $(Get-TestCommit 'earlier')"; gitFails = $true; trust = $true; legacy = $true; calls = ''; refused = $true; untouched = $true; names = { 'dubious ownership'; 'server of the old id was stopped'; 'herdr plugin action invoke devswha.herdr-web-ui.start-windows' } },
+        # and by a refusal after this checkout's own stop: a failed build
+        @{ name = 'a failed build, the old id installed too and its server stopped for the move'; packages = 'some'; stamp = 'started'; failBuild = $true; legacy = $true; calls = 'stop,install 1'; hint = $true },
+        @{ name = 'a finished build of an older launcher (no stamp), git failing at the checkout'; packages = 'all'; client = $true; gitFails = $true; calls = '' },
+        # scripts/plugin.ts's stop, told the new id's state dir, stops a live server recorded under the old id alone
+        @{ name = 'a live server recorded under the old id only, with packages that load the stop'; packages = 'all'; stamp = 'started'; server = 'alive'; legacyRecord = $true; calls = 'stop,install 1' },
         @{ name = 'a build during which the checkout moved to another commit'; packages = 'some'; stamp = 'started'; headMoves = $true; calls = 'stop,install 1' },
         @{ name = 'a failed build after a stop that could not run, a server no record names maybe running'; packages = 'some'; stamp = 'started'; failBuild = $true; calls = 'stop,install 1'; hint = $true },
         @{ name = 'a failed build after a stop that found no server to stop, a server no record names maybe running'; binary = $true; failBuild = $true; calls = 'stop,install 1'; hint = $true },
@@ -433,14 +471,21 @@ exit /b 1
     )) {
         & $unbuilt; $state.launcherCalls = @(); $state.builtUnderServer = $false
         $state.releaseDown = [bool]$case.releaseDown; $state.noGit = [bool]$case.noGit; $state.gitPrefix = if ($case.nested) { 'plugin/' } else { '' }
-        $state.badBinary = [bool]$case.badBinary; $state.headMoves = [bool]$case.headMoves
+        $state.badBinary = [bool]$case.badBinary; $state.headMoves = [bool]$case.headMoves; $state.gitFails = if ($case.gitFails) { $case.gitFails } else { $false }; $state.legacyInstalled = [bool]$case.legacy
         # a hand-started server's record, in ~\.local\state of a user profile of the test's own (and PATH as it was after)
         $herdrRecord = $state.serverRecord; $givenProfile = $env:USERPROFILE; $givenPath = $env:PATH
         if ($case.byHand) {
             $env:USERPROFILE = Join-Path $ghStandIn 'profile'
             $state.serverRecord = Join-Path $env:USERPROFILE '.local\state\ovis\server.pid'
         }
-        if ($case.server) { & $serverRuns $(switch ($case.server) { 'gone' { '1' } 'unverified' { 'none' } }) }
+        if ($case.legacyRecord) { $state.serverRecord = Join-Path $env:XDG_STATE_HOME 'herdr\plugins\devswha.herdr-web-ui\server.pid' }
+        # the recorded server: this process, or one the test starts (a process the refusal may tell to stop)
+        $serverChild = if ($case.serverProcess) { [Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo -Property @{ FileName = "$env:SystemRoot\System32\PING.EXE"; Arguments = '-n 120 127.0.0.1'; UseShellExecute = $false; CreateNoWindow = $true })) }
+        $serverPid = if ($serverChild) { $serverChild.Id } else { $PID }
+        if ($case.server) {
+            $birth = switch ($case.server) { 'gone' { '1' } 'unverified' { 'none' } default { '' } }
+            & $serverRuns -Birth $birth -Id $serverPid
+        }
         New-Item -ItemType Directory -Force -Path (Join-Path $pluginRoot '.ovis\server') | Out-Null
         Set-Content -LiteralPath $fromSource -Value '1.2.3'
         if ($case.stamp) { Set-Content -LiteralPath $sourceBuild -Value $case.stamp }
@@ -458,20 +503,35 @@ exit /b 1
         }
         $message = ''; $said = ''
         try { $said = & $installer -Ref 'feat/windows-install' 6>&1 | Out-String } catch { $message = $_.Exception.Message }
-        $state.releaseDown = $false; $state.noGit = $false; $state.failBuild = $false; $state.badBinary = $false; $state.headMoves = $false
-        # what a refusal must name: the files to remove, and the process of a server recorded as running
-        $named = @(if ($case.names) { & $case.names }) + @(if ($case.server -and $case.refused) { "process $PID" })
+        $state.releaseDown = $false; $state.noGit = $false; $state.failBuild = $false; $state.badBinary = $false; $state.headMoves = $false; $state.gitFails = $false; $state.legacyInstalled = $false
+        # what a refusal must name, in this order: the files to remove, and the process of a server recorded as running
+        $named = @(if ($case.names) { & $case.names }) + @(if ($case.server -and $case.refused) { "process $serverPid" })
+        $order = @($named | ForEach-Object { $message.IndexOf($_) })
+        $inOrder = -not @(for ($i = 1; $i -lt $order.Count; $i++) { if ($order[$i] -lt $order[$i - 1]) { $i } })
         # a refused server is left running: its record is where its start wrote it
         $recordLeft = -not $case.server -or -not $case.refused -or (Test-Path -LiteralPath $state.serverRecord)
         if ($case.byHand) {
             Remove-Item -LiteralPath $env:USERPROFILE -Recurse -Force
             $env:USERPROFILE = $givenProfile; $env:PATH = $givenPath; $state.serverRecord = $herdrRecord
         }
+        if ($case.legacyRecord) {
+            Remove-Item -LiteralPath (Split-Path $state.serverRecord) -Recurse -Force -ErrorAction SilentlyContinue
+            $state.serverRecord = $herdrRecord
+        }
         Assert (($state.launcherCalls -join ',') -eq $case.calls) "$($case.name): the launcher must get '$($case.calls)', not '$($state.launcherCalls -join ',')': $message"
+        if ($case.trust) {
+            # the command the refusal ends with, read as PowerShell reads it: git config with the folder as one argument
+            $command = ($message -split "`n")[-1]
+            $parseErrors = $null
+            $parsed = [System.Management.Automation.Language.Parser]::ParseInput($command, [ref]$null, [ref]$parseErrors)
+            $words = @($parsed.EndBlock.Statements[0].PipelineElements[0].CommandElements | ForEach-Object { $_.Value })
+            Assert (-not $parseErrors -and ($words -join '|') -eq "git|config|--global|--add|safe.directory|$($pluginRoot -replace '\\', '/')") "$($case.name): the refusal must end with a git config command that trusts the folder, as PowerShell reads it: $command"
+        }
+        if ($case.legacy) { Assert ($message.Contains('herdr plugin action invoke devswha.herdr-web-ui.start-windows')) "$($case.name): the old id's server, stopped for the move, must be said with its start: $message" }
         if ($case.failBuild) { Assert ($message -match 'bun failed' -and $message.Contains($pluginRoot) -eq [bool]$case.hint -and -not (Test-Path -LiteralPath $fromSource)) "$($case.name): a failed build must take the marker back, and name the checkout to find a server by only where a server no stop stopped may run ($([bool]$case.hint)): $message" }
         elseif ($case.refused) {
             # a refusal before anything is stopped or changed (untouched) keeps the marker; one after the stop took it back
-            Assert ($message -and $recordLeft -and (Test-Path -LiteralPath $fromSource) -eq [bool]$case.untouched -and -not @($named | Where-Object { -not $message.Contains($_) }) -and $message.Contains("Stop-Process -Id $PID") -eq ($case.server -eq 'alive')) "$($case.name): the run must be refused, naming $($named -join ' and '), with Stop-Process only for a verified server: $message"
+            Assert ($message -and $recordLeft -and (Test-Path -LiteralPath $fromSource) -eq [bool]$case.untouched -and -not @($named | Where-Object { -not $message.Contains($_) }) -and $inOrder -and $message.Contains("Stop-Process -Id $serverPid") -eq ($case.server -in 'alive', 'unverified')) "$($case.name): the run must be refused, naming $($named -join ' and ') in that order, with Stop-Process for a verified server, or for one that could not be verified if it is Ovis: $message"
             if ($case.recover) {
                 & $case.recover; $state.launcherCalls = @(); $message = ''
                 try { $null = & $installer -Ref 'feat/windows-install' 6>&1 } catch { $message = $_.Exception.Message }
@@ -483,10 +543,22 @@ exit /b 1
         elseif ($case.headMoves) { Assert (-not $message -and (Get-Content -Raw -LiteralPath $sourceBuild).Trim() -eq 'started' -and (Test-Path -LiteralPath $fromSource) -and $said -match 'moved to another commit') "$($case.name): the build must stay unfinished, kept, and said: $message $said" }
         elseif ($case.calls) { Assert (-not $message -and (Get-Content -Raw -LiteralPath $sourceBuild).Trim() -eq $finished -and -not ($case.server -eq 'alive' -and $state.builtUnderServer)) "$($case.name): must be built and stamped, with no server left running under the build: $message" }
         elseif ($case.nested) { Assert (-not $message -and -not $said.Contains((Get-TestCommit 'the repository around it').Substring(0, 12))) "$($case.name): must be kept, without the commit of the repository around the plugin's folder: $message $said" }
+        elseif ($case.gitFails) { Assert (-not $message -and $said.Contains('dubious ownership')) "$($case.name): must be kept, saying what git said: $message $said" }
         else { Assert (-not $message -and ($case.noGit -or $said.Contains($finished.Substring(6, 12)))) "$($case.name): must be kept, saying the installed commit: $message $said" }
+        if ($serverChild) { Stop-Process -Id $serverChild.Id -Force -ErrorAction SilentlyContinue; $serverChild = $null }
     }
     Remove-Item -LiteralPath (Join-Path $pluginRoot 'scripts\plugin-launch.ts'), (Join-Path $pluginRoot 'package.json') -Force; & $unbuilt
     $state.serverRecord = ''; $state.gitPrefix = ''
+    # the trust command for folders with a space and with an apostrophe (git prints its own with '\'' for a quote, which
+    # PowerShell reads otherwise), from the installer's own text: read as PowerShell reads it, it names the folder whole
+    $trustAst = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $installer).Path, [ref]$null, [ref]$null).Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-TrustCommand' }, $true)
+    Invoke-Expression $trustAst.Extent.Text
+    foreach ($folder in 'C:/Users/John Doe/AppData/Local/herdr/plugins/devswha.ovis', "C:/Users/John O'Brien/plugin", "C:/it's/a ''quoted'' one") {
+        $parseErrors = $null
+        $parsed = [System.Management.Automation.Language.Parser]::ParseInput((Get-TrustCommand $folder), [ref]$null, [ref]$parseErrors)
+        $words = @($parsed.EndBlock.Statements[0].PipelineElements[0].CommandElements | ForEach-Object { $_.Value })
+        Assert (-not $parseErrors -and $words.Count -eq 6 -and $words[5] -eq $folder) "The trust command for $folder must name it as one PowerShell argument: $(Get-TrustCommand $folder)"
+    }
     $state.running = $false
     $env:OVIS_FROM_SOURCE = '1'
 
@@ -961,6 +1033,7 @@ try { $null = Install-OvisBinary $Version; exit 0 } catch { Write-Output $_.Exce
     Remove-Item Env:\OVIS_RELEASES_URL -ErrorAction SilentlyContinue
     if ($binaryScratch) { Remove-Item -LiteralPath $binaryScratch -Recurse -Force -ErrorAction SilentlyContinue }
     if ($herdrStandIn) { Set-Item Function:\herdr $herdrStandIn }
+    if ($serverChild) { Stop-Process -Id $serverChild.Id -Force -ErrorAction SilentlyContinue }
     if ($scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
     Remove-Item -LiteralPath $ghStandIn -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $pluginRoot -Recurse -Force -ErrorAction SilentlyContinue

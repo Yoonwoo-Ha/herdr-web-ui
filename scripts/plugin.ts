@@ -767,6 +767,7 @@ async function stopInTurn(dependencies: StopDependencies): Promise<number> {
     // Never send another kill to a number Windows may have reassigned after taskkill.
     if (existsSync(PID_FILE) && statSync(PID_FILE).mtimeMs === recordedAt
       && Number(readFileSync(PID_FILE, "utf8").trim()) === pid) rmSync(PID_FILE);
+    // install.ps1 reads a stdout line starting `stopped ` as "this stop stopped a server" (scripts/plugin-stop-identity.test.ts pins it)
     process.stdout.write(`stopped Ovis (pid ${pid})\n`);
     return 0;
   } else {
@@ -810,6 +811,7 @@ async function stopInTurn(dependencies: StopDependencies): Promise<number> {
   }
   // a start that ran meanwhile may have recorded its own server: leave that one's records alone
   forgetServer(pid);
+  // install.ps1 reads a stdout line starting `stopped ` as "this stop stopped a server" (scripts/plugin-stop-identity.test.ts pins it)
   process.stdout.write(`stopped Ovis (pid ${pid})${killed && !handedOn ? `; it was still running after ${STOP_TIMEOUT_MS / 1000}s, so it was killed` : ""}\n`);
   return 0;
 }

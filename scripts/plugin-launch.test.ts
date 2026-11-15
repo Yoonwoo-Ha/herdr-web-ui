@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { headCommit, main } from "./plugin-launch.ts";
+import { checkoutCommit, main } from "./plugin-launch.ts";
 import { generateKeyPair, MANIFEST, releaseFile, PTY_ASSETS, ptyFile, SERVER_PLATFORMS, signManifest, writeManifest } from "./server-manifest.ts";
 
 /**
@@ -138,14 +138,34 @@ describe("the herdr plugin's launcher", () => {
     expect(await build(0, notFound)).toEqual({ code: 0, during: "started\n", after: finished });
   });
 
-  it("stamps the version alone where git cannot tell the commit", async () => {
+  it("stamps the version alone in a folder git says is no repository", async () => {
     process.env["OVIS_FROM_SOURCE"] = "1";
-    // git pointed at no repository fails as it does in a folder that is no git checkout
+    // git pointed at no repository says so as it does in a folder that is no git checkout
     process.env["GIT_DIR"] = join(scratch, "no-git");
     try {
+      expect(await checkoutCommit()).toEqual({ none: "no checkout" });
       expect(await build(0)).toEqual({ code: 0, during: "started\n", after: `${version}\n` });
     } finally {
       delete process.env["GIT_DIR"];
+    }
+  });
+
+  it("leaves the build unfinished, saying git's words, where git fails at a checkout's top level", async () => {
+    process.env["OVIS_FROM_SOURCE"] = "1";
+    // git refusing a repository it takes for another user's, as for a folder another account owns (with no config of
+    // this PC's that trusts every folder)
+    const set = { GIT_TEST_ASSUME_DIFFERENT_OWNER: "1", GIT_CONFIG_GLOBAL: join(scratch, "no-config"), GIT_CONFIG_NOSYSTEM: "1" };
+    const given = Object.fromEntries(Object.keys(set).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, set);
+    try {
+      expect(await checkoutCommit()).toEqual({ failed: expect.stringMatching(/^fatal: detected dubious ownership in repository at /), trust: expect.stringContaining("git config --global --add safe.directory ") });
+      // regression (main stamped the version alone, which install.ps1 took as built whatever commit the checkout is at)
+      expect(await build(0)).toEqual({ code: 0, during: "started\n", after: "started\n" });
+    } finally {
+      for (const [name, value] of Object.entries(given)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
     }
   });
 
@@ -164,12 +184,18 @@ describe("the herdr plugin's launcher", () => {
     process.env["OVIS_FROM_SOURCE"] = "1";
     const home = join(scratch, "server");
     const stamped = async (commits: string[]) => {
-      const code = await main(["install"], { home, source: async () => 0, commit: async () => commits.shift() ?? "" });
+      const code = await main(["install"], { home, source: async () => 0, commit: async () => ({ commit: commits.shift()! }) });
       return { code, after: readFileSync(join(home, "source-build"), "utf8") };
     };
     expect(await stamped(["a".repeat(40), "a".repeat(40)])).toEqual({ code: 0, after: `${version} ${"a".repeat(40)}\n` });
     // a pull while bun install ran: the sources built are not the commit's that HEAD now names
     expect(await stamped(["a".repeat(40), "b".repeat(40)])).toEqual({ code: 0, after: "started\n" });
+    // git failing after the build, or before it: nothing tells what was built
+    for (const answers of [[{ commit: "a".repeat(40) }, { failed: "git exited with 128" }], [{ failed: "git exited with 128" }, { commit: "a".repeat(40) }]] as const) {
+      const given = [...answers];
+      expect(await main(["install"], { home, source: async () => 0, commit: async () => given.shift()! })).toBe(0);
+      expect(readFileSync(join(home, "source-build"), "utf8")).toBe("started\n");
+    }
   });
 
   it("stamps the version alone for a folder that is not a checkout's top level, not the commit of the repository around it", async () => {
@@ -181,10 +207,73 @@ describe("the herdr plugin's launcher", () => {
       expect(Bun.spawnSync(["git", "-C", around, ...args]).exitCode).toBe(0);
     }
     const aroundCommit = Bun.spawnSync(["git", "-C", around, "rev-parse", "HEAD"]).stdout.toString().trim();
-    expect(await headCommit(around)).toBe(aroundCommit);
+    expect(await checkoutCommit(around)).toEqual({ commit: aroundCommit });
+    expect(await checkoutCommit(plugin)).toEqual({ none: "nested" });
     const home = join(scratch, "server");
-    expect(await main(["install"], { home, source: async () => 0, commit: () => headCommit(plugin) })).toBe(0);
+    expect(await main(["install"], { home, source: async () => 0, commit: () => checkoutCommit(plugin) })).toBe(0);
     expect(readFileSync(join(home, "source-build"), "utf8")).toBe(`${version}\n`);
+  });
+
+  it("names, for a folder git distrusts, a command that trusts it, quoted for a path with a space and an apostrophe, and says it on stderr", async () => {
+    process.env["OVIS_FROM_SOURCE"] = "1";
+    const folder = join(scratch, "John Doe's plugin");
+    mkdirSync(folder);
+    for (const args of [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"]]) {
+      expect(Bun.spawnSync(["git", "-C", folder, ...args]).exitCode).toBe(0);
+    }
+    const set = { GIT_TEST_ASSUME_DIFFERENT_OWNER: "1", GIT_CONFIG_GLOBAL: join(scratch, "global-config"), GIT_CONFIG_NOSYSTEM: "1" };
+    const given = Object.fromEntries(Object.keys(set).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, set);
+    const said: string[] = [];
+    const error = console.error;
+    console.error = (...args: unknown[]) => { said.push(args.join(" ")); };
+    try {
+      const answer = await checkoutCommit(folder);
+      if (!("failed" in answer) || !answer.trust) throw new Error(`no trust command: ${JSON.stringify(answer)}`);
+      // the build in that folder is left unfinished, and the command is said on a line of its own
+      const home = join(scratch, "server");
+      expect(await main(["install"], { home, source: async () => 0, commit: () => checkoutCommit(folder) })).toBe(0);
+      expect(readFileSync(join(home, "source-build"), "utf8")).toBe("started\n");
+      expect(said.join("\n").split("\n")).toContain(answer.trust);
+      // the command, run as printed in this platform's shell, trusts the folder: git reads its commit then
+      const shell = process.platform === "win32" ? ["powershell", "-NoProfile", "-Command", answer.trust] : ["sh", "-c", answer.trust];
+      expect(Bun.spawnSync(shell, { env: process.env }).exitCode).toBe(0);
+      expect(await checkoutCommit(folder)).toEqual({ commit: expect.stringMatching(/^[0-9a-f]{40}$/) });
+      // git's ownership answer is told by its own first line, not by the words anywhere: a missing folder named so is not it
+      expect(await checkoutCommit(join(scratch, "no such dubious ownership folder"))).toEqual({ failed: expect.stringContaining("cannot change to") });
+    } finally {
+      console.error = error;
+      for (const [name, value] of Object.entries(given)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
+  // The release's binary is taken only for sources git ties to it (sourceTrees); nothing else the launcher does needs git.
+  // Run in a process of its own, started with a PATH that has no git (Bun looks a program up on the PATH it started with).
+  it("runs without git on PATH: builds and runs from source, leaving the build unfinished, and gives no binary to sources it cannot tie", async () => {
+    const bin = join(scratch, "bin");
+    mkdirSync(bin);
+    const home = join(scratch, "server");
+    const script = `
+const { main } = await import(${JSON.stringify(join(import.meta.dir, "plugin-launch.ts"))});
+const { sourceTrees } = await import(${JSON.stringify(join(import.meta.dir, "server-manifest.ts"))});
+const { readFileSync } = await import("node:fs");
+const home = ${JSON.stringify(home)};
+const calls = [];
+const source = async (command) => { calls.push(command); return 0; };
+const install = await main(["install"], { home, source });
+const stamp = readFileSync(${JSON.stringify(join(home, "source-build"))}, "utf8");
+delete process.env.OVIS_FROM_SOURCE;
+const status = await main(["status"], { home, source });
+console.log(JSON.stringify({ install, stamp, status, calls, trees: sourceTrees() }));`;
+    const child = Bun.spawn([process.execPath, "-e", script], { env: { ...process.env, PATH: bin, OVIS_FROM_SOURCE: "1" }, stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    // regression (fails on main): sourceTrees threw ENOENT before any command ran
+    expect(code, err).toBe(0);
+    expect(JSON.parse(out)).toEqual({ install: 0, stamp: "started\n", status: 0, calls: ["install", "status"], trees: { error: "git is not on PATH, so the binaries cannot be tied to their sources" } });
+    expect(err).toContain("git could not read the checkout's commit (git is not on PATH)");
   });
 
   it("keeps running from source a checkout an older launcher built: a marker and no stamp", async () => {

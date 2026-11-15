@@ -67,11 +67,18 @@ const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes)
  * The git trees of server/ and shared/ in this checkout, or why there are none to name: outside a git checkout, or
  * with changes there that are not committed, a manifest would name sources the binaries were not built from. The trees
  * are this folder's own (`./`), also where it sits inside another repository: a tree id names the content wherever it is,
- * while `HEAD:server` would name the server/ at that repository's top level.
+ * while `HEAD:server` would name the server/ at that repository's top level. Without git on PATH nothing can tie them
+ * either: that is said as a reason too, not thrown, so the launcher still runs every command that needs no release.
  */
 export function sourceTrees(cwd = root): { server: string; shared: string } | { error: string } {
   const git = (...args: string[]) => Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "ignore", timeout: 10_000, killSignal: "SIGKILL" });
-  const status = git("status", "--porcelain", "--untracked-files=all", "--", "server", "shared");
+  let status: ReturnType<typeof git>;
+  try {
+    status = git("status", "--porcelain", "--untracked-files=all", "--", "server", "shared");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return { error: "git is not on PATH, so the binaries cannot be tied to their sources" };
+  }
   if (status.exitCode !== 0) return { error: "not a git checkout, so the binaries cannot be tied to their sources" };
   if (status.stdout.toString().trim() !== "") return { error: "server/ or shared/ has changes that are not committed, so the binaries would not be built from HEAD's sources" };
   const [server, shared] = ["server", "shared"].map((dir) => git("rev-parse", `HEAD:./${dir}`).stdout.toString().trim());
