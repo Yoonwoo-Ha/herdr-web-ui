@@ -9,7 +9,7 @@ import { notificationViewForPane, type NotificationTarget } from "./notification
 import type { TerminalPeek } from "./terminalPeek.ts";
 import { HISTORY_PROMPTS, type Settings } from "./settings.ts";
 import type { TelemetryViewSource } from "../../shared/telemetry.ts";
-import { usageCounters, type UsageCounters } from "./usageCounters.ts";
+import { tally, usageCounters, type UsageCounters } from "./usageCounters.ts";
 
 /**
  * The lens a pane opens in: the one picked for it by hand, remembered per pane, else its default
@@ -139,7 +139,7 @@ export function usePaneViewPicks({ setViewPicks, setNotificationViewTarget, setT
   }, []);
 
   const pickView = useCallback((machineId: string, paneId: string, next: PaneView, source: TelemetryViewSource | null) => {
-    counters.viewSwitch(next, agentOfRef.current(machineId, paneId), source, machineId);
+    tally(() => counters.viewSwitch(next, agentOfRef.current(machineId, paneId), source, machineId));
     remember(machineId, paneId, next);
   }, [counters, remember]);
 
@@ -149,7 +149,7 @@ export function usePaneViewPicks({ setViewPicks, setNotificationViewTarget, setT
       setLens((current) => ({ ...current, view: next }));
       setAutoSelected(false);
       if (selectedPaneId === null) return;
-      if (next !== view) counters.viewSwitch(next, agentOfRef.current(selectedMachineId, selectedPaneId), source, selectedMachineId);
+      if (next !== view) tally(() => counters.viewSwitch(next, agentOfRef.current(selectedMachineId, selectedPaneId), source, selectedMachineId));
       remember(selectedMachineId, selectedPaneId, next);
     },
     [counters, selectedPaneId, selectedMachineId, remember, view],

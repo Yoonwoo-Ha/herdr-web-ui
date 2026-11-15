@@ -83,7 +83,6 @@ const HERDR_KEY_ACTIONS: Partial<Record<HerdrPrefixAction, TelemetryAction>> = {
 };
 
 /** `tabRefused`: herdr's refusal of a new tab, said over the pane as the tab strip's button says it */
-
 export function runHerdrAction(actions: AppActions, action: HerdrPrefixAction, index: number | null, tabRefused: (reason: unknown) => void): void {
   const counted = HERDR_KEY_ACTIONS[action];
   if (counted) tally(() => actions.counted?.(counted, "shortcut"));

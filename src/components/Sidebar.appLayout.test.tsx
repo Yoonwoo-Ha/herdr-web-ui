@@ -7,6 +7,7 @@ import type { SessionSnapshot, WorkspaceInfo } from "../../shared/protocol.ts";
 import type { AppActions } from "../lib/actions.ts";
 import { AppLayoutContext, appLayoutOf, type LayoutOffer, ReorderContext } from "../lib/machineContext.tsx";
 import { SettingsProvider } from "../lib/settings.ts";
+import { usageCounters } from "../lib/usageCounters.ts";
 import { inactiveSidebarFilter, type SidebarFilter } from "../lib/sidebarFilter.ts";
 import { SidebarFilterProvider } from "../lib/sidebarFilterContext.ts";
 import { currentSidebarPins, setSidebarPins } from "../lib/sidebarPins.ts";
@@ -160,6 +161,28 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
     expect(await menuOf("Other terminals")).toEqual(["pin-workspace", "session-history", "close"]);
   });
 
+  it("counts the empty list's New workspace as a button, and starts one even when the count fails", async () => {
+    for (const failing of [false, true]) {
+      const told: string[] = [];
+      const started: string[] = [];
+      const counting = new Proxy({}, { get: (_, name) => name === "counted" ? (action: string, source: string) => { if (failing) throw new Error("storage full"); told.push(`${action}:${source}`); }
+        : name === "openNewSession" ? () => started.push("new") : () => {} }) as AppActions;
+      const logged = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await act(async () => {
+          renderer = create(createElement(SettingsProvider, null, createElement(SidebarFilterProvider, { value: { filter: inactiveSidebarFilter(), reportBranches: () => {} } },
+            createElement(AppLayoutContext.Provider, { value: TUI }, createElement(ReorderContext.Provider, { value: new ReorderCoordinator() },
+              createElement(Sidebar, { snapshot: roster([]), online: true, selectedPaneId: null, actions: counting }))))), { createNodeMock: node });
+        });
+        const button = renderer!.root.findAll((found) => found.type === "button" && found.props.className === "btn")[0]!;
+        await act(async () => { button.props.onClick(); });
+      } finally { logged.mockRestore(); }
+      expect([told, started]).toEqual([failing ? [] : ["new_workspace:button"], ["new"]]);
+      await act(async () => renderer!.unmount());
+      renderer = undefined;
+    }
+  });
+
   it("opens a new tab in a row's workspace from its menu, on a connected PC to a device that drives (#3772)", async () => {
     const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(async () => Response.json({ error: "not_found" }, { status: 404 }), { preconnect: globalThis.fetch.preconnect }));
     try {
@@ -167,8 +190,14 @@ describe("the sidebar on a PC the Herdr app lays out", () => {
       const spying = new Proxy({}, { get: (_, name) => name === "openNewTab" ? (target: unknown) => opened.push(target) : () => {} }) as AppActions;
       await draw(roster([workspace("a"), workspace("b")]), TUI, true, { actions: spying });
       expect(await menuOf("b")).toEqual(["pin-workspace", "new-tab", "rename-workspace", "session-history", "close"]);
-      await act(async () => (renderer!.root.findByType(RowMenu).props.items as { id: string; run: () => void }[]).find((item) => item.id === "new-tab")!.run());
+      const told: string[] = [];
+      const counting = spyOn(usageCounters, "paneUse").mockImplementation((name, machineId) => { told.push(`${name}@${machineId}`); });
+      try {
+        await act(async () => (renderer!.root.findByType(RowMenu).props.items as { id: string; run: () => void }[]).find((item) => item.id === "new-tab")!.run());
+      } finally { counting.mockRestore(); }
       expect(opened).toEqual([{ machineId: "local", workspaceId: "b" }]);
+      // counted as the workspace menu's New tab, with the PC it is for (usageCounters.paneUse counts this PC's alone)
+      expect(told).toEqual(["new_tab_by_menu@local"]);
       await act(async () => renderer!.unmount());
       renderer = undefined;
       await draw(roster([workspace("a"), workspace("b")]), TUI, true, { actions: spying, watching: true });

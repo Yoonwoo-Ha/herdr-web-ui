@@ -164,7 +164,7 @@ function ShortcutHint({ shortcutId }: { shortcutId?: ShortcutId }) {
 /** the rows whose action is also a button, a menu item or a shortcut: counted by how it was taken */
 const PALETTE_ACTIONS: Partial<Record<string, TelemetryAction>> = {
   new: "new_workspace", "new-tab": "new_tab", "split-right": "split", "split-down": "split", "split-right-open": "split", "split-down-open": "split",
-sidebar: "sidebar", "inbox-mode": "inbox", settings: "settings", files: "files",
+  sidebar: "sidebar", "inbox-mode": "inbox", settings: "settings", files: "files",
 };
 
 /** a palette row's use, told before it runs: a count that fails is logged and the row still runs */

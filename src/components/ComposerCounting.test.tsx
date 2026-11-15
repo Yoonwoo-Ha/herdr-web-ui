@@ -19,7 +19,7 @@ let renderer: ReactTestRenderer | undefined;
 let pasteSend = true;
 let readText: (() => Promise<string>) | undefined;
 let counted: string[];
-let countFails = false;
+let countFails: boolean | string = false;
 
 beforeEach(() => {
   pasteSend = true;
@@ -49,7 +49,7 @@ beforeEach(() => {
   counted = [];
   countFails = false;
   spyOn(usageCounters, "paneUse").mockImplementation((name) => {
-    if (countFails && name === "chat_send") throw new Error("storage full");
+    if (countFails === name || (countFails === true && name === "chat_send")) throw new Error("storage full");
     counted.push(name);
   });
 });
@@ -102,5 +102,15 @@ it("releases the draft even when counting fails, so the next send goes", async (
   readText = async () => "a second message";
   await press();
   expect(sent.map((call) => call[0])).toEqual(["from the clipboard", "a second message"]);
+  expect(logged).toHaveBeenCalled();
+});
+
+it("sends through Paste and send even when that button's count fails", async () => {
+  const sent: unknown[][] = [];
+  const logged = spyOn(console, "error").mockImplementation(() => {});
+  countFails = "composer_paste_send";
+  await act(async () => { renderer = create(<Composer {...props(sent)} />); });
+  await press();
+  expect(sent.map((call) => call[0])).toEqual(["from the clipboard"]);
   expect(logged).toHaveBeenCalled();
 });

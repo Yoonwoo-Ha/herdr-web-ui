@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { act, createElement } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import type { TelemetryViewSource } from "../../shared/telemetry.ts";
@@ -18,21 +18,25 @@ describe("chat/terminal switches in the usage counts", () => {
     else Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
   });
 
-  async function mount(view: PaneView): Promise<{ picks: Picks; counted: string[] }> {
+  async function mount(view: PaneView, failing = false): Promise<{ picks: Picks; counted: string[]; picked: unknown[] }> {
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, writable: true, value: true });
     const counted: string[] = [];
-    const counters = { viewSwitch: (to: PaneView, agent: string | null | undefined, source: TelemetryViewSource | null, machineId: string) => { counted.push(`${to}:${agent ?? "-"}:${source ?? "-"}:${machineId}`); } };
+    const picked: unknown[] = [];
+    const counters = { viewSwitch: (to: PaneView, agent: string | null | undefined, source: TelemetryViewSource | null, machineId: string) => {
+      if (failing) throw new Error("storage full");
+      counted.push(`${to}:${agent ?? "-"}:${source ?? "-"}:${machineId}`);
+    } };
     const agents: Record<string, string> = { "local/p1": "claude", "local/p2": "codex" };
     const out: { picks?: Picks } = {};
     function Harness() {
       out.picks = usePaneViewPicks({
-        setViewPicks: noop, setNotificationViewTarget: noop, setTerminalPeek: noop, setLens: noop, setAutoSelected: noop,
+        setViewPicks: (next) => { picked.push(next); }, setNotificationViewTarget: noop, setTerminalPeek: noop, setLens: noop, setAutoSelected: noop,
         selectedPaneId: "p1", selectedMachineId: "local", view, agentOf: (machineId, paneId) => agents[`${machineId}/${paneId}`], counters,
       });
       return null;
     }
     await act(async () => { renderer = create(createElement(Harness)); });
-    return { picks: out.picks!, counted };
+    return { picks: out.picks!, counted, picked };
   }
 
   test("the selected pane's switch is told with its agent and source; its own lens again is no switch", async () => {
@@ -47,5 +51,15 @@ describe("chat/terminal switches in the usage counts", () => {
     await act(async () => { picks.setView("terminal", null); });
     await act(async () => { picks.pickView("local", "p2", "terminal", "pane"); });
     expect(counted).toEqual(["terminal:claude:-:local", "terminal:codex:pane:local"]);
+  });
+
+  test("the switch is made even when its count fails", async () => {
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { picks, picked } = await mount("chat", true);
+      await act(async () => { picks.setView("terminal", "header"); });
+      expect(picked.length).toBe(1);
+      expect(logged).toHaveBeenCalled();
+    } finally { logged.mockRestore(); }
   });
 });

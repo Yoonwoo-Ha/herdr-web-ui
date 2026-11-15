@@ -134,7 +134,7 @@ import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { CrashProbe, RegionCrash } from "./components/AppCrash.tsx";
 import { RenderBoundary } from "./components/RenderBoundary.tsx";
 import { lensOwner, storedView, usePaneLens, usePaneLensState, usePaneViewPicks } from "./lib/usePaneLens.ts";
-import { actionUse, tally, usageCounters, useCountedInboxWays, useShownCount } from "./lib/usageCounters.ts";
+import { actionsCan, actionUse, tally, usageCounters, useCountedInboxWays, useShownCount } from "./lib/usageCounters.ts";
 import { useSplitLayout, useSplitRecheck, useSplitState } from "./lib/useSplitView.ts";
 import { linkSelects, useLinkLanding, useMachineGone, useNotificationTargets, useSelectedLayout, useSelectedMachine, useSelectedPane, useSelectionMark, useSelectionState, useSelectPane, useSelectTarget } from "./lib/useSelection.ts";
 import { useAddressBar } from "./lib/useAddressBar.ts";
@@ -648,10 +648,10 @@ export function App() {
       counted: (action, source) => {
         // what would do nothing here is no use of it (a shortcut or palette row with no pane to split, close or add a tab
         // beside); split, close pane and new tab act on the selected pane: counted for this PC's own alone
-        const name = actionUse(action, source, { machineId: selectedMachineId, can: {
-          split: actions.splitPane !== null, close_pane: actions.closePane !== null, new_tab: !inbox.shown && !inMode && newTabTarget() !== null,
-          sidebar: !inMode, files: actions.openFiles !== null,
-        } });
+        const name = actionUse(action, source, { machineId: selectedMachineId, can: actionsCan({
+          split: actions.splitPane !== null, closePane: actions.closePane !== null, files: actions.openFiles !== null,
+          inboxShown: inbox.shown, inMode, tabTarget: newTabTarget() !== null,
+        }) });
         if (name) tally(() => usageCounters.count(name));
       },
       // a peek shows the terminal over the chat: the shortcut takes the chat back, the lens stays Chat

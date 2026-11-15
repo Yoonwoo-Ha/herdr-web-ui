@@ -180,7 +180,12 @@ if (typeof document !== "undefined") {
 
 /** `name` is drawn while `drawn`, for a pane of `machineId`: told once a day per width while it stays, only for this PC's own panes */
 export function useShownCount(name: TelemetryShown, drawn: boolean, machineId: string): void {
-  useEffect(() => drawn && machineId === LOCAL_MACHINE ? usageCounters.draw(name) : undefined, [name, drawn, machineId]);
+  useEffect(() => {
+    if (!drawn || machineId !== LOCAL_MACHINE) return undefined;
+    let undo: (() => void) | undefined;
+    tally(() => { undo = usageCounters.draw(name); });
+    return () => tally(() => undo?.());
+  }, [name, drawn, machineId]);
 }
 
 /** The ways into the agent inbox and out of it, each counted (`inbox_enter`, `inbox_leave`) wherever a person asked. */
@@ -200,6 +205,15 @@ export function actionUse(action: TelemetryAction, source: TelemetryActionSource
   if (here.can[action] === false) return null;
   if ((action === "split" || action === "close_pane" || action === "new_tab" || action === "files") && here.machineId !== LOCAL_MACHINE) return null;
   return `${action}_by_${source}`;
+}
+
+/**
+ * Which counted actions would do something now, as App knows it (actionUse's `can`): no split, close or Files with
+ * nothing offered, no new tab in the agent inbox (its list or its mode) or with no workspace to add it to, and no
+ * sidebar in the mode.
+ */
+export function actionsCan(now: { split: boolean; closePane: boolean; files: boolean; inboxShown: boolean; inMode: boolean; tabTarget: boolean }): Partial<Record<TelemetryAction, boolean>> {
+  return { split: now.split, close_pane: now.closePane, files: now.files, new_tab: !now.inboxShown && !now.inMode && now.tabTarget, sidebar: !now.inMode };
 }
 
 /** A count that never stands in the way of what was pressed: a failure is logged, and the action goes on. */
