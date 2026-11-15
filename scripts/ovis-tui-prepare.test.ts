@@ -80,11 +80,16 @@ function prepare(dir: string, extra: Record<string, string> = {}): { code: numbe
   return { code: run.exitCode ?? -1, out: run.stdout.toString() + run.stderr.toString() };
 }
 
+function wrapper(): string {
+  return `#!/bin/sh\ncase " $* " in *" fetch "*) [ -z "\${WORK_DURING_FETCH:-}" ] || echo mine > "$WORK_DURING_FETCH"; [ -z "\${LOCK_HOLDER_DURING_FETCH:-}" ] || echo "$LOCK_HOLDER_DURING_FETCH" > "$LOCK_DIR/pid"; [ -z "\${SIGNAL_DURING_FETCH:-}" ] || kill -"$SIGNAL_DURING_FETCH" "$PPID" ;; esac\nexec "${Bun.which("git")}" "$@"\n`;
+}
+
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), "ovis-tui-prepare-"));
-  // git, which writes WORK_DURING_FETCH's file first when it fetches: work done while the script runs
+  // git, which when it fetches first does what the test asks: writes WORK_DURING_FETCH's file (work done
+  // while the script runs), hands the lock to LOCK_HOLDER_DURING_FETCH, or signals the script
   mkdirSync(join(scratch, "bin"));
-  writeFileSync(join(scratch, "bin", "git"), `#!/bin/sh\ncase " $* " in *" fetch "*) [ -z "\${WORK_DURING_FETCH:-}" ] || echo mine > "$WORK_DURING_FETCH" ;; esac\nexec "${Bun.which("git")}" "$@"\n`, { mode: 0o755 });
+  writeFileSync(join(scratch, "bin", "git"), wrapper(), { mode: 0o755 });
 });
 
 afterEach(() => rmSync(scratch, { recursive: true, force: true }));
@@ -103,6 +108,31 @@ describe("crates/ovis-tui/prepare.sh", () => {
     const made = git(upstream, "rev-parse", "HEAD");
     expect(prepare(dir).code).toBe(0);
     expect(git(upstream, "rev-parse", "HEAD")).toBe(made);
+  });
+
+  it("keeps a commit only the reflog of upstream/ holds when the pin moves", () => {
+    const { dir, upstream } = crate(1);
+    expect(prepare(dir).code).toBe(0);
+    const made = git(upstream, "rev-parse", "HEAD");
+    writeFileSync(join(upstream, "mine.md"), "mine\n");
+    git(upstream, "add", "mine.md");
+    git(upstream, "commit", "--quiet", "-m", "mine");
+    git(upstream, "reset", "--quiet", "--hard", made);
+    bumpPin(dir);
+    const ran = prepare(dir);
+    expect(ran.code, ran.out).toBe(1);
+    expect(git(upstream, "log", "-g", "--format=%s").split("\n")).toContain("mine");
+  });
+
+  it("keeps files in a vendor/ghostty that is not initialised", () => {
+    const { dir, upstream } = crate(1);
+    expect(prepare(dir).code).toBe(0);
+    git(upstream, "submodule", "--quiet", "deinit", "-f", "vendor/ghostty");
+    writeFileSync(join(upstream, "vendor", "ghostty", "mine.zig"), "// mine\n");
+    addPatch(dir, 2);
+    const ran = prepare(dir);
+    expect(ran.code, ran.out).toBe(1);
+    expect(existsSync(join(upstream, "vendor", "ghostty", "mine.zig"))).toBe(true);
   });
 
   it("moves a clean tree to a new pin whose Ghostty commit differs", () => {
@@ -187,6 +217,18 @@ describe("crates/ovis-tui/prepare.sh", () => {
       });
     }
 
+    it("keeps work in a tree git cannot read (a broken index), and replaces nothing", () => {
+      const { dir, upstream } = crate(1);
+      expect(prepare(dir).code).toBe(0);
+      writeFileSync(join(upstream, "notes.md"), "mine\n");
+      writeFileSync(join(upstream, ".git", "index"), "not an index");
+      addPatch(dir, 2);
+      const ran = prepare(dir);
+      expect(ran.code, ran.out).toBe(1);
+      expect(ran.out).toContain("git could not inspect it");
+      expect(existsSync(join(upstream, "notes.md"))).toBe(true);
+    });
+
     it("keeps work made in it while the new tree was fetched, and replaces nothing", () => {
       const { dir, upstream } = crate(1);
       expect(prepare(dir).code).toBe(0);
@@ -210,6 +252,76 @@ describe("crates/ovis-tui/prepare.sh", () => {
     addPatch(dir, 2);
     expect(prepare(dir).code).toBe(0);
     expect(existsSync(join(upstream, "patch-2.txt"))).toBe(true);
+  });
+
+  describe("one run at a time", () => {
+    const lockOf = (dir: string, pid: string | null) => {
+      mkdirSync(join(dir, ".prepare.lock"));
+      if (pid !== null) writeFileSync(join(dir, ".prepare.lock", "pid"), `${pid}\n`);
+    };
+
+    it("touches nothing while a live run holds the lock", () => {
+      const { dir, upstream } = crate(1);
+      expect(prepare(dir).code).toBe(0);
+      lockOf(dir, String(process.pid));
+      addPatch(dir, 2);
+      const ran = prepare(dir);
+      expect(ran.code, ran.out).toBe(1);
+      expect(ran.out).toContain(`another prepare.sh (pid ${process.pid}) is running`);
+      expect(existsSync(join(upstream, "patch-2.txt"))).toBe(false);
+      expect(readFileSync(join(dir, ".prepare.lock", "pid"), "utf8").trim()).toBe(String(process.pid));
+    });
+
+    it("takes over a lock whose run is gone, or one with no pid, and releases it", () => {
+      const gone = Bun.spawnSync(["true"]).pid;
+      for (const pid of [String(gone), null]) {
+        const { dir, upstream } = crate(1);
+        lockOf(dir, pid);
+        const ran = prepare(dir);
+        expect(ran.code, ran.out).toBe(0);
+        expect(existsSync(join(upstream, "patch-1.txt"))).toBe(true);
+        expect(existsSync(join(dir, ".prepare.lock"))).toBe(false);
+        rmSync(scratch, { recursive: true, force: true });
+        scratch = mkdtempSync(join(tmpdir(), "ovis-tui-prepare-"));
+        mkdirSync(join(scratch, "bin"));
+        writeFileSync(join(scratch, "bin", "git"), wrapper(), { mode: 0o755 });
+      }
+    });
+
+    it("stopped by a signal, leaves a lock another run took meanwhile", () => {
+      const { dir } = crate(1);
+      const ran = prepare(dir, { LOCK_DIR: join(dir, ".prepare.lock"), LOCK_HOLDER_DURING_FETCH: String(process.pid), SIGNAL_DURING_FETCH: "TERM" });
+      expect(ran.code, ran.out).toBe(130);
+      expect(readFileSync(join(dir, ".prepare.lock", "pid"), "utf8").trim()).toBe(String(process.pid));
+    });
+
+    it("leaves a lock another run took meanwhile", () => {
+      const { dir } = crate(1);
+      const ran = prepare(dir, { LOCK_DIR: join(dir, ".prepare.lock"), LOCK_HOLDER_DURING_FETCH: String(process.pid) });
+      expect(ran.code, ran.out).toBe(0);
+      expect(readFileSync(join(dir, ".prepare.lock", "pid"), "utf8").trim()).toBe(String(process.pid));
+    });
+  });
+
+  for (const signal of ["INT", "TERM", "HUP"]) {
+    it(`stopped by SIG${signal}, leaves the old tree, no half-made tree and no lock`, () => {
+      const { dir, upstream } = crate(1);
+      expect(prepare(dir).code).toBe(0);
+      addPatch(dir, 2);
+      const ran = prepare(dir, { SIGNAL_DURING_FETCH: signal });
+      expect(ran.code, ran.out).toBe(130);
+      expect(existsSync(join(upstream, "patch-1.txt"))).toBe(true);
+      expect(existsSync(join(upstream, "patch-2.txt"))).toBe(false);
+      expect(readdirSync(dir).filter((name) => name.startsWith(".upstream.") || name === ".prepare.lock")).toEqual([]);
+    });
+  }
+
+  it("clears the half-made and set-aside trees of runs that were killed", () => {
+    const { dir } = crate(1);
+    mkdirSync(join(dir, ".upstream.new.999", "part"), { recursive: true });
+    mkdirSync(join(dir, ".upstream.old.998", "part"), { recursive: true });
+    expect(prepare(dir).code).toBe(0);
+    expect(readdirSync(dir).filter((name) => name.startsWith(".upstream.new") || name === ".prepare.lock")).toEqual([]);
   });
 
   it("leaves the old tree as it was when the fetch fails, and no half-made tree beside it", () => {
