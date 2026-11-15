@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it, spyOn } from "bun:test";
+import { afterAll, beforeAll, expect, it, onTestFinished, spyOn } from "bun:test";
 import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { testSocketPath } from "../scripts/test-herdr.ts";
 import { createServer } from "./index.ts";
 import * as herdrClient from "./herdr/client.ts";
-import { herdrRpc, paneProcessInfo, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
+import { herdrRpc, paneProcessInfo, sessionSnapshot, subscribeEvents, type Subscription, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import { forgetTranscriptState, paneConversation } from "./conversation.ts";
 import { copilotHandoffSession, copilotProcessSession } from "./copilot-store.ts";
 import { processEnviron } from "./omo.ts";
@@ -32,12 +32,38 @@ async function fixtureInFront(pane: string, session: string): Promise<number | u
   return (await paneProcessInfo(pane))?.foreground_processes?.find((process) => process.argv?.includes(executable) && process.argv.includes(session))?.pid;
 }
 
-/** The test herdr's last log lines without its per-request ones: why it kept or dropped an agent is told there or nowhere. */
+/**
+ * The test herdr's last log lines without its per-request ones: what its detection changed (`agent changed`) and its
+ * warnings. In the runs read, it had no line for a stand-in's exit while the pane's agent events (`recordAgentEvents`)
+ * did, so no `agent=None` line after a quit proves nothing.
+ */
 function herdrLogTail(): string {
   const log = join(dirname(testSocketPath()), "herdr-server.log");
   try {
     return fs.readFileSync(log, "utf8").split("\n").filter((line) => line && !line.includes('event="api.request.')).slice(-25).join("\n");
   } catch (error) { return `no herdr log at ${log}: ${error instanceof Error ? error.message : String(error)}`; }
+}
+
+/**
+ * herdr's agent events for `pane` (`pane.agent_detected`, kept for this pane, and `pane.agent_status_changed`) from the
+ * moment herdr acknowledged the subscription, each with when it came. Only for a failure's message: it waits for the
+ * acknowledgement at most 2 s and never fails a test itself.
+ */
+async function recordAgentEvents(pane: string): Promise<{ events: { at: number; text: string }[]; close: () => void }> {
+  const events: { at: number; text: string }[] = [];
+  const note = (text: string) => events.push({ at: performance.now(), text });
+  let subscription: Subscription | undefined;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => { note("herdr did not start the subscription within 2 s"); resolve(); }, 2_000);
+    const settle = () => { clearTimeout(timer); resolve(); };
+    subscription = subscribeEvents([{ type: "pane.agent_detected" }, { type: "pane.agent_status_changed", pane_id: pane }], {
+      onStarted: () => { note("herdr acknowledged the subscription"); settle(); },
+      onEvent: ({ event, data }) => { if (data?.["pane_id"] === pane) note(`${event} ${JSON.stringify(data)}`); },
+      onError: (error) => { note(`subscription error: ${error.message}`); settle(); },
+      onClose: () => { note("herdr closed the subscription"); settle(); },
+    });
+  });
+  return { events, close: () => subscription?.close() };
 }
 
 async function startFixture(pane: string, session: string, flags = "") {
@@ -431,6 +457,10 @@ it.skipIf(process.platform !== "linux")("reads the live API without a report, fo
 }, 30_000);
 
 it.skipIf(process.platform !== "linux")("binds only the reported UUID to the foreground process's home and rejects old cursors after a switch", async () => {
+  // the pane's agent events, for the errors after the stand-in quits below: in the runs read, its exit showed there
+  // ("released":true) and not in herdr's log. Opened here, long before the quit, so that it adds no wait at the quit
+  const agentEvents = await recordAgentEvents(pane);
+  onTestFinished(() => agentEvents.close());
   const url = `http://127.0.0.1:${app.port}/api/pane/conversation?pane_id=${encodeURIComponent(pane)}`;
   const read = async () => (await fetch(url)).json() as Promise<{ source: string; turns: { parts: { kind?: string; text?: string; output_ref?: string }[] }[]; cursor?: string; history_id?: string }>;
   const external = await read();
@@ -519,25 +549,28 @@ it.skipIf(process.platform !== "linux")("binds only the reported UUID to the for
   expect((await fetch(toolUrl(completedRef))).status).toBe(404);
   // the stand-in quits. Its process leaving the pane is the exit; herdr must also forget the Copilot
   // session reported for it, or herdr 0.9.3 ignores the next stand-in's report. The release is what
-  // Copilot's own hook sends at its exit, but herdr 0.9.3 answers it and ignores it from herdr:copilot:
-  // only herdr's detection of the exit drops the label and that session
+  // Copilot's own hook sends at its exit; in the runs read, herdr answered it ok, the label and that
+  // session stayed while the stand-in ran, and both left together after its exit
   const quitting = await fixtureInFront(pane, id);
   if (quitting === undefined) throw new Error(`the stand-in for ${id} is not in front of ${pane}: ${JSON.stringify((await paneProcessInfo(pane))?.foreground_processes)}`);
+  const quitAt = performance.now();
   await herdrRpc("pane.send_text", { pane_id: pane, text: ":quit\n" });
   const quitState = async () => {
     const label = (await sessionSnapshot()).panes.find((p) => p.pane_id === pane);
     const state = (() => { try { return fs.readFileSync(`/proc/${quitting}/stat`, "utf8").split(") ")[1]?.split(" ")[0] ?? "?"; } catch { return "gone"; } })();
     return JSON.stringify({ pid: quitting, state, front: (await paneProcessInfo(pane))?.foreground_processes?.map((process) => [process.pid, process.argv]), agent: label?.agent, status: label?.agent_status, session: label?.agent_session });
   };
+  const recorded = () => `herdr agent events for ${pane}, ms from the quit (they arrive on herdr's poll: the latest may be missing):\n${agentEvents.events.map(({ at, text }) => `${Math.round(at - quitAt)} ${text}`).join("\n") || "none"}`;
   for (const deadline = Date.now() + 10_000; (await paneProcessInfo(pane))?.foreground_processes?.some((process) => process.pid === quitting);) {
-    if (Date.now() > deadline) throw new Error(`isolated fixture did not exit: ${await quitState()}\nherdr log:\n${herdrLogTail()}`);
+    if (Date.now() > deadline) throw new Error(`isolated fixture did not exit: ${await quitState()}\n${recorded()}\nherdr log:\n${herdrLogTail()}`);
     await Bun.sleep(50);
   }
   const released = await herdrRpc("pane.release_agent", { pane_id: pane, source: "herdr:copilot", agent: "copilot" });
   for (const deadline = Date.now() + 10_000; (await sessionSnapshot()).panes.find((p) => p.pane_id === pane)?.agent === "copilot";) {
-    if (Date.now() > deadline) throw new Error(`herdr still names the quit stand-in: ${await quitState()}; pane.release_agent answered ${JSON.stringify(released)}\nherdr log:\n${herdrLogTail()}`);
+    if (Date.now() > deadline) throw new Error(`herdr still names the quit stand-in: ${await quitState()}; pane.release_agent answered ${JSON.stringify(released)}\n${recorded()}\nherdr log:\n${herdrLogTail()}`);
     await Bun.sleep(50);
   }
+  agentEvents.close();
   await startFixture(pane, other);
   await report(other, 4);
   expect((await read()).turns[0]?.parts[0]?.text).toBe("session B");
