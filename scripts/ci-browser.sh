@@ -213,6 +213,8 @@ run_script scripts/chat-outcome-note-browser-qa.ts
 run_script scripts/prompt-card-lifetime-browser-qa.ts
 run_script scripts/sidebar-activity-demo-regression.ts
 run_script scripts/inbox-mode-demo-regression.ts
+run_script scripts/inbox-mode-panes-demo-regression.ts
+run_script scripts/inbox-mode-rail-demo-regression.ts
 run_script scripts/sheet-outside-tap-demo-regression.ts
 run_script scripts/sidebar-filter-demo-regression.ts
 run_script scripts/sidebar-declutter-demo-regression.ts
