@@ -3905,6 +3905,20 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   PC and an offline PC treat them as they treat the rows they hang from. Conductor and the Codex app
   list a project's sessions under it the same way; Ovis keeps herdr's workspace as the parent and the
   flat Agents list beside it.
+- While the tree is on, a workspace row with agents under it is a fold (#3771), as a project row is in
+  the Codex app and T3 Code: a click, Enter or Space folds or unfolds what hangs under it and opens
+  nothing (the agent rows open panes), so a phone's drawer stays open while one folds a way to the
+  workspace wanted; Left folds and Right unfolds, and the row carries `aria-expanded`. A workspace
+  with no agent under it opens as before, and with the tree off every row does. One fold per row: a
+  repository's row with worktrees folds its agents with them, through its face button, its menu's
+  Collapse / Expand and the worktree fold's own state and storage; any other row's menu gets the same
+  Collapse / Expand for its agents. Folded, the row keeps the selected agent's place
+  (`has-selected-agent`), the rolled-up state (a waiting agent shows there) and a `+N` count of
+  what is put away. Agent folds are kept per PC on this device as one list of folded workspaces
+  (`ovis:workspace-agents-folded:<machineId>`), pruned to the roster at each change; everything
+  starts unfolded. Under the filter a match among a folded row's agents holds them open for the
+  filter's time, as a worktree fold does. New tab with agent… from a folded row's menu unfolds it
+  first, so the new agent is in sight. Collapse all and Expand all are not offered yet.
 - The chip opens one list above the card: a **Plan** heading with `N of M done`, the steps in wave
   order (a status glyph, the name, what a running step does now, then a dim state · time · teammate
   line; a waiting step's name is dim), then a **Background tasks** heading over the tasks list when
