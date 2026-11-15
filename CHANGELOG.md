@@ -95,6 +95,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#3754](https://github.com/devswha/ovis/pull/3754))
 
 ### Changed
+- The iPhone app is out on the App Store. ovis.sh and the READMEs link to it with Apple's badge,
+  and the beta page keeps TestFlight for trying upcoming iPhone builds early.
+  ([#3863](https://github.com/devswha/ovis/pull/3863))
 - Agents list, grouped by state: a heading says its state once, in the state's colour with the
   count beside it, and the rows under it no longer repeat the state mark.
   ([#3777](https://github.com/devswha/ovis/pull/3777))
