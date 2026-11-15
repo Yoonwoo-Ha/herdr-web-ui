@@ -844,7 +844,7 @@ async function readPaneConversation(paneId: string, machineId: string, page: Con
     // as it arrived, whatever becomes of its body: its time bounds this browser's clock against the PC's
     const received = performance.now(), receivedWall = Date.now();
     if (response.status === 304 && known) {
-      observeWaitingClock(waitingKey(machineId, paneId), response.headers.get("x-server-time"), received, receivedWall);
+      observeWaitingClock(waitingKey(machineId, paneId), response.headers.get("x-server-time"), received, receivedWall, true);
       return { response, body: known.body };
     }
     if (!response.ok) throw await errorFrom(url, response);
