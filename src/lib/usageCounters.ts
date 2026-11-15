@@ -15,7 +15,7 @@
 import { useCallback, useEffect } from "react";
 import { LOCAL_MACHINE } from "../../shared/machines.ts";
 import { COUNTS_ON } from "../../shared/telemetry-notice.ts";
-import { harnessOf, type TelemetryCounter, type TelemetryCountsChange, type TelemetryShown, type TelemetryStatus, type TelemetryViewSource, type TelemetryWidth } from "../../shared/telemetry.ts";
+import { harnessOf, type TelemetryAction, type TelemetryActionSource, type TelemetryCounter, type TelemetryCountsChange, type TelemetryShown, type TelemetryStatus, type TelemetryViewSource, type TelemetryWidth } from "../../shared/telemetry.ts";
 import type { PaneView } from "./actions.ts";
 import { changeTelemetry, fetchTelemetry, onTelemetryStatus } from "./api.ts";
 import { SHEET_QUERY } from "./sheets.ts";
@@ -96,7 +96,7 @@ export function createUsageCounters(options: UsageCountersOptions) {
   const reshow = (): void => { if (ready()) for (const name of drawn.keys()) markShown(name); };
 
   function flush(keepalive: boolean): void {
-    if (allowed !== true) { drop(); return; }
+    if (allowed !== true || refused) { drop(); return; }
     // what is still drawn goes with this batch, so the timer it may arm is the one cleared here
     reshow();
     cancelTimer?.();
@@ -109,7 +109,8 @@ export function createUsageCounters(options: UsageCountersOptions) {
       // controls are forgotten, so the next batch tells them again; a refusal (a watching device) stops counting here
       options.send({ width, add, shown: [...shown].sort() }, keepalive).then((status) => { if (status) heard(status); }, (error: unknown) => {
         forget(keys);
-        if ((error as { status?: unknown } | null)?.status === 403) { refused = true; allowed = false; } else allowed = null;
+        // refused: what was counted while this batch was on its way goes nowhere either
+        if ((error as { status?: unknown } | null)?.status === 403) { refused = true; allowed = false; drop(); } else allowed = null;
       });
     }
   }
@@ -185,7 +186,23 @@ export function useShownCount(name: TelemetryShown, drawn: boolean, machineId: s
 /** The ways into the agent inbox and out of it, each counted (`inbox_enter`, `inbox_leave`) wherever a person asked. */
 export function useCountedInboxWays(enter: () => void, leave: () => void): { enter: () => void; leave: () => void } {
   return {
-    enter: useCallback(() => { usageCounters.count("inbox_enter"); enter(); }, [enter]),
-    leave: useCallback(() => { usageCounters.count("inbox_leave"); leave(); }, [leave]),
+    enter: useCallback(() => { tally(() => usageCounters.count("inbox_enter")); enter(); }, [enter]),
+    leave: useCallback(() => { tally(() => usageCounters.count("inbox_leave")); leave(); }, [leave]),
   };
+}
+
+/**
+ * The counter an action taken by `source` goes to, or null: none when it would do nothing here (a shortcut or a
+ * palette row for a split, a close or a new tab with nothing to act on), and none for a pane on another PC (split,
+ * close, new tab and Files act on one).
+ */
+export function actionUse(action: TelemetryAction, source: TelemetryActionSource, here: { machineId: string; can: Partial<Record<TelemetryAction, boolean>> }): TelemetryCounter | null {
+  if (here.can[action] === false) return null;
+  if ((action === "split" || action === "close_pane" || action === "new_tab" || action === "files") && here.machineId !== LOCAL_MACHINE) return null;
+  return `${action}_by_${source}`;
+}
+
+/** A count that never stands in the way of what was pressed: a failure is logged, and the action goes on. */
+export function tally(count: () => void): void {
+  try { count(); } catch (error) { console.error("usage counts", error); }
 }

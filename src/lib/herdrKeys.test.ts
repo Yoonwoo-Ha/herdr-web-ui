@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { parseHerdrBinding, resolveHerdrKeys, type HerdrKeys } from "../../shared/herdr-keys.ts";
 import { chordMatches, compileHerdrKeys, herdrKeyStep, runHerdrAction, type HerdrKeyMap } from "./herdrKeys.ts";
 import type { AppActions } from "./actions.ts";
@@ -118,5 +118,15 @@ describe("herdr's prefix actions in the usage counts", () => {
     const actions = { counted: (action, source) => { counted.push(`${action}:${source}`); }, splitPane: () => {}, openSettings: () => {}, openNewSession: () => {}, toggleSidebar: () => {}, openTerminalTab: async () => {}, selectAdjacentTab: () => {}, openPalette: () => {} } as Partial<AppActions> as AppActions;
     for (const action of ["split_vertical", "split_horizontal", "settings", "new_workspace", "toggle_sidebar", "new_tab", "next_tab", "help"] as const) runHerdrAction(actions, action, null, () => {});
     expect(counted).toEqual(["split:shortcut", "split:shortcut", "settings:shortcut", "new_workspace:shortcut", "sidebar:shortcut", "new_tab:shortcut"]);
+  });
+
+  it("runs the action even when its count fails, as every key that counts does", () => {
+    const opened: string[] = [];
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const actions = { counted: () => { throw new Error("storage full"); }, openSettings: () => { opened.push("settings"); } } as Partial<AppActions> as AppActions;
+      runHerdrAction(actions, "settings", null, () => {});
+    } finally { logged.mockRestore(); }
+    expect(opened).toEqual(["settings"]);
   });
 });

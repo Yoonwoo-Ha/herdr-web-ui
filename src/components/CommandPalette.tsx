@@ -1,3 +1,4 @@
+import { tally } from "../lib/usageCounters.ts";
 import type { TelemetryAction } from "../../shared/telemetry.ts";
 import { moveDestinations } from "../lib/layoutTargets.ts";
 import { useAppLayout, MachineContext, useMachineApi, useMachineId } from "../lib/machineContext.tsx";
@@ -163,8 +164,19 @@ function ShortcutHint({ shortcutId }: { shortcutId?: ShortcutId }) {
 /** the rows whose action is also a button, a menu item or a shortcut: counted by how it was taken */
 const PALETTE_ACTIONS: Partial<Record<string, TelemetryAction>> = {
   new: "new_workspace", "new-tab": "new_tab", "split-right": "split", "split-down": "split", "split-right-open": "split", "split-down-open": "split",
-  "close-pane": "close_pane", sidebar: "sidebar", "inbox-mode": "inbox", settings: "settings", files: "files",
+sidebar: "sidebar", "inbox-mode": "inbox", settings: "settings", files: "files",
 };
+
+/** a palette row's use, told before it runs: a count that fails is logged and the row still runs */
+export function countPaletteRow(actions: Pick<AppActions, "counted" | "inboxMode">, id: string): void {
+  const counted = paletteUse(id, actions.inboxMode?.on === true);
+  if (counted) tally(() => actions.counted?.(counted, "palette"));
+}
+
+/** the action a palette row counts, by its id: the inbox row only on the way in, as every other way in is counted */
+export function paletteUse(id: string, inInbox: boolean): TelemetryAction | undefined {
+  return id === "inbox-mode" && inInbox ? undefined : PALETTE_ACTIONS[id];
+}
 
 export function CommandPalette({ open, initialQuery = "", onClose, machines, onSelect, snapshot, online, selectedPaneId, view, actions, watching = false, inboxMode = false }: CommandPaletteProps) {
   const t = useT();
@@ -359,7 +371,7 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
     ] satisfies PaletteAction[] : []),
     ...(zoomPane && zoom && tabPanes > 1 ? [{ id: "zoom", label: t(zoom === "off" ? "Unzoom pane" : "Zoom pane"), icon: zoom === "off" ? Minimize2 : Maximize2, shortcut: "zoom-pane" as const, run: () => zoomPane(zoom) }] : []),
     // the pane menu's Close, its confirmation included (App, PaneCanvas)
-    ...(actions.closePane && !overDialog ? [{ id: "close-pane", label: t("Close pane"), icon: X, shortcut: "close-pane" as const, run: () => { if (!modalOpenBesides(surface.current)) actions.closePane?.(); } }] : []),
+    ...(actions.closePane && !overDialog ? [{ id: "close-pane", label: t("Close pane"), icon: X, shortcut: "close-pane" as const, run: () => { if (!modalOpenBesides(surface.current)) { tally(() => actions.counted?.("close_pane", "palette")); actions.closePane?.(); } } }] : []),
     // the open tab's Close, its confirmation included (App, TabStrip)
     ...(actions.closeTab && !overDialog ? [{ id: "close-tab", label: t("Close tab"), icon: X, shortcut: "close-tab" as const, run: () => { if (!modalOpenBesides(surface.current)) actions.closeTab?.(); } }] : []),
     { id: "view", label: t(view === "chat" ? "Switch to terminal" : "Switch to chat"), icon: SwitchCamera, shortcut: "toggle-view", run: () => actions.toggleView("palette") },
@@ -553,8 +565,7 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
     onClose();
   };
   const runAction = (action: PaletteAction): void => {
-    const counted = PALETTE_ACTIONS[action.id];
-    if (counted) actions.counted?.(counted, "palette");
+    countPaletteRow(actions, action.id);
     action.run();
     if (!action.keepOpen) onClose();
   };

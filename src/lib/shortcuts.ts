@@ -5,6 +5,7 @@ import { physicalKey } from "./keys.ts";
 
 import type { AppActions } from "./actions.ts";
 import type { TelemetryAction } from "../../shared/telemetry.ts";
+import { tally } from "./usageCounters.ts";
 
 export const SHORTCUTS = [
   { id: "palette", label: "Command palette", keys: ["Mod", "Shift", "K"] },
@@ -302,7 +303,7 @@ export function useShortcuts(actions: AppActions, enabled: boolean): void {
       if (event.repeat && (shortcut === "new-tab" || shortcut === "rename-tab" || shortcut === "split-right" || shortcut === "split-down" || shortcut === "zoom-pane")) return;
       if (closeStep === "ignore") return;
       const counted = SHORTCUT_ACTIONS[shortcut];
-      if (counted) actions.counted?.(counted, "shortcut");
+      if (counted) tally(() => actions.counted?.(counted, "shortcut"));
       switch (shortcut) {
         case "palette":
           actions.openPalette();

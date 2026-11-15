@@ -552,7 +552,8 @@ export class Telemetry {
   /**
    * Delivers each recorded day that has ended, oldest first, once: a delivered day is forgotten. No sooner than
    * NOTICE_GRACE_MS after the notice; a failure is logged and tried again at the next start or visit. A day the
-   * receiver took is remembered here too, so one whose removal could not be written is never sent twice.
+   * receiver took is also remembered in this process, so one whose removal could not be written is not sent twice
+   * while it runs; after a restart such a day is in the file and goes again (the receiver keeps the first message).
    */
   private flushCounts(): Promise<void> {
     if (!this.countsOn()) return Promise.resolve();

@@ -134,7 +134,7 @@ import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { CrashProbe, RegionCrash } from "./components/AppCrash.tsx";
 import { RenderBoundary } from "./components/RenderBoundary.tsx";
 import { lensOwner, storedView, usePaneLens, usePaneLensState, usePaneViewPicks } from "./lib/usePaneLens.ts";
-import { usageCounters, useCountedInboxWays, useShownCount } from "./lib/usageCounters.ts";
+import { actionUse, tally, usageCounters, useCountedInboxWays, useShownCount } from "./lib/usageCounters.ts";
 import { useSplitLayout, useSplitRecheck, useSplitState } from "./lib/useSplitView.ts";
 import { linkSelects, useLinkLanding, useMachineGone, useNotificationTargets, useSelectedLayout, useSelectedMachine, useSelectedPane, useSelectionMark, useSelectionState, useSelectPane, useSelectTarget } from "./lib/useSelection.ts";
 import { useAddressBar } from "./lib/useAddressBar.ts";
@@ -302,7 +302,7 @@ export function App() {
   const moreMenu = useMoreMenu();
   const { more, setMore, closeMore, group: moreGroup, openGroup: openMoreGroup, closeGroup: closeMoreGroup } = moreMenu;
   // the pane canvas's actions, for the phone's tab menu (TabStrip)
-  const paneActionsRef = useRef<((target: HerdrPane) => RowMenuItem[]) | null>(null);
+  const paneActionsRef = useRef<((target: HerdrPane, options?: { counted?: boolean }) => RowMenuItem[]) | null>(null);
   // a locked pinned agent's menu has no Close (PaneCanvas): neither has the Close pane shortcut or palette row
   const paneLocked = usePaneLocked(selectedMachineId);
   const { filesOpen, setFilesOpen, filesDocked, filesCovered, revealFiles, viewing, openFile, closeFile, hideFile, leaveFile, restoreFile, fileFromPop, forgetLeftFiles, diffViewing, openDiff, closeDiff, releaseDiff, presentation, fileDocked, webPage, closeWebPage, openWebPage, openDiffFile, reportFileKind, toggleFilePresentation, viewFile } = useFilePanels({ settings, filePanelAvailable, selectedPaneId, selectedMachineId });
@@ -646,9 +646,13 @@ export function App() {
       },
       setView,
       counted: (action, source) => {
-        // split, close pane and new tab act on the selected pane: counted for this PC's own alone
-        if (action === "split" || action === "close_pane" || action === "new_tab") usageCounters.paneUse(`${action}_by_${source}`, selectedMachineId);
-        else usageCounters.count(`${action}_by_${source}`);
+        // what would do nothing here is no use of it (a shortcut or palette row with no pane to split, close or add a tab
+        // beside); split, close pane and new tab act on the selected pane: counted for this PC's own alone
+        const name = actionUse(action, source, { machineId: selectedMachineId, can: {
+          split: actions.splitPane !== null, close_pane: actions.closePane !== null, new_tab: !inbox.shown && !inMode && newTabTarget() !== null,
+          sidebar: !inMode, files: actions.openFiles !== null,
+        } });
+        if (name) tally(() => usageCounters.count(name));
       },
       // a peek shows the terminal over the chat: the shortcut takes the chat back, the lens stays Chat
       toggleView: (source) => { if (terminalPeek !== null) endPeek(); else setView(view === "chat" ? "terminal" : "chat", source); setDrawerOpen(false); },
@@ -803,7 +807,8 @@ export function App() {
       // the canvas no longer offers Close for by the press closes nothing
       closePane: !closeOffered ? null : () => {
         const target = snapshotRef.current?.panes.find((pane) => pane.pane_id === selectionRef.current.paneId);
-        if (target) paneActionsRef.current?.(target).find((item) => item.id === "close" && !item.disabled)?.run();
+        // counted by its shortcut or palette row, not as the pane menu it runs
+        if (target) paneActionsRef.current?.(target, { counted: false }).find((item) => item.id === "close" && !item.disabled)?.run();
       },
       closeTab: !tabCloseOffered ? null : () => requestCloseTab(selectedMachineId, selectedPaneId!),
     }),
@@ -916,7 +921,7 @@ export function App() {
     ...(foldFind && more ? [{ id: "find-group", label: t("Find…"), icon: TextSearch, run: () => openMoreGroup("find", more.anchor) }] : findInTerminal),
     // from 769px Files has its own button beside the lens switch; a phone keeps it here
     // and so does an inbox mode thread at any width, whose shell has no Files button
-    ...(selectedPane && (!wideScreen || inMode) ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
+    ...(selectedPane && (!wideScreen || inMode) ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => { actions.counted?.("files", "menu"); setFilesOpen(true); } }] : []),
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
     { id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() },
@@ -1446,8 +1451,8 @@ export function App() {
                     onRenameHandled={clearRenameRequest}
                     closeRequest={active && closeTabRequest?.machineId === machineId && closeTabRequest.paneId === pane.pane_id ? closeTabRequest : null}
                     onCloseHandled={clearCloseTabRequest}
-                    onNewTab={() => { usageCounters.paneUse("new_tab_by_button", machineId); actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); }}
-                    onNewTerminal={() => { usageCounters.paneUse("new_tab_by_button", machineId); return actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); }}
+                    onNewTab={() => { tally(() => usageCounters.paneUse("new_tab_by_button", machineId)); actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); }}
+                    onNewTerminal={() => { tally(() => usageCounters.paneUse("new_tab_by_button", machineId)); return actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); }}
                     onMoveToWorkspace={(tabId, workspaceId) => actions.moveTabToWorkspace({ machineId, tabId, workspaceId })}
                     paneActions={active ? (paneId) => {
                       const target = snapshot?.panes.find((item) => item.pane_id === paneId);
@@ -1467,8 +1472,8 @@ export function App() {
                     onOpenInHalf={wideScreen && !threadDrawn ? (id, side) => dockSide({ machineId, paneId: id }, side) : undefined}
                     onRecoverUnsent={(target) => openUnsent({ machineId, pane: target })}
                     onSearchConversation={(target) => searchable(machineId, target, lensOf(target)) && !(slotPeek !== null && target.pane_id === pane?.pane_id) ? () => requestSearch(slot, machineId, target.pane_id) : null}
-                    onNewTab={workspace ? () => { usageCounters.paneUse("new_tab_by_button", machineId); actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); } : undefined}
-                    onNewTerminal={workspace ? () => { usageCounters.paneUse("new_tab_by_button", machineId); return actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); } : undefined}
+                    onNewTab={workspace ? () => { tally(() => usageCounters.paneUse("new_tab_by_button", machineId)); actions.openNewTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); } : undefined}
+                    onNewTerminal={workspace ? () => { tally(() => usageCounters.paneUse("new_tab_by_button", machineId)); return actions.openTerminalTab(active ? undefined : { machineId, workspaceId: workspace.workspace_id }); } : undefined}
                     onMoveToWorkspace={(tabId, workspaceId) => actions.moveTabToWorkspace({ machineId, tabId, workspaceId })}
                     tabsInHeader={tabsInHeader || threadDrawn} solo={threadDrawn}
                     renameRequest={active && pane && renameRequest?.machineId === machineId && renameRequest.paneId === pane.pane_id ? renameRequest : null}

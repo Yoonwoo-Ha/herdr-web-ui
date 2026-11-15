@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { TelemetryCountsChange, TelemetryStatus } from "../../shared/telemetry.ts";
 import { NOTICE_VERSION } from "../../shared/telemetry-notice.ts";
-import { createUsageCounters, usageCounters } from "./usageCounters.ts";
+import { actionUse, createUsageCounters, usageCounters } from "./usageCounters.ts";
 
 const status = (overrides: Partial<TelemetryStatus> = {}) => ({ enabled: true, blocked_by_env: false, notice_seen: true, ...overrides }) as TelemetryStatus;
 
@@ -255,5 +255,37 @@ describe("usage counters", () => {
     } finally { globalThis.fetch = original; }
     // 6 is the notice whose wording says buttons are counted: below it, not one request
     expect(calls.length > 0).toBe(NOTICE_VERSION >= 6);
+  });
+
+  test("an action counts under its source, never when it would do nothing here, never on another PC's pane", () => {
+    const here = (can = {}, machineId = "local") => ({ machineId, can });
+    expect(actionUse("split", "shortcut", here())).toBe("split_by_shortcut");
+    expect(actionUse("settings", "palette", here())).toBe("settings_by_palette");
+    // nothing selected to split, close or add a tab beside: the key or row did nothing
+    expect([actionUse("split", "shortcut", here({ split: false })), actionUse("close_pane", "palette", here({ close_pane: false })), actionUse("new_tab", "shortcut", here({ new_tab: false }))]).toEqual([null, null, null]);
+    // another PC's pane: those three are not counted; the rest are the app's own, wherever the pane is
+    expect([actionUse("split", "button", here({}, "pc-2")), actionUse("close_pane", "menu", here({}, "pc-2")), actionUse("new_tab", "shortcut", here({}, "pc-2"))]).toEqual([null, null, null]);
+    expect(actionUse("sidebar", "shortcut", here({}, "pc-2"))).toBe("sidebar_by_shortcut");
+  });
+
+  test("after a refusal nothing kept goes, not even what was counted while the refused batch was on its way", async () => {
+    const sent: TelemetryCountsChange[] = [];
+    let answer: (() => void) | null = null;
+    const counters = createUsageCounters({
+      on: true, narrow: () => false, now: () => Date.parse("2026-11-15T10:00:00Z"), setTimer: () => () => {},
+      status: async () => status(),
+      send: (counts) => { sent.push(counts); return new Promise((_resolve, reject) => { answer = () => reject(Object.assign(new Error("read_only"), { status: 403 })); }); },
+    });
+    counters.heard(status());
+    counters.count("chat_send");
+    counters.flush(false);
+    // counted while the batch is on its way, then the refusal, then a later yes (Settings asking the status)
+    counters.count("composer_voice");
+    answer!();
+    await settle();
+    counters.heard(status());
+    counters.flush(false);
+    await settle();
+    expect(sent.map((counts) => Object.keys(counts.add))).toEqual([["chat_send"]]);
   });
 });

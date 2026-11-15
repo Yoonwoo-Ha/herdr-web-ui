@@ -1,3 +1,4 @@
+import { tally, usageCounters } from "../lib/usageCounters.ts";
 import { Fragment, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type AnimationEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { Bot, ChevronDown, ChevronRight, Ellipsis, Folder, FolderOpen, GitBranch, History, Layers, ListChecks, Pencil, Pin, PinOff, Plus, Terminal, Trash2, TriangleAlert, X } from "lucide-react";
 
@@ -638,6 +639,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
           if (worktrees.length > 0 && repoKey) { if (folded || collapsedWorktrees.has(repoKey)) unfoldForNewAgent(workspace.workspace_id, repoKey); }
           else if (agentsAway || foldedAgents.has(workspace.workspace_id)) unfoldForNewAgent(workspace.workspace_id, undefined);
         }
+        tally(() => usageCounters.paneUse("new_tab_by_menu", machineId));
         actions.openNewTab({ machineId, workspaceId: workspace.workspace_id });
       } }] : []),
       ...(!renameOffered || !renamesWorkspace(workspace.workspace_id) ? [] : [{ id: "rename-workspace", label: t("Rename workspace"), icon: Pencil, run: () => beginWorkspaceRename(workspace) }]),
@@ -1065,7 +1067,7 @@ export function Sidebar({ snapshot, online, selectedPaneId, actions, watching = 
           {snapshot && snapshot.workspaces.length === 0 && (
             <div className="tree-state-empty">
               <p className="tree-state" role="status">{t("No workspaces yet")}</p>
-              <button type="button" className="btn" onClick={actions.openNewSession}><Plus aria-hidden="true" />{t("New workspace")}</button>
+              <button type="button" className="btn" onClick={() => { tally(() => actions.counted?.("new_workspace", "button")); actions.openNewSession(); }}><Plus aria-hidden="true" />{t("New workspace")}</button>
             </div>
           )}
           {visibleGroups.pinned.some(({ workspace }) => roster.some((pane) => pane.workspace_id === workspace.workspace_id)) && <>
