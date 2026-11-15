@@ -1308,12 +1308,23 @@ EOF
   fi
 }
 
+# OVIS_REF names what a fresh install takes: an Ovis already installed in the checkout $1 is not moved by it, which is
+# said with its commit, without asking GitHub
+ref_not_moved() {
+  [ -n "${OVIS_REF:-${HERDR_WEB_UI_REF:-}}" ] || return 0
+  # with no checkout to read (herdr did not name the plugin's root), git -C "" would read the current directory's
+  ref_not_moved_at=""
+  [ -z "$1" ] || ref_not_moved_at=$(git -C "$1" rev-parse --short=12 HEAD 2>/dev/null </dev/null) || ref_not_moved_at=""
+  say "${ref_not_moved_at:+the installed checkout is at commit $ref_not_moved_at; }OVIS_REF does not move an installed Ovis (INSTALL.md, Update)"
+}
+
 # Ovis on herdr-core, without herdr or its plugin: its own checkout in APP_DIR, built with herdr-plugin.toml's
 # [[build]] steps as herdr builds the plugin (the Rust PTY host aside: herdr-core's terminals need none),
 # its settings, its service, and a start now.
 install_core() {
   if [ -d "$APP_DIR/.git" ]; then
     say "already installed in $APP_DIR, on herdr-core; Settings → Updates keeps it current"
+    ref_not_moved "$APP_DIR"
   elif [ -e "$APP_DIR" ]; then
     fail "$APP_DIR is there but is not an Ovis checkout; move it away and run this again"
   else
@@ -1388,6 +1399,7 @@ install_plugin() {
 
   if herdr plugin list 2>/dev/null | grep -q "$PLUGIN "; then
     say "already installed as a herdr plugin; Settings → Updates keeps it current"
+    ref_not_moved "$(plugin_root "$PLUGIN")"
   else
     say "installing the herdr plugin at $ref (herdr clones and builds it: about a minute)"
     # a branch builds its own sources: the plugin's launcher (scripts/plugin-launch.ts) would otherwise run the

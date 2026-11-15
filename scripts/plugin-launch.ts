@@ -17,6 +17,8 @@
  * (bun install, bun run build, the Rust PTY host) and every command runs scripts/plugin.ts; .ovis/server/from-source
  * remembers the second case for this version, so later commands ask no server. A manifest that exists and fails a
  * check, a server error or a network failure is a failure, never a reason to build from source.
+ * .ovis/server/source-build is what that build came to (install.ps1 reads it): `started` from its first step, and the
+ * version and the checkout's commit (the version alone where git cannot tell it) only once every step returned 0.
  * This file imports nothing outside scripts/ and shared/.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -53,6 +55,17 @@ async function fromSource(command: string, args: string[]): Promise<number> {
   return 0;
 }
 
+/** The checkout's commit, or "" where git cannot tell (no git, or not a git checkout). */
+async function headCommit(): Promise<string> {
+  try {
+    const git = Bun.spawn(["git", "-C", root, "rev-parse", "HEAD"], { env: process.env, stdin: "ignore", stdout: "pipe", stderr: "ignore" });
+    const [out, code] = await Promise.all([new Response(git.stdout).text(), git.exited]);
+    return code === 0 ? out.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 /** the tests': the install folder, what stands in for the source path, and how a file is fetched */
 export async function main(args: string[], { home = join(root, ".ovis", "server"), source = fromSource, fetchFile, sources = sourceTrees(root) }: { home?: string; source?: typeof fromSource; fetchFile?: typeof fetch; sources?: ReturnType<typeof sourceTrees> } = {}): Promise<number> {
   const [command, ...rest] = args;
@@ -68,9 +81,23 @@ export async function main(args: string[], { home = join(root, ".ovis", "server"
   // without the variable it drops the choice and asks the release again. A choice made for another version is ignored.
   const marker = join(home, "from-source");
   const remember = () => { mkdirSync(home, { recursive: true }); writeFileSync(marker, `${version}\n`); };
+  // The marker is the choice, written before the build; the stamp says whether the build finished. It says `started`
+  // before the marker is written and names the version and commit only after every step returned 0, so a build that
+  // failed or was cut off (in bun install, or over the packages and client of an earlier build) is never taken as
+  // finished. A checkout without a stamp was built by a launcher from before it, or took the release's binary.
+  const stamp = join(home, "source-build");
+  const build = async () => {
+    mkdirSync(home, { recursive: true });
+    writeFileSync(stamp, "started\n");
+    remember();
+    const code = await source("install", rest);
+    if (code === 0) writeFileSync(stamp, `${[version, await headCommit()].filter(Boolean).join(" ")}\n`);
+    return code;
+  };
   if (command === "install") {
     rmSync(marker, { force: true });
-    if (process.env["OVIS_FROM_SOURCE"] === "1") { remember(); return await source(command, rest); }
+    rmSync(stamp, { force: true });
+    if (process.env["OVIS_FROM_SOURCE"] === "1") return await build();
   } else if (process.env["OVIS_FROM_SOURCE"] === "1" || (existsSync(marker) && readFileSync(marker, "utf8").trim() === version)) {
     return await source(command, rest);
   }
@@ -86,6 +113,7 @@ export async function main(args: string[], { home = join(root, ".ovis", "server"
   } catch (error) {
     if (error instanceof NoBinaryRelease) {
       console.error(`Ovis: ${error.message}, so this checkout runs from source`);
+      if (command === "install") return await build();
       remember();
       return await source(command, rest);
     }
