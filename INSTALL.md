@@ -59,8 +59,7 @@ runs, and, when Tailscale runs on the PC, serves the app to the tailnet (`tailsc
 prints the address as a QR code. It changes the user's Tailscale configuration, so it needs the
 same **Ask** as step 5. Running it again keeps what is there (`nothing to do` for a version already installed); two runs at once
 take turns through an install lock in `~/.local/share/ovis`: a waiter breaks the lock once the holder's pid no
-longer runs, one breaker at a time. With three or more installs started at the same instant a narrow race remains
-(a follow-up). A release
+longer runs, one breaker at a time. A release
 from before the compiled server, a branch in `OVIS_REF`, an install from source already on the PC, or
 `OVIS_FROM_SOURCE=1` install from source as before ([one rule](#binary-or-source)) (Bun, herdr's plugin checkout, and Node 22 only where
 the Rust PTY host cannot run). `OVIS_RELEASES_URL` (an https:// address, or a `file://` folder) points

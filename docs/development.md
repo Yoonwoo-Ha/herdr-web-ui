@@ -924,7 +924,7 @@ and `scripts/plugin-launch.ts` takes it from that file. Each checks the manifest
 size and SHA-256, and only then moves the release into place, in one rename (two on Windows, where a run cut off
 between them is put back by the next), holding an install lock (`.install.lock`, made by an atomic mkdir with the
 holder's pid; a waiter breaks it once the holder's pid no longer runs, one breaker at a time, so two installs at once
-take turns; with three or more started at the same instant a narrow race remains, a follow-up). When to build
+take turns). When to build
 from source instead is [one rule](../INSTALL.md#binary-or-source). Their tests run a copy whose key line names a key made for
 the test, or pass that key as `installServer`'s option, which the launcher never does: the shipped scripts read no
 key from anywhere else. `OVIS_RELEASES_URL` (https://, or a `file://` folder laid out as GitHub's

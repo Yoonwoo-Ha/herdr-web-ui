@@ -979,9 +979,8 @@ binary_pty_host() {
 # One install at a time in OVIS_HOME: $OVIS_HOME/.install.lock, made by mkdir (atomic) and holding this
 # shell's pid. Another run waits for it, at most INSTALL_LOCK_WAIT seconds, and then fails, saying who holds
 # it. A lock whose holder is gone (its pid does not run, or it never wrote one more than a minute ago) is
-# broken under .install.lock.break, one breaker at a time. With three or more installs started at the same
-# instant a narrow race remains (a follow-up). Released on every exit, a signal's included; only kill -9
-# leaves it, stale.
+# broken under .install.lock.break, one breaker at a time. Released on every exit, a signal's included; only
+# kill -9 leaves it, stale.
 install_lock() {
   lock="$OVIS_HOME/.install.lock"
   mkdir -p "$OVIS_HOME"
@@ -999,7 +998,7 @@ install_lock() {
         lock_stale=1
       fi
       # removed only while it still holds the record judged stale: a fresh holder's lock is never taken
-      if [ "$lock_stale" = 1 ] && [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$lock_holder" ]; then rm -rf "$lock" || true; fi
+      if [ "$lock_stale" = 1 ] && [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$lock_holder" ]; then install_lock_drop || true; fi
       rm -rf "$lock.break" 2>/dev/null || true
       [ -e "$lock" ] || continue
     elif [ -n "$(find "$lock.break" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
@@ -1016,10 +1015,19 @@ install_lock() {
   trap 'install_unlock; exit 129' HUP
   trap 'install_unlock; exit 130' INT
   trap 'install_unlock; exit 143' TERM
+  # a run cut off between its lock's rename and its removal left that folder: the holder removes it, before its own
+  # rename may need the same name
+  rm -rf "$lock".gone-*
 }
 install_unlock() {
-  if [ -n "${lock:-}" ] && [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$$" ]; then rm -rf "$lock"; fi
+  if [ -n "${lock:-}" ] && [ "$(cat "$lock/pid" 2>/dev/null || true)" = "$$" ]; then install_lock_drop; fi
   trap - EXIT HUP INT TERM
+}
+# The lock folder leaves in one rename, to a name of this run's own, and is removed there. rm -rf in place unlinks
+# the pid a moment before the folder: a waiter could claim the lock in that moment (its pid file is created wherever
+# none is), and the folder it holds would then not be removed (Directory not empty), failing the run that let it go
+install_lock_drop() {
+  mv "$lock" "$lock.gone-$$" && rm -rf "$lock.gone-$$"
 }
 
 # Whether the release of $version runs in OVIS_HOME already: its manifest there names it, and the binary
