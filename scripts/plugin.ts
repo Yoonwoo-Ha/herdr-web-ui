@@ -972,7 +972,7 @@ async function linkCommand(): Promise<number> {
   // Always "link", whichever name it was run by: a release from before `add` and `login` knows only that one
   if (active !== join(resolve(ROOT), "scripts", "plugin.ts") && resolve(active) !== resolve(import.meta.filename)) return await handOn(active, ["link", ...process.argv.slice(3)]);
   // loaded before anything is asked or listened for, as qrDrawer is
-  const { discardTyped, link: linkPc } = await import("./plugin-link.ts");
+  const { discardTyped, link: linkPc, linkSettings } = await import("./plugin-link.ts");
   if (!(await health())) {
     process.stderr.write(`Ovis is not running at ${origin}; start it first\n`);
     return 1;
@@ -996,6 +996,8 @@ async function linkCommand(): Promise<number> {
   return linkPc(process.argv.slice(3), {
     origin, headers, signal: stop.signal,
     accountService: accountServiceOrigin(env["OVIS_ACCOUNT_SERVICE_URL"] ?? DEFAULT_ACCOUNT_SERVICE),
+    // the fleet preview, the command's name and the app the server pairs with, from the settings the server it starts gets
+    ...linkSettings(env),
     out: (text) => process.stdout.write(text),
     lines: console[Symbol.asyncIterator](),
     // a pipe, a file or a closed stdin approves nothing, whatever it carries and whenever (`yes | ovis add`)
