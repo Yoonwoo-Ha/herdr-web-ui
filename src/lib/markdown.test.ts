@@ -273,6 +273,44 @@ describe("inline markdown", () => {
     expect(parseInline("`https://example.com/x`")).toEqual([{ type: "code", value: "https://example.com/x" }]);
   });
 
+  it("reads a link's title, in quotes or parentheses, after its address (#3987)", () => {
+    expect(parseInline('This is a [link with title](https://www.google.com "Click to go to google").')).toEqual([
+      { type: "text", value: "This is a " },
+      { type: "link", href: "https://www.google.com", title: "Click to go to google", children: [{ type: "text", value: "link with title" }] },
+      { type: "text", value: "." },
+    ]);
+    expect(parseInline("[a](https://a.dev 'single') [b](https://b.dev \t(parens))")).toEqual([
+      { type: "link", href: "https://a.dev", title: "single", children: [{ type: "text", value: "a" }] },
+      { type: "text", value: " " },
+      { type: "link", href: "https://b.dev", title: "parens", children: [{ type: "text", value: "b" }] },
+    ]);
+    // a link written in the title is the title's text, and an empty title is none
+    expect(parseInline('[a](https://a.dev "see [b](https://b.dev)")')).toEqual([
+      { type: "link", href: "https://a.dev", title: "see [b](https://b.dev)", children: [{ type: "text", value: "a" }] },
+    ]);
+    expect(parseInline('[a](https://a.dev "")')).toEqual([{ type: "link", href: "https://a.dev", children: [{ type: "text", value: "a" }] }]);
+    // a file link and an image read their address the same way
+    expect(parseInline('[report](out/REPORT.md "the report")')).toEqual([{ type: "file", path: "out/REPORT.md", children: [{ type: "text", value: "report" }] }]);
+    expect(parseInline('![chart](img/a.png "Q3")')[0]).toMatchObject({ type: "image", alt: "chart", src: "img/a.png" });
+    // a title that never closes, or anything after it, makes no link of the bracket
+    for (const line of ['[a](https://a.dev "open)', '[a](https://a.dev "t" x)', "[a](https://a.dev (t)x)", '[a](https://a.dev\n"t")', '[a](https://a.dev "t\nu")', "[a](https://a.dev (t\n))"]) {
+      expect(parseInline(line).filter((node) => node.type === "link"), line).toEqual([{ type: "link", href: "https://a.dev", children: [{ type: "text", value: "https://a.dev" }] }]);
+    }
+  });
+
+  it("shows a link's title when the pointer rests on it", () => {
+    const languages = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      const html = renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Markdown, { children: '[docs](https://docs.dev "Read the docs") [plain](https://plain.dev)' }) }));
+      expect(html).toContain('<a href="https://docs.dev" target="_blank" rel="noopener noreferrer" title="Read the docs"><span>docs</span></a>');
+      expect(html).toContain('<a href="https://plain.dev" target="_blank" rel="noopener noreferrer"><span>plain</span></a>');
+    } finally {
+      if (languages) Object.defineProperty(navigator, "languages", languages);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  });
+
   it("parses inline code, bold, italic, and strikethrough", () => {
     expect(parseInline("`code` **bold** *italic* ~~gone~~").map((node) => node.type)).toEqual([
       "code", "text", "strong", "text", "em", "text", "del",
@@ -570,6 +608,8 @@ describe("text no one wrote by hand", () => {
     const searches = new Set([
       /[`[<*_~$]|:codex-file-citation\{|\\\(|file:\/\/\/|https?:\/\/|www\./g,
       /\n/g, /}/g, /[\n\r\u2028\u2029]/g, /\\\)/g, /\$/g, /[\]\n]/g, /[\s)]/g,
+      // a link's title
+      /[^ \t]/g, /["\n]/g, /['\n]/g, /[()\n]/g,
       /_(?![\p{L}\p{N}\p{M}_])/gu,
       /__(?![\p{L}\p{N}\p{M}_])/gu,
       // Only the single-underscore token can succeed in the last fixture; trying the bold
@@ -615,8 +655,12 @@ describe("text no one wrote by hand", () => {
     // a label closed with an address that is not, and a `__` that only a `_` closes
     for (const count of [4_000, 40_000]) expect(counted("[a](b".repeat(count))).toHaveLength(1);
     for (const count of [3_000, 30_000]) expect(counted("__a b_ ".repeat(count))).toHaveLength(count * 2);
+    // a title that never closes, or closes on no `)`
+    for (const part of ['[a](b "', "[a](b '", "[a](b (", '[a](b  "c"', "[a](b (c)"]) {
+      for (const count of [1_000, 10_000]) expect(counted(part.repeat(count))).toEqual([{ type: "text", value: part.repeat(count) }]);
+    }
     // the marks are the ones it found as one pattern, searching the whole line
-    const asBefore = /(`[^`\n]+`|\\\(.+?\\\)|\[[^\]\n]+\]\([^\s)]+\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/gu;
+    const asBefore = /(`[^`\n]+`|\\\(.+?\\\)|\[[^\]\n]+\]\([^\s)]+(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\)|<https?:\/\/[^\s<>]+>|file:\/\/\/[!#-;=?-_a-~]+|https?:\/\/[!-;=?-~]+|(?<![\w.@/-])www\.[!-;=?-~]+|\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}\p{M}_])__(?=\S)[^\n]*?\S__(?![\p{L}\p{N}\p{M}_])|~~[^~\n]+~~|(?<!\*)\*[^*\n]+\*(?!\*)|(?<![\p{L}\p{N}\p{M}_])_(?=\S)[^\n]*?\S_(?![\p{L}\p{N}\p{M}_]))/gu;
     const found = (marks: Iterable<RegExpMatchArray>): string => [...marks].map((mark) => `${mark.index}:${mark[0]}`).join("\n");
     const lines = everyLine(["_", "a", " ", "[", "](", ")", "\\(", "\\)", "\n"], 5);
     expect(lines.length).toBeGreaterThan(66_000);
@@ -627,7 +671,18 @@ describe("text no one wrote by hand", () => {
       if (marks !== "") marked += 1;
     }
     expect(marked).toBeGreaterThan(1000);
-  });
+    // and so are a link's titles
+    let titled = 0;
+    const titles = everyLine(["[a](b", " ", '"', "'", "(", ")"], 6);
+    expect(titles.length).toBeGreaterThan(55_000);
+    for (const line of titles) {
+      const marks = found(inlineMarks(line));
+      expect(`${line}: ${marks}`).toBe(`${line}: ${found(line.matchAll(asBefore))}`);
+      if (/^\d+:\[a\]\(b .*\)$/m.test(marks)) titled += 1;
+    }
+    expect(titled).toBeGreaterThan(40);
+    // it counts searches, not time: with titles it runs past bun's 5 s on a loaded host
+  }, 20_000);
 
   it("reads a line of dollars that never closes in linear time", () => {
     for (const part of ["$a ", "$5 ", "$a\\$", " $a$b"]) linear((size) => part.repeat(size / part.length), 200_000, (line) => parseInline(line));

@@ -343,7 +343,7 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
       case "strong": return <strong key={key}><Inline nodes={node.children} interactive={interactive} /></strong>;
       case "em": return <em key={key}><Inline nodes={node.children} interactive={interactive} /></em>;
       case "del": return <del key={key}><Inline nodes={node.children} interactive={interactive} /></del>;
-      case "link": return <a key={key} href={node.href} target="_blank" rel="noopener noreferrer" onClick={webClick(node.href)}><Inline nodes={node.children} interactive={false} standalone={standalone} /></a>;
+      case "link": return <a key={key} href={node.href} target="_blank" rel="noopener noreferrer" title={node.title} onClick={webClick(node.href)}><Inline nodes={node.children} interactive={false} standalone={standalone} /></a>;
       // the label opens the file; where nothing can open one, the path shows after it, as Codex's terminal does
       case "file": {
         const label = <Inline nodes={node.children} interactive={false} />;
