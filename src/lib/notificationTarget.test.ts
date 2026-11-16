@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { resolveLink } from "./deepLink.ts";
-import { machineGone, machineMissing, notificationLanding, notificationTargetFromSearch, notificationTargets, notificationViewForPane, sameLink } from "./notificationTarget.ts";
+import type { SessionSnapshot } from "../../shared/protocol.ts";
+import { resolveLink, type AppLink } from "./deepLink.ts";
+import { linkLanding, linkTarget, machineGone, machineMissing, notificationLanding, notificationTargetFromSearch, notificationTargets, notificationViewForPane, sameLink, type NotificationTarget } from "./notificationTarget.ts";
 
 function messages() {
   let receive!: (event: MessageEvent) => void;
@@ -171,5 +172,83 @@ describe("notification landing", () => {
     expect(sameLink({ ...link, pane: "w1:p8" }, link)).toBe(false);
     expect(sameLink({ ...link, machine: "pc2" }, link)).toBe(false);
     expect(sameLink({ ...link, view: null }, link)).toBe(false);
+  });
+});
+
+describe("desktop link delivery", () => {
+  function links() {
+    let open!: (query: string) => void;
+    const subscribe = notificationTargets(undefined, { onOpen: (listener) => { open = listener; } });
+    return { subscribe, open: (query: string) => open(query) };
+  }
+  const place = (fields: Partial<AppLink>): AppLink => ({ machine: "local", workspace: null, workspaceSlug: null, pane: null, view: null, settings: null, ...fields });
+  // workspace 3 is "alpha"; herdr handed pane t3 to workspace 4 ("beta"), and t1 is alpha's
+  const roster = [{
+    id: "local",
+    state: "connected",
+    snapshot: {
+      workspaces: [{ workspace_id: "3", label: "alpha", active_tab_id: "3:1" }, { workspace_id: "4", label: "beta", active_tab_id: "4:1" }],
+      panes: [{ pane_id: "t1", workspace_id: "3", focused: true }, { pane_id: "t3", workspace_id: "4", focused: true }],
+      layouts: [],
+    } as unknown as Pick<SessionSnapshot, "workspaces" | "panes" | "layouts">,
+  }];
+
+  it("reads a link's place with the deep link's own reading", () => {
+    expect(linkTarget("?ws=3-my-app&pane=t3&view=terminal")).toEqual({
+      machine_id: "local", pane_id: "t3", view: "terminal", link: place({ workspace: "3", workspaceSlug: "my-app", pane: "t3", view: "terminal" }),
+    });
+    expect(linkTarget("?machine=home%20pc&pane=p2")).toEqual({ machine_id: "home pc", pane_id: "p2", link: place({ machine: "home pc", pane: "p2" }) });
+    expect(linkTarget("?pane=p2&view=files")?.link).toEqual(place({ pane: "p2" }));
+    expect(linkTarget("?ws=3")).toBeNull();
+    expect(linkTarget("")).toBeNull();
+  });
+
+  it("keeps the newest link until the app listens, then delivers each one at once", () => {
+    const source = links();
+    source.open("?pane=older");
+    source.open("?ws=3&pane=t3&view=chat");
+    source.open("?ws=4");
+    const selected: NotificationTarget[] = [];
+    source.subscribe((target) => selected.push(target));
+    expect(selected.map((target) => target.link)).toEqual([place({ workspace: "3", pane: "t3", view: "chat" })]);
+    source.open("?pane=t4&view=terminal");
+    expect(selected.map((target) => target.link)).toEqual([place({ workspace: "3", pane: "t3", view: "chat" }), place({ pane: "t4", view: "terminal" })]);
+  });
+
+  it("selects a pane only where the roster lists it in the link's workspace, as a deep link resolves it", () => {
+    expect(linkLanding(roster, linkTarget("?ws=4-beta&pane=t3&view=terminal")!.link!)).toEqual({ kind: "select", pane: "t3" });
+    expect(linkLanding(roster, linkTarget("?ws=4&pane=t3")!.link!)).toEqual({ kind: "select", pane: "t3" });
+    // a link with no workspace selects by its pane, as a deep link does
+    expect(linkLanding(roster, linkTarget("?pane=t3")!.link!)).toEqual({ kind: "select", pane: "t3" });
+  });
+
+  it("never selects a pane of another workspace than the link names, with or without its slug", () => {
+    // t3 is beta's now: a link to alpha's t3 waits, and lands on alpha with the pane-closed note
+    expect(linkLanding(roster, linkTarget("?ws=3&pane=t3")!.link!)).toEqual({ kind: "wait", stale: false });
+    expect(linkLanding(roster, linkTarget("?ws=3-alpha&pane=t3")!.link!)).toEqual({ kind: "wait", stale: false });
+    expect(resolveLink(roster[0]!.snapshot, place({ workspace: "3", pane: "t3" }))).toEqual({ pane: "t1", workspace: "3", note: "pane-closed" });
+    // workspace id 3 was handed out again: the slug says beta was meant, whose t3 it is
+    expect(linkLanding(roster, linkTarget("?ws=3-beta&pane=t3")!.link!)).toEqual({ kind: "select", pane: "t3" });
+  });
+
+  it("selects nothing before the link's PC has a roster", () => {
+    const link = linkTarget("?ws=4-beta&pane=t3")!.link!;
+    expect(linkLanding([], link)).toEqual({ kind: "wait", stale: false });
+    expect(linkLanding([{ id: "local", snapshot: null }], link)).toEqual({ kind: "wait", stale: false });
+    expect(linkLanding(roster, { ...link, machine: "pc-gone" })).toEqual({ kind: "wait", stale: true });
+  });
+
+  it("selects nothing from an offline PC's cached roster: the link waits until the PC is connected", () => {
+    const link = linkTarget("?ws=4-beta&pane=t3")!.link!;
+    for (const state of ["disconnected", "reconnecting", "connecting", undefined]) {
+      expect(linkLanding([{ ...roster[0]!, state }], link)).toEqual({ kind: "wait", stale: false });
+    }
+  });
+
+  it("tells a link from one to the same pane id in another workspace by its slug", () => {
+    const alpha = linkTarget("?ws=3-alpha&pane=t3")!.link!;
+    expect(sameLink(alpha, linkTarget("?ws=3-alpha&pane=t3")!.link!)).toBe(true);
+    expect(sameLink(alpha, linkTarget("?ws=3-beta&pane=t3")!.link!)).toBe(false);
+    expect(sameLink(alpha, linkTarget("?ws=3&pane=t3")!.link!)).toBe(false);
   });
 });

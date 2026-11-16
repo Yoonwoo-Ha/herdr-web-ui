@@ -516,7 +516,7 @@ export function App() {
     selectTargetRef.current(machineId, view.selection);
     if (listed) inbox.show();
   };
-  const { takeNotificationTargetRef } = useNotificationTargets({ machinesRef, selectTargetRef, selectionHint, pendingLink, pendingFile, setLinkLanded, linkSince, rosterSeq, setLinkTick, load });
+  const { takeNotificationTargetRef } = useNotificationTargets({ machinesRef, selectTargetRef, selectionHint, pendingLink, pendingFile, setLinkLanded, linkSince, rosterSeq, setLinkTick, load, onLinkWait: () => inbox.leave() });
 
 
   const { selectedPane } = useSelectedPane({ snapshot, selectedPaneId });
