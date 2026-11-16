@@ -2,7 +2,7 @@ import type { TailnetPcsOptions } from "./tailnet-pcs.ts";
 import type { SshCandidatesOptions } from "./ssh-candidates.ts";
 import "./adopt-legacy-env.ts";
 import { claimServerState, machineEngine, machineHerdrBinary, machineSocket, machineSocketRefusal, machineUnauthorized, MACHINE_DIRECT_CARRIER_ENABLED, ownerSocketPath } from "./machine-profile.ts";
-import { profileFolderRefusal } from "./profile-marker.ts";
+import { ProfileFolderError, profileFolderRefusal } from "./profile-marker.ts";
 import { holdForLife, OwnerGuardBusy } from "./owner-guard.ts";
 import { fleetPreview } from "./preview.ts";
 import type { RelaySocket } from "../shared/relay-channel.ts";
@@ -284,6 +284,12 @@ export function createServer(
 ): ServerInstance {
   // resolved once: a merge can give the old dir files of its own, after which resolving again could name the other dir
   const stateDir = provided.stateDir ?? defaultStateDir();
+  // a second look for the profile's marker (serve() looked before anything else), before anything here reads the
+  // folder, the device list first: a profile that started at the same moment may have marked it since
+  if (provided.profile !== "machine") {
+    const refusal = profileFolderRefusal(stateDir);
+    if (refusal !== null) throw new ProfileFolderError(refusal);
+  }
   const options = provided.profile === "machine" ? { ...provided,
     machineEngine: machineEngine(stateDir, provided.port ?? Number(process.env["PORT"] ?? 0)),
     // OVIS_TOKEN lets nobody in: the local owner is the caller on the owner's socket
@@ -779,6 +785,11 @@ export async function serve(): Promise<void> {
     }
     instance.warmAgentCatalog();
   } catch (err) {
+    // the second look found a profile's marker: the same sentence and exit as the first
+    if (err instanceof ProfileFolderError) {
+      console.error(err.message);
+      process.exit(1);
+    }
     const { code, syscall } = err as { code?: string; syscall?: string };
     // only the bind itself: a permission error reading a state file keeps its own message and path
     if (syscall !== "listen" || (code !== "EADDRINUSE" && code !== "EADDRNOTAVAIL" && code !== "EACCES")) {

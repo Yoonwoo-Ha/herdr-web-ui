@@ -3,7 +3,7 @@
  * whoever connects to `<state folder>/serve.sock`: the kernel lets only this account (and root) in there. Its
  * TCP port tells everyone that it is alive and nothing else; its devices come through the relay.
  */
-import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync } from "node:fs";
+import { closeSync, constants, type Dirent, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { trustRefusal } from "./herdr-core/discovery.ts";
@@ -111,12 +111,20 @@ export function claimServerState(told: string | undefined) {
   if (first.foreign) throw foreign(first);
   const running = "Another server already owns this Ovis state directory, so no second server was started";
   const hold = join(stateDir, "serve.own");
-  const made = !existsSync(hold);
+  const cannotHold = (error: unknown) => new MachineProfileError(`The machine profile cannot hold its state folder, so no server was started (${error instanceof Error ? error.message : String(error)})`);
+  // made by this start only when it creates the file itself, at once: one another server made meanwhile is not its
+  let made = false;
+  try {
+    closeSync(openSync(hold, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600));
+    made = true;
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw cannotHold(error);
+  }
   let release: () => void;
   try { release = holdForLife(hold, "exclusive"); }
   catch (error) {
     if (error instanceof OwnerGuardBusy) throw new MachineProfileError(`${running} (${hold} is held)`);
-    throw new MachineProfileError(`The machine profile cannot hold its state folder, so no server was started (${error instanceof Error ? error.message : String(error)})`);
+    throw cannotHold(error);
   }
   // again under the hold: an ordinary preview server may have held the folder, written its state and gone between
   // the first look and the hold. Its refusal leaves the folder as it was found: the serve.own this start made goes,

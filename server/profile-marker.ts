@@ -3,29 +3,46 @@
  * server/machine-profile.ts), and what it means to every other server that comes up on a state folder:
  * the folder is the profile's own, and its list of paired devices is kept by one server only.
  */
-import { lstatSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 
 export const MARKER = "machine-profile.json";
 /** The most a marker may hold: the profile's own is a few bytes. */
 const MARKER_MAX_BYTES = 4096;
+/**
+ * How the marker is opened: never through a link (a link is not the profile's own file) and never waiting (opening
+ * a FIFO for reading would wait for a writer), and never as this process's terminal. Windows has none of these
+ * flags, and needs none: no profile runs there, and a FIFO is no file in its folders.
+ */
+const MARKER_OPEN = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0) | (constants.O_NOCTTY ?? 0);
 
 /**
- * Whether `path` is the profile's marker. A file that cannot be read, or holds anything else, is not. It is looked
- * at first without following a link or opening it, so that only a small regular file is read: opening a FIFO would
- * wait for a writer that never comes, a large file would be read whole, and a link is not the profile's own file.
+ * Whether `path` is the profile's marker. A file that cannot be read, or holds anything else, is not. It is opened
+ * once, and everything after is asked of that descriptor: only a regular file of at most MARKER_MAX_BYTES is read,
+ * and never more than one byte past that.
  */
 export function markedByProfile(path: string): boolean {
+  let fd: number | undefined;
   try {
-    const entry = lstatSync(path);
+    fd = openSync(path, MARKER_OPEN);
+    const entry = fstatSync(fd);
     if (!entry.isFile() || entry.size > MARKER_MAX_BYTES) return false;
-    const marker: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const bytes = Buffer.alloc(MARKER_MAX_BYTES + 1);
+    let length = 0;
+    for (let read = 1; read > 0 && length < bytes.length; length += read) read = readSync(fd, bytes, length, bytes.length - length, length);
+    if (length > MARKER_MAX_BYTES) return false;
+    const marker: unknown = JSON.parse(bytes.toString("utf8", 0, length));
     return typeof marker === "object" && marker !== null && (marker as { profile?: unknown }).profile === "machine";
   } catch (error) {
     if (error instanceof SyntaxError || error instanceof Error && "code" in error) return false;
     throw error;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
+
+/** A server other than the profile on a profile's state folder (profileFolderRefusal): its message is the refusal. */
+export class ProfileFolderError extends Error {}
 
 /**
  * Why a server other than the profile does not start on `stateDir`, the folder as it will use it, or null: the

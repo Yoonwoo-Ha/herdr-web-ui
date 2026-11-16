@@ -1,4 +1,5 @@
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,9 +31,27 @@ it.each(notMarkers)("takes %s for no marker", (_, make) => {
   expect(markedByProfile(join(dir, MARKER))).toBe(false);
 });
 
-// a FIFO is never opened: reading one would wait for a writer that never comes
+// a FIFO is never read: reading one would wait for a writer that never comes
 it.skipIf(process.platform === "win32")("takes a FIFO for no marker, at once", () => {
   const dir = folder();
   expect(Bun.spawnSync(["mkfifo", join(dir, MARKER)]).exitCode).toBe(0);
   expect(markedByProfile(join(dir, MARKER))).toBe(false);
+});
+
+it.skipIf(process.platform === "win32")("judges what it reads by the descriptor it reads it through, not by an earlier look at the name", async () => {
+  const dir = folder();
+  const path = join(dir, MARKER);
+  writeFileSync(join(dir, "seen.json"), marker);
+  expect(Bun.spawnSync(["mkfifo", path]).exitCode).toBe(0);
+  // a look by name answers what it saw before the name became a FIFO: the profile's own small file
+  const seen = fs.lstatSync(join(dir, "seen.json"));
+  const look = spyOn(fs, "lstatSync").mockImplementation((() => seen) as never);
+  // and the FIFO gives whoever reads it the marker's bytes
+  const writer = Bun.spawn(["sh", "-c", `printf '%s' '${marker}' > "$0"`, path], { stdout: "ignore", stderr: "ignore" });
+  try { expect(markedByProfile(path)).toBe(false); }
+  finally {
+    look.mockRestore();
+    writer.kill();
+    await writer.exited;
+  }
 });

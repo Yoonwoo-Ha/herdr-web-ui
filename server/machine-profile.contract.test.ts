@@ -1,4 +1,5 @@
-import { afterEach, expect, it as test } from "bun:test";
+import { afterEach, expect, it as test, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
@@ -555,6 +556,42 @@ it("refuses a folder another server wrote into while the profile took its hold, 
   expect(() => claimServerState(dir)).toThrow(MachineProfileError);
   // nothing of the profile's stays: not its marker, not the serve.own its hold made
   expect(readdirSync(dir)).toEqual(["telemetry.json"]);
+});
+
+it("leaves the serve.own another server made right before this start would make it, when it refuses the folder", () => {
+  const dir = realpathSync(state());
+  const hold = join(dir, "serve.own");
+  const open = fs.openSync;
+  let theirs: number | undefined;
+  // the other server, an ordinary one with the preview: as this start is about to make serve.own, it makes it,
+  // holds it, writes its state and is gone
+  const made = spyOn(fs, "openSync").mockImplementation(((path: fs.PathLike, ...rest: unknown[]) => {
+    if (path === hold && theirs === undefined) {
+      writeFileSync(hold, "", { mode: 0o600 });
+      theirs = lstatSync(hold).ino;
+      writeFileSync(join(dir, "telemetry.json"), "{}");
+    }
+    return (open as (...args: unknown[]) => number)(path, ...rest);
+  }) as typeof fs.openSync);
+  cleanup.push(() => { made.mockRestore(); });
+  expect(() => claimServerState(dir)).toThrow(MachineProfileError);
+  expect(theirs).toBeDefined();
+  expect(lstatSync(hold).ino).toBe(theirs ?? -1);
+  expect(readdirSync(dir).sort()).toEqual(["serve.own", "telemetry.json"]);
+});
+
+it("refuses an ordinary server whose folder a profile marked after its first look, before the device list is read", () => {
+  const dir = state();
+  // the marker, written after serve()'s first look and before createServer's: the second look sees it
+  marked(dir);
+  let error: unknown;
+  try {
+    const server = createServer({ stateDir: dir, port: 0, hostname: "127.0.0.1", token, tailscaleOwner: null, sidecar: false });
+    cleanup.push(() => server.stop());
+  } catch (thrown) { error = thrown; }
+  expect(String(error)).toContain(join(dir, "machine-profile.json"));
+  // nothing written: no device list, nothing else
+  expect(readdirSync(dir)).toEqual(["machine-profile.json"]);
 });
 
 it("refuses a state folder whose machine-profile.json is not its own, naming that file, and leaves it as it was", async () => {
