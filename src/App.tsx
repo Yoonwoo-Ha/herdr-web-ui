@@ -414,6 +414,9 @@ export function App() {
     focusInput: () => paneControls.current?.focusInput() });
   // offered where the mode is, and not over the setup guide, which has the classic shell to itself
   const modeOffered = !guideShown;
+  // the Ovis mark at the sidebar's head (from 769px, the sidebar shown) is the classic shell's one way in where it is
+  // drawn; with no mark (a phone, a collapsed sidebar) More and the drawer's foot keep the way in
+  const markEnters = modeOffered && wideScreen && !sidebarCollapsed && !inMode;
   // going into the agent inbox and out of it, counted wherever a person asked
   const { enter: enterInbox, leave: leaveMode } = useCountedInboxWays(enterInboxShell, leaveModeShell);
   useShownCount("inbox", modeOffered, LOCAL_MACHINE);
@@ -943,8 +946,8 @@ export function App() {
     ...paneMoreItems.filter((item) => !(foldFind && item.id === "search-conversation") && (!foldPane || item.id.startsWith("pane:")))
       .map((item, index) => index === 0 ? { ...item, divider: true } : item),
     ...(foldPane && more ? [{ id: "pane-group", label: t("Pane and tab…"), icon: PanelsTopLeft, divider: true, run: () => openMoreGroup("pane", more.anchor) }] : []),
-    // the way into the agent inbox (lib/inboxMode.ts), More's last group at every width
-    ...(modeOffered ? [{ id: "enter-inbox", label: t("Open agent inbox"), icon: Inbox, divider: true, run: () => { actions.counted?.("inbox", "menu"); enterInbox(); } }] : []),
+    // the way into the agent inbox (lib/inboxMode.ts), More's last group wherever the Ovis mark is not drawn
+    ...(modeOffered && !markEnters ? [{ id: "enter-inbox", label: t("Open agent inbox"), icon: Inbox, divider: true, run: () => { actions.counted?.("inbox", "menu"); enterInbox(); } }] : []),
   ];
   // The inbox mode's More: what still means something in a shell with no drawer, tab row or status bar. On the list
   // only what is the app's own (the list already shows who waits first); in a thread also what is about the thread,
@@ -1118,7 +1121,7 @@ export function App() {
             .header-side is the sidebar's own top row from 769px (styles.css); below that its
             buttons sit in the bar */}
         <div className="header-side">
-          {wideScreen && !sidebarCollapsed && !inMode && <SidebarBrand dark={resolvedTheme === "dark"} onOpenInbox={modeOffered ? () => { actions.counted?.("inbox", "button"); enterInbox(); } : null} />}
+          {wideScreen && !sidebarCollapsed && !inMode && <SidebarBrand dark={resolvedTheme === "dark"} onOpenInbox={markEnters ? () => { actions.counted?.("inbox", "button"); enterInbox(); } : null} />}
           {inboxBack ? <button type="button" id="inbox-back" className="icon-button inbox-back" aria-label={t("Back")} title={t("Back")} onClick={inbox.back}><ChevronLeft /></button> : <button
             type="button"
             id="drawer-toggle"
@@ -1329,7 +1332,7 @@ export function App() {
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
             <ReorderContext.Provider value={reorderCoordinator}><MachineSidebar machines={sidebarMachines} allMachines={machines} watching={auth?.role === "watch"} appLayout={appLayoutOn} drawerOpen={drawerOpen} filterRequest={sidebarFilterRequest} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} activity={activity} actions={actions} onSelect={selectTarget} onUsageLogin={(paneId) => { selectTarget("local", paneId, "terminal"); void load(); }} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={openNewOn}
-              footerStart={<>{setupRow}{modeOffered && <InboxFootEntry onOpen={() => { actions.counted?.("inbox", "button"); enterInbox(); }} />}</>} /></ReorderContext.Provider>
+              footerStart={<>{setupRow}{modeOffered && !markEnters && <InboxFootEntry onOpen={() => { actions.counted?.("inbox", "button"); enterInbox(); }} />}</>} /></ReorderContext.Provider>
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>}
