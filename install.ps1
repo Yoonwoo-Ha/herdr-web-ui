@@ -582,6 +582,10 @@ function Get-RecordAdvice($Record) {
 function Get-TrustCommand([string]$Path) {
     "git config --global --add safe.directory '$($Path -replace "'", "''")'"
 }
+# the command that builds a checkout from its own sources with its launcher, the path quoted as Get-TrustCommand quotes one
+function Get-BuildCommand([string]$Launcher) {
+    "`$env:OVIS_FROM_SOURCE = '1'; bun '$($Launcher -replace "'", "''")' install"
+}
 $legacyStopped = $false
 if ($legacy) {
     Write-Host "Ovis: moving the installed plugin to its Ovis id; its settings and token come along"
@@ -715,7 +719,7 @@ if (-not $plugin) {
             if ($gitFailed) { throw "git could not read the commit of the installed plugin in $($plugin.plugin_root) (git said: $gitFailed), so this installer cannot tell whether its build is the one of that commit; $unchanged. Run this again; if git says the same, fix what it says first." }
             # a build to finish in a folder whose commit cannot be read: built as it is by its own launcher, which stamps the
             # version alone there, and then taken as built
-            if (-not $installedCommit) { throw "git could not read the commit of the installed plugin in $($plugin.plugin_root) (it is no git checkout, or not one's top level), so this installer cannot tell whether it is $Ref; $unchanged. To build that folder as it is, stop Ovis (herdr plugin action invoke $pluginId.stop-windows), run `$env:OVIS_FROM_SOURCE = '1'; bun '$launcherScript' install, then run this again." }
+            if (-not $installedCommit) { throw "git could not read the commit of the installed plugin in $($plugin.plugin_root) (it is no git checkout, or not one's top level), so this installer cannot tell whether it is $Ref; $unchanged. To build that folder as it is, stop Ovis (herdr plugin action invoke $pluginId.stop-windows), run $(Get-BuildCommand $launcherScript), then run this again." }
             # herdr checks the ref out detached, so the checkout knows its commit, not the branch: the ref is the installed
             # checkout only when it names that commit (a commit id, short ones too, among the checkout's objects, never a ref
             # of that name there, or a branch or tag whose commit on GitHub is it). A rerun keeps the installed plugin, so
@@ -735,6 +739,33 @@ if (-not $plugin) {
                     throw "The installed plugin is at commit $($installedCommit.Substring(0, 12)), $at. This installer does not move an installed plugin to another branch or commit, or to where its branch has moved since, so $unchanged. To install $Ref, stop Ovis (herdr plugin action invoke $pluginId.stop-windows), run `$env:OVIS_FROM_SOURCE = '1'; herdr plugin install devswha/ovis --ref $Ref --yes (INSTALL.md, Update: it replaces the checkout), then run this again."
                 }
             }
+            $kept = Join-Path $plugin.plugin_root '.ovis\server\bin'
+            $keptBinary = Test-Path -LiteralPath (Join-Path $kept 'ovis-server.exe')
+            $keptManifest = Join-Path $kept 'ovis-server.json'
+            $keptVersion = if (Test-Path -LiteralPath $keptManifest) { try { (Get-Content -Raw -LiteralPath $keptManifest | ConvertFrom-Json).version } catch { '' } } else { '' }
+            # Whether the launcher runs the release's binary kept in $kept without asking the release: one of this version
+            # whose executable has the SHA-256 its manifest names, with its client (scripts/server-install.ts
+            # verifiedInstall, but for the signature, checked when it was installed). Any other it fetches again.
+            $keptRuns = {
+                $release = try { Get-Content -Raw -LiteralPath $keptManifest -ErrorAction Stop | ConvertFrom-Json } catch { $null }
+                $sha = "$($release.assets.'windows-x64'.sha256)"
+                $release.version -eq $checkoutVersion -and $sha -cmatch '^[0-9a-f]{64}$' -and (Test-Path -LiteralPath (Join-Path $kept 'dist\index.html')) -and
+                    "$(try { (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $kept 'ovis-server.exe') -ErrorAction Stop).Hash } catch { '' })".ToLowerInvariant() -ceq $sha
+            }
+            # The release is asked first whenever the launcher's stop or herdr's next start would have to ask it: no kept
+            # binary the launcher runs without it. Out of reach, the stop below would stop a server (through the binary's
+            # absence, the sources) that herdr's start, with the marker taken back, could not start again if the build then
+            # failed (offline, bun install fetches nothing): nothing is stopped or changed then. A release in reach without
+            # this version's (a branch's) is no reason: the stop and the start go to the sources, as before.
+            if (-not (& $keptRuns)) {
+                $probe = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
+                $unreachable = try { $null = Save-ReleaseFile "$(Get-ReleasesBase)/v$checkoutVersion/ovis-server.json" $probe 65536 'ovis-server.json'; '' }
+                    catch { "$($_.Exception.Message)" } finally { Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue }
+                if ($unreachable) {
+                    $without = if ($keptBinary) { "the release's binary kept in $kept is not one the launcher runs without it" } else { 'this checkout keeps no release binary' }
+                    throw "The release of version $checkoutVersion could not be reached ($unreachable), and $without`: Ovis would be stopped for the build, and if the build failed too, herdr could not start it again until the release can be reached. So the branch was not built, and $unchanged. Run this again once the release can be reached."
+                }
+            }
             Write-Host "Ovis: the installed branch was not built from its own sources; building it"
             $givenSource = $env:OVIS_FROM_SOURCE
             $built = $false
@@ -747,10 +778,6 @@ if (-not $plugin) {
                 # caller's OVIS_FROM_SOURCE=1 it would go to scripts/plugin.ts); without it, nothing binary can run, so the
                 # stop goes to scripts/plugin.ts at once, which asking the release first could fail before (offline, or its
                 # downloads failing).
-                $kept = Join-Path $plugin.plugin_root '.ovis\server\bin'
-                $keptBinary = Test-Path -LiteralPath (Join-Path $kept 'ovis-server.exe')
-                $keptManifest = Join-Path $kept 'ovis-server.json'
-                $keptVersion = if (Test-Path -LiteralPath $keptManifest) { try { (Get-Content -Raw -LiteralPath $keptManifest | ConvertFrom-Json).version } catch { '' } } else { '' }
                 # whether a stop ran and succeeded: $null where there was nothing to stop it with. Succeeded is not stopped:
                 # scripts/plugin.ts's stop says "stopped Ovis (pid N)" for a server it stopped, and also exits 0 for none.
                 $stopped = $null
@@ -806,17 +833,17 @@ if (-not $plugin) {
                 & bun $launcherScript install
                 if ($LASTEXITCODE -ne 0) {
                     $code = $LASTEXITCODE
-                    # without the marker (taken back below), the launcher's start runs the release's binary where the checkout
-                    # keeps this version's (scripts/server-install.ts verifiedInstall, which also checks its signature), as
-                    # before this run
-                    $back = if ($keptVersion -eq $checkoutVersion -and (Test-Path -LiteralPath (Join-Path $kept 'ovis-server.exe')) -and (Test-Path -LiteralPath (Join-Path $kept 'dist\index.html'))) {
-                        " Until then, herdr plugin action invoke $pluginId.start-windows starts the release's binary this checkout ran before."
+                    # without the marker (taken back below), the launcher's start runs the release's binary the checkout keeps
+                    # once it accepts it without the release, which $keptRuns tells but for the manifest's signature: said as
+                    # what may be, not promised
+                    $back = if (& $keptRuns) {
+                        " Until then, herdr plugin action invoke $pluginId.start-windows may start the release's binary this checkout keeps, if the launcher still accepts it (its signature, which this installer does not check, included)."
                     } else { '' }
                     # Without a stop that stopped one, a server no record named may still run from the checkout, holding its
                     # files; hardly where neither packages nor a release binary were there to run one (nor a stop).
                     $how = if ($stoppedOne) { 'and Ovis is stopped' }
                         elseif ($null -eq $stopped) { 'with no server recorded as running, nor packages or a release binary here to run one' }
-                        else { "and an Ovis no stop reached may still run from this checkout, holding its files open: Get-CimInstance Win32_Process | Where-Object CommandLine -like '*$($plugin.plugin_root)*' finds it, and Stop-Process -Id <its ProcessId> stops it" }
+                        else { "and an Ovis no stop reached may still run from this checkout, holding its files open: Get-CimInstance Win32_Process | Where-Object CommandLine -like '*$([WildcardPattern]::Escape($plugin.plugin_root) -replace "'", "''")*' finds it, and Stop-Process -Id <its ProcessId> stops it" }
                     throw "bun failed (exit $code) building the installed branch, $how. Fix the error above, then run this again with OVIS_REF=$Ref to build it and start Ovis.$back$legacyNote"
                 }
                 $built = $true
@@ -830,7 +857,7 @@ if (-not $plugin) {
                     $versionNow = (Get-Content -Raw -LiteralPath (Join-Path $plugin.plugin_root 'package.json') | ConvertFrom-Json).version
                     $builtFor = "$(Get-Content -Raw -LiteralPath $marker -ErrorAction SilentlyContinue)".Trim()
                     if ($builtFor -ne $versionNow) {
-                        Write-Host "Ovis: the build is not marked finished: the installed checkout moved from version $builtFor to $versionNow while it was built, so herdr's next start does not run it. To build it, stop Ovis (herdr plugin action invoke $pluginId.stop-windows), run `$env:OVIS_FROM_SOURCE = '1'; bun '$launcherScript' install, then start it (herdr plugin action invoke $pluginId.start-windows)"
+                        Write-Host "Ovis: the build is not marked finished: the installed checkout moved from version $builtFor to $versionNow while it was built, so herdr's next start does not run it. To build it, stop Ovis, build it, then start it:`nherdr plugin action invoke $pluginId.stop-windows`n$(Get-BuildCommand $launcherScript)`nherdr plugin action invoke $pluginId.start-windows"
                     } else {
                     Write-Host "Ovis: the build is not marked finished (the installed checkout moved to another commit while it was built, or git could not read its commit: the launcher's line above says which), though herdr's next start still runs it as it is; run this again with OVIS_REF naming the commit it is at now to build that one"
                     }
