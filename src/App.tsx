@@ -366,6 +366,7 @@ export function App() {
     // undefined holds the decision until the access facts and this device's role are in: a failed read decides nothing
     pairingGate: security.state === "loading" || security.state === "error" || auth === null ? undefined : security.state === "known" ? security.summary.pairing_gate : null,
     watching: auth?.role === "watch",
+    showUsage: settings.showUsage,
   });
   const guideShown = setupGuide.guide !== null && !setupGuide.paused;
   // the sidebar's Setup: N left (components/SetupProgressRow.tsx), once the guide is gone; the phone is another
