@@ -7,7 +7,8 @@ import { FakeAccountService } from "../shared/account-service-fake.ts";
 import { encodeOffer } from "../shared/relay-offer.ts";
 import { loadRelayIdentity } from "../server/relay/identity.ts";
 import { updateStateDir } from "../server/update-state.ts";
-import { approveWaiting, COMMAND_ALIASES, link, type WaitingDevice } from "./plugin-link.ts";
+import { approveWaiting, link, type WaitingDevice } from "./plugin-link.ts";
+import { COMMAND_ALIASES } from "./plugin-runtime.ts";
 
 const ORIGIN = "http://127.0.0.1:7317";
 const SERVICE = "https://account.test";

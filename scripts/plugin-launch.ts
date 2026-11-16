@@ -30,6 +30,7 @@
  * checkout can always be stopped. This file imports nothing outside scripts/ and shared/.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { constants } from "node:os";
 import { join, resolve } from "node:path";
 import { hostPlatform, installServer, NoBinaryRelease, releasesBase } from "./server-install.ts";
 import { sourceTrees } from "./server-manifest.ts";
@@ -37,24 +38,26 @@ import { sourceTrees } from "./server-manifest.ts";
 const root = resolve(import.meta.dir, "..");
 const USAGE = "usage: bun scripts/plugin-launch.ts install | <command> [flags]   (the commands of scripts/plugin.ts: start, stop, status, phone-setup, add, ...)";
 
-const SIGNAL_NUMBERS: Record<string, number> = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 };
-/** the SIGTERM or SIGHUP this launcher was last sent while it ran a child: steps run one after another stop at it */
-let stopped: NodeJS.Signals | undefined;
+/** a process `signal` ended exits with this, as a shell says it: 128 + the signal's number on this platform */
+const signalExit = (signal: NodeJS.Signals): number => 128 + constants.signals[signal];
 
-/** Runs `argv` with this process's terminal and gives back its exit code. */
-export async function run(argv: string[], env: Record<string, string> = {}): Promise<number> {
+/**
+ * Runs `argv` with this process's terminal and gives back its exit code. `received` keeps the first SIGTERM or SIGHUP
+ * this launcher was sent while it ran: the caller that runs steps one after another stops at it.
+ */
+export async function run(argv: string[], env: Record<string, string> = {}, received: { signal?: NodeJS.Signals } = {}): Promise<number> {
   // the child takes back what it handed out (a pairing code) on SIGTERM or SIGHUP: pass them on, and let Ctrl+C reach
   // it alone (it shares the terminal) instead of ending this launcher before it. Listening starts before the child does,
   // so a signal that comes while it starts no longer ends this launcher with the child left running: Bun runs a listener
   // from the event loop, so one for a signal that came before the spawn returned runs once `child` is set.
   let child: Bun.Subprocess | undefined;
-  const forward = (signal: NodeJS.Signals) => () => { stopped = signal; try { child?.kill(signal); } catch { /* gone already */ } };
+  const forward = (signal: NodeJS.Signals) => () => { received.signal ??= signal; try { child?.kill(signal); } catch { /* gone already */ } };
   const handlers = { SIGTERM: forward("SIGTERM"), SIGHUP: forward("SIGHUP"), SIGINT: () => {} } as const;
   for (const [signal, handler] of Object.entries(handlers)) process.on(signal, handler);
   try {
     child = Bun.spawn(argv, { cwd: root, env: { ...process.env, ...env }, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
     const code = await child.exited;
-    return child.signalCode ? 128 + (SIGNAL_NUMBERS[child.signalCode] ?? 0) : code;
+    return child.signalCode ? signalExit(child.signalCode) : code;
   } finally {
     for (const [signal, handler] of Object.entries(handlers)) process.off(signal, handler);
   }
@@ -63,11 +66,13 @@ export async function run(argv: string[], env: Record<string, string> = {}): Pro
 /** The checkout's own path: built from source, and scripts/plugin.ts run by this Bun. */
 async function fromSource(command: string, args: string[]): Promise<number> {
   if (command !== "install") return await run([process.execPath, join(root, "scripts", "plugin.ts"), command, ...args]);
+  // this build's own: a signal an earlier run in the same process was sent belongs to that run
+  const received: { signal?: NodeJS.Signals } = {};
   for (const step of [["install"], ["run", "build"], [join(root, "scripts", "pty-sidecar.ts"), "install"]]) {
-    const code = await run([process.execPath, ...step]);
+    const code = await run([process.execPath, ...step], {}, received);
     if (code !== 0) return code;
     // a stop that came as the step started can find it already ended, passed on to nothing: no further step starts
-    if (stopped) return 128 + SIGNAL_NUMBERS[stopped]!;
+    if (received.signal) return signalExit(received.signal);
   }
   return 0;
 }

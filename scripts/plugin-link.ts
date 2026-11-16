@@ -2,7 +2,7 @@
  * `link`: a PC with no screen of its own joins the relay from its terminal (docs/relay.md, "A PC
  * with no screen"). Both ways are the ones its own Settings page offers, through the same routes:
  *
- * - `link` (also `add` and `login`, COMMAND_ALIASES): sign in to the account with a device code (as a PC's own page does,
+ * - `link` (also `add` and `login`, scripts/plugin-runtime.ts COMMAND_ALIASES): sign in to the account with a device code (as a PC's own page does,
  *   src/lib/account/deviceSignIn.ts): the Ovis link page's where the service has it, else, or with
  *   `--github` / `--google`, the provider's own device flow. Then list this PC in the account (src/lib/account/addThisPc.ts),
  *   then show one QR code: a device signed in to that account that scans it puts this PC in the account, with nothing
@@ -66,9 +66,6 @@ export interface LinkOptions {
   readonly now?: () => number;
   readonly wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
-
-/** The names `link` also answers to: what a person looks for when a PC is to join their account. */
-export const COMMAND_ALIASES: Readonly<Record<string, "link">> = { add: "link", login: "link" };
 
 /** How often the waiting screen looks for a device that asks to add this PC. */
 const POLL_MS = 2_000;

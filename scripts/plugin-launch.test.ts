@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { type CheckoutCommit, checkoutCommit, gitFailed, main } from "./plugin-launch.ts";
+import { type CheckoutCommit, checkoutCommit, gitFailed, main, run } from "./plugin-launch.ts";
 import { generateKeyPair, MANIFEST, releaseFile, PTY_ASSETS, ptyFile, SERVER_PLATFORMS, signManifest, sourceTrees, writeManifest } from "./server-manifest.ts";
 
 /**
@@ -669,4 +669,56 @@ process.exit(await main(["install"], { home: ${JSON.stringify(join(scratch, "ser
       } finally { cleanUp(launcher, pidFile); }
     }, 30_000);
   }
+
+  posix("names the first of two signals that came while a build step ran that then ended with 0", async () => {
+    // The first step is sent a SIGTERM by the launcher (passed on from its own), and answers it with a SIGHUP to the
+    // launcher; once that one is passed on too, it ends with 0. Each signal comes only after the one before it was
+    // passed on, so the order is the same every time.
+    const second = join(scratch, "second-step");
+    const pidFile = join(scratch, "child");
+    const launcher = launch(`const spawn = Bun.spawn;
+let steps = 0;
+Bun.spawn = (argv, options) => {
+  if (argv[0] !== process.execPath) return spawn(argv, options);
+  steps += 1;
+  if (steps > 1) return spawn(["sh", "-c", ": >> ${second}"], options);
+  return spawn(["sh", "-c", 'trap "kill -HUP $PPID" TERM; trap "exit 0" HUP; echo $$ > ${pidFile}; kill -TERM $PPID; while :; do sleep 0.05; done'], options);
+};
+const { main } = await import(${launcherModule});
+process.exit(await main(["install"], { home: ${JSON.stringify(join(scratch, "server"))} }));`, { OVIS_FROM_SOURCE: "1" });
+    try {
+      const code = await within(launcher.exited, "the launcher never exited");
+      // regression (fails on main: 129, the SIGHUP that came last)
+      expect({ code, secondStep: existsSync(second) }, said()).toEqual({ code: 143, secondStep: false });
+    } finally { cleanUp(launcher, pidFile); }
+  }, 30_000);
+
+  posix("does not stop a build at a signal an earlier run in the same process was sent", async () => {
+    // run() and main() called one after another in one process, as only a caller other than the launcher's CLI would:
+    // the SIGTERM the first run passed on to its child belongs to that run, and the build after it runs every step.
+    const pidFile = join(scratch, "child");
+    const launcher = launch(`const { main, run } = await import(${launcherModule});
+const first = await run(["sh", "-c", 'echo $$ > ${pidFile}; kill -TERM $PPID; while :; do sleep 0.05; done']);
+const spawn = Bun.spawn;
+let steps = 0;
+Bun.spawn = (argv, options) => {
+  if (argv[0] !== process.execPath) return spawn(argv, options);
+  steps += 1;
+  return spawn(["true"], options);
+};
+const code = await main(["install"], { home: ${JSON.stringify(join(scratch, "server"))} });
+console.log(JSON.stringify({ first, code, steps }));
+process.exit(0);`, { OVIS_FROM_SOURCE: "1" });
+    try {
+      const [out, code] = await within(Promise.all([new Response(launcher.stdout).text(), launcher.exited]), "the launcher never exited");
+      expect(code, said()).toBe(0);
+      // regression (fails on main: the build stopped after its first step with 143)
+      expect(JSON.parse(out)).toEqual({ first: 143, code: 0, steps: 3 });
+    } finally { cleanUp(launcher, pidFile); }
+  }, 30_000);
+
+  posix("exits with 128 + the platform's number of whatever signal ended the child", async () => {
+    // regression (fails on main: 128 for SIGKILL and SIGQUIT, which its table of HUP, INT and TERM did not know)
+    for (const [signal, code] of [["KILL", 137], ["QUIT", 131], ["TERM", 143]] as const) expect([signal, await run(["sh", "-c", `kill -${signal} $$`])]).toEqual([signal, code]);
+  });
 });
