@@ -120,9 +120,16 @@ trial folder (a folder in it this account cannot write in, say) names what is le
 of the kit's server, the one process the join starts and then signals by its pid, is signalled by the same rule: only
 while that pid is still the kit's server in the temporary folder, of this account, with the command line
 `<that program> serve` (a pid freed when it ended may belong to another process by then). Every end of that check is
-bounded: TERM, up to 5 s, KILL, then up to 2 s for it to end. A check that still runs then is named with its pid and the
-join stops (exit 14) instead of waiting on it; a server that never answers the check is stopped that way and refused
-(exit 24).
+bounded: TERM, up to 5 s, KILL, then up to 2 s for it to be seen ended, and the join waits on it only once it is
+seen ended. Whether it still runs is read from `/proc`, so a machine without `ps` is no different; a process with
+that pid that `/proc` does not show as the join's child (its entry unreadable, or `/proc` of another PID namespace)
+counts as still running. A check that still runs then, or was not seen to end, is named with its pid and with what it
+was sent (TERM, TERM and KILL, or nothing), in English and Korean, and the join stops (exit 14) instead of waiting on
+it. It gives no command that signals that pid: it says how to look at the process first (`ps -o pid,user,args -p
+<pid>`, or `ls -l /proc/<pid>/exe`), and to stop it only if it is the kit's `ovis-server serve`. A server that never
+answers the check is stopped that way and refused (exit 24). Each program copied into the trial folder is checked by
+its SHA-256, read from the copy itself, against the sum the kit's `SHA256SUMS` lists for it, so a machine without
+`cmp` (no diffutils) is no different, and a `sha256sum` that fails there matches nothing and is refused (exit 14).
 
 The port: a port another program already listens on is refused (exit 14), on a run again once the previous trial
 server is stopped, and a health answer counts only when the program listening on the port is the trial's own
@@ -150,14 +157,14 @@ The undo removes its own `join.sh` with the folder, so running the same undo lin
 ## Exit codes, and Ctrl+C
 
 `join.sh` exits 0 when the machine is in the account a sign-in of this run put it in: the trial server named no account
-before the add and names one after it. It names that account, as the add above does, with the undo line, and does not
-call it yours: a pairing that raced the add would look the same to the join. The account is read on the trial server's
-owner socket, up to five times a second apart, before the add and after it; a try counts only when curl ended well and
-the answer is one whole JSON object whose first field is `account`, as the server writes it (an answer cut off, whatever
-it holds so far, is no answer), and a read that no try answered counts as unknown, never as no account. A first try with
-no answer is said once (the tries can take up to about 30 s). The trial server's health and pairing gate are read by the
-same rule, and so is the account the undo reports. Accounts are shown shortened, as the add shows them (their first 12
-characters).
+before the add and names one after it. It names that account as the one the machine is in now, with the undo line, and
+does not call it yours: a pairing that raced the add would look the same to the join. The account is read on the trial
+server's owner socket, up to five times a second apart, before the add and after it; a try counts only when curl ended
+well and the answer is one whole JSON object whose first field is `account`, as the server writes it (an answer cut off,
+whatever it holds so far, is no answer; an account whose id is the text `null` is an account), and a read that no try
+answered counts as unknown, never as no account. A first try with no answer is said once (the tries can take up to
+about 30 s). The trial server's health and pairing gate are read by the same rule, and so is the account the undo
+reports. Accounts are shown shortened, as the add shows them (their first 12 characters).
 
 After an add that returned: exit 38 when the trial server names an account that no sign-in of this run put it in (the
 machine was in it before, or its account could not be read before the add): the join names that account, says "your

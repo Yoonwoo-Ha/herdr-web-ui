@@ -239,19 +239,20 @@ j_remove() {
   printf '%s\n' "$j_made" | while IFS= read -r p; do [ -z "$p" ] || rmdir -- "$p" 2>/dev/null; done
   return 0
 }
-# j_account_of <account status>: `null` when the trial server names no account, the account it names, or nothing (no
-# answer) unless the answer is one whole JSON object whose first field is the account, as the server writes it
-# ({"account":null,...} or {"account":"<id>",...})
+# j_account_of <account status>: `null` when the trial server names no account, `=<id>` for the account <id> it names
+# (so an account whose id is the text null is never taken for none), or nothing (no answer) unless the answer is one
+# whole JSON object whose first field is the account, as the server writes it ({"account":null,...} or
+# {"account":"<id>",...})
 j_account_of() {
   j_whole "$1" || return 0
   case $j_b in
     '{"account":null}' | '{"account":null,'*) printf null ;;
-    '{"account":"'*) printf '%s' "$j_b" | sed -n 's/^{"account":"\([^"]*\)"[,}].*/\1/p' ;;
+    '{"account":"'*) printf '%s' "$j_b" | sed -n 's/^{"account":"\([^"][^"]*\)"[,}].*/=\1/p' ;;
   esac
 }
-# j_short <account>: an account as the plugin's add shows it (scripts/plugin-link.ts shortId): control characters
-# dropped, its first 12 characters
-j_short() { printf '%s' "$1" | tr -d '[:cntrl:]' | cut -c1-12; }
+# j_short <account>: an account as j_account_of gives it, shown as the plugin's add shows it (scripts/plugin-link.ts
+# shortId): control characters dropped, the first 12 characters of its id
+j_short() { printf '%s' "${1#=}" | tr -d '[:cntrl:]' | cut -c1-12; }
 # j_account_read: sets j_got to the trial server's account as j_account_of gives it, read up to five times a second
 # apart, as the pairing gate is (j_gate_closed): one failed read (the server just restarted, say) is not taken for an
 # answer. Empty only when no try answered. A first try that got no answer is said, once: the tries can take a while
@@ -801,28 +802,68 @@ j_probe_is() {
   [ "$(readlink "/proc/$probe/exe" 2>/dev/null)" = "$(j_canonical "$j_stage/bin/ovis-server")" ] || return 1
   [ "$({ tr '\000' '\n' <"/proc/$probe/cmdline"; } 2>/dev/null)" = "$j_stage/bin/ovis-server${J_NL}serve" ]
 }
-# j_probe_running: $probe is a child of this shell that has not ended (a zombie has); a pid that is no longer this
-# shell's child is not
-j_probe_running() {
-  [ "$(ps -o ppid= -p "$probe" 2>/dev/null | tr -d ' ')" = "$$" ] && [ "$(ps -o stat= -p "$probe" 2>/dev/null | cut -c1)" != Z ]
+# j_probe_state: sets j_run to what /proc/<pid>/stat says of $probe (so it holds without ps): running (a child of this
+# shell that has not ended), ended (a zombie child of this shell, or no process with that pid: `wait` returns at once
+# on either), or unknown (a process with that pid that /proc does not show as this shell's child: its stat could not
+# be read, or /proc is another PID namespace's). The state and the parent are the first two fields after the program's
+# name, which is in parentheses and may itself hold spaces or parentheses
+j_probe_state() {
+  j_run=ended
+  if j_stat=$(cat "/proc/$probe/stat" 2>/dev/null); then
+    j_stat=${j_stat##*") "}
+    j_state=${j_stat%% *}
+    j_stat=${j_stat#* }
+    if [ "${j_stat%% *}" = "$$" ]; then
+      [ "$j_state" = Z ] || j_run=running
+      return 0
+    fi
+  fi
+  ! kill -0 "$probe" 2>/dev/null || j_run=unknown
+}
+j_probe_running() { j_probe_state; [ "$j_run" = running ]; }
+# j_look <pid> [program]: how to look at a process the join could not stop or could not tell, before stopping it by
+# hand: stop it only if its program is <program>, else the kit's server of the check (a pid is never given with a
+# command that signals it)
+j_look() {
+  if [ -n "${2:-}" ]; then printf 'look at it first: ps -o pid,user,args -p %s, or ls -l /proc/%s/exe, which shows its program; stop it only if that is %s' "$1" "$1" "$2"
+  else printf 'look at it first: ps -o pid,user,args -p %s, or ls -l /proc/%s/exe, which shows its program ("(deleted)" once its temporary folder is gone); stop it only if it is the kit'"'"'s ovis-server serve' "$1" "$1"; fi
+}
+j_look_ko() {
+  if [ -n "${2:-}" ]; then printf '먼저 확인하세요: ps -o pid,user,args -p %s 또는 ls -l /proc/%s/exe (그 프로그램을 보여 줍니다). 그 프로그램이 %s 일 때만 멈추세요' "$1" "$1" "$2"
+  else printf '먼저 확인하세요: ps -o pid,user,args -p %s 또는 ls -l /proc/%s/exe (그 프로그램을 보여 주며, 임시 폴더가 지워졌으면 "(deleted)"가 붙습니다). 키트의 ovis-server serve 일 때만 멈추세요' "$1" "$1"; fi
+}
+# j_probe_how: after a j_probe_stop that failed, j_how and j_how_ko say what the check was sent (TERM, TERM and KILL, or
+# nothing) and whether it was seen still running then
+j_probe_how() {
+  if [ -z "$j_signalled" ]; then
+    j_how="was not signalled, as the join could not tell that it is still the kit's server"
+    j_how_ko="아직 키트의 서버인지 알 수 없어 신호를 보내지 않았습니다"
+  elif [ "$j_run" = running ]; then
+    j_how="did not end after $j_signalled" j_how_ko="보낸 신호($j_signalled) 뒤에도 끝나지 않았습니다"
+  else
+    j_how="could not be seen to end after $j_signalled" j_how_ko="보낸 신호($j_signalled) 뒤에 끝났는지 확인하지 못했습니다"
+  fi
 }
 # j_probe_stop: ends the check of the kit's server, bounded, on every path (its end and an interruption): up to 1 s for a
 # probe just started to become the kit's server (env execs it); then, only while it is the probe (j_probe_is), TERM, up
-# to 5 s for it to end (it may ignore TERM), and KILL, which it cannot; then up to 2 s for it to end. Only an ended child
-# is waited for, so the join never hangs on it. False, with nothing waited for, when a child of this shell still runs
-# then (one that is not the probe is never signalled); true once it has ended
+# to 5 s for it to end (it may ignore TERM), and KILL, which it cannot; then up to 2 s for it to be seen ended. `wait`
+# runs only on a child seen ended (j_probe_state), where it returns at once: every wait here is bounded. False, with
+# nothing waited for, when it was not seen ended then, running or unknown (j_run); one that is not the probe is never
+# signalled, and j_signalled names what it was sent: TERM, TERM and KILL, or nothing. True once it has ended
 j_probe_stop() {
   j_i=0
+  j_signalled=""
   while ! j_probe_is && j_probe_running && [ "$j_i" -lt 5 ]; do j_pause 0.2; j_i=$((j_i + 1)); done
   if j_probe_is; then
+    j_signalled=TERM
     kill -TERM "$probe" 2>/dev/null
     j_i=0
     while j_probe_is && [ "$j_i" -lt 25 ]; do j_pause 0.2; j_i=$((j_i + 1)); done
-    ! j_probe_is || kill -KILL "$probe" 2>/dev/null
+    if j_probe_is; then j_signalled="TERM and KILL"; kill -KILL "$probe" 2>/dev/null; fi
   fi
   j_i=0
-  while j_probe_running && [ "$j_i" -lt 10 ]; do j_pause 0.2; j_i=$((j_i + 1)); done
-  ! j_probe_running || return 1
+  while j_probe_state; [ "$j_run" != ended ] && [ "$j_i" -lt 10 ]; do j_pause 0.2; j_i=$((j_i + 1)); done
+  [ "$j_run" = ended ] || return 1
   wait "$probe" 2>/dev/null
   return 0
 }
@@ -858,7 +899,11 @@ j_probe_profile() {
     [ -n "$answer" ] || j_pause 0.3
   done
   # a server that does not end is not left to run on unseen: the join stops here and names it
-  j_probe_stop || refuse 14 "this kit's server, started once for its check (pid $probe), did not end after TERM and KILL: stop it yourself (kill -KILL $probe); nothing was changed"
+  if ! j_probe_stop; then
+    j_probe_how
+    printf 'Ovis: 확인용으로 한 번 실행한 이 키트의 서버(pid %s)는 %s. %s. 아무것도 바꾸지 않았습니다.\n' "$probe" "$j_how_ko" "$(j_look_ko "$probe")" >&2
+    refuse 14 "this kit's server, started once for its check (pid $probe), $j_how; $(j_look "$probe"); nothing was changed"
+  fi
   probe=""
   if [ -z "$answer" ]; then
     # a machine profile that refuses to start says why in one sentence (its temporary state folder's path, say)
@@ -918,7 +963,9 @@ j_uninstall() {
     4) refuse 14 "the service manager of $(id -un) could not be reached, or $J_UNIT did not stop; nothing was removed: run the undo again from a login of $(id -un) (not through su or sudo)" ;;
     2) refuse 14 "$J_HOME/receipt, or the unit $(j_unit_path), was not written by this join as it is now; nothing was removed or stopped: look at both, then remove what is yours yourself" ;;
     3) refuse 14 "the trial server was stopped and its service removed, but its folder $J_HOME could not be removed entirely (left there: $(find "$J_HOME" 2>/dev/null | sed -n '2,4p' | tr '\n' ' ')...): remove what is left yourself" ;;
-    *) refuse 14 "the trial server (pid $pid) did not end; nothing was removed: stop it, then run the undo again" ;;
+    *)
+      printf 'Ovis: 체험용 서버(pid %s)가 끝나지 않아 아무것도 지우지 않았습니다. %s. 그다음 되돌리기를 다시 실행하세요.\n' "$pid" "$(j_look_ko "$pid" "$J_HOME/bin/ovis-server")" >&2
+      refuse 14 "the trial server (pid $pid) did not end; nothing was removed: $(j_look "$pid" "$J_HOME/bin/ovis-server"), then run the undo again" ;;
   esac
   j_linger_ko=""
   if [ -n "$j_linger_left" ]; then j_linger_ko=" $j_linger_left 계정의 lingering은 끄지 못했습니다: loginctl disable-linger $j_linger_left 로 직접 끄세요."
@@ -1053,7 +1100,9 @@ j_interrupted() {
   # the check of the kit's server, if it runs: stopped and waited for, and seen gone, before anything is reported
   if [ -n "${probe:-}" ]; then
     if ! j_probe_stop; then
-      printf 'Ovis: interrupted; the check of the kit'"'"'s server (pid %s) could not be stopped: stop it yourself\n' "$probe" >&2
+      j_probe_how
+      printf 'Ovis: 중단되었습니다. 확인용으로 한 번 실행한 이 키트의 서버(pid %s)는 %s. %s.\n' "$probe" "$j_how_ko" "$(j_look_ko "$probe")" >&2
+      printf 'Ovis: interrupted; the check of the kit'"'"'s server (pid %s) %s; %s\n' "$probe" "$j_how" "$(j_look "$probe")" >&2
       exit "$1"
     fi
     probe=""
@@ -1103,7 +1152,10 @@ mkdir -p "$J_HOME/bin/bin" "$J_HOME/config" "$J_HOME/plugin-state" "$J_HOME/run"
   || { j_rollback; refuse 14 "$J_HOME cannot be filled"; }
 for name in bin/ovis-server bin/bin/ovis-pty-sidecar bin/bin/ovis-pty-sidecar.json; do
   case $name in *.json) mode=600 ;; *) mode=755 ;; esac
-  j_put "$J_HOME/$name" "$mode" <"$j_stage/$name" && cmp -s "$J_HOME/$name" "$j_stage/$name" \
+  # the copy's SHA-256 (sha256sum, checked for above; not cmp, which some minimal systems lack), read from stdin so its
+  # path cannot change the output, against the sum SHA256SUMS lists for it, which is never empty: a sha256sum that
+  # fails gives nothing, which matches no sum
+  j_put "$J_HOME/$name" "$mode" <"$j_stage/$name" && [ "$(sha256sum <"$J_HOME/$name" | cut -c1-64)" = "$(j_kit_sum "$name")" ] \
     || { j_rollback; refuse 14 "the kit's programs cannot be copied into $J_HOME"; }
 done
 rm -rf "$j_stage"
@@ -1212,7 +1264,7 @@ j_gate_open() {
     j_why_ko="체험용 서버의 페어링 관문을 읽지 못해(5번 시도, 열려 있을 수 있음)"
   fi
   case $1 in
-    done) j_lead_en="The machine is in the Ovis account $(j_short "$j_after"), the one the add above names, but" j_lead_ko="기기가 위의 추가가 밝힌 Ovis 계정 $(j_short "$j_after") 에 들어갔지만" ;;
+    done) j_lead_en="The machine is in the Ovis account $(j_short "$j_after") now, but" j_lead_ko="기기가 지금 Ovis 계정 $(j_short "$j_after") 에 들어 있지만" ;;
     returned) j_lead_en="The add returned, and" j_lead_ko="추가는 끝났고" ;;
     *) j_lead_en="The add did not finish, and" j_lead_ko="추가가 끝나지 않았고" ;;
   esac
@@ -1240,8 +1292,8 @@ if [ "$j_added" = 1 ]; then
   if [ "$j_mine" = 1 ]; then j_gate_closed || j_gate_open done; else j_gate_closed || j_gate_open returned; fi
   if [ "$j_mine" = 1 ]; then
     # named, not called yours: a pairing that raced this run's add looks the same from here
-    say "Done: this machine runs the trial Ovis server and is in the Ovis account $(j_short "$j_after"), the one the add above names; on your phone, open it under PCs or Overview in the Ovis app. If that is not your account, undo the join: $(j_undo_line)"
-    say "완료: 이 머신에서 체험용 Ovis 서버가 실행 중이며 위의 추가가 밝힌 Ovis 계정 $(j_short "$j_after") 에 들어 있습니다. 휴대폰의 Ovis 앱에서 PC 또는 개요를 열고 이 머신을 고르세요. 내 계정이 아니면 되돌리세요: $(j_undo_line)"
+    say "Done: this machine runs the trial Ovis server and is in the Ovis account $(j_short "$j_after") now; on your phone, open it under PCs or Overview in the Ovis app. If that is not your account, undo the join: $(j_undo_line)"
+    say "완료: 이 머신에서 체험용 Ovis 서버가 실행 중이며 지금 Ovis 계정 $(j_short "$j_after") 에 들어 있습니다. 휴대폰의 Ovis 앱에서 PC 또는 개요를 열고 이 머신을 고르세요. 내 계정이 아니면 되돌리세요: $(j_undo_line)"
     exit 0
   fi
   if [ -n "$j_after" ] && [ "$j_after" != null ]; then
