@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { SessionSnapshot } from "../../shared/protocol.ts";
 import { resolveLink, type AppLink } from "./deepLink.ts";
-import { linkLanding, linkTarget, machineGone, machineMissing, notificationLanding, notificationTargetFromSearch, notificationTargets, notificationViewForPane, sameLink, type NotificationTarget } from "./notificationTarget.ts";
+import { linkLanding, linkTarget, machineGone, machineMissing, notificationLanding, notificationTargetFromSearch, notificationTargets, notificationViewForPane, sameLink, SELECT_PANE_EVENT, type NotificationTarget } from "./notificationTarget.ts";
 
 function messages() {
   let receive!: (event: MessageEvent) => void;
@@ -96,6 +96,38 @@ describe("notification pane delivery", () => {
     expect(selected).toEqual([{ machine_id: "local", pane_id: "pane-a" }]);
     expect(resumed).toEqual([{ machine_id: "local", pane_id: "pane-b" }]);
     expect(remounted).toEqual([]);
+  });
+
+  it("takes the Android app's page event as the worker's message, and tells the app it was heard", () => {
+    const worker = new EventTarget();
+    const page = new EventTarget();
+    const subscribe = notificationTargets(worker, undefined, page);
+    const selected: unknown[] = [];
+    subscribe((target) => selected.push(target));
+    const data = { type: "select-pane", pane_id: "w1:p9", machine_id: "build box", view: "chat", workspace_id: "w1" };
+    worker.dispatchEvent(new MessageEvent("message", { data }));
+    // cancelled: the app's script then does not dispatch it on the worker as well (an older page's way)
+    expect(page.dispatchEvent(new MessageEvent(SELECT_PANE_EVENT, { data, cancelable: true }))).toBe(false);
+    expect(selected).toEqual([
+      { machine_id: "build box", pane_id: "w1:p9", view: "chat", workspace_id: "w1" },
+      { machine_id: "build box", pane_id: "w1:p9", view: "chat", workspace_id: "w1" },
+    ]);
+    // the page's own messages are not this event
+    page.dispatchEvent(new MessageEvent("message", { data }));
+    expect(selected).toHaveLength(2);
+  });
+
+  it("ignores a malformed page event without losing a valid pending selection", () => {
+    const page = new EventTarget();
+    const subscribe = notificationTargets(undefined, undefined, page);
+    page.dispatchEvent(new MessageEvent(SELECT_PANE_EVENT, { data: { type: "select-pane", pane_id: "pane-a" } }));
+    for (const data of [null, "select-pane", { type: "other", pane_id: "pane-b" }, { type: "select-pane", pane_id: 7 }]) {
+      page.dispatchEvent(new MessageEvent(SELECT_PANE_EVENT, { data }));
+    }
+    page.dispatchEvent(new Event(SELECT_PANE_EVENT));
+    const selected: unknown[] = [];
+    subscribe((target) => selected.push(target));
+    expect(selected).toEqual([{ machine_id: "local", pane_id: "pane-a" }]);
   });
 
   it("an old cleanup cannot detach a later app subscriber", () => {
