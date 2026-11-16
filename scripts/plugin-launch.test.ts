@@ -582,16 +582,91 @@ console.log(JSON.stringify({ code, asked }));`;
 
 describe("the launcher's child", () => {
   // POSIX signals: on Windows herdr runs scripts/plugin.ps1, and no SIGTERM or SIGHUP reaches a launcher there
-  it.skipIf(process.platform === "win32")("gets the SIGTERM sent to the launcher, and the launcher exits as the child did", async () => {
-    const ready = join(scratch, "ready");
-    const got = join(scratch, "got");
-    const script = `const { run } = await import(${JSON.stringify(join(import.meta.dir, "plugin-launch.ts"))});
-process.exit(await run(["sh", "-c", 'trap "echo got > ${got}; exit 3" TERM; : > ${ready}; while :; do sleep 0.05; done']));`;
-    const launcher = Bun.spawn([process.execPath, "-e", script], { stdout: "ignore", stderr: "pipe" });
-    const deadline = Date.now() + 10_000;
-    while (!existsSync(ready)) { if (Date.now() > deadline) throw new Error("the child never started"); await Bun.sleep(20); }
-    launcher.kill("SIGTERM");
-    expect(await launcher.exited).toBe(3);
-    expect(readFileSync(got, "utf8")).toBe("got\n");
-  });
+  const posix = it.skipIf(process.platform === "win32");
+  const launcherModule = JSON.stringify(join(import.meta.dir, "plugin-launch.ts"));
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  /** `promise`, or a failure after 10 s: a launcher that hangs fails its test, which still reaches its `finally` */
+  async function within<T>(promise: Promise<T>, what: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(what)), 10_000); })]);
+    } finally { clearTimeout(timer); }
+  }
+  /** the launcher runs `script`, its stderr into a file: a child left running would hold a pipe open */
+  const launch = (script: string, env: Record<string, string> = {}) =>
+    Bun.spawn([process.execPath, "-e", script], { env: { ...process.env, ...env }, stdout: "pipe", stderr: Bun.file(join(scratch, "stderr")) });
+  const said = () => readFileSync(join(scratch, "stderr"), "utf8");
+  /** kills the launcher, and the child whose pid is in `pidFile`, whatever the test came to */
+  function cleanUp(launcher: ReturnType<typeof launch>, pidFile: string): void {
+    launcher.kill("SIGKILL");
+    const child = existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : 0;
+    if (child > 0 && alive(child)) process.kill(child, "SIGKILL");
+  }
+
+  posix("gets the SIGTERM sent to the launcher while it runs, and the launcher exits as the child did, leaving no child behind", async () => {
+    const pidFile = join(scratch, "child");
+    const launcher = launch(`const { run } = await import(${launcherModule});
+process.exit(await run(["sh", "-c", 'trap "exit 3" TERM; echo $$ > ${pidFile}; echo up; while :; do sleep 0.05; done']));`);
+    try {
+      // the child says it is up on the stdout it shares with the launcher, then loops
+      const up = await within(launcher.stdout.getReader().read(), "the child never started");
+      expect(new TextDecoder().decode(up.value)).toBe("up\n");
+      launcher.kill("SIGTERM");
+      const code = await within(launcher.exited, "the launcher never exited");
+      expect({ code, childLeft: alive(Number(readFileSync(pidFile, "utf8"))) }, said()).toEqual({ code: 3, childLeft: false });
+    } finally { cleanUp(launcher, pidFile); }
+  }, 30_000);
+
+  for (const [signal, exit] of [["SIGTERM", 3], ["SIGHUP", 4]] as const) {
+    posix(`gets a ${signal} that comes the instant it starts, and the launcher exits as the child did, leaving no child behind`, async () => {
+      // The launcher is held where it starts listening for the signal, if it has started the child by then, until the
+      // child has sent it the signal: as if it were descheduled there. A launcher that listens only after the spawn is
+      // ended by the signal and leaves its child running; one that listens first passes it on.
+      const pidFile = join(scratch, "child");
+      const sent = join(scratch, "sent");
+      const name = signal.slice(3);
+      const launcher = launch(`import { existsSync } from "node:fs";
+let spawned = false;
+const spawn = Bun.spawn;
+Bun.spawn = (...args) => { spawned = true; return spawn(...args); };
+process.on("newListener", (event) => {
+  if (event !== "${signal}" || !spawned) return;
+  for (const deadline = Date.now() + 10_000; !existsSync(${JSON.stringify(sent)});) if (Date.now() > deadline) throw new Error("the child never sent the signal");
+});
+const { run } = await import(${launcherModule});
+process.exit(await run(["sh", "-c", 'trap "exit ${exit}" ${name}; echo $$ > ${pidFile}; kill -${name} $PPID; : > ${sent}; while :; do sleep 0.05; done']));`);
+      try {
+        const code = await within(launcher.exited, "the launcher never exited");
+        expect({ code, childLeft: alive(Number(readFileSync(pidFile, "utf8"))) }, said()).toEqual({ code: exit, childLeft: false });
+      } finally { cleanUp(launcher, pidFile); }
+    }, 30_000);
+  }
+
+  for (const [signal, exit] of [["SIGTERM", 143], ["SIGHUP", 129]] as const) {
+    posix(`starts no further build step after a ${signal} that came as one started and found it already ended`, async () => {
+      // The signal comes just before the build's first step starts, and that step (\`true\`) has ended before the
+      // launcher could pass the signal on: a stop that reached nothing. The launcher stops there, as that signal would
+      // have stopped it, and the next step never starts. Git, which the build reads, runs as it is.
+      const second = join(scratch, "second-step");
+      const pidFile = join(scratch, "child");
+      const launcher = launch(`const spawn = Bun.spawn;
+let steps = 0;
+Bun.spawn = (argv, options) => {
+  if (argv[0] !== process.execPath) return spawn(argv, options);
+  steps += 1;
+  if (steps > 1) return spawn(["sh", "-c", ": >> ${second}"], options);
+  process.kill(process.pid, "${signal}");
+  const child = spawn(["true"], options);
+  // until the step has ended: a zombie, or already reaped
+  for (const deadline = Date.now() + 10_000; !/^(Z|$)/.test(Bun.spawnSync(["ps", "-o", "stat=", "-p", String(child.pid)]).stdout.toString().trim());) if (Date.now() > deadline) throw new Error("the first step never ended");
+  return child;
+};
+const { main } = await import(${launcherModule});
+process.exit(await main(["install"], { home: ${JSON.stringify(join(scratch, "server"))} }));`, { OVIS_FROM_SOURCE: "1" });
+      try {
+        const code = await within(launcher.exited, "the launcher never exited");
+        expect({ code, secondStep: existsSync(second) }, said()).toEqual({ code: exit, secondStep: false });
+      } finally { cleanUp(launcher, pidFile); }
+    }, 30_000);
+  }
 });

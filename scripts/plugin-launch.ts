@@ -37,17 +37,24 @@ import { sourceTrees } from "./server-manifest.ts";
 const root = resolve(import.meta.dir, "..");
 const USAGE = "usage: bun scripts/plugin-launch.ts install | <command> [flags]   (the commands of scripts/plugin.ts: start, stop, status, phone-setup, add, ...)";
 
+const SIGNAL_NUMBERS: Record<string, number> = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 };
+/** the SIGTERM or SIGHUP this launcher was last sent while it ran a child: steps run one after another stop at it */
+let stopped: NodeJS.Signals | undefined;
+
 /** Runs `argv` with this process's terminal and gives back its exit code. */
 export async function run(argv: string[], env: Record<string, string> = {}): Promise<number> {
-  const child = Bun.spawn(argv, { cwd: root, env: { ...process.env, ...env }, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
   // the child takes back what it handed out (a pairing code) on SIGTERM or SIGHUP: pass them on, and let Ctrl+C reach
-  // it alone (it shares the terminal) instead of ending this launcher before it
-  const forward = (signal: NodeJS.Signals) => () => { try { child.kill(signal); } catch { /* gone already */ } };
+  // it alone (it shares the terminal) instead of ending this launcher before it. Listening starts before the child does,
+  // so a signal that comes while it starts no longer ends this launcher with the child left running: Bun runs a listener
+  // from the event loop, so one for a signal that came before the spawn returned runs once `child` is set.
+  let child: Bun.Subprocess | undefined;
+  const forward = (signal: NodeJS.Signals) => () => { stopped = signal; try { child?.kill(signal); } catch { /* gone already */ } };
   const handlers = { SIGTERM: forward("SIGTERM"), SIGHUP: forward("SIGHUP"), SIGINT: () => {} } as const;
   for (const [signal, handler] of Object.entries(handlers)) process.on(signal, handler);
   try {
+    child = Bun.spawn(argv, { cwd: root, env: { ...process.env, ...env }, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
     const code = await child.exited;
-    return child.signalCode ? 128 + (({ SIGHUP: 1, SIGINT: 2, SIGTERM: 15 } as Record<string, number>)[child.signalCode] ?? 0) : code;
+    return child.signalCode ? 128 + (SIGNAL_NUMBERS[child.signalCode] ?? 0) : code;
   } finally {
     for (const [signal, handler] of Object.entries(handlers)) process.off(signal, handler);
   }
@@ -59,6 +66,8 @@ async function fromSource(command: string, args: string[]): Promise<number> {
   for (const step of [["install"], ["run", "build"], [join(root, "scripts", "pty-sidecar.ts"), "install"]]) {
     const code = await run([process.execPath, ...step]);
     if (code !== 0) return code;
+    // a stop that came as the step started can find it already ended, passed on to nothing: no further step starts
+    if (stopped) return 128 + SIGNAL_NUMBERS[stopped]!;
   }
   return 0;
 }

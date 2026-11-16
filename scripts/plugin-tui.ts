@@ -105,14 +105,15 @@ export async function runTui(args: readonly string[], options: TuiOptions): Prom
   // process under it, from the program's first instant: ignored before it starts, not once it already runs
   options.on("SIGINT", () => undefined);
   let child: Bun.Subprocess<"inherit", "inherit", "inherit">;
+  // a SIGTERM or SIGHUP sent to this process alone is passed on, so both end; listened for before the program starts,
+  // so one that comes while it starts cannot end this process under it: Bun runs the listener after `child` is set
+  for (const signal of ["SIGTERM", "SIGHUP"] as const) options.on(signal, () => child.kill(signal));
   try {
     child = Bun.spawn([lookup.path, ...args], { env: tuiEnv(options.caller), stdin: "inherit", stdout: "inherit", stderr: "inherit" });
   } catch (error) {
     options.err(`ovis tui: could not run ${lookup.path}: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
-  // a SIGTERM or SIGHUP sent to this process alone is passed on, so both end
-  for (const signal of ["SIGTERM", "SIGHUP"] as const) options.on(signal, () => child.kill(signal));
   // Bun resolves a death by signal as 128 + its number
   return await child.exited;
 }

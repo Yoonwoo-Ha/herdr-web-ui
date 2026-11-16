@@ -1130,8 +1130,9 @@ export async function runPlugin(): Promise<void> {
     const active = activePluginScript(ROOT, port, APP_STATE_DIR);
     if (active !== join(resolve(ROOT), "scripts", "plugin.ts") && resolve(active) !== resolve(import.meta.filename)) {
       process.on("SIGINT", () => undefined);
-      const child = Bun.spawn([process.execPath, active, ...process.argv.slice(2)], { cwd: ROOT, windowsHide: true, env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+      // listening before the release starts, as link does: Bun runs the listener from the event loop, after `child` is set
       for (const signal of ["SIGTERM", "SIGHUP"] as const) process.on(signal, () => child.kill(signal));
+      const child = Bun.spawn([process.execPath, active, ...process.argv.slice(2)], { cwd: ROOT, windowsHide: true, env, stdin: "inherit", stdout: "inherit", stderr: "inherit" });
       process.exit(await child.exited);
     }
     process.stderr.write([
