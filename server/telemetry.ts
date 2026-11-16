@@ -40,7 +40,12 @@ export const NOTICE_GRACE_MS = 10 * 60_000;
 /** the first notices that named the settings snapshot (3) and the daily visit with the agent kinds (4): shared/telemetry-notice.ts */
 const SETTINGS_NOTICE_VERSION = 3;
 const VISITS_NOTICE_VERSION = 4;
-const TELEMETRY_CHANGE_KEYS = new Set(["enabled", "notice_seen", "notice_version", "settings", "alert_opened", "counts"]);
+/**
+ * how long after its UTC midnight a day's counts wait before they go: longer than a page holds a batch (FLUSH_MS in
+ * src/lib/usageCounters.ts), so what was pressed in the day's last minute has arrived when the day is sent
+ */
+export const COUNTS_SETTLE_MS = 5 * 60_000;
+const TELEMETRY_CHANGE_KEYS = new Set(["enabled", "notice_seen", "notice_version", "settings", "alert_opened", "counts", "generation"]);
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 /** today's usage (its kinds of screen and ways in as much as its counts) changes on the wire at most this often, and only with a
  * visit: a resend for a new kind of agent in between carries the usage already sent, so no message tells when a count changed */
@@ -171,7 +176,10 @@ interface Saved {
   /** an off came since the last delivered event: the version an update replaced was known before it, so the next
    * install or update event names none */
   replaced_forgotten: boolean;
-  /** how many offs have deleted what was not sent: a visit or a send begun before one does not write or send after it */
+  /**
+   * how many offs have deleted what was not sent: a visit, a send or a browser batch begun before one does not write or
+   * send after it. The browser hears it as TelemetryStatus.counts_generation and names it in each batch
+   */
   forgotten: number;
   /** the visit days in `active` were recorded only after the current notice. A file without it (an older build's) may
    * hold a day recorded before the notice, so its days not yet delivered are dropped when read */
@@ -247,6 +255,10 @@ function telemetryChange(value: unknown): TelemetryChange | null {
           if (descriptor.value !== true) return null;
           clean.alert_opened = true;
           break;
+        case "generation":
+          if (typeof descriptor.value !== "number" || !Number.isSafeInteger(descriptor.value) || descriptor.value < 0) return null;
+          clean.generation = descriptor.value;
+          break;
         case "counts": {
           const counts = telemetryCountsChange(descriptor.value);
           if (!counts) return null;
@@ -279,6 +291,15 @@ function offMarked(offFile: string): boolean {
   } catch { return true; }
 }
 
+/** whether the file holds rows or a snapshot the state read from it does not keep, or lacks the marks it writes */
+function keptDiffers(file: string, saved: Saved): boolean {
+  try {
+    const value = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+    if (value["visits_after_notice"] !== true) return true;
+    return JSON.stringify([value["active"] ?? [], value["counts"] ?? [], value["settings"] ?? null]) !== JSON.stringify([saved.active, saved.counts, saved.settings]);
+  } catch { return false; }
+}
+
 function readSaved(file: string, offFile: string): Saved | null {
   try {
     const value: unknown = JSON.parse(readFileSync(file, "utf8"));
@@ -295,9 +316,11 @@ function readSaved(file: string, offFile: string): Saved | null {
     // days an older build kept may have been recorded before the notice: only the ones it delivered stay, so none is sent again
     // and a delivered one is cut back to what was delivered of it: what was added since may be from before an off
     const active = seenVersion < VISITS_NOTICE_VERSION ? [] : value["visits_after_notice"] === true ? readActive(value["active"]) : readActive(value["active"]).flatMap((entry) => entry.sent === null ? [] : [{ ...entry, harnesses: [...entry.sent], usage: entry.sent_usage ?? emptyUsage(), sent_usage: entry.sent_usage ?? emptyUsage(), wire_usage: entry.sent_usage ?? emptyUsage() }]);
+    // a file that is off keeps nothing to send: an older build, or a write that failed, may have left rows in it
+    const on = value["enabled"] !== false && !offMarked(offFile);
     return {
       install_id: value["install_id"],
-      enabled: value["enabled"] !== false && !offMarked(offFile),
+      enabled: on,
       notice_seen_at: noticeSeenAt,
       notice_version: NOTICE_VERSION,
       reported_version: typeof value["reported_version"] === "string" ? value["reported_version"] : null,
@@ -305,11 +328,11 @@ function readSaved(file: string, offFile: string): Saved | null {
       forgotten: typeof value["forgotten"] === "number" && Number.isSafeInteger(value["forgotten"]) && value["forgotten"] >= 0 ? value["forgotten"] : 0,
       visits_after_notice: true,
       // an older build kept a snapshot told before its notice too: one from a file without the mark waits for a page to tell it again
-      settings: seenVersion >= SETTINGS_NOTICE_VERSION && value["visits_after_notice"] === true ? telemetrySettings(value["settings"]) : null,
-      active: noticeSeenAt !== null && value["usage_after_notice"] === true ? active : withoutUsage(active),
+      settings: on && seenVersion >= SETTINGS_NOTICE_VERSION && value["visits_after_notice"] === true ? telemetrySettings(value["settings"]) : null,
+      active: !on ? [] : noticeSeenAt !== null && value["usage_after_notice"] === true ? active : withoutUsage(active),
       usage_after_notice: true,
       // counted only once the current notice was shown: a file whose notice is older keeps none
-      counts: noticeSeenAt === null ? [] : readCountDays(value["counts"]),
+      counts: noticeSeenAt === null || !on ? [] : readCountDays(value["counts"]),
     };
   } catch { return null; }
 }
@@ -329,6 +352,8 @@ export class Telemetry {
   /** days the receiver took in this process: never sent again, even if their removal from FILE could not be written */
   private readonly countsDelivered = new Set<string>();
   private countsAbort?: AbortController;
+  /** the one flush armed for the end of COUNTS_SETTLE_MS, when a day has ended but is still settling */
+  private countsTimer?: Timer;
   private readonly file: string;
   private readonly offFile: string;
   /** false when the state file could not be written: then nothing is sent (it could not be remembered) */
@@ -364,6 +389,12 @@ export class Telemetry {
     // a state made fresh names no version an update replaced: the updater's record of it is from before this file (one a
     // purge removed, or one that never was)
     this.saved = saved ?? { install_id: randomUUID(), enabled: !offMarked(this.offFile), notice_seen_at: null, notice_version: NOTICE_VERSION, reported_version: null, replaced_forgotten: true, forgotten: 0, visits_after_notice: true, settings: null, active: [], usage_after_notice: true, counts: [] };
+    // what was read and not kept (an older build's rows, an off file's) is written away once, so it does not stay on disk
+    if (saved && keptDiffers(this.file, saved)) {
+      try { this.persist(); } catch (error) {
+        console.error(`telemetry: ${this.file} could not be written (${error instanceof Error ? error.message : String(error)})`);
+      }
+    }
     if (!saved) {
       try { this.persist(); } catch (error) {
         // the app still starts; telemetry just stays silent
@@ -491,7 +522,7 @@ export class Telemetry {
       notice_seen: this.saved.notice_seen_at !== null,
       next: this.pending(),
       active: this.activeMessage(this.saved.active.find((entry) => entry.day === utcDay(this.now()))),
-      ...(this.countsOn() ? { counts: this.countsMessage(utcDay(this.now())) } : {}),
+      ...(this.countsOn() ? { counts: this.countsMessage(utcDay(this.now())), counts_generation: this.saved.forgotten } : {}),
     };
   }
 
@@ -502,6 +533,8 @@ export class Telemetry {
     // even if OFF_FILE cannot be written
     if (clean.enabled === false) { this.abort?.abort(); this.activeAbort?.abort(); this.countsAbort?.abort(); }
     this.refresh();
+    // the counter as the request found it: settings told with the generation the page heard last are from now
+    const heard = this.saved.forgotten;
     // off is marked before FILE is written, whatever another server writes to FILE meanwhile
     if (clean.enabled === false) this.markOff();
     // nothing kept before an off is sent after it: the off, and an on after an off (one another server marked), drop every
@@ -513,7 +546,9 @@ export class Telemetry {
     if (clean.notice_seen && this.saved.notice_seen_at === null) this.saved.notice_seen_at = new Date(this.now()).toISOString();
     // kept for the next install/update event, only once the notice that names it was seen (the page sends it with its
     // acknowledgement) and while the counts are on; telling it sends nothing by itself
-    if (clean.settings !== undefined && this.saved.notice_seen_at !== null && this.saved.enabled && !this.blocked()) this.saved.settings = clean.settings;
+    // a request that names no generation, or one from before an off the page had not heard, keeps none: they may be from
+    // before it (a request delayed while another page turned the counts off and on)
+    if (clean.settings !== undefined && clean.generation === heard && this.saved.notice_seen_at !== null && this.saved.enabled && !this.blocked()) this.saved.settings = clean.settings;
     this.persist();
     // and again after: an on from another server between the two writes cannot leave this off without its mark
     if (clean.enabled === false) this.markOff();
@@ -587,7 +622,13 @@ export class Telemetry {
    */
   tallyCounts(change: TelemetryCountsChange): void {
     if (!this.countsOn() || !this.countingUsage()) return;
-    const day = utcDay(this.now());
+    // counted under another generation (before an off, in a tab that did not hear it), or by a page that names none
+    if (change.generation !== this.saved.forgotten) return;
+    // the day the batch was counted on: a batch that went just after midnight is yesterday's; one older, or a day not yet begun, is dropped
+    const today = utcDay(this.now());
+    const yesterday = utcDay(this.now() - 86_400_000);
+    const day = change.day ?? today;
+    if (day !== today && day !== yesterday) return;
     this.prune();
     let entry = this.saved.counts.find((known) => known.day === day);
     if (!entry) {
@@ -605,6 +646,8 @@ export class Telemetry {
     try { this.persist(); } catch (error) {
       console.error(`telemetry: the counts could not be recorded (${message(error)})`);
     }
+    // a batch from before midnight that arrived after the visit that would have armed it: the ended day's flush
+    if (day !== today) this.settleLater();
   }
 
   private countsOn(): boolean { return this.options.countsOn ?? COUNTS_ON; }
@@ -614,7 +657,7 @@ export class Telemetry {
 
   /**
    * Delivers each recorded day that has ended, oldest first, once: a delivered day is forgotten. No sooner than
-   * NOTICE_GRACE_MS after the notice; a failure is logged and tried again at the next start or visit. A day the
+   * COUNTS_SETTLE_MS after the day's end, nor NOTICE_GRACE_MS after the notice; a failure is logged and tried again at the next start or visit. A day the
    * receiver took is also remembered in this process, so one whose removal could not be written is not sent twice
    * while it runs; after a restart such a day is in the file and goes again (the receiver keeps the first message).
    */
@@ -632,9 +675,12 @@ export class Telemetry {
         return Promise.resolve();
       }
     }
-    const today = utcDay(this.now());
-    const due = this.saved.counts.filter((entry) => entry.day < today && !this.countsDelivered.has(entry.day)).map((entry) => this.countsMessage(entry.day));
+    // a day goes once it has ended and COUNTS_SETTLE_MS more have passed, for the batches still on their way
+    const settled = utcDay(this.now() - COUNTS_SETTLE_MS);
+    const due = this.saved.counts.filter((entry) => entry.day < settled && !this.countsDelivered.has(entry.day)).map((entry) => this.countsMessage(entry.day));
+    this.settleLater();
     if (due.length === 0) return Promise.resolve();
+    const generation = this.saved.forgotten;
     const abort = new AbortController();
     this.countsAbort = abort;
     this.countsSending = (async () => {
@@ -642,6 +688,10 @@ export class Telemetry {
         for (const counts of due) {
           // right before it goes: turned off here or by another server on the same state directory meanwhile
           if (abort.signal.aborted || offMarked(this.offFile)) return;
+          // an off and on again meanwhile (by another server on the same state directory) began a new generation and
+          // cleared the days kept: a day from before it is not sent
+          this.refresh();
+          if (!this.saved.enabled || this.saved.forgotten !== generation || !this.saved.counts.some((entry) => entry.day === counts.day)) return;
           try {
             const response = await this.options.fetch(this.options.countsUrl ?? COUNTS_URL, {
               method: "POST",
@@ -669,8 +719,28 @@ export class Telemetry {
     return this.countsSending;
   }
 
+  /**
+   * A day that has ended but is still settling: one flush at the end of the settle time, which checks everything again
+   * (on, notice, generation), so the day does not wait for a start or visit that may not come before it is too old.
+   */
+  private settleLater(): void {
+    const today = utcDay(this.now());
+    const settled = utcDay(this.now() - COUNTS_SETTLE_MS);
+    if (settled === today || !this.saved.counts.some((entry) => entry.day === settled && !this.countsDelivered.has(entry.day))) return;
+    this.countsTimer?.clear();
+    this.countsTimer = this.arm(() => void this.flushCounts(), Date.parse(`${today}T00:00:00Z`) + COUNTS_SETTLE_MS - this.now());
+  }
+
+  /** a timer that does not keep the process alive (options.setTimer in tests) */
+  private arm(fn: () => void, ms: number): Timer {
+    if (this.options.setTimer) return this.options.setTimer(fn, ms);
+    const timer = setTimeout(fn, ms);
+    timer.unref?.();
+    return { clear: () => clearTimeout(timer) };
+  }
+
   start(): void { this.schedule(START_DELAY_MS); }
-  stop(): void { clearTimeout(this.timer); this.abort?.abort(); this.activeTimer?.clear(); this.activeAbort?.abort(); this.countsAbort?.abort(); }
+  stop(): void { clearTimeout(this.timer); this.abort?.abort(); this.activeTimer?.clear(); this.activeAbort?.abort(); this.countsTimer?.clear(); this.countsAbort?.abort(); }
 
   /**
    * A browser visit: records today (the day of this call, even when the agents arrive after
@@ -767,12 +837,7 @@ export class Telemetry {
     const wait = seen + (this.options.noticeGraceMs ?? NOTICE_GRACE_MS) - this.now();
     if (wait > 0) {
       this.activeTimer?.clear();
-      const setTimer = this.options.setTimer ?? ((fn: () => void, ms: number): Timer => {
-        const timer = setTimeout(fn, ms);
-        timer.unref?.();
-        return { clear: () => clearTimeout(timer) };
-      });
-      this.activeTimer = setTimer(() => void this.flushActive(), wait);
+      this.activeTimer = this.arm(() => void this.flushActive(), wait);
       return Promise.resolve();
     }
     if (this.activeSending) { this.activeAgain = true; this.activeAgainVisit ||= visit; return this.activeSending; }

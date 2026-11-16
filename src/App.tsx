@@ -140,7 +140,8 @@ import { SplitDropPreview } from "./components/SplitDropPreview.tsx";
 import { CrashProbe, RegionCrash } from "./components/AppCrash.tsx";
 import { RenderBoundary } from "./components/RenderBoundary.tsx";
 import { lensOwner, storedView, usePaneLens, usePaneLensState, usePaneViewPicks } from "./lib/usePaneLens.ts";
-import { actionsCan, actionUse, tally, usageCounters, useCountedInboxWays, useShownCount } from "./lib/usageCounters.ts";
+import { tally, usageCounters, useCountedInboxWays, useShownCount } from "./lib/usageCounters.ts";
+import { appCounted, closeFromPaneMenu, moreFilesRun, type AppCountingState } from "./lib/appCounting.ts";
 import { useSplitLayout, useSplitRecheck, useSplitState } from "./lib/useSplitView.ts";
 import { linkSelects, useLinkLanding, useMachineGone, useNotificationTargets, useSelectedLayout, useSelectedMachine, useSelectedPane, useSelectionMark, useSelectionState, useSelectPane, useSelectTarget } from "./lib/useSelection.ts";
 import { useAddressBar } from "./lib/useAddressBar.ts";
@@ -665,15 +666,8 @@ export function App() {
         if (next) selectPane(next);
       },
       setView,
-      counted: (action, source) => {
-        // what would do nothing here is no use of it (a shortcut or palette row with no pane to split, close or add a tab
-        // beside); split, close pane and new tab act on the selected pane: counted for this PC's own alone
-        const name = actionUse(action, source, { machineId: selectedMachineId, can: actionsCan({
-          split: actions.splitPane !== null, closePane: actions.closePane !== null, files: actions.openFiles !== null,
-          inboxShown: inbox.shown, inMode, tabTarget: newTabTarget() !== null,
-        }) });
-        if (name) tally(() => usageCounters.count(name));
-      },
+      // what would do nothing here is no use of it; split, close pane, new tab and Files count for this PC's own panes alone
+      counted: appCounted((): AppCountingState => ({ actions, machineId: selectedMachineId, inbox, inMode, tabTarget: newTabTarget() !== null })),
       // a peek shows the terminal over the chat: the shortcut takes the chat back, the lens stays Chat
       toggleView: (source) => { if (terminalPeek !== null) endPeek(); else setView(view === "chat" ? "terminal" : "chat", source); setDrawerOpen(false); },
       focusInput: () => { if (!inbox.shown) paneControls.current?.focusInput(); },
@@ -828,7 +822,7 @@ export function App() {
       closePane: !closeOffered ? null : () => {
         const target = snapshotRef.current?.panes.find((pane) => pane.pane_id === selectionRef.current.paneId);
         // counted by its shortcut or palette row, not as the pane menu it runs
-        if (target) paneActionsRef.current?.(target, { counted: false }).find((item) => item.id === "close" && !item.disabled)?.run();
+        if (target) closeFromPaneMenu(paneActionsRef.current, target);
       },
       closeTab: !tabCloseOffered ? null : () => requestCloseTab(selectedMachineId, selectedPaneId!),
     }),
@@ -941,7 +935,7 @@ export function App() {
     ...(foldFind && more ? [{ id: "find-group", label: t("Find…"), icon: TextSearch, run: () => openMoreGroup("find", more.anchor) }] : findInTerminal),
     // from 769px Files has its own button beside the lens switch; a phone keeps it here
     // and so does an inbox mode thread at any width, whose shell has no Files button
-    ...(selectedPane && (!wideScreen || inMode) ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => { actions.counted?.("files", "menu"); setFilesOpen(true); } }] : []),
+    ...(selectedPane && (!wideScreen || inMode) ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: moreFilesRun(actions.counted, () => setFilesOpen(true)) }] : []),
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
     { id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() },
