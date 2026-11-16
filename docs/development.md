@@ -120,6 +120,24 @@ Removing that override and restarting restores the WebSocket transport. The SSE 
 available to older clients and bridge/relay consumers. A reconnect negotiates the transport again;
 no terminal input is replayed by this subscription.
 
+New clients request `compact_agents: true` on their `machine-events` subscription and
+`compact_agents=1` on `/api/machines` and `/api/machines/events`. Only these opt-in responses
+replace a snapshot's `agents` with `agent_refs`, and only where that is smaller (otherwise the
+snapshot keeps its `agents`): each row keeps its `pane_id`, agent-only fields
+and overrides, and inherits matching fields from the pane in the same snapshot. `_omit` lists
+optional pane fields that were absent from that agent. Clients restore full agent rows before
+updating application state; a restored row equals the full one after parsing, though its keys may
+come in another order, and the roster compares rows regardless of key order. Order, recency and completion counters, nulls, differing values and
+agents without a pane are preserved: a snapshot with an agent whose pane it does not list goes out
+full. `agent_refs` and a row's `_omit` are the server's alone: those a PC put in its own snapshot
+are removed from every response, compact or not, and clients expand only a snapshot with `agent_refs` and no
+`agents`. A compact snapshot a client cannot read (a reference naming no pane of its snapshot, a
+malformed `_omit`) keeps that PC's last roster, and the client reads the roster again without
+`compact_agents`. Redaction happens before compaction, and WebSocket size
+limits measure the compact frame. Legacy responses and the bridge protocol do not change;
+new clients also accept full rows from older servers. This reduces duplicate data without raising
+the machine-event backlog limit; an even larger roster can still fall back to SSE.
+
 A page takes machine events over SSE whenever its socket does not carry them: a connection that
 has not said whether it does within five seconds, a socket stopped for output (4008, which only
 reconnects on an attach), or a connection whose server sent `machine-events-ended`. Machine events

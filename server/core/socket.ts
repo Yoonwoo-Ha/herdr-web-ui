@@ -80,7 +80,7 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
         send(client, { type: "error", code: "invalid_subscription", message: "enabled must be a boolean" });
         return;
       }
-      setMachineEvents(client, message.enabled);
+      setMachineEvents(client, message.enabled, message.compact_agents === true);
     },
     // liveness only: any role, no herdr call, nothing to wait behind
     ping(client: Client, message: Frame<"ping">): void {
