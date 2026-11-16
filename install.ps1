@@ -824,7 +824,16 @@ if (-not $plugin) {
                 # pull while bun install ran), or where git failed to read the commit (its line above says which); it ran
                 # 0 all the same, since herdr's own build step runs it too
                 if ("$(Get-Content -Raw -LiteralPath $stamp -ErrorAction SilentlyContinue)".Trim() -eq 'started') {
+                    # The marker names the version the build was for. Where the checkout's version moved while it was built (a
+                    # pull across a version bump), herdr's next start ignores that marker and does not run this build (it
+                    # takes the release's binary, or refuses a build left `started`): said, with the command that builds it.
+                    $versionNow = (Get-Content -Raw -LiteralPath (Join-Path $plugin.plugin_root 'package.json') | ConvertFrom-Json).version
+                    $builtFor = "$(Get-Content -Raw -LiteralPath $marker -ErrorAction SilentlyContinue)".Trim()
+                    if ($builtFor -ne $versionNow) {
+                        Write-Host "Ovis: the build is not marked finished: the installed checkout moved from version $builtFor to $versionNow while it was built, so herdr's next start does not run it. To build it, stop Ovis (herdr plugin action invoke $pluginId.stop-windows), run `$env:OVIS_FROM_SOURCE = '1'; bun '$launcherScript' install, then start it (herdr plugin action invoke $pluginId.start-windows)"
+                    } else {
                     Write-Host "Ovis: the build is not marked finished (the installed checkout moved to another commit while it was built, or git could not read its commit: the launcher's line above says which), though herdr's next start still runs it as it is; run this again with OVIS_REF naming the commit it is at now to build that one"
+                    }
                 }
             } finally {
                 $env:OVIS_FROM_SOURCE = $givenSource

@@ -427,6 +427,24 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
     expect(existsSync(join(pc.scratch, "plugin-source"))).toBe(false);
   });
 
+  it.concurrent("says the installed commit on a rerun with OVIS_REF also where mktemp cannot make a file for git's stderr", async () => {
+    const pc = new Pc().installed();
+    const plugin = join(pc.scratch, "plugin");
+    for (const args of [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"]]) {
+      expect(await Bun.spawn(["git", "-C", plugin, ...args], { stdout: "ignore", stderr: "inherit" }).exited).toBe(0);
+    }
+    const head = (await new Response(Bun.spawn(["git", "-C", plugin, "rev-parse", "HEAD"], { stdout: "pipe" }).stdout).text()).trim();
+    // a mktemp that fails, as on a full or read-only temporary folder
+    const mktemp = join(pc.scratch, "bin", "mktemp");
+    rmSync(mktemp);
+    writeFileSync(mktemp, "#!/bin/sh\necho 'mktemp: failed to create file' >&2\nexit 1\n");
+    chmodSync(mktemp, 0o755);
+    const { out, exitCode } = await pc.unattended({ OVIS_REF: "feat/x" });
+    expect(exitCode, out).toBe(0);
+    // regression (fails on main: without the file the commit was not read at all)
+    expect(out).toContain(`the installed checkout is at commit ${head.slice(0, 12)}; OVIS_REF does not move`);
+  });
+
   it.concurrent("says no commit when herdr names no plugin root, rather than the one of the directory it runs in", async () => {
     const pc = new Pc().installed();
     writeFileSync(join(pc.scratch, "no-json"), "");

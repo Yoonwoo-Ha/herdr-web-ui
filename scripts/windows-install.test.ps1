@@ -84,9 +84,10 @@ function bun {
         if ($state.handStarted -and $env:HERDR_PLUGIN_STATE_DIR) { 'herdr web ui is not running' } else { 'stopped herdr web ui (pid 1234)' }
     }
     # the plugin's launcher: its command, and whether it was told to build from source. As scripts/plugin-launch.ts does,
-    # a stop asks the release first unless OVIS_FROM_SOURCE=1 or a marker naming this version chose the sources (and
-    # fails when the release cannot be reached); under either, or without the release's binary of this version in
-    # .ovis/server/bin (a branch's sources are not the release's), it goes to scripts/plugin.ts, which fails without all
+    # a stop runs the release's binary of this version kept in .ovis/server/bin once it passes its check, unless
+    # OVIS_FROM_SOURCE=1 or a marker naming this version chose the sources; under either, or with no such binary for any
+    # reason (none kept, another version's, one failing its check, the release out of reach: a branch's sources are not
+    # the release's, and a stop only works with the server that runs), it goes to scripts/plugin.ts, which fails without all
     # the packages (node_modules\all-installed stands for bun install's end). As scripts/plugin.ts's stop on Windows, it
     # stops a recorded server it identifies by the creation time its start recorded, takes its record away and says so,
     # fails on a live pid it cannot identify (another creation time, or none recorded: this process is no Ovis) and keeps
@@ -103,9 +104,9 @@ function bun {
         $keptVersion = if (Test-Path -LiteralPath $keptJson) { (Get-Content -Raw -LiteralPath $keptJson | ConvertFrom-Json).version }
         $toSource = $marked -or -not (Test-Path -LiteralPath (Join-Path $serverDir 'bin\ovis-server.exe')) -or $keptVersion -ne '1.2.3'
         if ($args[-1] -eq 'stop') {
-            if ($env:OVIS_FROM_SOURCE -ne '1' -and -not $marked -and $state.releaseDown) { $global:LASTEXITCODE = 1; return }
             # a kept binary of this version that fails its check (signature, executable or client), the release out of reach
-            if ($env:OVIS_FROM_SOURCE -ne '1' -and -not $toSource -and $state.badBinary) { $global:LASTEXITCODE = 1; return }
+            # ($state.releaseDown): no binary can be had, so the stop goes to the sources
+            if ($state.badBinary) { $toSource = $true }
             if (($env:OVIS_FROM_SOURCE -eq '1' -or $toSource) -and -not (Test-Path -LiteralPath (Join-Path $root 'node_modules\all-installed'))) { $global:LASTEXITCODE = 1; return }
             # the record it reads: in the state dir it is told, else ~\.local\state's while a pid is recorded there (a
             # server started by hand, of any checkout), else herdr's; told the new id's dir with no live record there, the
@@ -135,7 +136,10 @@ function bun {
             Set-Content -LiteralPath (Join-Path $root 'node_modules\all-installed'), (Join-Path $root 'dist\index.html') -Value ''
             # the version alone where git reads no commit (no checkout, or not its top level); `started` left where HEAD
             # moved while it built ($state.headMoves) or git failed ($state.gitFails), the build returning 0 all the same
-            if (-not $state.headMoves -and -not $state.gitFails) {
+            # the checkout moved to another version while it built ($state.versionMoves, a pull across a version bump): its
+            # commit moved too, so `started` is left
+            if ($state.versionMoves) { Set-Content -LiteralPath (Join-Path $root 'package.json') -Value '{ "version": "1.2.4" }' }
+            if (-not $state.headMoves -and -not $state.gitFails -and -not $state.versionMoves) {
                 Set-Content -LiteralPath (Join-Path $serverDir 'source-build') -Value $(if ($state.noGit -or $state.gitPrefix) { '1.2.3' } else { "1.2.3 $(Get-TestCommit $state.ref)" })
             }
         }
@@ -464,6 +468,7 @@ exit /b 1
         # scripts/plugin.ts's stop, told the new id's state dir, stops a live server recorded under the old id alone
         @{ name = 'a live server recorded under the old id only, with packages that load the stop'; packages = 'all'; stamp = 'started'; server = 'alive'; legacyRecord = $true; calls = 'stop,install 1' },
         @{ name = 'a build during which the checkout moved to another commit'; packages = 'some'; stamp = 'started'; headMoves = $true; calls = 'stop,install 1' },
+        @{ name = 'a build during which the checkout moved to another version'; packages = 'some'; stamp = 'started'; versionMoves = $true; calls = 'stop,install 1' },
         @{ name = 'a failed build after a stop that could not run, a server no record names maybe running'; packages = 'some'; stamp = 'started'; failBuild = $true; calls = 'stop,install 1'; hint = $true },
         @{ name = 'a failed build after a stop that found no server to stop, a server no record names maybe running'; binary = $true; failBuild = $true; calls = 'stop,install 1'; hint = $true },
         @{ name = 'a failed build after a stop that stopped the recorded server'; binary = $true; server = 'alive'; failBuild = $true; calls = 'stop,install 1' },
@@ -471,7 +476,7 @@ exit /b 1
     )) {
         & $unbuilt; $state.launcherCalls = @(); $state.builtUnderServer = $false
         $state.releaseDown = [bool]$case.releaseDown; $state.noGit = [bool]$case.noGit; $state.gitPrefix = if ($case.nested) { 'plugin/' } else { '' }
-        $state.badBinary = [bool]$case.badBinary; $state.headMoves = [bool]$case.headMoves; $state.gitFails = if ($case.gitFails) { $case.gitFails } else { $false }; $state.legacyInstalled = [bool]$case.legacy
+        $state.badBinary = [bool]$case.badBinary; $state.headMoves = [bool]$case.headMoves; $state.versionMoves = [bool]$case.versionMoves; $state.gitFails = if ($case.gitFails) { $case.gitFails } else { $false }; $state.legacyInstalled = [bool]$case.legacy
         # a hand-started server's record, in ~\.local\state of a user profile of the test's own (and PATH as it was after)
         $herdrRecord = $state.serverRecord; $givenProfile = $env:USERPROFILE; $givenPath = $env:PATH
         if ($case.byHand) {
@@ -504,7 +509,9 @@ exit /b 1
         $message = ''; $said = ''
         # each line said whole: Out-String would wrap it at the console's width
         try { $said = & $installer -Ref 'feat/windows-install' 6>&1 | Out-String -Width 4096 } catch { $message = $_.Exception.Message }
-        $state.releaseDown = $false; $state.noGit = $false; $state.failBuild = $false; $state.badBinary = $false; $state.headMoves = $false; $state.gitFails = $false; $state.legacyInstalled = $false
+        $state.releaseDown = $false; $state.noGit = $false; $state.failBuild = $false; $state.badBinary = $false; $state.headMoves = $false; $state.versionMoves = $false; $state.gitFails = $false; $state.legacyInstalled = $false
+        $versionAfter = (Get-Content -Raw -LiteralPath (Join-Path $pluginRoot 'package.json') | ConvertFrom-Json).version
+        Set-Content -LiteralPath (Join-Path $pluginRoot 'package.json') -Value '{ "version": "1.2.3" }'
         # what a refusal must name, in this order: the files to remove, and the process of a server recorded as running
         $named = @(if ($case.names) { & $case.names }) + @(if ($case.server -and $case.refused) { "process $serverPid" })
         $order = @($named | ForEach-Object { $message.IndexOf($_) })
@@ -543,7 +550,12 @@ exit /b 1
                 Assert (-not $message -and (Get-Content -Raw -LiteralPath $sourceBuild).Trim() -eq $expected) "$($case.name): doing what the refusal says must let the next run build, or take the folder as built (launcher: $($state.launcherCalls -join ',')): $message"
             }
         }
-        elseif ($case.headMoves) { Assert (-not $message -and (Get-Content -Raw -LiteralPath $sourceBuild).Trim() -eq 'started' -and (Test-Path -LiteralPath $fromSource) -and $said -match 'moved to another commit') "$($case.name): the build must stay unfinished, kept, and said: $message $said" }
+        elseif ($case.headMoves) { Assert (-not $message -and (Get-Content -Raw -LiteralPath $sourceBuild).Trim() -eq 'started' -and (Test-Path -LiteralPath $fromSource) -and $said -match 'moved to another commit' -and $said -match 'still runs it') "$($case.name): the build must stay unfinished, kept, and said: $message $said" }
+        # the next start ignores a marker of the version before (1.2.3): said, never that it still runs, with the build command
+        elseif ($case.versionMoves) {
+            $line = @($said -split "`r?`n" | Where-Object { $_ -like '*not marked finished*' })[0]
+            Assert (-not $message -and $versionAfter -eq '1.2.4' -and (Get-Content -Raw -LiteralPath $sourceBuild).Trim() -eq 'started' -and "$line".Contains('1.2.3') -and "$line".IndexOf('1.2.4') -gt "$line".IndexOf('1.2.3') -and "$line".Contains("bun '$(Join-Path $pluginRoot 'scripts\plugin-launch.ts')' install") -and "$line" -notmatch 'still runs it') "$($case.name): the build must stay unfinished and be said not to run, with both versions and the build command: $message $said"
+        }
         elseif ($case.calls) { Assert (-not $message -and (Get-Content -Raw -LiteralPath $sourceBuild).Trim() -eq $finished -and -not ($case.server -eq 'alive' -and $state.builtUnderServer)) "$($case.name): must be built and stamped, with no server left running under the build: $message" }
         elseif ($case.nested) { Assert (-not $message -and -not $said.Contains((Get-TestCommit 'the repository around it').Substring(0, 12))) "$($case.name): must be kept, without the commit of the repository around the plugin's folder: $message $said" }
         elseif ($case.gitFails) { Assert (-not $message -and $said.Contains('dubious ownership')) "$($case.name): must be kept, saying what git said: $message $said" }
