@@ -25,7 +25,7 @@ import type { AttachmentView, TerminalSighting } from "./terminals.ts";
 import type { ClientMessage, HerdrPane, PendingMessage, PendingRemoval, SessionSnapshot } from "../../shared/protocol.ts";
 import { typingGuards } from "../input-guard.ts";
 import { claudeForegroundSession, isClaudeProcess } from "../claude-store.ts";
-import { HerdrError, paneGet, paneProcessInfo, paneRead, paneSendKeys, paneSendText, type ProcessInfo } from "../herdr/client.ts";
+import { HerdrError, type HerdrFailureView, paneGet, paneProcessInfo, paneRead, paneSendKeys, paneSendText, type ProcessInfo } from "../herdr/client.ts";
 import { bindCommandProcess, claudeHeldIsGrey, codexQuestionsCollapsed, isClaudeHeld, heldCandidate, noteSubmitted, parseInteractivePrompt, piRunsCommand, piListsTemplate, prepareCommandSend, shownInputBox } from "../prompt.ts";
 import { agentPickerWaits, registry } from "../dialogs/registry.ts";
 import { codexOwnScreenOpen, CODEX_OWN_SCREEN_MESSAGE } from "../dialogs/codex.ts";
@@ -146,7 +146,9 @@ const FIRST_MESSAGE_RECEIPTS = 8;
  * called through: only a frame or a turn calls them, after `createServer` has returned.
  */
 export function createPendingDelivery({ options, clients, attachments, sight, serialize, lastTyped, typedInto = () => 0, submitText, authorizeSocket, clientSnapshot, omo, queueHeld = () => false, SUBMIT_DEADLINE_MS, SUBMIT_DELAY_MS, TYPED_SETTLE_MS }: {
-  options: { pendingStartTimeoutMs?: number; piReceiptLimit?: number; submitDeadlineMs?: number; submitDelayMs?: number; ompReportPollMs?: number; ompStartupMs?: number; openCodeStateDir?: string };
+  options: { pendingStartTimeoutMs?: number; piReceiptLimit?: number; submitDeadlineMs?: number; submitDelayMs?: number; ompReportPollMs?: number; ompStartupMs?: number; openCodeStateDir?: string;
+    /** how failed herdr calls are worded for a client (the machine profile's), unset elsewhere */
+    herdrFailure?: HerdrFailureView };
   clients: Set<Client>;
   attachments: ReadonlyMap<string, AttachmentView>;
   sight: (client: Client, paneId: string) => TerminalSighting;
@@ -968,8 +970,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       watch?.cancel();
       // never retried, and uncertain (dispatchPending): the pane's queue waits behind it for the user
       if (stranded) return { ok: false, code: "pasted_not_sent", message: PASTED_NOT_SENT_MESSAGE };
-      const fault = error instanceof HerdrError && error.code === "submit_changed" ? pendingFault(error)
-        : wrote ? { code: "submit_changed", message: "Pending-message delivery could not be confirmed. Check the terminal before sending again." } : pendingFault(error);
+      const fault = error instanceof HerdrError && error.code === "submit_changed" ? pendingFault(error, options.herdrFailure)
+        : wrote ? { code: "submit_changed", message: "Pending-message delivery could not be confirmed. Check the terminal before sending again." } : pendingFault(error, options.herdrFailure);
       // a menu herdr reports ends with a status event, which drains again. One of Codex's own screens ends with none:
       // the pane is not noted blocked for it (the queue behind this message is tried too, and held the same way)
       const unannounced = !wrote && error instanceof CodexOwnScreenRefusal;
@@ -992,7 +994,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         automatic, arrivedAt, (working, restarting) => pending.committing(item, working, restarting), interruptWorkingCodex, item.message.request_id, item.message.agent_only === true, false,
         { withdrawn: () => withdrawn.has(item), waiting: (waits) => pending.sendingWaitsFor(item, waits ? "omp_starting" : undefined) });
     } catch (error) {
-      reply = { ok: false, ...pendingFault(error) };
+      reply = { ok: false, ...pendingFault(error, options.herdrFailure) };
     }
     const code = reply.code ?? "";
     // a first message its page could not type yet stays queued for that page's next attach or turn. One whose
@@ -1044,7 +1046,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       dispatched = true;
       await dispatchPending(item, true, arrivedAt, false, by);
       takenWithPane(item, arrivedAt);
-    }).catch((error) => console.warn("pending message:", pendingFault(error).code)).finally(() => {
+    }).catch((error) => console.warn("pending message:", pendingFault(error, options.herdrFailure).code)).finally(() => {
       pendingDrains.delete(paneId);
       const again = drainAgain.delete(paneId);
       if (dispatched || again) drainPending(paneId);
@@ -1189,7 +1191,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
           const pane = await paneGet(paneId);
           if (pendingIdentity(pane).agent !== "omp" || pane.agent_session?.source === "herdr:omp") return;
         } catch (error) {
-          if (pendingFault(error).code === "pane_not_found") return;
+          if (pendingFault(error, options.herdrFailure).code === "pane_not_found") return;
         }
       }
     })().finally(() => {
@@ -1535,7 +1537,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       let framed = { text: message.text, payload: message.payload };
       if (!waits) {
         try { framed = submitFraming(message.text, message.payload, message.typed === true); }
-        catch (error) { const fault = pendingFault(error); result(false, fault.code, fault.message); return; }
+        catch (error) { const fault = pendingFault(error, options.herdrFailure); result(false, fault.code, fault.message); return; }
       }
       const arrivedAt = Date.now();
       try {
@@ -1583,7 +1585,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             // read again after the awaits above: the typing may have come, and ended the wait, meanwhile
             if (typedWhileOmpStarted(message.pane_id)) pending.holdQueued(message.pane_id, TYPED_WHILE_WAITING);
             return { ok: true, pending: item.message };
-          }).catch((error): SubmitReply => ({ ok: false, ...pendingFault(error) })));
+          }).catch((error): SubmitReply => ({ ok: false, ...pendingFault(error, options.herdrFailure) })));
           const answer = await reply;
           const accepted = answer.pending ? pending.get(client, message.pane_id, answer.pending.id)?.message : undefined;
           if (answer.pending && !accepted) replayPendingOutcome(client, message.pane_id, answer.pending.id);
@@ -1684,7 +1686,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             try {
               sent = await pending.resend(pane, id, hash, async () => {
                 try { await dispatch(); typedNow = true; return { ok: true }; }
-                catch (error) { return { ok: false, ...pendingFault(error) }; }
+                catch (error) { return { ok: false, ...pendingFault(error, options.herdrFailure) }; }
               }, message.resend_generation);
             } catch (error) {
               // refused before anything was typed (its limit, a reused ID): the receipt stays the copy's
@@ -1723,7 +1725,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
           if (!confirmations) { confirmations = new Map(); draftConfirmations.set(client, confirmations); }
           confirmations.set(message.pane_id, { draft: error.draft, identity: error.identity, box: error.box });
         }
-        const fault = pendingFault(error);
+        const fault = pendingFault(error, options.herdrFailure);
         result(false, fault.code, fault.message, undefined, error instanceof InputDraftError ? error.draft : null,
           error instanceof InputDraftError && error.identity && error.box !== null ? shownInputBox(error.box) : null);
       }
@@ -1792,7 +1794,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
                 if (isClient(item.owner)) item.lease = lease!;
                 dispatched = true;
                 return await dispatchPending(item, false, arrivedAt, true, client);
-              } catch (error) { return { ok: false, ...pendingFault(error) }; }
+              } catch (error) { return { ok: false, ...pendingFault(error, options.herdrFailure) }; }
             }, message.resend_generation, (code) => code === "submit_changed");
           // A saved copy may already have completed this ID on another connection.
           if (!dispatched && pending.get(client, item.paneId, item.message.id) === item && pending.claim(item, false))
@@ -1808,7 +1810,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         });
         result(answer);
         drainPending(message.pane_id);
-      } catch (error) { result({ ok: false, ...pendingFault(error) }); }
+      } catch (error) { result({ ok: false, ...pendingFault(error, options.herdrFailure) }); }
       return;
     },
   };

@@ -1222,6 +1222,21 @@ it.each(["an ordinary server", "the machine profile"])("%s refuses pane input to
   expect([response.status, (await response.json() as { error: { code: string } }).error.code]).toEqual([403, "read_only"]);
 });
 
+it("machine profile gives a plugin run's state to a device that drives it and refuses a watch device", async () => {
+  const f = await machineFixture();
+  await f.start();
+  const offer = await f.offer();
+  const drive = await client(f, offer);
+  // a driving device reaches the route (it asks for a run with no log id, which the route itself refuses)
+  const driving = await drive.http("/api/plugin/action");
+  expect([driving.status, (await driving.json() as { error: { code: string } }).error.code]).not.toEqual([403, "read_only"]);
+  f.app.context.services.devices.update(drive.device.id, { role: "watch" });
+  await bounded(drive.closed);
+  const watch = await client(f, offer, false, drive.device);
+  const watching = await watch.http("/api/plugin/action?log_id=x");
+  expect([watching.status, (await watching.json() as { error: { code: string } }).error.code]).toEqual([403, "read_only"]);
+});
+
 it("machine profile tells a paired relay device why its classic engine is absent", async () => {
   const restore = unitHerdrOnly();
   cleanup.push(restore);

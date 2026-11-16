@@ -1,4 +1,4 @@
-import { machineHealth, machineReadError, machineRoster, machineRouteRestricted, machineTcpAnswer, machineUnauthorized } from "./machine-profile.ts";
+import { machineFailure, machineHealth, machineLayoutReason, machineReadError, machineRoster, machineRouteRestricted, machineTcpAnswer, machineUnauthorized } from "./machine-profile.ts";
 import { handleWorkspaceRequest } from "./workspace-routes.ts";
 import { handleAlertWebhookRequest } from "./alert-webhook.ts";
 import { connectionData, type createCore, type SocketData } from "./core/index.ts";
@@ -15,7 +15,7 @@ import { type DeviceStore, handleDeviceRequest, newStreamKey, sameBrowser, strea
 import { handlePreferencesRequest, type PreferenceStore } from "./preferences.ts";
 import { handleSeenRequest, type SeenStore } from "./seen.ts";
 import { remoteAccess } from "./tailscale.ts";
-import { badRequest, errorResponse, jsonResponse, setRequestRoute } from "./http.ts";
+import { badRequest, errorResponse, jsonResponse, setRequestRoute, wordHerdrFailures } from "./http.ts";
 import { requestOrigin, serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
 import { handleTasksRequest } from "./tasks-routes.ts";
@@ -154,6 +154,8 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
   const { options, hostname, token, bridgeToken, bootId, devices, preferences, herdrSidebar, identityOf, serveOnly, portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, cliProxyRoutes, usageLogin, usage, voice, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartupResult, portalStartup } = ctx.services;
   const { sidecar, serialize, push, alertWebhook, logPushError, omo, claudeAgents, opencodeAgents, plans, clientSnapshot, machines, broadcastAll, collector, queueFirstMessage } = core;
   return requestLog.handle(request, async (headers) => {
+  // the machine profile words every failed herdr call of this request itself (machineFailure)
+  if (options.profile === "machine") wordHerdrFailures(machineFailure, machineLayoutReason);
   const startup = portalStartupResult ?? await portalStartup;
   if (!startup.ok) {
     setRequestRoute("startup");

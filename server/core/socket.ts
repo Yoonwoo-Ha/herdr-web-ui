@@ -6,7 +6,7 @@
 import type { WebSocketHandler } from "bun";
 import type { ClientMessage, ClientRole, ServerFeature, SessionSnapshot } from "../../shared/protocol.ts";
 import { ConnectionDiagnostics } from "../connection-diagnostics.ts";
-import { HerdrError, LARGE_REPLY_BYTES } from "../herdr/client.ts";
+import { faultOf, HerdrError, type HerdrFailureView, LARGE_REPLY_BYTES } from "../herdr/client.ts";
 import { OUTPUT_HARD_BYTES } from "../output-window.ts";
 import { pasteDirectoryForAll } from "../paste.ts";
 import { type Client, connectionOf, presenceOf, relayClient, send, setMachineEvents, type SocketData } from "./connections.ts";
@@ -43,7 +43,9 @@ function watchablePane(paneId: unknown): paneId is string {
   return typeof paneId === "string" && paneId.length <= 256 && paneId.trim() !== "" && !paneId.trim().startsWith("-") && !/[\u0000-\u001f\u007f]/.test(paneId);
 }
 
-export function createSocket({ clients, present, stopped, admit, setRole, watchable, terminalHistory, watchPane, unwatchPane, end, holdPending, attachments, clientSnapshot, herdrLifetime, browserSnapshot, countVisit, drainOutput, frames }: {
+export function createSocket({ clients, present, stopped, admit, setRole, watchable, terminalHistory, watchPane, unwatchPane, end, holdPending, attachments, clientSnapshot, herdrLifetime, browserSnapshot, countVisit, drainOutput, frames, herdrFailure }: {
+  /** how a failed herdr call is worded in an error frame (the machine profile's), unset elsewhere */
+  herdrFailure?: HerdrFailureView;
   clients: Set<Client>;
   present: Set<Client>;
   stopped: () => boolean;
@@ -171,8 +173,8 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
         const read = await snapshot;
         send(client, { type: "snapshot", snapshot: client.data.bridge ? read : browserSnapshot(read), features, connection: client.data.connectionId });
       } catch (error) {
-        const code = error instanceof HerdrError ? error.code : "snapshot_failed";
-        send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error) });
+        const fault = faultOf(error, "snapshot_failed", herdrFailure);
+        send(client, { type: "error", code: fault.code, message: fault.message });
       }
     },
 
@@ -203,7 +205,8 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
         // an attach that could not start names its pane: the panes of a PC share this connection, and one
         // without a pane would end every terminal on it
         const failed = code === "attach_failed" && message.type === "attach" ? { pane_id: message.pane_id } : {};
-        send(client, { type: "error", code, message: error instanceof Error ? error.message : String(error), ...failed });
+        const fault = faultOf(error, code, herdrFailure);
+        send(client, { type: "error", code: fault.code, message: fault.message, ...failed });
       }
     },
 

@@ -9,7 +9,7 @@ import { stripVTControlCharacters } from "node:util";
 import type { HerdrPane } from "../../shared/protocol.ts";
 import { displayWidth, secretPrompt } from "../../shared/secret-prompt.ts";
 import { AGENT_INPUT_DRAFT_MESSAGE, CLAUDE_FOLDED_DRAFT_MESSAGE, GROK_SEND_UNCONFIRMED_MESSAGE, NO_AGENT_MESSAGE } from "../../shared/submit-outcome.ts";
-import { agentPrompt, HerdrError, paneGet, paneProcessInfo, paneRead, paneScrollInfo, paneSendKeys, paneSendText, type ProcessInfo } from "../herdr/client.ts";
+import { agentPrompt, HerdrError, paneGet, paneProcessInfo, paneRead, paneScrollInfo, paneSendKeys, paneSendText, type ProcessInfo, faultOf, type HerdrFailureView } from "../herdr/client.ts";
 import { mirrorInput } from "../mirror-input.ts";
 import { paneAgentOf, resolveAgent, typingRoots } from "../pane-context.ts";
 import { paneProcessRoots } from "../conversation.ts";
@@ -249,10 +249,9 @@ export function submitFraming(text: string, payload: string, typed: boolean): { 
   return { text: message, payload };
 }
 
-export const pendingFault = (error: unknown) => ({
-  code: error instanceof HerdrError || error instanceof PendingInputError ? error.code : "submit_failed",
-  message: error instanceof Error ? error.message : String(error),
-});
+/** A pending row's or a submit's fault: the bridge's own refusal as it is, any other as faultOf words it by `view` (the machine profile's). */
+export const pendingFault = (error: unknown, view: HerdrFailureView | undefined) => error instanceof PendingInputError
+  ? { code: error.code, message: error.message } : faultOf(error, "submit_failed", view);
 
 /**
  * Hermes' input, refused with input_draft unless hermesInputDraft knows it empty. As claudeBoxReads,

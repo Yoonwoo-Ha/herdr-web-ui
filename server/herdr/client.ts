@@ -104,13 +104,36 @@ export class HerdrError extends Error {
    * enumerable, so an error's printed or encoded form keeps its own fields only.
    */
   declare readonly fromReply: boolean;
+  /** Set on what a call to herdr rejects with (herdrRpc), so a refusal the bridge words itself never has it. Not enumerable either. */
+  declare readonly failedCall?: true;
+  /**
+   * What the bridge knows came of a failed call, in its own words and none of herdr's (where a pane ended up): a
+   * server that words failed calls may say it in place of its fixed sentence. Not enumerable either.
+   */
+  declare readonly outcome?: string;
 
-  constructor(code: string, message: string, fromReply = false) {
+  constructor(code: string, message: string, fromReply = false, failedCall = false, outcome?: string) {
     super(message);
     this.name = "HerdrError";
     this.code = code;
     Object.defineProperty(this, "fromReply", { value: fromReply, enumerable: false });
+    if (failedCall) markFailedCall(this);
+    if (outcome !== undefined) Object.defineProperty(this, "outcome", { value: outcome, enumerable: false });
   }
+}
+
+function markFailedCall(error: HerdrError): void { Object.defineProperty(error, "failedCall", { value: true, enumerable: false }); }
+
+/** How a server words a failed call to herdr for its callers: the code and message it answers instead of the error's own. */
+export type HerdrFailureView = (error: HerdrError) => { code: string; message: string };
+/** The code and message a caller is answered with for `error`: `view`'s for a failed call when the server has one, else the error's own. */
+export function herdrFault(error: HerdrError, view: HerdrFailureView | undefined): { code: string; message: string } {
+  return view !== undefined && error.failedCall === true ? view(error) : { code: error.code, message: error.message };
+}
+/** Any fault's code and message for a caller: a HerdrError's as herdrFault gives it; any other keeps `code`, in `view`'s sentence where the server has one. */
+export function faultOf(error: unknown, code: string, view: HerdrFailureView | undefined): { code: string; message: string } {
+  if (error instanceof HerdrError) return herdrFault(error, view);
+  return { code, message: view !== undefined ? view(new HerdrError(code, "")).message : error instanceof Error ? error.message : String(error) };
 }
 
 let requestCounter = 0;
@@ -444,6 +467,7 @@ export async function herdrRpc(
   } catch (error) {
     const code = error instanceof HerdrError ? transportFailureCode(error.code) : null;
     if (code !== null) diagnostics.failed(key, code, fields());
+    if (error instanceof HerdrError && error.failedCall !== true) markFailedCall(error);
     throw error;
   } finally {
     pendingRpcs--;
@@ -1081,9 +1105,12 @@ export async function paneMoveBeside(paneId: string, targetPaneId: string, side:
         read = await sessionSnapshot(socket).catch(() => null);
         back = inTab(read, out);
       }
-      if (!back) throw new HerdrError(why.code, `pane ${out} ${read === null ? "may wait" : "waits"} in a tab of its own: ${why.message}`, why.fromReply);
+      if (!back) {
+        throw new HerdrError(why.code, `pane ${out} ${read === null ? "may wait" : "waits"} in a tab of its own: ${why.message}`, why.fromReply, why.failedCall === true,
+          read === null ? "The pane was not moved and may be in a tab of its own" : "The pane was not moved and is in a tab of its own");
+      }
       if (left !== null) await restore(out, (at) => at === left);
-      throw new HerdrError(why.code, `pane ${out} went back into its tab: ${why.message}`, why.fromReply);
+      throw new HerdrError(why.code, `pane ${out} went back into its tab: ${why.message}`, why.fromReply, why.failedCall === true, "The pane was not moved and is back in its tab");
     };
     const failed = (error: unknown) => error instanceof HerdrError ? error : new HerdrError("pane_not_moved", error instanceof Error ? error.message : String(error));
     try {
@@ -1118,7 +1145,8 @@ export async function paneMoveBeside(paneId: string, targetPaneId: string, side:
         } catch (error) {
           return await strayed(out, failed(error));
         }
-        if (moved.changed === false) return await strayed(out, new HerdrError("pane_not_moved", `herdr answered ${moved.reason ?? "unchanged"}`));
+        // built from herdr's answer: a failed call, as one herdr refused
+        if (moved.changed === false) return await strayed(out, new HerdrError("pane_not_moved", `herdr answered ${moved.reason ?? "unchanged"}`, false, true));
       }
       if (moved.changed === false) return { changed: false, reason: moved.reason ?? null };
       const id = moved.pane.pane_id;
