@@ -1164,6 +1164,14 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   from the left `24px` edge opens the drawer and a swipe to the left closes it. While the finger is
   down the drawer is under it and the scrim darkens with it; let go, it stays open when more than half
   shows or a flick (`0.35` px/ms, not after a `100ms` rest) went that way, and slides the rest from there.
+- A phone's open drawer has no X: the drawer toggle's place holds the Ovis mark (`.drawer-toggle.is-mark`, `OvisMark`,
+  a button named and titled **Open agent inbox**), the drawer's one way into the inbox mode, as the app's mark at
+  the head of the Codex and Claude apps' sidebars is their way home. It closes by a tap on the dimmed pane beside
+  it, a swipe, Back, Escape, or **Close workspace list** (`.drawer-close`), the modal drawer's first control: read
+  by a screen reader, drawn as a button only while the keyboard is on it. The mark stands where the menu button
+  was, so a tap on it within `400ms` of the tap that opened the drawer is that double tap's second half and does
+  nothing (the two clicks' own times, lib/useSidebarLayout.ts `SECOND_TAP_MS`); the setup guide's shell, which offers no inbox,
+  keeps the X.
 - The terminal stack contains a positioned terminal surface, then composer or key bar. The xterm
   mount stays alive under the chat lens; changing views never creates a second connection.
 - At `<=480px` the brand name, the offline pill and desktop-only control labels go, and the
@@ -2198,16 +2206,19 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   full-width `.sidebar-footer-action` as the Change PC row is: lucide `Inbox` in the icon's
   column, then the words, and no chevron at its end: the Agents disclosure row above it starts
   with one, and one foot does not draw two with two meanings): the way into the inbox mode
-  (Inbox mode, below), in
-  the drawer on a phone and in a collapsed sidebar's peek. From `769px` with the sidebar shown it is
-  not drawn: the Ovis wordmark at the sidebar's head is the way in there, and a second row saying
-  the same thing above the gear was one too many. The setup guide's shell does not draw it.
+  (Inbox mode, below), only in a collapsed sidebar's peek. With the sidebar shown from `769px` the
+  Ovis wordmark at the sidebar's head is the way in, and on a phone the Ovis mark in the open
+  drawer's head: a row saying the same thing above the gear was one too many, and a phone's drawer
+  keeps its foot to the gear. The setup guide's shell does not draw it.
 - Above that row, only where the page is one PC of a phone's list (a PC's page on the hosted
   relay shell, or the phone app), one full-width row (`.sidebar-footer-pc`) names the PC, the lone
   Host's name its header no longer shows, then **Change PC** in `--text-dim` and a switch glyph: a
   tap goes back to the list of PCs (the shell's front page, or the app's list), as the Claude app's
-  sidebar foot names whose account it is and switches it in one tap. Settings → Phone & devices
-  keeps its Change PC row. A PC's own app never shows it: its sidebar lists its PCs itself.
+  sidebar foot names whose account it is and switches it in one tap. Only from `769px`: below that
+  the drawer keeps its foot to the gear, and Settings' list of pages ends in **Change PC** at the
+  same widths (`.settings-change-pc`, under the pages, `DRAWER_QUERY`), so the way back is the gear
+  and that row. Settings →
+  Devices and PCs keeps its Change PC row. A PC's own app never shows it: its sidebar lists its PCs itself.
 
 ### Inbox mode (`.mode-inbox`, `.inbox-rail`, `.thread-title`, `.thread-top`)
 - The agent inbox is a mode of the app: the list of agents and the thread a row opens, in the
