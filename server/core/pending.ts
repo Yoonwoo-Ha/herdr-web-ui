@@ -18,6 +18,7 @@
  * First messages live in memory: a restart of the bridge loses those not sent yet.
  */
 import { AGENT_PICKER_MESSAGE, closeBackslash, closeMention, type createSubmitText, freeAgentInput, freeClaudeBox, freeHermesInput, InputDraftError, modelSwitchText, OMP_REPORT_POLL_MS, OMP_STARTUP_MS, ompStartingUntil, pendingFault, pendingIdentity, pendingText, submitFraming, untilOmpReported } from "./composer.ts";
+import { grokEcho, grokQueue, sendGrokQueuedNow } from "./grok-queue.ts";
 import { type Client, connectionOf, send } from "./connections.ts";
 import { ATTACH_HELD_MESSAGE } from "./terminal-process.ts";
 import type { AttachmentView, TerminalSighting } from "./terminals.ts";
@@ -900,6 +901,9 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       committing(steering);
       // Claude Code queues what Enter commits during a turn; Ctrl+Enter sends it now (#737). herdr
       // encodes the key as the pane asked, and as a plain CR for a program that asked for nothing.
+      // Grok queues that same Enter while a turn runs. Only Send now (`interruptWorkingCodex`, the steer) then sends
+      // one more Enter, and only while the message is the one row queued (sendGrokQueuedNow); a queued request
+      // typed at once is not a Send now and stays queued behind the turn.
       const sentAt = Date.now();
       // the connection to herdr is awaited, and a task may fire meanwhile: the hold is read once more once connected,
       // right before the key's own write. A key refused there was not sent, and its paste is not confirmed. Not seen: a
@@ -908,6 +912,32 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       let refused = false;
       await paneSendKeys(paneId, [steering && beforeEnter.identity.agent === "claude" ? "ctrl+enter" : "Enter"], undefined, () => allowed() && !(refused = resumed()))
         .catch((error: unknown) => { if (refused) refuseResumed(); throw error; });
+      // the screen after its Enter says whether Grok queued the message, also from a Grok read at rest: another client
+      // can start a turn before the Enter, and in minimal mode herdr does not tell a running turn. Compared with the
+      // queue as read right before that Enter, with this delivery's paste in the prompt
+      if (interruptWorkingCodex && beforeEnter.identity.agent === "grok") {
+        // the queue Enter already went: every failure here is submit_changed (wrote is set), never enterRefused's
+        // paste left unsent, or a retry would queue the message twice. The terminal's input line does not come here;
+        // a Send now from the terminal view uses this same steer, as the frame does not say which view asked.
+        await sendGrokQueuedNow({
+          message: closeMention(sent),
+          before: { working: beforeEnter.working, queue: grokQueue(beforeEnter.screen), echo: grokEcho(beforeEnter.screen) },
+          delayMs: options.submitDelayMs ?? SUBMIT_DELAY_MS,
+          // pendingContext refuses another terminal, session or process, a blocked or unknown state and a masked prompt
+          look: async () => {
+            const current = await pendingContext(owner, paneId, lease, identity, true, agentOnly);
+            authorizePending(owner, paneId, lease);
+            return { status: current.pane.agent_status, screen: current.screen };
+          },
+          // pendingContext's process and /proc reads come after its screen read: a card or a draft that came up during
+          // them gets no Enter. The window left is this read and the write's own call (herdr has no compare-and-send)
+          lastScreen: async () => (await paneRead({ paneId, source: "detection", format: "text" })).text,
+          sendEnter: async () => {
+            authorizePending(owner, paneId, lease);
+            await paneSendKeys(paneId, ["Enter"], undefined, allowed);
+          },
+        });
+      }
       if (endsOmpStart) forgetOmpStart(paneId);
       // This proves only that Ovis committed Enter to Pi, not that Pi accepted, queued or recorded
       // the message. Keep a non-resendable receipt until the bound JSONL active branch appends it.
@@ -1607,8 +1637,9 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             const receiptText = identity === null ? undefined : piReceiptText(identity, framed.text);
             const piAnchor = identity === null ? null : await preparePiReceipt(message.pane_id, identity).catch(() => null);
             sendingAt = new Date().toISOString();
+            // a saved copy's resend is its Send now: a plain Send is not
             await submitText(message.pane_id, framed.text, framed.payload, arrivedAt, message.typed === true, () => authorizeSocket(client), message.clear_draft,
-              draftConfirmations.get(client)?.get(message.pane_id), message.send_anyway === true, agentOnly);
+              draftConfirmations.get(client)?.get(message.pane_id), message.send_anyway === true, agentOnly, message.resend_id !== undefined);
             if (identity !== null && receiptText !== undefined) {
               try { recordPiTyped(client, message.pane_id, message.id, receiptText, identity, piAnchor, reservation, current !== null && piListsTemplate(current.pane, framed.text)); } catch { /* The send succeeded; receipt tracking cannot make it retryable. */ }
             }
