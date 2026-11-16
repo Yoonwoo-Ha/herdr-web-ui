@@ -1315,24 +1315,23 @@ ref_not_moved() {
   # What git answers, by the rule scripts/plugin-launch.ts (checkoutCommit) and install.ps1 read the installed commit
   # by: a checkout's top level has its commit; a folder inside another repository (--show-prefix names its path there:
   # git would read that repository's commit, not the plugin's) or one git says is no repository has none; anything else
-  # is git failing, which is said with git's first line (untranslated: LC_ALL=C). With no checkout to read (herdr did
-  # not name the plugin's root), git -C "" would read the current directory's.
+  # is git failing, which is said with git's first line (untranslated: LC_ALL=C). Only git's stdout is the prefix and
+  # the commit: a warning it prints on stderr while it succeeds is neither. With no checkout to read (herdr did not name
+  # the plugin's root), git -C "" would read the current directory's; with no file for git's stderr, nothing is said.
   ref_not_moved_at=""
-  if [ -n "$1" ]; then
-    if ref_not_moved_git=$(LC_ALL=C git -C "$1" rev-parse --show-prefix 2>&1 </dev/null); then
+  if [ -n "$1" ] && ref_not_moved_err=$(mktemp 2>/dev/null); then
+    if ref_not_moved_git=$(LC_ALL=C git -C "$1" rev-parse --show-prefix 2>"$ref_not_moved_err" </dev/null); then
       if [ -z "$ref_not_moved_git" ]; then
-        if ref_not_moved_git=$(LC_ALL=C git -C "$1" rev-parse --short=12 HEAD 2>&1 </dev/null); then
+        if ref_not_moved_git=$(LC_ALL=C git -C "$1" rev-parse --short=12 HEAD 2>"$ref_not_moved_err" </dev/null); then
           ref_not_moved_at="the installed checkout is at commit $ref_not_moved_git; "
         else
-          ref_not_moved_at="git could not read the installed checkout's commit ($(printf '%s\n' "$ref_not_moved_git" | sed -n 1p)); "
+          ref_not_moved_at="git could not read the installed checkout's commit ($(sed -n 1p "$ref_not_moved_err")); "
         fi
       fi
-    else
-      case $ref_not_moved_git in
-        *"not a git repository"*) ;;
-        *) ref_not_moved_at="git could not read the installed checkout's commit ($(printf '%s\n' "$ref_not_moved_git" | sed -n 1p)); " ;;
-      esac
+    elif ! grep -q "not a git repository" "$ref_not_moved_err"; then
+      ref_not_moved_at="git could not read the installed checkout's commit ($(sed -n 1p "$ref_not_moved_err")); "
     fi
+    rm -f "$ref_not_moved_err"
   fi
   say "${ref_not_moved_at}OVIS_REF does not move an installed Ovis (INSTALL.md, Update)"
 }

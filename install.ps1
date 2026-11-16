@@ -838,8 +838,11 @@ if (-not $plugin) {
     # another ref is not installed over a checkout that needs no build, nor is a release tag: said, without asking GitHub
     if ($Ref -and -not $repairing) {
         $at = if ($installedCommit.Length -ge 12) { "the installed plugin is at commit $($installedCommit.Substring(0, 12)); " }
+            elseif ($distrusted) { "git does not trust the installed plugin's folder: it belongs to another account (git said: $($read.First)); " }
             elseif ($gitFailed) { "git could not read the installed plugin's commit (git said: $gitFailed); " } else { '' }
         Write-Host "Ovis: ${at}OVIS_REF does not move an installed plugin (INSTALL.md, Update)"
+        # git's own command for it is quoted for a POSIX shell: the one for PowerShell instead, on a line of its own
+        if ($distrusted) { Write-Host "Ovis: to trust the folder, run:`n$(Get-TrustCommand $distrusted)" }
     }
 }
 if ($legacy) {

@@ -460,7 +460,7 @@ exit /b 1
         @{ name = 'the same, the old id installed too and its server stopped for the move'; packages = 'all'; client = $true; stamp = "1.2.3 $(Get-TestCommit 'earlier')"; gitFails = $true; trust = $true; legacy = $true; calls = ''; refused = $true; untouched = $true; names = { 'dubious ownership'; 'server of the old id was stopped'; 'herdr plugin action invoke devswha.herdr-web-ui.start-windows' } },
         # and by a refusal after this checkout's own stop: a failed build
         @{ name = 'a failed build, the old id installed too and its server stopped for the move'; packages = 'some'; stamp = 'started'; failBuild = $true; legacy = $true; calls = 'stop,install 1'; hint = $true },
-        @{ name = 'a finished build of an older launcher (no stamp), git failing at the checkout'; packages = 'all'; client = $true; gitFails = $true; calls = '' },
+        @{ name = 'a finished build of an older launcher (no stamp), git failing at the checkout'; packages = 'all'; client = $true; gitFails = $true; trust = $true; calls = '' },
         # scripts/plugin.ts's stop, told the new id's state dir, stops a live server recorded under the old id alone
         @{ name = 'a live server recorded under the old id only, with packages that load the stop'; packages = 'all'; stamp = 'started'; server = 'alive'; legacyRecord = $true; calls = 'stop,install 1' },
         @{ name = 'a build during which the checkout moved to another commit'; packages = 'some'; stamp = 'started'; headMoves = $true; calls = 'stop,install 1' },
@@ -502,7 +502,8 @@ exit /b 1
             Set-Content -LiteralPath (Join-Path $pluginRoot 'dist\index.html') -Value ''
         }
         $message = ''; $said = ''
-        try { $said = & $installer -Ref 'feat/windows-install' 6>&1 | Out-String } catch { $message = $_.Exception.Message }
+        # each line said whole: Out-String would wrap it at the console's width
+        try { $said = & $installer -Ref 'feat/windows-install' 6>&1 | Out-String -Width 4096 } catch { $message = $_.Exception.Message }
         $state.releaseDown = $false; $state.noGit = $false; $state.failBuild = $false; $state.badBinary = $false; $state.headMoves = $false; $state.gitFails = $false; $state.legacyInstalled = $false
         # what a refusal must name, in this order: the files to remove, and the process of a server recorded as running
         $named = @(if ($case.names) { & $case.names }) + @(if ($case.server -and $case.refused) { "process $serverPid" })
@@ -520,8 +521,10 @@ exit /b 1
         }
         Assert (($state.launcherCalls -join ',') -eq $case.calls) "$($case.name): the launcher must get '$($case.calls)', not '$($state.launcherCalls -join ',')': $message"
         if ($case.trust) {
-            # the command the refusal ends with, read as PowerShell reads it: git config with the folder as one argument
-            $command = ($message -split "`n")[-1]
+            # the command the refusal ends with (or, kept, the line said alone), read as PowerShell reads it: git config with
+            # the folder as one argument, never git's own command, quoted for a POSIX shell
+            $command = if ($message) { ($message -split "`n")[-1] } else { @($said -split "`r?`n" | Where-Object { $_ -like 'git config *' })[0] }
+            Assert (-not "$message$said".Contains('To add an exception')) "$($case.name): git's own lines after its first must not be said: $message $said"
             $parseErrors = $null
             $parsed = [System.Management.Automation.Language.Parser]::ParseInput($command, [ref]$null, [ref]$parseErrors)
             $words = @($parsed.EndBlock.Statements[0].PipelineElements[0].CommandElements | ForEach-Object { $_.Value })

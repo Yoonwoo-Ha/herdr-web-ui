@@ -467,6 +467,25 @@ describe.skipIf(platform() === "win32")("install.sh without a terminal", () => {
     expect(out).not.toContain(head.slice(0, 12));
   });
 
+  it.concurrent("reads only git's stdout as the prefix and the commit, also where git warns on stderr while it answers", async () => {
+    const pc = new Pc().installed();
+    const plugin = join(pc.scratch, "plugin");
+    for (const args of [["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x"]]) {
+      expect(await Bun.spawn(["git", "-C", plugin, ...args], { stdout: "ignore", stderr: "inherit" }).exited).toBe(0);
+    }
+    const head = (await new Response(Bun.spawn(["git", "-C", plugin, "rev-parse", "HEAD"], { stdout: "pipe" }).stdout).text()).trim();
+    // git answering, and warning on stderr as it does about a config file it cannot read
+    const git = join(pc.scratch, "bin", "git");
+    rmSync(git);
+    writeFileSync(git, `#!/bin/sh\necho "warning: unable to access '/nowhere/.config/git/config': Permission denied" >&2\nexec '${Bun.which("git")}' "$@"\n`);
+    chmodSync(git, 0o755);
+    const { out, exitCode } = await pc.unattended({ OVIS_REF: "feat/x" });
+    expect(exitCode, out).toBe(0);
+    // regression (fails on main): the warning was read as the prefix of a folder inside another repository, so no commit was said
+    expect(out).toContain(`the installed checkout is at commit ${head.slice(0, 12)}; OVIS_REF does not move`);
+    expect(out).not.toContain("unable to access");
+  });
+
   it.concurrent("says nothing of git for a plugin folder git says is no repository", async () => {
     const pc = new Pc().installed();
     // nothing above the scratch folder is read as the repository around it
