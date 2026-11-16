@@ -95,8 +95,9 @@ to change. Also read [server/AGENTS.md](server/AGENTS.md) and [src/AGENTS.md](sr
   prepare the release PR but stops at it. When that PR raises `REMOTE_BUNDLE_VERSION`, the merge
   pass merges nothing touching `server/`, `shared/`, `bun.lock` or `patches/` from its merge until
   the Release run is done.
-- Required checks: Fast checks, Integration and browser, Native Windows install. Resolve review
-  threads before merging (branch protection does not enforce it).
+- Required checks: Fast checks, Integration and browser, Native Windows install,
+  Hook kill tests (container). Resolve review threads before merging (branch protection does
+  not enforce it).
 - The merge pass may merge on a local merge gate instead of waiting for GitHub's runs. On a
   freshly fetched `origin/main` with the PR head merged in (nothing pushed), it runs CI's release
   guards, then four groups side by side, each in a checkout and container of its own of the

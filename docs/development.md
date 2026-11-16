@@ -846,7 +846,7 @@ job asks `scripts/release-ci-reuse.ts`, which says yes only when all of this hol
   request's run, a manual run and a fork's run never count);
 - it completed with success, on its first attempt or after one rerun;
 - every job of `ci.yml` is in it and passed: a failed, cancelled, skipped or missing job is a no,
-  whatever the three required checks say.
+  whatever ci.yml's three required checks say.
 
 A run still going is waited for, at most 40 minutes (main's run takes 15 to 30) and only while
 none of its jobs has ended without passing. Anything else is a no at once: no run for the commit,
@@ -1450,8 +1450,9 @@ Remote/server/shared/dependency changes also run the existing four-platform bund
 SSH workflow on PRs; its publishing job only runs for `remote-v*` tags. Website publishing
 continues after `main` pushes.
 
-Repository protection should require PRs and all three checks on `main`—**Fast checks**,
-**Integration and browser**, and **Native Windows install** (GitHub App ID `15368`)—including for
+Repository protection should require PRs and all four checks on `main`—**Fast checks**,
+**Integration and browser**, **Native Windows install**, and **Hook kill tests (container)**
+(GitHub App ID `15368`)—including for
 administrators. Branch protection does not require branches to be up to date before merging and
 does not enforce resolved review threads; resolve every review thread before merging anyway, as a
 practice. Force pushes and branch deletion are disabled. Human approvals are optional for this maintainer-led
