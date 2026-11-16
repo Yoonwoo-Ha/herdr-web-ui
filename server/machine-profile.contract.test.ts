@@ -69,16 +69,21 @@ function contents(dir: string) {
     return [name, entry.isFile() ? readFileSync(path, "base64") : entry.isDirectory() ? "folder" : "other"];
   });
 }
-/** A herdr at `socket` that answers ping with protocol 22, and counts the connections it gets. */
-function fakeHerdr(socket: string) {
+/**
+ * A herdr at `socket` that answers ping with protocol 22, and counts the connections it gets. `refuse` names one
+ * method it answers with an error of its own instead, whose message is `refuse.message`, or closes the connection on.
+ */
+function fakeHerdr(socket: string, refuse?: { method: string; message: string } | { method: string; close: true }) {
   let connections = 0;
   const listener = Bun.listen<{ line: string }>({ unix: socket, socket: {
     open(client) { connections++; client.data = { line: "" }; },
     data(client, chunk) {
       client.data.line += chunk.toString();
       if (!client.data.line.includes("\n")) return;
-      const { id } = JSON.parse(client.data.line) as { id: string };
-      client.write(`${JSON.stringify({ id, result: { version: "fixture", protocol: 22 } })}\n`);
+      const { id, method } = JSON.parse(client.data.line) as { id: string; method: string };
+      if (method === refuse?.method && "close" in refuse) { client.end(); return; }
+      const answer = method === refuse?.method && "message" in refuse ? { error: { code: "server_error", message: refuse.message } } : { result: { version: "fixture", protocol: 22 } };
+      client.write(`${JSON.stringify({ id, ...answer })}\n`);
       client.end();
     },
   } });
@@ -506,7 +511,7 @@ it("still asks which one when two safe sessions run", async () => {
   expect(await (await owner(dir, "/api/health", { headers })).json()).toMatchObject({ machine_profile: { runtime_down: true, reason: "Several herdr sessions are running; select one with HERDR_REMOTE_SOCKET" } });
 });
 
-it("looks for a herdr that started after it on a session request too, before any health check", async () => {
+it.each(["/api/session", "/api/machines"])("looks for a herdr that started after it on a request for %s too, before any health check", async (path) => {
   const dir = state();
   const config = herdrConfig();
   const server = launch(dir, { XDG_CONFIG_HOME: config, HERDR_REMOTE_SOCKET: "", HERDR_REMOTE_SESSION: "", HERDR_SOCKET: undefined });
@@ -514,8 +519,107 @@ it("looks for a herdr that started after it on a session request too, before any
   const socket = join(config, "herdr", "sessions", "a", "herdr.sock");
   mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
   const herdr = fakeHerdr(socket);
-  await (await owner(dir, "/api/session", { headers })).text();
+  await (await owner(dir, path, { headers })).text();
   expect(herdr.connections()).toBeGreaterThan(0);
+});
+
+it("answers /api/session with its health's reason while its herdr is down", async () => {
+  const dir = state();
+  // a named session whose herdr has not started yet
+  const server = launch(dir, { XDG_CONFIG_HOME: herdrConfig(), HERDR_REMOTE_SOCKET: "", HERDR_REMOTE_SESSION: "a" });
+  await bounded(server.ready, 20_000);
+  const reason = (await (await owner(dir, "/api/health", { headers })).json() as { machine_profile: { reason: string } }).machine_profile.reason;
+  expect(reason).toBe("herdr is not running for the selected session");
+  const response = await owner(dir, "/api/session", { headers });
+  const text = await response.text();
+  // the status every failed herdr read answers with, and the client's own code, kept
+  expect([response.status, JSON.parse(text)]).toEqual([502, { error: { code: "connect_failed", message: reason } }]);
+  expect([text.includes(realpathSync(dir)), text.includes("herdr.sock")]).toEqual([false, false]);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+});
+
+it.each(["/api/session", "/api/machines"])("answers a herdr read that fails on %s while herdr answers its health with one sentence of its own", async (path) => {
+  const dir = state();
+  const config = herdrConfig();
+  const socket = join(config, "herdr", "sessions", "a", "herdr.sock");
+  mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+  // herdr answers ping, and fails the session read with an error of its own: its code, and a message that names its socket
+  fakeHerdr(socket, { method: "session.snapshot", message: `cannot read the session behind ${socket}` });
+  const server = launch(dir, { XDG_CONFIG_HOME: config, HERDR_REMOTE_SOCKET: "", HERDR_REMOTE_SESSION: "a" });
+  await bounded(server.ready, 20_000);
+  expect(await (await owner(dir, "/api/health", { headers })).json()).toMatchObject({ machine_profile: { runtime_down: false, reason: null } });
+  const response = await owner(dir, path, { headers });
+  const text = await response.text();
+  // a code herdr gave is answered as one fixed code; the status is the one every failed herdr read answers with
+  expect([response.status, JSON.parse(text)]).toEqual([404, { error: { code: "herdr_error", message: "herdr did not answer this request" } }]);
+  expect([text.includes(config), text.includes(realpathSync(dir)), text.includes("herdr.sock")]).toEqual([false, false, false]);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+});
+
+it("keeps the bridge's own code when herdr closes the connection before it answers the read", async () => {
+  const dir = state();
+  const config = herdrConfig();
+  const socket = join(config, "herdr", "sessions", "a", "herdr.sock");
+  mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+  fakeHerdr(socket, { method: "session.snapshot", close: true });
+  const server = launch(dir, { XDG_CONFIG_HOME: config, HERDR_REMOTE_SOCKET: "", HERDR_REMOTE_SESSION: "a" });
+  await bounded(server.ready, 20_000);
+  const response = await owner(dir, "/api/session", { headers });
+  expect([response.status, await response.json()]).toEqual([404, { error: { code: "closed", message: "herdr did not answer this request" } }]);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+});
+
+it("answers an ordinary server's failed /api/session with herdr's own message", async () => {
+  // control: only the machine profile changes this answer
+  const socket = join(scratch(), "herdr.sock");
+  const base = await bounded(launch(state(), { OVIS_PROFILE: "", OVIS_PREVIEW: undefined, HERDR_SOCKET: socket }).ready, 20_000);
+  const response = await fetch(`${base}/api/session`, { headers });
+  const body = await response.json() as { error: { code: string; message: string } };
+  expect([response.status, body.error.code]).toEqual([502, "connect_failed"]);
+  expect(body.error.message).toContain(`cannot reach herdr at ${socket}`);
+});
+
+it("lists this machine alone on GET /api/machines, under its own name, and says why its engine is down", async () => {
+  const dir = state();
+  // a named session whose herdr has not started yet
+  const server = launch(dir, { XDG_CONFIG_HOME: herdrConfig(), HERDR_REMOTE_SOCKET: "", HERDR_REMOTE_SESSION: "a" });
+  await bounded(server.ready, 20_000);
+  const health = await (await owner(dir, "/api/health", { headers })).json() as { machine_profile: { reason: string }; web_ui: { boot_id: string; server_id?: string } };
+  expect(health.machine_profile.reason).toBe("herdr is not running for the selected session");
+  const response = await owner(dir, "/api/machines", { headers });
+  expect(response.status).toBe(200);
+  const { machines } = await response.json() as { machines: Record<string, unknown>[] };
+  // what the app's sidebar draws for a PC whose herdr is away: its name, the reason, no terminals (an ordinary server's own PC)
+  expect(machines).toEqual([{ id: "local", name: hostname(), kind: "local", enabled: true, state: "error", error: health.machine_profile.reason,
+    snapshot: null, source_boot_id: health.web_ui.boot_id, ...(health.web_ui.server_id ? { server_id: health.web_ui.server_id } : {}) }]);
+});
+
+it("proves its own boot to its owner on GET /api/machines?verify_source_boot=local, and names no other PC", async () => {
+  const { stateDir } = profileServer();
+  const boot = (await (await owner(stateDir, "/api/health", { headers })).json() as { web_ui: { boot_id: string } }).web_ui.boot_id;
+  const proved = await owner(stateDir, "/api/machines?verify_source_boot=local", { headers });
+  expect(proved.status).toBe(200);
+  const body = await proved.json() as { machines: { id: string; source_boot_id: string }[]; verified_source_boot?: unknown };
+  expect(body.machines.map((machine) => [machine.id, machine.source_boot_id])).toEqual([["local", boot]]);
+  expect(body.verified_source_boot).toEqual({ machine_id: "local", boot_id: boot });
+  // a PC it does not have is no proof, and the plain roster carries none
+  for (const path of ["/api/machines?verify_source_boot=other", "/api/machines"]) {
+    expect(await (await owner(stateDir, path, { headers })).json()).not.toHaveProperty("verified_source_boot");
+  }
+  // the roster answers this app's page only, as an ordinary server's does
+  const foreign = await owner(stateDir, "/api/machines", { headers: { ...headers, origin: "http://evil.example" } });
+  expect([foreign.status, (await foreign.json() as { error: { code: string } }).error.code]).toEqual([403, "invalid_origin"]);
+});
+
+it("refuses every other route of /api/machines to its owner, as the routes between PCs", async () => {
+  const { stateDir } = profileServer();
+  const routes: [string, string][] = [["POST", "/api/machines"], ["DELETE", "/api/machines"], ["PATCH", "/api/machines"], ["GET", "/api/machines/events"],
+    ["GET", "/api/machines/local/session"], ["GET", "/api/machines/ssh-candidates"], ["GET", "/api/machines/tailnet"], ["GET", "/api/machines/other-pc/session"],
+    ["GET", "/api/machines/"]];
+  for (const [method, path] of routes) {
+    const response = await owner(stateDir, path, { method, headers: { ...headers, origin: "http://localhost", "content-type": "application/json" }, ...(method === "GET" ? {} : { body: "{}" }) });
+    expect([method, path, response.status, (await response.json() as { error: { code: string } }).error.code]).toEqual([method, path, 409, "machine_profile"]);
+  }
 });
 
 it("takes a state folder holding only an unheld serve.own, as a start killed before its mark leaves it", async () => {

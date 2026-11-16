@@ -99,11 +99,17 @@ export function terminalAttachSupported(capabilities?: Record<string, unknown>):
 
 export class HerdrError extends Error {
   readonly code: string;
+  /**
+   * Whether `code` and the message are herdr's own, out of a reply's `error`, rather than this client's. Not
+   * enumerable, so an error's printed or encoded form keeps its own fields only.
+   */
+  declare readonly fromReply: boolean;
 
-  constructor(code: string, message: string) {
+  constructor(code: string, message: string, fromReply = false) {
     super(message);
     this.name = "HerdrError";
     this.code = code;
+    Object.defineProperty(this, "fromReply", { value: fromReply, enumerable: false });
   }
 }
 
@@ -365,7 +371,7 @@ export async function herdrRpc(
         }
         const reply = readReply(frame, id);
         if (typeof reply === "string") invalid(reply, bytes);
-        else if ("error" in reply) finish(() => reject(new HerdrError(reply.error.code, reply.error.message)));
+        else if ("error" in reply) finish(() => reject(new HerdrError(reply.error.code, reply.error.message, true)));
         else finish(() => resolve(reply.result));
       };
 
@@ -1075,9 +1081,9 @@ export async function paneMoveBeside(paneId: string, targetPaneId: string, side:
         read = await sessionSnapshot(socket).catch(() => null);
         back = inTab(read, out);
       }
-      if (!back) throw new HerdrError(why.code, `pane ${out} ${read === null ? "may wait" : "waits"} in a tab of its own: ${why.message}`);
+      if (!back) throw new HerdrError(why.code, `pane ${out} ${read === null ? "may wait" : "waits"} in a tab of its own: ${why.message}`, why.fromReply);
       if (left !== null) await restore(out, (at) => at === left);
-      throw new HerdrError(why.code, `pane ${out} went back into its tab: ${why.message}`);
+      throw new HerdrError(why.code, `pane ${out} went back into its tab: ${why.message}`, why.fromReply);
     };
     const failed = (error: unknown) => error instanceof HerdrError ? error : new HerdrError("pane_not_moved", error instanceof Error ? error.message : String(error));
     try {
@@ -1252,7 +1258,7 @@ export function subscribeEvents(
     if (!started || (!isEvent && isRecord(frame) && Object.hasOwn(frame, "error"))) {
       const reply = readReply(frame, id);
       if (typeof reply === "string") invalid(reply, bytes);
-      else if ("error" in reply) handlers.onError?.(new HerdrError(reply.error.code, reply.error.message));
+      else if ("error" in reply) handlers.onError?.(new HerdrError(reply.error.code, reply.error.message, true));
       else if (started || !isRecord(reply.result) || reply.result["type"] !== "subscription_started") invalid("unexpected acknowledgement", bytes);
       else {
         started = true;
