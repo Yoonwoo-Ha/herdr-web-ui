@@ -23,6 +23,7 @@
 import { mergeEnvLayers } from "../server/legacy-env.ts";
 import { acquireOwnerDirectory, guardPath, type OwnerLease } from "../server/owner-guard.ts";
 import { parseBirth, readProcessBirth } from "../server/process-owner.ts";
+import { writeStateDocument } from "../server/state-document.ts";
 import { defaultStateDir } from "../server/update-state.ts";
 import { COMPILED, entryCommand, ROOT as SERVER_ROOT } from "../server/entries.ts";
 import { version as builtVersion } from "../package.json";
@@ -565,16 +566,9 @@ async function startInTurn(): Promise<number> {
   return failStart(why, `; ${LOG_FILE} ends with:\n${logSince(log, logged)}`, log);
 }
 
-/** Written whole or not at all: a reader never finds half a record. */
+/** Written whole or not at all, and flushed before it replaces the old one: a reader never finds half a record, nor an empty one after a power cut. */
 function writeRecord(file: string, text: string): void {
-  const staging = `${file}.tmp`;
-  try {
-    writeFileSync(staging, text, { mode: 0o600 });
-    renameSync(staging, file);
-  } catch (error) {
-    rmSync(staging, { force: true });
-    throw error;
-  }
+  writeStateDocument(file, text, false);
 }
 
 /** Removes the records that name `pid`, and only those: a start that ran meanwhile may have recorded its own server. */
