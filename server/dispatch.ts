@@ -15,7 +15,7 @@ import { type DeviceStore, handleDeviceRequest, newStreamKey, sameBrowser, strea
 import { handlePreferencesRequest, type PreferenceStore } from "./preferences.ts";
 import { handleSeenRequest, type SeenStore } from "./seen.ts";
 import { remoteAccess } from "./tailscale.ts";
-import { badRequest, errorResponse, jsonResponse, setRequestRoute, wordHerdrFailures } from "./http.ts";
+import { badRequest, errorResponse, jsonResponse, setRequestRoute, wordedHeaders, wordHerdrFailures } from "./http.ts";
 import { requestOrigin, serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
 import { handleTasksRequest } from "./tasks-routes.ts";
@@ -812,7 +812,7 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     try {
       // another Ovis server reading this PC (its bridge token) applies its own rows; a browser gets this server's
       const snapshot = await clientSnapshot();
-      return jsonResponse({ snapshot: bridgeAuthorized ? snapshot : browserSnapshot(snapshot) });
+      return jsonResponse({ snapshot: bridgeAuthorized ? snapshot : browserSnapshot(snapshot) }, 200, wordedHeaders());
     } catch (error) {
       // the machine profile answers a failed herdr read with its health's reason
       return options.profile === "machine" ? machineReadError(error, options.machineEngine ?? "herdr", engineRefusal) : errorResponse(error);

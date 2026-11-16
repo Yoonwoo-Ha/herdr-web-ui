@@ -1257,7 +1257,7 @@ it("answers a pane move herdr did not make with its own reason and words, and ke
   mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
   const marker = `herdr-own-${Math.random().toString(36).slice(2)}`;
   const cwd = scratch();
-  let script: "plain" | "swap" | "stray" = "plain";
+  let script: "plain" | "swap" | "stray" | "malformed" = "plain";
   let moves = 0;
   const pane = (id: string, tab?: string) => walkPane(cwd, id, tab);
   refusingHerdr(socket, { code: marker, message: `${marker} at ${socket}` }, {
@@ -1269,20 +1269,27 @@ it("answers a pane move herdr did not make with its own reason and words, and ke
       // out of its tab, then herdr will not bring it back beside any pane
       if (moves === 1) return { move_result: { changed: false, reason: "same_tab", pane: pane("w1:p1") } };
       if (moves === 2) return { move_result: { changed: true, pane: pane("w1:p9", "w1:t9"), source_layout: { focused_pane_id: "w1:p2" } } };
+      // or with a reply that is no answer at all
+      if (script === "malformed") return null;
       return { move_result: { changed: false, reason: `${marker}-reason`, pane: pane("w1:p9", "w1:t9") } };
     },
   });
   const post = await bothOn(socket);
-  const asks = { plain: { side: "right" }, swap: { side: "left" }, stray: { side: "right" } } as const;
-  for (const each of ["plain", "swap", "stray"] as const) {
+  const asks = { plain: { side: "right" }, swap: { side: "left" }, stray: { side: "right" }, malformed: { side: "right" } } as const;
+  let stranded = "";
+  for (const each of ["plain", "swap", "stray", "malformed"] as const) {
     const body = { pane_id: "w1:p1", target_pane_id: "w1:p2", ...asks[each] };
     script = each; moves = 0;
     const theirs = await post("ordinary", "/api/pane/move", body);
     script = each; moves = 0;
     const mine = await post("profile", "/api/pane/move", body);
     expect([each, mine.text.includes(marker), mine.cache]).toEqual([each, false, "no-store"]);
-    expect([each, theirs.text.includes(marker), theirs.cache]).toEqual([each, true, null]);
-    if (each === "stray") {
+    expect([each, theirs.text.includes(marker), theirs.cache]).toEqual([each, each !== "malformed", null]);
+    if (each === "malformed") {
+      // the pane is where a refused move back leaves it, and the profile says so as it does then
+      expect([mine.status, mine.text]).toEqual([theirs.status, stranded]);
+    } else if (each === "stray") {
+      stranded = mine.text;
       // the same refusal, in the profile's words: the code the bridge made is kept, and the message says where the
       // pane is (the bridge's own words), not the sentence the profile gives a call herdr did not answer
       const refused = await post("profile", "/api/pane/zoom", { pane_id: "w1:p1" });
@@ -1466,14 +1473,17 @@ it("tells a pane herdr could not restore in its own words, keeping the field, an
   };
   const restoreOf = (snapshot: unknown) => (snapshot as { panes: { pane_id: string; restore_error?: string | null }[] }).panes.find((pane) => pane.pane_id === "w1:p2")?.restore_error;
   const mine = await frames(`ws+unix://${join(realpathSync(dir), "serve.sock")}:/ws`);
-  const session = await (await owner(dir, "/api/session", { headers })).json() as { snapshot: unknown };
+  const asked = await owner(dir, "/api/session", { headers });
+  const session = await asked.json() as { snapshot: unknown };
   const listed = await (await owner(dir, "/api/machines", { headers })).json() as { machines: { snapshot: unknown }[] };
   const theirs = await frames(`${ordinary.replace(/^http/, "ws")}/ws`, { headers: { authorization: headers.authorization } });
-  const theirSession = await (await fetch(`${ordinary}/api/session`, { headers })).json() as { snapshot: unknown };
+  const theirAnswer = await fetch(`${ordinary}/api/session`, { headers });
+  const theirSession = await theirAnswer.json() as { snapshot: unknown };
   // on the profile: the field is still set (the app keys on it), in one sentence of the profile's own, everywhere
   const told = [restoreOf(session.snapshot), restoreOf(listed.machines[0]!.snapshot), restoreOf(mine.snapshot), mine.attach.message];
   expect(told.map((text) => [typeof text === "string" && text.length > 0, text?.includes(marker)])).toEqual(told.map(() => [true, false]));
-  expect([new Set(told).size, mine.attach.code]).toEqual([1, "pane_not_restored"]);
+  expect([new Set(told).size, mine.attach.code, asked.headers.get("cache-control")]).toEqual([1, "pane_not_restored", "no-store"]);
   // an ordinary server answers as main does
-  expect([restoreOf(theirSession.snapshot), restoreOf(theirs.snapshot), theirs.attach.code, theirs.attach.message]).toEqual([`${marker} could not restore`, `${marker} could not restore`, "pane_not_restored", `${marker} could not restore`]);
+  expect([restoreOf(theirSession.snapshot), restoreOf(theirs.snapshot), theirs.attach.code, theirs.attach.message, theirAnswer.headers.get("cache-control")])
+    .toEqual([`${marker} could not restore`, `${marker} could not restore`, "pane_not_restored", `${marker} could not restore`, null]);
 }, 60_000);

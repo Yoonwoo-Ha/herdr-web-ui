@@ -1112,7 +1112,7 @@ export async function paneMoveBeside(paneId: string, targetPaneId: string, side:
       if (left !== null) await restore(out, (at) => at === left);
       throw new HerdrError(why.code, `pane ${out} went back into its tab: ${why.message}`, why.fromReply, why.failedCall === true, "The pane was not moved and is back in its tab");
     };
-    const failed = (error: unknown) => error instanceof HerdrError ? error : new HerdrError("pane_not_moved", error instanceof Error ? error.message : String(error));
+    const failed = (error: unknown) => error instanceof HerdrError ? error : new HerdrError("pane_not_moved", error instanceof Error ? error.message : String(error), false, true);
     try {
       let moved = await move(paneId, into);
       if (moved.changed === false && moved.reason === "same_tab") {
