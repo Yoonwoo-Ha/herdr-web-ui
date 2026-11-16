@@ -1241,9 +1241,12 @@ The [CI workflow](../.github/workflows/ci.yml) runs on every PR and `main` push:
     size) run in the layout script, on a fixture of their own, so neither context script nears
     the per-script cap. Each context script prints each helper's elapsed time and stops its owned
     daemon on exit. `bun run test:ui` also runs all six.
-  - **Browser regression (other scripts)** runs every other browser script: six at a time in
-    one job on self-hosted CI, and on hosted CI split over four jobs (`BROWSER_SHARD=k/4`,
-    balanced by `scripts/ci-browser-timings.json`) that run three at a time each.
+  - **Browser regression (other scripts)** runs every other browser script, split over parts
+    (`BROWSER_SHARD=k/n`, balanced by `scripts/ci-browser-timings.json`): three parts on
+    self-hosted CI that run six at a time each (`Browser regression (other scripts 1/3)` and so
+    on), four on hosted CI and five on the VM runners that run three at a time each. Each part
+    uploads its logs as `browser-other-<part>-<run>-<attempt>`. `scripts/pages-gate.test.ts`
+    fails if a script is in no part or in two.
 
   Both browser jobs run `scripts/ci-browser-parallel.ts`, which takes its script list from
   `scripts/ci-browser.sh` (`BROWSER_SCRIPTS` picks from it, `BROWSER_EXCLUDE` leaves scripts out,
@@ -1334,7 +1337,7 @@ pages or credentials.
 
 `ci.yml`'s Linux jobs of a push run on the maintainer PC's runners (labels
 `["self-hosted","self-hosted-ovis"]`) by default. A same-repository pull request goes there too
-while those runners have room for its four Linux jobs, and to `ubuntu-24.04` (with the browser
+while those runners have room for its six Linux jobs, and to `ubuntu-24.04` (with the browser
 checks sharded) when they do not, so neither pool queues while the other sits idle. The workflow
 token cannot list runners, so Detect changes counts room from the Actions API: the repository
 variable `CI_SELF_HOSTED_CAPACITY` (default 10, the PC's `self-hosted-ovis` runners) minus the

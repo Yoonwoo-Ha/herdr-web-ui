@@ -410,13 +410,15 @@ jobs:
     runs-on: ${{ fromJSON(needs.changes.outputs.linux) }}
     # A hosted runner has 4 CPUs: one job running every script there took about 28 minutes, and
     # frame-timing checks failed under the load. So hosted runs split the scripts over four jobs
-    # (scripts/ci-browser-parallel.ts's BROWSER_SHARD); a self-hosted run keeps one job. The cloud VM
-    # runners (label ovis-vm, 4 vCPUs each, scripts/self-hosted-runner/vm-runner.sh) are hosted-sized:
-    # five jobs there, so no shard waits past the longest script for long.
+    # (scripts/ci-browser-parallel.ts's BROWSER_SHARD). On the self-hosted PC one job of six workers
+    # took about 20 minutes, the whole run's length; three parts of six workers each end near the
+    # longest single script (sidebar-filter-demo, about 7 minutes). The cloud VM runners (label
+    # ovis-vm, 4 vCPUs each, scripts/self-hosted-runner/vm-runner.sh) are hosted-sized: five jobs
+    # there, so no shard waits past the longest script for long.
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(contains(needs.changes.outputs.linux, 'ovis-vm') && '[1,2,3,4,5]' || contains(needs.changes.outputs.linux, 'self-hosted') && '[1]' || '[1,2,3,4]') }}
+        shard: ${{ fromJSON(contains(needs.changes.outputs.linux, 'ovis-vm') && '[1,2,3,4,5]' || contains(needs.changes.outputs.linux, 'self-hosted') && '[1,2,3]' || '[1,2,3,4]') }}
     # a wait for a slot counts against it
     timeout-minutes: 50
     env:

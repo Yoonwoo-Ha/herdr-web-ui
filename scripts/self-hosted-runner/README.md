@@ -274,7 +274,8 @@ old; one it cannot even move is emptied where it is, and logged once a day while
 
 `ci.yml`'s Linux jobs of a push go to `["self-hosted","self-hosted-ovis"]` by default, the launcher's
 default label. A same-repository pull request goes there only while at most
-`CI_SELF_HOSTED_CAPACITY` (default 10) minus its four Linux jobs are queued or running on that label,
+`CI_SELF_HOSTED_CAPACITY` (default 10) minus its six Linux jobs (Fast checks, Integration tests and the
+browser jobs: ui-regression and the three parts of the other scripts) are queued or running on that label,
 and GitHub-hosted otherwise. Set the capacity to the number of `self-hosted-ovis` runners you keep
 online. The repository variable overrides the choice:
 
@@ -308,7 +309,7 @@ share `check.ts`'s slots (`CHECK_HOST_MAX_RUNS`) with theirs, so they can wait t
 
 On the maintainer PC the launcher runs as the systemd user unit `ovis-ci-runner.service`
 (`run.sh --repo devswha/ovis --count 4 --labels self-hosted-ovis` from a copy of this directory in
-`~/.local/share/ovis-ci-runner`): four slots let one CI run's four Linux jobs start together, and
+`~/.local/share/ovis-ci-runner`): four slots start four of one CI run's six Linux jobs together, and
 `check.ts`'s shared slots cap its herdr-backed lanes at `ci.yml`'s `CHECK_MAX_RUNS`. Copy the directory again
 after changing these files, on every host whose launcher runs with `--build-cache`. For a change to
 `build-cache-promote.sh` the copy is all it takes: the launcher starts the promoter from that
@@ -362,17 +363,23 @@ After two hardware resets under that load (a data fabric sync flood), it runs `-
 `CHECK_HOST_TEST_SHARDS=4`, `CHECK_HOST_BROWSER_WORKERS=5` and `CHECK_HOST_UNIT_WORKERS=5` until its
 memory is checked.
 
-Memory, not CPU, bounds it. Measured there with three runners and `ci.yml`'s values, the CPU stayed
-over 90% idle while Browser regression (other scripts) held 2-4 GiB with one script's spike to
+Memory, not CPU, bounded it then. Measured there with three runners and `ci.yml`'s values, the CPU
+stayed over 90% idle while Browser regression (other scripts) held 2-4 GiB with one script's spike to
 9.3 GiB, Browser regression (ui-regression) 2.6-4.5 GiB and Integration tests 1.6-2.7 GiB; the
-host peaked at 14.6 of 30 GiB; Fast checks peaked at 0.6 GiB. Those jobs (all but Fast checks)
-run at most `CHECK_HOST_MAX_RUNS` at once, however many runners wait for a slot, so the other
-runners hold only Fast checks and the setup steps before a slot. More browser workers raise that
-spike: with ten, Browser regression (other scripts) reached 14 GiB for about 20 s (its 90th
-percentile stayed near 5.4 GiB) while the host peaked at 20.4 GiB, so the P620 ran eight. With
-four slot jobs and twelve runners busy, the host stayed under 17.2 GiB; a fifth slot job at about
-4 GiB puts it near 21 GiB, about 9 GiB below the total, which holds one browser spike at eight
-workers (about 5-7 GiB above that job's usual 2-4 GiB) but not two at once.
+host peaked at 14.6 of 30 GiB; Fast checks peaked at 0.6 GiB. More browser workers raise that
+spike: with ten, Browser regression (other scripts) reached 14 GiB for about 20 s, so the P620 ran
+eight, and a fifth slot job left about 9 GiB of the 30, room for one browser spike but not two.
+
+The P620 has 184 GiB now. A second host runs pull requests' runners with `CHECK_HOST_MAX_RUNS=3`.
+Every herdr-backed job takes one check slot of its host: Integration tests, Browser regression
+(ui-regression) and each of the three parts of Browser regression (other scripts), five per run, and
+a host runs at most `CHECK_HOST_MAX_RUNS` of them at once, however many runners wait for a slot, so
+the other runners hold only Fast checks and the setup steps before a slot (on the host with three
+slots, a run's parts waited 146 to 278 s for one in two of four runs). Measured on 2026-11-17 on
+this pull request's runs, with six workers per part: one part peaked at 5.6 to 10.2 GiB (the one job
+of six workers before the split peaked at 9.2 GiB), the three parts of one run at 15.2 to 19.0 GiB
+together, and the hosts' available memory never fell below 79.9 GiB on the P620 or 77.8 GiB on the
+second host, so two runs' spikes at once fit on either.
 
 A manual run can override the variable with the `self_hosted_labels` workflow_dispatch input. Fork PRs always use `ubuntu-24.04`; Windows/macOS jobs, `remote-bundles.yml` and `windows-install.yml` stay GitHub-hosted, except `ci.yml`'s Native macOS session identity job, which follows the repository variable `CI_MAC_LABELS` to the self-hosted Mac when it is set ([docs](../../docs/development.md)).
 
