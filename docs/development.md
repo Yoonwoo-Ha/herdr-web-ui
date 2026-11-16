@@ -1355,7 +1355,22 @@ request runs, and `"ubuntu-24.04"` keeps only main GitHub-hosted. `CI_SELF_HOSTE
 `"ubuntu-24.04"` still keeps every job hosted. Delete the variable while no reserved runner is online,
 or main's jobs wait for one.
 
-The Windows and macOS jobs, the Rust PTY host job (the runner image has no Rust toolchain),
+`ci.yml`'s Native macOS session identity job can run on the self-hosted Mac `eamac-ovis-mac`
+(labels `self-hosted, macOS, ARM64, self-hosted-ovis-mac`): ci.yml's own same-repository runs off
+`main` take the repository variable `CI_MAC_LABELS`, a JSON label list
+(`["self-hosted","self-hosted-ovis-mac"]`) or the JSON string `"macos-15"`; unset, the job stays on
+`macos-15`. Its `runs-on` sends a fork pull request to `macos-15` before it reads the variable. A
+release never validates there: Release validation calls ci.yml under its own name, and main's run,
+which a Release run may take instead, stays on `macos-15`. One runner takes one job at a time, so
+while the Mac is off or busy the job waits for it: delete the variable to go back to `macos-15`.
+The runner runs jobs as the Mac's own account, so on it `setup-ci` installs Bun under the job's temp
+folder, not that account's `~/.bun`; the prepared-image check and the host's Bun cache are for the
+self-hosted Linux runners alone. Before the variable is set, the Mac runner needs a fork refusal
+that works on macOS: `job-started.sh` finds the job's worker through `/proc`, which macOS lacks.
+Until then, only the repository's approval policy for fork pull request workflows (every outside
+contributor's run waits for a maintainer) keeps a fork's own workflow from naming the Mac's labels.
+
+The other Windows and macOS jobs, the Rust PTY host job (the runner image has no Rust toolchain),
 `remote-bundles.yml`'s other jobs (Rust builds, and the SSH job's `sudo apt-get` and Docker),
 `desktop.yml`, `windows-install.yml` and `windows-terminal-qa.yml` always stay GitHub-hosted.
 

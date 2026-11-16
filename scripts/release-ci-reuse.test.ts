@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -743,6 +743,9 @@ describe("ci.yml", () => {
     "jobs.changes.runs-on": LIGHT,
     "jobs.herdr-core-live.runs-on": LIGHT,
     "jobs.integration-browser.runs-on": LIGHT,
+    // the macOS session job's guard against a fork's pull request (scripts/light-runner-workflow.test.ts): a push and a
+    // Release run carry none, and both then stay on macos-15 (the test below)
+    "jobs.macos-session.runs-on": "${{ github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'macos-15' || fromJSON(github.workflow == 'CI' && github.ref != 'refs/heads/main' && vars.CI_MAC_LABELS || '\"macos-15\"') }}",
     // the runner of the Linux jobs (scripts/ci-runner-route.sh): the self-hosted PC for a push,
     // GitHub's for the Release run's own call. The jobs and their steps are the same on either;
     // the unit tests the self-hosted runner skips run in release-validate.yml's own Fast checks, on
@@ -760,6 +763,16 @@ describe("ci.yml", () => {
     // step again
     "jobs.fast.steps.Release guards.env.BASE_SHA": "${{ github.event.pull_request.base.sha || github.event.before }}",
   };
+
+  it("never validates a release on the self-hosted Mac: CI_MAC_LABELS reaches neither a Release run nor main's run", () => {
+    // A Release run calls ci.yml under its own workflow name, with its caller's event, and may take main's push run in
+    // place of its own: the variable is read only in ci.yml's own runs off main, so both stay on GitHub's macos-15.
+    const dir = join(root, ".github/workflows");
+    const reads = readdirSync(dir).filter((name) => name.endsWith(".yml"))
+      .flatMap((name) => readFileSync(join(dir, name), "utf8").split("\n").filter((line) => line.includes("CI_MAC_LABELS") && !line.trimStart().startsWith("#")).map((line) => `${name}: ${line.trim()}`));
+    expect(reads).toEqual([`ci.yml: runs-on: ${String((ci.jobs["macos-session"] as CiJob & { "runs-on"?: string })["runs-on"])}`]);
+    expect(reads[0]).toContain("fromJSON(github.workflow == 'CI' && github.ref != 'refs/heads/main' && vars.CI_MAC_LABELS || '\"macos-15\"')");
+  });
 
   it("reads the event and the run's inputs only where a push run may differ from Release's own", () => {
     const EVENT = /\bgithub\.event\w*|\bgithub\s*\[|\(\s*github\s*\)|\binputs\b/;

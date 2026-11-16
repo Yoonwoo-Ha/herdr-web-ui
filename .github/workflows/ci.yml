@@ -130,10 +130,17 @@ jobs:
     name: Native macOS session identity
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: macos-15
+    # mac: fork pull requests stay on macos-15; ci.yml's own same-repository runs off main take the repository variable
+    # CI_MAC_LABELS (a JSON label list such as ["self-hosted","self-hosted-ovis-mac"]), macos-15 while it is unset. A release
+    # never validates on the Mac: a workflow that calls ci.yml (Release validation) runs under its own name, and main's
+    # run, which a Release run may take in place of its own, stays on macos-15 (scripts/release-ci-reuse.test.ts)
+    runs-on: ${{ github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'macos-15' || fromJSON(github.workflow == 'CI' && github.ref != 'refs/heads/main' && vars.CI_MAC_LABELS || '"macos-15"') }}
     timeout-minutes: 5
     env:
       HERDR_TEST_MODE: unit
+      # claude-store.test.ts skips two session-identity tests when a Claude config dir is exported; a self-hosted
+      # runner's environment must not turn them off
+      CLAUDE_CONFIG_DIR: ''
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
