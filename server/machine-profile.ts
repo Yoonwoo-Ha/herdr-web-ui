@@ -57,13 +57,21 @@ function canonical(path: string): string {
 function walkedStateDir(told: string): string {
   const made = mkdirSync(told, { recursive: true, mode: 0o700 });
   const stateDir = realpathSync(told);
-  const stats = statSync(stateDir);
-  const refusal = trustRefusal(stateDir, profileGroups(), true)
-    ?? (stats.uid !== process.getuid?.() ? `${stateDir} belongs to uid ${stats.uid}, not to this account`
-      : (stats.mode & 0o7777) !== 0o700 ? `${stateDir} has mode ${(stats.mode & 0o7777).toString(8).padStart(4, "0")}, not 0700` : null);
+  const refusal = stateDirRefusal(stateDir);
   if (refusal === null) return stateDir;
   if (made !== undefined) for (let dir = resolve(told); ; dir = dirname(dir)) { rmdirSync(dir); if (dir === resolve(made)) break; }
   throw new MachineProfileError(`The machine profile's state folder is not safe to serve from, so no server was started: ${refusal}`);
+}
+
+/**
+ * Why the existing folder `stateDir`, a real path, is not one the profile serves from, or null: the walk from `/`
+ * of walkedStateDir, and the folder this account's own with mode 0700. It makes and changes nothing.
+ */
+export function stateDirRefusal(stateDir: string): string | null {
+  const stats = statSync(stateDir);
+  return trustRefusal(stateDir, profileGroups(), true)
+    ?? (stats.uid !== process.getuid?.() ? `${stateDir} belongs to uid ${stats.uid}, not to this account`
+      : (stats.mode & 0o7777) !== 0o700 ? `${stateDir} has mode ${(stats.mode & 0o7777).toString(8).padStart(4, "0")}, not 0700` : null);
 }
 
 /**
