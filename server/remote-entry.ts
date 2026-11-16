@@ -5,6 +5,7 @@ import { createServer } from "./index.ts";
 import { ROOT } from "./entries.ts";
 import { bridgeIdentity, descriptorLive, descriptorPath, registerBridge } from "./bridge.ts";
 import { acquireOwnerDirectory } from "./owner-guard.ts";
+import { profileFolderRefusal } from "./profile-marker.ts";
 import { parseProcessLine, refusedSocket, staleMarker } from "./herdr-marker.ts";
 import { startHeadlessWindowsHerdr, startInteractiveWindowsHerdr, windowsStartupStatus } from "./windows-herdr-start.ts";
 import { ShellAgentLocator } from "./shell-agent.ts";
@@ -147,6 +148,9 @@ try {
   const info = await bridgeIdentity();
   if (info.herdr.protocol < 22) throw new Error("herdr 0.9+ is required; update it explicitly before connecting");
   const token = randomBytes(32).toString("hex");
+  // a folder a machine profile marked is its own: this bridge's server does not come up on it (server/profile-marker.ts)
+  const marked = profileFolderRefusal(descriptor + ".state");
+  if (marked !== null) throw new Error(marked);
   // started over SSH with a bare PATH: omo and gjc are often only on the login shell's
   const server = createServer({ port: 0, hostname: "127.0.0.1", token, machines: false, bridgeOnly: true, stateDir: descriptor + ".state", shellAgents: new ShellAgentLocator(), agentDetector: new AgentDetector({ locate: catalogLocator({ probe: defaultLoginProbe() }) }) });
   const registration = registerBridge(server.port, token);

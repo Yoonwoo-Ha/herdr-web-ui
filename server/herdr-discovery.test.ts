@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { chosenHerdrSocketStatus, discoverHerdrSessions, parseFoundHerdrSessions } from "./herdr-discovery.ts";
+import { chosenHerdrSocketStatus, discoverHerdrSessions, parseFoundHerdrSessions, profileGroups } from "./herdr-discovery.ts";
+import { harmlessGroups } from "./herdr-core/discovery.ts";
 
 const roots: string[] = [];
 const listeners: ReturnType<typeof Bun.listen>[] = [];
@@ -192,5 +193,16 @@ describe("running herdr discovery", () => {
     expect(await discoverHerdrSessions(f)).toEqual([]);
     writeFileSync(join(f.procRoot, "100/cmdline"), "/usr/bin/herdr\0server\0");
     expect(await discoverHerdrSessions({ ...f, uid: f.uid + 1 })).toEqual([]);
+  });
+});
+
+describe("the machine profile's own folders", () => {
+  it("trust this account's private group alone, not macOS's admin group under Homebrew's prefixes", () => {
+    // the account's private group is 20 here, as a fake answer: no macOS needed
+    const own = () => 20;
+    // control: the rule of main's other callers trusts admin (80) there on macOS
+    expect(harmlessGroups("darwin", own)(80, "/opt/homebrew/var/herdr")).toBe(true);
+    const groups = profileGroups(own);
+    expect([groups(80, "/opt/homebrew/var/herdr"), groups(80, "/usr/local/state"), groups(20, "/Users/me/.config"), groups(21, "/Users/me/.config")]).toEqual([false, false, true, false]);
   });
 });
