@@ -115,9 +115,9 @@ to change. Also read [server/AGENTS.md](server/AGENTS.md) and [src/AGENTS.md](sr
   whose every failed test ran 2 s or more, or failed on a timeout or a start that never came, is
   rerun once and listed in the comment; any other failure is red. A PR still waits for GitHub's
   checks when it touches what only GitHub's runners check: `app/`, `crates/`, a `.ps1`,
-  `install.*`, `.github/`, `package.json`, `bun.lock`, `patches/`, `scripts/plugin*`, or the
-  files of a test that the Windows or macOS jobs of `ci.yml` run (`server/grok.test.ts` covers
-  `server/grok*`).
+  `install.*`, `.github/`, `package.json`, `bun.lock`, `patches/`, `scripts/plugin*`,
+  `scripts/self-hosted-runner/`, `scripts/self-hosted-runner.test.ts`, or the files of a test
+  that the Windows or macOS jobs of `ci.yml` run (`server/grok.test.ts` covers `server/grok*`).
 - Run `bun run check fast` before every push, and push a PR's commits together: each push to a
   PR cancels its CI run in progress and starts every job again.
 - A handoff or a PR's Validation says which checks ran (`bun run check fast`, `full`, or which

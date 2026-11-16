@@ -823,6 +823,9 @@ describe("ci.yml", () => {
     "scripts/self-hosted-runner/job-started.sh",
     // tests that hand the variables to the code above and to pr-title.yml's script, and read none themselves
     "scripts/build-cache.test.ts", "scripts/check-report.test.ts", "scripts/check.test.ts", "scripts/pr-title.test.ts", "scripts/self-hosted-runner.test.ts",
+    // the job-started hook's test harness: started only by the hook's tests, it hands the hook an event path;
+    // no workflow starts it, and it decides nothing about what a run does
+    "scripts/self-hosted-runner/hook-test-harness.sh",
   ];
 
   it("reads the event from the runner's environment only where a push run may differ from Release's own", () => {
