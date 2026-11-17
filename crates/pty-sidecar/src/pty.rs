@@ -189,6 +189,7 @@ pub fn wake(fd: RawFd) {
 /// cannot be reused before `reap`. SIGCHLD must not be ignored (`default_sigchld`), or the kernel reaps it.
 pub fn wait_exited(pid: libc::pid_t) -> io::Result<()> {
     loop {
+        // SAFETY: an all-zero siginfo_t is valid, and waitid writes only into it
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         if unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, libc::WEXITED | libc::WNOWAIT) } == 0 {
             return Ok(());
@@ -201,14 +202,17 @@ pub fn wait_exited(pid: libc::pid_t) -> io::Result<()> {
 }
 
 pub fn has_exited(pid: libc::pid_t) -> bool {
+    // SAFETY: an all-zero siginfo_t is valid, and waitid writes only into it
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     let rc = unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT) };
     // with WNOHANG a child still running leaves si_pid 0
+    // SAFETY: waitid filled `info` (or left it zeroed)
     rc == 0 && unsafe { info.si_pid() } != 0
 }
 
 /// SIGCHLD back to its default: an ignored one, which survives exec, would have the kernel reap the child.
 pub fn default_sigchld() -> io::Result<()> {
+    // SAFETY: an all-zero sigaction with SIG_DFL is valid
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
         action.sa_sigaction = libc::SIG_DFL;
@@ -257,6 +261,7 @@ static GROUP: AtomicI32 = AtomicI32::new(0);
 
 extern "C" fn kill_group(signal: libc::c_int) {
     let group = GROUP.load(Ordering::Relaxed);
+    // SAFETY: kill and raise are async-signal-safe
     unsafe {
         if group > 1 {
             libc::kill(-group, libc::SIGKILL);
@@ -270,6 +275,7 @@ extern "C" fn kill_group(signal: libc::c_int) {
 pub fn kill_group_on_crash(group: libc::pid_t) -> io::Result<()> {
     GROUP.store(group, Ordering::Relaxed);
     for signal in [libc::SIGABRT, libc::SIGSEGV, libc::SIGBUS, libc::SIGILL, libc::SIGFPE] {
+        // SAFETY: an all-zero sigaction is valid; the handler only reads an atomic and calls kill and raise
         unsafe {
             let mut action: libc::sigaction = std::mem::zeroed();
             action.sa_sigaction = kill_group as extern "C" fn(libc::c_int) as libc::sighandler_t;

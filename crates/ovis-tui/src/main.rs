@@ -8,6 +8,7 @@ use hc_proto::endpoint::{self, Endpoint, Sys};
 use hc_tui::embed::Embed;
 
 fn main() -> ExitCode {
+    // SAFETY: the first thing the program does, while it is the only thread
     unsafe { forget_ovis_secrets() };
     let options = match args::parse(std::env::args().skip(1)) {
         Ok(args::Action::Help) => {
@@ -36,6 +37,7 @@ fn main() -> ExitCode {
 
 unsafe fn forget_ovis_secrets() {
     for name in ["OVIS_TOKEN", "OVIS_URL", "HERDR_WEB_TOKEN"] {
+        // SAFETY: the caller guarantees no other thread reads or writes the environment yet
         unsafe { std::env::remove_var(name) };
     }
 }
