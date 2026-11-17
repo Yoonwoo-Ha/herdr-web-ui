@@ -839,6 +839,19 @@ describe("when an entry holds", () => {
     expect(await asyncRefusal(async () => entryHolds(await two(held0.list), held))).toBe("none");
   });
 
+  test("the entry it is shown is read once: one whose body or signature reads otherwise a second time is held as it first read", async () => {
+    // What a second reading gives: a body above the limit, a signature one byte short.
+    const second = { body: new Uint8Array(LIST_BODY_MAX + 1), signature: genesis.signature.subarray(0, 63) };
+    const shownOnce = (part: "body" | "signature"): Entry => {
+      let read = 0;
+      return Object.defineProperty({ ...genesis }, part, { get: () => (read++ === 0 ? genesis[part] : second[part]) });
+    };
+    for (const part of ["body", "signature"] as const) {
+      expect([part, await asyncRefusal(() => entryHolds(shownOnce(part), null))]).toEqual([part, "none"]);
+      expect([part, await entryHolds(shownOnce(part), null)]).toEqual([part, held0]);
+    }
+  });
+
   test("a body that says it is above the limit is refused by that size, before a byte of it is read", async () => {
     // The bytes of an entry that holds, under a length of 64 MiB: only a check of the size, made first, refuses them.
     const body = Object.defineProperty(genesis.body.slice(), "length", { value: 64 * 1024 * 1024 });

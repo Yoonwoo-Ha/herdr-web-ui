@@ -350,9 +350,10 @@ export async function verifySignature(body: Uint8Array, signature: Uint8Array, s
  * checked against, whatever the caller does to its buffers or to that state meanwhile or later.
  */
 export async function entryHolds(shown: Entry, before: HeldEntry | null): Promise<HeldEntry> {
-  if (shown.signature.length !== LIST_SIGNATURE_BYTES) malformed(`A signature is ${LIST_SIGNATURE_BYTES} bytes`);
-  withinLimit(shown.body.length);
-  const entry: Entry = { body: new Uint8Array(shown.body), signature: new Uint8Array(shown.signature) };
+  const { body: shownBody, signature: shownSignature } = shown;
+  if (shownSignature.length !== LIST_SIGNATURE_BYTES) malformed(`A signature is ${LIST_SIGNATURE_BYTES} bytes`);
+  withinLimit(shownBody.length);
+  const entry: Entry = { body: new Uint8Array(shownBody), signature: new Uint8Array(shownSignature) };
   const chain = before === null ? null : { seq: before.body.seq, hash: before.hash, list: before.list };
   const body = readBody(entry.body);
   const n = chain === null ? 0 : chain.seq + 1;
