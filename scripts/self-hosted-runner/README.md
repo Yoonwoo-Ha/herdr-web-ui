@@ -54,6 +54,34 @@ a slot, instead of each runner believing it has the PC to itself ([Check slots](
 limit. The container still has a pids limit of 8192, and `--ulimit core=0`: a crash never leaves a
 core file in the checkout, where `scripts/check.ts` would count it as a source change.
 
+Each slot's network is a /28 of one block, `10.213.0.0/16`, never a range docker picks. Left to
+itself, docker takes 172.17-31.x/16 ranges and then 192.168.x/20 ones: on a host whose 172 ranges
+were used up, a runner network made at boot, before the LAN's route was there, got 192.168.0.0/20
+and put its bridge on 192.168.0.1, the LAN router's address, and the host was offline until that
+network was removed. So the launcher removes and makes no network while the kernel has no route
+to the internet (`ip -4 route get 1.1.1.1`, which follows policy routing and a VPN's split
+default): the slot says so in the journal and tries again. Slot N takes the block's Nth /28, or the
+next one that no route or address of the host overlaps at that moment (`ip -4 route show table
+all`, `ip -4 addr`) and that docker does not refuse as overlapping another of its networks; after
+16 refusals its next try goes on from where it stopped. A route broader than /8 counts as a
+default, not a network (a full-tunnel VPN's /1 pair or four /2s): a runner network inside it takes
+those few addresses from it, as it does from a default route; /8 and narrower count. A slot's
+network that is there already is kept when its only IPv4 range is a /28 of the block; any other
+(one from a launcher before the block, say) is removed and made again before the slot's next
+container, unless a container is on it: then the slot leaves it, says so in the journal and tries
+again. Limits: a network that is kept is not checked against the host's routes again, so if the
+host later joins a network inside the block, set `OVIS_CI_NETWORK_BLOCK` to another block. A host
+that routes all of both 10.0.0.0/8 and 172.16.0.0/16 has no block it may use: its slots say so and
+start no runner (192.168.0.0/16 stays refused, as home networks are there). A host with no IPv4
+route to the internet at all (IPv6 only, or a proxy only), or without `ip`, starts no runner
+either: its slots report "no default route yet". Every launcher on a host must run this `run.sh`:
+a host may run several, and a copy installed under another name keeps letting docker pick its
+ranges until it is replaced too, by this `run.sh` with that copy's own `PREFIX` line. The block
+is private, outside docker's own pools, and rarely a home or office network. On a host where it is
+one, set `OVIS_CI_NETWORK_BLOCK` in the launcher's environment (the unit's `Environment=`) to
+another network address from /8 to /24 inside `10.0.0.0/8`, or inside `172.16.0.0/16` on a host
+that routes all of 10.0.0.0/8 (a VPN); the launcher refuses anything else.
+
 `--work-tmpfs SIZE` (say `4g`) puts each container's work folder (`/w`, the checkout) and `/tmp` in
 RAM, each capped at SIZE. A job's files end with its container anyway; on disk, its checkout, Bun
 cache copy and browser profiles are most of what a busy host writes. Only what a job writes takes
@@ -79,10 +107,10 @@ same docker network reaches as well.
 
 So each slot has a docker network of its own, made when the slot first starts a container and
 removed at the launcher's stop, and docker keeps its networks apart. (A launcher that was killed
-leaves them, and the next one uses them; one started with a lower `--count` leaves those of the
-slots above it, for `docker network rm`.) Docker takes each network's addresses from its address
-pools (the P620 made twenty networks beside its own); a slot whose network cannot be made starts
-no runner, says so in the journal and tries again. The slots themselves are lock
+leaves them, and the next one uses each that is a /28 of the block and makes the others again;
+one started with a lower `--count` leaves those of the slots above it, for `docker network rm`.) Each network is a /28 of the runner networks' block
+([Run](#run)); a slot whose network cannot be made starts no runner, says so in the journal and
+tries again. The slots themselves are lock
 files, one for each port (`41737` to `41770`), in the Docker volume `herdr-ci-<host>-check-slots`
 (RAM, 1 MiB), which every runner container mounts at `/check-slots` and learns of in
 `CHECK_SLOTS_DIR`. A run holds a file with `flock`, which the kernel grants to one holder and takes
