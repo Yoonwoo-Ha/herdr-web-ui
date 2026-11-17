@@ -9,7 +9,8 @@ const LIGHT = `\${{ ${FORK_GUARD} || fromJSON(github.ref == 'refs/heads/main' &&
 const ROUTED = "${{ fromJSON(needs.changes.outputs.linux) }}";
 const ROUTED_FAST = "${{ fromJSON(needs.changes.outputs.fast) }}";
 const MAC_FORK_GUARD = "github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'macos-15'";
-const MAC = `\${{ ${MAC_FORK_GUARD} || fromJSON(github.workflow == 'CI' && github.ref != 'refs/heads/main' && vars.CI_MAC_LABELS || '"macos-15"') }}`;
+const MAC = `\${{ ${MAC_FORK_GUARD} || fromJSON(github.workflow == 'CI' && vars.CI_MAC_LABELS || '"macos-15"') }}`;
+const MAC_PULL_REQUEST = "${{ fromJSON(matrix.os == 'macos-15' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_MAC_LABELS || toJSON(matrix.os)) }}";
 const HOSTED = /^(ubuntu|windows|macos)-[\w.-]+$/;
 const hostedOnly = (label: string, expression: string): string => `\${{ inputs.hosted_only && '${label}' || ${expression.slice("${{ ".length)}`;
 const HOSTED_ONLY_LIGHT = hostedOnly("ubuntu-24.04", LIGHT);
@@ -45,9 +46,10 @@ function forkSafe(job: Job & { strategy?: { matrix?: { include?: { os?: unknown 
   if (runsOn === MAC || runsOn === hostedOnly("macos-15", MAC)) return "mac";
   if (runsOn === ROUTED || runsOn === hostedOnly("ubuntu-24.04", ROUTED)) return "routed";
   if (runsOn === ROUTED_FAST || runsOn === hostedOnly("ubuntu-24.04", ROUTED_FAST)) return "routed (fast)";
-  if (runsOn === "${{ matrix.os }}") {
+  if (runsOn === "${{ matrix.os }}" || runsOn === MAC_PULL_REQUEST) {
     const include = job.strategy?.matrix?.include ?? [];
-    return include.length > 0 && include.every((entry) => typeof entry.os === "string" && HOSTED.test(entry.os)) ? "hosted matrix" : null;
+    const hosted = include.length > 0 && include.every((entry) => typeof entry.os === "string" && HOSTED.test(entry.os));
+    return hosted ? (runsOn === MAC_PULL_REQUEST ? "mac on this repository's pull requests" : "hosted matrix") : null;
   }
   const condition = job.if ?? "";
   return /^(.+ && )?github\.event_name != 'pull_request'( && .+)?$/.test(condition) && !condition.includes("||") ? "not on pull requests" : null;
@@ -57,6 +59,17 @@ describe("self-hosted runners and fork pull requests", () => {
   test("the light runner expression sends fork pull requests to ubuntu-24.04 before reading any variable", () => {
     expect(LIGHT.indexOf(FORK_GUARD)).toBe(4);
     expect(LIGHT.indexOf("vars.")).toBeGreaterThan(LIGHT.indexOf(FORK_GUARD));
+  });
+
+  test("the matrix Mac form sends only a macos-15 entry of a pull request from this repository to CI_MAC_LABELS", () => {
+    const mac = '["self-hosted","self-hosted-ovis-mac"]';
+    const run = (os: string, event: string, head: string | null, vars: Record<string, string> = { CI_MAC_LABELS: mac }) =>
+      evaluateValue(MAC_PULL_REQUEST, { github: { event_name: event, repository: "devswha/ovis", event: head === null ? {} : { pull_request: { head: { repo: { full_name: head } } } } }, vars, matrix: { os } } as Contexts);
+    expect(run("macos-15", "pull_request", "devswha/ovis")).toEqual(["self-hosted", "self-hosted-ovis-mac"]);
+    expect(run("macos-15", "pull_request", "someone/fork")).toBe("macos-15");
+    expect(run("macos-15", "pull_request", "devswha/ovis", {})).toBe("macos-15");
+    for (const event of ["push", "workflow_dispatch", "workflow_run", "pull_request_target"]) expect(run("macos-15", event, null)).toBe("macos-15");
+    for (const os of ["macos-15-intel", "ubuntu-24.04", "ubuntu-24.04-arm"]) expect(run(os, "pull_request", "devswha/ovis")).toBe(os);
   });
 
   test("ci.yml's macOS session job keeps forks on macos-15 and stays there while CI_MAC_LABELS is unset", () => {
@@ -133,6 +146,7 @@ describe("ci.yml's hosted_only input", () => {
     expect(evaluateValue(LIGHT, fork)).toBe("ubuntu-24.04");
     const topic = { ...push, github: { ...push.github, ref: "refs/heads/topic" }, vars: { CI_MAC_LABELS: '["self-hosted","self-hosted-ovis-mac"]' } };
     expect(evaluateValue(MAC, topic)).toEqual(["self-hosted", "self-hosted-ovis-mac"]);
+    expect(evaluateValue(MAC, { ...topic, github: { ...topic.github, ref: "refs/heads/main" } })).toEqual(["self-hosted", "self-hosted-ovis-mac"]);
     expect(evaluateValue(MAC, { ...topic, github: { ...topic.github, workflow: "Release" } })).toBe("macos-15");
     expect(evaluateValue(ROUTED, { ...push, needs: { changes: { outputs: { linux: '"ubuntu-24.04"' } } } })).toBe("ubuntu-24.04");
   });

@@ -27,7 +27,7 @@ jobs:
           - { asset: linux-x64, os: ubuntu-24.04 }
           - { asset: linux-arm64, os: ubuntu-24.04-arm }
           - { asset: darwin-universal, os: macos-15 }
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ fromJSON(matrix.os == 'macos-15' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_MAC_LABELS || toJSON(matrix.os)) }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,6 +35,8 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        env:
+          HOME: ${{ runner.temp }}/setup-bun-home
         with:
           bun-version: 1.4.2
           no-cache: true

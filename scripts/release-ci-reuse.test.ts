@@ -743,7 +743,7 @@ describe("ci.yml", () => {
     "jobs.changes.runs-on": LIGHT,
     "jobs.herdr-core-live.runs-on": LIGHT,
     "jobs.integration-browser.runs-on": LIGHT,
-    "jobs.macos-session.runs-on": "${{ inputs.hosted_only && 'macos-15' || github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'macos-15' || fromJSON(github.workflow == 'CI' && github.ref != 'refs/heads/main' && vars.CI_MAC_LABELS || '\"macos-15\"') }}",
+    "jobs.macos-session.runs-on": "${{ inputs.hosted_only && 'macos-15' || github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'macos-15' || fromJSON(github.workflow == 'CI' && vars.CI_MAC_LABELS || '\"macos-15\"') }}",
     "jobs.changes.steps.route.env.EVENT_NAME": "${{ github.event_name }}",
     "jobs.changes.steps.route.env.HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
     "jobs.changes.steps.route.env.REQUESTED_LABELS": "${{ inputs.self_hosted_labels }}",
@@ -756,12 +756,19 @@ describe("ci.yml", () => {
     "jobs.changes.steps.ratchet.env.EVENT_NAME": "${{ github.event_name }}",
   };
 
-  it("never validates a release on the self-hosted Mac: CI_MAC_LABELS reaches neither a Release run nor main's run", () => {
+  it("never runs a Release run's own jobs on the self-hosted Mac: CI_MAC_LABELS is read only in ci.yml's own runs and in pull requests", () => {
     const dir = join(root, ".github/workflows");
     const reads = readdirSync(dir).filter((name) => name.endsWith(".yml"))
       .flatMap((name) => readFileSync(join(dir, name), "utf8").split("\n").filter((line) => line.includes("CI_MAC_LABELS") && !line.trimStart().startsWith("#")).map((line) => `${name}: ${line.trim()}`));
-    expect(reads).toEqual([`ci.yml: runs-on: ${String((ci.jobs["macos-session"] as CiJob & { "runs-on"?: string })["runs-on"])}`]);
-    expect(reads[0]).toContain("fromJSON(github.workflow == 'CI' && github.ref != 'refs/heads/main' && vars.CI_MAC_LABELS || '\"macos-15\"')");
+    const pullRequestOnly = "runs-on: ${{ fromJSON(matrix.os == 'macos-15' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_MAC_LABELS || toJSON(matrix.os)) }}";
+    expect([...reads].sort()).toEqual([
+      `ci.yml: runs-on: ${String((ci.jobs["macos-session"] as CiJob & { "runs-on"?: string })["runs-on"])}`,
+      `pty-sidecar.yml: ${pullRequestOnly}`,
+      `remote-bundles.yml: ${pullRequestOnly}`,
+    ]);
+    const ciRead = reads.find((read) => read.startsWith("ci.yml: "))!;
+    expect(ciRead).toContain("inputs.hosted_only && 'macos-15' || ");
+    expect(ciRead).toContain("fromJSON(github.workflow == 'CI' && vars.CI_MAC_LABELS || '\"macos-15\"')");
   });
 
   it("reads the event and the run's inputs only where a push run may differ from Release's own", () => {

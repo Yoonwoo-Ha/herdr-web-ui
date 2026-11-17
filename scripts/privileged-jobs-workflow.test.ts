@@ -27,6 +27,8 @@ const SETUP_CI_ACTIONS = [
 ];
 const LABEL_FORM = /^\$\{\{ inputs\.hosted_only && '([^']+)' \|\| (?:(?!\$\{\{|\}\}).)+ \}\}$/s;
 const NO_CACHE_FORM = /^\$\{\{ inputs\.hosted_only && 'none' \|\| (?:(?!\$\{\{|\}\}).)+ \}\}$/s;
+const MAC_PULL_REQUEST = "${{ fromJSON(matrix.os == 'macos-15' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_MAC_LABELS || toJSON(matrix.os)) }}";
+const NOT_FOR_PULL_REQUESTS = [/^github\.event_name != 'pull_request'$/, /^startsWith\(github\.ref, 'refs\/tags\/[^']*'\)$/];
 
 type Permissions = Record<string, string> | "read-all" | "write-all";
 type Matrix = Record<string, unknown> & { include?: Record<string, unknown>[] };
@@ -123,13 +125,17 @@ function matrixValues(matrix: unknown, axis: string): unknown[] | null {
   return [...(bases as unknown[][]).flat(), ...include.flatMap((entry) => Object.entries(entry).filter(([key]) => same(key)).map(([, value]) => value))];
 }
 
+function hostedAxis(job: AnyJob, axis: string): boolean {
+  const values = matrixValues(job.strategy?.matrix, axis);
+  return values !== null && values.length > 0 && values.every((value) => typeof value === "string" && GITHUB_HOSTED_LABELS.includes(value));
+}
+
 function hostedLiteral(job: AnyJob): boolean {
   const runsOn = job["runs-on"];
   if (typeof runsOn !== "string") return false;
   if (GITHUB_HOSTED_LABELS.includes(runsOn)) return true;
   const axis = /^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$/.exec(runsOn)?.[1];
-  const values = axis === undefined ? null : matrixValues(job.strategy?.matrix, axis);
-  return values !== null && values.length > 0 && values.every((value) => typeof value === "string" && GITHUB_HOSTED_LABELS.includes(value));
+  return axis !== undefined && hostedAxis(job, axis);
 }
 
 function privilegeProblems(workflows: Workflows): string[] {
@@ -152,7 +158,7 @@ function labelsOf(job: AnyJob): string[] {
   if (!runsOn.includes("${{")) return [runsOn];
   const prefixed = LABEL_FORM.exec(runsOn);
   if (prefixed !== null) return [prefixed[1]!];
-  const axis = /^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$/.exec(runsOn)?.[1];
+  const axis = runsOn === MAC_PULL_REQUEST ? "os" : /^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$/.exec(runsOn)?.[1];
   return ((axis === undefined ? null : matrixValues(job.strategy?.matrix, axis)) ?? []).filter((value): value is string => typeof value === "string");
 }
 
@@ -277,13 +283,23 @@ function privilegedJobProblems(workflows: Workflows): string[] {
   );
 }
 
+function pullRequestProblems(workflows: Workflows, root: string): string[] {
+  if (!Object.keys(events(workflows[root]!.on)).some((event) => event.toLowerCase() === "pull_request")) return [];
+  return runJobs(workflows, root)
+    .filter(({ file, job }) => privileges(workflows, file, job).length > 0)
+    .filter(({ job }) => job.if === undefined || mixedCondition(job.if) || !topLevelTerms(job.if).some((term) => NOT_FOR_PULL_REQUESTS.some((form) => form.test(term))))
+    .map(({ file, id }) => `${file} ${id}`);
+}
+
 function runProblems(workflows: Workflows, root: string): string[] {
   const problems = new Set<string>();
   for (const { file, id, job, hostedOnly } of runJobs(workflows, root)) {
     const where = `${root}: ${file} ${id}`;
     const runsOn = job["runs-on"];
     const prefixed = typeof runsOn === "string" ? LABEL_FORM.exec(runsOn) : null;
-    if (!hostedLiteral(job) && !(hostedOnly && prefixed !== null && GITHUB_HOSTED_LABELS.includes(prefixed[1]!))) {
+    if (runsOn === MAC_PULL_REQUEST && hostedAxis(job, "os")) {
+      for (const privileged of pullRequestProblems(workflows, root)) problems.add(`${where}: runs-on the pull-request Mac form in a run where a pull request can run the privileged job ${privileged}`);
+    } else if (!hostedLiteral(job) && !(hostedOnly && prefixed !== null && GITHUB_HOSTED_LABELS.includes(prefixed[1]!))) {
       problems.add(`${where}: runs-on ${JSON.stringify(runsOn)} is neither a listed hosted label nor the hosted_only form under a call that passes hosted_only: true`);
     }
     for (const problem of conditionProblems(job)) problems.add(`${where}: ${problem}`);
@@ -763,6 +779,44 @@ describe("a whole-run run (a Pages run, or one whose privileged job takes an art
       expect(wholeRunProblems(workflows)).toEqual(problems);
     });
   }
+
+  const MAC_MATRIX = { include: [{ os: "ubuntu-24.04" }, { os: "macos-15" }, { os: "macos-15-intel" }] };
+  const macBuild = (runsOn: string = MAC_PULL_REQUEST, matrix: Matrix = MAC_MATRIX): AnyJob => ({ "runs-on": runsOn, strategy: { matrix }, steps: [{ uses: CHECKOUT }] });
+  const macRun = (on: unknown, publish: AnyJob, build: AnyJob = macBuild()): Workflows => ({ "rel.yml": { on, permissions: { contents: "read" }, jobs: { build, publish } } });
+  const PULL_REQUEST = { pull_request: {}, push: { tags: ["v*"] } };
+  const MAC_IN_PR_RUN = (privileged: string): string => `rel.yml: rel.yml build: runs-on the pull-request Mac form in a run where a pull request can run the privileged job ${privileged}`;
+  const macCases: [string, Workflows, string[]][] = [
+    ["allows the pull-request Mac form where the publishing job never runs for a pull request", macRun(PULL_REQUEST, { ...PUBLISH, if: "github.event_name != 'pull_request' && always()" }), []],
+    ["allows it where the publishing job runs for a tag only", macRun(PULL_REQUEST, { ...PUBLISH, if: "startsWith(github.ref, 'refs/tags/remote-v')" }), []],
+    ["allows it in a run no pull request starts, whatever its publishing job's condition", macRun({ workflow_dispatch: {}, pull_request_target: {} }, PUBLISH), []],
+    ["refuses it where the publishing job has no condition", macRun(PULL_REQUEST, PUBLISH), [MAC_IN_PR_RUN("rel.yml publish")]],
+    ["refuses it where the pull request term is inside an ||", macRun(PULL_REQUEST, { ...PUBLISH, if: "github.event_name != 'pull_request' || always()" }), [MAC_IN_PR_RUN("rel.yml publish")]],
+    ["refuses it where the guard names a branch, which a pull request's merge ref is not either but nothing proves", macRun(PULL_REQUEST, { ...PUBLISH, if: "github.ref == 'refs/heads/main'" }), [MAC_IN_PR_RUN("rel.yml publish")]],
+    ["refuses it where the publishing job's condition mixes an expression with text", macRun(PULL_REQUEST, { ...PUBLISH, if: "${{ github.event_name != 'pull_request' }} && true" }), [MAC_IN_PR_RUN("rel.yml publish"), `rel.yml: rel.yml publish: job if "\${{ github.event_name != 'pull_request' }} && true" ${MIXED}`]],
+    ["refuses it where the trigger is written in another case", macRun({ Pull_Request: {} }, PUBLISH), [MAC_IN_PR_RUN("rel.yml publish")]],
+    ["refuses the form over a matrix one of whose labels is not hosted", macRun(PULL_REQUEST, { ...PUBLISH, if: "github.event_name != 'pull_request'" }, macBuild(MAC_PULL_REQUEST, { include: [{ os: "macos-15" }, { os: "self-hosted" }] })), [`rel.yml: rel.yml build: runs-on ${JSON.stringify(MAC_PULL_REQUEST)} ${RUNS_ON}`]],
+    ...[
+      MAC_PULL_REQUEST.replace(" && github.event.pull_request.head.repo.full_name == github.repository", ""),
+      MAC_PULL_REQUEST.replace("github.event_name == 'pull_request'", "github.event_name != 'workflow_call'"),
+      `${MAC_PULL_REQUEST}-x`,
+    ].map((runsOn): [string, Workflows, string[]] => [`refuses another form: ${runsOn}`, macRun({ workflow_dispatch: {} }, PUBLISH, macBuild(runsOn)), [`rel.yml: rel.yml build: runs-on ${JSON.stringify(runsOn)} ${RUNS_ON}`]]),
+  ];
+  for (const [name, workflows, problems] of macCases) {
+    test(name, () => {
+      expect(wholeRunProblems(workflows)).toEqual(problems);
+    });
+  }
+
+  test("no privileged job may take the pull-request Mac form itself", () => {
+    expect(privilegeProblems(one({ ...macBuild(), permissions: { contents: "write" }, if: "github.event_name != 'pull_request'" }))).toEqual([`x.yml job: runs-on ${JSON.stringify(MAC_PULL_REQUEST)} with contents: write`]);
+  });
+
+  test("the remote bundles and the Rust PTY host take the pull-request Mac form, and their publishing jobs skip pull requests", () => {
+    expect(repository["remote-bundles.yml"]!.jobs.bundle!["runs-on"]).toBe(MAC_PULL_REQUEST);
+    expect(repository["pty-sidecar.yml"]!.jobs.build!["runs-on"]).toBe(MAC_PULL_REQUEST);
+    expect(pullRequestProblems(repository, "remote-bundles.yml")).toEqual([]);
+    expect(pullRequestProblems(repository, "pty-sidecar.yml")).toEqual([]);
+  });
 
   test("a push to gh-pages shows none of the Pages signs; the privileged-job rule keeps it hosted", () => {
     expect(pagesRoots(release(HOSTED_JOB, GH_PAGES))).toEqual([]);

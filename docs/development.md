@@ -1399,24 +1399,30 @@ request runs, and `"ubuntu-24.04"` keeps only main GitHub-hosted. `CI_SELF_HOSTE
 `"ubuntu-24.04"` still keeps every job hosted. Delete the variable while no reserved runner is online,
 or main's jobs wait for one.
 
-`ci.yml`'s Native macOS session identity job can run on the self-hosted Mac `eamac-ovis-mac`
-(labels `self-hosted, macOS, ARM64, self-hosted-ovis-mac`): ci.yml's own same-repository runs off
-`main` take the repository variable `CI_MAC_LABELS`, a JSON label list
-(`["self-hosted","self-hosted-ovis-mac"]`) or the JSON string `"macos-15"`; unset, the job stays on
-`macos-15`. Its `runs-on` sends a fork pull request to `macos-15` before it reads the variable. A
-release never validates there: Release validation calls ci.yml under its own name, and main's run,
-which a Release run may take instead, stays on `macos-15`. One runner takes one job at a time, so
-while the Mac is off or busy the job waits for it: delete the variable to go back to `macos-15`.
+The Apple Silicon (`macos-15`) jobs that hold no secret can run on the self-hosted Mac
+(labels `self-hosted, macOS, ARM64, self-hosted-ovis-mac`; two runners): they take the repository
+variable `CI_MAC_LABELS`, a JSON label list (`["self-hosted","self-hosted-ovis-mac"]`) or the JSON
+string `"macos-15"`; unset, they stay on `macos-15`. `ci.yml`'s Native macOS session identity job
+takes it in ci.yml's own runs, main's push runs included; its `runs-on` sends a fork pull request to
+`macos-15` before it reads the variable, and Release validation, which calls ci.yml under its own
+name with `hosted_only`, stays on `macos-15`. A Release may take main's run in place of its own, whose
+macOS job then ran on the Mac, as its Linux jobs ran on the self-hosted PC. The `macos-15` entries of
+`remote-bundles.yml`'s bundle job and `pty-sidecar.yml`'s build job take it only for a pull request
+from this repository, so the binaries a release publishes or attests are always built on GitHub's
+runners (scripts/privileged-jobs-workflow.test.ts). `desktop.yml` and `beta.yml` read the Mac
+signing secrets and stay hosted, as do `macos-15-intel` jobs. A job waits for a runner while the Mac
+is off or both runners are busy: delete the variable to go back to `macos-15`.
 The runner runs jobs as the Mac's own account, so on it `setup-ci` installs Bun under the job's temp
 folder, not that account's `~/.bun`; the prepared-image check and the host's Bun cache are for the
-self-hosted Linux runners alone. Before the variable is set, the Mac runner needs a fork refusal
-that works on macOS: `job-started.sh` finds the job's worker through `/proc`, which macOS lacks.
-Until then, only the repository's approval policy for fork pull request workflows (every outside
-contributor's run waits for a maintainer) keeps a fork's own workflow from naming the Mac's labels.
+self-hosted Linux runners alone. Each Mac runner refuses a fork's job with the same `job-started.sh`
+as the Linux runners, which finds the job's worker through `/proc` on Linux and `/bin/ps` on macOS
+([Mac runner](../scripts/self-hosted-runner/README.md#mac-runner)); the repository's approval policy for
+fork pull request workflows (every outside contributor's run waits for a maintainer) stays on as well.
 
 The other Windows and macOS jobs, the Rust PTY host job (the runner image has no Rust toolchain),
 `remote-bundles.yml`'s other jobs (Rust builds, and the SSH job's `sudo apt-get` and Docker),
-`desktop.yml`, `windows-install.yml` and `windows-terminal-qa.yml` always stay GitHub-hosted.
+`desktop.yml`, `windows-install.yml` and `windows-terminal-qa.yml` stay off the self-hosted Linux
+runners (the Mac takes the `macos-15` jobs above).
 
 In `ci.yml`, Detect changes picks the runner with `scripts/ci-runner-route.sh`. A fork pull request
 always gets `ubuntu-24.04`, whatever the variable says. Since that script runs from the pull

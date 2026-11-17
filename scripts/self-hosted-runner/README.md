@@ -409,7 +409,7 @@ of six workers before the split peaked at 9.2 GiB), the three parts of one run a
 together, and the hosts' available memory never fell below 79.9 GiB on the P620 or 77.8 GiB on the
 second host, so two runs' spikes at once fit on either.
 
-A manual run can override the variable with the `self_hosted_labels` workflow_dispatch input. Fork PRs always use `ubuntu-24.04`; Windows/macOS jobs, `remote-bundles.yml` and `windows-install.yml` stay GitHub-hosted, except `ci.yml`'s Native macOS session identity job, which follows the repository variable `CI_MAC_LABELS` to the self-hosted Mac when it is set ([docs](../../docs/development.md)).
+A manual run can override the variable with the `self_hosted_labels` workflow_dispatch input. Fork PRs always use `ubuntu-24.04`; Windows/macOS jobs, `remote-bundles.yml` and `windows-install.yml` stay GitHub-hosted, except the `macos-15` jobs that hold no secret (`ci.yml`'s Native macOS session identity job, and for pull requests from this repository the `macos-15` entries of `remote-bundles.yml` and `pty-sidecar.yml`), which follow the repository variable `CI_MAC_LABELS` to the self-hosted Mac when it is set ([docs](../../docs/development.md)).
 
 ## Cloud VM runners
 
@@ -536,7 +536,8 @@ Every job of `.github/workflows` as of this change (2026-11-17). LIGHT is the li
 fork's pull request gets `ubuntu-24.04`; otherwise main takes `CI_MAIN_SELF_HOSTED_LABELS`, then
 `CI_LIGHT_LABELS`, `CI_SELF_HOSTED_LABELS`, `["self-hosted","self-hosted-ovis"]`); ROUTE is
 `scripts/ci-runner-route.sh`'s output; MAC is the macOS job's expression (`CI_MAC_LABELS` in ci.yml's own
-runs off main, else `macos-15`); HO is the `hosted_only` prefix, taken in `pages.yml`'s and
+runs, else `macos-15`); MACPR is the matrix form (`CI_MAC_LABELS` for the `macos-15` entry of a pull request
+from this repository, else the entry's own label); HO is the `hosted_only` prefix, taken in `pages.yml`'s and
 `release-validate.yml`'s calls. Write permissions without "(workflow)" are the
 job's own; a call's jobs are listed under its workflow. No test reads this table; the test above holds
 the rules.
@@ -577,7 +578,7 @@ the rules.
 | pty-sidecar-attach.yml | gate | `ubuntu-24.04` | yes | - | none |
 | pty-sidecar-attach.yml | build | calls `pty-sidecar.yml` | (its jobs) | id-token, attestations write | (its jobs) |
 | pty-sidecar-attach.yml | attach | `ubuntu-24.04` | yes | contents write | none |
-| pty-sidecar.yml | build | matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15 | yes | - | none |
+| pty-sidecar.yml | build | MACPR over matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15 | yes unless a same-repository pull request while CI_MAC_LABELS is set | - | none |
 | pty-sidecar.yml | manifest | `ubuntu-24.04` | yes | - | none |
 | pty-sidecar.yml | attest | `ubuntu-24.04` | yes | id-token, attestations write | none |
 | relay-deploy.yml | validate | calls `ci.yml` | (its jobs) | - | (its jobs) |
@@ -599,7 +600,7 @@ the rules.
 | release.yml | windows-app | calls `windows-app.yml` | (its jobs) | contents write | (its jobs) |
 | release.yml | desktop | calls `desktop.yml` | (its jobs) | contents write; passes 7 secrets | (its jobs) |
 | release.yml | mac-dmg | calls `mac-dmg.yml` | (its jobs) | contents write; passes secrets: inherit | (its jobs) |
-| remote-bundles.yml | bundle | matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel | yes | - | none |
+| remote-bundles.yml | bundle | MACPR over matrix: ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel | yes unless a same-repository pull request while CI_MAC_LABELS is set | - | none |
 | remote-bundles.yml | bundle-windows | `ubuntu-24.04` | yes | - | none |
 | remote-bundles.yml | smoke-windows | `windows-latest` | yes | - | none |
 | remote-bundles.yml | ssh | `ubuntu-24.04` | yes | - | none |
@@ -635,6 +636,10 @@ the base branch's workflow, since such a workflow may check out the fork's head;
 `workflow_run` whose triggering run came from a fork, as it may use that run's artifacts. Each of
 these is refused when its payload names no head repository, and a job with no event name always.
 
+- The Mac runs two runners side by side (two remote bundle jobs together took 53 s each against 49 s
+  alone, with no thermal limit over five minutes), each in its own directory with its own LaunchAgent,
+  `.env` and hook. Their `.path` puts a `cargo` and `rustup` with the `aarch64-apple-darwin` and
+  `x86_64-apple-darwin` targets first, for `remote-bundles.yml` and `pty-sidecar.yml`.
 - Install: copy the file to `<runner>/hooks/job-started.sh` (mode 755) and set
   `ACTIONS_RUNNER_HOOK_JOB_STARTED=<runner>/hooks/job-started.sh` (an absolute path) in the
   runner's `.env`. The runner reads `.env` at its start (restart the LaunchAgent after changing

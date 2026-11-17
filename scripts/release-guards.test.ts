@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { BUNDLE_PLATFORMS, BUNDLE_WORKFLOW, bundleInput, bundleProblems, check, DEPLOYED_FILE, type Get, manifestUrl, publishedProblems, releaseCheck, WORKER_SOURCES, workerFingerprint, workerProblems } from "./release-guards.ts";
+import { BUNDLE_PLATFORMS, BUNDLE_WORKFLOW, bundleInput, bunPins, bundleProblems, check, DEPLOYED_FILE, type Get, manifestUrl, publishedProblems, releaseCheck, WORKER_SOURCES, workerFingerprint, workerProblems } from "./release-guards.ts";
 import { bundleManifestSource } from "../server/remote-bundle.ts";
 import { REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
 
@@ -221,6 +221,15 @@ describe("check", () => {
     expect(check(dir, false, "HEAD^1")).toEqual({ version: null, problems: [] });
     expect(check(dir, false, "0000000000000000000000000000000000000000").problems[0]).toContain("server/other.ts");
     expect(check(dir, true).problems[0]).toContain("from 2 to 3");
+  });
+
+  it("reads a bun pin for every step that installs the bundles' Bun, so the guard sees a change of it", () => {
+    const workflow = readFileSync(join(import.meta.dir, "..", BUNDLE_WORKFLOW), "utf8");
+    const steps = Object.values(Bun.YAML.parse(workflow).jobs as Record<string, { steps?: { uses?: string; with?: Record<string, unknown> }[] }>)
+      .flatMap((job) => job.steps ?? []).filter((step) => /^(oven-sh\/setup-bun@|\.\/\.github\/actions\/setup-ci$)/.test(step.uses ?? ""));
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps.filter((step) => step.with?.["bun-version"] === undefined).map((step) => step.uses)).toEqual([]);
+    expect(bunPins(workflow).split(" ")).toHaveLength(steps.length);
   });
 
   it("fails a release that moved the bun pin the Linux bundles carry", () => {
