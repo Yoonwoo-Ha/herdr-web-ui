@@ -61,7 +61,6 @@ it.skipIf(process.platform !== "linux").each([
     const reader = child.stdout.getReader();
     await reader.read();
     if (inspectFailure) {
-      // Both stores remain held; only inspecting one candidate's path fails mid-scan.
       const inaccessible = files[inspectFailure === "database" ? 2 : 3]!;
       const stat = fs.statSync;
       spies.push(spyOn(fs, "statSync").mockImplementation(((...args: Parameters<typeof fs.statSync>) => {
@@ -96,7 +95,6 @@ it.skipIf(process.platform !== "linux").each([
     expect(await processCodexHome(child.pid)).toBe(explicit ? explicitHome : found ? homes[0]! : null);
     if (inspectFailure || closedDescriptor) expect(injected).toBeGreaterThan(0);
     if (found && !explicit) {
-      // Neither an inferred store nor its absence can survive a descriptor change in the cache.
       child.stdin.write("close\n");
       await child.stdin.flush();
       await reader.read();

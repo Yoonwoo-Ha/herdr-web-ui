@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { agentProcessInFront } from "./agent-process.ts";
 
 const info = (...foreground: { pid: number; argv: string[] }[]) => ({ pane_id: "fixture", foreground_processes: foreground.map((entry) => ({ ...entry, name: entry.argv[0]! })) });
-// a launcher that does not exec its agent stays listed before the native binary it started
 const launcher = { pid: 100, argv: ["node", "/opt/fixture/bin/claude"] };
 const native = { pid: 101, argv: ["/opt/fixture/native/claude"] };
 

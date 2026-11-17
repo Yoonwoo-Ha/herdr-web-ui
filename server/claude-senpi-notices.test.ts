@@ -34,7 +34,6 @@ describe("senpi's own notices in a Claude Code SDK prompt", () => {
 
   it("shows each task completion as the card of the task that ended, where it arrived", () => {
     const turns = parseClaudeTranscript(recorded);
-    // each report wakes the agent after an answer: its card, then the work it started
     expect(turns.map((turn) => turn.parts[0]?.kind === "task_result" ? "card" : turn.role)).toEqual(["assistant", "card", "assistant", "card", "assistant", "assistant", "card", "assistant", "assistant"]);
     expect(cards(turns).map(({ id, title, agent, model, status, duration_ms, tokens, tool_calls }) => ({ id, title, agent, model, status, duration_ms, tokens, tool_calls }))).toEqual([
       { id: "st_01a1175a", title: "rv534", agent: "deep-low", model: "Claude Opus 5.5", status: "completed", duration_ms: 200_000, tokens: 612311, tool_calls: 7 },
@@ -81,11 +80,8 @@ describe("senpi's own notices in a Claude Code SDK prompt", () => {
     const user = (content: unknown, extra: Record<string, unknown>) => JSON.stringify({ type: "user", ...extra, message: { role: "user", content } });
     const reminder = "<system-reminder>quoted</system-reminder>";
     expect(said(parseClaudeTranscript([
-      // typed at Claude Code's own prompt
       user([{ type: "text", text: reminder }], { promptSource: "typed", entrypoint: "cli" }),
-      // a program's prompt with words of its own after the wrapper
       user([{ type: "text", text: `${reminder}\nwhy is this here?` }], { promptSource: "sdk", entrypoint: "sdk-ts" }),
-      // a tag senpi does not send
       user([{ type: "text", text: "<details>mine</details>" }], { promptSource: "sdk", entrypoint: "sdk-ts" }),
     ].join("\n")))).toEqual([reminder, `${reminder}\nwhy is this here?`, "<details>mine</details>"]);
   });
@@ -123,14 +119,12 @@ describe("senpi's own notices in a Claude Code SDK prompt", () => {
       const turns = parseClaudeTranscript(sdk(block));
       expect(said(turns)).toEqual([]);
       expect(cards(turns).map(({ id, status, result }) => ({ id, status, result }))).toEqual([{ id: "st_a", status: "completed", result: "cut" }, { id: "st_b", status: "failed", result: "Task runner failed to start." }]);
-      // a notification senpi cut short, between two reports
       const capped = "<system-reminder>long notification excerpt</system-reminder>\n[…notification tail capped…]\nBuffered output overflowed; full output: /tmp/notice.txt";
       const [first, second] = block.split("\n\n");
       const joined = parseClaudeTranscript(sdk([first, capped, second].join("\n\n")));
       expect(said(joined)).toEqual([]);
       expect(cards(joined).map((card) => card.id)).toEqual(["st_a", "st_b"]);
       expect(said(parseClaudeTranscript(sdk(`${capped}\n\nwhy did this appear?`)))).toEqual([`${capped}\n\nwhy did this appear?`]);
-      // a person's words after the reports keep the whole block theirs
       expect(said(parseClaudeTranscript(sdk(`${block}\n\nand my question`)))).toEqual([`${block}\n\nand my question`]);
     });
 

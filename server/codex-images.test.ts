@@ -51,11 +51,10 @@ it("strips Codex's native image envelope but keeps user-typed lookalikes", () =>
   };
   const regressionTurns = parseCodexTranscript(jsonl(withEnvelope));
   const regressionUser = regressionTurns[0]!;
-  expect(regressionUser.parts.filter((part) => part.kind === "text").map((part) => part.text)).toEqual(["[Image #1]"]); // regression (fails on main)
-  expect(regressionUser.parts.filter((part) => part.kind === "image")).toHaveLength(1); // regression (fails on main)
-  expect(JSON.stringify(regressionUser)).not.toContain("/tmp/yellow-star.gif"); // regression (fails on main)
+  expect(regressionUser.parts.filter((part) => part.kind === "text").map((part) => part.text)).toEqual(["[Image #1]"]);
+  expect(regressionUser.parts.filter((part) => part.kind === "image")).toHaveLength(1);
+  expect(JSON.stringify(regressionUser)).not.toContain("/tmp/yellow-star.gif");
 
-  // a pasted image's envelope has no path; two of them in one message
   const pasted = parseCodexTranscript(jsonl({
     type: "response_item", timestamp: "2026-09-27T00:00:00Z",
     payload: { type: "message", role: "user", content: [
@@ -76,7 +75,7 @@ it("strips Codex's native image envelope but keeps user-typed lookalikes", () =>
     payload: { type: "message", role: "user", content: [{ type: "input_text", text: 'I typed <image name=x> and </image> literally.' }] },
   }));
   expect(controlTurns[0]?.parts.filter((part) => part.kind === "text").map((part) => part.text))
-    .toEqual(['I typed <image name=x> and </image> literally.']); // control
+    .toEqual(['I typed <image name=x> and </image> literally.']);
 });
 
 it("names a raster by its signature and refuses short or truncated prefixes", () => {
@@ -94,7 +93,6 @@ it("names a raster by its signature and refuses short or truncated prefixes", ()
   expect(imageType(bytes("RIFF", [4, 0, 0, 0], "WEBP"))).toBe("image/webp");
   expect(imageType(bytes("RIFF", [4, 0, 0, 0], "WEB"))).toBeNull();
   expect(imageType(bytes("RIFF", [4, 0, 0, 0], "WAVE"))).toBeNull();
-  // each letter with its high bit set: an ASCII decode would read these as the signatures
   expect(imageType(bytes([0xc7, 0xc9, 0xc6, 0x38, 0x37, 0xe1]))).toBeNull();
   expect(imageType(bytes([0xc7, 0xc9, 0xc6, 0x38, 0x39, 0xe1]))).toBeNull();
   expect(imageType(bytes([0xd2, 0xc9, 0xc6, 0xc6, 4, 0, 0, 0, 0xd7, 0xc5, 0xc2, 0xd0]))).toBeNull();
@@ -140,7 +138,6 @@ it("fetches only referenced raster images within the retained history and bounds
 it("serves no picture from another rollout that a folder swap puts at a later rollout's path once the lookup has begun", async () => {
   const root = mkdtempSync(join(tmpdir(), "herdr-codex-images-swap-"));
   try {
-    // the same record and length: only the picture's bytes, and so its ref, tell the rollouts apart
     const foreign = Buffer.from(png);
     foreign[foreign.length - 1]! ^= 1;
     const own = jsonl(response("", data));
@@ -159,8 +156,6 @@ it("serves no picture from another rollout that a folder swap puts at a later ro
     const segments = [{ path: parent, end: Buffer.byteLength(jsonl(event("before", []))) }, { path, end: Buffer.byteLength(own) }];
     expect((await codexTranscriptImage(segments, ownRef, root))?.mediaType).toBe("image/png");
     expect(await codexTranscriptImage(segments, otherRef, root)).toBeNull();
-    // the live rollout is the pane's own as the lookup begins; the other folder is put in place before the
-    // lookup's first await, so the live rollout is opened only after it, and put back once the lookup answers
     const pending = codexTranscriptImage(segments, otherRef, root);
     renameSync(folder, join(root, "away"));
     renameSync(elsewhere, folder);
@@ -179,7 +174,6 @@ it("serves no picture from another rollout that a folder swap puts at a later ro
 // picture as a data URL beside an `ImageView` event. Only the records the chat reads are kept.
 const ROLLOUT = readFileSync(new URL("./fixtures/codex-pictures-0.163.0-rollout.jsonl", import.meta.url), "utf8");
 const VIEWED = "call_c14dcc9fd54946c7bc093bac1ec706fd";
-/** The sha256 of the 32x32 PNG the recording viewed. */
 const SHOT = "216412999d849811ca002949953aa22a041cebcf0b31e7c812ee86328338b893";
 
 describe("a Codex tool's pictures reach the chat", () => {
@@ -212,7 +206,6 @@ describe("a Codex tool's pictures reach the chat", () => {
 
   it("names the recorded view_image picture by its call, never its bytes, and serves those bytes", async () => {
     const path = rollout(ROLLOUT);
-    // one picture: the ImageView event beside the output is no second copy
     expect(pictures(path)).toEqual([`image/png codex-tool:${VIEWED}:0`]);
     expect(JSON.stringify(transcriptPage("codex-transcript", path, {}, home))).not.toContain("iVBORw0KGgo");
     expect(await sha(path, `codex-tool:${VIEWED}:0`)).toBe(`image/png ${SHOT}`);
@@ -236,7 +229,6 @@ describe("a Codex tool's pictures reach the chat", () => {
     expect(await sha(path, "codex-tool:call_a:0")).toBe(`image/gif ${createHash("sha256").update(gif).digest("hex")}`);
     expect((await codexToolImage(path, "codex-tool:call_a:1", home))?.bytes.length).toBe(8 * 1024 * 1024);
     expect(await codexToolImage(path, "codex-tool:call_a:2", home)).toBeNull();
-    // a byte past the endpoint's size takes no place either
     const large = rollout(records(started, call("call_a"), output("call_a", [picture(over), picture(gif, "image/gif")])));
     expect(pictures(large)).toEqual(["image/gif codex-tool:call_a:0"]);
     expect((await codexToolImage(large, "codex-tool:call_a:0", home))?.mediaType).toBe("image/gif");
@@ -244,19 +236,15 @@ describe("a Codex tool's pictures reach the chat", () => {
   });
 
   it("serves a picture only from the output the page draws: the first one answering a call it shows", async () => {
-    // an output answering no call
     const orphan = rollout(records(started, output("call_a", [picture(png)])));
     expect(pictures(orphan)).toEqual([]);
     expect(await codexToolImage(orphan, "codex-tool:call_a:0", home)).toBeNull();
-    // a second output for an answered call
     const twice = rollout(records(started, call("call_a"), output("call_a", [{ type: "input_text", text: "none" }]), output("call_a", [picture(png)])));
     expect(pictures(twice)).toEqual([]);
     expect(await codexToolImage(twice, "codex-tool:call_a:0", home)).toBeNull();
-    // a call made again after an output with no picture: the second output's picture is the one named
     const again = rollout(records(started, call("call_a"), output("call_a", [{ type: "input_text", text: "none" }]), call("call_a"), output("call_a", [picture(gif, "image/gif")])));
     expect(pictures(again)).toEqual(["image/gif codex-tool:call_a:0"]);
     expect((await codexToolImage(again, "codex-tool:call_a:0", home))?.mediaType).toBe("image/gif");
-    // a function call's output is read as a custom tool's is
     const fn = rollout(records(started, { type: "response_item", timestamp: at, payload: { type: "function_call", call_id: "call_f", name: "view_image", arguments: "{\"path\":\"shot.png\"}" } },
       { type: "response_item", timestamp: at, payload: { type: "function_call_output", call_id: "call_f", output: [picture(png)] } }));
     expect(pictures(fn)).toEqual(["image/png codex-tool:call_f:0"]);
@@ -266,7 +254,6 @@ describe("a Codex tool's pictures reach the chat", () => {
   it("counts a picture before the one it serves as the parser does, its text written with escapes", async () => {
     const large = Buffer.alloc(2 * 1024 * 1024, 7);
     png.copy(large);
-    // a JSON writer may escape every `/`, and the first picture's text crosses the endpoint's windows
     const path = rollout(records(started, call("call_a"), output("call_a", [picture(large), picture(Buffer.from("<svg/>"), "image/svg+xml"), picture(gif, "image/gif")])).replaceAll("/", "\\/"));
     expect(pictures(path)).toEqual(["image/png codex-tool:call_a:0", "image/gif codex-tool:call_a:1"]);
     expect(Buffer.from((await codexToolImage(path, "codex-tool:call_a:0", home))!.bytes).equals(large)).toBe(true);
@@ -289,16 +276,13 @@ describe("a Codex tool's pictures reach the chat", () => {
     setImmediate(turn);
     expect((await codexToolImage(path, "codex-tool:call_a:0", home))?.mediaType).toBe("image/png");
     looking = false;
-    // a reader that held the loop for the whole search would let it turn once, at the end
     expect(turns).toBeGreaterThanOrEqual(15);
   });
 
   it("never holds the event loop for more than a few windows, however many small records it judges", async () => {
-    // 30,000 short records that each name the call in their words, so the search hands every one to be judged
     const words = "call_a again ".repeat(90);
     const many = Array.from({ length: 30_000 }, () => ({ type: "response_item", timestamp: at, payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: words }] } }));
     const path = rollout(records(started, ...many, call("call_a"), output("call_a", [picture(png)])));
-    // work between two turns of the loop, counted in buffers taken rather than in time
     let since = 0, most = 0, total = 0;
     const real = Buffer.alloc.bind(Buffer);
     const counting = spyOn(Buffer, "alloc").mockImplementation(((...args: Parameters<typeof Buffer.alloc>) => { since += 1; total += 1; return real(...args); }) as typeof Buffer.alloc);
@@ -308,8 +292,6 @@ describe("a Codex tool's pictures reach the chat", () => {
       setImmediate(turn);
       expect((await codexToolImage(path, "codex-tool:call_a:0", home))?.mediaType).toBe("image/png");
     } finally { looking = false; most = Math.max(most, since); counting.mockRestore(); }
-    // a reader that judged every record before the loop's next turn would take thousands in one stretch
-    // the count is live: judging 30,000 records takes far more buffers than any one stretch may
     expect(total).toBeGreaterThan(30_000);
     expect(most).toBeLessThanOrEqual(400);
   });
@@ -318,7 +300,6 @@ describe("a Codex tool's pictures reach the chat", () => {
     const alloc = spyOn(Buffer, "alloc");
     try {
       const pad = "x".repeat(20 * 1024 * 1024);
-      // a call and its output, each padded past the largest picture the chat shows
       const path = rollout(records(started, call("call_a", pad), output("call_a", [{ type: "input_text", text: pad }, picture(png)])));
       expect((await codexToolImage(path, "codex-tool:call_a:0", home))?.mediaType).toBe("image/png");
       alloc.mockClear();
@@ -328,7 +309,6 @@ describe("a Codex tool's pictures reach the chat", () => {
   });
 
   it("serves no picture from another rollout that a folder swap puts at the path around the scan's opens after its first", async () => {
-    // the same records and length: only the picture's bytes tell the rollouts apart
     const foreign = Buffer.from(png);
     foreign[foreign.length - 1]! ^= 1;
     const folder = join(root, "swap-own");
@@ -342,8 +322,6 @@ describe("a Codex tool's pictures reach the chat", () => {
     writeFileSync(join(elsewhere, name), records(started, call("call_a"), output("call_a", [picture(foreign)])));
     expect(Buffer.from((await codexToolImage(path, "codex-tool:call_a:0", home))!.bytes).equals(png)).toBe(true);
     forgetTranscriptState();
-    // the path names the pane's own rollout when the lookup begins and at the scan's first open; every later
-    // open, after the scan's awaits, meets the other folder
     const counts = { opens: 0, swaps: 0 };
     const real = fs.openSync;
     const spy = spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
@@ -369,7 +347,6 @@ it("checks a picture's text a piece at a time exactly as it checks the whole", (
   const pngHead = head([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
   const texts = [pngHead, pngHead + "AAAA", `${pngHead}A=`, `${pngHead}==`, `${pngHead}A==`, "PHN2Zz4=", "", "iVBO", `${pngHead}*bad`, `${pngHead}=A`, `${pngHead}===`];
   const urls = [...texts.map((text) => `data:image/png;base64,${text}`), `data:image/svg+xml;base64,${pngHead}`, `data:image/png;base64;${pngHead}`, `https://host/x.png`, `data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7`, `xdata:image/png;base64,${pngHead}`];
-  // every way of cutting the text into two or three pieces
   const splits = (text: string): string[][] => {
     const out: string[][] = [[text]];
     for (let a = 0; a <= text.length; a += 1) {
@@ -394,8 +371,6 @@ it("checks a picture's text a piece at a time exactly as it checks the whole", (
       expect([url, scan.type()]).toEqual([url, codexOutputPicture({ type: "input_image", image_url: url })?.mediaType ?? null]);
     }
   }
-  // at the 8 MiB edge the padding decides: "==" takes exactly the most the endpoint serves, so a
-  // text cut inside its padding must still be read as ending in both
   const edge = `${pngHead}${"A".repeat(11_184_814 - pngHead.length - 2)}==`;
   for (const text of [edge, `${edge.slice(0, -2)}A=`]) {
     for (const at of [text.length - 1, text.length - 2, text.length - 3]) {
@@ -413,11 +388,6 @@ it("checks a picture's text a piece at a time exactly as it checks the whole", (
   expect(inlineImageType("image/png", `${edge.slice(0, -2)}A=`)).toBeNull();
 });
 
-/**
- * A live rollout with no parent, and another session's file of the same name whose header continues a parent
- * rollout in the store holding `parentRecords`. The other file is put in place of the live one's folder around
- * the first open of the live rollout only: the header read that discovers its chain.
- */
 async function coldChainSwap<T>(parentRecords: readonly unknown[], lookup: (path: string, home: string) => Promise<T>): Promise<{ answered: T; swaps: number }> {
   const root = mkdtempSync(join(tmpdir(), "herdr-codex-chain-swap-"));
   try {
@@ -460,7 +430,6 @@ async function coldChainSwap<T>(parentRecords: readonly unknown[], lookup: (path
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
-/** The PNG with its last byte changed: the same length, other bytes. */
 const otherPng = (() => { const bytes = Buffer.from(png); bytes[bytes.length - 1]! ^= 1; return bytes; })();
 const otherUrl = `data:image/png;base64,${otherPng.toString("base64")}`;
 
@@ -489,7 +458,6 @@ it("serves no local attachment from another folder swapped in around the attachm
     const elsewhere = join(root, "elsewhere");
     mkdirSync(assets, { recursive: true });
     mkdirSync(elsewhere);
-    // the same name and length: only the bytes tell the attachments apart
     writeFileSync(join(assets, "shot.png"), png);
     writeFileSync(join(elsewhere, "shot.png"), otherPng);
     const path = join(root, "rollout.jsonl");
@@ -499,7 +467,6 @@ it("serves no local attachment from another folder swapped in around the attachm
     const ref = codexImageParts(record)[0]!.ref;
     const cwd = join(root, "cwd");
     expect(Buffer.from((await codexTranscriptImage(segments, ref, cwd))!.bytes).equals(png)).toBe(true);
-    // the attachment's path names the pane's own file whenever it is looked at, except around its open
     const attachment = join(assets, "shot.png");
     const away = join(root, "away");
     let swaps = 0;
@@ -534,7 +501,6 @@ it("serves a local attachment only whole: short reads are read on, and an early 
     writeFileSync(path, `${jsonl(record)}\n`);
     const segments = [{ path, end: Buffer.byteLength(`${jsonl(record)}\n`) }];
     const ref = codexImageParts(record)[0]!.ref;
-    // the attachment's reads (into a buffer its size) answer 16 bytes at most; `ending`: none after the first
     const shortReads = (ending: boolean) => {
       let reads = 0;
       const real = fs.read;
@@ -573,9 +539,7 @@ it("serves no prompt picture from the parent a replaced rollout's remembered cha
     writeFileSync(path, `${meta({ history_base: { thread_id: thread, end_ordinal_exclusive: 2, end_byte_offset: Buffer.byteLength(kept) } })}\n${turn}\n`);
     const ref = codexImageParts(response("", otherUrl))[0]!.ref;
     forgetHistoryChains();
-    // the rollout continues the parent: its picture is the conversation's
     expect((await codexPromptImage(path, ref, "/", home))?.mediaType).toBe("image/png");
-    // another rollout replaces it at the same path, continuing nothing
     writeFileSync(`${path}.new`, `${meta()}\n${turn}\n`);
     renameSync(`${path}.new`, path);
     let image: Awaited<ReturnType<typeof codexPromptImage>>;

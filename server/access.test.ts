@@ -52,18 +52,15 @@ describe("decideAccess", () => {
       expect(via({ loopback: true, forwarded: true, host })).toBe("refused:pairing_required");
       expect(via({ loopback: true, forwarded: true, host, dnsName: NODE, tailnetIp: IP })).toBe("refused:pairing_required");
     }
-    // control: this PC's own names, and a proxy that keeps them, are as before
     for (const host of ["127.0.0.1:7317", "localhost:7317", "[::1]:7317", NODE, `${IP}:7317`]) {
       expect(via({ loopback: true, forwarded: true, host, dnsName: NODE, tailnetIp: IP })).toBe("open");
     }
-    // a LAN client of a deliberate non-loopback bind names whatever it reached the PC by
     expect(via({ loopback: false, forwarded: true, host: "pc.lan:7317" })).toBe("open");
   });
 
   it("regression: a Tailscale login stated under a rebound name lets nobody in", () => {
     const login = { forwarded: true, tailscaleLogin: "me@example.com", owner: "me@example.com", dnsName: NODE, tailnetIp: IP } as const;
     for (const host of ["rebind.example", "rebind.example:7317", `${NODE}.rebind.example`]) expect(via({ ...login, host })).toBe("refused:pairing_required");
-    // control: tailscale serve keeps the device's Host, this PC's tailnet name or address
     for (const host of [NODE, `${NODE}:443`, IP, `${IP}:7317`, "127.0.0.1:7317"]) expect(via({ ...login, host })).toBe("tailscale");
   });
 
@@ -77,33 +74,25 @@ describe("decideAccess", () => {
     expect(via({ forwarded: true, tailscaleLogin: "Me@Example.com", owner: "me@example.com" })).toBe("tailscale");
     expect(via({ forwarded: true, tailscaleLogin: "them@example.com", owner: "me@example.com", gated: true })).toBe("refused:other_user");
     expect(via({ forwarded: true, tailscaleLogin: "them@example.com", owner: "me@example.com" })).toBe("refused:other_user");
-    // a LAN client can type any header: from off this machine it means nothing
     expect(via({ loopback: false, tailscaleLogin: "me@example.com", owner: "me@example.com", gated: true })).toBe("refused:pairing_required");
-    // no login from tailscale serve is a tagged node, not a person: it pairs like any other device
     expect(via({ forwarded: true, owner: "me@example.com" })).toBe("refused:pairing_required");
     expect(via({ forwarded: true, owner: "me@example.com", device })).toBe("device");
-    // no owner known yet: the header decides nothing either way
     expect(via({ forwarded: true, tailscaleLogin: "me@example.com", owner: null })).toBe("open");
   });
 
   it("lets the owner's own device in through serve with no login, when serve is declared the only ingress and one login owns the tailnet", () => {
-    // the phone's shape: tailscale serve proxies from loopback, states no person, and the Host is this PC's name
     const phone = { forwarded: true, owner: "me@example.com", soleLogin: "me@example.com", serveOnly: true, ...node } as const;
     expect(via(phone)).toBe("tailscale");
     expect(via({ ...phone, gated: true })).toBe("tailscale");
     expect(decideAccess({ ...base, ...phone })).toEqual({ level: "full", via: "tailscale", role: "drive", login: "me@example.com" });
-    // the same request where the operator did not declare serve the only ingress pairs, as it always did
     expect(via({ ...phone, serveOnly: false })).toBe("refused:pairing_required");
-    // and where Tailscale proves nothing, it is the stranger it always was
     expect(via({ ...phone, soleLogin: null })).toBe("refused:pairing_required");
-    // with the name unknown, a Host that could be this PC's cannot be taken for it
     expect(via({ ...phone, dnsName: null, tailnetIp: null })).toBe("refused:pairing_required");
   });
 
   it("grants only on this PC's tailnet name or address, in any case, with a trailing dot or a port", () => {
     const phone = { forwarded: true, owner: "me@example.com", soleLogin: "me@example.com", serveOnly: true, dnsName: NODE, tailnetIp: IP } as const;
     for (const host of [`${NODE}:7317`, NODE.toUpperCase(), `${NODE}.`, `${NODE}.:443`, IP, `${IP}:7317`]) expect(via({ ...phone, host })).toBe("tailscale");
-    // a rebinding page or a public domain forwarded here presents its own name, never this PC's
     for (const host of [null, "evil.example", "evil.example:7317", `${NODE}.evil.example`, "herdr.example.com:7317", "100.64.0.8", `[${IP}]`, "[fd7a::1]:7317"]) {
       expect(via({ ...phone, host })).toBe("refused:pairing_required");
     }
@@ -111,34 +100,25 @@ describe("decideAccess", () => {
 
   it("holds the floor the sole-login rule sits on: another user, Funnel, a token, a tag, a LAN client, a named owner that is not the sole login", () => {
     const sole = { forwarded: true, owner: "me@example.com", soleLogin: "me@example.com", serveOnly: true, ...node } as const;
-    // a login Tailscale did stage is still read, and still refused when it is not the owner's
     expect(via({ ...sole, tailscaleLogin: "them@example.com" })).toBe("refused:other_user");
     expect(via({ ...sole, tailscaleLogin: "me@example.com" })).toBe("tailscale");
-    // the public internet proves nothing about who is asking, whoever owns the tailnet
     expect(via({ ...sole, funnel: true })).toBe("refused:pairing_required");
     expect(via({ ...sole, funnel: true, gated: true })).toBe("refused:pairing_required");
-    // a token still gates everything but a paired device
     expect(via({ ...sole, tokenConfigured: true })).toBe("refused:token_required");
     expect(via({ ...sole, tokenConfigured: true, tokenMatched: true })).toBe("token");
-    // a tagged PC names no owner to be: its visitors pair, as before
     expect(via({ forwarded: true, tagged: true, soleLogin: "me@example.com", serveOnly: true })).toBe("refused:pairing_required");
-    // off this machine the rule buys nothing: any LAN client could claim the same proxy
     expect(via({ ...sole, loopback: false, gated: true })).toBe("refused:pairing_required");
     expect(via({ ...sole, loopback: false, tailscaleLogin: "me@example.com", gated: true })).toBe("refused:pairing_required");
-    // a named owner the tailnet's sole login does not match keeps the refusal it had
     expect(via({ ...sole, owner: "named@example.com" })).toBe("refused:pairing_required");
   });
 
   it("asks a tagged PC's visitors to pair, its owner included, and never calls them another user", () => {
-    // the node names no person: there is no login to match, and none to be a stranger to
     expect(via({ forwarded: true, tagged: true, tailscaleLogin: "me@example.com" })).toBe("refused:pairing_required");
     expect(via({ forwarded: true, tagged: true })).toBe("refused:pairing_required");
     expect(via({ forwarded: true, tagged: true, tailscaleLogin: "me@example.com", tokenConfigured: true })).toBe("refused:token_required");
     expect(via({ forwarded: true, tagged: true, tailscaleLogin: "me@example.com", device })).toBe("device");
     expect(via({ tagged: true })).toBe("local");
-    // a login header alone marks a proxy: with no owner to refuse it against, it must not pass for this PC
     expect(cameThroughProxy(new Headers({ host: "localhost:7317", "tailscale-user-login": "them@example.com" }))).toBe(true);
-    // a login named for the PC lets that person in as on any other node
     expect(via({ forwarded: true, tailscaleLogin: "me@example.com", owner: "me@example.com" })).toBe("tailscale");
   });
 
@@ -146,7 +126,6 @@ describe("decideAccess", () => {
     expect(via({ tokenConfigured: true })).toBe("refused:token_required");
     expect(via({ tokenConfigured: true, tokenMatched: true })).toBe("token");
     expect(via({ tokenConfigured: true, device })).toBe("device");
-    // any proxy on this PC can pass a visitor's copy of the login header on: a token holds against it
     expect(via({ tokenConfigured: true, forwarded: true, tailscaleLogin: "me@example.com", owner: "me@example.com" })).toBe("refused:token_required");
     expect(via({ tokenConfigured: true, forwarded: true, tailscaleLogin: "them@example.com", owner: "me@example.com" })).toBe("refused:token_required");
     expect(via({ tokenConfigured: true, tokenMatched: true, forwarded: true, tailscaleLogin: "me@example.com", owner: "me@example.com" })).toBe("token");
@@ -161,7 +140,6 @@ describe("decideAccess", () => {
   it("knows a name for this machine from a proxied Host", () => {
     for (const host of ["localhost", "localhost:7317", "LOCALHOST:5173", "herdr.localhost:7317", "127.0.0.1:7317", "127.9.9.9", "[::1]:7317", "localhost.:7317", "[::ffff:127.0.0.1]:7317"]) expect(isLoopbackHost(host)).toBe(true);
     for (const host of ["app.example.test", "app.example.test:8443", "192.168.0.10:7317", "localhost.example.test", "127.0.0.1.example.test", "[fd7a::1]:7317", "", "0.0.0.0:7317", "[::ffff:192.168.0.10]"]) expect(isLoopbackHost(host)).toBe(false);
-    // not an authority: a URL parser would have read these as localhost
     for (const host of ["public.example@localhost:7317", "localhost/x@public.example", "localhost:7317/x", "localhost?x", "local host", "localhost:port", "localhost..", "127.0.0.1@public.example"]) expect(isLoopbackHost(host)).toBe(false);
   });
 
@@ -169,7 +147,6 @@ describe("decideAccess", () => {
     const proxy = (headers: Record<string, string>) => cameThroughProxy(new Headers(headers));
     expect(proxy({ host: "localhost:7317" })).toBe(false);
     expect(proxy({ host: "127.0.0.1:7317", origin: "http://127.0.0.1:7317" })).toBe(false);
-    // no Host at all: HTTP/1.0 through a proxy, never a local browser or CLI
     expect(proxy({})).toBe(true);
     expect(proxy({ host: "public.example@localhost:7317" })).toBe(true);
     expect(proxy({ host: "app.example.test" })).toBe(true);
@@ -183,7 +160,6 @@ describe("decideAccess", () => {
 });
 
 describe("Portal's sign-in", () => {
-  // what a request through the running Portal looks like: the identity it states, and its proof
   const HOST = "herdr-test-0123.relay.example";
   const WALLET = "0x52908400098527886E0F7030069857D2E4169EE7";
   const through = (portal: Partial<NonNullable<AccessInput["portal"]>> = {}, over: Partial<AccessInput> = {}): Partial<AccessInput> => ({
@@ -191,7 +167,6 @@ describe("Portal's sign-in", () => {
   });
   const REFUSED = "refused:token_required";
 
-  // a visitor can type X-Portal-User wherever Portal is not the one carrying the request; only Portal has the proof
   const cases: [string, Partial<AccessInput>, string][] = [
     ["the identity of a request that carries the Portal's proof, like a device that may watch", through(), "portal"],
     ["whatever Host, forwarding headers or Tailscale login come with it: the proof is the only condition", through({}, { host: "anything.example", forwardedFor: "100.64.0.9", tailscaleLogin: "me@example.com", owner: "me@example.com", funnel: true }), "portal"],
@@ -259,7 +234,6 @@ describe("lanExposed", () => {
 
   it("names the one state a warning belongs to: bound past this PC, no token, nothing paired", () => {
     expect(lanExposed(open)).toBe(true);
-    // wildcard, LAN, other IPv6 and DNS binds still warn, even on a PC with Tailscale
     for (const hostname of ["::", "[::]", "192.168.0.10", "fd7a::1", "my-pc.local", "127.devbox.example", "localhost.example", "100.63.255.255", "100.128.0.0", "fd7a:115c:a1df:ffff:ffff:ffff:ffff:ffff", "fd7a:115c:a1e1::", "100.64.0.999", "100.64.0.2.example"]) {
       expect(isLoopbackBind(hostname)).toBe(false);
       expect(warned({ hostname })).toBe(true);
@@ -274,12 +248,10 @@ describe("lanExposed", () => {
   }
 
   it("is quiet whenever one of the three is not the case", () => {
-    // a loopback bind is unreachable from the network however it is addressed or spelt
     for (const hostname of ["127.0.0.1", "localhost", "::1", "127.0.0.2", "[::1]", "LOCALHOST", "::ffff:127.0.0.1", "app.localhost", " localhost "]) {
       expect(isLoopbackBind(hostname)).toBe(true);
       expect(warned({ hostname })).toBe(false);
     }
-    // a token means a stranger is asked for it, and a paired device means the gate is closed
     expect(warned({ tokenConfigured: true })).toBe(false);
     expect(warned({ gated: true })).toBe(false);
     expect(warned({ tokenConfigured: true, gated: true })).toBe(false);
@@ -305,39 +277,30 @@ describe("bindScope", () => {
 });
 
 describe("observedIngress", () => {
-  // a request from this PC's own browser, with Tailscale running here and nothing forwarded
   type Request = Parameters<typeof observedIngress>[0];
   const local: Request = { peerKnown: true, loopback: true, forwarded: false, forwardingHeaders: false, funnel: false, tailscaleLogin: null, forwardedFor: null, owner: "owner@example.com", tagged: false, serveOnly: false };
   const ingress = (over: Partial<Request>) => observedIngress({ ...local, ...over });
-  // what tailscale serve sends on an install that declared it the only ingress: from loopback, its own login header and a tailnet source address
   const serve = { forwarded: true, forwardingHeaders: true, tailscaleLogin: "owner@example.com", forwardedFor: "100.64.0.9", serveOnly: true };
 
   it("calls an unforwarded request direct, from this PC or from the network", () => {
     expect(ingress({})).toBe("direct");
-    // a LAN client addresses the server by its LAN name; that Host alone is no forwarding
     expect(ingress({ loopback: false, forwarded: true })).toBe("direct");
   });
 
   it("labels Tailscale only on the shape Tailscale itself produces, where serve is declared the only ingress", () => {
     expect(ingress(serve)).toBe("tailscale");
     expect(ingress({ ...serve, owner: null, tagged: true })).toBe("tailscale");
-    // a tagged node or the owner's grant sends no login
     expect(ingress({ ...serve, tailscaleLogin: null })).toBe("tailscale");
     expect(ingress({ ...serve, tailscaleLogin: null, serveOnly: false })).toBe("proxy");
   });
 
   it("keeps forwarded-but-unverified Tailscale headers unknown", () => {
-    // without the declaration any client or proxy on this PC can send the very same shape
     expect(ingress({ ...serve, serveOnly: false })).toBe("unknown");
     expect(ingress({ ...serve, serveOnly: false, owner: null, tagged: true })).toBe("unknown");
-    // a LAN client can send the login header itself
     expect(ingress({ ...serve, loopback: false })).toBe("unknown");
-    // another proxy on this PC passing a visitor's copy on: the source is not a tailnet address
     expect(ingress({ ...serve, forwardedFor: "203.0.113.7" })).toBe("unknown");
     expect(ingress({ ...serve, forwardedFor: null })).toBe("unknown");
-    // Tailscale does not run here: nothing could have written the header
     expect(ingress({ ...serve, owner: null, tagged: false })).toBe("unknown");
-    // a Funnel header is trusted only where serve is declared the only ingress
     expect(ingress({ ...serve, tailscaleLogin: null, forwardedFor: "203.0.113.7", funnel: true, serveOnly: false })).toBe("unknown");
     expect(ingress({ ...serve, tailscaleLogin: null, forwardedFor: "203.0.113.7", funnel: true, loopback: false })).toBe("unknown");
     expect(ingress({ peerKnown: false })).toBe("unknown");

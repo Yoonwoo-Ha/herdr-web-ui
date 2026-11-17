@@ -5,7 +5,6 @@ const KINDS: readonly ClientConnectionEventKind[] = ["connect", "open", "connect
 const MAX_BYTES = 8192;
 // Report bodies read at once, server-wide: 16 x 8 KiB at most, whatever peer keys callers rotate.
 const MAX_READING = 16;
-// A body still arriving after this long gives up its read slot, however steadily it trickles in.
 const READ_DEADLINE_MS = 10_000;
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const integer = (value: unknown, max = Number.MAX_SAFE_INTEGER): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= max;
@@ -36,7 +35,6 @@ function readTrace(value: unknown): ClientConnectionTrace | null {
     }
     events.push(event);
   }
-  // Only these explicit fields reach the log. Unknown fields, URLs, reasons and text are discarded.
   return { client_id: value.client_id, target: value.target, events };
 }
 
@@ -56,7 +54,6 @@ export class ClientConnectionLog {
       if (this.peers.size >= 128) this.peers.delete(this.peers.keys().next().value!);
       quota = { at: now, count: 0 }; this.peers.set(peer, quota);
     }
-    // The global quota is charged only once a report validates, so malformed POSTs cannot starve real ones.
     if (quota.count >= 4) return jsonResponse({ error: { code: "trace_rate_limited", message: "Connection diagnostics are rate limited" } }, 429, { "retry-after": "60" });
     quota.count++;
     // Bodies being read are bounded server-wide, whatever peer key a caller rotates; the report
@@ -74,8 +71,6 @@ export class ClientConnectionLog {
     if (!request.body) return badRequest("invalid_trace", "Connection diagnostics are required");
     const reader = request.body.getReader();
     const chunks: Uint8Array[] = []; let size = 0;
-    // One deadline for the whole body, not per chunk: the timer covers a body that stops arriving,
-    // the clock check after each chunk a body that keeps arriving slowly.
     const deadline = this.now() + this.readDeadlineMs;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<"expired">((resolve) => { timer = setTimeout(() => resolve("expired"), this.readDeadlineMs); });
@@ -102,7 +97,7 @@ export class ClientConnectionLog {
     if (this.global.count >= 16) return jsonResponse({ error: { code: "trace_rate_limited", message: "Connection diagnostics are rate limited" } }, 429, { "retry-after": "60" });
     this.global.count++;
     try { this.write(JSON.stringify({ time: new Date(now).toISOString(), event: "client.connection_trace", client_reported: true, client_id: trace.client_id, target: trace.target, events: trace.events })); }
-    catch { /* diagnostics must not affect the app's connection or delivery */ }
+    catch {}
     return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
   }
 }

@@ -72,10 +72,10 @@ for (const source of ["omp-transcript", "omo-transcript", "gjc-transcript", "cla
     const path = fixture(jsonl(Array.from({ length: 130 }, (_, i) => user(`old ${i}`))));
     const before = transcriptPage(source, path);
     expect(before.cursor).toBeString();
-    transcriptPage(source, path, { before: before.cursor! }); // warm an older page
-    appendFileSync(path, JSON.stringify(reset).slice(0, -1)); // torn control record
+    transcriptPage(source, path, { before: before.cursor! });
+    appendFileSync(path, JSON.stringify(reset).slice(0, -1));
     expect(transcriptPage(source, path).history_id).toBe(before.history_id);
-    appendFileSync(path, "}"); // valid object, no newline yet
+    appendFileSync(path, "}");
     const cleared = transcriptPage(source, path);
     expect(cleared.turns).toEqual([]);
     expect(cleared.cursor).toBeNull();
@@ -112,21 +112,19 @@ test("reset scanning crosses chunk boundaries, excludes pre-clear full outputs a
 for (const source of ["omp-transcript", "omo-transcript", "gjc-transcript"] as const) {
   test(`${source}: a thinking-level change between the metadata head and the newest page sets the reasoning shown`, () => {
     const level = (thinkingLevel: string) => ({ type: "thinking_level_change", thinkingLevel });
-    const padding = { type: "padding", text: "x".repeat(70 * 1024) }; // past the 64 KiB metadata head
+    const padding = { type: "padding", text: "x".repeat(70 * 1024) };
     const path = fixture(jsonl([
       { type: "model_change", modelId: "first" }, level("high"), message("user", "start"), padding,
       { type: "model_change", modelId: "second" }, level("medium"),
       ...Array.from({ length: 130 }, (_, i) => message("user", `turn ${i}`)),
     ]));
     const page = transcriptPage(source, path);
-    expect(page.cursor).toBeString(); // the newest page starts after both changes
+    expect(page.cursor).toBeString();
     expect(page.metadata).toEqual({ model: "second", reasoning_effort: "medium" });
     forgetTranscriptState();
     expect(transcriptPage(source, path).metadata).toEqual({ model: "second", reasoning_effort: "medium" });
-    // a change inside the page still wins
     appendFileSync(path, jsonl([level("low")]));
     expect(transcriptPage(source, path).metadata.reasoning_effort).toBe("low");
-    // a clear forgets them all, also once the newest page starts past the cleared head
     appendFileSync(path, jsonl([clear, padding, ...Array.from({ length: 130 }, (_, i) => message("user", `after clear ${i}`))]));
     const cleared = transcriptPage(source, path);
     expect(cleared.cursor).toBeString();
@@ -143,7 +141,7 @@ for (const via of ["an answer", "/model and /effort"] as const) {
     const answer = (model: string, effort: string) => record({ type: "assistant", effort, message: { role: "assistant", model, content: [{ type: "text", text: "ok" }] } });
     const output = (text: string) => record({ type: "user", message: { role: "user", content: `<local-command-stdout>${text}</local-command-stdout>` } });
     const prompts = (label: string) => Array.from({ length: 130 }, (_, i) => prompt(`${label} ${i}`));
-    const padding = () => record({ type: "system", subtype: "informational", content: "x".repeat(70 * 1024) }); // past the 64 KiB metadata head
+    const padding = () => record({ type: "system", subtype: "informational", content: "x".repeat(70 * 1024) });
     const sonnet = { model: "claude-sonnet-5-5", reasoning_effort: "high" };
     const path = fixture(jsonl([
       prompt("start"), answer("claude-opus-5-5", "medium"), padding(),
@@ -151,14 +149,12 @@ for (const via of ["an answer", "/model and /effort"] as const) {
         : [output("Set model to `Sonnet 5.5` and saved as your default for new sessions"), output("Set effort level to high (saved as your default for new sessions)")],
     ]));
     expect(transcriptPage("claude-transcript", path).metadata).toEqual(sonnet);
-    // many prompts and no answer: the newest page starts after the setting
     appendFileSync(path, jsonl(prompts("turn")));
     const page = transcriptPage("claude-transcript", path);
     expect(page.cursor).toBeString();
     expect(page.metadata).toEqual(sonnet);
     forgetTranscriptState();
     expect(transcriptPage("claude-transcript", path).metadata).toEqual(sonnet);
-    // a later answer wins, until a rewind to before it leaves it off the branch
     const back = parent;
     appendFileSync(path, jsonl([prompt("on haiku"), answer("claude-haiku-5-5", "low"), ...prompts("haiku")]));
     expect(transcriptPage("claude-transcript", path).metadata).toEqual({ model: "claude-haiku-5-5", reasoning_effort: "low" });
@@ -166,7 +162,6 @@ for (const via of ["an answer", "/model and /effort"] as const) {
     expect(transcriptPage("claude-transcript", path).metadata).toEqual(sonnet);
     forgetTranscriptState();
     expect(transcriptPage("claude-transcript", path).metadata).toEqual(sonnet);
-    // a clear forgets them, also once the newest page starts past the cleared head
     appendFileSync(path, jsonl([claudeClear, padding(), ...prompts("after clear")]));
     const cleared = transcriptPage("claude-transcript", path);
     expect(cleared.cursor).toBeString();
@@ -184,7 +179,6 @@ test("claude-transcript: a setting every rewind left off the branch is not repla
   const padding = () => record({ type: "system", subtype: "informational", content: "x".repeat(70 * 1024) });
   const rows = [prompt("start"), answer("claude-opus-5-5", "medium")];
   const opus = parent;
-  // the same Sonnet twice, each answer then rewound past, with the first rewind's prompt between them
   rows.push(padding(), prompt("on sonnet"), answer("claude-sonnet-5-5", "high"), prompt("back", opus));
   const back = parent;
   rows.push(answer("claude-sonnet-5-5", "high"), prompt("back again", back), ...prompts("turn"));
@@ -194,7 +188,6 @@ test("claude-transcript: a setting every rewind left off the branch is not repla
   expect(page.metadata).toEqual({ model: "claude-opus-5-5", reasoning_effort: "medium" });
   forgetTranscriptState();
   expect(transcriptPage("claude-transcript", path).metadata).toEqual({ model: "claude-opus-5-5", reasoning_effort: "medium" });
-  // an answer too long for the branch to follow still names what it ran at
   appendFileSync(path, jsonl([padding(), prompt("long"), answer("claude-sonnet-5-5", null, "x".repeat(1024 * 1024 + 1)), ...prompts("after long")]));
   expect(transcriptPage("claude-transcript", path).metadata).toEqual({ model: "claude-sonnet-5-5", reasoning_effort: null });
   forgetTranscriptState();

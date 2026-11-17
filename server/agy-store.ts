@@ -10,7 +10,6 @@ import { agyStartScreenUnused } from "./start-screen.ts";
 export interface AgyStore { root: string; session: string; path: string; pid: number; started: string }
 const LOCK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.lock$/i;
 
-/** Only paths held by the selected process are candidates; directory contents aren't evidence. */
 export function agyStoreFromLocks(paths: readonly string[]): Pick<AgyStore, "root" | "session" | "path"> | null {
   const locks = new Set<string>();
   for (const path of paths) {
@@ -41,7 +40,6 @@ const MAX_WINDOWS_CANDIDATES = 4096;
 const MAX_WINDOWS_HOLDERS = 4096;
 const WINDOWS_SCAN_TTL_MS = 5_000;
 
-/** Load rstrtmgr.dll via Bun FFI for querying file lock owners. */
 const openRestartManager = () => dlopen(join(process.env["SystemRoot"] || process.env["windir"] || "C:\\Windows", "System32", "rstrtmgr.dll"), {
   RmStartSession: { args: [FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.u32 },
   RmRegisterResources: { args: [FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.ptr], returns: FFIType.u32 },
@@ -49,7 +47,6 @@ const openRestartManager = () => dlopen(join(process.env["SystemRoot"] || proces
   RmEndSession: { args: [FFIType.u32], returns: FFIType.u32 },
 });
 
-/** Load kernel32.dll via Bun FFI for process inspection and handle management. */
 const openKernel = () => dlopen(join(process.env["SystemRoot"] || process.env["windir"] || "C:\\Windows", "System32", "kernel32.dll"), {
   OpenProcess: { args: [FFIType.u32, FFIType.i32, FFIType.u32], returns: FFIType.ptr },
   GetProcessTimes: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
@@ -57,13 +54,11 @@ const openKernel = () => dlopen(join(process.env["SystemRoot"] || process.env["w
 });
 
 let windowsApis: { restartManager: ReturnType<typeof openRestartManager>; kernel: ReturnType<typeof openKernel> } | null = null;
-/** Lazily initialize and cache Win32 FFI function bindings. */
 function windowsApi(): NonNullable<typeof windowsApis> {
   windowsApis ??= { restartManager: openRestartManager(), kernel: openKernel() };
   return windowsApis;
 }
 
-/** Minimal type definition for Win32 Restart Manager API symbols used by windowsHolders. */
 export type RestartManagerApi = {
   symbols: {
     RmStartSession: (pSessionHandle: Buffer, dwSessionFlags: number, strSessionKey: Buffer) => number;
@@ -73,10 +68,6 @@ export type RestartManagerApi = {
   };
 };
 
-/**
- * Every process the Restart Manager names for this file; empty when the file is not held, null when
- * the query failed (a failed query proves nothing about who holds the file).
- */
 export function windowsHolders(path: string, api?: RestartManagerApi): number[] | null {
   const restartManager = api ?? windowsApi().restartManager;
   const session = Buffer.alloc(4);
@@ -120,7 +111,6 @@ export function windowsLockCandidates(env: Record<string, string | undefined> = 
   return candidates.length > MAX_WINDOWS_CANDIDATES ? [] : candidates;
 }
 
-/** `complete` is false when a holder query failed: such a pass names no pid's only lock. */
 interface WindowsScan { at: number; candidates: string; owners: Map<number, string[]>; complete: boolean }
 type WindowsHolders = (path: string) => number[] | null;
 const holds = (getHolders: WindowsHolders, path: string, pid: number): boolean => getHolders(path)?.includes(pid) ?? false;
@@ -128,14 +118,12 @@ let windowsScan: WindowsScan | null = null;
 let windowsScanning: Promise<WindowsScan> | null = null;
 let windowsScanId = 0;
 
-/** Invalidate in-flight and completed candidate scans so the next lookup rescans. */
 function invalidateWindowsScan(): void {
   windowsScan = null;
   windowsScanning = null;
   windowsScanId += 1;
 }
 
-/** Reset scan and holder caches between tests. */
 export function resetWindowsScanCacheForTest(): void {
   invalidateWindowsScan();
   windowsNegative.clear();
@@ -174,16 +162,8 @@ function windowsScanAll(
   return windowsScanning;
 }
 
-/**
- * Unresolved pids retry at 5, 10, 20, 40, then 60 seconds while the listing stays unchanged, each
- * on its own deadline: another pane's scan in between is read, never a reason to scan again.
- */
 const windowsNegative = new Map<number, { listing: string; scanAt: number; delay: number; next: number }>();
 
-/**
- * A pid's one held lock and when a scan proved it the only one: a resolved pane costs one call per
- * refresh, and a full pass once a minute, or a newer scan from another pane, notices a second lock.
- */
 const windowsHeld = new Map<number, { path: string; proven: number }>();
 const WINDOWS_HELD_MAX_AGE_MS = 60_000;
 function rememberHeld(pid: number, path: string, proven: number): void {
@@ -192,7 +172,6 @@ function rememberHeld(pid: number, path: string, proven: number): void {
   if (windowsHeld.size > 64) windowsHeld.delete(windowsHeld.keys().next().value!);
 }
 
-/** The locks this pid holds: one known path is re-validated, a new or moved session is scanned. */
 export async function windowsHeldPaths(
   pid: number,
   getHolders: WindowsHolders = windowsHolders,
@@ -204,7 +183,6 @@ export async function windowsHeldPaths(
     const stillOnly = newer === null || (newer.length === 1 && newer[0] === known.path);
     if (stillOnly && Date.now() - known.proven < WINDOWS_HELD_MAX_AGE_MS && holds(getHolders, known.path, pid)) return [known.path];
     windowsHeld.delete(pid);
-    // a newer scan that disagrees already stands; otherwise the next answer needs a new pass
     if (stillOnly) invalidateWindowsScan();
   }
   if (!windowsScanning && (!windowsScan || Date.now() - windowsScan.at >= WINDOWS_SCAN_TTL_MS)) {
@@ -218,7 +196,6 @@ export async function windowsHeldPaths(
     if (negative && negative.listing === listing && Date.now() < negative.next) return [];
     getCandidates = () => candidates;
   }
-  // Only a fresh, complete scan establishes singleton evidence; confirm it on every refresh.
   const seen = windowsScan?.owners.get(pid);
   if (windowsScan?.complete && Date.now() - windowsScan.at < WINDOWS_SCAN_TTL_MS && seen?.length === 1) {
     if (holds(getHolders, seen[0]!, pid)) { rememberHeld(pid, seen[0]!, windowsScan.at); return seen; }
@@ -227,8 +204,6 @@ export async function windowsHeldPaths(
   const scan = await windowsScanAll(getHolders, getCandidates);
   const scanned = scan.owners.get(pid) ?? [];
   const held = scanned.filter((path) => holds(getHolders, path, pid));
-  // ownership moved during the pass: a lock it never saw may be held too, so nothing is proven,
-  // and the pid backs off like any unresolved one instead of rescanning on every refresh
   const moved = held.length !== scanned.length;
   if (moved) invalidateWindowsScan();
   else if (held.length === 1 && scan.complete) {
@@ -237,7 +212,6 @@ export async function windowsHeldPaths(
   }
   const previous = windowsNegative.get(pid);
   if (previous?.scanAt !== scan.at) {
-    // a changed listing starts over even when no scan was left to compare it with
     const base = previous?.listing === scan.candidates ? previous.delay : WINDOWS_SCAN_TTL_MS / 2;
     const delay = Math.min(base * 2, 60_000);
     windowsNegative.set(pid, { listing: scan.candidates, scanAt: scan.at, delay, next: scan.at + delay });
@@ -274,11 +248,10 @@ async function processIdentity(pid: number): Promise<{ started: string } | null>
         return created > 0n ? { started: `win32:${created}` } : null;
       } finally { kernel.symbols.CloseHandle(handle); }
     }
-  } catch { /* gone or unreadable owner */ }
+  } catch {}
   return null;
 }
 
-/** List open file paths held by the given process id on the current platform, or null when the query fails. */
 async function heldPaths(pid: number): Promise<string[] | null> {
   if (process.platform === "darwin") {
     const child = Bun.spawn(["/usr/sbin/lsof", "-nPbw", "-a", "-p", String(pid), "-Fn"], { stdout: "pipe", stderr: "ignore", timeout: 3000 });
@@ -295,7 +268,7 @@ async function heldPaths(pid: number): Promise<string[] | null> {
       let count = 0;
       for (let entry = dir.readSync(); entry; entry = dir.readSync()) {
         if (++count > 4096) return null;
-        try { paths.push(readlinkSync(`/proc/${pid}/fd/${entry.name}`)); } catch { /* closed during enumeration */ }
+        try { paths.push(readlinkSync(`/proc/${pid}/fd/${entry.name}`)); } catch {}
       }
     } finally { dir.closeSync(); }
     return paths;
@@ -308,14 +281,12 @@ export function isAgyProcessName(name: unknown): boolean {
   return process.platform === "win32" ? /(?:^|[\\/])agy(?:\.exe)?$/i.test(name) : name === "agy";
 }
 
-/** The pane's foreground Agy process as herdr names it now, or null unless it names exactly one. */
 async function agyPaneProcess(paneId: string): Promise<{ pid: number; argv?: string[] | null } | null> {
   const info = await paneProcessInfo(paneId);
   const owners = (info?.foreground_processes ?? []).filter((p) => isAgyProcessName(p.name) && Number.isSafeInteger(p.pid) && p.pid > 1);
   return owners.length === 1 ? owners[0]! : null;
 }
 
-/** Resolve the Agy session store for the given pane by matching process identity and held locks. */
 export async function resolveAgyStore(pane: HerdrPane): Promise<AgyStore | null> {
   if (pane.agent !== "agy") return null;
   try {
@@ -324,9 +295,6 @@ export async function resolveAgyStore(pane: HerdrPane): Promise<AgyStore | null>
     const { pid } = owner;
     const before = await processIdentity(pid);
     if (!before) return null;
-    // herdr's first list may predate the process the locks are read from, when the Agy it named exited
-    // and its pid was reused. Ask again before reading them: the locks are then the last evidence
-    // gathered, and that answer and they both lie between two reads of one birth identity.
     const current = await agyPaneProcess(pane.pane_id);
     if (current?.pid !== pid) return null;
     const paths = await heldPaths(pid);
@@ -348,17 +316,11 @@ function agyProcessArgv(owner: { pid: number; argv?: string[] | null }): string[
   } catch { return null; }
 }
 
-/** Whether this Agy was started without a resume, prompt or remote flag; false when its arguments are unknown. */
 function agyStartedOnNoSession(owner: { pid: number; argv?: string[] | null }): boolean {
   const argv = agyProcessArgv(owner);
   return argv !== null && !argv.slice(1).some((arg) => AGY_SESSION_FLAGS.has(arg) || /^--(?:conversation|remote-agent|prompt|prompt-interactive)=/.test(arg));
 }
 
-/**
- * The history id of the conversation an Agy started in a terminal has not begun, or null unless
- * its live screen shows the unused start screen, its single foreground Agy process was started
- * without a resume/prompt/remote flag, and it holds no presence lock yet.
- */
 export async function agyFreshSession(pane: HerdrPane, screen: string): Promise<string | null> {
   // Windows names held locks from a shared, cached scan: an empty answer there proves no absence
   if (process.platform === "win32" || pane.agent !== "agy" || !agyStartScreenUnused(screen)) return null;
@@ -367,8 +329,6 @@ export async function agyFreshSession(pane: HerdrPane, screen: string): Promise<
     if (!owner || !agyStartedOnNoSession(owner)) return null;
     const before = await processIdentity(owner.pid);
     if (!before) return null;
-    // As in resolveAgyStore: the pane must still name this process, asked before its locks are read,
-    // and its arguments are read again here, inside the same birth identity as the locks.
     const current = await agyPaneProcess(pane.pane_id);
     if (current?.pid !== owner.pid || !agyStartedOnNoSession(current)) return null;
     const paths = await heldPaths(owner.pid);
@@ -379,7 +339,6 @@ export async function agyFreshSession(pane: HerdrPane, screen: string): Promise<
   } catch { return null; }
 }
 
-/** Check whether two AgyStore references identify the same process and session path. */
 export function sameAgyStore(a: AgyStore, b: AgyStore | null): boolean {
   return b !== null && a.pid === b.pid && a.started === b.started && a.path === b.path;
 }

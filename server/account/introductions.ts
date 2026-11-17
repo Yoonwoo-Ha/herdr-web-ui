@@ -4,15 +4,12 @@ import { isWssOrigin } from "../../shared/relay-offer.ts";
 import { deriveServerId } from "../../shared/relay-server-proof.ts";
 import { writePrivateState } from "../private-state.ts";
 
-/** How long an introduction waits for its device: a device that is off for weeks still learns of a PC enrolled meanwhile. */
 export const INTRODUCTION_TTL_MS = 30 * 24 * 60 * 60_000;
 const MAX_PCS = 32;
-/** Devices with an introduction waiting at most; past them the one that would expire first goes. */
 const MAX_KEYS = 256;
 
 export interface IntroducedPc { server_id: string; server_public_key: string; relay: string; name: string }
 
-/** Null unless `value` is a list of PCs whose ids derive from their keys (docs/account.md, "Introductions"). */
 export function parseIntroducedPcs(value: unknown): IntroducedPc[] | null {
   if (!Array.isArray(value) || value.length > MAX_PCS) return null;
   const pcs: IntroducedPc[] = [];
@@ -29,7 +26,6 @@ export function parseIntroducedPcs(value: unknown): IntroducedPc[] | null {
 
 type Waiting = Map<string, { pcs: IntroducedPc[]; expires: number }>;
 
-/** What `path` holds, or nothing: an introduction is only a hint the member gives again, so an unreadable file is an empty one. */
 function readWaiting(path: string | undefined): Waiting {
   const waiting: Waiting = new Map();
   if (!path) return waiting;
@@ -40,14 +36,10 @@ function readWaiting(path: string | undefined): Waiting {
       const parsed = parseIntroducedPcs(pcs);
       if (typeof key === "string" && parsed && typeof expires === "number") waiting.set(key, { pcs: parsed, expires });
     }
-  } catch { /* absent or damaged: no introduction waits */ }
+  } catch {}
   return waiting;
 }
 
-/**
- * The PCs members introduced to a device, by its key: merged by PC (a later one for the same PC
- * replaces it), kept on disk for INTRODUCTION_TTL_MS after the last one.
- */
 export class AccountIntroductions {
   private readonly waiting: Waiting;
 
@@ -61,7 +53,6 @@ export class AccountIntroductions {
     for (const pc of pcs) { merged.delete(pc.server_id); merged.set(pc.server_id, pc); }
     this.waiting.delete(key);
     this.waiting.set(key, { pcs: [...merged.values()].slice(-MAX_PCS), expires: this.now() + INTRODUCTION_TTL_MS });
-    // the oldest set goes first: it expires first
     while (this.waiting.size > MAX_KEYS) this.waiting.delete(this.waiting.keys().next().value!);
     this.save();
   }

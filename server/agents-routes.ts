@@ -1,8 +1,3 @@
-/**
- * GET /api/agents: the agent kinds this PC can start, with display labels: herdr's agent manifests,
- * Oh My Pi and Claude Code on herdr, and the shell-started agents this server finds (shell-agent.ts).
- * The dispatcher in index.ts runs the access gate first.
- */
 import type { AgentKind } from "../shared/agents.ts";
 import { agentManifests } from "./herdr/client.ts";
 import { hcMachine } from "./herdr-core/runtime.ts";
@@ -32,21 +27,12 @@ export const AGENT_LABELS: Record<string, string> = {
   "dsh-tui": "DeepSeek Harness",
 };
 
-/**
- * The answer for the agent catalog route, or null when the path is not it. `shellAgents`: the server's
- * own locator, which starts them too. `has`: whether a kind is on a PATH a pane's shell starts it from,
- * read again once after an install put it in its installer's folder (installed-lookup.ts), so Add
- * another agent… can pick what its tile just installed; without it, the locator and this server's PATH.
- */
 export async function handleAgentsRequest(request: Request, pathname: string, shellAgents: Pick<ShellAgentLocator, "executable">, has?: (kind: string) => Promise<boolean>): Promise<Response | null> {
   if (pathname === "/api/agents") {
     setRequestRoute(pathname);
     if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
     try {
       const kinds = new Set((await agentManifests()).manifests.map((manifest) => manifest.agent));
-      // another machine of the core (machine-bridge.ts): this PC's PATH does not tell what that machine
-      // has, and a shell-started agent would be typed in from this PC's path, so only herdr's own kinds
-      // are offered, without saying whether they are installed
       if (hcMachine() !== null) {
         const agents: AgentKind[] = [...kinds].map((kind) => ({ kind, label: AGENT_LABELS[kind] ?? kind }))
           .sort((left, right) => left.label.localeCompare(right.label) || left.kind.localeCompare(right.kind));
@@ -58,8 +44,6 @@ export async function handleAgentsRequest(request: Request, pathname: string, sh
         kinds.add("omp");
         kinds.add("claude");
       }
-      // not herdr kinds: offered where this server can run them (see shell-agent.ts), with the locator
-      // the start asks too, so what is offered is what starts
       const shellStarted = new Set<string>();
       for (const kind of Object.keys(SHELL_AGENTS)) if (has !== undefined ? await has(kind) : (await shellAgents.executable(kind)) !== null) shellStarted.add(kind);
       for (const kind of shellStarted) kinds.add(kind);

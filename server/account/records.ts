@@ -9,13 +9,9 @@ import type { PairedDevice } from "../../shared/protocol.ts";
 
 export type RecordRefusal = "record_invalid" | "signature_invalid" | "account_mismatch" | "signer_not_member" | "tombstoned" | "link_not_owner" | "account_unavailable" | "enrolling" | "removal_pending";
 
-/** What holds an `add` back on this PC (mailbox.ts `gates`, docs/account.md "Enrolling a PC"). */
 export interface AddGates {
-  /** the PC waits for the member that linked it first to hand it the account's devices */
   enrolling(): boolean;
-  /** a waiting remove or a held key names `key`, or what waits cannot be trusted to be complete */
   held(key: string): boolean;
-  /** a remove waiting here names `key` (an add it signed waits until that settles) */
   removing?(key: string): boolean;
 }
 export type RecordOutcome = { id: string | null; outcome: "applied" | "unchanged" } | { id: string | null; outcome: "refused"; code: RecordRefusal };
@@ -37,7 +33,6 @@ function apply(store: DeviceStore, record: AccountRecord, serverId: string | nul
   if (store.accountError !== null) return refused("account_unavailable");
   const account = store.account();
   if (account !== null && account !== record.account) return refused("account_mismatch");
-  // a member of any role may sign the remove of its own key: that is how a device leaves (docs/account.md)
   const leaving = record.kind === "remove" && record.signer === record.key;
   const signer = store.accountSigner(record.signer, record.account, leaving);
   if (!signer) return refused("signer_not_member");
@@ -46,14 +41,11 @@ function apply(store: DeviceStore, record: AccountRecord, serverId: string | nul
   if (!store.acceptsRelayKey(record.key)) return refused("record_invalid");
   if (store.isTombstoned(record.key)) return refused("tombstoned");
   if (store.hasKey(record.key)) {
-    // kept on the row this signer's approval made here, so a client can hand it to a PC it enrolls later
     store.keepAccountAdd(record, signer.id);
     return { id: record.id, outcome: "unchanged" };
   }
   if (gates?.enrolling()) return refused("enrolling");
-  // a key this PC holds back, or a signer it holds back (a remove for it waits here): the add waits for that to settle
   if (gates?.held(record.key) || gates?.removing?.(record.signer)) return refused("removal_pending");
-  // the new row's id is derived from this PC's relay id (docs/account.md), so without one there is no row to make
   if (serverId === null) return refused("account_unavailable");
   const id = accountDeviceId(serverId, record.key);
   if (store.has(id)) return refused("record_invalid");
@@ -61,25 +53,17 @@ function apply(store: DeviceStore, record: AccountRecord, serverId: string | nul
   return { id: record.id, outcome: "applied" };
 }
 
-/**
- * A remove refused only because its signer is not a member here yet, handed to `wait` before the next
- * record applies, so an add for the same key later in the batch already meets it (AddGates.held).
- * One `wait` could not keep is undecided (`account_unavailable`): its sender tries again.
- */
 function waited(outcome: RecordOutcome, record: AccountRecord, value: unknown, wait: ((record: unknown) => boolean) | undefined, undecided: Set<string>): RecordOutcome {
   if (wait === undefined || record.kind !== "remove" || outcome.outcome !== "refused" || outcome.code !== "signer_not_member") return outcome;
   if (wait(value)) return outcome;
-  // not kept anywhere: the rest of the batch still treats its key as removed
   undecided.add(record.key);
   return { id: outcome.id, outcome: "refused", code: "account_unavailable" };
 }
 
-/** `gates` with the keys of this batch's removes that could not be kept: an add for one is held back too. */
 function withUndecided(gates: AddGates | undefined, undecided: ReadonlySet<string>): AddGates {
   return { enrolling: () => gates?.enrolling() ?? false, held: (key) => undecided.has(key) || (gates?.held(key) ?? false), removing: (key) => undecided.has(key) || (gates?.removing?.(key) ?? false) };
 }
 
-/** Every record of a batch, in order; one refusal never fails the rest. At most ACCOUNT_RECORDS_MAX. */
 export async function applyAccountRecords(store: DeviceStore, values: readonly unknown[], serverId: string | null, now = Date.now(), gates?: AddGates, wait?: (record: unknown) => boolean): Promise<RecordOutcome[]> {
   if (values.length > ACCOUNT_RECORDS_MAX) throw new RangeError(`At most ${ACCOUNT_RECORDS_MAX} records at once`);
   const outcomes: RecordOutcome[] = [];
@@ -92,13 +76,6 @@ export async function applyAccountRecords(store: DeviceStore, values: readonly u
   return outcomes;
 }
 
-/**
- * An enrollment (POST /api/account/enroll, docs/account.md "Enrolling a PC"), in the server's order
- * whatever the client's: every `remove` first, in the order signed, then the `add`s in rounds, so an
- * add whose signer another add of the batch lets in applies in the next round. After each round
- * `settle` retries what waits here, so a remove whose signer just became a member applies before the
- * next round's adds. `wait` keeps a remove refused only for its signer; false when it could not.
- */
 export async function applyEnrollment(store: DeviceStore, values: readonly unknown[], serverId: string | null, options: {
   gates: AddGates; wait: (record: unknown) => boolean; settle: () => Promise<unknown>; now?: number;
 }): Promise<RecordOutcome[]> {
@@ -143,10 +120,6 @@ export async function applyEnrollment(store: DeviceStore, values: readonly unkno
 
 export type LinkRefusal = RecordRefusal | "key_in_use";
 
-/**
- * A `link` from the device `deviceId` over its own session to the PC `serverId`. It needs no
- * member: the session is its authority, which is how a PC gets its first one.
- */
 export async function applyLink(store: DeviceStore, value: unknown, session: { deviceId: string; serverId: string; sessionKey: string; sessionId?: string }, gates?: AddGates): Promise<{ device: PairedDevice } | { refused: LinkRefusal }> {
   const { deviceId, serverId, sessionKey, sessionId } = session;
   const record = await read(value);

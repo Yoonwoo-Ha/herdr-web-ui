@@ -13,35 +13,23 @@ import { homedir } from "node:os";
 import { join, parse, resolve, sep } from "node:path";
 
 /**
- * Where the files go: `ovis\claude settings` in this Windows user's %LOCALAPPDATA%, the profile's
- * own folder for what stays on this PC, which only this user and the administrators can reach.
- * Not %TEMP%: TEMP can name a folder other accounts write to (C:\Temp, or C:\Windows\Temp for a
- * service), where another account could make this folder first and, a file being named by its
- * text's hash, swap hooks into it between the check below and Claude Code's read. Not the server's
- * state dir (defaultStateDir, %USERPROFILE%\.config\ovis): createServer's `stateDir` stops at
- * index.ts, so the create routes would have to pass it down, and the default one goes wherever
- * OVIS_STATE_DIR or XDG_CONFIG_HOME point. A file holds only the JSON a launch already put on
- * Claude Code's command line (the dialog's is {"ultracode":true}). Claude Code keeps what it read
- * from it at start (2.1.311 pins a settings file's content), so one removed later costs nothing and
- * the next launch writes it again. The space in the folder's name has PowerShell quote the path for
- * a `.cmd` agent it starts, so a profile folder holding `&` (`R&D`) reaches it whole and herdr-core's
- * start takes it (powershellNativeArgs, #3084).
+ * %LOCALAPPDATA% only this user and the administrators can reach. Not %TEMP%: TEMP can name a folder
+ * other accounts write to (C:\Temp, or C:\Windows\Temp for a service), where another account could
+ * make this folder first and swap hooks into it before Claude Code's read. Claude Code keeps what it
+ * read from it at start (2.1.311 pins a settings file's content), so one removed later costs nothing.
+ * The space in the folder's name has PowerShell quote the path for a `.cmd` agent it starts, so a
+ * profile folder holding `&` (`R&D`) reaches it whole and herdr-core's start takes it (#3084).
  */
 export function claudeSettingsDir(env: Record<string, string | undefined> = process.env, home: string = homedir()): string {
   return join(env["LOCALAPPDATA"] || join(home, "AppData", "Local"), "ovis", "claude settings");
 }
 
-/** Whether Claude Code reads a `--settings` value as JSON rather than as a file's path: its own test. */
+/** Claude Code's own test for reading a `--settings` value as JSON rather than as a file's path. */
 const inlineJson = (value: string): boolean => {
   const trimmed = value.trim();
   return trimmed.startsWith("{") && trimmed.endsWith("}");
 };
 
-/**
- * `args` with each inline JSON `--settings` value, `--settings <json>` or `--settings=<json>`,
- * replaced by the path `write` gives a file holding that text. Every other argument is kept, and
- * nothing after a bare `--` is read as a flag.
- */
 export function settingsFileArgs(args: readonly string[], write: (json: string) => string): string[] {
   const rewritten: string[] = [];
   for (let at = 0; at < args.length; at++) {
@@ -51,7 +39,6 @@ export function settingsFileArgs(args: readonly string[], write: (json: string) 
       break;
     }
     if (arg === "--settings" && at + 1 < args.length) {
-      // the flag's value is the flag's own, a "--" there included: it is not read again as an argument
       const value = args[++at]!;
       rewritten.push(arg, inlineJson(value) ? write(value) : value);
     }
@@ -63,7 +50,6 @@ export function settingsFileArgs(args: readonly string[], write: (json: string) 
   return rewritten;
 }
 
-/** Make each component without traversing a link; retain identities to check around file operations. */
 const cacheDirectory = (dir: string): (() => void) => {
   const absolute = resolve(dir);
   let folder = parse(absolute).root;
@@ -89,7 +75,6 @@ const cacheDirectory = (dir: string): (() => void) => {
   return check;
 };
 
-/** Read only a regular, non-linked entry whose opened and named identities still agree. */
 const holds = (path: string, text: string, checkDirectory: () => void): boolean => {
   checkDirectory();
   const named = lstatSync(path, { bigint: true });
@@ -116,13 +101,7 @@ const holds = (path: string, text: string, checkDirectory: () => void): boolean 
   }
 };
 
-/**
- * The path of a file in `dir` holding `json`, named by its sha256: the same text is one file, written
- * once. The first launch makes it new, with no rename that Defender or the indexer could hold up for
- * a moment on Windows, and a later one finds it there. Only a file under its name that holds other
- * text (cut short, or edited) is replaced, written under a temporary name and renamed into place so
- * nothing reads half of it.
- */
+/** Created in place first: on Windows, Defender or the indexer can hold up a rename for a moment. */
 export function settingsFile(json: string, dir: string = claudeSettingsDir()): string {
   dir = resolve(dir);
   const path = join(dir, `${createHash("sha256").update(json).digest("hex")}.json`);
@@ -154,7 +133,6 @@ export function settingsFile(json: string, dir: string = claudeSettingsDir()): s
   try {
     writeNew(temporary);
     checkDirectory();
-    // Refuse an entry changed to a link while its replacement was being written.
     holds(path, json, checkDirectory);
     renameSync(temporary, path);
   } catch (error) {

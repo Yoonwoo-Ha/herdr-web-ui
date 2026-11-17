@@ -6,11 +6,6 @@ import { join } from "node:path";
 import { createServer } from "./index.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
 
-/**
- * A page whose own name was rebound to 127.0.0.1 reaches a loopback server from loopback, with that
- * name as Host and Origin. Neither the open grant of an install with nothing paired nor a Tailscale
- * login the page types itself may let it in.
- */
 const OWNER = "owner@example.com";
 const NODE = "pc.tail5cc90b.ts.net";
 const IP = "100.101.102.103";
@@ -18,7 +13,6 @@ const status = JSON.stringify({ BackendState: "Running", Self: { DNSName: `${NOD
 
 type Server = { port: number; stop: (force?: boolean) => void };
 
-/** the status line of a WebSocket upgrade sent as raw HTTP */
 function upgrade(port: number, headers: Record<string, string>): Promise<string> {
   return new Promise((resolve, reject) => {
     const lines = ["GET /ws HTTP/1.1", ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
@@ -41,11 +35,8 @@ describe("a rebound name on a loopback server", () => {
   let named: Server;
   beforeAll(() => {
     const state = () => { const dir = mkdtempSync(join(tmpdir(), "ovis-authority-")); states.push(dir); return dir; };
-    // nothing paired, no token, no Tailscale here: the default install
     open = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state(), tailscaleOwner: null, tailnet: new TailnetIdentitySource(async () => null) }) as Server;
-    // the same, on a PC whose Tailscale login is known
     owned = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state(), tailnet: new TailnetIdentitySource(async () => status) }) as Server;
-    // a tagged node's owner named in OVIS_TAILSCALE_OWNER: the login still counts only at this PC's tailnet name
     named = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: state(), tailscaleOwner: OWNER, tailnet: new TailnetIdentitySource(async () => status) }) as Server;
   });
   afterAll(() => {
@@ -61,7 +52,6 @@ describe("a rebound name on a loopback server", () => {
     expect((await fetch(`http://127.0.0.1:${open.port}/api/devices`, { headers })).status).toBe(401);
     expect((await fetch(`http://127.0.0.1:${open.port}/api/probe-unknown`, { method: "POST", headers })).status).toBe(401);
     expect(await upgrade(open.port, headers)).toBe("HTTP/1.1 401 Unauthorized");
-    // control: this PC under its own name keeps its local access
     expect((await fetch(`http://127.0.0.1:${open.port}/api/devices`)).status).toBe(200);
   });
 
@@ -70,7 +60,6 @@ describe("a rebound name on a loopback server", () => {
       const headers = { ...rebound(server.port), "tailscale-user-login": OWNER, "x-forwarded-for": "100.64.0.9" };
       expect((await fetch(`http://127.0.0.1:${server.port}/api/devices`, { headers })).status).toBe(401);
       expect(await upgrade(server.port, headers)).toBe("HTTP/1.1 401 Unauthorized");
-      // control: tailscale serve keeps the device's Host, this PC's tailnet name or address, and the owner gets in
       for (const host of [NODE, `${NODE.toUpperCase()}.`, `${IP}:443`]) {
         expect((await fetch(`http://127.0.0.1:${server.port}/api/devices`, { headers: { ...headers, host, origin: `https://${host}` } })).status).toBe(200);
       }

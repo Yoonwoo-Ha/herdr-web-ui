@@ -8,7 +8,6 @@ import { guardLibrary, guardPath, OwnerGuardReleaseFailed } from "./owner-guard.
 import { readProcessBirth } from "./process-owner.ts";
 
 let root = "", path = "";
-/** A well-formed birth no running process has: this platform's form, at the epoch. */
 const earlierBirth = { platform: process.platform, value: process.platform === "linux" ? `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}:1` : process.platform === "darwin" ? "Thu Jan 1 00:00:00 1970" : "1" };
 const others: Bun.Subprocess<"pipe", "ignore", "ignore">[] = [];
 beforeEach(() => {
@@ -21,14 +20,12 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** A live process other than this one, blocked on its stdin until the test ends. */
 function other() {
   const child = Bun.spawn([process.execPath, "-e", "for await (const _ of console) break;"], { stdin: "pipe", stdout: "ignore", stderr: "ignore", windowsHide: true });
   others.push(child);
   return child;
 }
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-/** Signal 0 to `pid` is refused (EPERM), as another user's or a protected process refuses it; every other PID is probed for real. */
 function refusing(pid: number) {
   const kill = process.kill.bind(process);
   return spyOn(process, "kill").mockImplementation(((target: number, signal?: NodeJS.Signals | number) => {
@@ -55,7 +52,6 @@ describe("bridge registration", () => {
   });
 
   it("replaces a descriptor whose PID another process now holds", () => {
-    // regression (fails on main, which took any live PID for the bridge): a reused PID
     const reused = other();
     writeFileSync(path, descriptor({ pid: reused.pid, generation: "crashed", birth: earlierBirth }));
     registerBridge(4242, "new-token", { path });
@@ -64,8 +60,6 @@ describe("bridge registration", () => {
   });
 
   it("replaces a descriptor whose PID a process it may not signal now holds", () => {
-    // regression: a refused probe (EPERM) once kept the descriptor, so after a reboot that handed
-    // the old bridge's PID to another user's process, no bridge could register (main replaced it)
     const reused = other();
     const reading = readProcessBirth(reused.pid);
     if (reading.state !== "identified") throw new Error(`no birth for ${reused.pid}`);
@@ -103,8 +97,6 @@ describe("bridge registration", () => {
   });
 
   it("keeps a live bridge's descriptor whose recorded birth is malformed", () => {
-    // regression: a missing, numeric or empty birth once read as another process's, and the live
-    // bridge's descriptor and credential were overwritten
     const bridge = other();
     for (const birth of [{ platform: process.platform }, { platform: process.platform, value: 7 }, { platform: process.platform, value: "" }, { platform: process.platform, value: "an earlier process" }, null]) {
       const text = descriptor({ pid: bridge.pid, generation: "live", birth: birth as never });
@@ -122,7 +114,6 @@ describe("bridge registration", () => {
     const reused = other(), bridge = other();
     const reading = readProcessBirth(bridge.pid);
     if (reading.state !== "identified") throw new Error(`no birth for ${bridge.pid}`);
-    // the replacement may itself look stale: a changed sample is never replaced
     for (const replacement of [descriptor({ pid: bridge.pid, generation: "won", birth: reading.birth }), descriptor({ pid: reused.pid, generation: "other", birth: earlierBirth })]) {
       writeFileSync(path, descriptor({ pid: reused.pid, generation: "crashed", birth: earlierBirth }));
       const registration = registerBridge(4242, "new-token", { path, sampled() { writeFileSync(path, replacement); } });
@@ -143,7 +134,6 @@ describe("bridge registration", () => {
   });
 
   it("fails a registration whose guard was not released, and logs a close that was not clean", () => {
-    // one failing native call: the POSIX unlock, or Windows' UnlockFileEx; the real close still runs
     const fail = () => {
       if (process.platform === "win32") guardLibrary.windows = (calls) => ({ ...calls, UnlockFileEx: (...args: Parameters<typeof calls.UnlockFileEx>) => (calls.UnlockFileEx(...args), 0) });
       else guardLibrary.posix = (calls) => ({ ...calls, flock: (fd, operation) => operation === 8 ? -1 : calls.flock(fd, operation) });
@@ -164,7 +154,6 @@ describe("bridge registration", () => {
       restore();
       logged.mockRestore();
     }
-    // the guard was handed back by its close: registration works again
     registerBridge(4243, "next-token", { path }).close();
   });
 
@@ -192,7 +181,6 @@ describe("bridge registration", () => {
   });
 });
 
-// #1960: an Ovis with HOST set to another address registers this relay, since the app's tunnel reaches only the PC's loopback
 describe("loopback relay", () => {
   const stops: (() => void)[] = [];
   afterEach(() => { for (const stop of stops.splice(0)) stop(); });
@@ -229,9 +217,6 @@ describe("loopback relay", () => {
     const piece = 16 * 1024;
     const blocked = Promise.withResolvers<"blocked">();
     const sent = Promise.withResolvers<"sent">();
-    // one piece per event-loop turn, so the relay gets to read between them; a write that takes
-    // less than a piece is the server feeling the client's backpressure, and its drain goes on
-    // every byte says where it belongs, so a lost, repeated or reordered piece shows
     const payload = new Uint8Array(size);
     for (let i = 0; i < size; i++) payload[i] = (i ^ (i >>> 13)) & 0xff;
     type Writer = { data: { at: number }; write(chunk: Uint8Array): number; end(): void };
@@ -257,7 +242,6 @@ describe("loopback relay", () => {
       data(_socket, data) { received.set(data.subarray(0, size - filled), filled); filled += data.byteLength; },
       close() { done.resolve(); },
     } });
-    // a relay that buffered everything would let the server finish while nothing is read
     expect(await Promise.race([blocked.promise, sent.promise])).toBe("blocked");
     client.resume();
     await done.promise;
@@ -265,7 +249,6 @@ describe("loopback relay", () => {
     expect(Buffer.compare(received, payload)).toBe(0);
   });
 
-  /** a client sending `total` bytes through the relay to a server that reads nothing */
   async function stuckUpstream(total: number): Promise<{ client: Socket; relay: { stop(): void }; written: Promise<void>; clientClosed: Promise<void>; upstreamClosed: Promise<void> }> {
     const upstreamClosed = Promise.withResolvers<void>();
     const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
@@ -332,7 +315,6 @@ describe("loopback relay", () => {
 
   it("relays an IP address that does not answer on 127.0.0.1, and never a host name", () => {
     expect(["127.0.0.2", "100.64.0.7", "::1", "[FD7A:115C:A1E0::7]"].map(relayTarget)).toEqual(["127.0.0.2", "100.64.0.7", "::1", "fd7a:115c:a1e0::7"]);
-    // 127.0.0.1 and a wildcard need none; a host name may resolve elsewhere by the next connection
     expect(["127.0.0.1", "0.0.0.0", "::", "[::]", "localhost", "pc.example", "pc.tail1234.ts.net"].map(relayTarget)).toEqual([null, null, null, null, null, null, null]);
   });
 });

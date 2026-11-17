@@ -1,7 +1,3 @@
-/**
- * AST checks for agent command catalog boundaries.
- * Split strings and JSX text are not detected by the boundary literal scan.
- */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,7 +74,6 @@ function forbiddenBoundaryLiterals(source: string, fileName?: string): string[] 
         text.includes("/tui/") ||
         ["service.ensure", "turn/start", "thread/resume", "skill.invoke"].some((method) => text.includes(method)) ||
         /\/api\/session\/[^/]+\/command(?:[/?#]|$)/.test(text) ||
-        // Only the terminal attachment may take over, after an explicit user request.
         (text.includes("--takeover") && fileName !== "server/core/terminal-process.ts")
       ) {
         violations.push(text);

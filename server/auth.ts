@@ -12,7 +12,6 @@
  * helpers for that cookie live here too), and index.ts warns when a public bind address is
  * combined with neither.
  */
-
 import { timingSafeEqual } from "node:crypto";
 
 import { isLoopbackAddress } from "./access.ts";
@@ -20,18 +19,14 @@ import { PAGE_MEDIA_ROUTE } from "./file-view.ts";
 import { badRequest, jsonResponse } from "./http.ts";
 
 export const TOKEN_COOKIE = "ovis_token";
-/** a paired device's own credential; the same flags as the token cookie */
 export const DEVICE_COOKIE = "ovis_device";
-/** their names before the rename: a browser signed in then keeps sending them for up to a year */
 const LEGACY_TOKEN_COOKIE = "herdr_web_token";
 const LEGACY_DEVICE_COOKIE = "herdr_web_device";
 
-/** The token cookie a request carries, under its name or the one before the rename. */
 export function tokenCookie(cookies: Map<string, string>): string | undefined {
   return cookies.get(TOKEN_COOKIE) ?? cookies.get(LEGACY_TOKEN_COOKIE);
 }
 
-/** The paired device's cookie a request carries, under its name or the one before the rename. */
 export function deviceCookieValue(cookies: Map<string, string>): string | undefined {
   return cookies.get(DEVICE_COOKIE) ?? cookies.get(LEGACY_DEVICE_COOKIE);
 }
@@ -40,7 +35,6 @@ function clearCookie(name: string): string {
   return `${name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`;
 }
 
-/** Set with a fresh credential, so the browser stops sending the old name beside the new one. */
 export const CLEAR_LEGACY_TOKEN_COOKIE = clearCookie(LEGACY_TOKEN_COOKIE);
 export const CLEAR_LEGACY_DEVICE_COOKIE = clearCookie(LEGACY_DEVICE_COOKIE);
 export const COOKIE_MAX_AGE_SECONDS = 31536000;
@@ -60,7 +54,6 @@ export const COOKIE_MAX_AGE_SECONDS = 31536000;
 const AUTH_FAILURE_BUDGET = 5;
 const AUTH_BACKOFF_MS = 1_000;
 const AUTH_BACKOFF_MAX_MS = 60_000;
-/** addresses remembered; past the cap the ones whose wait is over are dropped first */
 export const AUTH_CLIENTS_MAX = 1024;
 const authAttempts = new Map<string, { failures: number; until: number }>();
 const BEARER_PREFIX = "bearer ";
@@ -110,7 +103,6 @@ export function deviceAuthorizationValue(request: Request): string | undefined {
   return authorization.slice(DEVICE_PREFIX.length) || undefined;
 }
 
-/** The token came in an `Authorization` header: a proxy or a script sends it with every request, so signing out cannot take it away. */
 export function bearerMatches(request: Request, token: string): boolean {
   if (token === "") return false;
   const authorization = request.headers.get("authorization") ?? "";
@@ -118,7 +110,6 @@ export function bearerMatches(request: Request, token: string): boolean {
   return matches(authorization.slice(BEARER_PREFIX.length), token);
 }
 
-/** /api/health, /api/auth and /api/devices/pair stay open so a client can discover the gate and pass it. */
 export function requiresAuth(pathname: string): boolean {
   if (pathname === "/ws") return true;
   if (!pathname.startsWith("/api/")) return false;
@@ -147,7 +138,6 @@ export function deviceCookie(token: string, secure: boolean): string {
   return `${DEVICE_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_SECONDS}${secure ? "; Secure" : ""}`;
 }
 
-/** The Set-Cookie that drops a browser's device cookie: signing out, or revoking every device (its own included). */
 export const DEVICE_COOKIE_CLEARED = clearCookie(DEVICE_COOKIE);
 
 export function noContent(...setCookies: string[]): Response {
@@ -156,11 +146,6 @@ export function noContent(...setCookies: string[]): Response {
   return new Response(null, { status: 204, headers });
 }
 
-/**
- * How long `client` still has to wait, in whole seconds, or 0. An address with no address
- * to remember (a unix socket, a proxy that hid it) is never held back: the budget is there
- * to make guessing expensive, not to lock anyone out.
- */
 function authWaitLeft(key: string): number {
   const entry = authAttempts.get(key);
   const left = entry === undefined ? 0 : entry.until - Date.now();
@@ -197,7 +182,6 @@ const sharedFailures = new Map<string, number[]>();
 export function sharedFailuresSize(): number {
   return sharedFailures.size;
 }
-/** addresses that presented the right token, and when: the shared hold passes them */
 const ADMITTED_FOR_MS = 30 * 24 * 60 * 60_000;
 const admitted = new Map<string, number>();
 
@@ -221,7 +205,6 @@ function sharedWaitLeft(channel: Channel, client: string | null): number {
   return Math.ceil((recent[recent.length - SHARED_FAILURES]! + SHARED_WINDOW_MS - Date.now()) / 1000);
 }
 
-/** An unknown address (a unix socket) has no budget: it is there to make guessing expensive, not to lock anyone out. */
 function waitLeft(channel: Channel, client: string | null): number {
   if (client === null) return 0;
   return Math.max(authWaitLeft(`${channel} ${client}`), sharedWaitLeft(channel, client));
@@ -240,7 +223,6 @@ function recordFailure(channel: Channel, client: string | null): void {
   trimSharedFailures();
 }
 
-/** The shared proxy budgets cannot retain more distinct addresses than the per-client budgets. */
 function trimSharedFailures(): void {
   for (const [address, failures] of sharedFailures) {
     if (failures.every((time) => Date.now() - time >= SHARED_WINDOW_MS)) sharedFailures.delete(address);
@@ -249,7 +231,6 @@ function trimSharedFailures(): void {
   while (sharedFailures.size > AUTH_CLIENTS_MAX) sharedFailures.delete(sharedFailures.keys().next().value!);
 }
 
-/** The right token from `client`: its own waits are spent, and the shared hold passes it from now on. */
 function admit(client: string | null): void {
   if (client === null) return;
   for (const channel of ["sign-in", "presented"] as const) authAttempts.delete(`${channel} ${client}`);
@@ -282,7 +263,6 @@ export function recordPresentedTokenFailure(client: string | null): void {
   recordFailure("presented", client);
 }
 
-/** The answer to a request whose Bearer token was not compared because its address is waiting. */
 export function presentedTokenHeld(client: string | null): Response {
   return tooManyAttempts(waitLeft("presented", client));
 }
@@ -293,11 +273,9 @@ function tooManyAttempts(wait: number): Response {
 
 function recordAuthFailure(client: string, budget: number): void {
   const failures = (authAttempts.get(client)?.failures ?? 0) + 1;
-  // the budget is spent first: the failures under it cost nothing but the answer they got
   const wait = failures < budget ? 0 : Math.min(AUTH_BACKOFF_MS * 2 ** (failures - budget), AUTH_BACKOFF_MAX_MS);
   authAttempts.set(client, { failures, until: wait === 0 ? 0 : Date.now() + wait });
   if (authAttempts.size <= AUTH_CLIENTS_MAX) return;
-  // over the cap: an address whose wait is over first, else the oldest
   for (const [address, entry] of authAttempts) {
     if (authAttempts.size <= AUTH_CLIENTS_MAX / 2) return;
     if (entry.until !== 0 && entry.until > Date.now()) continue;
@@ -306,7 +284,6 @@ function recordAuthFailure(client: string, budget: number): void {
   while (authAttempts.size > AUTH_CLIENTS_MAX) authAttempts.delete(authAttempts.keys().next().value!);
 }
 
-/** Forget every address's budget (tests share this module's state). */
 export function forgetAuthAttempts(): void {
   authAttempts.clear();
   sharedFailures.clear();
@@ -315,11 +292,9 @@ export function forgetAuthAttempts(): void {
 
 export async function handleAuthRequest(request: Request, token: string, client: string | null = null): Promise<Response> {
   if (request.method === "DELETE") {
-    // signing out drops both credentials this browser may hold
     return noContent(clearCookie(TOKEN_COOKIE), clearCookie(DEVICE_COOKIE), CLEAR_LEGACY_TOKEN_COOKIE, CLEAR_LEGACY_DEVICE_COOKIE);
   }
   if (request.method !== "POST") return badRequest("method_not_allowed", "use POST or DELETE");
-  // Gate off: answering 204 without a cookie lets one client flow work either way.
   if (token === "") return noContent();
   const wait = waitLeft("sign-in", client);
   if (wait > 0) return tooManyAttempts(wait);
@@ -342,7 +317,6 @@ export async function handleAuthRequest(request: Request, token: string, client:
     recordFailure("sign-in", client);
     return jsonResponse({ error: { code: "invalid_token", message: "token does not match" } }, 401);
   }
-  // the right token, typed in: both waits are spent, a stale cookie's included
   admit(client);
   return noContent(sessionCookie(token, isSecureRequest(request)), CLEAR_LEGACY_TOKEN_COOKIE);
 }
