@@ -17,8 +17,11 @@ import { mountRelayShell } from "./shell.tsx";
 import { createShellTestPage } from "./shell.test.tsx";
 import { RelayTransport } from "./transport.ts";
 
+const UNTIL_MIN_NS = 3_000_000_000n;
+
 async function until(holds: () => boolean | Promise<boolean>): Promise<void> {
-  for (let turn = 0; turn < 10_000; turn++) { if (await holds()) return; await new Promise<void>((resolve) => setImmediate(resolve)); }
+  const deadline = process.hrtime.bigint() + UNTIL_MIN_NS;
+  for (let turn = 0; turn < 10_000 || process.hrtime.bigint() < deadline; turn++) { if (await holds()) return; await new Promise<void>((resolve) => setImmediate(resolve)); }
   throw new Error("Enrollment did not reach the expected state");
 }
 
