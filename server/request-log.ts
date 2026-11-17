@@ -9,7 +9,6 @@ const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIO
 export const clientRequestId = (value: string | null): string | undefined => value !== null && CLIENT_ID.test(value) ? value : undefined;
 export const requestMethod = (value: string): string => METHODS.has(value) ? value : "OTHER";
 
-/** One synchronous, bounded writer per server; no queue, timer or streaming-body reader. */
 export class RequestLog {
   private fd: number | undefined;
   private warned = false;
@@ -21,7 +20,6 @@ export class RequestLog {
       mkdirSync(stateDir, { recursive: true, mode: 0o700 });
       this.open();
     } catch (error) {
-      // Completion telemetry is best effort, including unavailable or read-only state.
       this.disable(error);
     }
   }
@@ -44,14 +42,14 @@ export class RequestLog {
       && typeof error.code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code) ? error.code : "UNKNOWN";
     try {
       console.warn(`Request log disabled: http-requests.jsonl (${code})`);
-    } catch { /* A diagnostic failure must not change the response or recurse. */ }
+    } catch {}
   }
 
   close(): void {
     const fd = this.fd;
     this.fd = undefined;
     if (fd !== undefined) {
-      try { closeSync(fd); } catch { /* Best-effort telemetry must not break a response or shutdown. */ }
+      try { closeSync(fd); } catch {}
     }
   }
 
@@ -102,7 +100,6 @@ export class RequestLog {
           }
         }
       } catch (error) {
-        // Never change the answer or recursively log a writer failure.
         this.disable(error);
       }
       return response;

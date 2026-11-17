@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HerdrError, herdrRpc } from "./herdr/client.ts";
 
-// A stand-in herdr on a Unix socket: it records what was written and answers each line.
 let dir = "";
 let listener: ReturnType<typeof Bun.listen> | null = null;
 afterEach(() => {
@@ -34,7 +33,6 @@ it("writes nothing when the sender's right lapses while the connection is made (
   const { path, written } = standIn();
   let allowed = true;
   const call = herdrRpc("pane.send_keys", { pane_id: "p", keys: ["Enter"] }, path, 2_000, () => allowed);
-  // the connect is awaited: the sender detaches (or is revoked) meanwhile
   allowed = false;
   const error = await call.then(() => null, (failure: unknown) => failure);
   expect(error).toBeInstanceOf(HerdrError);

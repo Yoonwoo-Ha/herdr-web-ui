@@ -3,10 +3,6 @@ import { errorResponse, jsonResponse, readJsonObject, setRequestRoute } from "..
 import type { ServerContext } from "../dispatch.ts";
 import { updateRequestAllowed } from "../update-api.ts";
 
-/**
- * Drive authority and the outer origin gate are shared with Portal in dispatch.ts. `caller`: the paired device
- * the request came from, null for this PC itself: it holds the pairing code an offer or a typed code gives it.
- */
 export async function handleRelayRequest(request: Request, pathname: string, context: ServerContext, caller: string | null = null): Promise<Response> {
   const service = context.services.relay;
   const reply = (body: unknown, status = 200) => jsonResponse(body, status, { "cache-control": "no-store" });
@@ -16,7 +12,6 @@ export async function handleRelayRequest(request: Request, pathname: string, con
     return reply(service.status());
   }
   const peer = context.peer;
-  // one admission rule (docs/account.md): this PC itself, or a drive account member through the relay
   const remoteApprover = peer.kind === "relay" && context.services.devices.isAccountApproverSession(peer.device.id, peer.key) ? peer.device : null;
   if (pathname === "/api/relay/pairings" && request.method === "GET") {
     setRequestRoute("/api/relay/pairings");
@@ -39,18 +34,15 @@ export async function handleRelayRequest(request: Request, pathname: string, con
         ? fail("relay_pairing_gone", "That device is no longer waiting: it left, was decided, or its time ran out.", 404)
         : fail("wrong_digits", "Those are not the digits the new device shows; it was not let in.", 409);
     }
-    // the id the new device's row takes once its person confirms too: what the approver's add record and introductions name
     return reply(body.decision === "approve" ? { ok: true, device_id: outcome.device_id } : { ok: true });
   }
   if (!updateRequestAllowed(request)) return fail("invalid_relay_request", "Use the relay controls from this app.", 403);
-  // A relayed session would hold the relay it runs on; Portal visitors are refused in dispatch.ts (owner_only).
   if (context.peer.kind === "relay") return fail("local_required", "Control the relay from a direct connection to this PC.", 403);
   try {
     switch (pathname) {
       case "/api/relay/start": {
         setRequestRoute("/api/relay/start");
         const status = service.start();
-        // an existing link in "error" is retrying, not a failed start; a start that left no link failed
         return reply(status, status.blocked ? 409 : !service.linked ? 500 : 200);
       }
       case "/api/relay/stop":
@@ -59,10 +51,7 @@ export async function handleRelayRequest(request: Request, pathname: string, con
       case "/api/relay/offer":
         setRequestRoute("/api/relay/offer");
         if (service.status().phase === "off" || service.status().blocked) return fail("relay_off", "Start the relay before pairing.", 409);
-        // While connecting, a client the offer reaches waits at the relay for this PC; in error nothing may answer it.
         if (service.status().phase === "error") return fail("relay_offline", "The relay is not reachable; wait until it is online before pairing.", 409);
-        // the relay tab's QR code says what it is for (a header, as x-ovis-local-only below): it puts a PC in no
-        // account into the account of whoever scans it, so a PC that is in one makes none (409 in_account)
         return reply(service.offer(caller, { noAccountOnly: request.headers.get("x-ovis-no-account-only") === "1" }));
       case "/api/relay/code": {
         setRequestRoute("/api/relay/code");
@@ -79,13 +68,11 @@ export async function handleRelayRequest(request: Request, pathname: string, con
       case "/api/relay/link":
         setRequestRoute("/api/relay/link");
         if (service.status().phase === "off" || service.status().blocked) return fail("relay_off", "Start the relay before pairing.", 409);
-        // the PC's own screen waiting to be added to an account: what that link brings is approved here only
         // a query string is refused for every relay control (updateRequestAllowed), so the flag travels as a header,
         // which another site cannot set without a preflight the PC never answers
         return reply(service.pairingLink({ localOnly: request.headers.get("x-ovis-local-only") === "1" }));
       case "/api/relay/link/close":
         setRequestRoute("/api/relay/link/close");
-        // the owner stopped waiting: nothing more is taken, whatever the relay's state
         if (!service.approvals.closeWindow()) return fail("internal_error", "The pairing window is closed, but its saved state could not be cleared.", 500);
         return reply({ ok: true });
       case "/api/relay/pairing": {
@@ -116,9 +103,7 @@ export async function handleRelayRequest(request: Request, pathname: string, con
       default: return fail("method_not_allowed", "Unknown relay action.", 405);
     }
   } catch (error) {
-    // the device that asked for an offer or a code was revoked while its request was on its way: it is handed none
     if (error instanceof DeviceGoneError) return fail(error.code, error.message, 401);
-    // the PC joined an account since the page read it: the page asks nothing more and says how a device is added there
     if (error instanceof PcInAccountError) return fail(error.code, error.message, 409);
     return errorResponse(error);
   }

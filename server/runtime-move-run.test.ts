@@ -27,10 +27,6 @@ const plan: MovePlan = {
 
 interface World { herdr: Map<string, { agent: string | null; status: string; session: string | null; shellInFront: boolean | null }>; core: Set<string>; calls: string[] }
 
-/**
- * herdr and herdr-core as the move sees them. An agent typed its exit command ends, unless
- * `turnsBusy` names it (it took the command as work instead).
- */
 function fakes(options: { turnsBusy?: string; failStart?: string; refuseSwitch?: boolean; notResumed?: string } = {}) {
   const world: World = {
     herdr: new Map([["a", { agent: "claude", status: "idle", session: "s1", shellInFront: false }], ["b", { agent: null, status: "unknown", session: null, shellInFront: true }], ["c", { agent: "codex", status: "idle", session: null, shellInFront: false }]]),
@@ -140,7 +136,6 @@ describe("runMove, an agent the person ended", () => {
 describe("runMove, before anything is ended", () => {
   it("types nothing into an agent that took work since the plan, and ends no other", async () => {
     const { world, source, destination, options } = fakes();
-    // the plan saw it idle; a message from another client started a turn before the exit
     world.herdr.set("a", { agent: "claude", status: "working", session: "s1", shellInFront: false });
     const journal = await runMove(stateDir(), PORT, "m1", plan, source, destination, options);
     expect([journal.state, journal.reason]).toEqual(["rolled_back", "agent_busy"]);
@@ -157,7 +152,6 @@ describe("runMove, before anything is ended", () => {
 
   it("waits for the shell to be in front before it counts an agent as ended", async () => {
     const { world, source, destination, options } = fakes();
-    // herdr stops naming the agent while its process still holds the terminal
     source.sendExit = async (id) => { world.calls.push(`herdr exit ${id}`); world.herdr.set(id, { ...world.herdr.get(id)!, agent: null, status: "unknown", shellInFront: false }); };
     const journal = await runMove(stateDir(), PORT, "m1", plan, source, destination, { ...options, exitMs: 50, settleMs: 0 });
     expect([journal.state, journal.reason]).toEqual(["rolled_back", "agent_did_not_exit"]);
@@ -167,7 +161,6 @@ describe("runMove, before anything is ended", () => {
 
   it("restarts in herdr an agent whose shell comes back while the rollback looks", async () => {
     const { world, source, destination, options } = fakes();
-    // herdr drops the agent at once; its shell is back only after the exit wait gave up
     let shellBackAt = Infinity;
     source.sendExit = async (id) => { world.calls.push(`herdr exit ${id}`); shellBackAt = Date.now() + 80; world.herdr.set(id, { ...world.herdr.get(id)!, agent: null, status: "unknown", shellInFront: false }); };
     const plain = source.pane;
@@ -191,7 +184,6 @@ describe("settleJournal", () => {
   it("counts a move whose switch was asked for as done on the herdr-core it switched to", async () => {
     const dir = stateDir();
     const { source, destination, options } = fakes();
-    // the server stops right after asking for the switch, before it could write `committed`
     await runMove(dir, PORT, "m1", plan, source, destination, { ...options, switchRuntime: () => { throw new Error("stopped"); } });
     const journal = readJournal(dir, PORT)!;
     journal.state = "switching";
@@ -202,7 +194,6 @@ describe("settleJournal", () => {
   it("never retries a move another server left mid-way, and names the agents it had ended", async () => {
     const dir = stateDir();
     const { source, destination, options } = fakes();
-    // the server stops while it builds on herdr-core
     const stopping = { ...destination, createWorkspace: () => new Promise<never>(() => undefined) };
     void runMove(dir, PORT, "m1", plan, source, stopping, options);
     for (let tries = 0; readJournal(dir, PORT)?.state !== "building" && tries < 100; tries++) await Promise.resolve();

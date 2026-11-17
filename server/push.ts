@@ -85,43 +85,25 @@ import { isLoopbackHost } from "./access.ts";
 import type { AlertWebhook } from "./alert-webhook.ts";
 import { writePrivateState } from "./private-state.ts";
 
-/** A blocked agent is still blocked when the phone gets signal back; a newer push for the pane replaces it anyway. */
 const PUSH_TTL_SECONDS = 12 * 60 * 60;
 const PUSH_TIMEOUT_MS = 10_000;
-/** How long a question's alert waits to read the prompt for its buttons; past it, the alert goes without them. */
 const PROMPT_LOOKUP_MS = 3_000;
-/** The longest option label an alert's button carries: a longer one is cut by the platform, so its alert opens the pane. */
 const ACTION_LABEL_MAX = 24;
-/** The most of a prompt an alert with buttons shows whole: the lines of its body, and its length in all. A longer one gets no buttons. */
 const PROMPT_SUMMARY_LINES = 4;
 const PROMPT_SUMMARY_MAX = 300;
 const DEFAULT_SUBJECT = "https://github.com/devswha/ovis";
-/**
- * The largest encrypted body the phone app's push relay passes on (push-relay/worker.ts `push`): it
- * base64s the body into `{"aps":{"alert":{"body":FALLBACK_BODY},"mutable-content":1},"ovis":"…"}`,
- * 74 bytes besides the base64, and answers 413 when that is over MAX_APNS_BYTES, 4,096 (FCM's
- * limit too). floor((4096 - 74) / 4) * 3 = 3,015.
- */
 export const RELAY_MAX_BODY_BYTES = 3015;
-/** The path of an endpoint the push relay hands the phone app (push-relay/worker.ts `register`, OvisPushPlugin.registerWithRelay). */
 const RELAY_ENDPOINT_PATH = /^\/v1\/push\/[^/]+$/;
-/** How many retired endpoints are remembered; the oldest is forgotten first. */
 const RETIRED_LIMIT = 1000;
-/** The key pairs, besides vapid.json's, that subscriptions taken over from another state dir were made for. */
 export const PUSH_EXTRA_KEYS = "push-keys.json";
 
 type VapidKeys = { publicKey: string; privateKey: string };
-/** The delivery records are bounded the same way, and kept for as long since their last write. */
 const DELIVERY_LIMIT = RETIRED_LIMIT;
 const DELIVERY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** How long an alert waits for the pane to change first, and the turn a finish is worth telling. */
 export interface AlertTiming {
-  /** a question, and a finish on a device that wants every one */
   short: number;
-  /** a finish after a long turn */
   long: number;
-  /** the least a turn works for its finish to be worth an alert (`done: "long"`) */
   longTurn: number;
 }
 export const DEFAULT_ALERT_TIMING: AlertTiming = { short: 10_000, long: 60_000, longTurn: 60_000 };
@@ -129,44 +111,28 @@ export const DEFAULT_ALERT_TIMING: AlertTiming = { short: 10_000, long: 60_000, 
 export interface PushSubscriptionRecord {
   endpoint: string;
   keys: { p256dh: string; auth: string };
-  /** what this device wants alerts for; absent in a record from before there was a choice */
   alerts?: AlertPrefs;
-  /** null: local/token sign-in; absent: legacy subscription awaiting ownership. */
   device_id?: string | null;
-  /**
-   * The stream keys of the browser that registered it (server/devices.ts `streamKeys`), so a
-   * pairing that browser makes is not pushed back to it, whatever access it subscribed through.
-   * Absent: registered without one (it then hears every pairing, like any other subscriber).
-   */
   browser_keys?: string[];
 }
 
-
 export type PushDelivery = { ok: true } | { ok: false; status: number | null; gone: boolean };
 
-/** The last push to one subscription, kept for the device that owns it (push-delivery.json). */
 interface DeliveryRecord {
-  /** sha256 of the endpoint, base64url: the endpoint itself is not written */
   hash: string;
-  /** the device it was recorded for, or null for a local/token/Tailscale sign-in; never a legacy owner */
   owner: string | null;
-  /** sha256 of the subscription's keys: what a reader has to hold */
   keys: string;
   success_at: number | null;
   failure_at: number | null;
   failure: PushDeliveryFailure | null;
-  /** last written: the oldest records are forgotten first */
   at: number;
 }
 
-/** An endpoint a push service retired (push-retired.json), keyed by its hash. */
 interface RetiredMark {
   at: number;
-  /** the device it was registered for, null for a local/token/Tailscale sign-in; absent for a legacy owner or an older file */
   owner?: string | null;
 }
 
-/** What the push service's answer means for the subscription (shared/protocol.ts PushDeliveryFailure). */
 export function classifyFailure(status: number | null): PushDeliveryFailure {
   if (status === null) return "network";
   if (status === 404 || status === 410) return "gone";
@@ -178,82 +144,38 @@ export function classifyFailure(status: number | null): PushDeliveryFailure {
 
 export interface PushService {
   publicKey(): string;
-  /** `parseSubscription` with this service's endpoint rule: what POST /api/push/subscribe accepts */
   parse(value: unknown): PushSubscriptionRecord | null;
-  /** `alerts` absent keeps what the device chose before (a re-registration on load) */
   subscribe(subscription: PushSubscriptionRecord, alerts?: AlertPrefs, deviceId?: string | null, browserKeys?: readonly string[]): void;
   revokeDevice(id: string): void;
   unsubscribe(endpoint: string): void;
-  /** whether a push service answered 404/410 for this endpoint, in any spelling normalizeEndpoint takes as one */
   retired(endpoint: string): boolean;
-  /** One confirmation push to one device, so enabling alerts proves the whole path works. */
   sendTest(endpoint: string): Promise<PushDelivery | null>;
-  /**
-   * What this server knows of one subscription, for its owner holding its keys: null for anyone
-   * else, for an unknown subscription and for a legacy owner (undefined), all alike. A retired
-   * subscription still answers, `registered: false`, with the failure that retired it.
-   */
   status(subscription: PushSubscriptionRecord, owner: string | null | undefined): PushSubscriptionStatus | null;
-  /**
-   * A device was durably enrolled (server/devices.ts): every other eligible subscriber is told at
-   * once, visibly, whether or not a window of the app is in use somewhere (that window could be
-   * the new device's). The new device's own subscriptions hear nothing, and neither does any
-   * subscription of the browser that paired (`origin`, its stream keys), whoever owns it: a
-   * token, local or Tailscale sign-in pairing itself, or a device pairing again. Resolves once delivered.
-   */
   devicePaired(event: DevicePairedEvent, origin?: readonly string[]): Promise<void>;
-  /** The collector's view of every pane: status baselines and the titles notifications use. */
   seed(panes: readonly HerdrPane[], machineId?: string, machineName?: string, serverId?: string): void;
-  /**
-   * After status events were lost, `panes` (every pane on the PC) are the baseline for all
-   * but the `newer` ones, which had an event since this snapshot was asked for. A pane
-   * missing from it is gone: its waiting alert is called off. Nothing is announced: a
-   * change that happened unseen is not news, and an alert it overtook is called off.
-   */
   resync(panes: readonly HerdrPane[], newer: ReadonlySet<string>, machineId?: string): void;
-  /** Schedules the alert this change is worth, and calls off the one it overtakes. */
   onStatus(paneId: string, status: AgentStatus, machineId?: string): Promise<void>;
   onEnded(paneId: string, machineId?: string): Promise<void>;
-  /**
-   * The pane's turn stopped on an error (an OmO or GJC pane at rest after one, server/completion.ts
-   * OmoRest `failed`): told to the devices that want errors. Call it after the status change that
-   * brought the pane to rest; the pane's next change calls it off.
-   */
   onFailed(paneId: string, machineId?: string): Promise<void>;
-  /** The shared mute list changed: an alert waiting for a pane now muted is called off. */
   mutesChanged(): void;
-  /** Resolves once every alert scheduled so far went out or was called off (tests wait). */
   settled(): Promise<void>;
 }
 
 export interface PushServiceOptions {
   stateDir: string;
   subject?: string;
-  /**
-   * The pane as herdr has it now, looked up when an alert fires: its title, and what a blocked agent
-   * waits for. Falls back to what was last seeded.
-   */
   lookupPane?: (paneId: string) => Promise<{ title: string; agent_kind?: string } | undefined>;
-  /** The prompt this PC's pane shows now and the screen it was read from (absent for one not read off a screen), read when a question's alert fires, for its answer buttons (promptActions). */
   lookupPrompt?: (paneId: string, signal: AbortSignal) => Promise<{ prompt: InteractivePrompt; screen?: string } | null>;
-  /** whether a subscription's device may answer a prompt (not one paired to watch only): only it gets the buttons */
   canAnswer?: (deviceId: string | null | undefined) => boolean;
-  /** This PC's name, as the roster gives it to devices (server/machines.ts): what an older `pcs_off` names it by */
   localName?: string;
-  /** This PC's relay ID, where it has one (server/relay/service.ts serverId): what `pcs_off` names it by (shared/machines.ts pcAlertKey) */
   serverId?: () => string | undefined;
   timing?: Partial<AlertTiming>;
   now?: () => number;
   canDeliver?: (deviceId: string | null | undefined) => boolean;
-  /** whether a window of the app is in use right now: then no alert goes to any device (the test push still does) */
   inUse?: () => boolean;
-  /** whether the pane's alerts are off for everyone (shared/notify-policy.ts paneAlertsMuted on the shared preferences) */
   muted?: (machineId: string, paneId: string) => boolean;
-  /** accept plain-http loopback endpoints: only for the tests' fake push service (push.fake.ts) */
   loopbackHttp?: boolean;
-  /** a pane's alert reached one device (the push service took it); not the test push or a pairing notice */
   onAlertDelivered?: () => void;
-  /** Settings → Alerts → Also send to (server/alert-webhook.ts): told the alerts it chose, with the same waits and holds as a device */
   webhook?: Pick<AlertWebhook, "prefs" | "wants" | "generation" | "send">;
 }
 
@@ -268,10 +190,6 @@ function readJson(path: string): unknown {
   }
 }
 
-/**
- * Owner-only, and written whole, but not flushed: only for push-retired.json, which is telemetry.
- * The key pair and the subscriptions go through writePrivateState (private-state.ts).
- */
 function writeJsonPrivate(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.tmp`;
@@ -303,7 +221,6 @@ export function normalizeEndpoint(endpoint: string): string {
   }
 }
 
-/** The PushSubscription JSON a browser produces, checked before anything is stored. */
 export function parseSubscription(value: unknown, options: { loopbackHttp?: boolean } = {}): PushSubscriptionRecord | null {
   if (typeof value !== "object" || value === null) return null;
   const { endpoint, keys } = value as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } };
@@ -331,42 +248,24 @@ export function statusMessage(paneId: string, title: string, status: AgentStatus
   return { pane_id: paneId, title, body: kind === "permission" ? PERMISSION_NOTIFICATION_BODY : statusNotificationBody(status), tag: paneNotificationTag(paneId), kind };
 }
 
-/**
- * The buttons an alert for `prompt` carries: each option, when the prompt is one choice between at
- * most two short options (Allow / Deny, Yes / No) that nothing else goes with, and `screen` shows
- * all of what it is about (shownWhole). A plan, a menu, a form of several questions, a typed answer,
- * a queued question, or a prompt not read off a screen opens the pane instead.
- */
 export function promptActions(prompt: InteractivePrompt | null, screen?: string): PushAction[] | null {
   if (!prompt || (prompt.kind !== "approval" && prompt.kind !== "question")) return null;
-  // omp cut its own question short on the screen: what the alert would show is cut too
   if (screen === undefined || !shownWhole(prompt, screen) || parsedByPublicPrompt.get(prompt)?.ompQuestionCut) return null;
   if (prompt.multi_select || prompt.custom_option_index !== null || prompt.queued !== undefined || prompt.checks_with_text) return null;
   if (prompt.steps !== undefined || prompt.answers !== undefined || prompt.can_step_back || prompt.can_step_next) return null;
   if (prompt.options.length === 0 || prompt.options.length > 2) return null;
-  // an option whose meaning is in its description is not answered by its label alone
   if (prompt.options.some((option) => option.label.trim() === "" || option.label.length > ACTION_LABEL_MAX || option.description)) return null;
   return prompt.options.map((option, index) => ({ option_index: index, label: option.label.trim() }));
 }
 
-/**
- * Whether the alert's text is the prompt as the screen shows it, verbatim: the body's lines are the
- * screen's lines right over the question, in order, with nothing between (a line a reader left out,
- * a key hint, a marker); over them is the prompt's title or a divider, so nothing of it is above the
- * screen or above a window the reader cut; under the question come the options, one line each. Any
- * line a reader dropped, filtered, joined or cut fails this, whichever agent's reader it is: a button
- * must approve only what the alert shows.
- */
 export function shownWhole(prompt: InteractivePrompt, screen: string): boolean {
   const lines = screen.split("\n").map(cleanLine).filter((line) => line !== "");
   const body = (prompt.body ?? "").split("\n").map((line) => line.trim()).filter((line) => line !== "");
   const question = prompt.question.trim();
-  // the asking nearest the bottom: what the screen asks now
   const at = lines.lastIndexOf(question);
   if (at < 0) return false;
   if (!prompt.options.every((option, index) => lines[at + 1 + index]?.includes(option.label.trim()))) return false;
   const start = at - body.length;
-  // the screen's first line has nothing over it to say it is where the prompt begins
   if (start < 1 || !body.every((line, index) => lines[start + index] === line)) return false;
   const over = lines[start - 1]!;
   return over === prompt.title.trim() || isDivider(over);
@@ -379,7 +278,6 @@ export function shownWhole(prompt: InteractivePrompt, screen: string): boolean {
 export function promptSummary(prompt: InteractivePrompt): string | null {
   const body = (prompt.body ?? "").split("\n");
   if (body.length > PROMPT_SUMMARY_LINES) return null;
-  // every line of what is approved stays, a repeated one too: only a title that repeats the question goes
   const head = prompt.title.trim() === prompt.question.trim() ? [prompt.question] : [prompt.title, prompt.question];
   const text = [...head, ...body].map((line) => line.trim()).filter((line) => line !== "").join("\n");
   return text.length > PROMPT_SUMMARY_MAX ? null : text;
@@ -393,14 +291,11 @@ export function failedMessage(paneId: string, title: string): PushPayload {
   return { pane_id: paneId, title, body: ERROR_NOTIFICATION_BODY, tag: paneNotificationTag(paneId), kind: "error" };
 }
 
-/** An alert scheduled for a pane, from its scheduling until it went out or was called off. */
 interface Scheduled {
   key: string;
   machineId: string;
   paneId: string;
-  /** a mute called it off: set for good, so an unmute while its title is looked up sends nothing */
   silenced: boolean;
-  /** stops the timers that have not fired yet */
   cancel: () => void;
 }
 
@@ -411,37 +306,23 @@ export function createPushService(options: PushServiceOptions): PushService {
 
   let vapid: { publicKey: string; privateKey: string } | null = null;
   let subscriptions: Map<string, PushSubscriptionRecord> | null = null;
-  /** the file still lists a subscription dropped in memory only (a retirement whose write failed): the next goodbye writes it */
   let stale = false;
   const lastStatus = new Map<string, AgentStatus>();
   const titles = new Map<string, string>();
-  // the workspace a pane was last seen in: an alert names it, so the tap of an ended pane can open
-  // its workspace (src/lib/deepLink.ts resolveLink) once herdr has dropped the pane
   const workspaces = new Map<string, string>();
-  // what a blocked pane last said it waits for (herdr-core's agent_kind), for a PC whose pane is not looked up
   const kinds = new Map<string, string>();
-  // each PC's name and relay ID, either of which a device's `pcs_off` lists (shared/machines.ts pcAlertKey)
   const pcNames = new Map<string, string>();
   const pcIds = new Map<string, string>();
   const pcKeys = (machineId: string): [string, string | undefined] => machineId === "local"
     ? [options.localName ?? hostname(), options.serverId?.()]
     : [pcNames.get(machineId) ?? machineId, pcIds.get(machineId)];
   const retiredPath = join(options.stateDir, "push-retired.json");
-  /**
-   * sha256 of each endpoint a push service retired -> when, and the owner it was registered for (absent for a
-   * legacy one), oldest first; loaded on first need. The owner is kept here, not only in the delivery record,
-   * because that record can be evicted first and a revocation still has to find the mark.
-   */
   let retiredEndpoints: Map<string, RetiredMark> | null = null;
   const endpointHash = (endpoint: string): string => createHash("sha256").update(endpoint).digest("base64url");
-  /** what a retired mark is keyed by: one key for every spelling of the endpoint (#2012) */
   const retiredKey = (endpoint: string): string => endpointHash(normalizeEndpoint(endpoint));
-  /** a mark from before #2012 is keyed by the spelling as it was handed over */
   const isRetired = (endpoint: string): boolean => retiredStore().has(retiredKey(endpoint)) || retiredStore().has(endpointHash(endpoint));
-  /** endpoint -> the key pair it was made for, when that is not vapid.json's; loaded on first need */
   let extraKeys: Map<string, VapidKeys> | null = null;
 
-  /** The key pair `endpoint` was made for: one of push-keys.json's, else this server's own. */
   function keysFor(endpoint: string): VapidKeys {
     if (extraKeys === null) {
       extraKeys = new Map();
@@ -454,7 +335,6 @@ export function createPushService(options: PushServiceOptions): PushService {
           for (const at of endpoints) if (typeof at === "string") extraKeys.set(at, { publicKey, privateKey });
         }
       } catch (error) {
-        // those subscriptions are then signed with vapid.json's key, which their push service refuses
         console.error(`Cannot read ${path} (${(error as NodeJS.ErrnoException).code ?? "not JSON"}); subscriptions taken over from another state dir get no alerts until their devices subscribe again`);
       }
     }
@@ -462,10 +342,8 @@ export function createPushService(options: PushServiceOptions): PushService {
   }
   const keyFingerprint = (keys: PushSubscriptionRecord["keys"]): string => createHash("sha256").update(`${keys.p256dh}.${keys.auth}`).digest("base64url");
   const deliveryPath = join(options.stateDir, "push-delivery.json");
-  /** by endpoint hash, least recently written first; loaded on first need */
   let deliveries: Map<string, DeliveryRecord> | null = null;
 
-  /** Created on first need: a server nobody subscribes to never writes a key. */
   function keys(): { publicKey: string; privateKey: string } {
     if (vapid) return vapid;
     const stored = readJson(vapidPath) as { publicKey?: unknown; privateKey?: unknown } | undefined;
@@ -489,7 +367,6 @@ export function createPushService(options: PushServiceOptions): PushService {
     if (Array.isArray(stored)) {
       for (const entry of stored) {
         const parsed = parseSubscription(entry, options);
-        // retired, but its removal could not be written (#2013): it stays gone, and the next goodbye writes the file without it
         if (parsed && isRetired(parsed.endpoint)) {
           stale = true;
           continue;
@@ -508,7 +385,6 @@ export function createPushService(options: PushServiceOptions): PushService {
     return subscriptions;
   }
 
-  /** Drops what has outlived its time to live: on every read and write, not only when the file is loaded. */
   function expire<T>(entries: Map<string, T>, at: (entry: T) => number, ttl: number): boolean {
     const cutoff = (options.now ?? Date.now)() - ttl;
     let changed = false;
@@ -520,11 +396,6 @@ export function createPushService(options: PushServiceOptions): PushService {
     return changed;
   }
 
-  /**
-   * Writes the list back. Never throws: neither a read of the list (a subscribe's retired check) nor a
-   * retirement may fail on it, as the list is telemetry (#2013). The list stays as it is in memory, and
-   * the next write that succeeds puts it on disk.
-   */
   function rewriteRetired(): void {
     try {
       persistRetired();
@@ -533,10 +404,6 @@ export function createPushService(options: PushServiceOptions): PushService {
       console.error(`Cannot write ${retiredPath} (${(error as NodeJS.ErrnoException).code ?? "unknown error"}); retired endpoints are kept in memory until a write succeeds`);
     }
   }
-  /**
-   * The list on disk is not the one in memory (a write failed): a subscribe writes it first, so a mark
-   * a revocation removed in memory only cannot come back at a restart and drop the new subscription.
-   */
   let retiredUnwritten = false;
 
   function persistRetired(): void {
@@ -551,7 +418,7 @@ export function createPushService(options: PushServiceOptions): PushService {
     try {
       stored = readJson(retiredPath);
     } catch {
-      return retiredEndpoints; // an unreadable file only means a retired endpoint registers again once
+      return retiredEndpoints;
     }
     if (!Array.isArray(stored)) return retiredEndpoints;
     for (const entry of stored.slice(-RETIRED_LIMIT)) {
@@ -559,15 +426,12 @@ export function createPushService(options: PushServiceOptions): PushService {
       if (typeof hash !== "string" || typeof at !== "number") continue;
       retiredEndpoints.set(hash, { at, ...(owner === null || typeof owner === "string" ? { owner } : {}) });
     }
-    // what was dropped (over the bound, malformed) leaves the file too: a revocation later finds
-    // nothing of it to remove, and the device's marks must not stay on disk
     if (retiredEndpoints.size !== stored.length) {
       rewriteRetired();
     }
     return retiredEndpoints;
   }
 
-  /** Writes `next` and only then makes it the subscriptions in use, so a failed write changes nothing. */
   function persist(next: Map<string, PushSubscriptionRecord>): void {
     writePrivateState(subscriptionsPath, [...next.values()]);
     subscriptions = next;
@@ -591,29 +455,22 @@ export function createPushService(options: PushServiceOptions): PushService {
     try {
       stored = readJson(deliveryPath);
     } catch {
-      return deliveries; // an unreadable file only means a device is told nothing until the next push
+      return deliveries;
     }
     if (!Array.isArray(stored)) return deliveries;
     const cutoff = (options.now ?? Date.now)() - DELIVERY_TTL_MS;
     for (const entry of stored.slice(-DELIVERY_LIMIT)) {
       const { hash, owner, keys, success_at, failure_at, failure, at } = (entry ?? {}) as Partial<Record<keyof DeliveryRecord, unknown>>;
-      // a number a Date cannot hold (1e100, NaN) would throw when the status is told: such a record is dropped
       const date = (value: unknown): value is number => typeof value === "number" && Number.isFinite(new Date(value).getTime());
       const time = (value: unknown): value is number | null => value === null || date(value);
       if (typeof hash !== "string" || !(owner === null || typeof owner === "string") || typeof keys !== "string" || !date(at) || at <= cutoff) continue;
       if (!time(success_at) || !time(failure_at) || !(failure === null || FAILURES.includes(failure as PushDeliveryFailure))) continue;
       deliveries.set(hash, { hash, owner, keys, success_at, failure_at, failure: failure as PushDeliveryFailure | null, at });
     }
-    // what was dropped leaves the file too: an unsubscribe or a revocation later finds nothing of it to
-    // remove, and a device's history must not stay on disk without another push
     if (deliveries.size !== stored.length) persistDeliveries();
     return deliveries;
   }
 
-  /**
-   * Never throws: the records are telemetry, and a write that fails (a full disk) must not keep a
-   * push's own outcome from counting, a retirement included. They stay in memory until a write succeeds.
-   */
   function persistDeliveries(): void {
     try {
       writeJsonPrivate(deliveryPath, [...deliveryStore().values()]);
@@ -622,20 +479,16 @@ export function createPushService(options: PushServiceOptions): PushService {
     }
   }
 
-  /** The identity a delivery is recorded for, taken before the push goes out. */
   function identityOf(subscription: PushSubscriptionRecord): { hash: string; owner: string | null | undefined; keys: string } {
     return { hash: endpointHash(subscription.endpoint), owner: subscription.device_id, keys: keyFingerprint(subscription.keys) };
   }
 
-  /** The stored subscription is still the one the push went to: same owner, same keys. */
   function stillOwns(identity: ReturnType<typeof identityOf>, endpoint: string): boolean {
     const current = store().get(endpoint);
     return current !== undefined && current.device_id === identity.owner && keyFingerprint(current.keys) === identity.keys;
   }
 
-  /** A push went out and was answered: its outcome is this subscription's latest, for its owner. */
   function recordDelivery(identity: ReturnType<typeof identityOf>, failure: PushDeliveryFailure | null): void {
-    // a legacy subscription (from before owners, or the open LAN) is nobody's to read
     if (identity.owner === undefined) return;
     const records = deliveryStore();
     const previous = records.get(identity.hash);
@@ -667,10 +520,7 @@ export function createPushService(options: PushServiceOptions): PushService {
   const iso = (at: number | null): string | null => at === null ? null : new Date(at).toISOString();
 
   async function deliver(subscription: PushSubscriptionRecord, message: PushPayload, urgency: "normal" | "high"): Promise<PushDelivery> {
-    // denied here, nothing went out: not a delivery, so nothing is recorded
     if (options.canDeliver && !options.canDeliver(subscription.device_id)) return { ok: false, status: null, gone: false };
-    // what the push goes to, taken now: by the time the answer comes the endpoint may be
-    // registered again by another owner or with other keys, and that subscription is not told
     const identity = identityOf(subscription);
     const { publicKey, privateKey } = keysFor(subscription.endpoint);
     const request = (payload: PushPayload) => webpush.generateRequestDetails(subscription, JSON.stringify(payload), {
@@ -679,13 +529,10 @@ export function createPushService(options: PushServiceOptions): PushService {
       urgency,
       contentEncoding: "aes128gcm",
     });
-    // which PC sent it, for the phone app's tap (shared/push.ts endpoint): a pane alert to the push
-    // relay only, as a browser's worker knows its PC by its own scope
     const toRelay = message.pane_id !== null && RELAY_ENDPOINT_PATH.test(new URL(subscription.endpoint).pathname);
     const serverId = toRelay ? options.serverId?.() : undefined;
     const named: PushPayload | null = toRelay ? { ...message, endpoint: subscription.endpoint, ...(serverId ? { server_id: serverId } : {}) } : null;
     let details = request(named ?? message);
-    // past what the relay takes, it goes without them: the tap then only opens the app, but the alert arrives
     if (named && details.body.length > RELAY_MAX_BODY_BYTES) details = request(message);
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(details.headers)) headers[name] = String(value);
@@ -706,19 +553,13 @@ export function createPushService(options: PushServiceOptions): PushService {
       }
       status = response.status;
     } catch {
-      /* network failure or timeout: status stays null */
     }
-    // 404/410: the device unsubscribed or the browser dropped the subscription
     const gone = status === 404 || status === 410;
-    // a replacement subscription at this endpoint is not retired, and not written to, for a push
-    // that went to the one before it
     if (!stillOwns(identity, subscription.endpoint)) return { ok: false, status, gone };
     recordDelivery(identity, classifyFailure(status));
     if (gone) {
       const retired = retiredStore();
       const mark = retiredKey(subscription.endpoint);
-      // two spellings of one endpoint held by different owners share the mark: it then belongs to neither,
-      // so one owner's revocation cannot take a mark the other's subscription was retired under too
       const previous = retired.get(mark);
       const shared = (previous !== undefined && previous.owner === undefined)
         || [...store().values()].some((held) => held.endpoint !== subscription.endpoint && retiredKey(held.endpoint) === mark && held.device_id !== identity.owner);
@@ -726,14 +567,12 @@ export function createPushService(options: PushServiceOptions): PushService {
       retired.delete(mark);
       retired.set(mark, { at: (options.now ?? Date.now)(), ...(owner === undefined ? {} : { owner }) });
       if (retired.size > RETIRED_LIMIT) retired.delete(retired.keys().next().value!);
-      // the list is telemetry: a write that fails keeps the mark in memory, and never keeps the dead subscription (#2013)
       rewriteRetired();
       const next = without((endpoint) => endpoint === subscription.endpoint);
       if (next) {
         try {
           persist(next);
         } catch (error) {
-          // the push service said it is gone: nothing is sent to it again, and the next write that succeeds leaves it off disk
           subscriptions = next;
           stale = true;
           console.error(`Cannot write ${subscriptionsPath} (${(error as NodeJS.ErrnoException).code ?? "unknown error"}); the retired subscription is dropped in memory until a write succeeds`);
@@ -757,26 +596,22 @@ export function createPushService(options: PushServiceOptions): PushService {
     );
   }
 
-  /** Where an alert's pane is: its PC (absent for this one) and the workspace it was last seen in. */
   function where(key: string, machineId: string): Pick<PushPayload, "machine_id" | "workspace_id"> {
     const workspace = workspaces.get(key);
     return { ...(machineId === "local" ? {} : { machine_id: machineId }), ...(workspace ? { workspace_id: workspace } : {}) };
   }
 
-  /** The pane's title and what it waits for, as herdr has them now; the seeded ones when herdr does not answer. */
   async function lookUp(key: string, machineId: string, paneId: string): Promise<{ title: string; agentKind: string | undefined }> {
     if (machineId === "local") {
       try {
         const fresh = await options.lookupPane?.(paneId);
         if (fresh?.title) return { title: fresh.title, agentKind: fresh.agent_kind };
       } catch {
-        /* herdr busy: the seeded title is at most one reconcile old */
       }
     }
     return { title: titles.get(key) ?? paneId, agentKind: kinds.get(key) };
   }
 
-  /** The prompt's identity and buttons for its alert; null when it has none, or the read failed or took too long. */
   async function readActions(paneId: string): Promise<{ promptId: string; body: string; actions: PushAction[] } | null> {
     if (!options.lookupPrompt) return null;
     const signal = AbortSignal.timeout(PROMPT_LOOKUP_MS);
@@ -790,36 +625,25 @@ export function createPushService(options: PushServiceOptions): PushService {
       const body = prompt && actions ? promptSummary(prompt) : null;
       return prompt && actions && body !== null ? { promptId: prompt.id, body, actions } : null;
     } catch {
-      // herdr busy or the pane gone: the alert opens the pane, as it always did
       return null;
     }
   }
 
   const timing = { ...DEFAULT_ALERT_TIMING, ...options.timing };
   const now = options.now ?? Date.now;
-  /** when each pane's current turn began: from `working`/`blocked` entered, until idle or done */
   const turnStart = new Map<string, number>();
-  /** the alert each pane is waiting to send, called off by the pane's next change (or its mute) */
   const waiting = new Map<string, Scheduled>();
-  /**
-   * every alert from its scheduling until it went out or was called off, with the pane it is for:
-   * a mute calls one off even while its title is looked up, and an unmute after that brings it back nowhere
-   */
   const unsent = new Set<Scheduled>();
-  /** every alert not yet sent or called off, for `settled()` */
   const inFlight = new Set<Promise<void>>();
 
-  /** how many times each pane's waiting alert was called off: an alert that fired before a change sees it after its lookups */
   const changes = new Map<string, number>();
 
-  /** The alert, as the webhook says it: a pane of this PC is named with the PC, one of another PC's title already is. */
   function tellWebhook(key: string, machineId: string, paneId: string, message: PushPayload, generation?: number): void {
     const workspace = workspaces.get(key);
     const at = epochs.get(key) ?? 0;
     hooked.set(key, { machineId, paneId });
     options.webhook?.send({
       kind: message.kind ?? "input", title: message.title, body: message.body, pane_id: paneId,
-      // a retry is news only while the pane is as it was, unmuted, and no window of the app is in use
       current: () => (epochs.get(key) ?? 0) === at && !muted(machineId, paneId) && options.inUse?.() !== true,
       ...(machineId === "local" ? { pc: pcKeys(machineId)[0] } : { machine_id: machineId }),
       ...(workspace ? { workspace_id: workspace } : {}),
@@ -827,12 +651,7 @@ export function createPushService(options: PushServiceOptions): PushService {
     });
   }
 
-  /**
-   * Bumped whenever an alert for the pane is called off (its next change, its end, a resync) or the pane is muted:
-   * a webhook retry is news only while it is unchanged, so a mute undone or a status come back resurrects nothing
-   */
   const epochs = new Map<string, number>();
-  /** the panes a webhook alert went out for, so a mute can call off its retries */
   const hooked = new Map<string, { machineId: string; paneId: string }>();
   const bump = (key: string): void => { epochs.set(key, (epochs.get(key) ?? 0) + 1); };
 
@@ -844,23 +663,20 @@ export function createPushService(options: PushServiceOptions): PushService {
   }
 
   const muted = (machineId: string, paneId: string): boolean => options.muted?.(machineId, paneId) === true;
-  /** whether the subscription, as it is now, wants this kind of alert from this PC: asked again as an alert goes out */
+  // A web push the device received has to be shown (iOS takes the subscription away from a page
+  // that shows none), so a device's alert choices are applied here, not on the device.
   const wants = (subscription: PushSubscriptionRecord, kind: AlertKind, machineId: string): boolean => {
     const prefs = subscription.alerts ?? DEFAULT_ALERTS;
     return alertKindAllowed(prefs, kind) && alertPcAllowed(prefs, ...pcKeys(machineId));
   };
 
-  /** How long a device waits before this alert reaches it, or null: it does not want it. */
   function delayFor(prefs: AlertPrefs, status: AgentStatus, worked: number | null): number | null {
-    // what it waits for is looked up as the alert goes out: a device that wants either kind waits for it
     if (status === "blocked") return alertKindAllowed(prefs, "input") || alertKindAllowed(prefs, "permission") ? timing.short : null;
     if (status !== "done" || prefs.done === "off") return null;
     if (prefs.done === "always") return timing.short;
-    // a turn that began before this server knew the pane is of unknown length: tell it
     return worked === null || worked >= timing.longTurn ? timing.long : null;
   }
 
-  /** One timer per delay, each for the devices that wait that long; all called off together. */
   function schedule(key: string, machineId: string, paneId: string, groups: Map<number, PushSubscriptionRecord[]>, send: (to: PushSubscriptionRecord[], silenced: () => boolean, delay: number) => Promise<void>): void {
     const cancels: Array<() => void> = [];
     let remaining = groups.size;
@@ -877,7 +693,6 @@ export function createPushService(options: PushServiceOptions): PushService {
             console.error(`web push failed: ${error instanceof Error ? error.message : String(error)}`);
           }).finally(resolve);
         }, delay);
-        // a group already sending is past calling off: it settles when its delivery does
         cancels.push(() => { if (fired) return; clearTimeout(timer); resolve(); });
       });
       inFlight.add(done);
@@ -899,8 +714,6 @@ export function createPushService(options: PushServiceOptions): PushService {
     subscribe(subscription, alerts, deviceId, browserKeys = []) {
       const previous = store().get(subscription.endpoint);
       const kept = alerts ?? previous?.alerts;
-      // one endpoint is one browser: a re-registration adds the keys it carries (a browser that lost its
-      // key cookie is issued a new one) to those it was registered with, the newest kept within the limit
       const merged = [...new Set([...(previous?.browser_keys ?? []), ...browserKeys])].slice(-8);
       const browser = merged.length > 0 ? merged : undefined;
       const next = new Map(store());
@@ -909,14 +722,12 @@ export function createPushService(options: PushServiceOptions): PushService {
         ...(browser === undefined ? {} : { browser_keys: browser }) });
       if (retiredUnwritten) persistRetired();
       persist(next);
-      // the record of the subscription this replaces (another owner, other keys) is not the new one's
       const identity = identityOf({ ...subscription, device_id: deviceId });
       forgetDeliveries((record) => record.hash !== identity.hash || (identity.owner !== undefined && record.owner === identity.owner && record.keys === identity.keys));
     },
 
     revokeDevice(id) {
       persist(without((_, subscription) => subscription.device_id === id || subscription.device_id === undefined) ?? new Map(store()));
-      // the device's tombstones go with its history: the retired marks of the endpoints it owned
       const retired = retiredStore();
       let unmarked = false;
       for (const [hash, mark] of retired) {
@@ -924,7 +735,6 @@ export function createPushService(options: PushServiceOptions): PushService {
         retired.delete(hash);
         unmarked = true;
       }
-      // a write that fails must not keep the device's history: the next write that succeeds drops its marks from disk
       if (unmarked) rewriteRetired();
       forgetDeliveries((record) => record.owner !== id);
     },
@@ -941,7 +751,6 @@ export function createPushService(options: PushServiceOptions): PushService {
     },
 
     status(subscription, owner) {
-      // the open LAN and a subscription from before owners prove nothing
       if (owner === undefined) return null;
       const hash = endpointHash(subscription.endpoint);
       const proof = keyFingerprint(subscription.keys);
@@ -965,7 +774,6 @@ export function createPushService(options: PushServiceOptions): PushService {
     },
 
     async devicePaired(event, origin = []) {
-      // its own tag per enrollment: a second delivery of the same event replaces the first instead of adding to it
       const others = [...store().values()].filter((subscription) => subscription.device_id !== event.device_id
         && !(subscription.browser_keys ?? []).some((key) => origin.includes(key)));
       await broadcast({ pane_id: null, title: "Ovis", body: `New device paired: ${event.label}`, tag: `herdr-device-paired-${event.event_id}` }, "high", others);
@@ -975,7 +783,6 @@ export function createPushService(options: PushServiceOptions): PushService {
       if (machineName) pcNames.set(machineId, machineName);
       if (serverId) pcIds.set(machineId, serverId);
       for (const pane of panes) {
-        // only fill gaps: an event already seen is newer than any snapshot
         const key = paneStorageId(machineId, pane.pane_id);
         titles.set(key, `${machineName ? machineName + " · " : ""}${pushPaneTitle(pane)}`);
         workspaces.set(key, pane.workspace_id);
@@ -992,9 +799,7 @@ export function createPushService(options: PushServiceOptions): PushService {
       const onThisPc = (key: string): boolean => machineId === "local" ? !key.startsWith("remote:") : key.startsWith(remotePrefix);
       for (const key of [...lastStatus.keys()]) {
         if (!onThisPc(key) || present.has(key) || newerKeys.has(key)) continue;
-        // closed while events were lost: no alert may still speak for it
         callOff(key);
-        // gone: a question still reading its prompt finds no count, which is no longer the one it saw
         changes.delete(key);
         turnStart.delete(key);
         lastStatus.delete(key);
@@ -1005,13 +810,10 @@ export function createPushService(options: PushServiceOptions): PushService {
         const previous = lastStatus.get(key);
         const status = pane.agent_status;
         if (previous === status) continue;
-        // done and idle are both at rest: herdr reports a finish nobody has seen as idle. No
-        // alert is called off for it, but it is what the next event is measured against
         if (previous !== undefined && !busy(previous) && !busy(status)) { lastStatus.set(key, status); continue; }
         lastStatus.set(key, status);
         if (previous === undefined) continue;
         callOff(key);
-        // a turn that began unseen has no known start, like a first sighting mid-turn
         if (busy(status) !== busy(previous)) turnStart.delete(key);
       }
     },
@@ -1021,10 +823,8 @@ export function createPushService(options: PushServiceOptions): PushService {
       const previous = lastStatus.get(key);
       lastStatus.set(key, status);
       if (previous === status) return;
-      // answered, working again, or seen: whatever was waiting is no longer news
       callOff(key);
       const busy = (value: AgentStatus | undefined): boolean => value === "working" || value === "blocked";
-      // a first sighting mid-turn has no start: its length stays unknown
       if (busy(status) && previous !== undefined && !busy(previous)) turnStart.set(key, now());
       let worked: number | null = null;
       if (!busy(status)) {
@@ -1033,7 +833,6 @@ export function createPushService(options: PushServiceOptions): PushService {
         turnStart.delete(key);
       }
       if (!shouldNotifyStatus(previous, status)) return;
-      // muted for everyone: tracked above, told to nobody
       if (muted(machineId, paneId)) return;
       const groups = new Map<number, PushSubscriptionRecord[]>();
       for (const subscription of store().values()) {
@@ -1046,21 +845,15 @@ export function createPushService(options: PushServiceOptions): PushService {
       const hookDelay = hookPrefs === null ? null : delayFor(hookPrefs, status, worked);
       if (hookDelay !== null && !groups.has(hookDelay)) groups.set(hookDelay, []);
       if (groups.size === 0) return;
-      // the destination the alert arose for: one set before the timer fires was not there to be told
       const hookAt = options.webhook?.generation();
       schedule(key, machineId, paneId, groups, async (to, silenced, delay) => {
         if (options.inUse?.() || muted(machineId, paneId)) return;
-        // only this PC's prompts are read here, and only a question's alert carries buttons
         const reading = status === "blocked" && machineId === "local" ? readActions(paneId) : Promise.resolve(null);
         const asked = changes.get(key);
         const [{ title, agentKind }, answer] = await Promise.all([lookUp(key, machineId, paneId), reading]);
-        // the title can wait for herdr: a window that came into use, or a mute made (even one undone since), meanwhile still holds the alert
         if (options.inUse?.() || silenced() || muted(machineId, paneId)) return;
-        // a question whose pane changed while its prompt was read: the next asking's alert, under the same tag, holds what
-        // the pane asks now, and this one's buttons must not replace it. A finish already under way still goes out
         if (status === "blocked" && changes.get(key) !== asked) return;
         const kind: AlertKind = status === "blocked" ? blockedAlertKind(agentKind) : "done";
-        // a device that dropped out meanwhile is not written to, nor one that does not want this kind
         const live = to.flatMap((subscription) => {
           const current = store().get(subscription.endpoint);
           return current && current.device_id === subscription.device_id && wants(current, kind, machineId) ? [current] : [];
@@ -1074,7 +867,6 @@ export function createPushService(options: PushServiceOptions): PushService {
         const urgency = status === "blocked" ? "high" : "normal";
         const answering = answer === null ? [] : live.filter((subscription) => options.canAnswer?.(subscription.device_id) ?? true);
         await Promise.all([
-          // the buttons go with what they answer: a bare "Yes" under "waiting for your input" says nothing of what it allows
           broadcast({ ...alert, ...(answer === null ? {} : { body: answer.body, prompt_id: answer.promptId, actions: answer.actions }) }, urgency, answering, true),
           broadcast(alert, urgency, live.filter((subscription) => !answering.includes(subscription)), true),
         ]);
@@ -1083,7 +875,6 @@ export function createPushService(options: PushServiceOptions): PushService {
 
     async onFailed(paneId, machineId = "local") {
       const key = paneStorageId(machineId, paneId);
-      // only a pane at rest stopped: one the alerts take for working (its background work still runs) did not
       const at = lastStatus.get(key);
       if (at === "working" || at === "blocked" || muted(machineId, paneId)) return;
       const to = [...store().values()].filter((subscription) => {
@@ -1093,7 +884,6 @@ export function createPushService(options: PushServiceOptions): PushService {
       const hooked = options.webhook?.wants("error") === true;
       if (to.length === 0 && !hooked) return;
       const hookAt = options.webhook?.generation();
-      // it waits like a question does: a retry at the desk meanwhile is the pane's next change, which calls it off
       schedule(key, machineId, paneId, new Map([[timing.short, to]]), async (group, silenced) => {
         if (options.inUse?.() || muted(machineId, paneId)) return;
         const { title } = await lookUp(key, machineId, paneId);
@@ -1117,14 +907,12 @@ export function createPushService(options: PushServiceOptions): PushService {
       changes.delete(key);
       turnStart.delete(key);
       if (muted(machineId, paneId)) return;
-      // an ended terminal is a finish of its own: a device that wants none hears none
       const to = [...store().values()].filter((subscription) => {
         const prefs = subscription.alerts ?? DEFAULT_ALERTS;
         return alertKindAllowed(prefs, "ended") && alertPcAllowed(prefs, ...pcKeys(machineId));
       });
       const hook = options.webhook?.wants("ended") === true;
       if ((to.length === 0 && !hook) || options.inUse?.()) return;
-      // the pane may already be gone from herdr: the seeded title is what is left
       const message = endedMessage(paneId, titles.get(key) ?? paneId);
       if (hook) tellWebhook(key, machineId, paneId, message);
       if (to.length === 0) return;
@@ -1137,8 +925,6 @@ export function createPushService(options: PushServiceOptions): PushService {
         bump(key);
         hooked.delete(key);
       }
-      // an unmute resurrects nothing: what was called off while muted stays called off, including
-      // an alert whose timer has fired and whose title is still being looked up
       for (const entry of [...unsent]) {
         if (!muted(entry.machineId, entry.paneId)) continue;
         entry.silenced = true;
@@ -1200,8 +986,6 @@ export async function handlePushRequest(request: Request, pathname: string, push
     return new Response(null, { status: 204 });
   }
   if (route === "POST /api/push/status") {
-    // the open LAN signs in as nobody: no record can be its own, so it is told that before any is looked
-    // at, and its device stays quiet rather than reading "not subscribed" for a subscription that works
     if (deviceId === undefined) return jsonResponse({ error: { code: "status_unavailable", message: "this sign-in has no device to answer for" } }, 403);
     const subscription = push.parse(body.subscription);
     if (!subscription) return badRequest("invalid_subscription", "subscription needs an https endpoint and p256dh/auth keys");

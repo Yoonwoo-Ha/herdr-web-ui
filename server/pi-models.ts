@@ -17,15 +17,8 @@ import { join } from "node:path";
  *    window for every model pi offers through it;
  *  - `models-store.json` — pi's store for the other providers it knows on disk, by provider
  *    id, each with the same flat `models` list.
- *
- * So this resolves what those files state and nothing else. A model pi knows only from its
- * built-in registry, a provider whose entry omits `contextWindow`, and a model that names none
- * while its provider states one (pi does not inherit that number) all stay unresolved and the
- * ring is not drawn: guessing a window would draw a percentage the user cannot tell from pi's
- * own. pi's footer does the same, showing `?` in place of a number.
  */
 
-/** `models.json`'s own spelling: `providers` by id, each with a list of models. */
 type PiModel = { id?: unknown; contextWindow?: unknown };
 type PiProvider = { models?: unknown; modelOverrides?: unknown };
 type PiCatalog = { providers?: Record<string, PiProvider> };
@@ -52,14 +45,6 @@ function parse(text: string): unknown {
  *   (`contextWindow: override.contextWindow ?? model.contextWindow`). Reading only `models` would
  *   report the pre-override window; at 128000 against an override of 256000 that is half the window
  *   and double the percentage the ring shows.
- *
- * An entry that is not an object is skipped rather than read, and the models beside it are still
- * resolved. pi is stricter: it validates the file, warns, and refuses the whole provider — checked
- * with a `models` list of `null, "a string", {id}`, which leaves `pi --list-models` reporting no
- * models at all. This reader is deliberately the more forgiving of the two, because its worst
- * outcome is one fewer number on the ring, while pi's worst outcome is switching to a model that
- * does not exist. It is not merely defensive: a `null` in that list threw, and the throw came from
- * the read every poll does, so the chat went down for a comma in a hand-edited file.
  */
 function windowsFromModelsJson(provider: PiProvider): Map<string, number | null> {
   const list: unknown[] = Array.isArray(provider.models) ? provider.models : [];
@@ -76,8 +61,6 @@ function windowsFromModelsJson(provider: PiProvider): Map<string, number | null>
     // pi's own rule, field by field: the override states a window or the model's own stands. An
     // override that only renames a model, or sets its cost, says nothing here
     const window = override?.contextWindow ?? model.contextWindow;
-    // a model the user defined without a window stays unknown (null), so a later catalog's number
-    // for the same id does not stand in for the definition pi runs
     models.set(model.id, typeof window === "number" && Number.isFinite(window) && window > 0 ? window : null);
   }
   // pi applies an override to every model of the provider, built-in and store models included, so
@@ -93,10 +76,6 @@ function windowsFromModelsJson(provider: PiProvider): Map<string, number | null>
   return models;
 }
 
-/**
- * A flat list of `{ id, contextWindow }` entries, as pi's commandcode cache and model store keep
- * them. Same rules as above for a damaged entry or a window that is not a positive number.
- */
 function windowsFromFlatList(list: unknown): Map<string, number> {
   const models = new Map<string, number>();
   if (!Array.isArray(list)) return models;
@@ -113,7 +92,6 @@ function windowsFromFlatList(list: unknown): Map<string, number> {
 
 type Catalog = Map<string, Map<string, number | null>>;
 
-/** pi's catalogs are short lists of models; a file past this is not one, and is not read whole. */
 const MAX_CATALOG_BYTES = 4 * 1024 * 1024;
 
 /**
@@ -130,19 +108,13 @@ export function readRegularText(path: string): string | null {
     const buffer = Buffer.alloc(Math.min(stat.size, MAX_CATALOG_BYTES) + 1);
     let length = 0;
     for (let count = 1; count > 0 && length < buffer.length; length += count) count = readSync(fd, buffer, length, buffer.length - length, null);
-    // a file that grew past its stat since is read again once its signature moves
     return length > stat.size ? null : buffer.subarray(0, length).toString("utf8");
   } catch { return null; }
   finally { if (fd !== undefined) closeSync(fd); }
 }
 
-/**
- * Each catalog file read once per change: a conversation is re-read on every poll, so the files
- * are only stat'ed there, and read and parsed again when their mtime or size moves.
- */
 const cache = new Map<string, { signature: string; byProvider: Catalog | null }>();
 
-/** A catalog file's models by provider, or null when the file is absent or not a catalog. */
 function readCatalog(path: string, parseCatalog: (parsed: unknown) => Catalog | null): Catalog | null {
   let signature: string;
   try {
@@ -201,11 +173,6 @@ export function piAgentDir(env: NodeJS.ProcessEnv = process.env): string {
   return typeof dir === "string" && dir.length > 0 ? (dir === "~" || dir.startsWith("~/") ? join(homedir(), dir.slice(2)) : dir) : join(homedir(), ".pi", "agent");
 }
 
-/**
- * The window a model runs in, by the provider that served it. Both parts are asked for:
- * two providers can offer the same model id at different windows, and a session records
- * which of them answered. Consults every on-disk catalog pi keeps, in order.
- */
 export function piContextWindow(model: string, provider: string | null, agentDir = piAgentDir()): number | null {
   const files: { path: string; parse: (p: unknown) => Catalog | null }[] = [
     { path: join(agentDir, "models.json"), parse: modelsJsonCatalog },
@@ -215,15 +182,11 @@ export function piContextWindow(model: string, provider: string | null, agentDir
   for (const file of files) {
     const catalog = readCatalog(file.path, file.parse);
     if (catalog === null) continue;
-    // an exact provider match only: a model id a second provider also serves, at another
-    // window, must not borrow the first one's number
     const byId = provider === null ? undefined : catalog.get(provider);
     if (byId === undefined) continue;
     if (byId.has(model)) return byId.get(model) ?? null;
-    // provider present but model absent here: a later catalog may still list it
   }
   return null;
 }
 
-/** The cache is process-wide; tests point it at another directory. */
 export function forgetPiModels(): void { cache.clear(); }

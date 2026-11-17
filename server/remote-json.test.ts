@@ -4,7 +4,6 @@ import { discard, readCapped, readCappedJson, RemoteResponseInvalid, RemoteRespo
 const cleanups: (() => void)[] = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
 
-/** A body served chunk by chunk that records how far it was pulled and whether it was cancelled. */
 function body(chunks: Uint8Array[], headers: Record<string, string> = {}) {
   const receipt = { pulled: 0, cancelled: false };
   const stream = new ReadableStream<Uint8Array>({
@@ -22,7 +21,6 @@ describe("capped remote answers", () => {
   it("cancels at cap plus one without decoding", async () => {
     const decode = spyOn(TextDecoder.prototype, "decode");
     cleanups.push(() => decode.mockRestore());
-    // not JSON at all: a parse would fail differently, so the size check must come first
     const { response, receipt } = body([bytes("x".repeat(8)), bytes("y".repeat(9)), bytes("never pulled")]);
     await expect(readCappedJson(response, 16)).rejects.toBeInstanceOf(RemoteResponseTooLarge);
     expect(receipt).toEqual({ pulled: 2, cancelled: true });
@@ -32,7 +30,6 @@ describe("capped remote answers", () => {
 
   it("accepts exact cap across UTF-8 chunks", async () => {
     const encoded = bytes(JSON.stringify({ name: "한글 PC" }));
-    // split inside the first Hangul syllable's three bytes
     const split = encoded.indexOf(0xed) + 1;
     const { response, receipt } = body([encoded.slice(0, split), encoded.slice(split)]);
     expect(await readCappedJson<{ name: string }>(response, encoded.byteLength)).toEqual({ name: "한글 PC" });
@@ -41,15 +38,12 @@ describe("capped remote answers", () => {
   });
 
   it("ignores dishonest length headers", async () => {
-    // a small claim does not let a larger body through
     const small = body([bytes("{\"a\":"), bytes("\"0123456789\"}")], { "content-length": "2" });
     await expect(readCapped(small.response, 12)).rejects.toBeInstanceOf(RemoteResponseTooLarge);
     expect(small.receipt.cancelled).toBe(true);
-    // a claim past the cap is refused before anything is read
     const large = body([bytes("{}")], { "content-length": "13" });
     await expect(readCapped(large.response, 12)).rejects.toBeInstanceOf(RemoteResponseTooLarge);
     expect(large.receipt).toEqual({ pulled: 0, cancelled: true });
-    // no length at all is measured the same way
     const absent = body([bytes("0123456"), bytes("789abc")]);
     expect(absent.response.headers.get("content-length")).toBeNull();
     await expect(readCapped(absent.response, 12)).rejects.toBeInstanceOf(RemoteResponseTooLarge);

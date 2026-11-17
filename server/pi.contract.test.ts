@@ -9,7 +9,6 @@ import { forgetPiModels } from "./pi-models.ts";
 import { herdrRpc, sessionSnapshot, workspaceClose, workspaceCreate } from "./herdr/client.ts";
 import type { ConversationResponse } from "../shared/protocol.ts";
 
-// Real herdr metadata + HTTP + native files, all under an owned workspace/store.
 const root = mkdtempSync(join(tmpdir(), "ovis-pi-contract-"));
 const sessionDir = join(root, ".pi", "agent", "sessions");
 const slug = join(sessionDir, `--${root.replaceAll("/", "-")}--`);
@@ -111,7 +110,6 @@ it.skipIf(process.platform !== "linux")("serves a fresh Pi session in its pane-o
 
   mkdirSync(dirname(fresh), { recursive: true });
   writeFileSync(fresh, turns("Synthetic new profile session", "First response in the profile session"));
-  // the window comes from the profile's own catalog, not from the one the bridge's env names
   writeFileSync(join(profileDir, "models.json"), JSON.stringify({ providers: { test: { models: [{ id: "pi-contract-model", contextWindow: 400_000 }] } } }));
   const bridgeDir = join(root, "bridge-agent-dir");
   mkdirSync(bridgeDir, { recursive: true });
@@ -136,7 +134,6 @@ it("serves a pi pane's native transcript over HTTP", async () => {
   expect(first.source).toBe("pi-transcript");  expect(first.turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
   expect(first.turns[0]!.parts).toEqual([{ kind: "text", text: "Check chat" }]);
   // the figure pi's own footer shows: input + output + both cache tiers
-  // the figure pi's own footer shows: input + output + both cache tiers
   expect(first.metadata).toEqual({ model: "pi-contract-model", reasoning_effort: null, context: { used: 35, window: null }, provider: "test" });
 });
 
@@ -155,7 +152,6 @@ it("offers a tool's own picture over the image endpoint", async () => {
       content: [{ type: "text", text: "read 1 image" }, { type: "image", mimeType: "image/png", data: PNG.toString("base64") }],
     } },
   ]));
-  // the tests after this one read the session this file first held, so put it back
   try {
     const conversation = await read();
     const tool = conversation.turns.flatMap((turn) => turn.parts).find((part) => part.kind === "tool");
@@ -165,7 +161,6 @@ it("offers a tool's own picture over the image endpoint", async () => {
     expect(response.headers.get("content-type")).toBe("image/png");
     expect(response.headers.get("content-security-policy")).toBe(FILE_POLICY);
     expect(Buffer.from(await response.arrayBuffer()).equals(PNG)).toBe(true);
-    // a ref naming no image, and one that is no pi ref at all
       const miss = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation/image?pane_id=${encodeURIComponent(paneId)}&ref=${encodeURIComponent("pi:call-9:0")}`);
       expect(miss.status).toBe(404);
   } finally {
@@ -176,22 +171,17 @@ it("offers a tool's own picture over the image endpoint", async () => {
 it("resolves pi's context window from the agent dir pi reads its models from", async () => {
   writeFileSync(transcript, turns("Check chat", "Answer one"));
   expect((await read()).metadata?.context?.window).toBeNull();
-  // the window is nowhere in the transcript: pi's own catalog is the only disk answer for it
   const agentDir = join(root, "agent-dir");
   mkdirSync(agentDir, { recursive: true });
   writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { test: { models: [{ id: "pi-contract-model", contextWindow: 200_000 }] } } }));
   const previous = process.env["PI_CODING_AGENT_DIR"];
   process.env["PI_CODING_AGENT_DIR"] = agentDir;
   try {
-    // no pi process is identified here (the stand-in is not pi), and the session store is shared
-    // (PI_CODING_AGENT_SESSION_DIR), not the one inside that agent dir: its catalogs are no pane's
     writeFileSync(transcript, turns("Check chat twice", "Answer two"));
     expect((await read()).metadata?.context).toEqual({ used: 35, window: null });
-    // the store inside the bridge's own agent dir: the session was written by that profile
     const owner = dirname(sessionDir);
     writeFileSync(join(owner, "models.json"), JSON.stringify({ providers: { test: { models: [{ id: "pi-contract-model", contextWindow: 200_000 }] } } }));
     process.env["PI_CODING_AGENT_DIR"] = owner;
-    // the window is read as the metadata is rebuilt, so a new answer carries it
     writeFileSync(transcript, turns("Check chat three times", "Answer three"));
     const withWindow = await read();
     expect(withWindow.metadata?.context).toEqual({ used: 35, window: 200_000 });
@@ -199,7 +189,6 @@ it("resolves pi's context window from the agent dir pi reads its models from", a
   } finally {
     if (previous === undefined) delete process.env["PI_CODING_AGENT_DIR"]; else process.env["PI_CODING_AGENT_DIR"] = previous;
     forgetPiModels();
-    // the tests after this one read the session this file first held
     writeFileSync(transcript, turns("Check chat", "Answer one"));
   }
 });
@@ -214,12 +203,11 @@ it("follows the pane to a new session file when /new or /resume replaces it", as
   expect(after.history_id).not.toBe(before.history_id);
   expect(after.turns.map((turn) => turn.role)).toEqual(["user", "assistant"]);
   expect(after.turns[0]!.parts).toEqual([{ kind: "text", text: "New topic" }]);
-  // the previous conversation is gone: it lived in the abandoned file
   expect(JSON.stringify(after.turns)).not.toContain("Check chat");
 });
 
 it("shows the branch /tree leaves the leaf on, and invalidates the pages held before it", async () => {
-  await reportSession(transcript); // /resume back to the session this pane began on
+  await reportSession(transcript);
   const before = await read();
   expect(JSON.stringify(before.turns)).toContain("Answer one");
   // pi writes the new answer beside the old one, parented to the prompt, and moves the leaf
@@ -232,7 +220,7 @@ it("shows the branch /tree leaves the leaf on, and invalidates the pages held be
   writeFileSync(transcript, branched.join("\n") + "\n");
   const after = await read();
   expect(after.source).toBe("pi-transcript");
-  expect(after.history_id).not.toBe(before.history_id); // same file, same size class: the tree moved
+  expect(after.history_id).not.toBe(before.history_id);
   expect(JSON.stringify(after.turns)).toContain("the retried answer");
   expect(JSON.stringify(after.turns)).not.toContain("Answer one");
 });
@@ -248,8 +236,6 @@ it("counts the turns a /tree left behind, over HTTP", async () => {
     { type: "message", id: "a-live", parentId: "u2", timestamp: "2026-09-30T00:00:04Z", message: { role: "assistant", content: "the answer in play" } },
   ]));
   const branched = await read();
-  // pi moved its leaf and wrote nothing, so the page is built from the live branch alone; the
-  // count is the only thing that can tell the reader the file holds more than this
   expect(JSON.stringify(branched.turns)).not.toContain("abandoned");
   expect(branched.abandoned).toEqual({ count: 2, branches: 1, summary: null });
 
@@ -264,7 +250,6 @@ it("counts the turns a /tree left behind, over HTTP", async () => {
   ]));
   expect((await read()).abandoned?.summary).toBe("Tried the first question; it failed.");
 
-  // a session no /tree touched answers zero, not absent: the client shows nothing at 0
   writeFileSync(transcript, turns("Check chat", "Answer one"));
   expect((await read()).abandoned).toEqual({ count: 0, branches: 0, summary: null });
 });
@@ -274,7 +259,6 @@ it("answers a session pi has not written yet as an empty conversation, then foll
   const fresh = join(slug, "fresh.jsonl");
   await reportSession(fresh, target);
   expect(await read(target)).toMatchObject({ source: "pi-transcript", turns: [], cursor: null, history_id: "unwritten:fresh" });
-  // a cursor from another conversation is refused, whichever way it points
   for (const cursor of ["before", "since", "from"]) {
     const stale = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation?pane_id=${encodeURIComponent(target)}&${cursor}=${encodeURIComponent("other:0")}`);
     expect(stale.status).toBe(409);
@@ -294,7 +278,6 @@ it("answers a session pi has not written yet as an empty conversation, then foll
   expect(written.source).toBe("pi-transcript");
   expect(written.history_id).not.toBe("unwritten:fresh");
   expect(written.turns[0]!.parts).toEqual([{ kind: "text", text: "First prompt" }]);
-  // a transcript read and then removed is missing, not a conversation not begun
   rmSync(fresh);
   expect(await read(target)).toEqual({ source: "scrollback", turns: [], unavailable: "unreadable" });
 });
@@ -314,7 +297,6 @@ it("distinguishes unwritten sessions with the same filename in different folders
   expect((await read(target)).turns[0]!.parts).toEqual([{ kind: "text", text: "Fresh prompt" }]);
   rmSync(fresh);
   expect(await read(target)).toEqual({ source: "scrollback", turns: [], unavailable: "unreadable" });
-  // Another spelling of the same directory must not make a removed transcript unwritten again.
   const alias = join(sessionDir, "alias-project");
   symlinkSync(other, alias, "dir");
   await reportSession(join(alias, "shared-name.jsonl"), target);

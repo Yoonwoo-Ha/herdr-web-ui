@@ -4,7 +4,6 @@ import { isJsonObject } from "./http.ts";
 import type { MachineManager } from "./machines.ts";
 import { discard, parseJson, readCapped, REMOTE_LIMITS } from "./remote-json.ts";
 
-/** the move routes the PC proxy forwards, under /api/machines/:id/ (docs/runtime-move.md, "On another PC") */
 export const PC_MOVE_PATH = /^runtime\/move(?:\/(?:stop|stop-all|install))?$/;
 export const PC_UPDATE_REQUIRED = "Update Ovis on that PC first, then move it.";
 const MOVE_UNKNOWN = "That PC did not answer in time; it may have started. Look at its move status before trying again.";
@@ -28,9 +27,7 @@ export function tooOldToMove(kind: Machine["kind"] | undefined, status: number, 
 }
 
 const MOVE_STEPS = new Set(["ending_agents", "building", "starting_agents", "switching"]);
-/** the reasons this version knows (shared/runtime-move.ts MoveUnavailable): any other words of that PC are not carried */
 const MOVE_REASONS = new Set<string>(["not_herdr", "no_herdr_core", "runtime_locked", "herdr_app"] satisfies MoveUnavailable[]);
-/** What of a PC's move status the roster carries (PcMoveStatus): no reason or agent's words, which name folders. */
 function moveSummary(status: Record<string, unknown>): PcMoveStatus | null {
   const { state } = status;
   if (state === "idle" || state === "waiting" || state === "done") return { state };
@@ -43,11 +40,6 @@ function moveSummary(status: Record<string, unknown>): PcMoveStatus | null {
   return null;
 }
 
-/**
- * A PC's move badge from its own plan answer: null when it cannot tell (an Ovis without the route, one
- * that does not take this server's credential there, or one with no runtime to switch), undefined when it
- * did not answer now (herdr away, a timeout), so the badge it had stays.
- */
 export async function readMoveOffer(endpoint: { url: string; token: string }): Promise<PcMoveOffer | null | undefined> {
   const response = await fetch(`${endpoint.url}/api/runtime/move`, { headers: { authorization: `Bearer ${endpoint.token}` }, redirect: "error", signal: AbortSignal.timeout(30_000) });
   if (!response.ok) {
@@ -60,7 +52,6 @@ export async function readMoveOffer(endpoint: { url: string; token: string }): P
   const status = moveSummary(answer.status);
   const reason = answer.available === true ? null : answer.reason;
   if (status === null || reason !== null && (typeof reason !== "string" || !MOVE_REASONS.has(reason))) return null;
-  // a move is refused as not_herdr exactly when that server serves herdr-core (server/runtime-move.ts moveUnavailable)
   return { serving: reason === "not_herdr" ? "herdr-core" : "herdr", offered: answer.available === true || answer.install !== undefined, reason: reason as MoveUnavailable | null, status };
 }
 
@@ -80,18 +71,15 @@ async function startMove(manager: MachineManager, id: string, revision: string):
       headers: { authorization: `Bearer ${endpoint.token}`, "content-type": "application/json", "x-herdr-update": "1" },
     });
   } catch {
-    // the start may have reached that PC before its answer was lost: not a refusal
     return { outcome: "unknown", message: MOVE_UNKNOWN };
   }
   if (response.status === 202) { await discard(response); manager.moveOfferSoon(id); return { outcome: "started" }; }
-  // a gateway between here and that PC (the relay, a tunnel) may lose the answer after the PC took the start
   if (response.status === 502 || response.status === 504) { await discard(response); manager.moveOfferSoon(id); return { outcome: "unknown", message: MOVE_UNKNOWN }; }
   const body = await readCapped(response, REMOTE_LIMITS.bridgeError).catch(() => null);
   const code = answerCode(body);
   if (tooOldToMove(machine.kind, response.status, code)) return { outcome: "refused", code: "pc_update_required", message: PC_UPDATE_REQUIRED };
   let message: unknown;
   try { message = body ? parseJson<{ error?: { message?: unknown } }>(body).error?.message : undefined; } catch { message = undefined; }
-  // that PC's own words (plan_changed, already_moving, ...), as the proxied route passes them on
   return {
     outcome: "refused",
     code: code?.slice(0, 64) ?? "move_failed",
@@ -99,7 +87,6 @@ async function startMove(manager: MachineManager, id: string, revision: string):
   };
 }
 
-/** POST /api/machines/runtime/move-all: every PC's move at once, each through that PC's own route. */
 export async function moveAll(manager: MachineManager, plans: { machine_id: string; revision: string }[]): Promise<MoveAllResponse> {
   const answers = await Promise.all(plans.map(async ({ machine_id, revision }) => ({ machine_id, ...await startMove(manager, machine_id, revision) })));
   const answer: MoveAllResponse = { started: [], refused: [], unknown: [] };
@@ -111,7 +98,6 @@ export async function moveAll(manager: MachineManager, plans: { machine_id: stri
   return answer;
 }
 
-/** The plans of a move-all request: each PC once, and never more than `most` (the PCs this server knows); null otherwise. */
 export function moveAllPlans(body: unknown, most: number): { machine_id: string; revision: string }[] | null {
   if (!isJsonObject(body) || !Array.isArray(body.plans) || body.plans.length > most) return null;
   const plans: { machine_id: string; revision: string }[] = [];

@@ -9,7 +9,6 @@ import { PAIRING_WINDOW_MS, RelayPairingApprovals, pairingWindowFs } from "./pai
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const close of cleanup.splice(0).reverse()) close(); });
 
-/** A window file in a directory of its own, and a clock the test moves. */
 function fixture() {
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-pairing-window-"));
   cleanup.push(() => rmSync(stateDir, { recursive: true, force: true }));
@@ -17,7 +16,6 @@ function fixture() {
   const clock = { at: 1_700_000_000_000 };
   return {
     path, clock,
-    /** what a server started now would read */
     open: () => new RelayPairingApprovals({ path, now: () => clock.at }),
     write(value: unknown) {
       mkdirSync(join(stateDir, "relay"), { recursive: true });
@@ -31,7 +29,6 @@ describe("the pairing window across a restart", () => {
   it("is still open, and still local-only, for a server started on the same state", () => {
     const f = fixture();
     f.open().openWindow(f.clock.at, { localOnly: true });
-    // both deadlines are in the one document
     expect(f.saved()).toEqual({ v: 1, window_until: f.clock.at + PAIRING_WINDOW_MS, local_only_until: f.clock.at + PAIRING_WINDOW_MS });
     f.clock.at += 60_000;
     const restarted = f.open();
@@ -49,7 +46,6 @@ describe("the pairing window across a restart", () => {
     f.clock.at += 1;
     expect(restarted.windowOpen()).toBe(false);
     expect(restarted.localOnlyOpen()).toBe(false);
-    // and a server started after it reads it closed
     const later = f.open();
     expect(later.windowOpen()).toBe(false);
     expect(later.localOnlyOpen()).toBe(false);
@@ -67,7 +63,6 @@ describe("the pairing window across a restart", () => {
       expect(restarted.windowOpen()).toBe(false);
       expect(restarted.localOnlyOpen()).toBe(false);
       expect(f.saved()).toEqual({ v: 1, window_until: 0, local_only_until: 0 });
-      // so no later start gets a window from it either, as a clamp to "now" gave at every restart
       f.clock.at += 365 * 86_400_000 - 60_000;
       expect(f.open().windowOpen()).toBe(false);
     }
@@ -77,7 +72,6 @@ describe("the pairing window across a restart", () => {
     const f = fixture();
     f.open().openWindow(f.clock.at, { localOnly: true });
     const opened = f.clock.at;
-    // a start with a clock earlier than the open sees a deadline more than one window ahead
     f.clock.at = opened - 60_000;
     expect(f.open().windowOpen()).toBe(false);
     f.clock.at = opened + 1;
@@ -203,7 +197,6 @@ describe("the pairing window across a restart", () => {
     cleanup.push(() => { warn.mockRestore(); open.mockRestore(); });
     approvals.openWindow(f.clock.at, { localOnly: true });
     open.mockRestore();
-    // this process still has the window it opened
     expect(approvals.windowOpen()).toBe(true);
     expect(approvals.localOnlyOpen()).toBe(true);
     expect(existsSync(f.path)).toBe(false);
@@ -226,7 +219,6 @@ describe("the pairing window across a restart", () => {
     const approvals = new RelayPairingApprovals({ path: f.path, now: () => f.clock.at, setTimer: (run, ms) => { timers.push({ run, ms }); return () => {}; } });
     approvals.openWindow(f.clock.at, { localOnly: true });
     expect(timers.at(-1)!.ms).toBe(PAIRING_WINDOW_MS);
-    // fired early (a timer is not a clock): it waits for the rest
     f.clock.at += PAIRING_WINDOW_MS - 1_000;
     timers.at(-1)!.run();
     expect(timers.at(-1)!.ms).toBe(1_000);
@@ -310,13 +302,10 @@ describe("the pairing window across a restart", () => {
     const truncate = spyOn(pairingWindowFs, "truncateSync").mockImplementation(() => { throw new Error("read-only"); });
     cleanup.push(() => { warn.mockRestore(); open.mockRestore(); rm.mockRestore(); truncate.mockRestore(); });
     for (const f of files) expect(f.open().closeWindow()).toBe(true);
-    // one that a start could not clear either is still reported
     expect(g.open().closeWindow()).toBe(false);
   });
 });
 
-// the PC's own prompt words the request by this (src/components/RelayPairingPrompt.tsx): typed on the
-// other device while this PC waits to be added, compared on both screens otherwise
 describe("what the PC's own windows are told of a waiting request", () => {
   const device = { intent: "account" as const, key: "k", deviceId: "d" };
 
@@ -325,10 +314,8 @@ describe("what the PC's own windows are told of a waiting request", () => {
     const approvals = f.open();
     approvals.openWindow(f.clock.at, { localOnly: true });
     approvals.ask("phone", "123456", f.clock.at + 90_000, device);
-    // as session.ts passes it, fixed when the phone asked
     approvals.ask("tablet", "654321", f.clock.at + 90_000, { ...device, localOnly: true });
     expect(approvals.list().map(({ label, local_only }) => [label, local_only])).toEqual([["phone", true], ["tablet", true]]);
-    // account members are not shown it at all
     expect(approvals.remoteList()).toEqual([]);
   });
 
@@ -341,7 +328,6 @@ describe("what the PC's own windows are told of a waiting request", () => {
     const listed = approvals.list();
     expect(listed).toHaveLength(2);
     for (const request of listed) expect("local_only" in request).toBe(false);
-    // and once the local-only half has run out, whatever the rest of the window does
     const later = f.open();
     later.openWindow(f.clock.at, { localOnly: true });
     f.clock.at += PAIRING_WINDOW_MS;
@@ -358,13 +344,10 @@ describe("what the PC's own windows are told of a waiting request", () => {
     approvals.ask("phone", "123456", f.clock.at + 90_000, { ...device, membersOnly: true, localOnly: true });
     expect(approvals.list()).toEqual([]);
     expect(seen.at(-1)).toEqual([]);
-    // what members are told carries no such field either
     expect(approvals.remoteList()).toHaveLength(1);
     expect("local_only" in approvals.remoteList()[0]!).toBe(false);
   });
 
-  // nothing here tells which device shows digits and which takes them typed: the mark is the PC's
-  // window, and a plain link asked meanwhile must not hand what the add-me screen waits for to members
   it("keeps the mark, and the request off members' screens, when an ordinary link is asked for meanwhile", () => {
     const f = fixture();
     const approvals = f.open();
@@ -384,7 +367,6 @@ describe("what the PC's own windows are told of a waiting request", () => {
     approvals.ask("phone", "123456", f.clock.at + 90_000, device);
     expect(approvals.list()[0]!.left_ms).toBe(90_000);
     f.clock.at += 30_500;
-    // counted again at each telling: a window that subscribes late hears what is left now
     const seen: RelayPairingRequest[][] = [];
     approvals.subscribe((pairings) => seen.push(pairings));
     expect(seen[0]![0]!.left_ms).toBe(59_500);

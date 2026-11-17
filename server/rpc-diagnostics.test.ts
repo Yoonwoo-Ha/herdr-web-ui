@@ -13,9 +13,6 @@ async function fixture() {
   const path = join(root, "private-herdr.sock");
   let mode: "stall" | "success" | "bad_frame" | "refuse" = "stall";
   let requests = 0;
-  // A request marked stall is never answered. It is counted apart: on a busy PC the client's 30 ms
-  // can run out before its request is written, or the bytes it wrote can be read only after the
-  // test moved on to answering, so how many of them arrive is not the test's to fix.
   let stalled = 0;
   const sockets = new Set<Socket>();
   const daemon = createServer((socket) => {
@@ -51,7 +48,6 @@ async function fixture() {
 describe("RPC diagnostic wiring", () => {
   it("logs a timeout once, then one recovery without private parameters or socket paths", async () => {
     const f = await fixture();
-    // long enough to connect on a busy PC, so the timeout it logs is the response's
     await expect(herdrRpc("fixture.read", { token: "private-input-secret", stall: true }, f.path, 500)).rejects.toBeInstanceOf(HerdrError);
     await expect(herdrRpc("fixture.read", { stall: true }, f.path, 30)).rejects.toThrow("timed out");
     expect(f.records()).toHaveLength(1);
@@ -64,9 +60,7 @@ describe("RPC diagnostic wiring", () => {
     expect(f.records()[1]).toMatchObject({ event: "herdr.rpc.recovered", episode_id: f.records()[0].episode_id, failures: 2, suppressed: 1 });
     expect(f.lines.join("\n")).not.toContain(f.root);
     expect(f.lines.join("\n")).not.toContain("private-input-secret");
-    // one request per call, none sent again
     expect(f.requests()).toBe(2);
-    // the first, with 500 ms, always arrives; the second's 30 ms may run out before it is written
     expect(f.stalled()).toBeGreaterThanOrEqual(1);
     expect(f.stalled()).toBeLessThanOrEqual(2);
   });

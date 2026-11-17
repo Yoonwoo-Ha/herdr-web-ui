@@ -2,12 +2,10 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { join } from "node:path";
 import { PtySession, writeLine } from "./session.ts";
 
-/** Prints only whether the bridge token is present, plus the socket and TERM the attach would use. */
 const REPORT_ENV = ["-e", `process.stdout.write("TOKEN_PRESENT=" + Object.prototype.hasOwnProperty.call(process.env, "OVIS_TOKEN")
   + " SOCKET=[" + process.env.HERDR_SOCKET_PATH + "] TERM=[" + process.env.TERM + "]")`];
 const fixtureToken = () => `herdr-web-token-fixture-${crypto.randomUUID()}`;
 
-/** Runs REPORT_ENV through a PtySession with a fixture bridge token in this process's env, capturing the sidecar's spawn options. */
 async function reportThroughSession(env: Record<string, string>) {
   const parentToken = fixtureToken();
   const previous = process.env["OVIS_TOKEN"];
@@ -32,12 +30,6 @@ async function reportThroughSession(env: Record<string, string>) {
   }
 }
 
-/**
- * The attach command is `herdr terminal attach`, and herdr's CLI picks its socket from
- * HERDR_SOCKET_PATH, so the session must be able to hand the command an environment
- * of its own on top of the server's - otherwise a non-default session's terminals
- * are looked up on the default socket and the attach dies.
- */
 describe("PtySession", () => {
   it("forwards extra env to the command running on the pty", async () => {
     const sentinel = "/tmp/ovis-session-test.sock";
@@ -58,7 +50,6 @@ describe("PtySession", () => {
     expect(await printed).toContain("[" + sentinel + "]");
   }, 10000);
 
-  // The bridge's bearer token is for browsers: neither the Node sidecar nor the attach command needs it.
   it("omits bridge token from the sidecar after merging overrides", async () => {
     const overrideToken = fixtureToken();
     const run = await reportThroughSession({ OVIS_TOKEN: overrideToken });
@@ -71,7 +62,6 @@ describe("PtySession", () => {
   }, 10000);
 
   it("host omits bridge token from attach environment", async () => {
-    // Launched outside PtySession: the host defends the attach child on its own.
     const token = fixtureToken();
     const socket = "/tmp/ovis-host-test.sock";
     const host = Bun.spawn(
@@ -181,7 +171,7 @@ describe("PtySession", () => {
       const deadline = Date.now() + 5000;
       while (!stopped && Date.now() < deadline) await Bun.sleep(10);
       expect(stopped).toBe(true);
-      await Bun.sleep(150); // allow the already-read pipe tail to arrive
+      await Bun.sleep(150);
       const pausedBytes = bytes;
       await Bun.sleep(200);
       expect(bytes).toBe(pausedBytes);
@@ -221,7 +211,6 @@ describe("writeLine", () => {
   const python = Bun.which(process.platform === "win32" ? "python" : "python3");
   const runs = python !== null && Bun.spawnSync([python, "-c", ""], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
   it.skipIf(!runs)("survives a child that already closed its stdin", async () => {
-    // on Windows the write settles later and an EPIPE rejects the returned promise instead of throwing
     const rejections: unknown[] = []; const track = (error: unknown) => rejections.push(error);
     process.on("unhandledRejection", track);
     let proc: ReturnType<typeof Bun.spawn> | undefined;

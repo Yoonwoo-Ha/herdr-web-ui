@@ -43,7 +43,6 @@ it("names its relays in AUTH_OK to a phone that offered relay hints", async () =
   const relays = ["wss://relay-ap.ovis.sh", "wss://relay.ovis.sh"];
   const link = await relayConnection(f, { relayHints: () => relays });
   expect((await link.auth(device, ["relay-hints"])).relays).toEqual(relays);
-  // answered in AUTH_OK only: a provisional WELCOME goes out before HELLO is read
   expect((await link.welcome).payload.features).toEqual([]);
 });
 
@@ -94,7 +93,6 @@ for (const role of ["drive", "watch"] as const) {
     const request = link.open("/api/preferences", { method: "PUT", headers: guard, body: "stream" });
     const upload = request.stream.sendBody(new Response('{"settings":{}}').body ?? new ReadableStream());
     const response = await request.response;
-    // A refused upload is stopped, so a body write still queued behind the channel is cancelled.
     const uploaded = await upload.then(() => "sent", (error: unknown) => error instanceof MuxStreamError ? error.code : String(error));
     expect(role === "drive" ? ["sent"] : ["sent", "cancelled"]).toContain(uploaded);
     expect(response.status).toBe(role === "drive" ? 200 : 403);
@@ -260,7 +258,6 @@ it("rejects OPEN before AUTH_OK without invoking the dispatcher", async () => {
   const f = fixture();
   let calls = 0;
   const link = await relayConnection(f, { dispatch: async (request, context) => { calls++; return handleRequest(request, context); } });
-  // The server closes the channel while answering, so this send may reject with that close.
   await link.channel.send(encodeFrame({
     type: FrameType.HTTP_OPEN, flags: 0, stream_id: 1,
     payload: { device_id: "0123456789abcdef", method: "GET", target: "/api/health", headers: [], body: "none" },
@@ -303,7 +300,6 @@ it("drops forged headers on the encrypted wire and dispatches with synthetic ori
   } });
   try {
     expect(await link.auth(device)).toMatchObject({ device_id: device.id, role: "watch" });
-    // Inject after mux serialization but before encryption, bypassing the client's header filter.
     link.transformClientFrame = (bytes) => {
       const decoded = decodeFrame(bytes);
       if (decoded.type !== FrameType.HTTP_OPEN) return bytes;
@@ -386,7 +382,6 @@ it("keeps the native pairing rate-limit status and retry header over relay HTTP"
   const f = fixture();
   const device = await relayDevice(f);
   const store = f.app.context.services.devices;
-  // Enrollment already spent the first of ten code issues.
   for (let issue = 1; issue < 10; issue++) store.startPairing();
   const link = await relayConnection(f);
   await link.auth(device);
@@ -451,7 +446,6 @@ it("sends WELCOME behind the protected handshake, before HELLO, and still requir
   const device = await relayDevice(f);
   const link = await relayConnection(f);
   await link.flush();
-  // nothing sent by the phone yet: WELCOME already went out
   expect(link.frames.map((frame) => frame.type)).toEqual([FrameType.WELCOME]);
   expect((await link.auth(device)).device_id).toBe(device.id);
   expect(link.frames.filter((frame) => frame.type === FrameType.WELCOME)).toHaveLength(1);
@@ -476,7 +470,6 @@ it("sends no WELCOME before HELLO while a pairing window is open, so a phone fro
   let provisional = false;
   link.onFrame = (frame) => { if (frame.type === FrameType.WELCOME && frame.payload.provisional) provisional = true; };
   expect((await link.auth(await relayDevice(f))).device_id).toMatch(/^[0-9a-f]{16}$/);
-  // HELLO was answered by one WELCOME, as before provisional ones
   expect(link.frames.filter((frame) => frame.type === FrameType.WELCOME)).toHaveLength(1);
   expect(provisional).toBe(false);
 });
@@ -541,7 +534,7 @@ it("keeps the engine's 413 when an unknown-length upload crosses the request cei
       const reader = request.body?.getReader();
       if (!reader) throw new Error("Missing upload");
       try {
-        while (!(await reader.read()).done) { /* Consume without retaining the upload. */ }
+        while (!(await reader.read()).done) {}
         return new Response("accepted");
       } catch {
         return new Response("body stopped", { status: 400 });

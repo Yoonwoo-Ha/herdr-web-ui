@@ -48,7 +48,6 @@ async function fixture(serveOnly?: boolean, options: Partial<RelayServiceOptions
   let synced = deferred<void>();
   let controlLost = deferred<void>();
   let dataOpened = deferred<WebSocket>();
-  /** every socket the PC opened, by kind, and what its control sockets heard */
   const opened: { kind: "control" | "data" | "warm"; socket: WebSocket }[] = [];
   const heard: string[] = [];
   const warmOpened: ReturnType<typeof deferred<WebSocket>>[] = [deferred<WebSocket>(), deferred<WebSocket>()];
@@ -60,7 +59,6 @@ async function fixture(serveOnly?: boolean, options: Partial<RelayServiceOptions
       const kind = target.searchParams.has("connection_id") ? "data" : target.searchParams.has("warm") ? "warm" : "control";
       opened.push({ kind, socket });
       if (kind === "warm") {
-        // resolved once the PC sent its proof: what the test sends after it reaches the relay after it
         const proved = warmOpened[opened.filter((entry) => entry.kind === "warm").length - 1];
         const send = socket.send.bind(socket);
         socket.send = (data) => {
@@ -72,7 +70,6 @@ async function fixture(serveOnly?: boolean, options: Partial<RelayServiceOptions
       if (target.searchParams.has("connection_id")) {
         socket.addEventListener("open", () => dataOpened.resolve(socket));
       } else if (target.searchParams.has("warm")) {
-        // a warm socket is a client's data socket from the moment the relay binds it
         socket.addEventListener("message", (event) => {
           if (typeof event.data === "string" && event.data.includes('"bound"')) dataOpened.resolve(socket);
         });
@@ -99,7 +96,6 @@ async function fixture(serveOnly?: boolean, options: Partial<RelayServiceOptions
     get base() { return `http://127.0.0.1:${app.port}`; },
     async request(path = "", method = "GET", guarded = true) {
       const guard: Record<string, string> = guarded ? { "x-herdr-update": "1" } : {};
-      // the machine profile's local owner is the caller on its socket in the state folder
       if (appOptions.profile === "machine") return fetch("http://localhost/api/relay" + path, { method, unix: join(stateDir, "serve.sock"), headers: { origin: "http://localhost", ...guard } });
       return fetch(this.base + "/api/relay" + path, { method, headers: { origin: this.base, ...guard } });
     },
@@ -237,7 +233,6 @@ async function client(f: Awaited<ReturnType<typeof fixture>>, offer: RelayOffer,
   };
 }
 
-/** A client that finishes the protected handshake and says hello, then never signs in or pairs. */
 async function squatter(f: Awaited<ReturnType<typeof fixture>>, offer: RelayOffer) {
   const socket = new WebSocket(`ws://127.0.0.1:${f.localRelay.port}/v1/ws?server_id=${offer.server_id}&role=client&v=1`);
   socket.binaryType = "arraybuffer";
@@ -313,7 +308,6 @@ it("ends the relay offer's code, and a typed code, with the paired device that a
   await f.start();
   const devices = f.app.context.services.devices;
   const guard = { origin: f.base, "x-herdr-machine": "1" };
-  // a device paired at this PC's own address, which asks with its own credential
   const pairHere = async (label: string) => {
     const paired = await fetch(`${f.base}/api/devices/pair`, {
       method: "POST", headers: { ...guard, "content-type": "application/json", accept: "application/json" },
@@ -325,32 +319,27 @@ it("ends the relay offer's code, and a typed code, with the paired device that a
     const ask = (path: string) => fetch(`${f.base}/api/relay${path}`, { method: "POST", headers: { origin: f.base, "x-herdr-update": "1", authorization: `Device ${token}` } });
     return { id, ask };
   };
-  // the offer it asks for starts a code: that code goes when the device is revoked
   const laptop = await pairHere("Laptop");
   expect(devices.activePairing()).toBeNull();
   expect((await laptop.ask("/offer")).status).toBe(200);
   expect(devices.activePairing()).not.toBeNull();
   devices.revoke(laptop.id);
   expect(devices.activePairing()).toBeNull();
-  // so does this PC's own code once a device was handed it in an offer
   const tablet = await pairHere("Tablet");
   const own = await f.offer();
   const handed = decodeOffer((await (await tablet.ask("/offer")).json() as { url: string }).url);
   expect(handed?.code).toBe(own.code);
   devices.revoke(tablet.id);
   expect(devices.activePairing()).toBeNull();
-  // and the code to type it asked for, with the six digits behind it
   const phone = await pairHere("Phone");
   expect((await phone.ask("/code")).status).toBe(200);
   expect(devices.activePairing()).not.toBeNull();
   devices.revoke(phone.id);
   expect(devices.activePairing()).toBeNull();
-  // a code this PC asked for itself outlives the removal of a device that never had it
   const other = await pairHere("Other");
   const kept = await f.offer();
   devices.revoke(other.id);
   expect(devices.activePairing()?.code).toBe(kept.code);
-  // a device revoked while its request was on its way is handed nothing and starts nothing
   for (const path of ["/api/relay/offer", "/api/relay/code"]) {
     const late = await handleRelayRequest(new Request(f.base + path, { method: "POST", headers: { origin: f.base, "x-herdr-update": "1" } }), path, f.app.context, other.id);
     expect([path, late.status, await late.json()]).toEqual([path, 401, { error: { code: "unauthorized", message: "this device is no longer paired" } }]);
@@ -361,7 +350,6 @@ it("makes the relay tab's QR code only for a PC in no account, and takes it back
   const f = await fixture();
   await f.start();
   const devices = f.app.context.services.devices;
-  // the relay tab's QR code says so (x-ovis-no-account-only); every other offer is what it was
   const ask = (noAccountOnly: boolean) => fetch(`${f.base}/api/relay/offer`, { method: "POST",
     headers: { origin: f.base, "x-herdr-update": "1", ...(noAccountOnly ? { "x-ovis-no-account-only": "1" } : {}) } });
   const codeOf = async (response: Response) => {
@@ -370,18 +358,14 @@ it("makes the relay tab's QR code only for a PC in no account, and takes it back
   };
   const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   const key = Buffer.from(await crypto.subtle.exportKey("spki", keys.publicKey)).toString("base64url");
-  // paired long before, and signed in to an account since: it links itself while the QR code is on screen
   const laptop = devices.pairRelay(devices.startPairing().code, "Laptop", key)!.device;
-  // a code another place shows as digits is never the one the QR code carries
   devices.startPairing();
   let started = 0;
   devices.onPairingStarted(() => { started++; });
   const qr = await codeOf(await ask(true));
   expect([started, devices.activePairing()?.code]).toEqual([1, qr]);
-  // asked again, and by the page's other relay QR codes, it is the same code
   expect([await codeOf(await ask(true)), await codeOf(await ask(false)), started]).toEqual([qr, qr, 1]);
   expect(devices.linkAccountKey(laptop.id, key, key, "acct_1")).not.toBeNull();
-  // the PC is in an account: the code is taken back, and a page that still shows the QR code is refused a new one
   expect(devices.activePairing()).toBeNull();
   const refused = await ask(true);
   expect([refused.status, await refused.json()]).toEqual([409, { error: { code: "in_account", message: "This PC is already in an Ovis account. Sign in to that account on the device to add it." } }]);
@@ -411,18 +395,14 @@ it("closes the pairing window on request, and keeps it closed for the next start
   await f.start();
   expect((await f.request("/link", "POST")).status).toBe(200);
   expect(f.service.approvals.windowOpen()).toBe(true);
-  // Given the request does not come from this app's relay controls, it changes nothing
   expect((await f.request("/link/close", "POST", false)).status).toBe(403);
   expect(f.service.approvals.windowOpen()).toBe(true);
-  // When the owner stops waiting
   const closed = await f.request("/link/close", "POST");
   expect(closed.status).toBe(200);
   expect(await closed.json()).toEqual({ ok: true });
   expect(f.service.approvals.windowOpen()).toBe(false);
-  // Then a restart does not bring it back
   await f.restart();
   expect(f.service.approvals.windowOpen()).toBe(false);
-  // And closing a window that is not open answers the same
   expect(await (await f.request("/link/close", "POST")).json()).toEqual({ ok: true });
 });
 
@@ -514,7 +494,6 @@ it("hands a phone the PC's proven warm socket, so the PC opens none for it, and 
   const f = await fixture();
   await f.start();
   const warm = await bounded(f.warmOpened[0]!);
-  // a keepalive sent after the proof is answered after the relay took that proof
   const proven = deferred<void>();
   warm.addEventListener("message", (event) => { if (event.data === '{"type":"pong"}') proven.resolve(); });
   warm.send('{"type":"ping"}');
@@ -534,7 +513,6 @@ it("relay off closes sessions", async () => {
   const controlClosed = deferred<void>();
   const closed = Room.prototype.closed;
   const observer = spyOn(Room.prototype, "closed").mockImplementation(function (this: Room<object>, socket) {
-    // The only socket with no paired connection_id is the server control.
     if ("data" in socket && typeof socket.data === "object" && socket.data !== null
       && "info" in socket.data && typeof socket.data.info === "object" && socket.data.info !== null
       && "role" in socket.data.info && socket.data.info.role === "control") controlClosed.resolve();
@@ -626,7 +604,6 @@ it("fails closed on corrupt saved state and on an unreadable identity", async ()
   loadRelayIdentity(f.stateDir);
   writeFileSync(join(f.stateDir, "relay", "state.json"), "{bad");
   await f.restart();
-  // nothing goes through the relay: off, with the reason
   expect(f.service.status()).toMatchObject({ phase: "off", error: "Could not start the relay.", error_code: "start_failed" });
   expect(f.attempts).toBe(0);
   writeFileSync(relayIdentityPath(f.stateDir), "{bad");
@@ -639,7 +616,6 @@ it("fails closed on corrupt saved state and on an unreadable identity", async ()
 it("reads a start that failed before any link existed as off, with the reason, and a later start retries", async () => {
   const f = await fixture();
   loadRelayIdentity(f.stateDir);
-  // the saved choice cannot be written: a directory stands where state.json goes
   const state = join(f.stateDir, "relay", "state.json");
   mkdirSync(state);
   const failed = await f.request("/start", "POST");
@@ -729,7 +705,6 @@ it("bounds a client's incomplete protected handshake to fifteen seconds", async 
   raw.onclose = (event) => closed.resolve(event.code);
   const opened = deferred<void>();
   raw.onopen = () => opened.resolve();
-  // with a warm socket the PC's side is ready before the client hears its socket opened
   await bounded(Promise.all([f.dataOpened, opened.promise]));
   clock.advance(14_999);
   expect(raw.readyState).toBe(WebSocket.OPEN);
@@ -750,7 +725,6 @@ it("closes relay clients that never sign in, so they cannot hold the PC's slots"
   await f.start();
   const offer = await f.offer();
   const squatters = [];
-  // seven: the eighth would already push the oldest out (below)
   for (let index = 0; index < 7; index += 1) squatters.push(await squatter(f, offer));
   clock.advance(14_999);
   expect(squatters.every((squatting) => squatting.socket.readyState === WebSocket.OPEN)).toBe(true);
@@ -765,7 +739,6 @@ it("keeps at most four relay sessions per device, closing its oldest", async () 
   const f = await fixture();
   await f.start();
   const offer = await f.offer();
-  // each session is used (a stream opened) before the next: only then does it count as the device's for good
   const first = await client(f, offer);
   expect((await first.http("/api/relay")).status).toBe(200);
   const later = [];
@@ -805,13 +778,11 @@ it("keeps a signed-in client past the sign-in deadline", async () => {
 });
 
 it("lets a new client in when every place holds a client that never signed in, evicting the oldest of them", async () => {
-  // a frozen clock: no sign-in deadline fires, only the eviction can make room
   const f = await fixture(false, { clock: new TestClock() });
   await f.start();
   const offer = await f.offer();
   const squatters = [];
   for (let index = 0; index < 8; index += 1) squatters.push(await squatter(f, offer));
-  // the eighth arrival pushes the oldest out at once (well before a squatter closes on its own, about 10 s in)
   await bounded(squatters[0]!.closed, 2_000);
   const peer = await client(f, offer);
   await bounded(squatters[1]!.closed, 2_000);
@@ -823,7 +794,6 @@ it("never evicts a signed-in session to make room", async () => {
   const f = await fixture(false, { clock: new TestClock() });
   await f.start();
   const first = await client(f, await f.offer());
-  // each used before the next: used, a session counts as the device's for good; one never used could give way to a later racing carrier
   expect((await first.http("/api/relay")).status).toBe(200);
   const signedIn = [first];
   for (let index = 0; index < 3; index += 1) {
@@ -838,10 +808,6 @@ it("never evicts a signed-in session to make room", async () => {
   expect(f.service.status().sessions).toBe(5);
 });
 
-/**
- * A PC between a global and a regional local relay with the given round trips. By default it names
- * no relay of its own and measures the regional one; `named` sets OVIS_RELAY_URL's value instead.
- */
 async function regionalFixture({ rtt = { global: 130, regional: 13 } as { global: number | null; regional: number | null },
   stateDir = undefined as string | undefined, probeGate = undefined as Promise<void> | undefined, named = undefined as string | undefined } = {}) {
   const relays = { global: startBunRelay({ port: 0 }), regional: startBunRelay({ port: 0 }) };
@@ -868,7 +834,6 @@ async function regionalFixture({ rtt = { global: 130, regional: 13 } as { global
       socket.addEventListener("message", (event) => {
         if (typeof event.data === "string" && JSON.parse(event.data).type === "sync") synced[which].resolve();
       });
-      // the control socket: data and warm sockets come and go with phones
       if (!target.searchParams.has("connection_id") && !target.searchParams.has("warm")) socket.addEventListener("close", () => lost[which].resolve());
       return socket;
     },
@@ -883,21 +848,17 @@ async function regionalFixture({ rtt = { global: 130, regional: 13 } as { global
 }
 
 it("advertises a regional relay that answers much faster, stays on the global one too, and keeps the choice", async () => {
-  // Given a regional relay at a tenth of the global relay's round trip
   const f = await regionalFixture();
   expect((await f.post("/start")).status).toBe(200);
-  // Then the PC is on both relays, and new offers name the regional one
   await bounded(Promise.all([f.synced.global.promise, f.synced.regional.promise]));
   expect(f.service.status()).toMatchObject({ phase: "online", relay: "wss://regional.test" });
   const offer = await f.offer();
   expect(offer.relay).toBe("wss://regional.test");
-  // And a phone reaches it through either relay
   for (const port of [f.relays.regional.port, f.relays.global.port]) {
     const phone = await client({ localRelay: { port } } as Awaited<ReturnType<typeof fixture>>, { ...offer, code: (await f.offer()).code });
     expect((await phone.http("/api/health")).status).toBe(200);
     phone.close();
   }
-  // And a restart keeps the choice without measuring again
   await f.service.shutdown();
   const again = await regionalFixture({ rtt: { global: null, regional: null }, stateDir: f.dir });
   expect((await again.post("/start")).status).toBe(200);
@@ -919,35 +880,27 @@ it("stays on the global relay alone when a regional one is not much faster or th
 });
 
 it("keeps no measurement that finishes after the relay was turned off", async () => {
-  // Given a measurement still running when the relay is turned off
   const gate = deferred<void>();
   const f = await regionalFixture({ probeGate: gate.promise });
   expect((await f.post("/start")).status).toBe(200);
   await bounded(f.synced.global.promise);
   expect((await f.post("/stop")).status).toBe(200);
-  // Then its requests are cancelled
   expect(f.signals.length).toBe(2);
   expect(f.signals.every((signal) => signal.aborted)).toBe(true);
-  // And when it finishes, nothing is saved and no regional link opens
   gate.resolve();
-  // a macrotask runs only once every microtask the measurement queued has run
   await new Promise((resolve) => setImmediate(resolve));
   expect(existsSync(join(f.dir, "relay", "region.json"))).toBe(false);
   expect(f.service.status()).toMatchObject({ phase: "off", relay: "wss://global.test" });
 });
 
 it("names the relay new offers name in a pairing link without a code too", async () => {
-  // Given a PC that chose a regional relay
   const f = await regionalFixture();
   expect((await f.post("/start")).status).toBe(200);
   await bounded(Promise.all([f.synced.global.promise, f.synced.regional.promise]));
-  // Then a link for comparing digits names the regional relay, as a QR code does
   expect((await f.link()).relay).toBe("wss://regional.test");
-  // And the global relay while the regional link is down
   await f.relays.regional.stop();
   await bounded(f.lost.regional.promise);
   expect((await f.link()).relay).toBe("wss://global.test");
-  // And a PC that chose no regional relay names the global one
   const plain = await regionalFixture({ rtt: { global: 100, regional: 60 } });
   expect((await plain.post("/start")).status).toBe(200);
   await bounded(plain.synced.global.promise);
@@ -955,26 +908,21 @@ it("names the relay new offers name in a pairing link without a code too", async
 });
 
 it("names the global relay in new offers while the regional link is down, and reports the global link's state", async () => {
-  // Given a PC on both relays
   const f = await regionalFixture();
   expect((await f.post("/start")).status).toBe(200);
   await bounded(Promise.all([f.synced.global.promise, f.synced.regional.promise]));
-  // When the regional relay goes away, offers name the global relay again, which stays online
   await f.relays.regional.stop();
   await bounded(f.lost.regional.promise);
   expect(f.service.status()).toMatchObject({ phase: "online", relay: "wss://global.test", error: null });
   expect((await f.offer()).relay).toBe("wss://global.test");
-  // And when the global relay goes away too, the status says so
   await f.relays.global.stop();
   await bounded(f.lost.global.promise);
   expect(f.service.status().phase).toBe("error");
 });
 
 it("keeps a PC whose OVIS_RELAY_URL names a regional relay on the global relay too, without measuring", async () => {
-  // Given OVIS_RELAY_URL naming Ovis's regional relay, which its phones fall back from
   const f = await regionalFixture({ named: "wss://relay-ap.ovis.sh" });
   expect((await f.post("/start")).status).toBe(200);
-  // Then the PC is on both relays, measured nothing, and offers name the regional relay
   await bounded(Promise.all([f.synced.global.promise, f.synced.regional.promise]));
   expect(f.probed).toEqual([]);
   expect((await f.offer()).relay).toBe("wss://relay-ap.ovis.sh");
@@ -982,18 +930,15 @@ it("keeps a PC whose OVIS_RELAY_URL names a regional relay on the global relay t
 });
 
 it("opens the regional link and keeps running when the choice cannot be saved", async () => {
-  // Given a state folder where the choice cannot be written
   const dir = mkdtempSync(join(tmpdir(), "ovis-relay-region-"));
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(join(dir, "relay", "region.json"), { recursive: true });
   const f = await regionalFixture({ stateDir: dir });
   expect((await f.post("/start")).status).toBe(200);
-  // Then the PC is on both relays all the same, and offers name the regional one
   await bounded(Promise.all([f.synced.global.promise, f.synced.regional.promise]));
   expect((await f.offer()).relay).toBe("wss://regional.test");
 });
 
-/** A device typing `code`: one exchange on the rendezvous; the offer's JSON, the error it ended in, or the relay's close code. */
 async function typeCode(f: Awaited<ReturnType<typeof fixture>>, code: string): Promise<{ offer?: string; error?: unknown; close?: number }> {
   const { nameplate } = splitPairCode(code);
   const socket = new WebSocket(`ws://127.0.0.1:${f.localRelay.port}/v1/pair?nameplate=${nameplate}&role=guest&v=1`);
@@ -1022,7 +967,6 @@ async function mintCode(f: Awaited<ReturnType<typeof fixture>>) {
   return body;
 }
 
-/** The same code with its last password character changed. */
 const wrong = (code: string) => { const canonical = normalizePairCode(code)!; return canonical.slice(0, -1) + (canonical.endsWith("Z") ? "Y" : "Z"); };
 
 it("a device that types the code gets the QR code's offer, pairs with its six-digit code, and the code is spent", async () => {
@@ -1045,7 +989,6 @@ it("three wrong codes end it, deliver nothing, and never pause pairing with the 
   await f.start();
   const minted = await mintCode(f);
   for (let index = 0; index < 3; index++) {
-    // the PC heard a wrong confirmation and ended that try itself
     expect(await typeCode(f, wrong(minted.code))).toEqual({ close: PAIR_CLOSE.DROPPED });
   }
   expect(await typeCode(f, minted.code)).toEqual({ close: PAIR_CLOSE.NO_HOST });
@@ -1090,7 +1033,6 @@ it("end to end: the hosted app's code screen finds the PC through the relay and 
   expect(f.app.context.services.devices.list(null).some((device) => device.via_relay)).toBe(true);
 });
 
-/** The same device protocol, with the ordinary server constrained to one local engine. */
 function machineFixture(appOptions: NonNullable<Parameters<typeof createServer>[0]> = {}, relayOptions: Partial<RelayServiceOptions> = {}) {
   const account = new FakeAccountService();
   const options = { profile: "machine" as const, accountService: { url: "https://account.test", fetch: account.fetch }, ...appOptions };
@@ -1106,7 +1048,6 @@ it.each(["missing HTTP", "missing WS", "wrong"])("machine profile refuses %s pro
   if (scenario === "wrong") peer.mux.sendSession({ type: FrameType.AUTH, flags: 0, stream_id: 0,
     payload: { scheme: "device-key", device_id: allowed.device.id, signature: Buffer.alloc(64, 9).toString("base64url") } });
   else {
-    // The malicious client claims local admission so it can send OPEN; the server has granted none.
     peer.mux.authenticate(allowed.device.id);
     if (scenario.endsWith("HTTP")) peer.mux.openHttp({ target: "/api/session", method: "GET", headers: [], body: "none" });
     else peer.mux.openWs({ target: "/ws", protocols: [], headers: [] });
@@ -1114,7 +1055,6 @@ it.each(["missing HTTP", "missing WS", "wrong"])("machine profile refuses %s pro
   expect(await bounded(peer.error)).toBe(scenario === "wrong" ? "auth_failed" : "protocol_error");
   await bounded(peer.closed);
   expect(peer.frames.filter((type) => [FrameType.AUTH_OK, FrameType.HTTP_HEADERS, FrameType.WS_ACCEPT, FrameType.WS_DATA].some((forbidden) => forbidden === type))).toEqual([]);
-  // The answer identifies the profile actually exercised; the existing device proof is reused unchanged.
   expect(await (await allowed.http("/api/health")).json()).toMatchObject({ machine_profile: { engine: "herdr" } });
 });
 
@@ -1170,7 +1110,6 @@ it("machine profile opens no direct listener even when the relay service is give
   expect(bound).toBe(0);
 });
 
-/** A phone's saved pairings, held in memory (the app keeps them in IndexedDB). */
 class MemoryStore implements RelayDeviceStore {
   saved: RelayDevice | undefined;
   async get() { return this.saved; }
@@ -1187,13 +1126,11 @@ it("machine profile lists itself alone, with its terminals, to the app reading i
   const f = await machineFixture();
   await f.start();
   const offer = await f.offer();
-  // the phone's own transport and PC list read, as the hosted app makes them after its pairing
   const transport = await openRelayTransport(offer, { store: new MemoryStore(), openChannel: (opened, options) => openRelayChannel(opened, { ...options,
     socket: (url) => { const target = new URL(url); return new WebSocket(`ws://127.0.0.1:${f.localRelay.port}${target.pathname}${target.search}`); } }) });
   cleanup.push(() => { setTransport(nativeTransport); transport.close(); });
   setTransport(transport);
   const machines = await fetchMachines();
-  // named as the machine names itself, and known by its relay ID, as an ordinary server lists its own PC
   expect(machines.map(({ id, name, kind, state, error, server_id }) => ({ id, name, kind, state, error, server_id })))
     .toEqual([{ id: "local", name: hostname(), kind: "local", state: "connected", error: null, server_id: offer.server_id }]);
   expect(machines[0]!.snapshot?.workspaces.map((workspace) => workspace.workspace_id)).toContain(made.workspace.workspace_id);
@@ -1227,7 +1164,6 @@ it("machine profile gives a plugin run's state to a device that drives it and re
   await f.start();
   const offer = await f.offer();
   const drive = await client(f, offer);
-  // a driving device reaches the route (it asks for a run with no log id, which the route itself refuses)
   const driving = await drive.http("/api/plugin/action");
   expect([driving.status, (await driving.json() as { error: { code: string } }).error.code]).not.toEqual([403, "read_only"]);
   f.app.context.services.devices.update(drive.device.id, { role: "watch" });

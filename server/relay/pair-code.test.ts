@@ -7,7 +7,6 @@ import { PAIR_CLOSE } from "../../relay/pair-room.ts";
 import { RelayPairCodes } from "./pair-code.ts";
 import { loadRelayIdentity } from "./identity.ts";
 
-/** A host socket the test drives: what the PC sends is kept, and the relay's frames and close are the test's to deliver. */
 class FakeSocket extends EventTarget {
   binaryType = "arraybuffer";
   sent: unknown[] = [];
@@ -39,7 +38,6 @@ it("a mint that a newer one replaced, still waiting on the relay, leaves nothing
     const second = pairCodes.mint();
     sockets[1]!.relay(JSON.stringify({ type: "waiting" }));
     await second;
-    // the first mint's relay answers late: another PC holds its nameplate
     sockets[0]!.end(PAIR_CLOSE.TAKEN);
     expect(await first).toBeInstanceOf(Error);
     pairCodes.cancel();
@@ -55,7 +53,6 @@ it("gives no code to a device that was revoked while its code waited on the rela
       devices.match(paired.token);
       return paired.device.id;
     };
-    // revoked before the relay answered: the six digits behind the code would be held by a device no revoke can name
     const laptop = pairHere("Laptop");
     const minted = pairCodes.mint(laptop).catch((error: unknown) => error);
     devices.revoke(laptop);
@@ -64,7 +61,6 @@ it("gives no code to a device that was revoked while its code waited on the rela
     expect(devices.activePairing()).toBeNull();
     expect(pairCodes.showing).toBeNull();
     expect(sockets.filter((socket) => !socket.closed).map((socket) => socket.url)).toEqual([]);
-    // the same with Revoke all while the relay was asked
     const tablet = pairHere("Tablet");
     const second = pairCodes.mint(tablet).catch((error: unknown) => error);
     devices.revokeAll();
@@ -72,7 +68,6 @@ it("gives no code to a device that was revoked while its code waited on the rela
     expect(await second).toBeInstanceOf(DeviceGoneError);
     expect(devices.activePairing()).toBeNull();
     expect(pairCodes.showing).toBeNull();
-    // this PC's own code, asked for by no device, is started as before
     const own = pairCodes.mint();
     sockets[2]!.relay(JSON.stringify({ type: "waiting" }));
     await own;

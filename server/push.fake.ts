@@ -1,17 +1,10 @@
 import type { PushPayload } from "../shared/protocol.ts";
 
-/**
- * Test support, never served: a push service on 127.0.0.1 that also plays the browser.
- * It owns one subscription's keys, decrypts every push with an independent RFC 8291
- * (aes128gcm) implementation and verifies the RFC 8292 VAPID signature, so tests assert
- * on the payload a device would actually show - not on what the server meant to send.
- */
 
 export interface ReceivedPush {
   payload: PushPayload;
   urgency: string | null;
   ttl: number;
-  /** the JWT verified against the `k=` key it came with */
   vapidValid: boolean;
   vapidKey: string;
   vapidClaims: { aud?: string; sub?: string; exp?: number };
@@ -20,7 +13,6 @@ export interface ReceivedPush {
 export interface FakePushService {
   readonly subscription: { endpoint: string; keys: { p256dh: string; auth: string } };
   readonly received: ReceivedPush[];
-  /** HTTP status for the next pushes (201 by default; 410 = the device unsubscribed). */
   answerWith(status: number): void;
   waitFor(predicate: (push: ReceivedPush) => boolean, label: string, ms: number): Promise<ReceivedPush>;
   stop(): void;
@@ -60,7 +52,6 @@ async function decrypt(body: Bytes, privateKey: CryptoKey, publicKey: Bytes, aut
   const nonce = await hkdf(salt, ikm, encoder.encode("Content-Encoding: nonce\0"), 12);
   const aes = await crypto.subtle.importKey("raw", contentKey, "AES-GCM", false, ["decrypt"]);
   const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, aes, body.slice(21 + idLength)));
-  // a single final record: data, then the 0x02 delimiter, then zero padding
   let end = plain.length;
   while (end > 0 && plain[end - 1] === 0) end -= 1;
   if (plain[end - 1] !== 2) throw new Error("push record is missing its final-record delimiter");

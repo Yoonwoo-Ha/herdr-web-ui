@@ -21,29 +21,21 @@ import { answerServerChallenge } from "../../shared/relay-server-proof.ts";
 import type { DeviceStore } from "../devices.ts";
 import type { RelayIdentity } from "./identity.ts";
 
-/** how long one device has, from M1, to answer */
 export const PAIR_CODE_ATTEMPT_MS = 20_000;
-/** nameplates tried before minting gives up: another PC may hold one */
 const NAMEPLATE_TRIES = 5;
 const REOPEN_MS = 1000;
 /** under the relay's 120 s idle close (relay/core.ts IDLE_MS), so a code nobody tries keeps its nameplate */
 const KEEPALIVE_MS = 30_000;
-/** how long a nameplate may wait for the relay before its six-digit code is started */
 const PAIR_CODE_HOLD_MS = 60_000;
-/** the relay's keepalive (relay/core.ts KEEPALIVE_PING), as server/relay/link.ts sends it */
 const KEEPALIVE_PING = '{"type":"ping"}';
 
 export class PairCodeUnavailableError extends Error {}
 
 export interface RelayPairCodesOptions {
-  /** the relay's wss origin the rendezvous is held on */
   readonly relay: string;
   readonly devices: DeviceStore;
-  /** the offer a QR code would show for `code`, the six-digit code this typed code is bound to */
   readonly offer: (code: string) => RelayOffer;
-  /** this PC's relay key, which it proves to hold a nameplate (relay/pair-room.ts) */
   readonly identity: () => RelayIdentity;
-  /** this PC's relay pass, sent in a header on Ovis's relays only */
   readonly pass?: () => string | null;
   readonly connect?: (url: string, headers?: Record<string, string>) => WebSocket;
   readonly attemptMs?: number;
@@ -55,10 +47,6 @@ interface Attempt { id: string; exchange: PairCodeHost; timer: ReturnType<typeof
 interface Current {
   code: string;
   nameplate: string;
-  /**
-   * the six-digit code the offer carries, and that issuance's expiry: the typed code is dead once it
-   * is no longer the pending one, even when a later issuance drew the same six digits
-   */
   bound: { code: string; expires_at: string };
   expires: number;
   tries: number;
@@ -76,29 +64,21 @@ const bytesOf = (text: string) => Uint8Array.from(text.match(/../g)!, (pair) => 
 
 export class RelayPairCodes {
   private current: Current | null = null;
-  /** bumped by every mint and cancel: a mint still waiting on the relay that is no longer the newest stops there */
   private generation = 0;
 
-  /** set while mint starts the six-digit code its typed code is bound to: that one replaces nothing of its own */
   private binding = false;
 
   constructor(private readonly options: RelayPairCodesOptions) {
-    // a six-digit code started anywhere else (New code, the Devices group) ends the typed code bound to the old one
     options.devices.onPairingStarted(() => { if (!this.binding) this.cancel(); });
   }
 
   private url(nameplate: string, identity: RelayIdentity): string {
     const url = new URL("/v1/pair", this.options.relay.replace(/^wss:/, "https:"));
     url.protocol = "wss:";
-    // the PC's key, which a relay that binds the nameplate to it asks this socket to prove; an older relay reads neither
     url.search = new URLSearchParams({ nameplate, role: "host", v: "1", server_id: identity.server_id, public_key: bytesToHex(importPublicKey(identity.public_key)) }).toString();
     return url.href;
   }
 
-  /**
-   * A new code, replacing any code still showing. It starts a fresh six-digit code (the QR code then
-   * shows the same one) and resolves once the relay holds its nameplate.
-   */
   async mint(by: string | null = null): Promise<{ code: string; expires_at: string }> {
     this.cancel();
     const generation = this.generation;
@@ -106,8 +86,6 @@ export class RelayPairCodes {
     devices.assertRelayPairing();
     for (let tried = 0; tried < NAMEPLATE_TRIES; tried++) {
       const code = randomPairCode();
-      // the six-digit code is started only once the relay holds the nameplate, so a code the relay
-      // refuses leaves the QR code showing as it was
       const current: Current = {
         code, nameplate: splitPairCode(code).nameplate, bound: { code: "", expires_at: "" }, expires: Date.now() + PAIR_CODE_HOLD_MS, tries: PAIR_CODE_TRIES,
         socket: null, attempt: null, next: new PairCodeHost(code), reopen: null, keepalive: null, done: false,
@@ -115,7 +93,6 @@ export class RelayPairCodes {
       };
       this.current = current;
       const held = await this.hold(current);
-      // hidden, or replaced by a newer code, while the relay answered: this one must not live on
       if (generation !== this.generation || current.done) { this.finish(current); throw new PairCodeUnavailableError("This code was replaced."); }
       if (held !== "held") {
         this.finish(current);
@@ -124,7 +101,6 @@ export class RelayPairCodes {
       }
       let pairing: { code: string; expires_at: string };
       this.binding = true;
-      // `by`: the paired device that asked for the code, which holds the six digits behind it (DeviceStore.revoke)
       try { pairing = devices.startPairing(Date.now(), { remote: false, startedBy: null, memberRequired: false, by }); }
       catch (error) { this.finish(current); throw error; }
       finally { this.binding = false; }
@@ -137,18 +113,15 @@ export class RelayPairCodes {
     throw new PairCodeUnavailableError("The relay did not take a pairing code. Try again, or scan the QR code.");
   }
 
-  /** Ends the code showing, if any: its nameplate leaves the relay, and a device trying it is cut off. */
   cancel(): void {
     this.generation++;
     if (this.current) this.finish(this.current);
   }
 
-  /** the code showing, for tests and status */
   get showing(): { code: string; tries: number } | null {
     return this.current && !this.current.done ? { code: this.current.code, tries: this.current.tries } : null;
   }
 
-  /** Opens the host socket; "taken" when another PC holds the nameplate, "failed" when the relay did not answer. */
   private hold(current: Current): Promise<"held" | "taken" | "failed"> {
     return new Promise((resolve) => {
       let settled = false;
@@ -188,7 +161,6 @@ export class RelayPairCodes {
         }
         if (!settled) return settle(event.code === PAIR_CLOSE.TAKEN ? "taken" : "failed");
         if (current.done) return;
-        // the relay dropped the nameplate: the same code, with the tries it has left, goes back on it
         if (current.attempt) this.endAttempt(current);
         if (Date.now() + REOPEN_MS < current.expires) current.reopen = setTimeout(() => { current.reopen = null; if (!current.done) void this.hold(current).then((held) => { if (held !== "held") this.finish(current); }); }, REOPEN_MS);
         else this.finish(current);
@@ -197,14 +169,13 @@ export class RelayPairCodes {
   }
 
   private send(current: Current, data: string | Uint8Array<ArrayBuffer>): void {
-    try { current.socket?.send(data); } catch { /* the close handler reopens or ends it */ }
+    try { current.socket?.send(data); } catch {}
   }
 
   private drop(current: Current, attempt: string): void {
     this.send(current, JSON.stringify({ type: "drop", attempt }));
   }
 
-  /** A device joined: one of the tries is taken now, before anything goes out. */
   private guest(current: Current, id: string): void {
     if (current.attempt !== null || current.tries <= 0 || Date.now() >= current.expires) return this.drop(current, id);
     current.tries -= 1;
@@ -215,7 +186,6 @@ export class RelayPairCodes {
     frame.set(bytesOf(id));
     frame.set(hello, ATTEMPT_BYTES);
     this.send(current, frame);
-    // the next device's M1 is worked out once this one is sent, so the relay cannot time it against an arrival
     current.next = new PairCodeHost(current.code);
   }
 
@@ -223,7 +193,6 @@ export class RelayPairCodes {
     const attempt = current.attempt;
     if (!attempt || frame.length < ATTEMPT_BYTES || hexOf(frame.subarray(0, ATTEMPT_BYTES)) !== attempt.id) return;
     const { devices, offer } = this.options;
-    // the six-digit code may have been spent, replaced or run out since: then no offer goes out
     const active = devices.activePairing();
     const pending = active?.code === current.bound.code && active.expires_at === current.bound.expires_at;
     let reply: Uint8Array | null;
@@ -238,11 +207,9 @@ export class RelayPairCodes {
     out.set(bytesOf(attempt.id));
     out.set(reply, ATTEMPT_BYTES);
     this.send(current, out);
-    // single use: the device that knew the code has the offer (or was told the code is gone)
     this.finish(current);
   }
 
-  /** The attempt is over; its try stays spent, and the code ends with its last one. */
   private endAttempt(current: Current): void {
     if (current.attempt) clearTimeout(current.attempt.timer);
     current.attempt = null;
@@ -259,8 +226,7 @@ export class RelayPairCodes {
     current.attempt = null;
     const socket = current.socket;
     current.socket = null;
-    // the last frame goes out before the close: a WebSocket keeps their order
-    try { socket?.close(1000, "done"); } catch { /* already closed */ }
+    try { socket?.close(1000, "done"); } catch {}
     if (this.current === current) this.current = null;
   }
 }

@@ -8,10 +8,6 @@ import { createServer } from "./index.ts";
 import type { MachineManager } from "./machines.ts";
 import { PortalService } from "./portal.ts";
 
-// Pairing this PC's server with another PC of the account (docs/account.md, "Adding a PC of your account") is the
-// owner's, from a window direct to this PC that drives it: this PC itself, the token, the owner's Tailscale login, a
-// device paired with it directly that drives. Never an open LAN window, a Portal visitor, a device on the relay or
-// one that only watches: none of them may have this PC pair itself with a PC they name.
 afterAll(unitHerdrOnly());
 const root = mkdtempSync(join(tmpdir(), "ovis-account-pc-owner-"));
 const TOKEN = "fictional-owner-token";

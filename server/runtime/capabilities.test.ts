@@ -13,9 +13,7 @@ describe("the runtime a process serves", () => {
   });
 
   it("tells herdr's TUI server and herdr-core apart by what each can do", () => {
-    // herdr: a PTY runs its attach command, it works out agents itself, and has no other client to tell
     expect(HERDR).toEqual({ runtime: "herdr", attach: "pty-cli", agents: "detected", foreground: "job", seen: null, pins: false, machines: false, spawner: "server" });
-    // herdr-core: a stream on the hc connection, reports only, and the Herdr app beside it
     expect(HERDR_CORE).toEqual({ runtime: "herdr-core", attach: "hc", agents: "reported", foreground: "leader", seen: "label", pins: true, machines: true, spawner: "core" });
   });
 });
@@ -24,7 +22,6 @@ describe("the runtime a ping names", () => {
   it("says nothing for herdr's TUI server, whose ping names none", () => {
     expect(runtimeIdentity(undefined)).toEqual({});
     expect(runtimeIdentity({ direct_terminal_attach: true })).toEqual({});
-    // layout flags without a runtime are no one's: herdr's layout is its own
     expect(runtimeIdentity({ layout: { rename: true } })).toEqual({});
   });
 

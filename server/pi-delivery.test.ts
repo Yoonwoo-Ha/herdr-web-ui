@@ -9,7 +9,6 @@ import { capturePiDeliveryAnchor, capturePiDeliveryAnchorAttempt, capturePiDeliv
 const roots: string[] = [];
 const dir = () => { const root = mkdtempSync(join(tmpdir(), "ovis-pi-delivery-")); roots.push(root); return root; };
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
-/** `stamp` is the time Pi gave the message when it was submitted, before it was written. */
 const entry = (id: string, parentId: string | null, role: string, text: string, stamp = Date.now()) => JSON.stringify({
   type: "message", id, parentId, timestamp: "2026-10-24T00:00:00.000Z",
   message: { role, content: [{ type: "text", text }], timestamp: stamp },
@@ -150,7 +149,6 @@ describe("Pi delivery transcript matching", () => {
     appendFileSync(path, entry("e1", "base", "user", "hello") + entry("u2", "e1", "user", "hello") + entry("u3", "u2", "user", "hello"));
     const consumed = new Set<string>();
     expect(matchPiDeliveries(path, [template("one", "/review", anchor), candidate("two", "hello", anchor)], consumed).consumed).toEqual(["one", "two"]);
-    // the third record is left for a later receipt
     expect(consumed.size).toBe(2);
   });
 
@@ -177,7 +175,6 @@ describe("Pi delivery transcript matching", () => {
     const path = join(dir(), "slash-message.jsonl");
     writeFileSync(path, header() + entry("base", null, "assistant", "working"));
     const anchor = capturePiDeliveryAnchor(path)!;
-    // typed in the terminal before Pi recorded the Ovis send
     appendFileSync(path, entry("t1", "base", "user", "from the terminal"));
     const receipts = [candidate("one", "/home/me/file explain this", anchor)];
     expect(matchPiDeliveries(path, receipts).consumed).toEqual([]);
@@ -220,7 +217,6 @@ describe("Pi delivery transcript matching", () => {
     const path = join(dir(), "skill-body-tag.jsonl");
     writeFileSync(path, header() + entry("base", null, "assistant", "working"));
     const anchor = capturePiDeliveryAnchor(path)!;
-    // a SKILL.md body of `Example:\n</skill>\n\nhello`: where the block ends is not provable from the record
     appendFileSync(path, entry("s1", "base", "user", `<skill name="commit" location="/s/commit/SKILL.md">\nReferences are relative to /s/commit.\n\nExample:\n</skill>\n\nhello\n</skill>${request}`));
     expect(matchPiDeliveries(path, [candidate("one", other, anchor)]).consumed).toEqual([]);
     expect(matchPiDeliveries(path, [candidate("two", `/skill:commit${request ? " more" : ""}`, anchor)]).consumed).toEqual([]);
@@ -273,8 +269,6 @@ describe("Pi delivery transcript matching", () => {
   it("reads bounded tails on a 200 MiB history and parses only appended records", () => {
     const path = join(dir(), "large.jsonl");
     writeFileSync(path, header());
-    // A sparse hole stands in for 200 MiB of older history: a reader that scanned it would count
-    // every byte, while the disk stores none of them.
     fs.truncateSync(path, 200 * 1024 * 1024);
     appendFileSync(path, "\n" + entry("baseline", "old-24", "assistant", "done"));
     const original = fs.readSync;
@@ -381,7 +375,6 @@ describe("Pi delivery transcript matching", () => {
     const complete = start + message;
     const prefix = kind === "empty file" ? "" : kind === "partial header" ? start.slice(0, -1) : complete.slice(0, -1);
     writeFileSync(path, prefix);
-    // No write occurs during the attempt: equal before/after stats do not prove the writer is done.
     expect(capturePiDeliveryAnchorAttempt(path)).toEqual({ anchor: null, retry: true });
     let waits = 0;
     const anchor = await capturePiDeliveryAnchorRetrying(path, false, undefined, capturePiDeliveryAnchorAttempt,
@@ -451,7 +444,6 @@ describe("Pi delivery transcript matching", () => {
   it("does not let a same-text record Pi stamped before the capture confirm the receipt", () => {
     const path = join(dir(), "stamped.jsonl");
     writeFileSync(path, header() + entry("a0", null, "assistant", "working"));
-    // Typed into Pi's own terminal and queued while it worked, before Ovis pressed Enter.
     const typedEarlier = Date.now() - 1000;
     const anchor = capturePiDeliveryAnchor(path)!;
     appendFileSync(path, entry("external", "a0", "user", "same", typedEarlier));
@@ -466,9 +458,7 @@ describe("Pi delivery transcript matching", () => {
     const consumed = new Set<string>();
     appendFileSync(path, entry("external", "a0", "user", "same", typedEarlier) + entry("ours", "external", "user", "same"));
     const receipts = [candidate("r1", "same", anchor), candidate("r2", "same", anchor)];
-    // the earlier record lies before the first receipt's match, so it cannot settle the second
     expect(matchPiDeliveries(path, receipts, consumed)).toEqual({ consumed: ["r1"], changed: [], retry: false });
-    // nor in a later reconciliation, which scans the branch from the anchor again
     expect(matchPiDeliveries(path, [receipts[1]!], consumed)).toEqual({ consumed: [], changed: [], retry: false });
     appendFileSync(path, entry("ours-2", "ours", "user", "same"));
     expect(matchPiDeliveries(path, [receipts[1]!], consumed)).toEqual({ consumed: ["r2"], changed: [], retry: false });
@@ -478,7 +468,6 @@ describe("Pi delivery transcript matching", () => {
     const path = join(dir(), "captures.jsonl");
     writeFileSync(path, header() + entry("a0", null, "assistant", "working"));
     const first = capturePiDeliveryAnchor(path)!;
-    // the clock is set back a minute before Ovis's first record, then restored
     appendFileSync(path, entry("own-1", "a0", "user", "same", first.at - 60_000));
     const second = { ...capturePiDeliveryAnchor(path)!, at: first.at - 59_000 };
     appendFileSync(path, entry("own-2", "own-1", "user", "same", first.at - 58_000)
@@ -493,7 +482,6 @@ describe("Pi delivery transcript matching", () => {
     const path = join(dir(), "other-text.jsonl");
     writeFileSync(path, header() + entry("a0", null, "assistant", "working"));
     const first = capturePiDeliveryAnchor(path)!;
-    // the clock is set back a minute after the first capture
     appendFileSync(path, entry("own-1", "a0", "user", "same", first.at - 60_000));
     const second = { ...capturePiDeliveryAnchor(path)!, at: first.at - 59_000 };
     appendFileSync(path, entry("own-2", "own-1", "user", "other", first.at - 58_500));
@@ -503,7 +491,6 @@ describe("Pi delivery transcript matching", () => {
     const receipts = [candidate("r1", "same", first), candidate("r2", "other", second), candidate("r3", "same", third)];
     const consumed = new Set<string>();
     expect(matchPiDeliveries(path, receipts, consumed)).toEqual({ consumed: ["r1"], changed: [], retry: false });
-    // the earlier external copy predates r3's capture and was passed over: it must not settle r3
     expect(matchPiDeliveries(path, receipts.slice(1), consumed)).toEqual({ consumed: ["r2"], changed: [], retry: false });
     appendFileSync(path, entry("own-3", "external-late", "user", "same", first.at - 56_000 + 60_000));
     expect(matchPiDeliveries(path, [receipts[2]!], consumed)).toEqual({ consumed: ["r3"], changed: [], retry: false });
@@ -513,7 +500,6 @@ describe("Pi delivery transcript matching", () => {
     const path = join(dir(), "clock.jsonl");
     writeFileSync(path, header() + entry("a0", null, "assistant", "working"));
     const first = capturePiDeliveryAnchor(path)!;
-    // a clock corrected a minute back between the capture and Pi's stamp, and forward again
     appendFileSync(path, entry("u1", "a0", "user", "first", first.at - 60_000));
     const second = capturePiDeliveryAnchor(path)!;
     appendFileSync(path, entry("u2", "u1", "user", "second"));

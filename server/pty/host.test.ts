@@ -7,7 +7,6 @@ import { defaultRustSidecar, installedHostVouched, probeRustHost, resetPtyHostFo
 import { PtySession, type PtySessionOptions } from "./session.ts";
 import { nodeSidecarAvailable, resetSidecarForTests, sidecarAvailable } from "./sidecar.ts";
 
-/** the Rust host these tests run: OVIS_PTY_SIDECAR_BIN, else the release build */
 const RUST_HOST = rustSidecar({ ...process.env, OVIS_PTY_SIDECAR: "rust" });
 const built = RUST_HOST !== null;
 const LIMIT_MS = 10_000;
@@ -80,7 +79,6 @@ describe("rustSidecar", () => {
       const installed = join(dir, "bin", "ovis-pty-sidecar");
       writeFileSync(installed, "host");
       const digest = createHash("sha256").update("host").digest("hex");
-      // a whole second, so both writes carry exactly the same mtime, as on a coarse file clock
       const tick = 1_700_000_000;
       writeFileSync(`${installed}.json`, JSON.stringify({ sha256: digest, version: "0.0.1" }));
       utimesSync(`${installed}.json`, tick, tick);
@@ -89,7 +87,6 @@ describe("rustSidecar", () => {
       utimesSync(`${installed}.json`, tick, tick);
       expect(statSync(`${installed}.json`).mtimeMs).toBe(tick * 1000);
       expect(installedHostVouched(installed)).toBe(true);
-      // a server of another version, after a verdict for this one
       writeFileSync(join(dir, "package.json"), JSON.stringify({ version: "9.9.10" }));
       expect(installedHostVouched(installed)).toBe(false);
     } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -139,7 +136,6 @@ describe.skipIf(process.platform === "win32")("probeRustHost", () => {
     expect(probeRustHost(RUST_SIDECAR_BUILD)).toEqual({ ok: true });
   });
 
-  /** the verdict's reason, failing the test when the probe passed */
   const refused = (binary: string, timeoutMs?: number): string => {
     const verdict = probeRustHost(binary, process.env, timeoutMs);
     expect(verdict.ok).toBe(false);
@@ -274,7 +270,6 @@ describe.skipIf(process.platform === "win32")("PtySession Rust fallback", () => 
     resetPtyHostForTests();
     previous = { ...process.env };
     process.env["OVIS_PTY_SIDECAR"] = "rust";
-    // a home without the app's own Node (server/pty/sidecar.ts looks there first), whatever this PC has
     process.env["HOME"] = mkdtempSync(join(fixtures, "home-"));
   });
   afterEach(() => {
@@ -285,17 +280,14 @@ describe.skipIf(process.platform === "win32")("PtySession Rust fallback", () => 
     resetSidecarForTests();
   });
 
-  /** A PC without Node, as `bun run` leaves one: the `node` on PATH is Bun itself. Nothing here may run pty-host.mjs on it. */
   function withoutNode(): void {
     const dir = mkdtempSync(join(fixtures, "bun-as-node-"));
     symlinkSync(process.execPath, join(dir, "node"));
     process.env["PATH"] = `${dir}:/usr/bin:/bin`;
-    // and no Node of the app's own (install.sh's) in its home
     process.env["HOME"] = mkdtempSync(join(fixtures, "home-"));
     resetSidecarForTests();
     expect(nodeSidecarAvailable()).toBe(false);
   }
-  /** passes the check without Node: its pty leg exits 0 instead of delegating to pty-host.mjs */
   const NODELESS_PROBE = `${IDENTITY}\nif [ "$3" = true ]; then exit 0; fi`;
 
   it("keeps the Rust host after an unrequested signal on a PC without Node, which has nothing to fall back to", async () => {
@@ -325,7 +317,6 @@ describe.skipIf(process.platform === "win32")("PtySession Rust fallback", () => 
     } finally { spawn.mockRestore(); }
   });
 
-  // #596: the installer no longer links its Node into ~/.local/bin, and herdr's PATH may hold a Node older than 18 first
   for (const where of [".local/share/ovis/node", ".local/share/herdr-web-ui/node"]) {
     it(`runs the Node the installer put in ~/${where} over an older one first on PATH, probed and spawned at one path`, async () => {
       const real = Bun.which("node");
@@ -441,7 +432,6 @@ describe.skipIf(process.platform === "win32")("PtySession Rust fallback", () => 
     const empty = mkdtempSync(join(fixtures, "empty-"));
     try {
       try {
-        // the server answers this once, at its start, while its PATH is whole; a PATH emptied later must not change it
         expect(nodeSidecarAvailable()).toBe(true);
         process.env["PATH"] = empty;
         expect(() => new PtySession({ command: "true", args: [], cols: 1, rows: 1, onData: () => {}, onExit: () => {} })).toThrow();
@@ -459,7 +449,6 @@ interface Run {
   session: PtySession;
   output: () => string;
   until: (label: string, check: (output: string) => boolean) => Promise<void>;
-  /** onExit's code; a killed session never reports one */
   exited: Promise<number | null>;
 }
 
@@ -494,7 +483,6 @@ function runOn(host: "node" | "rust", command: string, args: string[], extra: Pa
   return { session, output: () => output, until, exited };
 }
 
-/** Resolves once `path` exists: the command's own word that it got that far, whatever the pty carried. */
 async function appears(path: string): Promise<void> {
   const watcher = watch(dirname(path));
   try {
@@ -511,10 +499,8 @@ async function appears(path: string): Promise<void> {
   } finally { watcher.close(); }
 }
 
-/** A `sleep` whose arguments no other process has: the mark of one test's process group. */
 const sleepTag = () => `sleep ${5000 + Math.floor(Math.random() * 4000)}.${String(Math.random()).slice(2, 10)}`;
 
-/** Whether every process whose command line holds `tag` is gone within 3 s (a SIGKILLed one takes a moment). */
 async function gone(tag: string): Promise<boolean> {
   for (const deadline = Date.now() + 3000; ;) {
     if (Bun.spawnSync(["pgrep", "-f", tag]).stdout.length === 0) return true;
@@ -523,10 +509,8 @@ async function gone(tag: string): Promise<boolean> {
   }
 }
 
-/** A command in a process group of its own whose members ignore SIGHUP: a hangup alone never ends it. */
 const STUBBORN_GROUP = (tag: string, then: string) => ["-c", `trap '' HUP; ${tag} & printf READY; ${then}`];
 
-/** The same checks on each host: the Rust one has to behave as the Node one does. */
 function parity(host: "node" | "rust") {
   describe.skipIf(host === "rust" && !built)(`PtySession on the ${host} PTY host`, () => {
     beforeEach(resetPtyHostForTests);
@@ -535,7 +519,6 @@ function parity(host: "node" | "rust") {
     const home = process.env["HOME"];
     beforeAll(() => {
       process.env["OVIS_PTY_SIDECAR"] = host;
-      // a home without the app's own Node, so the Node host is the one on PATH whatever this PC has
       process.env["HOME"] = mkdtempSync(join(fixtures, "home-"));
     });
     afterAll(() => {
@@ -557,7 +540,6 @@ function parity(host: "node" | "rust") {
         });
         expect(await started.exited).toBe(0);
         const argv = (spawn.mock.calls[0] as unknown as [string[]])[0];
-        // Node by the absolute path the guard probed, so the check and the spawn find the same one
         expect(argv[0]).toBe(host === "rust" ? RUST_HOST ?? "" : Bun.which("node") ?? "");
         expect(started.output()).toContain("[/tmp/ovis-host-parity.sock|xterm-256color|unset|unset]");
         // compared as a boolean so a failure never prints the token
@@ -583,7 +565,6 @@ function parity(host: "node" | "rust") {
       } finally { burst.session.kill(); }
     }, 15_000);
 
-    // a signal's end is never the 0 of a success: told as a shell tells it
     it.skipIf(process.platform === "win32")("reports a command a signal ended as 128 plus the signal's number", async () => {
       const ended = run("sh", ["-c", "kill -TERM $$"]);
       try {
@@ -607,8 +588,6 @@ function parity(host: "node" | "rust") {
       } finally { ended.session.kill(); }
     }, 15_000);
 
-    // the host waits (EXIT_QUIET) for a command that closed its terminal, as a dying one does, before hanging it up:
-    // time is the behaviour here, a command exiting 50 ms after it closed its terminal is well within that wait
     it.skipIf(process.platform === "win32")("lets a command that closed its terminal exit with its own code", async () => {
       const ended = run("sh", ["-c", "exec 0<&- 1>&- 2>&-; sleep 0.05; exit 3"]);
       try {
@@ -623,7 +602,6 @@ function parity(host: "node" | "rust") {
       } finally { ended.session.kill(); }
     }, 15_000);
 
-    // past that wait the host ends the command itself: only the signals it sent are its own end
     it.skipIf(process.platform === "win32")("reports a signal the command sent itself after the host hung it up, as that signal", async () => {
       const ended = run("sh", ["-c", "trap '' HUP; exec 0<&- 1>&- 2>&-; sleep 0.45; kill -TERM $$"]);
       try {
@@ -730,7 +708,6 @@ function parity(host: "node" | "rust") {
       } finally { flood.session.kill(); }
     }, 15_000);
 
-    // the Node host signals the command alone, and exits right after its SIGKILL: only the Rust one promises these
     it.skipIf(host !== "rust")("kills the command's whole process group when stopped, even one ignoring SIGHUP", async () => {
       const tag = sleepTag();
       const stubborn = run("sh", STUBBORN_GROUP(tag, "wait"));
@@ -757,11 +734,8 @@ function parity(host: "node" | "rust") {
       }
     }, 15_000);
 
-    // the Node host kills the group once node-pty's exit timer ends, also while it holds paused output; the Rust
-    // host hangs it up at the exit and kills it after the drain
     it.skipIf(host !== "node" || process.platform === "win32")("kills what is left of the command's process group when the command exits, while output is paused", async () => {
       const tag = sleepTag();
-      // the tag's seconds as an argument: the host's own command line must not match `tag`
       const leaving = run("sh", ["-c", `trap '' HUP; sleep "$1" & printf READY; read -r _; exit 4`, "sh", tag.slice("sleep ".length)]);
       try {
         await leaving.until("READY", (output) => output.includes("READY"));
@@ -807,9 +781,7 @@ function parity(host: "node" | "rust") {
 parity("node");
 parity("rust");
 
-/** The Rust host run directly, so a test can write what PtySession never does: frames cut off, floods. */
 function direct(args: string[]) {
-  // exec keeps the host's pid; no core dump when a test aborts it (NO_CORE)
   const proc = Bun.spawn(["sh", "-c", `${NO_CORE}; exec "$0" "$@"`, RUST_HOST ?? "", "40", "5", ...args], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   let output = "";
   const waiters = new Set<() => void>();
@@ -836,14 +808,11 @@ function direct(args: string[]) {
     waiters.add(test);
     test();
   });
-  /** the host's peak resident memory so far, in MiB */
   const peakMiB = () => Number(readFileSync(`/proc/${proc.pid}/status`, "utf8").match(/VmHWM:\s+(\d+)/)?.[1]) / 1024;
-  /** how many diagnostic lines the host wrote */
   const errorLines = () => errors.split("\n").filter(Boolean).length;
   return { proc, until, peakMiB, errorLines };
 }
 
-/** Reports each resize, and never reads its input: what it is sent piles up in the pty (raw, so the line discipline keeps it). */
 const UNREAD = ["sh", "-c", 'stty raw -echo; exec node -e "$1"', "sh", `
   const out = process.stdout;
   process.on("SIGWINCH", () => out.write("WINCH " + out.columns + "x" + out.rows));
@@ -906,7 +875,6 @@ describe.skipIf(!built || process.platform !== "linux")("the Rust PTY host under
       await host.proc.stdin.flush();
       await host.until("the resize", "WINCH 60x10");
       expect(host.peakMiB()).toBeLessThan(48);
-      // one line for the overflow, not one per frame dropped
       expect(host.errorLines()).toBeLessThanOrEqual(2);
     } finally {
       host.proc.kill();

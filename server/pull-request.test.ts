@@ -13,7 +13,6 @@ type Answer = { stdout?: string; stderr?: string; code?: number; hold?: boolean 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), "ovis-pull-request-")));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
-/** A `gh` stand-in: answers by its first words from scenario.json and records each call's arguments. */
 function fakeGh(scenario: Record<string, Answer>): { gh: string[]; calls: () => string[][] } {
   const dir = mkdtempSync(join(scratch, "gh-"));
   writeFileSync(join(dir, "scenario.json"), JSON.stringify(scenario));
@@ -71,7 +70,6 @@ describe("reading a branch's pull request through gh", () => {
     const fake = fakeGh({ "pr view": { stdout: prJson({ url: "https://github.com/123/2048/pull/12" }) }, graphql: { stdout: graphqlJson() } });
     await pullRequestView(scratch, { gh: fake.gh });
     const graphql = fake.calls().find((args) => args[1] === "graphql")!;
-    // gh's -F would send these as numbers, which GitHub refuses for a String! variable
     for (const value of ["owner=123", "name=2048"]) expect([value, graphql[graphql.indexOf(value) - 1]]).toEqual([value, "-f"]);
   });
 

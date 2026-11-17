@@ -2,11 +2,9 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { linuxStartTicks, newOwnerRecord, ownerGone, parseBirth, parseLstart, parseOwnerRecord, probeProcess, readProcessBirth } from "./process-owner.ts";
 
-/** A well-formed birth no running process has: this platform's form, at the epoch. */
 const earlierBirth = { platform: process.platform, value: process.platform === "linux" ? `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}:1` : process.platform === "darwin" ? "Thu Jan 1 00:00:00 1970" : "1" };
 const BOOT = "0b1c2d3e-4f50-4617-8899-aabbccddeeff";
 
-// a process that is not the owner: alive and blocked on its stdin until the test closes it
 const children: Bun.Subprocess<"pipe", "ignore", "ignore">[] = [];
 function unrelated() {
   const child = Bun.spawn([process.execPath, "-e", "for await (const _ of console) break;"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" });
@@ -17,7 +15,6 @@ afterEach(async () => {
   for (const child of children.splice(0)) { child.stdin.end(); await child.exited; }
 });
 
-/** Signal 0 to `pid` is refused (EPERM), as another user's or a protected process refuses it; every other PID is probed for real. */
 function refusing(pid: number) {
   const kill = process.kill.bind(process);
   return spyOn(process, "kill").mockImplementation(((target: number, signal?: NodeJS.Signals | number) => {
@@ -97,24 +94,19 @@ describe("owner records", () => {
   });
 
   it("proves an owner gone when another process now holds its PID", () => {
-    // regression (fails on main, which trusted any live PID): a reused PID is not the owner
     const child = unrelated();
     expect(ownerGone({ pid: child.pid, birth: earlierBirth })).toBe(true);
     expect(() => process.kill(child.pid, 0)).not.toThrow();
   });
 
   it("keeps an owner whose recorded birth is malformed", () => {
-    // regression: a missing, numeric, empty or misshapen value once read as a birth that differs,
-    // which let a live owner's lock or descriptor be replaced
     const child = unrelated();
     for (const birth of [{ platform: process.platform }, { platform: process.platform, value: 7 }, { platform: process.platform, value: "" }, { platform: process.platform, value: "an earlier process" }, null, "b"]) {
       expect(ownerGone({ pid: child.pid, birth })).toBe(false);
     }
-    // control: the same PID with a well-formed birth of another process is gone
     expect(ownerGone({ pid: child.pid, birth: earlierBirth })).toBe(true);
   });
 
-  // an owner killed without letting go of its lock, whose live parent has not reaped it yet
   it.skipIf(process.platform !== "linux" || !Bun.which("setsid"))("proves an exited, unreaped owner gone, its birth still matching", async () => {
     // the inner shell exits at once; its parent turns into a sleep that never reaps it
     const parent = Bun.spawn(["sh", "-c", "setsid sh -c 'echo $$; exec sleep 0.2' & exec sleep 30"], { stdout: "pipe", stderr: "ignore" });
@@ -136,16 +128,11 @@ describe("owner records", () => {
 
   it("keeps legacy, foreign-platform and unreadable owners live", () => {
     const child = unrelated();
-    // control: a PID-only record from an older version cannot be proved gone while its PID runs
     expect(ownerGone({ pid: child.pid })).toBe(false);
-    // a birth recorded on another platform cannot be compared: unknown
     expect(ownerGone({ pid: child.pid, birth: { platform: "plan9", value: "x" } })).toBe(false);
   });
 
   it("compares births when the probe is refused (EPERM)", () => {
-    // regression: a refused probe once kept every owner, so a lock or descriptor whose PID another
-    // user's process took after a reboot (or a SYSTEM service after a forced Windows shutdown)
-    // blocked every start
     const child = unrelated();
     const reading = readProcessBirth(child.pid);
     if (reading.state !== "identified") throw new Error(`no birth for ${child.pid}`);
@@ -153,15 +140,12 @@ describe("owner records", () => {
     try {
       expect(probeProcess(child.pid)).toBe("denied");
       expect(ownerGone({ pid: child.pid, birth: earlierBirth })).toBe(true);
-      // a refused probe never proves the owner gone by itself: a matching birth, or none, keeps it
       expect(ownerGone({ pid: child.pid, birth: reading.birth })).toBe(false);
       expect(ownerGone({ pid: child.pid })).toBe(false);
     } finally { refused.mockRestore(); }
   });
 
   it.skipIf(refusedPid === undefined)("reads the birth of a process it may not signal", () => {
-    // the same rule against a real refusal: on Windows that birth comes from CIM, which reads
-    // processes that Get-Process cannot open
     const pid = refusedPid!;
     const reading = readProcessBirth(pid);
     if (reading.state !== "identified") throw new Error(`no birth for ${pid}`);

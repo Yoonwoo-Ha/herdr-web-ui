@@ -9,9 +9,6 @@ import { MACHINE_PROXY_PATH } from "./machine-api.ts";
 import type { ApiError, PluginActionResult, PluginActionsResponse } from "../shared/protocol.ts";
 
 /**
- * GET /api/plugins/actions and POST /api/plugin/action against a real herdr, with a plugin linked
- * for the test from a temp directory and unlinked after it.
- *
  * herdr keeps linked plugins per user, not per session (`$XDG_CONFIG_HOME/herdr/plugins.json`), so
  * a session of the test's own isolates nothing here. This runs only where `bun run check` (and so
  * CI) says the config directory is the run's own and will be thrown away
@@ -27,7 +24,6 @@ describe.skipIf(disposable === null || process.platform === "win32")("plugin act
   const impatientStateDir = mkdtempSync(join(tmpdir(), "ovis-plugin-state-"));
   const marker = join(root, "marker.json");
   let server: { port: number; stop: () => void };
-  /** answers `running` after 300 ms, as the real wait does after five seconds */
   let impatient: { port: number; stop: () => void };
   let created: WorkspaceCreateResult;
   const EMPTY_WORKTREE = { repo_key: "", repo_name: "", repo_root: "", checkout_path: "", is_linked_worktree: false };
@@ -137,7 +133,6 @@ platforms = ["linux", "macos"]
 
   it("runs an action with the named pane's workspace, tab and pane as its context, not herdr's focus", async () => {
     const paneId = created.root_pane.pane_id;
-    // the workspace was made unfocused: herdr's own focus is another pane
     expect((await sessionSnapshot()).focused_pane_id).not.toBe(paneId);
     const response = await invoke({ plugin_id: PLUGIN, action_id: "mark", pane_id: paneId });
     expect(response.status).toBe(200);
@@ -230,7 +225,6 @@ platforms = ["linux", "macos"]
     const known = new Set((await pluginLogList(PLUGIN, 50)).map((entry) => entry.log_id));
     const pending = invoke({ plugin_id: PLUGIN, action_id: "slow", pane_id: rootPane });
     await until(async () => (await pluginLogList(PLUGIN, 50)).some((entry) => !known.has(entry.log_id) && entry.action_id === "slow" && entry.status === "running"), "the slow command to start");
-    // as someone at herdr's own TUI would: a new pane, focused, while the plugin command runs
     const split = await herdrRpc<{ pane: { pane_id: string } }>("pane.split", { target_pane_id: rootPane, direction: "right", focus: true });
     expect((await sessionSnapshot()).focused_pane_id).toBe(split.pane.pane_id);
     const result = (await (await pending).json()) as PluginActionResult;
@@ -304,7 +298,6 @@ platforms = ["linux", "macos"]
     expect(failed).toMatchObject({ status: "failed", exit_code: 3, output: "boom" });
     const asked = await fetch(`${base()}/api/machines/local/plugin/action?plugin_id=${encodeURIComponent(PLUGIN)}&log_id=${encodeURIComponent(failed.log_id)}`);
     expect([asked.status, await asked.json()]).toEqual([200, failed]);
-    // a POST without the app's header never reaches the route, and no other plugin path is aliased
     const bare = await fetch(`${base()}/api/machines/local/plugin/action`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ plugin_id: PLUGIN, action_id: "fail" }) });
     expect([bare.status, ((await bare.json()) as ApiError).error.code]).toEqual([403, "invalid_origin"]);
     const other = await fetch(`${base()}/api/machines/local/plugin/link`, { method: "POST", headers: { "x-herdr-machine": "1" } });

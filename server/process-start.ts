@@ -14,21 +14,11 @@ function darwinStart(pid: number): number | null {
   }
 }
 
-/**
- * When a process started, in ms since the epoch: Linux counts it in /proc (USER_HZ
- * ticks after boot); macOS has no /proc, so there the kernel's process record tells it
- * (sysctl). null where neither answers.
- */
 export function processStartedAt(pid: number): number | null {
   if (process.platform === "darwin") return darwinStart(pid);
   return linuxBirth(pid);
 }
 
-/**
- * Linux: /proc/stat's `btime` and the start's ticks after boot. The same on every read, so it is the
- * process's identity (pending input compares it exactly); but `btime` is whole seconds and stays
- * where it was when the clock is stepped later, so it may be up to a second before the real start.
- */
 function linuxBirth(pid: number): number | null {
   try {
     const ticks = Number(readFileSync(`/proc/${pid}/stat`, "utf8").split(") ").pop()!.split(" ")[19]);
@@ -65,24 +55,15 @@ export function processAlive(pid: number): boolean {
   }
 }
 
-/**
- * processStartedAt for a caller that awaits it: the same reading (Linux's /proc birth; macOS's kernel record),
- * which no platform needs a child process for any more (#1404). null where neither answers.
- */
 export async function processStartedAtAsync(pid: number): Promise<number | null> {
   return processStartedAt(pid);
 }
 
-/**
- * processStartUpperBound for a caller that awaits it; every platform's read is synchronous now.
- * Where no start time is known (Windows), null.
- */
 export async function processStartUpperBoundAsync(pid: number): Promise<number | null> {
   if (process.platform !== "linux" && process.platform !== "darwin") return null;
   return processStartUpperBound(pid);
 }
 
-/** An upper bound for comparing a new thread's timestamp, without btime's whole-second loss. */
 export function processStartUpperBound(pid: number): number | null {
   if (process.platform !== "linux") {
     const started = processStartedAt(pid);
@@ -124,8 +105,6 @@ function linuxReadStart(pid: number): number | null {
 export function processStartLowerBound(pid: number): number | null {
   if (process.platform === "darwin") return darwinStart(pid);
   if (process.platform !== "linux") return null;
-  // the earlier of both readings, less one tick: no later than the real start (the uptime's), nor
-  // than the start processStartedAt tells (btime's), so a thread made as the process starts is in
   const starts = [linuxBirth(pid), linuxReadStart(pid)].filter((start): start is number => start !== null);
   return starts.length === 0 ? null : Math.min(...starts) - 10;
 }

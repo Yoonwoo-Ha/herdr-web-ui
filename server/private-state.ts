@@ -21,11 +21,9 @@ import { randomBytes } from "node:crypto";
 import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 
-/** The filesystem calls the writer makes, in one place so tests can replace them with scoped spies. */
 export const privateStateFs = { mkdirSync, openSync, writeSync, fsyncSync, closeSync, renameSync, unlinkSync };
 
 export interface PrivateStateWrite {
-  /** false when the parent-directory fsync after the rename failed or was not attempted (Windows) */
   directorySynced: boolean;
 }
 
@@ -33,24 +31,17 @@ export function writePrivateState(path: string, value: unknown, platform: NodeJS
   const temporary = preparePrivateState(path, value, platform);
   try { privateStateFs.renameSync(temporary, path); }
   catch (error) {
-    // Cleanup failures must not mask the write failure the caller has to see.
-    try { privateStateFs.unlinkSync(temporary); } catch { /* reported through `error` */ }
+    try { privateStateFs.unlinkSync(temporary); } catch {}
     throw error;
   }
   return syncDirectory(dirname(path), platform);
 }
 
-/**
- * The two halves of writePrivateState, for a caller that must know afterwards whether the new
- * document reached `path` (state-merge.ts): the prepared file is renamed into place by
- * publishPrivateState, so while it still exists, `path` has not got it. A failed publish leaves it.
- */
 export function publishPrivateState(temporary: string, path: string, platform: NodeJS.Platform = process.platform): PrivateStateWrite {
   privateStateFs.renameSync(temporary, path);
   return syncDirectory(dirname(path), platform);
 }
 
-/** The new bytes of `path`, flushed, in a private temporary file beside it; returns that file. */
 export function preparePrivateState(path: string, value: unknown, platform: NodeJS.Platform = process.platform): string {
   const fs = privateStateFs;
   const directory = dirname(path);
@@ -75,15 +66,13 @@ export function preparePrivateState(path: string, value: unknown, platform: Node
     fd = null; // a failed close must not be retried: the descriptor is released either way
     fs.closeSync(closing);
   } catch (error) {
-    // Cleanup failures must not mask the write failure the caller has to see.
-    if (fd !== null) try { fs.closeSync(fd); } catch { /* reported through `error` */ }
-    try { fs.unlinkSync(temporary); } catch { /* reported through `error` */ }
+    if (fd !== null) try { fs.closeSync(fd); } catch {}
+    try { fs.unlinkSync(temporary); } catch {}
     throw error;
   }
   return temporary;
 }
 
-/** Records the rename in `directory` (best effort, see the top of this file). */
 export function syncDirectory(directory: string, platform: NodeJS.Platform): PrivateStateWrite {
   const fs = privateStateFs;
   if (platform === "win32") return { directorySynced: false };
@@ -95,6 +84,6 @@ export function syncDirectory(directory: string, platform: NodeJS.Platform): Pri
   } catch {
     return { directorySynced: false };
   } finally {
-    if (directoryFd !== null) try { fs.closeSync(directoryFd); } catch { /* the rename already succeeded */ }
+    if (directoryFd !== null) try { fs.closeSync(directoryFd); } catch {}
   }
 }

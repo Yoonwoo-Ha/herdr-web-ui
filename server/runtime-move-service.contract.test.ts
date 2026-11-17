@@ -16,18 +16,12 @@ import type { RuntimeService } from "./herdr-core/runtime-choice.ts";
 import { createServer } from "./index.ts";
 import { herdrRpc } from "./herdr/client.ts";
 
-/**
- * A move of shells only, from the test herdr session to a real hc in a core of its own (its
- * session, state, config and runtime folders): built, then ended again when the switch is refused,
- * then built and kept when it is taken. Runs only where OVIS_TEST_HC_BIN names an hc.
- */
 const bin = process.env["OVIS_TEST_HC_BIN"];
 const TEST_MS = 60_000;
 
 describe.skipIf(!bin)("move of herdr's session to a real herdr-core", () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "mv-")));
   const stateDir = join(root, "ovis-state");
-  // set only once the core's own folders exist: afterAll stops a core only through it
   let env: Record<string, string> = {};
   let hc: HcConnection | null = null;
   let workspace: string | null = null;
@@ -36,15 +30,12 @@ describe.skipIf(!bin)("move of herdr's session to a real herdr-core", () => {
 
   beforeAll(async () => {
     for (const sub of ["state", "config", "run", "ovis-state", "home", "bin"]) mkdirSync(join(root, sub), { mode: 0o700 });
-    // a stand-in agent first on the core's PATH: an agent the move starts there is never a real CLI
     writeFileSync(join(root, "bin", "claude"), "#!/bin/sh\n[ \"$2\" = refused ] && { sleep 2; exit 1; }\nwhile :; do sleep 60; done\n");
     chmodSync(join(root, "bin", "claude"), 0o755);
     // and on the PATH of the login shell the move's panes start from: Debian's /etc/profile sets a PATH of its own
     writeFileSync(join(root, "home", ".profile"), `export PATH="${join(root, "bin")}:$PATH"\n`);
     env = isolatedHcEnv(root, { PATH: `${join(root, "bin")}:/usr/bin:/bin`, SHELL: "/bin/bash", OVIS_HC_BIN: bin! });
-    // the move reaches the core the server would once it serves herdr-core (runtime.ts hcEnv)
     process.env["OVIS_HC_ENV"] = JSON.stringify(env);
-    // found as startRuntime finds it: in this process's environment
     process.env["OVIS_HC_BIN"] = bin!;
     const started = Bun.spawn([bin!, "server", "start"], { env, stdout: "ignore", stderr: "pipe" });
     expect({ exit: await started.exited, stderr: await new Response(started.stderr).text() }).toMatchObject({ exit: 0 });
@@ -69,7 +60,6 @@ describe.skipIf(!bin)("move of herdr's session to a real herdr-core", () => {
     workspace = created.workspace.workspace_id;
     const down = await paneSplit(created.root_pane.pane_id, "down", false);
     const tab = await tabCreate({ workspaceId: workspace, cwd: logs, label: "logs" });
-    // the split's shell starts where the first pane is; its folder in the plan is the one asked of the move
     const full = await planMove(await sessionSnapshot(), { findResume: async () => null, processInfo: async () => undefined, inputEmpty: async () => null, holdsPending: () => false });
     const ours = new Set([created.root_pane.pane_id, down.pane_id, tab.root_pane.pane_id]);
     const plan: MovePlan = {
@@ -99,12 +89,9 @@ describe.skipIf(!bin)("move of herdr's session to a real herdr-core", () => {
     expect(labels.map((entry) => entry["ovis.tab"] ?? "").sort()).toEqual(["1", "1", "logs"].sort());
     const layout = (await hc!.call("doc.get", { name: "ovis-layout" })).value as { workspaces: { tabs: { root: { split?: string } }[] }[] };
     expect(layout.workspaces[0]?.tabs[0]?.root.split).toBe("down");
-    // herdr is left as it was: its panes are all still there
     expect((await sessionSnapshot()).panes.filter((pane) => ours.has(pane.pane_id))).toHaveLength(3);
   }, TEST_MS);
 
-  // the whole flow over the HTTP route: a pane at work makes it wait, the person ends that agent, it
-  // goes by itself; the launcher's answer decides whether it stays or is ended again
   const facts: HerdrRuntimeFacts = { serving: "herdr", source: "detected", tui: { installed: true, running: true }, app_installed: false, switch_to: "herdr-core", locked: null };
   async function viaRoute(answer: { ok: true } | { ok: false; status: number; code: string; message: string }) {
     const asked: unknown[] = [];
@@ -154,13 +141,10 @@ describe.skipIf(!bin)("move of herdr's session to a real herdr-core", () => {
     expect(status).toMatchObject({ state: "rolled_back", reason: "switch_refused: locked" });
     expect(asked).toEqual(["herdr-core"]);
     expect((await live()).filter((terminal) => !before.has(terminal.address))).toEqual([]);
-    // herdr's own panes are all there (the route's workspace was the test's, closed after)
     expect((await sessionSnapshot()).panes.length).toBe(panesBefore);
     expect(pane).not.toBe("");
   }, TEST_MS);
 
-  // a resumed agent in a split whose folder is gone: its shell starts home, not in the first pane's folder,
-  // and the move goes on only once the agent runs the conversation it was given
   async function resumeInSplit(session: string) {
     const left = join(root, `left-${session}`);
     mkdirSync(left);
@@ -173,7 +157,6 @@ describe.skipIf(!bin)("move of herdr's session to a real herdr-core", () => {
         { pane_id: "x2", cwd: null, name: null, verdict: { kind: "resume", agent: "claude", session_id: session, argv: ["claude", "--resume", session], ended: true } },
       ],
     };
-    // nothing in herdr is touched: the agent was ended there already, and no pane of the test session is named
     const source = { pane: async () => null, holdsPending: () => false, inputEmpty: async () => true, sendExit: async () => { throw new Error("no exit is typed"); }, runsConversation: async () => false, start: async () => { throw new Error("nothing restarts in herdr"); } };
     const destination = await coreDestination(stateDir, move);
     try {
