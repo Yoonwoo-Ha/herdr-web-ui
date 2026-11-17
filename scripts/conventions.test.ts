@@ -216,6 +216,9 @@ describe("the tools typecheck", () => {
   // had, and the untracked scripts/*.tmp.ts probes .gitignore allows. A new file is checked without being named
   // anywhere, and the list may only shrink.
   const ROOTS = ["scripts", "integrations", "site", "app/scripts"];
+  /** The tracked .ts/.tsx files under the roots of the checkout at `cwd` that are hidden or in a hidden folder; `-z`, since git quotes a name with non-ASCII bytes. */
+  const hiddenSources = (cwd: string): string[] =>
+    gitIn(cwd, "ls-files", "-z", ...ROOTS).stdout.split("\0").filter((file) => /\.tsx?$/.test(file) && /(^|\/)\./.test(file));
   const config = JSON.parse(read("tsconfig.tools.json")) as { extends?: unknown; include?: unknown; exclude?: unknown; files?: unknown; compilerOptions?: unknown };
   const excluded = (json: string): string[] | null => {
     const list = (JSON.parse(json) as { exclude?: unknown }).exclude;
@@ -224,19 +227,34 @@ describe("the tools typecheck", () => {
   /** The entries `now` has and `before` lacks, but a renamed file's (`renames`: new path to old), which takes its entry along. */
   const added = (now: readonly string[], before: readonly string[], renames: ReadonlyMap<string, string>): string[] =>
     now.filter((file) => !before.includes(file) && !before.includes(renames.get(file) ?? ""));
+  /**
+   * The exclude entries that take out a file the base checked: against its exclude list, the entries it lacks but a
+   * renamed file's; against the file list the exclude list replaced, the entries that list names. Null when the base
+   * has neither.
+   */
+  const uncheckedNow = (now: readonly string[], baseJson: string, renames: ReadonlyMap<string, string>): string[] | null => {
+    const base = JSON.parse(baseJson) as { exclude?: unknown; files?: unknown };
+    if (Array.isArray(base.exclude)) return added(now, base.exclude as string[], renames);
+    if (Array.isArray(base.files)) return now.filter((file) => (base.files as string[]).includes(file));
+    return null;
+  };
   const now = excluded(read("tsconfig.tools.json")) ?? [];
 
   it("excludes no more files than at the ratchets' base", () => {
     const base = ratchetBase();
     if (base === null) return;
     const json = atBase(base, "tsconfig.tools.json");
-    const before = json === null ? null : excluded(json);
-    if (before === null) {
-      // the one base without the list is the file list it replaced, from before the list was made
-      if (json !== null && "files" in (JSON.parse(json) as object)) return;
-      throw new Error(`tsconfig.tools.json at ${base} has no exclude list to compare with: keep the list in it, empty when every file is fixed.`);
-    }
-    fail(added(now, before, renamesSince(base)), "The exclude list of tsconfig.tools.json may only shrink: fix the type errors `bun run typecheck` reports in these files instead of excluding them. A renamed file (renamed with `git mv`, or with the rename staged, so git sees it) takes its entry along under the new path.");
+    const offenders = json === null ? null : uncheckedNow(now, json, renamesSince(base));
+    if (offenders === null) throw new Error(`tsconfig.tools.json at ${base} has no exclude list to compare with: keep the list in it, empty when every file is fixed.`);
+    fail(offenders, "The exclude list of tsconfig.tools.json may only shrink: fix the type errors `bun run typecheck` reports in these files instead of excluding them. A renamed file (renamed with `git mv`, or with the rename staged, so git sees it) takes its entry along under the new path.");
+  });
+
+  it("against the file list the exclude list replaced, refuses excluding any file that list checked", () => {
+    const files = JSON.stringify({ files: ["scripts/a.ts", "scripts/b.ts"] });
+    expect(uncheckedNow(["scripts/c.ts"], files, new Map())).toEqual([]);
+    expect(uncheckedNow(["scripts/b.ts", "scripts/c.ts"], files, new Map())).toEqual(["scripts/b.ts"]);
+    expect(uncheckedNow(["scripts/c.ts"], JSON.stringify({ exclude: [] }), new Map())).toEqual(["scripts/c.ts"]);
+    expect(uncheckedNow([], JSON.stringify({ include: ["scripts"] }), new Map())).toBeNull();
   });
 
   it("tells a new entry from a renamed file's, whatever the list's length", () => {
@@ -259,11 +277,27 @@ describe("the tools typecheck", () => {
     // one glob per root: Bun.Glob reads no slash inside braces; the untracked probes are not checked
     const sources = ROOTS.flatMap((root) => files(`${root}/**/*.{ts,tsx}`)).filter((file) => !/^scripts\/[^/]+\.tmp\.ts$/.test(file));
     expect(sources.length).toBeGreaterThan(400);
+    fail(hiddenSources(repo),
+      "Rename these: tsc's folder include skips a hidden file or folder, so this file would never be typechecked.");
     fail(sources.filter((file) => file.endsWith(".tsx") && sources.includes(file.replace(/\.tsx$/, ".ts"))),
       "Rename one of each pair: beside a .ts of the same name, tsc's folder include leaves the .tsx unchecked.");
     // the directive in a line comment of any number of slashes, or a block comment
     fail(sources.filter((file) => /^\s*(?:\/\/+|\/\*+)\s*@ts-nocheck\b/m.test(read(file))),
       "Fix the type errors in these files instead of `// @ts-nocheck`: a file under the tools typecheck's roots is checked, or listed in its exclude list until it is fixed.");
+  });
+
+  it("finds a hidden file whatever its name", () => {
+    const root = mkdtempSync(join(tmpdir(), "ovis-hidden-sources-"));
+    try {
+      mkdirSync(join(root, "scripts"));
+      for (const name of [".x.ts", ".숨김.ts", "plain.ts"]) writeFileSync(join(root, "scripts", name), "");
+      gitIn(root, "init", "-q");
+      gitIn(root, "config", "core.quotePath", "true");
+      gitIn(root, "add", "scripts");
+      expect(hiddenSources(root)).toEqual(["scripts/.x.ts", "scripts/.숨김.ts"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("excludes only files that exist", () => {
