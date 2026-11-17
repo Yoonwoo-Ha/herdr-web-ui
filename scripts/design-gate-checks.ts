@@ -26,6 +26,7 @@ export async function walkFocus<Verdict>(driver: FocusDriver<Verdict>, ceiling: 
   for (let presses = 1; presses <= ceiling; presses += 1) {
     const stop = await driver.tab();
     if (stop.id === null) {
+      // past the last stop focus leaves the page once; twice in a row means the page has nothing to stop on
       outside += 1;
       if (outside >= 2) return { verdicts, complete: true, presses };
       continue;

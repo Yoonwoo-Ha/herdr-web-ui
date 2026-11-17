@@ -181,6 +181,7 @@ it("the demo refuses draft clearing, drains accepted pending IDs once, and never
       "a successful receipt must not bypass clear_draft validation");
     assert.equal(combined(549, false).ok, true);
     assert.equal((await json("/api/pane/conversation?pane_id=" + claude)).turns.filter((turn: any) => turn.parts.some((part: any) => part.text === "combined demo copy")).length, 1);
+    // regression: as at the bridge, framing is checked before a held-copy receipt is replayed or reserved
     const framed = (id: number, payload: string, resendId: string) => {
       combinationPeer.socket.send(JSON.stringify({ type: "submit", id, pane_id: claude, text: "hello framing", payload, resend_id: resendId }));
       return combinationPeer.frames.findLast((frame) => frame.type === "submit-result" && frame.id === id);

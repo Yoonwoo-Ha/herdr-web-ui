@@ -1,3 +1,8 @@
+// GitHub Actions expressions, the part of the language the workflows use, evaluated against contexts a test gives:
+// literals, context paths (case-insensitive), `!`, `==`/`!=` (strings compared ignoring case, mixed types as numbers),
+// `&&`/`||` (which return an operand, as GitHub's do), and fromJSON, toJSON, contains, startsWith, endsWith, format and
+// the status functions.
+
 export type Value = null | boolean | number | string | Value[] | { [key: string]: Value };
 export type Contexts = Record<string, Value>;
 
@@ -117,6 +122,7 @@ export function evaluate(expression: string, contexts: Contexts): Value {
   return value;
 }
 
+/** A workflow value: one whole `${{ }}` gives its value, text around expressions makes a string; `if:` may omit `${{ }}`. */
 export function evaluateValue(value: unknown, contexts: Contexts, isCondition = false): Value {
   if (typeof value !== "string") return (value ?? null) as Value;
   const whole = /^\s*\$\{\{([\s\S]*)\}\}\s*$/.exec(value);

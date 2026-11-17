@@ -1,3 +1,9 @@
+/**
+ * In a parallel unit run, off Windows, each file runs in a process group of its own: a test that signals its own group
+ * (kill(0), kill(-pgid)) ends only its file, which then fails by that signal, instead of the whole run, which `bun run
+ * check` runs in one group and which would otherwise end with no failure named. What a file leaves running is ended
+ * with it. A unit run with one worker and the integration files share this runner's group.
+ */
 import { availableParallelism } from "node:os";
 
 const suite = process.argv[2];
@@ -39,6 +45,8 @@ if (suite === "unit") {
   const failed: string[] = [];
   const unread: string[] = [];
   const startedAt = Date.now();
+  // The files' groups are not this process's: a Ctrl+C, or check.ts ending its step, reaches only
+  // this one, and check.ts cannot reach them either.
   const running = new Map<number, Promise<number>>();
   let stopping = false;
   for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]] as const) {
@@ -71,6 +79,7 @@ if (suite === "unit") {
       running.set(child.pid, child.exited);
       const read = new Response(child.stdout).text();
       const code = await child.exited;
+      // what the file left in its group, which may still hold its output open
       let leftover = false;
       try { process.kill(-child.pid, "SIGKILL"); leftover = true; } catch {}
       running.delete(child.pid);
@@ -95,6 +104,8 @@ if (suite === "unit") {
 const requested = Number(process.env["HERDR_TEST_SHARDS"]);
 const shards = Math.min(selected.length, requested >= 1 ? Math.floor(requested) : Math.min(4, availableParallelism()));
 const baseSession = process.env["HERDR_TEST_SESSION"] || "ovis-test";
+// Always `<session>-<n>`, also for one worker: the plain session belongs to the browser scripts,
+// which run beside this suite in CI (scripts/ci-lanes.ts) and must never share a herdr with it.
 const sessions = Array.from({ length: shards }, (_, index) => `${baseSession}-${index + 1}`);
 // Largest first: the long files are the large ones, and one started last would run on alone.
 const queue = [...selected].sort((a, b) => Bun.file(b).size - Bun.file(a).size);

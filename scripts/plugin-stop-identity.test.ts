@@ -5,6 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readProcessBirth } from "../server/process-owner.ts";
 
+/**
+ * herdr plugin update builds the new version in a new installation folder while the server the old folder started
+ * runs on. Stop, run from the new folder (HERDR_PLUGIN_ROOT) with the same plugin state folder, must stop that server
+ * by the identity start recorded (pid and birth), and nothing else. Each case runs in a process of its own, as
+ * scripts/plugin.ts reads its state folder once.
+ */
 const root = join(import.meta.dir, "..");
 
 async function runStop(scratch: string, body: string, argv?: string[]): Promise<{ code: number; out: string; err: string }> {
@@ -43,6 +49,7 @@ it("stops, from a new installation folder, the server another folder started: by
     const { code, out, err } = await runStop(scratch, windowsCase(1700000000000, oldFolderServer));
     expect(code, err).toBe(0);
     expect(JSON.parse(out.trim().split("\n").at(-1)!), err).toEqual({ result: 0, stopped: true });
+    // install.ps1 takes a stdout line starting `stopped ` for "this stop stopped a server"
     expect(out).toMatch(new RegExp(`^stopped Ovis \\(pid ${process.pid}\\)$`, "m"));
     expect(existsSync(join(scratch, "state", "server.pid")), "the next start finds no server recorded").toBe(false);
   } finally { rmSync(scratch, { recursive: true, force: true }); }
@@ -79,6 +86,8 @@ it("stops a real process recorded the way start records it, from another folder,
   }
 }, 60_000);
 
+// install.ps1 decides whether the repair's stop stopped a server ($said -match '^stopped ') by this line, from the stop of
+// the checkout's sources and from the release binary's (`ovis-server plugin stop`, whose entry is server/main.ts)
 it("says `stopped ` at the start of a stdout line for the server it stopped, and only then, from source and as the release binary runs it", async () => {
   for (const entry of [[join(root, "scripts", "plugin.ts"), "stop"], [join(root, "server", "main.ts"), "plugin", "stop"]]) {
     const server = spawn(process.execPath, ["-e", "setInterval(() => {}, 1 << 30)"], { detached: true, stdio: "ignore", windowsHide: true });

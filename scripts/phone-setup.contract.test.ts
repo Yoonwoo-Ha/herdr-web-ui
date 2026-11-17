@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { herdrRpc, paneRead, sessionSnapshot, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { testShellEnv } from "./test-shell.ts";
 
+/** Its own XDG config isolates the global plugin registry as well as the owned herdr panes. */
 it("herdr loads the Phone setup entrypoint and keeps its QR and code visible in a pane", async () => {
   // the session socket lives under root: a temp dir (macOS's, or a TMPDIR set deeper by hand) is too deep for a socket
   // path (104 bytes on macOS, 108 on Linux), and herdr then refuses to start
@@ -26,6 +27,9 @@ it("herdr loads the Phone setup entrypoint and keeps its QR and code visible in 
   const binary = process.env["OVIS_HERDR_BIN"] || Bun.which("herdr")!;
   const session = "phone-setup-qa";
   const socket = join(config, "herdr", "sessions", session, "herdr.sock");
+  // OVIS_FROM_SOURCE: the pane runs this checkout's scripts/plugin.ts. Without it the launcher would ask GitHub whether
+  // package.json's version has a compiled server (this plugin never ran the build step that remembers the answer):
+  // a network call in a contract test, and once that release exists, a download of it instead of these sources
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("HERDR_"))), ...testShellEnv(config), XDG_CONFIG_HOME: config, OVIS_FROM_SOURCE: "1" };
   const cli = async (...args: string[]) => {
     const child = Bun.spawn([binary, ...args], { env, stdout: "pipe", stderr: "pipe" });

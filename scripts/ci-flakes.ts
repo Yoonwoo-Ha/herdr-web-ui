@@ -72,6 +72,7 @@ export function aggregateFailures(observations: readonly FailureObservation[]): 
 
 class GhError extends Error {}
 
+/** A write passes `attempts: 1`, since a 5xx may come after the write was done; `input` is its standard input. */
 export async function gh(args: string[], { attempts = 3, input }: { attempts?: number; input?: string } = {}): Promise<string> {
   for (let attempt = 1; ; attempt++) {
     const child = Bun.spawn(["gh", ...args], { stdin: input === undefined ? "ignore" : new Blob([input]), stdout: "pipe", stderr: "pipe" });
@@ -130,12 +131,17 @@ async function flaggedFlaky(repo: string, job: Job): Promise<boolean | "unread">
 interface Annotation { readonly title: string | null }
 const isFlakyWarning = (annotation: Annotation): boolean => annotation.title?.startsWith("Flaky browser script") === true;
 
+/** GraphQL's answer to SUITE_QUERY: one entry per check suite asked for, each check run (a job of any attempt) with its first annotations. */
 export interface SuiteAnswer {
   readonly data: { readonly nodes: readonly ({ readonly checkRuns?: { readonly nodes: readonly { readonly databaseId: number; readonly annotations: { readonly totalCount: number; readonly nodes: readonly Annotation[] } }[] } } | null)[] };
 }
 // checkType ALL: without it a suite lists only its latest attempt's check runs, and the scan reads every attempt
 const SUITE_QUERY = "query($ids: [ID!]!) { nodes(ids: $ids) { ... on CheckSuite { checkRuns(first: 100, filterBy: {checkType: ALL}) { nodes { databaseId annotations(first: 15) { totalCount nodes { title } } } } } } }";
 
+/**
+ * Whether each check run in the answer carries the flaky warning, by job id (a check run's id is its job's). A run with
+ * more annotations than the answer holds, none of them the warning, is left out: its annotations are read through REST.
+ */
 export function flaggedJobs(answer: SuiteAnswer): Map<number, boolean> {
   const flagged = new Map<number, boolean>();
   for (const run of answer.data.nodes.flatMap((suite) => suite?.checkRuns?.nodes ?? [])) {

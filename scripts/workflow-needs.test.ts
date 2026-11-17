@@ -8,6 +8,7 @@ const files = readdirSync(dir).filter((name) => /\.ya?ml$/.test(name)).sort();
 
 const STATUS = /\b(always|cancelled|failure|success)\s*\(/i;
 
+/** A job-level `if` as GitHub's expression reads it: without `${{ }}`, and with what it quotes left out (a status function named in a string is not called). */
 const expression = (condition: unknown): string =>
   String(condition ?? "").trim().replace(/^\$\{\{([\s\S]*)\}\}$/, "$1").replace(/'(?:[^']|'')*'/g, "''").trim();
 
@@ -36,6 +37,12 @@ function mayRunAfterSkipped(condition: unknown): boolean {
   return STATUS.test(text) && !(conjuncts(text) ?? []).some((part) => /^success\s*\(\s*\)$/i.test(part));
 }
 
+/**
+ * Whether a job with this `if` says for itself when it runs: it calls a status function, and no
+ * success() that is not negated. With a plain success() anywhere, however it is bracketed or
+ * joined, a skipped job before it still keeps the condition false in every way this can read, so
+ * such a job counts as not saying: it is named rather than missed.
+ */
 function saysWhenItRuns(condition: unknown): boolean {
   const text = expression(condition);
   return STATUS.test(text) && ![...text.matchAll(/\bsuccess\s*\(/gi)].some((call) => !text.slice(0, call.index).trimEnd().endsWith("!"));
@@ -84,8 +91,10 @@ test("a job behind one that decides for itself is found, however far behind, unl
   expect(skippedBehindDecidingJobs(beta("(inputs.tag != '') && (success())"))).toEqual(["publish", "after"]);
   expect(skippedBehindDecidingJobs(beta("success() && inputs.a || success() && inputs.b"))).toEqual(["publish", "after"]);
   expect(skippedBehindDecidingJobs(beta("always() && success()"))).toEqual(["publish", "after"]);
+  // a status function named in a string is not called
   expect(skippedBehindDecidingJobs(beta("contains(github.event.head_commit.message, 'always()')"))).toEqual(["publish", "after"]);
   expect(skippedBehindDecidingJobs(beta("${{ !cancelled() && needs.build.result == 'it''s success()' }}"))).toEqual(["after"]);
+  // a negated success() decides too: recover runs after the skipped gate, and publish behind it does not
   const recovering = (recover: string) => workflowOf({ gate: { if: "github.event_name != 'pull_request'" }, recover: { needs: "gate", if: recover }, publish: { needs: "recover" } });
   expect(skippedBehindDecidingJobs(recovering("!success()"))).toEqual(["publish"]);
   expect(skippedBehindDecidingJobs(recovering("${{ !success() && inputs.tag != '' }}"))).toEqual(["publish"]);

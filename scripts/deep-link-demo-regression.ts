@@ -9,6 +9,7 @@ import { DEMO_FILE_PREVIEW_SCRIPT } from "./demo-file-preview.ts";
 import { chromePath } from "./chrome-path.ts";
 import { openMoreGroup } from "./header-more.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-deep-link-demo-"));
 const INFRA = panes.omp;
 const DOCS = panes.hermes;
@@ -139,6 +140,9 @@ try {
       });
       console.log("PASS opening another pane is a history entry and a lens switch is not; Back and Forward return to each pane in its lens");
 
+      // Back and Forward land on the entry's pane when a listener before the address bar's changes what
+      // is shown (Settings closing, the file viewer's file leaving): React draws that before the entry
+      // is read, and the place shown must not be written over the entry meanwhile.
       await withPage(browser, `?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}&view=chat`, async (page) => {
         await waitSelected(page, INFRA);
         await openPane(page, DOCS);
@@ -379,6 +383,8 @@ try {
       });
       console.log("PASS Copy link puts the address on the clipboard");
 
+      // a link to the New workspace dialog fills its fields and creates nothing by itself; the
+      // address follows what is typed, and closing the dialog takes it off
       await withPage(browser, `?new=workspace&cwd=${encodeURIComponent("/home/demo/infra")}&name=Fix%20backup&agent=codex`, async (page) => {
         const dialog = page.getByRole("dialog", { name: /New workspace/ });
         const nameField = dialog.getByRole("textbox", { name: "Optional workspace label", exact: true });

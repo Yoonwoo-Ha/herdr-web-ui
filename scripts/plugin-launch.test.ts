@@ -234,25 +234,29 @@ describe("the herdr plugin's launcher", () => {
     try {
       const answer = await checkoutCommit(folder);
       if (!("failed" in answer) || !answer.trust) throw new Error(`no trust command: ${JSON.stringify(answer)}`);
+      // the reason the release's binary is not taken there says git distrusts it, not that it is no checkout
       expect(sourceTrees(folder)).toEqual({ error: "git does not trust this folder (another account owns it), so the binaries cannot be tied to their sources" });
       const home = join(scratch, "server");
       expect(await main(["install"], { home, source: async () => 0, commit: () => checkoutCommit(folder) })).toBe(0);
       expect(readFileSync(join(home, "source-build"), "utf8")).toBe("started\n");
       const lines = said.join("\n").split("\n");
       expect(lines).toContain(answer.trust);
+      // the command, run as printed in this platform's shell, trusts the folder: git reads its commit then
       const shell = process.platform === "win32" ? ["powershell", "-NoProfile", "-Command", answer.trust] : ["sh", "-c", answer.trust];
       expect(Bun.spawnSync(shell, { env: process.env }).exitCode).toBe(0);
       expect(await checkoutCommit(folder)).toEqual({ commit: expect.stringMatching(/^[0-9a-f]{40}$/) });
+      // on Windows herdr's line may as well be pasted into cmd.exe: its own command, typed there as printed (cmd.exe
+      // reading it from its input as from the keyboard), trusts the folder too, once the first one's trust is gone
       if (process.platform === "win32") {
         expect(answer.trustCmd).toBeDefined();
         expect(lines).toContain(answer.trustCmd!);
         rmSync(set.GIT_CONFIG_GLOBAL);
         expect(await checkoutCommit(folder)).toMatchObject({ failed: expect.any(String) });
-        // cmd.exe reads its input as typed at the keyboard
         const cmd = Bun.spawnSync(["cmd", "/d", "/q"], { env: process.env, stdin: Buffer.from(`${answer.trustCmd}\r\nexit %errorlevel%\r\n`) });
         expect(cmd.exitCode, cmd.stdout.toString()).toBe(0);
         expect(await checkoutCommit(folder)).toEqual({ commit: expect.stringMatching(/^[0-9a-f]{40}$/) });
       } else expect(answer.trustCmd).toBeUndefined();
+      // git's ownership answer is told by its own first line, not by the words anywhere: a missing folder named so is not it
       expect(await checkoutCommit(join(scratch, "no such dubious ownership folder"))).toEqual({ failed: expect.stringContaining("cannot change to") });
     } finally {
       console.error = error;
@@ -287,6 +291,10 @@ console.log(JSON.stringify({ install, stamp, status, calls, trees: sourceTrees()
     expect(err).toContain("git could not read the checkout's commit (git is not on PATH)");
   });
 
+  // Without sources git ties to the release (no git, no checkout, changes not committed) its binary is not installed
+  // (none is in these checkouts yet), so nothing the release answers changes the choice: it is not asked.
+  // `key`: the release key this checkout pins instead of RELEASE_PUBLIC_KEY, so a release the test signs is checked as
+  // the real one is
   function checkout({ packages = true, client = true, stamp, git = false, key }: { packages?: boolean; client?: boolean; stamp?: string; git?: boolean; key?: string } = {}): string {
     const dir = join(scratch, "checkout");
     mkdirSync(join(dir, "scripts"), { recursive: true });
@@ -394,6 +402,7 @@ console.log(JSON.stringify({ code, asked }));`;
     expect(start).toMatchObject({ code: 1, ran: null, marker: false });
     expect(start.err).toContain("ships no compiled server");
     expect(start.err).toContain("no dist/index.html");
+    // regression (fails at 1040c7de: the stop wrote the marker, and the start after it ran the sources unchecked)
     for (const command of ["stop", "status"]) expect(await startIn(dir, { git: true, releases, command })).toMatchObject({ code: 0, ran: command, marker: false });
     expect(await startIn(dir, { git: true, releases })).toMatchObject({ code: 1, ran: null, marker: false });
     mkdirSync(join(dir, "dist"));
@@ -549,6 +558,8 @@ process.exit(await run(["sh", "-c", 'trap "exit 3" TERM; echo $$ > ${pidFile}; e
 
   for (const [signal, exit] of [["SIGTERM", 3], ["SIGHUP", 4]] as const) {
     posix(`gets a ${signal} that comes the instant it starts, and the launcher exits as the child did, leaving no child behind`, async () => {
+      // A launcher that listens only after the spawn is ended by the signal and leaves its child running; one that
+      // listens first passes it on.
       const pidFile = join(scratch, "child");
       const sent = join(scratch, "sent");
       const name = signal.slice(3);

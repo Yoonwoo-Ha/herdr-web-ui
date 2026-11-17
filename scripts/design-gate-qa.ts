@@ -101,6 +101,7 @@ const OUT = resolve(outArg);
 const baselinePath = option("--baseline");
 const allowPath = option("--allow");
 const workers = Number(option("--workers") ?? 6);
+// "6x" or 0 would start no worker: no visit measured, no failure found, and a passing exit
 if (!Number.isInteger(workers) || workers < 1) throw new Error(`--workers ${option("--workers")}: a whole number of 1 or more`);
 const SELF_TEST = args.includes("--self-test");
 const SELF_TEST_LAYOUT = args.includes("--self-test-layout");
@@ -935,6 +936,10 @@ function gateRuntime(): void {
     if (el.matches(".xterm-helper-textarea")) for (const frame of [el.closest(".xterm"), el.closest(".pane-frame")]) if (frame && !found.includes(frame)) found.push(frame);
     return found;
   };
+  /**
+   * The ring `parts` of `node` against the background next to it (WCAG 1.4.11, 3:1): a ring drawn outside is read
+   * over the parent's background, an inset one (or an outline pulled inside) over the node's own.
+   */
   const ringVerdict = (node: Element, snap: RingSnap, parts: readonly (keyof RingRead)[]): "ok" | "none" | string => {
     const marks: { color: RGBA; inside: boolean; what: string }[] = [];
     if (parts.includes("outline") && snap.outlined) marks.push({ color: rgba(snap.outlineColor), inside: Number.parseFloat(snap.outlineOffset) + Number.parseFloat(snap.outlineWidth) <= 0, what: `outline ${snap.outlineColor}` });

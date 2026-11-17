@@ -5,6 +5,7 @@ import { updateStateDir } from "../server/update-state.ts";
 
 export const COMMAND_ALIASES: Readonly<Record<string, "link">> = { add: "link", login: "link" };
 
+/** The plugin checkout survives updates; pane entrypoints must follow its active release. */
 export function activePluginScript(root: string, port: number, stateDir: string): string {
   const own = join(resolve(root), "scripts", "plugin.ts");
   try {

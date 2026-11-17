@@ -35,6 +35,7 @@ export async function checkDroplet(browser: Browser, origin: string): Promise<vo
     const droplet = page.locator(".droplet");
     const card = page.locator(".droplet-card");
     const selected = () => page.evaluate(() => new URLSearchParams(location.search).get("pane") ?? JSON.parse(sessionStorage.getItem("ovis:selection") ?? localStorage.getItem("ovis:selection") ?? "null")?.pane_id);
+    // the app must have seen the pane work before it waits: a wait first seen is no news
     const seen = (pane: string, status: string) => page.locator(`.pane-item:has(.pane-select[title^="${pane} —"]) [data-status="${status}"]`).first().waitFor({ state: "attached" });
     const block = async (pane: string) => {
       await report(pane, "working");

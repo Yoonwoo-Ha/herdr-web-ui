@@ -1,3 +1,9 @@
+/**
+ * A herdr-core server's terminal history (#2663): its `terminal-history` feature keeps the scrollback in
+ * xterm, so the wheel and a phone's swipe scroll back through the history its attach replays first, a
+ * replay erases the last one's instead of doubling it, and nothing is typed to the program. herdr's
+ * own server keeps none (its TUI does).
+ */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

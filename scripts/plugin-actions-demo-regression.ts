@@ -7,6 +7,7 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-plugin-actions-demo-"));
 const TRACEBACK = ["Traceback (most recent call last):", ...Array.from({ length: 40 }, (_, line) => `  File "/opt/example/layout.py", line ${line + 1}, in apply`), "RuntimeError: no layout saved for this workspace"].join("\n");
 

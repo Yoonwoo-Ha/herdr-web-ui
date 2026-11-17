@@ -6,6 +6,8 @@ import { appFaces } from "./app-faces.ts";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
+
 // an id the composer cannot name is drawn as received, in the mono face: the widest label there is
 const LONG_MODEL = "gpt-5.6-sol-codex-preview-2026-10";
 const NAMED = ["gpt-5.6", "claude-opus-5-5"] as const;

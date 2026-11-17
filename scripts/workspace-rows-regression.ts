@@ -62,12 +62,15 @@ const paneSelector = (paneId: string): string => `.pane-select[title^=${JSON.str
 const itemSelector = (paneId: string): string => `.pane-item:has(${paneSelector(paneId)})`;
 const workspaceSelector = (workspaceId: string): string => `.workspace-group[data-workspace=${JSON.stringify(workspaceId)}]`;
 const root = realpathSync(mkdtempSync(join(tmpdir(), "herdr-workspace-rows-regression-")));
+// These accumulators contain only IDs created by this invocation.
 const ownedWorkspaces: string[] = [];
 const errors: string[] = [];
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 let server: ReturnType<typeof createServer> | undefined;
 
 try {
+  // test-herdr has live/unit escape hatches and a no-binary fallback. Never let
+  // any of those silently target the user's current socket.
   assert.notEqual(process.env.HERDR_TEST_LIVE, "1", "Live-session mode is forbidden");
   assert.notEqual(process.env.HERDR_TEST_MODE, "unit", "This regression requires isolated herdr");
   process.env.HERDR_TEST_SESSION ||= "ovis-test";
@@ -253,6 +256,8 @@ try {
   assert.deepEqual(errors, [], "no browser page errors");
   console.log("PASS one row per workspace, identical workspace menu entry points, and pane actions on the canvas");
 } finally {
+  // Attempt every cleanup even if an earlier teardown fails; never close an
+  // unowned resident workspace from test-herdr or any other invocation.
   const cleanupErrors: unknown[] = [];
   try { await browser?.close(); } catch (error) { cleanupErrors.push(error); }
   try { server?.stop(); } catch (error) { cleanupErrors.push(error); }

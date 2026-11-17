@@ -44,6 +44,7 @@ try {
   await page.goto(`http://127.0.0.1:${server.port}`);
   const open = async (path: string) => { await page.evaluate((path) => window.previewQA.open(path), path); await page.getByRole("dialog").waitFor(); };
   await open("error");
+  // a 401 says what to do about it (lib/fileFailure.ts), never the body it came with
   await page.getByRole("alert").filter({ hasText: "Pair this browser again to open the file." }).waitFor();
   assert.equal(await page.locator(".file-viewer-text").count(), 0);
   assert.ok(!(await page.locator("body").innerText()).includes("PRIVATE ERROR BODY"));

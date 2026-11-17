@@ -55,6 +55,7 @@ it.skipIf(process.platform !== "win32")("runs the Windows launcher with executab
       ]);
       expect(resolutionCode, resolutionError).toBe(0);
       expect(resolved.trim().split(/\r?\n/)).toEqual(["Application", join(bin, `bun.${installation}`)]);
+      // a command's flags go on with it (link --code); anything that is not a plain flag is refused before Bun runs
       for (const [command, ...rest] of [["start"], ["status"], ["link", "--code", "--google"], ["link", "a&b"], ["link", "--code=%OS%"]] as [string, ...string[]][]) {
         const refused = rest.some((flag) => !/^--[a-z][a-z-]*$/.test(flag));
         rmSync(result, { force: true });
@@ -169,7 +170,7 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
   const peer = createServer(connection => {
     let buffer = "";
     connection.on("error", error => {
-      if ((error as NodeJS.ErrnoException).code !== "EPIPE") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "EPIPE") throw error; // the forced stop can close a reply's pipe
     });
     connection.on("data", data => {
       buffer += data.toString();
@@ -228,6 +229,8 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
     const record = statSync(join(state, "server.pid"));
     const owner = readFileSync(join(state, "server.owner"), "utf8");
     try {
+      // with no creation time recorded, a matching app started after an old PID record is not its owner
+      // (a recorded creation time that matches decides alone: plugin-stop-identity.test.ts)
       writeFileSync(join(state, "server.owner"), `${JSON.stringify({ pid, birth_unknown: true })}\n`);
       utimesSync(join(state, "server.pid"), record.atime, new Date(0));
       await run("stop", 1);
@@ -254,7 +257,7 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
     }
     expect(remaining, "control: wait up to ten seconds for the Windows-owned process tree to disappear").toEqual([]);
     expect(existsSync(join(state, "server.pid"))).toBe(false);
-    await run("start");
+    await run("start"); // forced Windows shutdown leaves a stale lock; restart must recover it
     expect((await fetch(`http://127.0.0.1:${port}/api/health`)).ok).toBe(true);
     await run("stop");
     const unrelated = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 90000)"], { windowsHide: true, stdout: "ignore", stderr: "ignore" });
@@ -268,10 +271,11 @@ it.skipIf(process.platform !== "win32")("starts after its launcher exits, stops 
       expect(existsSync(staleLock)).toBe(true);
       writeFileSync(staleLock, String(unrelated.pid));
       utimesSync(staleLock, new Date(0), new Date(0));
-      await run("start");
+      await run("start"); // a reused supervisor PID must not block restart or be terminated
       expect((await fetch(`http://127.0.0.1:${port}/api/health`)).ok).toBe(true);
       expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
       await run("stop");
+      // Simulate PID reuse after taskkill: the real CLI must leave this live fixture alone.
       const preload = join(scratch, "stop-boundaries.ts");
       for (const missingIdentity of [false, true]) {
         writeFileSync(join(state, "server.pid"), String(unrelated.pid));

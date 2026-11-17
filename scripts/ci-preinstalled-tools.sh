@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Self-hosted jobs use the immutable runner image, never a download fallback.
 set -euo pipefail
 
 fail() {

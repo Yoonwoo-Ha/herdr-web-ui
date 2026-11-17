@@ -8,6 +8,8 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
 
+// The demo pairs no real device and holds no credential; `?demo_devices=` picks its states (site/demo/transport.ts).
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-device-security-demo-"));
 const evidence = process.env.UI_EVIDENCE_DIR || "";
 const NOTICE = '[data-testid="device-paired-notice"]';
@@ -523,6 +525,7 @@ try {
             await press(dialog.getByRole("button", { name: label("Revoke all"), exact: true }));
             const failure = dialog.locator(".confirm-error");
             await failure.waitFor();
+            // what did not happen, and what to do next, with the server's log reference and no file name or machine words
             assert.equal(await failure.innerText(), label("Nothing was revoked: the PC could not save the change. Try again; if it keeps failing, look up {reference} in the server's log on the PC.").replace("{reference}", "d3m0f41l0001"));
             assert.doesNotMatch(await failure.innerText(), /devices\.json|internal error/, "no file name or machine words");
             assert.equal(await dialog.isVisible(), true, "a refused write keeps the question open");
@@ -537,6 +540,7 @@ try {
             await page.close();
           }
 
+          // a device that only watches: the words, and no working button
           {
             const { page, errors } = await open(context, server.port, "&demo_devices=watch");
             errorsOf.push(errors);

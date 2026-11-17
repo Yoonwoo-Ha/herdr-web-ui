@@ -1,4 +1,6 @@
 /**
+ * Every visible control of the open surface lies inside the safe area, and the controls that close
+ * or answer it are drawn whole there
  * (a sheet's cap that cut them off would hide them from that check). An iPhone's keyboard (the layout
  * viewport stays, the visual one shrinks) keeps the search sheet and Settings below the island too.
  */

@@ -154,6 +154,7 @@ describe.skipIf(process.platform === "win32")("Unix Bun discovery", () => {
     expect(plain.out).toContain("Update it with: bun upgrade");
   });
 
+  // a bin directory links into the Cellar, as Homebrew does, here through a second link
   it.each(["readlink", "ls"])("preflight follows links into Homebrew's Cellar with only %s to read them", async (reader) => {
     const cellar = join(home, "prefix", "Cellar", "bun", "1.3.14", "bin"), bin = join(home, "prefix", "bin"), outer = join(home, "outer");
     tool(cellar, "bun", "1.3.14");

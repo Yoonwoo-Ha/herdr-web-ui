@@ -17,6 +17,7 @@ declare global { interface Window { dragFixture: { inputs: Frame[] } } }
 
 function installDragFixture(): void {
   const core = new URL(location.href).searchParams.get("server") === "core";
+  // Codex's main screen as it starts: the alternate screen with drag reporting in SGR
   const stream = `\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h\x1b[H\x1b[2J${Array.from({ length: 20 }, (_, index) => `CODEX-ROW-${index + 1}`).join("\r\n")}`;
   const state = { inputs: [] as Frame[] };
   window.dragFixture = state;
@@ -110,6 +111,7 @@ try {
             await page.waitForFunction(() => /\x1b\[<0;\d+;\d+M(?:[\s\S]*?\x1b\[<32;\d+;\d+M)+[\s\S]*?\x1b\[<0;\d+;\d+m/.test(window.dragFixture.inputs.map((frame) => frame.text ?? "").join("")))
               .catch(async (cause: unknown) => { throw new Error(`${name}: the drag never reached Codex (sent ${JSON.stringify(await sent(page))})`, { cause }); });
             assert.equal(await page.locator(".pane-frame.is-current .xterm-selection div").count(), 0, `${name}: Ovis selects nothing over Codex's own selection`);
+            // herdr drops Codex's copy: the way to copy and quote here is said; herdr-core passes the copy on
             if (kind === "herdr") await note.waitFor();
             else assert.equal(await note.count(), 0, `${name}: no note where Codex's copy arrives`);
             const selecting = await page.evaluate(() => /Mac/.test(navigator.platform)) ? "Alt" : "Shift";

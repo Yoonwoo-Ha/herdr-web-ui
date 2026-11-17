@@ -9,6 +9,7 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { openLens } from "./header-lens.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const repo = join(import.meta.dir, "..");
 const app = mkdtempSync(join(tmpdir(), "herdr-command-outcome-demo-"));
 const evidence = join(process.env.UI_EVIDENCE_DIR || join(repo, "evidence"), "command-outcome");
@@ -105,6 +106,9 @@ try {
           await page.screenshot({ path: shot("context-done"), animations: "disabled" });
           console.log(`PASS ${label}: /context shows accepted, then done on the transcript, on one bubble`);
 
+          // /btw is answered on the screen alone: one send opens a peek of the terminal over the
+          // chat, and returning leaves one quiet command row, without an outcome chip or an
+          // unconfirmed screen preview.
           await send(page, "/btw is the retry test flaky on CI too?");
           await peekStack(page, panes.flaky).waitFor();
           await page.locator(".terminal-banner-command").waitFor();
@@ -117,6 +121,8 @@ try {
           assert.equal(await btw.locator(".chat-outcome, .chat-bubble, details").count(), 0);
           assert.equal(await back.locator(".chat-turn-user:not(.chat-terminal-command)").count(), turnsBefore + 1);
           await page.screenshot({ path: shot("btw-returned"), animations: "disabled" });
+          // the answer is still open in the terminal, where the next message would be typed and do
+          // nothing: the composer says so (src/lib/inputRow.ts), and dismissing it there clears that
           const stillOpen = chatStack(page, panes.flaky).locator(".composer-notice", { hasText: "/btw is still open in the terminal" });
           await stillOpen.waitFor();
           await stillOpen.getByRole("button", { name: "Show terminal", exact: true }).click();

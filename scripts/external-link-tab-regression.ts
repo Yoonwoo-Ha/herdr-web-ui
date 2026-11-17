@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { chromePath } from "./chrome-path.ts";
 
+// The app's own link opener (src/lib/terminalFileLinks.ts) in a real Chromium: with "Reuse tab for
+// external links" on, a second link replaces the first one's tab; off, every link gets a tab of its
 // own with no opener. The page that clicks is served on 127.0.0.1 with Ovis's Referrer-Policy and
 // the links on localhost, so the tab is another site's, as an agent's link is. Loopback only.
 const built = await Bun.build({ entrypoints: [join(import.meta.dir, "../src/lib/terminalFileLinks.ts")], format: "esm", target: "browser" });

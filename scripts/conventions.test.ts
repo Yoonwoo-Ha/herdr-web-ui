@@ -43,6 +43,9 @@ describe("the frontend build", () => {
 });
 
 describe("what the browser loads", () => {
+  // src/ and site/ are bundled for the browser, and shared/ is loaded there and by the server both.
+  // An import that leads out of them (server/, relay/, scripts/, app/ …) puts code written for Bun
+  // or Node into that bundle, where the environment it reads is not there.
   const MAY_IMPORT: Readonly<Record<string, readonly string[]>> = { src: ["shared"], site: ["src", "shared"], shared: [] };
   const leadsTo = (file: string, specifier: string): string => posix.normalize(posix.join(posix.dirname(file), specifier)).replace(/\/.*$/, "");
   const crossings = Object.keys(MAY_IMPORT).flatMap((own) =>
@@ -186,6 +189,7 @@ describe("fixed sleeps", () => {
 
 describe("the tools typecheck", () => {
   const ROOTS = ["scripts", "integrations", "site", "app/scripts"];
+  /** The tracked .ts/.tsx files under the roots of the checkout at `cwd` that are hidden or in a hidden folder; `-z`, since git quotes a name with non-ASCII bytes. */
   const hiddenSources = (cwd: string): string[] =>
     gitIn(cwd, "ls-files", "-z", ...ROOTS).stdout.split("\0").filter((file) => /\.tsx?$/.test(file) && /(^|\/)\./.test(file));
   const config = JSON.parse(read("tsconfig.tools.json")) as { extends?: unknown; include?: unknown; exclude?: unknown; files?: unknown; compilerOptions?: unknown };
@@ -269,6 +273,9 @@ describe("the tools typecheck", () => {
 });
 
 describe("demo transport", () => {
+  // Every push to main redeploys the browser demo, whose server is site/demo/transport.ts: an
+  // endpoint or WS frame it does not answer is a 404 or a dropped frame there (AGENTS.md,
+  // Changing a contract).
   const demo = stripComments(read("site/demo/transport.ts"));
   const exact = new Set([...demo.matchAll(/["'](\/api\/[^"'?]*)["']/g)].map((match) => match[1]!));
   const prefixes = [...demo.matchAll(/\.startsWith\(\s*["'](\/api\/[^"']+)["']\s*\)/g)].map((match) => match[1]!).filter((prefix) => prefix !== "/api/");
@@ -426,6 +433,7 @@ describe("raw NUL bytes", () => {
     expect(scanned).toBeGreaterThan(1000);
   });
 
+  /** A throwaway repository holding `tracked` in its index and `untracked` beside it; `run` gets its root and a git environment that cannot reach another repository. */
   const withRepo = (tracked: Record<string, string | Uint8Array>, untracked: Record<string, string | Uint8Array>, run: (root: string, env: Record<string, string | undefined>) => void) => {
     const dir = mkdtempSync(join(tmpdir(), "tracked-text-"));
     const root = join(dir, "repo");

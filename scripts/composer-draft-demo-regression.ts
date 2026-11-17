@@ -205,6 +205,8 @@ try {
         console.log(`PASS skill completion at word boundaries (${agent}, ${width}px)`);
       });
 
+      // The message box is typed at the transcript's size (Settings → Chat font size): with a mouse
+      // exactly, on a phone never under 16px, the smallest size iOS does not zoom the page for
       for (const width of [390, 1440]) for (const chatFontSize of [null, 20]) await withCard(browser, width, { model: "claude-opus-5-5", chatFontSize }, async (page) => {
         const [box, body] = await page.evaluate(() => {
           const probe = document.createElement("span");

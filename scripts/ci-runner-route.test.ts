@@ -115,6 +115,7 @@ describe.skipIf(process.platform === "win32")("CI runner route", () => {
         ...running(2),
       ];
       expect(routed({ ...pr, FAKE_GH: actions({ in_progress: { 1: others } }) })).toEqual(ovis);
+      // a job asking for fewer labels can take those runners too
       for (const labels of [["Self-Hosted", "self-hosted-ovis"], ["self-hosted-ovis"], ["self-hosted"], ["self-hosted", "linux", "x64"]]) {
         expect(routed({ ...pr, FAKE_GH: actions({ in_progress: { 1: [...others, ...waiting(1, 300, labels)] } }) })).toBe("ubuntu-24.04");
       }

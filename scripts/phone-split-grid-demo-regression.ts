@@ -8,6 +8,8 @@ import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 import { shownRows } from "./shown-rows.ts";
 
+// The pty is shared with every device, so a hidden pane must not size it: a PC drawing the split would
+// see that pane at the phone's size.
 const app = mkdtempSync(join(tmpdir(), "herdr-phone-split-grid-demo-"));
 
 interface Frame { type: string; pane_id: string; cols?: number; rows?: number; keep_size?: boolean }

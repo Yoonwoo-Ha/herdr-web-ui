@@ -12,6 +12,10 @@ import { join, resolve, sep } from "node:path";
 export const DISPOSABLE_CONFIG_ENV = "HERDR_TEST_DISPOSABLE_CONFIG";
 export const DISPOSABLE_CONFIG_FILE = ".ovis-check-run";
 
+/**
+ * The check run's own config directory when herdr's plugin registry and the socket under test
+ * both live in it, else null: the caller then writes nothing to any registry.
+ */
 export function disposableConfig(env: Record<string, string | undefined>, socketPath: string): string | null {
   const named = env[DISPOSABLE_CONFIG_ENV];
   const config = env["XDG_CONFIG_HOME"];

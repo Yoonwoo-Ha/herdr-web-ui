@@ -17,6 +17,7 @@ type Workflow = { jobs?: Record<string, { uses?: string; steps?: Step[] }>; runs
 
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const actionName = (uses: string) => uses.slice(0, uses.lastIndexOf("@"));
+// every workflow and action GitHub loads; a `.yaml` file or another spelling fails the test below instead of being skipped
 const actionFiles = workflowAndActionFiles().filter((path) => (path.startsWith(".github/workflows/") && path.endsWith(".yml")) || path.endsWith("/action.yml"));
 
 function auditActions(file: string, text: string) {
@@ -174,6 +175,7 @@ describe("CI cache contract", () => {
     const save = action.runs.steps.find((step) => step.name === "Cache Bun dependencies")!;
     const restore = action.runs.steps.find((step) => step.name === "Restore Bun dependencies (read-only)")!;
     expect(action.inputs.cache!.default).toBe("save");
+    // a top-level && term: a mode comparison inside an || would let the step run under any mode
     expect(topLevelTerms(save.if!)).toContain("inputs.cache == 'save'");
     expect(topLevelTerms(restore.if!)).toContain("inputs.cache == 'restore'");
     expect(actionName(restore.uses!)).toBe("actions/cache/restore");
@@ -199,6 +201,7 @@ describe("CI cache contract", () => {
     const names = action.runs.steps.map((step) => step.name);
     const seed = names.indexOf("Seed Bun cache from the runner host");
     expect(seed).toBeGreaterThan(names.indexOf("Select workspace-local Bun cache"));
+    // the Linux runners' image only: the self-hosted Mac has no host cache
     expect(action.runs.steps[seed]!.if).toBe("runner.environment == 'self-hosted' && runner.os == 'Linux'");
   });
 
@@ -254,6 +257,7 @@ describe("CI cache contract", () => {
 
 describe("action pins and checkout credentials", () => {
   it("runs the Windows terminal QA on a pull request's merge with main, as ci.yml does", () => {
+    // the PR head of a branch cut before a QA script fix would run the old, broken script (#2243)
     const workflow = Bun.YAML.parse(readFileSync(join(root, ".github/workflows/windows-terminal-qa.yml"), "utf8")) as {
       jobs: Record<string, { steps: Array<{ uses?: string; with?: Record<string, string> }> }>;
     };
@@ -262,6 +266,7 @@ describe("action pins and checkout credentials", () => {
   });
 
   it("pins every external action to a full commit SHA and keeps local actions and workflows relative", () => {
+    // a workflow or action GitHub loads under another spelling (`.yaml`), or behind a symlink, would escape this audit: it fails instead
     expect(workflowFileProblems()).toEqual([]);
     expect(actionFiles).toContain(".github/actions/setup-ci/action.yml");
     const names = new Set<string>();

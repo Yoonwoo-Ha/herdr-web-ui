@@ -99,6 +99,9 @@ try {
       });
       console.log("PASS a phone's Return inserts a new line by default with Send and Mod+Enter sending, a chosen Return sends after reload, desktop Enter and Mod+Enter stay, and native multiline paste reaches chat through Send");
 
+      // An immediate message's paste framing: a whole paste marker in the text is dropped before it is sent, so the
+      // message arrives as written; any other escape byte is refused by the bridge (here the demo's answer), and the
+      // draft stays with the reason. Observe-only and offline keep their own guards.
       // The conversation is frozen: the accepted send's reply never lands mid-capture, so every frame shows the same turns.
       const framingMeasures: Record<string, unknown>[] = [];
       for (const [width, language] of [[390, "en"], [1440, "en"], [390, "ko"]] as const) for (const theme of ["light", "dark"] as const) await withCard(browser, width, { agent: "claude", model: "claude-opus-5-5", status: "idle", freezeConversation: true, language, theme, ...(width === 390 ? { scale: 3 } : {}) }, async (page) => {
@@ -173,6 +176,7 @@ try {
         await shot("loading");
         await page.evaluate(() => { (window as any).fitHoldSend = false; (window as any).fitReply(false); });
         await page.waitForFunction(() => !document.querySelector(".composer-send")?.hasAttribute("aria-busy"));
+        // sent for real with a whole paste marker pasted inside it: the marker is gone, the message is as written
         await note.waitFor();
         await box.fill(written.replace("\n", "\n\u001b[201~"));
         await button.click();
@@ -182,6 +186,7 @@ try {
           return turns.some((turn: { role: string; parts: { kind: string; text?: string }[] }) => turn.role === "user" && turn.parts.some((part) => part.kind === "text" && part.text === text));
         }, { paneId: panes.api, text: written }, { timeout: 5_000 });
         assert.ok(!(await conversation()).includes("\\u001b"), "no escape byte reached the conversation");
+        // error: an escape byte that is no paste marker is refused, typed nowhere, and the draft stays with the reason
         const refused = language === "ko" ? "이 초안은 \u001b[31m남아야 합니다" : "keep \u001b[31mthis draft";
         await box.fill(refused);
         await button.click();
@@ -197,6 +202,7 @@ try {
         await noOverflow("long");
         await shot("long-end");
         await measure("long-end");
+        // observe-only: the connection only watches, so it offers no message box; the draft is back once it interacts
         await box.fill(written);
         await page.evaluate(() => (window as any).fitSocket.send(JSON.stringify({ type: "role", mode: "observe" })));
         await box.waitFor({ state: "detached" });
@@ -214,6 +220,7 @@ try {
         await noOverflow("offline");
         await shot("offline");
         await measure("offline");
+        // the terminal's input line, itself unchanged: the same framing, and the same refusal kept under the line
         await page.evaluate(() => {
           const settings = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}");
           localStorage.setItem("ovis:settings", JSON.stringify({ ...settings, terminalInputMode: "line" }));
@@ -341,6 +348,8 @@ try {
       });
       console.log("PASS Send tapped mid-composition finishes the word and sends");
 
+      // A keyboard that does not commit inside the tap leaves it waiting for the word. A drop inside
+      // that wait withdraws it: the commit after a quick reconnect sends nothing on the new connection.
       await withCard(browser, 390, { status: "idle", model: "claude-opus-5-5" }, async (page) => {
         const box = page.getByRole("textbox", { name: "Message", exact: true });
         await box.tap();

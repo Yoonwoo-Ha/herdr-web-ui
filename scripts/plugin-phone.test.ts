@@ -37,6 +37,7 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(scratch, { recursive: true, force: true }));
 
+/** `tailscale serve status --json` with the given HTTPS listeners, each proxying "/" to its target */
 const serving = (sites: Record<string, string>) => JSON.stringify({
   TCP: Object.fromEntries(Object.keys(sites).map((https) => [https, { HTTPS: true }])),
   Web: Object.fromEntries(Object.entries(sites).map(([https, proxy]) => [`${DNS}:${https}`, { Handlers: { "/": { Proxy: proxy } } }])),

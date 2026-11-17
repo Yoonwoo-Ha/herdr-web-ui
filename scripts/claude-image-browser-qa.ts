@@ -1,4 +1,4 @@
-import "./test-herdr.ts";
+import "./test-herdr.ts"; // a herdr session of its own: nothing shows in the user's
 import assert from "node:assert/strict";
 import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +14,8 @@ if (process.platform !== "linux" && process.platform !== "darwin") { console.log
 const root = realpathSync(mkdtempSync(join(tmpdir(), "ovis-claude-image-browser-")));
 const store = join(root, ".claude");
 const SESSION = "c1a0de00-0000-4000-8000-000000000992";
+// real 1x1 files, so Chrome decodes them: a naturalWidth of 1 proves the bytes that arrived are a
+// picture, not a broken-image placeholder
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const GIF = "R0lGODlhAQABAPAAAAAA/////yH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==";
 const ids = { ask: "00000000-0000-4000-8000-0000000000a1", read: "00000000-0000-4000-8000-0000000000a2", result: "00000000-0000-4000-8000-0000000000a3", answer: "00000000-0000-4000-8000-0000000000a4", abandoned: "00000000-0000-4000-8000-0000000000a5", abandonedAnswer: "00000000-0000-4000-8000-0000000000a6", picture: "00000000-0000-4000-8000-0000000000a7", pictureAnswer: "00000000-0000-4000-8000-0000000000a8" };
@@ -35,6 +37,8 @@ const records = [
 const toolRef = `${ids.result}:0:0`;
 const promptRef = `${ids.picture}:0`;
 
+// the stand-in Claude: a renamed runtime that records itself as the session's process, the way
+// Claude Code does under its config dir, and says when it has
 const standIn = `
 const fs = require("node:fs");
 const net = require("node:net");

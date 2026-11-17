@@ -10,12 +10,16 @@ import { chromePath } from "./chrome-path.ts";
 const root = mkdtempSync(join(tmpdir(), "herdr-image-browser-"));
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
+// real 1x1 files, so Chrome decodes them: a naturalWidth of 1 proves the bytes that arrived
+// are a picture, not a broken-image placeholder
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 const GIF = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 const png = { type: "image", mimeType: "image/png", data: PNG };
+// pi's own record shapes: the picture sits in the tool result, beside the text it returns
 const entries = [
   { type: "session", version: 3, id: "s", timestamp: "2026-09-30T00:00:00Z", cwd: root },
   { type: "model_change", id: "m1", parentId: null, timestamp: "2026-09-30T00:00:00Z", provider: "test", modelId: "qwen-test" },
+  // a picture sent with no words: pi keeps it in the prompt
   { type: "message", id: "u0", parentId: "m1", timestamp: "2026-09-30T00:00:00Z", message: { role: "user", content: [{ type: "image", mimeType: "image/gif", data: GIF }] } },
   { type: "message", id: "a0", parentId: "u0", timestamp: "2026-09-30T00:00:00Z", message: { role: "assistant", model: "qwen-test", provider: "test", stopReason: "stop", usage: { input: 4, output: 2 }, content: [{ type: "text", text: "A single pixel." }] } },
   { type: "message", id: "u1", parentId: "a0", timestamp: "2026-09-30T00:00:01Z", message: { role: "user", content: "what is in this screenshot?" } },

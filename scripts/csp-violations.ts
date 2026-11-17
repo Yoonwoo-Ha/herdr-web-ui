@@ -21,14 +21,17 @@ export interface CspViolation {
   blockedURI: string;
   sourceFile: string;
   lineNumber: number;
+  /** which half reported it: the document's own event, or Chromium's console line */
   seen: "event" | "console";
 }
 
 export interface CspWatch {
   violations(): CspViolation[];
+  /** whether a response carried a policy header; false means the page proves nothing */
   servedPolicy(): boolean;
 }
 
+/** Both modes ship the same string, and report-only is what a measurement run sends. */
 const POLICY_HEADERS = ["content-security-policy", "content-security-policy-report-only"];
 /** Chromium's own wording, in the enforcing console line and in the report-only one alike */
 const CSP_TEXT = /content security policy/i;

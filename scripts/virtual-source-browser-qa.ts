@@ -365,6 +365,8 @@ try {
     assert.equal(part.copied, partial, `${path}: a real copy of a partial selection is exact`);
     const edges = lines.slice(29, 41).join("\n");
     assert.equal(await selectRows(page, 30, 41), await nativeSelection(page, edges), `${path}: blank first and last lines read as a native pre/code`);
+    // the trailing blank line and the empty line after the final newline: the source's own tail,
+    // where a native pre/code would drop the final newline
     await scrollRootTo(page, "end");
     await page.waitForFunction((last) => document.querySelector("diffs-container")!.shadowRoot!.querySelector(`[data-line="${last}"]`) !== null, lines.length);
     const tail = lines.slice(lines.length - 4).join("\n");

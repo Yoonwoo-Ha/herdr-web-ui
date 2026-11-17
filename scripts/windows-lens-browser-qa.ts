@@ -193,6 +193,8 @@ try {
   console.log("PASS in a small desktop window the wheel pans a mirrored grid");
   await narrow.close();
 
+  // A herdr that attaches: an interact client's grid is its own and fits, so nothing pans and a
+  // vertical drag still scrolls herdr's history. An observer adopts the operator's grid and pans it.
   const second = await workspaceCreate({ cwd, label: "ovis-test-winlens-attach" });
   workspaces.push(second.workspace.workspace_id);
   const attached = second.root_pane.pane_id;

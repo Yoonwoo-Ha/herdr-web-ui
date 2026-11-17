@@ -197,6 +197,8 @@ try {
       });
       console.log("PASS selectable pending bubbles fit phones; explicit Send now and Discard act on IDs");
 
+      // With automatic sending turned off, a follow-up sent while the agent works is held by the PC at once, at its
+      // sender's request: a reconnect leaves it held and sends nothing, and only Send now delivers it.
       await withCard(browser, 390, { agent: "codex", model: "gpt-5.6", autoSend: false }, async (page) => {
         const text = "held at once follow-up";
         await page.getByRole("textbox", { name: "Message", exact: true }).fill(text);
@@ -223,6 +225,9 @@ try {
         const sent = await page.evaluate(async (paneId) => await (await fetch(`/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`)).json(), panes.api);
         assert.equal(JSON.stringify(sent).split(text).length - 1, 1, "Send now delivers it once");
       });
+      // With automatic sending on, a follow-up is queued. One the bridge holds untyped as its connection closes comes
+      // back held on the bridge's receipt, sent only by an explicit Send now on the new connection. Past the receipt's
+      // ten minutes it proves nothing: the copy is uncertain and never offers an automatic or explicit retry.
       for (const held of [false, true]) await withCard(browser, 390, { agent: "codex", model: "gpt-5.6", autoSend: true }, async (page) => {
         const text = held ? "confirmed held follow-up" : "follow-up past its receipt";
         await page.getByRole("textbox", { name: "Message", exact: true }).fill(text);

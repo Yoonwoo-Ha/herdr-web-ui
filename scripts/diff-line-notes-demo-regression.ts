@@ -1,3 +1,4 @@
+/** Nothing leaves this loopback-only app. */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -206,6 +207,7 @@ async function desktop(browser: Browser, origin: string, theme: "dark" | "light"
     await page.keyboard.press("Escape");
     await page.locator(".repo-diff-find").waitFor({ state: "detached" });
 
+    // closed, the viewer leaves the note in the chip; the next message carries it first, for an agent alone
     await page.keyboard.press("Escape");
     await closeFiles(page);
     const chip = page.locator(".reply-comments-open");
