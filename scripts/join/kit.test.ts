@@ -77,9 +77,11 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")("kit lin
 
   test("the line removes its temporary folder when INT reaches it while join.sh downloads, and exits 130", async () => {
     const { at, tmp } = scratch();
+    // a join.sh that is a FIFO: the download waits on it until a writer comes
     mkdirSync(join(at, "kit"));
     expect(Bun.spawnSync(["mkfifo", join(at, "kit", "join.sh")]).exitCode).toBe(0);
     const { child, ended } = pasted(join(at, "kit"), "never read", tmp);
+    // opened for writing once curl has opened it for reading: the line is in its download, its trap set
     const writer = await open(join(at, "kit", "join.sh"), "w");
     await writer.write("#!/bin/sh\n");
     expect(readdirSync(tmp)).toHaveLength(1);

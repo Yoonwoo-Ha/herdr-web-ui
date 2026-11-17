@@ -65,6 +65,7 @@ export function redirectFor(rules: RedirectRule[], pathname: string): { to: stri
   return null;
 }
 
+/** `headers` after every rule `pathname` matches, in order: unset first, then set (joined when set twice). */
 export function applyHeaders(rules: HeaderRule[], pathname: string, headers: Headers): Headers {
   const setByRules = new Set<string>();
   for (const rule of rules) {
@@ -91,6 +92,7 @@ export function loadPagesSite(dir: string): PagesSite {
   return { dir, redirects: parseRedirects(read("_redirects")), headers: parseHeaders(read("_headers")) };
 }
 
+/** The response Pages would give `request` from `site`: redirects and rewrites, then the file, then the headers. */
 export async function pagesResponse(site: PagesSite, request: Request): Promise<Response> {
   const url = new URL(request.url);
   const requested = url.pathname;

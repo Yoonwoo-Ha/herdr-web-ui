@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseWorkflow, root, type Job } from "./shell-workflow-rules.ts";
 
+// hook-kill-tests.yml runs job-started.sh's refusals and its signal (the isolated tests of
+// scripts/self-hosted-runner.test.ts) in a throwaway container on GitHub's hosted runner. Nothing may move it onto the
+// self-hosted runners, give it more than a read token, leave a pull request without its run, or rename its check;
+// its container stays confined, and shows it before any test starts.
 const file = join(root, ".github/workflows/hook-kill-tests.yml");
 const workflow = parseWorkflow(file);
 const job = workflow.jobs["hook-kill-tests"]! as Job & { name?: string };
@@ -92,6 +96,7 @@ describe("hook kill tests workflow", () => {
     expect(dockerfile).toContain(">/opt/runner-hooks/ovis-runner-image");
     expect(dockerfile).toContain("chmod 0444 /opt/runner-hooks/ovis-runner-image");
     expect(dockerfile).toMatch(/^USER hooktest$/m);
+    // the runner image itself never carries the marker: its containers never run these tests
     expect(readFileSync(join(root, "scripts/self-hosted-runner/Dockerfile"), "utf8")).not.toContain("ovis-runner-image");
   });
 });

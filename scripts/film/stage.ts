@@ -1,7 +1,8 @@
 /**
- * The frame is resampled once in a canvas at the size it takes on screen (Skia's high
- * quality downscale), and only then moved by the object's matrix3d (perspective, rotation,
- * translation, near unit scale), so UI text stays crisp and never shimmers under a slow push.
+ * - Objects: the browser window and the phone of DESIGN.md/brief section 2, each carrying a recorded
+ *   frame. The frame is resampled once in a canvas at the size it takes on screen (Skia's high
+ *   quality downscale), and only then moved by the object's matrix3d (perspective, rotation,
+ *   translation, near unit scale), so UI text stays crisp and never shimmers under a slow push.
  */
 
 export interface ObjDesc {

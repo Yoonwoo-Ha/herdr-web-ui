@@ -78,6 +78,9 @@ export async function checkPaletteKeys(page: Page, fixture: PaletteKeysFixture):
     await until(async () => await rows.count() === 0, "F left RUN");
     await until(() => search.evaluate((input) => document.activeElement === input), "an emptied list hands the focus to the search");
 
+    // the letter pressed again on the first row, then a pane before it enters the filter: the
+    // keyboard stays on its row, and the highlight and Enter name that row (a letter that moves
+    // no focus fires no focus event, so the pick must be told without one)
     await report(paneD, "working");
     await report(paneE, "working");
     await until(async () => await rows.count() === 2, "D and E are back in RUN");

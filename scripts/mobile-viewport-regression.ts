@@ -13,7 +13,7 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     await context.addInitScript(() => {
       if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ terminalInputMode: "line" }));
       const viewport = window.visualViewport!;
-      let height = 795;
+      let height = 795; // a standalone app's idle visual viewport can exclude its status bar
       Object.defineProperty(viewport, "height", { get: () => height });
       const query = "(pointer: coarse)";
       let touch = true;
@@ -34,6 +34,8 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     await openLens(page, "chat");
     const composer = page.getByRole("textbox", { name: "Message", exact: true });
     await composer.waitFor();
+    // read in one step: the transcript's first node is replaced as the conversation loads, and a node
+    // found before that and read after it is out of the document, with no style at all
     assert.equal(await page.evaluate(() => { const view = document.querySelector(".chat-view"); return view ? getComputedStyle(view).overscrollBehaviorY : "no .chat-view"; }), "contain",
       "a drag past the transcript's top stays in the transcript, or Android Chrome reloads the app");
     assert.deepEqual(await page.evaluate(() => [document.documentElement, document.body].map((node) => getComputedStyle(node).overscrollBehaviorY)),
@@ -65,6 +67,8 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     await shell(false, "", 844);
     await height(780);
     await shell(false, "", 844);
+    // focused with the keyboard down (back from a dictation app, or closed by its own key):
+    // no keyboard sizing, so no status-bar band under the composer
     await composer.focus();
     await shell(false, "", 844);
     await height(500);
@@ -83,6 +87,7 @@ export async function checkMobileViewport(browser: Browser, origin: string, pane
     await page.waitForTimeout(20);
     await shell(true, "500px", 500);
     await blur();
+    // Focus loss alone does not dismiss the still-occluding keyboard.
     await shell(true, "500px", 500);
     await height(795);
     await shell(false, "", 844);

@@ -1,3 +1,11 @@
+/**
+ * The app on a browser older than the built-ins it calls (#2513): it runs from Safari 16.4, so each
+ * newer one it uses must be there by the time a module runs (src/lib/builtins.ts). Each page here
+ * loses those built-ins before the app's script runs, as Safari 16.4 to 17.3 lacks them, and a chat
+ * pane and a terminal pane must both draw with no "can't be shown" and no uncaught error. No herdr
+ * session and no user state: the demo build on a loopback server on port 0 under the app's
+ * Content-Security-Policy, and a temporary directory removed at the end.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,6 +44,8 @@ let server: ReturnType<typeof Bun.serve> | null = null;
 try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
+  // the built-ins go after the demo's transport, which needs randomUUID as it loads, and before the
+  // app: a file of the page's own, as the Content-Security-Policy allows no inline script
   writeFileSync(join(app, "old-browser.js"), `{
     const owners = { Promise, AbortSignal, "Crypto.prototype": Crypto.prototype };
     for (const path of window.oldBrowserLacks.gone) {

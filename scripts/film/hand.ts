@@ -1,3 +1,7 @@
+/**
+ * The film's recorder: every frame Chrome paints (CDP screencast) with its paint time, plus a log
+ * of what the "hand" did (pointer moves, clicks, taps) for the compositor to draw the cursor.
+ */
 import type { CDPSession, Page } from "playwright-core";
 
 export interface Frame { t: number; jpeg: Buffer }

@@ -7,6 +7,7 @@ const PREPARE = join(import.meta.dir, "..", "crates", "ovis-tui", "prepare.sh");
 
 let scratch = "";
 
+/** git with a fixed identity, local submodules allowed, and none of the user's config */
 function git(cwd: string, ...args: string[]): string {
   const run = Bun.spawnSync(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-c", "protocol.file.allow=always", "-C", cwd, ...args], {
     env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: scratch, GIT_CONFIG_NOSYSTEM: "1" },

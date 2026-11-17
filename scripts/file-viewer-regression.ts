@@ -41,6 +41,11 @@ const openFiles = async (page: import("playwright-core").Page) => {
   else await runMoreItem(page, "Browse files");
 };
 
+// A loaded or reloaded chat scrolls to its end once its conversation is measured; the chat frame
+// names its content only once it is presented there. Even then a link far above the end is no
+// steady target for a pointer: a follow to the end still on its way moves it between pointer down
+// and up, or takes its row and the focus away before a key, and nothing opens. Not even a wheel
+// read back first holds still: the follow undid one in looped runs.
 const transcriptSettled = (page: Page) => page.locator(".chat-frame[data-pane-content]").waitFor({ state: "attached" });
 const reloadFollowingEnd = async (page: Page): Promise<void> => {
   await page.evaluate(() => { for (const node of document.querySelectorAll(".chat-view")) node.scrollTop = node.scrollHeight; });
@@ -77,8 +82,10 @@ writeFileSync(transcript, [
   { type: "session_meta", payload: { id: thread, cwd: root } },
   { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Show me the demo video." }] } },
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [guide](./docs/guide.md) or [big](./big.txt) or [big code](./big.ts) or [mid code](./mid.ts) or [deep quotes](./deep.md) or [empty](./empty.txt) or [slow preview](./slow.md) or [long notes](./long.md) or [many lines](./lines.txt) or [long list](./list.md) or [contents page](./toc.html) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}) or [web report](${reportUrl}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}\n\n\`\`\`ts\nconst answer = 42;\n\nexport { answer };\n\`\`\`\n\n${chatImages}` }] } },
+  // a block the highlighter is quadratic on (a line of dashes in YAML): seconds on the page
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: "References: [source column](./target.ts:60:8), [source range](./target.ts#L60-L65), [Markdown line](./docs/guide.md#L6), [past end](./notes.txt:999), [past preview](./big.txt:999999), [capped line](./lines.txt:5)." }] } },
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Dashes:\n\n\`\`\`yaml\n${"-".repeat(90_000)}\n\`\`\`` }] } },
+  // more lines than are drawn one element each (LINE_ELEMENT_LIMIT): 30 000 elements held the page
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Lines:\n\n\`\`\`\n${"x\n".repeat(30_000)}\`\`\`` }] } },
   ...fidelitySources.map((source, index) => ({ type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `\`\`\`${index === 0 ? "ts" : "text"}\n${source}\n\`\`\`` }] } })),
   { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Take the screenshots." }] } },
@@ -111,6 +118,8 @@ writeFileSync(join(root, "README"), "Extensionless text\n");
 writeFileSync(join(root, "notes.custom"), "Unknown extension text\n");
 mkdirSync(join(root, "folder.txt"));
 writeFileSync(join(root, "folder.txt", "inside.txt"), "Chosen inside the popup\n");
+// a rendered page whose recording is too large to put into it (EMBED_FILE_BYTES in server/file-view.ts),
+// so it plays from the address its render gives out: 1 150 s of silence as 8 kHz 8-bit mono WAV, 9.2 MB
 mkdirSync(join(root, "media"));
 const takeRate = 8_000;
 const take = Buffer.alloc(44 + takeRate * 1_150, 0x80);
@@ -137,6 +146,7 @@ const SOURCE_LOAD_LIMIT = 8 * 1024 * 1024;
 writeFileSync(join(root, "big.txt"), `a line of plain text, ${"0123456789".repeat(8)}\n`.repeat(Math.ceil((SOURCE_LOAD_LIMIT + 1024 * 1024) / 103)));
 writeFileSync(join(root, "big.ts"), "export const value = 1;\n".repeat(Math.ceil((TEXT_LOAD_LIMIT + 1024) / 24)));
 writeFileSync(join(root, "mid.ts"), Array.from({ length: 3_000 }, (_, index) => `export const value${index + 1} = ${index + 1};`).join("\n") + "\n");
+// 20 KB of nested quotes: parsed one level per `>`, they overflowed the stack and blanked the app
 writeFileSync(join(root, "deep.md"), `${">".repeat(20_000)} deepest\n`);
 // a YAML block of dashes in a Markdown file: seconds for the highlighter in Chromium as in Bun (8 s at
 // 64 KB), while the Markdown parser reads it in a millisecond. A line of "[a" is slow in Bun alone:
@@ -147,17 +157,21 @@ writeFileSync(join(root, "long.md"), longNotes);
 const longPrefix = longNotes.slice(0, TEXT_LOAD_LIMIT);
 const longPreviewHeadings = longPrefix.slice(0, longPrefix.lastIndexOf("\n") + 1).split("\n").filter((line) => line.startsWith("# ")).length;
 writeFileSync(join(root, "lines.txt"), "\n".repeat(TEXT_LOAD_LIMIT));
+// more list items than a Preview draws (PREVIEW_ELEMENT_LIMIT): 65 536 of them held the page 1.6 s
 writeFileSync(join(root, "list.md"), "- a\n".repeat(TEXT_LOAD_LIMIT / 4));
 // an empty file has no first byte: its range answers 416, which is not an error
 writeFileSync(join(root, "empty.txt"), "");
 mkdirSync(join(root, "shots"));
 writeFileSync(join(root, "shots", "t00000.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64"));
+// a page whose script runs, and reports what it may not reach: the network and this app's storage
 writeFileSync(join(root, "shots", "report.html"), `<!doctype html><meta charset="utf-8"><title>Report</title><body><h1 id="ran">static</h1><p id="net">waiting</p><p id="store"></p><img id="shot" alt="shot" src="t00000.png"><p id="pic">no picture</p><script>
 document.getElementById("shot").decode().then(() => { document.getElementById("pic").textContent = "picture drawn"; }, () => {});
 document.getElementById("ran").textContent = "script ran";
 try { localStorage.length; document.getElementById("store").textContent = "storage reachable"; } catch { document.getElementById("store").textContent = "no storage"; }
 fetch("/api/health").then(() => { document.getElementById("net").textContent = "network reachable"; }, () => { document.getElementById("net").textContent = "network blocked"; });
 </script></body>`);
+// a page with a table of contents: an anchor the reader clicks inside the frame is a navigation of
+// the frame's own, an entry in the session history above the preview's (#1203)
 writeFileSync(join(root, "toc.html"), `<!doctype html><meta charset="utf-8"><title>Contents</title><body><nav><a id="toc" href="#details">Details</a></nav><p id="ran">static</p><p style="height:1200px">body</p><h2 id="details">Details</h2><script>document.getElementById("ran").textContent = "contents ran";</script></body>`);
 const markdownPath = join(root, "preview #1 & 한글.MD");
 const markdownSource = "<p align=\"center\">\n  <img src=\"./preview.svg\" alt=\"Logo\" width=\"64\">\n</p>\n\n<p align=\"center\"><a href=\"https://example.com/\">website</a> &middot; <strong>bold</strong></p>\n\n# Markdown preview\n\n한글 문서도 새 탭에서 읽을 수 있습니다.\n\n| Item | State |\n| --- | --- |\n| Preview | Ready |\n\n- [x] Rendered\n\nSee [the other notes](other.md).\n\n```ts\nconst answer = 42;\n```\n\n![Local image](./preview.svg)\n\n```mermaid\ngraph LR\n  A[Read] --> B[Preview]\n```\n";
@@ -254,6 +268,9 @@ try {
     for (const [index, source] of fidelitySources.entries()) {
       const block = page.locator(".markdown-code").nth(3 + index);
       assert.equal(await block.locator("code").textContent(), source, `${mode}: source whitespace`);
+      // found and selected in one task: an answer's Markdown is drawn again once the pane's skill
+      // list arrives (Markdown.tsx), which can fall between a locator's element handle and a later
+      // call on it and leave that handle on a detached <pre>
       const selections = await page.evaluate(({ nth, source }) => {
         const pre = document.querySelectorAll(".markdown-code")[nth]!.querySelector("pre")!;
         const selection = window.getSelection()!;
@@ -364,6 +381,7 @@ try {
   assert.equal(await narrowGuide.count(), 1, "Escape closes the More menu, not the file");
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "More", "and gives the focus back to More");
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "mobile-markdown-320.png") });
+  // the menu's own entry goes first: a Back pressed before that would leave it, with the file still up
   await sheetEntryLeft(page);
   await page.goBack();
   await narrowGuide.waitFor({ state: "hidden" });
@@ -532,6 +550,7 @@ try {
   await setFileOpen("panel");
   console.log("PASS by default a text file opens in the popup on a wide window");
   const beforePlacement = await page.evaluate(() => history.state);
+  // setFileOpen reloaded the page: its follow to the end can take the link from under a pointer
   await activateInTranscript(page, videoLink);
   await page.locator(".modal.file-viewer video").waitFor();
   assert.equal(await panel.count(), 0, "video starts in the popup at 1280px");
@@ -582,6 +601,8 @@ try {
   await page.keyboard.press("Escape");
   await panel.waitFor({ state: "detached" });
   assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, "Escape in the panel consumes the preview entry");
+  // A history traversal removes the panel and restores focus: detachment alone is not the
+  // focus signal. Keep the focus assertion, but wait for the state it actually checks.
   await page.waitForFunction((link) => document.activeElement === link, await notesLink.elementHandle());
   assert.equal(await notesLink.evaluate((link) => document.activeElement === link), true, "Escape in the panel returns the focus to the link that opened the file");
   await notesLink.press("Enter");
@@ -606,6 +627,10 @@ try {
   await panel.waitFor({ state: "detached" });
   assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, "Close file consumes the preview entry");
   console.log("PASS from 980px a file is a panel beside the pane: no scrim, the pane takes clicks, its edge drags and keeps its width, Escape inside and Close file close it");
+  // a page the reader navigates inside its frame (a click on its table of contents; a script setting
+  // location.hash once the page has loaded does the same) puts an entry of its own above the
+  // preview's in the session history: Close file and Escape must still close the panel and consume
+  // the preview's entry, not step the frame back and leave the panel there (#1203)
   const contentsLink = page.getByRole("button", { name: "contents page", exact: true });
   for (const close of ["Close file", "Escape"]) {
     await activateInTranscript(page, contentsLink);
@@ -613,6 +638,8 @@ try {
     await panel.getByRole("button", { name: "Run scripts", exact: true }).click();
     await framed.getByText("contents ran", { exact: true }).waitFor();
     const opened = await page.evaluate(() => history.length);
+    // the frame's own navigation is under test, not where the panel lays the frame out: a pointer
+    // aimed at the link while the panel settles can miss it, and no entry is made
     await framed.locator("#toc").dispatchEvent("click");
     await page.waitForFunction((length) => history.length === length + 1, opened);
     if (close === "Escape") { await panel.locator(".file-panel-resizer").focus(); await page.keyboard.press("Escape"); }
@@ -639,6 +666,7 @@ try {
 
   for (const [label, content] of [["extensionless", "Extensionless text"], ["unknown text", "Unknown extension text"]] as const) {
     const link = page.getByRole("button", { name: label, exact: true });
+    // the panel just closed: the chat takes its width back and its rows move under a pointer.
     await transcriptSettled(page);
     await link.focus();
     await link.dispatchEvent("click");
@@ -976,6 +1004,7 @@ try {
   await page.goBack();
   await notes.waitFor({ state: "hidden" });
   await videoLink.waitFor();
+  // reloaded and gone back: the chat's follow to its end can take the link from under a pointer
   await videoLink.dispatchEvent("click");
   await preview.waitFor();
   await preview.getByRole("button", { name: "Close file", exact: true }).click();
@@ -1130,6 +1159,7 @@ try {
   });
   await reloadFollowingEnd(page);
   await page.locator(".conn-live").waitFor();
+  // the reloaded chat's follow to its end can take the link from under a pointer
   await activateInTranscript(page, page.getByRole("button", { name: "big code", exact: true }));
   const bigCode = page.getByRole("dialog", { name: "big.ts", exact: true });
   await page.waitForFunction(() => (document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0);
@@ -1142,6 +1172,7 @@ try {
   await page.getByRole("button", { name: "Close file", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
+  // code past an element per line but within the colors bound: colored in the virtualizer's worker, served by this server under its CSP
   await page.getByRole("button", { name: "mid code", exact: true }).click();
   const midCode = page.getByRole("dialog", { name: "mid.ts", exact: true });
   await page.waitForFunction(() => (document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line] span[style*='--herdr-code-token']").length ?? 0) > 0, undefined, { timeout: 20_000 });
@@ -1509,6 +1540,7 @@ try {
   await page.locator(".work-row-detail .chat-tool-io pre").getByRole("button", { name: "shots/report.html", exact: true }).first().tap();
   const report = page.getByRole("dialog", { name: "report.html", exact: true });
   const frame = page.frameLocator(".file-viewer-page");
+  // the page is drawn without its scripts first: the frame allows none, and the line above it offers them
   await report.locator(".file-viewer-page").waitFor();
   assert.equal(await report.locator(".file-viewer-page").getAttribute("sandbox"), "", "a page's scripts do not run by themselves");
   assert.equal(await report.locator(".file-viewer-scripts").innerText().then((text) => text.replace(/\s+/g, " ").trim()), "Scripts in this page are off. Run scripts");
@@ -1516,6 +1548,7 @@ try {
   await frame.getByText("script ran", { exact: true }).waitFor();
   await frame.getByText("network blocked", { exact: true }).waitFor();
   await frame.getByText("no storage", { exact: true }).waitFor();
+  // a picture beside the page is put into it, so it draws though the page may ask this server for nothing
   await frame.getByText("picture drawn", { exact: true }).waitFor();
   assert.equal(await report.locator(".file-viewer-page").getAttribute("sandbox"), "allow-scripts");
   assert.equal(await report.getByRole("button", { name: "Show source", exact: true }).count(), 0, "HTML uses only Page | Source");
@@ -1549,6 +1582,7 @@ try {
     await contentsLink.tap();
     await contents.getByRole("button", { name: "Run scripts", exact: true }).click();
     await frame.getByText("contents ran", { exact: true }).waitFor();
+    // the sheet is still rising when the page shows: a click aimed into the frame meanwhile lands beside the anchor
     await sheetsSettled(page);
     const opened = await page.evaluate(() => history.length);
     await frame.locator("#toc").click();
@@ -1578,6 +1612,10 @@ try {
   console.log("PASS A file whose body is refused shows an error, not the error's JSON");
   assert.deepEqual(errors, []);
 
+  // a rendered page's recording too large to put into it plays and seeks from the address its render
+  // gave out, each request opening the file again and checking it is still the one that render saw; a
+  // lapsed or revoked address plays no more, and closing the viewer lets go of every descriptor, each
+  // once (server/file-view.ts)
   const live = new Set<number>();
   let closedTwice = 0;
   let allClosed: (() => void) | null = null;
@@ -1642,9 +1680,11 @@ try {
     }));
     assert.equal(Math.round(seeked), 900, "the recording seeks");
     assert.equal(await loads("again"), "loaded", "its address answers again");
+    // lapsed: past its lifetime the address is dropped, and the page's next ask is refused
     assert.equal(pageMediaResponse(first.slice(first.lastIndexOf("/") + 1), null, null, Date.now() + PAGE_MEDIA_LIFETIME_MS + 1), null);
     assert.equal(await loads("lapsed"), "error", "a lapsed address is refused");
     await closePage();
+    // revoked: a new render gives a new address, which plays until its client signs out
     const second = await openPage();
     assert.notEqual(second, first, "a new render gives a new address");
     forgetPageMedia({ client: "127.0.0.1" });

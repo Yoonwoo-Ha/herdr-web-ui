@@ -1,3 +1,4 @@
+/** omp's pictures live in its blob store and load with the line; a Codex tool's load only once its row is opened. */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -14,6 +15,8 @@ let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;
 const fixture = (name: string) => readFileSync(new URL(`../server/fixtures/${name}`, import.meta.url));
 
+// omp 18.8.7's session as recorded, laid out in an agent directory as omp keeps it, with one more
+// prompt that is only a picture (a paste: `@file` adds the file's name as text)
 const blob = fixture("omp-pictures-18.8.7-blob.webp");
 const agent = join(root, "omp", "agent");
 mkdirSync(join(agent, "sessions", "-tmp-omp-pictures-"), { recursive: true });

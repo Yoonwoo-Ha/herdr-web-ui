@@ -117,6 +117,7 @@ function agentRow(paneId: string) {
   assert.ok(page);
   return page.locator(`.agents-sidebar .agent-item[data-machine="local"][data-pane="${paneId}"]`);
 }
+// the pane on screen was looked at: its row draws herdr's DONE as ready, as herdr's own client does (#1279)
 let onScreen: string | null = null;
 const drawn = (paneId: string, status: Status): Status => status === "done" && paneId === onScreen ? "idle" : status;
 async function settled(paneId: string, status: Status, start?: number): Promise<void> {

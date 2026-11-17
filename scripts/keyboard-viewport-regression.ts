@@ -9,6 +9,9 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import { chromePath } from "./chrome-path.ts";
 
 async function checkState(page: Page, visible: boolean, height: number, inset: number, correction = false): Promise<void> {
+  // The page's clock is paused: this lets only the timers already due run (the zero timer a blur leaves), so the
+  // state read is the one the event itself left. A wait that should not be there (lib/viewport.ts holds only an
+  // iPad's shrink without a keyboard) shows as a stale state; a case that must wait runs the clock itself.
   await page.clock.runFor(1);
   const state = await page.evaluate((visible) => {
     const composer = document.querySelector(".composer")!;
@@ -170,25 +173,27 @@ try {
         await page.setViewportSize({ width: 393, height: 1000 });
         await geometry(page, 976, 1000, 1000);
         await checkState(page, false, 1000, 34);
+        // Same-width top/bottom split view changes the large/layout viewport,
+        // while the visual viewport retains a small non-keyboard inset.
         await page.setViewportSize({ width: 393, height: 600 });
         await geometry(page, 576, 600, 600);
         await checkState(page, false, 600, 34);
         await geometry(page, 300, 600, 600);
         await checkState(page, true, 300, 34);
         await geometry(page, 576, 600, 600, "scroll");
-        await checkState(page, false, 600, 34);
+        await checkState(page, false, 600, 34); // soft keyboard dismissed, still focused
         await page.getByRole("textbox", { name: "Message", exact: true }).blur();
         await page.getByRole("textbox", { name: "Message", exact: true }).focus();
         await checkState(page, false, 600, 34);
       } else if (scenario === "mobile") {
         await geometry(page, 472, 852, 852);
         await checkState(page, true, 472, 34);
-        await geometry(page, 400, 852, 852);
+        await geometry(page, 400, 852, 852); // the keyboard grows while it is up (a suggestion bar)
         await checkState(page, true, 400, 34);
-        await geometry(page, 793, 852, 852, "scroll");
+        await geometry(page, 793, 852, 852, "scroll"); // native dismissal, focus remains
         assert.equal(await page.getByRole("textbox", { name: "Message", exact: true }).evaluate((el) => document.activeElement === el), true);
         await checkState(page, false, 852, 34);
-        await geometry(page, 472, 472, 472);
+        await geometry(page, 472, 472, 472); // resizes-content: both viewports and CSS units shrink
         await checkState(page, true, 472, 34);
         await geometry(page, 793, 852, 852);
         await checkState(page, false, 852, 34);
@@ -277,6 +282,8 @@ try {
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   }
+  // an iPad home-screen app in landscape: the visual viewport stops above the status bar while the shell would be
+  // 100dvh tall, so the page could scroll by that band whenever a field takes the focus.
   // Page zoom scales the layout (125% of an 1180x820 screen lays out 944x656) and leaves the screen's own size, so
   // the iPad is told by its screen.
   const landscape = { width: 1180, height: 820 };
@@ -362,6 +369,8 @@ try {
       assert.equal(await size("#fixture-search"), ios ? "16px" : body, `${where}: ${ios ? "16px for a field a button's press focuses" : "a focused field keeps the interface size"}`);
       await page.locator("#fixture-search").blur();
       assert.equal(await size("#fixture-search"), body, `${where}: the interface size again after the blur`);
+      // a button drawn as a select (the agent picker) opens a menu and Safari never zooms into it, and it may not even
+      // take the focus: a press leaves its size alone, during the press and after it
       await page.evaluate(() => document.querySelector(".app")!.insertAdjacentHTML("afterbegin", '<button type="button" class="select" id="fixture-picker">Agent</button>'));
       await page.locator("#fixture-picker").dispatchEvent("pointerdown");
       assert.equal(await size("#fixture-picker"), body, `${where}: a pressed picker button keeps the interface size`);
@@ -381,6 +390,8 @@ try {
       await page.locator("#fixture-refused").dispatchEvent("pointerdown");
       await page.locator("#fixture-find").dispatchEvent("pointerdown");
       assert.equal(await size("#fixture-refused"), body, `${where}: the next press clears a field an earlier press left armed`);
+      // a field disabled while it has the focus (a form that is sending) does not stay armed: its blur disarms it
+      // though it is disabled by then, and where the browser drops the focus without a blur, the next press does
       await page.locator("#fixture-dir").focus();
       assert.equal(await size("#fixture-dir"), ios ? "16px" : body, `${where}: ${ios ? "16px with the focus" : "a focused field keeps the interface size"}`);
       await page.locator("#fixture-dir").evaluate((el: HTMLInputElement) => {

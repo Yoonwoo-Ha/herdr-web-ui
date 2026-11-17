@@ -12,6 +12,7 @@ import { appFaces } from "./app-faces.ts";
 import { chromePath } from "./chrome-path.ts";
 import { buildDemoApp } from "./demo-build.ts";
 
+// Only the demo transport and fictional question cards; never a user's OpenCode session.
 const app = mkdtempSync(join(tmpdir(), "opencode-prompt-browser-"));
 const shots = process.env.OPENCODE_PROMPT_SHOTS;
 const unconfirmedKey = "OpenCode did not confirm the answer. Check the question before sending again.";

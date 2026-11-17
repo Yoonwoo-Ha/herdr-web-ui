@@ -1,4 +1,6 @@
 /**
+ * The raw takes in _film/footage/rec/<name>/ (made by capture.ts), read for the compositor:
+ * frame files with their paint times, the hand's cues and the marks, all in seconds from the
  * take's first frame. Screencast takes (R*) paint 20-45 fps, so a moment shows the last frame
  * painted at or before it; stepped takes (S*) are exact 60 fps (frame i at i/60).
  */
@@ -69,6 +71,10 @@ export function frameAt(t: Take, s: number): number {
 
 export const frameUrl = (t: Take, i: number): string => `/_film/footage/rec/${t.name}/frames/${t.files[i]}`;
 
+/**
+ * The pointer at time s in CSS px: the recorded moves (~30 per second while gliding) joined by a
+ * Catmull-Rom curve so it glides at 60 fps. Moves more than 0.25 s apart are a jump, not a glide.
+ */
 export function pointerAt(t: Take, s: number): { x: number; y: number } | null {
   const pts = t.cues.filter((c) => c.kind !== "tap");
   if (!pts.length) return null;
@@ -89,6 +95,10 @@ export function pressesAt(t: Take, s: number, kind: "down" | "tap", window = 0.4
   return t.cues.filter((c) => c.kind === kind && c.t <= s && s - c.t < window).map((c) => ({ x: c.x, y: c.y, age: s - c.t }));
 }
 
+/**
+ * The first trough (opacity 0.35, 800 ms into the 1.6 s CSS `pulse`) of a status dot at or after
+ * `after` s, from the take's "pulse <dot> <ms>" marks (capture.ts reads each dot's animation time).
+ */
 export function trough(t: Take, after: number, dot = "badge"): number {
   const m = t.marks.find((m) => m.label.startsWith(`pulse ${dot} `));
   if (!m) throw new Error(`${t.name}: no pulse mark for ${dot}`);

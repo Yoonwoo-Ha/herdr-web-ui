@@ -11,6 +11,8 @@ export async function checkNotificationStartup(browser: Browser, upstream: strin
   let requestedJS!: () => void;
   const jsRequested = new Promise<void>((resolve) => { requestedJS = resolve; });
   const context = await browser.newContext({ locale: "en-US" });
+  // The shipped click handler uses a real WindowClient returned by the driver.
+  // Controlling open/focus avoids OS notification and transient-activation policy.
   const worker = `
     const nativeAdd = self.addEventListener.bind(self);
     let notificationClick;

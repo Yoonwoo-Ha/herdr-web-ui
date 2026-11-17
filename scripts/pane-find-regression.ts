@@ -10,6 +10,7 @@ import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/clien
 import { chromePath } from "./chrome-path.ts";
 import { shownRows } from "./shown-rows.ts";
 
+/** GUI searches stay in herdr's history, never in browser scrollback or terminal input. */
 export async function checkPaneFind(browser: Browser, origin: string): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "herdr-find-browser-"));
   const created = await workspaceCreate({ cwd: root, label: "ovis-test-find-browser" });
@@ -187,6 +188,9 @@ export async function checkPaneFind(browser: Browser, origin: string): Promise<v
     await page.keyboard.press("Escape");
     await uploadClosedGeometry;
 
+    // Let the narrow viewport's own resize land first: a phone's More sheet rises (styles.css) for
+    // longer than the terminal waits for a size to settle (PaneTerminal.tsx), so phoneGeometry would
+    // otherwise answer to that resize, and the search below would race the find bar's.
     const phoneViewport = resized();
     await page.setViewportSize({ width: 320, height: 844 });
     await phoneViewport;

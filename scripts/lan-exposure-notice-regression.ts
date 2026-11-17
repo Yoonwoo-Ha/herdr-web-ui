@@ -7,6 +7,17 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import "./test-herdr.ts";
 import { createServer } from "../server/index.ts";
 
+/**
+ * The line that says this server can be reached from the network with no token and nothing
+ * paired (#698). It is drawn from `lan_exposure` on `/api/health`, which the server sends only
+ * to a request that got in — so the check drives the real server, with a real herdr behind it,
+ * rather than a canned answer, and asks two questions:
+ *
+ *   1. does it appear, name the address, and carry the danger tint, on a server bound past
+ *      this PC with no token and nothing paired?
+ *   2. does it stay away on the same empty configuration bound to loopback, which is
+ *      unreachable from the network however it is addressed?
+ */
 const NOTICE = '[data-testid="lan-exposure-notice"]';
 
 type Found = {
@@ -45,6 +56,8 @@ async function read(browser: Browser, hostname: string): Promise<Found> {
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(String(error)));
+    // the absent case must not pass on a page that never asked: wait for the health answer the
+    // notice is drawn from, and for the session to be live, before looking
     const health = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/health" && response.status() === 200, { timeout: 15_000 });
     await page.goto(`http://127.0.0.1:${server.port}`, { waitUntil: "load" });
     await health;

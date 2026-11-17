@@ -7,6 +7,7 @@ type Carry = (storage: Storage, carried: Record<string, string>, shared: boolean
 const source = readFileSync(join(import.meta.dir, "..", "app", "mac", "Resources", "carry-drafts.js"), "utf8");
 const carry = new Function(`${source}\nreturn ovisCarryDrafts;`)() as Carry;
 
+/** A page's localStorage; `full` keys refuse writes, as a store over its quota does. */
 function store(entries: Record<string, string>, full = new Set<string>()): Storage & { entries: Map<string, string> } {
   const map = new Map(Object.entries(entries));
   return {

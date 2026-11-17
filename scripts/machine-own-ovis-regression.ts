@@ -82,6 +82,8 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: `${shots}/failed-mobile.png` });
   await page.setViewportSize({ width: 1280, height: 900 });
+  // the drawer, opened at the phone's width, held a history entry: widened, it steps off it, and a
+  // reload asked for before that step lands is dropped (net::ERR_ABORTED)
   await sheetEntryLeft(page);
 
   roster = [local, refused(null)];

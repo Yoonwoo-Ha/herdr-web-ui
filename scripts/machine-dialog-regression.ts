@@ -64,6 +64,8 @@ try {
           });
           await page.goto(`http://127.0.0.1:${server.port}/`);
           const dialog = page.getByRole("dialog", { name: "Add PC", exact: true });
+          // a phone's dialog holds a history entry and steps off it a moment after it closes: a reload asked
+          // for before that step lands is dropped by it (net::ERR_ABORTED)
           const reload = async (): Promise<void> => { if (await dialog.count() === 0) await sheetEntryLeft(page); await page.reload(); };
           const destination = dialog.getByRole("textbox", { name: "SSH alias or user@address", exact: true });
           await destination.fill("fixture-only");

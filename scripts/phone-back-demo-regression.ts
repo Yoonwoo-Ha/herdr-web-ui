@@ -42,6 +42,7 @@ async function open(browser: Browser, origin: string, screen: Screen, run: (page
         if (location.protocol !== "about:") void (window as unknown as { entryAdded: (entry: Entry) => Promise<void> }).entryAdded({ taps, keys: state !== null && typeof state === "object" ? Object.keys(state).join(",") : String(state) });
         return push(...args);
       };
+      // a step the page takes by itself lands as a popstate too, and is none of the user's
       let own = false;
       for (const name of ["back", "forward", "go"] as const) {
         const step = (history[name] as (by?: number) => void).bind(history);
@@ -229,6 +230,8 @@ try {
       await stillHere(page, origin, shown, "Files after a file closed by its X");
     });
 
+    // the same file closed by Back: Files is in front again with no tap since, where the browser's
+    // Back would skip an entry made now.
     await open(browser, origin, UPRIGHT, async (page) => {
       const shown = await paneShown(page);
       await page.locator(".header-more-button").tap();
@@ -303,6 +306,10 @@ try {
       await page.waitForURL("about:blank");
     });
 
+    // a busy tab's close asks first, even among other tabs: Back closes the question, and the tab is still there. On
+    // the web pane, whose agent waits on its question for good, beside a new terminal, so the question comes from the
+    // busy agent, not from a last tab: the api pane's turn ends 4.5 s after load (site/demo/transport.ts), and an idle
+    // tab among others closes without asking
     await open(browser, origin, TABLET, async (page) => {
       const busyTab = await page.locator(".tab-strip-close").first().getAttribute("aria-label");
       assert.ok(busyTab, "the web pane's tab has a close button");
@@ -412,6 +419,7 @@ try {
       await stillHere(page, origin, shown, "with no Navigation API, Files after Back closed a file opened from it");
     }, {}, false);
   } finally {
+    // the servers go whatever else failed, a browser that did not start included: left up, they keep this script from ending
     try { await browser?.close(); }
     finally {
       try { await server.stop(true); }

@@ -1,3 +1,21 @@
+/**
+ * New tab with an agent's model, effort, Ultracode, skills and first message (#774, #1311, #2232) on the
+ * unmodified app over the demo's fixture transport: the tab menu opens the dialog on the pane's workspace
+ * (the composer has no New tab button, even where an older version stored it on); Codex shows its `$` skills before any process exists (GET /api/agent/commands), a chip
+ * puts its token in the message, and Start sends exactly one tab/create with the agent's own
+ * arguments however often it is pressed while the first is in flight (the prompt is Codex's
+ * positional argument behind `--`, never queued as well); Claude Code, whose parser would run a
+ * message named like a subcommand, starts bare and the message rides on the request as
+ * `first_message`: the bridge's own pending message, shown in the new pane's chat until the agent is
+ * first ready, then typed once through this page's own connection, with this page never sending it
+ * itself; Claude Code's effort lists its five levels, and Ultracode is a switch of its own after it,
+ * on Claude Code alone, that adds one `--settings` object when it is on and is off at each opening;
+ * when that connection drops before the agent is ready, the message is held, never typed on its own,
+ * and goes once on Send now; a choice the launch does not take disables Start and is dropped with the
+ * agent; the keyboard reaches every control; a skill list the PC answers busy (503 file_busy, #2254) is asked for
+ * again and shows its chips, never the error.
+ * All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
+ */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -239,6 +257,7 @@ try {
         await dialog.locator(".new-session-skill-chip").first().waitFor();
         assert.deepEqual(await dialog.locator(".new-session-skill-chip").allTextContents(), ["/review-pr", "/changelog"], "a / skill for an agent that types them so");
         await dialog.getByLabel("Model").fill("opus");
+        // the five levels Claude Code's --effort lists; Ultracode is no level but the switch after them
         assert.deepEqual(await dialog.getByLabel("Effort").locator("option").allTextContents(), ["Agent default", "low", "medium", "high", "xhigh", "max"]);
         await dialog.getByLabel("Effort").selectOption("high");
         const ultracode = dialog.getByRole("switch", { name: "Ultracode", exact: true });
@@ -258,6 +277,7 @@ try {
         assert.deepEqual(sent.map(({ body: { first_message_connection: _, ...body } }) => body), [{ workspace_id: "w1C", cwd: "/home/demo/checkout-api", label: null, agent: { kind: "claude", args: ["--model", "opus", "--effort", "high", "--settings", "{\"ultracode\":true}"] }, first_message: "Plan the config file" }], "Ultracode is one --settings object after the effort it keeps; the message is the request's first_message, never an argument of Claude Code's");
         const bubble = page.locator(".pane-frame.is-current .pending-message-bubble", { hasText: "Plan the config file" });
         await bubble.waitFor();
+        // shot at once: the demo's agent rests 1.5 s after the start, and the bubble goes with it
         await page.screenshot({ path: join(evidence, "desktop-dark-claude-pending-bubble.png") });
         assert.equal(await page.getByRole("textbox", { name: "Message", exact: true }).inputValue(), "", "nothing is put in the box");
         const turn = page.locator(".pane-frame.is-current .chat-turn", { hasText: "Plan the config file" });
@@ -289,6 +309,8 @@ try {
         console.log("PASS Claude Code offers five effort levels and the Ultracode switch, and starts bare with its model, effort and --settings {\"ultracode\":true}; the first message is the bridge's pending message, shown in the chat and sent once when the agent rests, with no send from the page; the switch is off again at the next opening, after a Start or an Escape");
       } finally { await pendingPath.close(); }
 
+      // the connection drops right after Start and comes back before the agent is ready: nothing the user typed goes
+      // on its own after a disconnect, so the message is held for the new connection's Send now, and goes once then
       const reconnect = await desktop(browser, "dark");
       try {
         await reconnect.addInitScript(settings, "dark");

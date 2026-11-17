@@ -129,6 +129,8 @@ process.stdout.write(Array.from({ length: 400 }, (_, n) => "history " + n + "\\r
     await page.mouse.wheel(0, -120);
     if (delayed) await page.mouse.wheel(0, -120);
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+    // The held response cannot arrive until release: start its timeout here, not before
+    // navigation and terminal startup, and subscribe before allowing it to continue.
     const releasedMetrics = delayed
       ? page.waitForResponse(response => response.url().includes("/pane/scroll?"))
       : metrics;

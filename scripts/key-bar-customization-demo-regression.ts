@@ -11,6 +11,8 @@ import { sheetEntryLeft } from "./sheets-settled.ts";
 import { shownRows } from "./shown-rows.ts";
 import { keyBarItemLabel } from "../src/lib/keyBar.ts";
 
+// Editing and typing stay in this disposable, loopback-only app; no herdr session or user
+// terminal is opened.
 const repo = join(import.meta.dir, "..");
 const app = mkdtempSync(join(tmpdir(), "herdr-key-bar-demo-"));
 const evidence = process.env.UI_EVIDENCE_DIR;
@@ -260,6 +262,8 @@ try {
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
   assert.match(html, /<script type="module"/);
+  // The demo replaces WebSocket itself, so install the recorder after it and before the app.
+  // Record input only: output ACKs and resize frames must not race the input assertions.
   const record = `<script>(() => {
     const Demo = window.WebSocket;
     window.keyBarFrames = [];
@@ -496,6 +500,7 @@ try {
         const closePalette = async (): Promise<void> => {
           await page.keyboard.press("Escape");
           await palette.waitFor({ state: "hidden", timeout: 5_000 });
+          // a screen worked by touch: the palette held a history entry, and a reload asked for before the history is off it is dropped
           await sheetEntryLeft(page);
         };
         const modifierLabel = await page.evaluate(() => /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent) ? "⌘" : "Ctrl");
@@ -614,6 +619,8 @@ try {
             await Bun.sleep(50);
           }
         };
+        // the shell first replays a recorded session, with the gaps between its frames capped at
+        // half a second: typing before it ends is drawn over by the frames that follow
         let replayed = "";
         let replayedSince = Date.now();
         const replayDeadline = Date.now() + 15_000;

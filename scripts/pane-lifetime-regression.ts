@@ -1,4 +1,7 @@
-/** herdr gives pane IDs out again once it is replaced (#1608). */
+/**
+ * herdr gives pane IDs out again once it is replaced (#1608): what was typed for a pane of the
+ * previous herdr must not show in the pane that now has its ID.
+ */
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +11,7 @@ import type { ServerMessage } from "../shared/protocol.ts";
 import { chromePath } from "./chrome-path.ts";
 import { SOCKET_PATH_MAX } from "./check.ts";
 
+// This script stops its herdr, so it must not share even the browser lane's test session.
 const root = mkdtempSync(join(tmpdir(), "pane-lifetime-"));
 const session = "ovis-test-lifetime";
 const config = join(root, "config");
@@ -219,6 +223,7 @@ try {
   console.log("PASS Recover fills the box without sending, Discard removes the text");
   await page.close();
 
+  // A server that names no herdr lifetime (an older bridge): a draft lives in the page, never in storage.
   await server.stop();
   server = createServer({ hostname: "127.0.0.1", port, stateDir: join(root, "web"), token: "", herdrIdentity: () => null });
   const older = await browser.newContext({ viewport: { width: 1280, height: 800 } });

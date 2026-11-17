@@ -27,6 +27,7 @@ const write = (answer: string) => {
   conversation = { source, history_id: "fixture", cursor: null, turns, metadata, version: 1 };
 };
 try {
+  // Exercise the production bundler too: Vite must load the stylesheet with its JS chunk.
   const repo = join(import.meta.dir, "..");
   const output = join(root, "dist");
   symlinkSync(join(repo, "node_modules"), join(root, "node_modules"), "dir");

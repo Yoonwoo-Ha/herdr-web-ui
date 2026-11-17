@@ -1,3 +1,9 @@
+/**
+ * A mirrored pane wider than a phone (a Windows PC: herdr has no terminal attach there, so the bridge
+ * repaints the pane at its size on that PC) is drawn folded to the screen's width, with nothing cut off
+ * on the right; the pane menu's "Original width" draws the grid as it is again, remembered for this
+ * device, and a desktop keeps the original width until it chooses "Wrap to screen".
+ */
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -91,6 +97,7 @@ for (let index = 1; index <= ROWS; index++) {
   if (index === 3) screenRows.push(`\x1b[31mRED-SEGMENT\x1b[0m${row(index, " ").slice("RED-SEGMENT".length)}`);
   else if (index === 5) screenRows.push(row(index, "한글 줄바꿈: 오른쪽 끝까지 보여야 합니다 ", "가"));
   else if (index === 7) screenRows.push(row(index, `R07 ${LINK} `));
+  // an OSC 8 hyperlink whose label is itself an address: its target, not the label, is what opens
   else if (index === 11) screenRows.push(`R11 \x1b]8;;${OSC8_REAL}\x1b\\${OSC8_SHOWN}\x1b]8;;\x1b\\${row(index, " ").slice(`R11 ${OSC8_SHOWN}`.length)}`);
   else if (index === 9) screenRows.push(`R09 \x1b]8;;${OSC8}\x1b\\OSC8-LABEL\x1b]8;;\x1b\\${row(index, " ").slice("R09 OSC8-LABEL".length)}`);
   else if (index === ROWS) screenRows.push(row(index, "FOLD-LAST "));
@@ -178,6 +185,8 @@ const rowsWhole = async (page: Page, label: string): Promise<Visible> => {
   return seen;
 };
 const choose = async (page: Page, label: string, phone: boolean): Promise<void> => {
+  // a phone layout is waited for, not sampled: just after a resize from a desktop-wide window the header
+  // still holds the desktop's tab row, which the phone layout then takes away
   if (phone) {
     await page.locator(".app-header .header-tabs-sheet").waitFor();
     await page.locator(".header-more-button").click();
@@ -197,6 +206,11 @@ const choose = async (page: Page, label: string, phone: boolean): Promise<void> 
   }
   await item.click();
 };
+/**
+ * The point is measured against the row and Playwright clicks the row there once it holds still, so the
+ * view scrolling between measuring and tapping (a late resize settling, the rows following the cursor)
+ * cannot move the tap off the glyph.
+ */
 const tapFolded = async (page: Page, text: string, at: number): Promise<void> => {
   const row = page.locator(".pane-frame.is-current .terminal-fold-row").filter({ hasText: text }).first();
   const position = await row.evaluate((node, { text, at }) => {
@@ -287,6 +301,7 @@ async function open(browser: Browser, origin: string, viewport: { width: number;
   await context.addInitScript(() => {
     const seen = { taps: [] as string[], anchors: [] as string[] };
     (window as unknown as { foldSeen: typeof seen }).foldSeen = seen;
+    // the app opens a web link with a detached anchor's click (lib/terminalFileLinks.ts openWebLink), which no listener sees
     const anchorClick = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) { seen.anchors.push(this.href); anchorClick.call(this); };
     document.addEventListener("click", (event) => {
@@ -488,6 +503,7 @@ try {
         assert.deepEqual(await fitState(phone), { folded: false, fold: false, fits: true }, "a driving phone's grid is its own, fitted: nothing folded");
         assert.ok(!(await sheetItems(phone)).includes("Original width"), "a driving phone's menu offers no Original width");
 
+        // watching (a device paired to watch): the grid is the pty's, the other device's, wider than the phone: folded whole
         await phone.evaluate(() => window.foldFixture.sockets.at(-1)!.send(JSON.stringify({ type: "role", mode: "observe" })));
         await phone.locator(".pane-frame.is-current .terminal-banner-observe").waitFor();
         await phone.evaluate(({ pane, cols, rows, data }) => {
@@ -576,6 +592,7 @@ try {
         });
 
         await phone.evaluate(({ pane, cols, rows }) => window.foldFixture.sockets.at(-1)!.push({ type: "pane-geometry", pane_id: pane, cols, rows }), { pane: panes.shell, cols: COLS, rows: ROWS });
+        // the mouse reported, as herdr's attach always has it: the fold does not wait for a program that takes no clicks
         await pushScreen(phone, HERDR_MOUSE);
         await phone.evaluate(() => document.querySelector<HTMLTextAreaElement>(".pane-frame.is-current .xterm-helper-textarea")!.focus());
         await phone.setViewportSize({ width: 390, height: 470 });

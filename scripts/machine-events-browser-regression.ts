@@ -1,3 +1,4 @@
+/** More tabs than a browser's HTTP/1.1 connections per host take machine events over their terminal socket; tests use isolated app state. */
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

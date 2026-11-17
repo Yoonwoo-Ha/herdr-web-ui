@@ -1,4 +1,15 @@
 /**
+ * Which Hermes child sessions are conversations of their own, as the installed hermes-agent itself
+ * decides (Earlier sessions lists only those, server/session-history.ts hermesSessions).
+ *
+ * It runs hermes-agent's own SessionDB (never the agent, a model or a provider) in a temporary
+ * HERMES_HOME, makes each kind of child row the way Hermes's own code makes it (/branch, a gateway
+ * reset, a compression rotation, a delegate run, a tool session, the pre-marker rows of older
+ * releases), then asks Hermes's own `list_sessions_rich` which rows its session list shows and its
+ * `resolve_resume_session_id` which session `hermes --resume <id>` opens. It records the Hermes
+ * commit, the schema version and the source definitions behind those answers, and with `--fixture`
+ * writes the store it probed as the SQL script server/session-history.test.ts installs.
+ *
  *   bun scripts/hermes-history-schema-probe.ts [--hermes <hermes-agent dir>] [--python <python3>]
  *     [--out <evidence.json>] [--fixture <state.sql>]
  *
@@ -46,6 +57,8 @@ function definition(file: string, start: RegExp): { file: string; line: number; 
 
 const CWD = "/work/project";
 const OTHER_CWD = "/elsewhere";
+// The rows, oldest first. Each is made by the call Hermes's own code makes for that kind of row
+// (cited per kind below); the probe then pins their times so the fixture is the same every run.
 const PYTHON = String.raw`
 import json, sqlite3, sys
 from pathlib import Path
@@ -240,6 +253,8 @@ try {
     native_list: string[]; native_list_in_cwd: string[]; native_list_by_activity: string[];
     dump: { sessions: Array<Record<string, unknown>>; messages: Array<Record<string, unknown>> };
   };
+  // the decision rule: at least one branch or reset child in the folder that Hermes's own list shows
+  // and that `hermes --resume <its id>` opens as itself
   const proven = probe.rows.filter((row) => ["branch", "reset", "legacy-branch", "legacy-reset"].includes(row.kind)
     && row.cwd === CWD && row.listed_in_cwd && row.resume_opens === row.id);
   const evidence = {

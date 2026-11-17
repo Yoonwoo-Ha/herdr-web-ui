@@ -27,6 +27,7 @@ export async function checkFollowHerdrFocus(page: Page, fixture: FollowFocusFixt
     assert.equal(await choice.getAttribute("aria-pressed"), "true");
     await page.getByRole("button", { name: "Close settings", exact: true }).click();
   };
+  // `herdr tab create --focus`: herdr opens the tab and moves its own focus there, past this app
   const focusedTab = (label: string) => herdrRpc<{ tab: { tab_id: string }; root_pane: { pane_id: string } }>(
     "tab.create", { workspace_id: fixture.workspaceId, label, focus: true });
 
@@ -45,6 +46,8 @@ export async function checkFollowHerdrFocus(page: Page, fixture: FollowFocusFixt
       return data;
     };
   });
+  // A wrong follow is only a React update scheduled in that call: the selection read here is stored
+  // by an effect after the render, so the read waits two frames and a task past the frame for both
   const focusRead = async (paneId: string, label: string): Promise<void> => {
     await until(() => page.evaluate(
       (paneId) => (window as unknown as { __focusFramesRead?: string[] }).__focusFramesRead?.includes(paneId) === true, paneId), label);
@@ -57,6 +60,7 @@ export async function checkFollowHerdrFocus(page: Page, fixture: FollowFocusFixt
     const ignored = await focusedTab("follow focus off");
     tabs.push(ignored.tab.tab_id);
     await focusRead(ignored.root_pane.pane_id, "herdr's focus frame for the tab opened while off is read");
+    // a wrong follow is only a scheduled render when the frame is read, and no later step would show it
     // fixed wait: the selection gets the time to move before it is read
     await page.waitForTimeout(NO_FOLLOW_WAIT_MS);
     assert.equal(await selectedPaneId(), before, "a device that did not ask to follow herdr's focus keeps its pane");

@@ -177,6 +177,8 @@ const row = (page: Page, machineId: string, paneId: string) => page.locator(`.ag
 const status = (page: Page, machineId: string, paneId: string, value: string) => row(page, machineId, paneId).locator(`.sidebar-status[data-status="${value}"]`);
 const muteItem = (page: Page) => page.locator('.row-menu [role="menuitemcheckbox"], .row-sheet-item[aria-pressed]');
 const droplet = (page: Page) => page.locator(".droplet-card");
+// an alert leaves by itself after its hold (DROPLET_HOLD_MS): a Dismiss pressed after a slow capture can find it
+// already leaving, so each step that needs it gone waits for it to go
 let url = "";
 
 async function newContext(browser: Browser, phone: boolean, settings: Record<string, unknown>): Promise<BrowserContext> {
@@ -197,6 +199,8 @@ async function openTab(context: BrowserContext, query = ""): Promise<Page> {
   await page.locator(".conn-live").waitFor({ state: "attached" });
   await row(page, "local", P).waitFor({ state: "attached" });
   await page.waitForFunction(() => window.muteFixture.documents.length > 0);
+  // the demo's own turn on the open pane ends 4.5 s after load (site/demo/transport.ts): every count and
+  // every capture comes after it, so none races that finish
   await page.locator(`.pane-item:has(.pane-select[title^="${OPENED} —"]) [data-status="idle"]`).first().waitFor({ state: "attached", timeout: 10_000 });
   return page;
 }
@@ -268,6 +272,7 @@ export async function runPaneMute(part: "behaviour" | "captures"): Promise<void>
   writeFileSync(join(app, "mute-fixture.js"), `(${installMuteFixture.toString()})();`);
   writeFileSync(index, html.replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n    <script src="./mute-fixture.js"></script>\n    <script type="module"'));
 
+  // the preferences stream stays open across the whole run: a heartbeat every 15 s, as the server's stream has, keeps it inside the idle limit
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === "/fixture/preferences") {
@@ -316,6 +321,7 @@ export async function runPaneMute(part: "behaviour" | "captures"): Promise<void>
       const key = paneStorageId("local", P);
       const checks: string[] = [];
 
+      // the behaviour sections stay together and in this order: the finish and barrier counters run on from one to the next
       if (part === "behaviour") {
         openStore("pre-feature");
         {
@@ -354,6 +360,7 @@ export async function runPaneMute(part: "behaviour" | "captures"): Promise<void>
         const context = await newContext(browser, false, {});
         const a = await openTab(context);
         const b = await openTab(context);
+        // a key was pressed on the page: its chimes may play from here (lib/alertSound.ts unlocks on a gesture)
         await a.keyboard.press("Shift");
         await toggleMute(a, false, "local", P);
         const muted = await storeHolds("tab A's mute", (document) => document.muted_panes?.includes(key) === true);
@@ -467,6 +474,7 @@ export async function runPaneMute(part: "behaviour" | "captures"): Promise<void>
         }
         fixture.old = false;
 
+        // ---- a watching device: the state, not the switch ----
         openStore("fresh");
         fixture.store.set({ settings: {}, muted_panes: [key] });
         fixture.watch = true;

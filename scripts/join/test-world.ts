@@ -1,3 +1,11 @@
+/**
+ * The test world of scripts/join/join.contract.test.ts, run in a container of its own on the test's docker network
+ * (`bun scripts/join/test-world.ts`, JOIN_BIND = that container's address): the repository's test account service
+ * (shared/account-service-fake.ts) on :9080, its Bun relay (relay/bun.ts) on :8787 and the kit folders (/srv/kit*,
+ * read-only: /kit/<file> serves /srv/kit/<file>) on :9180, each behind the test TLS proxy as https://account.join.test:9443, wss://relay.join.test:8443 and
+ * https://kit.join.test:7443. A control API on :9090 stands in for the person at the sign-in page and reads the
+ * service's state.
+ */
 import { startBunRelay } from "../../relay/bun.ts";
 import { FakeAccountService, type SignInProvider } from "../../shared/account-service-fake.ts";
 

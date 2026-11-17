@@ -1,5 +1,8 @@
 /**
- * HEALTH_FLAP_RESULTS=<dir> keeps each scenario's record there.
+ * A PC known to have no terminal attach (a Windows herdr) keeps its chat lens and its "soon" mark
+ * through failed reads, and no failed read opens an attach. All files and HTTP traffic stay in this
+ * disposable, loopback-only app; no herdr session is opened. HEALTH_FLAP_RESULTS=<dir> keeps each
+ * scenario's record there.
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -103,6 +106,7 @@ export function installHealthFlap(): void {
     const send = socket.send.bind(socket);
     socket.send = (raw: string) => {
       const frame = JSON.parse(String(raw)) as Frame;
+      // an observer: the connection asks to watch only, as a second browser on a held pane does
       const sent = observe && frame.type === "role" ? { ...frame, mode: "observe" } : frame;
       if (/attach|watch|role|take|input|keys|submit|resize/.test(sent.type)) flap.sent.push({ type: sent.type, mode: sent.mode, pane_id: sent.pane_id });
       send(sent === frame ? raw : JSON.stringify(sent));

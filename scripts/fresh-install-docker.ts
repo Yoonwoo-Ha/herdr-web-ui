@@ -1,4 +1,6 @@
 /**
+ * Requires Docker and network; nothing on the host changes.
+ *
  * ONE_LINE=1 is the other door: a box with curl and git but no Node, herdr or Bun, and this
  * checkout's install.sh piped into sh as `curl … | sh` would, before herdr ever runs. It installs
  * the plugin at `ref` (install.sh reads OVIS_REF), and the startup hook brings the app up.

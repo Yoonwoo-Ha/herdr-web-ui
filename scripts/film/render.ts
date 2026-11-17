@@ -10,7 +10,8 @@
  * (CRF 19, preset veryslow, no grain, ≤ 20 MB): at a web bitrate x264 freezes per-frame grain into blocky
  * mottle that only refreshes on I-frames (a visible 2 s pulse), and even a static grain field costs ~3 MB
  * that the UI text needs more; the site draws its own static grain over the stage.
- * and the poster site/media/ovis-film.jpg (the frame at 34.40 s).
+ * and the poster site/media/ovis-film.jpg (the frame at 34.40 s). A full render takes a few
+ * minutes on 32 cores.
  *
  * After a re-capture, re-check what was measured by hand on the frames: the S8 status/Pushed times
  * (R3_DONE… in timeline.ts), the per-shot camera anchors (fx/fy/ax/ay) and the type positions against
@@ -176,6 +177,7 @@ const loopShift = (): number => Math.round(opt("start", LOOP_START) * LOOP_FPS);
 async function loop(): Promise<void> {
   const n = Math.round(LOOP_LEN * LOOP_FPS), s = loopShift();
   const lossless = await renderAll("loop", (i) => loopFrame(((i + s) % n) / LOOP_FPS), LOOP_FPS, 0, n, opt("workers", 12), 1);
+  // static grain (no temporal flag: one fixed noise field), so the seam stays invisible
   const vf = `${TO_YUV},format=yuv420p,noise=c0s=${GRAIN}:c0f=u`;
   mkdirSync(join(REPO, "site/media"), { recursive: true });
   mkdirSync(join(REPO, "docs/media"), { recursive: true });
@@ -185,6 +187,7 @@ async function loop(): Promise<void> {
   console.log(`loop ${LOOP_MP4} ${mb(LOOP_MP4)}\nposter ${LOOP_JPG} ${mb(LOOP_JPG)}\ngif ${LOOP_GIF} ${mb(LOOP_GIF)}`);
 }
 
+/** README GIF: the brief's 880 px / 15 fps first; while over 5 MB, 12 fps, then a 128-colour palette, then 800 px. */
 async function gif(src: string): Promise<void> {
   const tries = [[15, 880, 256, 3], [12, 880, 256, 3], [12, 880, 128, 4], [12, 800, 128, 4]] as const;
   for (const [fps, width, colors, bayer] of tries) {
@@ -230,6 +233,9 @@ async function check(): Promise<void> {
   console.log(await run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,profile,width,height,r_frame_rate,pix_fmt,nb_frames,color_space:format=duration,size", "-of", "compact", FILM_MP4]));
   for (const f of [FILM_MP4, FILM_JPG, LOOP_MP4, LOOP_JPG, LOOP_GIF]) console.log(f.replace(REPO + "/", ""), existsSync(f) ? mb(f) : "MISSING");
   console.log(await run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height,r_frame_rate,nb_frames:format=duration", "-of", "compact", LOOP_MP4]));
+  // the loop's seam: path frame 0 against path frame 192 (t = 6.4 s, one past the last), both rendered
+  // fresh; in the rotated file that wrap is between output frames n - s - 1 and n - s. Then the file's
+  // frame 0 against a fresh render of the start, to prove the rotation is the one asked for.
   const lossless = join(RENDERS, "loop-lossless.mkv");
   if (existsSync(lossless)) {
     const n = Math.round(LOOP_LEN * LOOP_FPS), sh = loopShift();

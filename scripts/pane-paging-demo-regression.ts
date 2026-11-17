@@ -24,6 +24,9 @@ const scrollGeometry = (page: Page) => page.evaluate(() => {
     returnControls: [...document.querySelectorAll<HTMLElement>(".pane-frame.is-current .chat-new-messages")].map((button) => ({ label: button.getAttribute("aria-label"), text: button.textContent, className: button.className, height: button.getBoundingClientRect().height })),
     loading: node.querySelector(".chat-inline-state")?.textContent ?? null };
 });
+// The demo's api pane opens mid-turn and ends that turn 4.5 s later (site/demo/transport.ts): the
+// answer lands and the work block folds, so the transcript's height changes under the reader. Paging
+// asserts exact scroll positions, so it starts only once that turn has ended and its fold has settled.
 async function demoTurnEnded(page: Page): Promise<void> {
   await page.waitForFunction(() => {
     const transcript = document.querySelector(".pane-frame.is-current .chat-view");

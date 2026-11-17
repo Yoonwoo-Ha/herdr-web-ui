@@ -8,6 +8,7 @@ import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
 
+// All files and HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const repo = join(import.meta.dir, "..");
 const app = mkdtempSync(join(tmpdir(), "herdr-held-rows-demo-"));
 
@@ -98,6 +99,8 @@ try {
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", hasTouch: touch });
         await context.addInitScript((queues) => {
           localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
+          // the rows were kept under the demo's herdr (site/demo/transport.ts): with no record they would
+          // be an earlier release's, whose herdr nothing proves, and go to Recover unsent text
           localStorage.setItem("ovis:pane-lifetime:local", "demo-local");
           for (const [owner, value] of Object.entries(queues)) localStorage.setItem(`ovis:queue:${owner}`, value);
         }, seed);
@@ -240,6 +243,7 @@ try {
       }
 
       {
+        // watch-only access (the bridge says so before the socket answers in observe mode): a held message offers no Send now
         const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
         try {
           await context.addInitScript((queue) => {

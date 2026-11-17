@@ -24,7 +24,9 @@ import { ompStoreLayout } from "../server/omp.ts";
 import { createOmpProcessProbe } from "../server/omp-process.ts";
 
 const STARTUP_MS = 30_000;
+/** The bridge's 1 s helper bound is for a live pane; a loaded host may need longer to answer here. */
 const ompProcessMemory = createOmpProcessProbe({ timeoutMs: 15_000 });
+/** Directories omp resolves against one nothing records (it changes into its --cwd): the resolver must give nothing. */
 const UNSUPPORTED = new Set(["relative PI_CODING_AGENT_DIR", "relative session-dir", "relative cwd and relative session-dir"]);
 const omp = Bun.which("omp");
 const root = realpathSync(mkdtempSync(join(tmpdir(), "omp-store-layout-")));
@@ -94,6 +96,7 @@ async function observe(spec: Case, index: number): Promise<Observed> {
     if (found.length === 1) [breadcrumbCwd = null, sessionPath = null] = readFileSync(found[0]!, "utf8").split("\n");
     const absolute = sessionPath?.startsWith("/") ?? false;
     if (absolute && breadcrumbCwd) {
+      // the header omp writes with its first answer, so the resolver has a transcript to find
       mkdirSync(dirname(sessionPath!), { recursive: true });
       if (!existsSync(sessionPath!) || statSync(sessionPath!).size === 0) writeFileSync(sessionPath!, `${JSON.stringify({ type: "session", version: 3, id: "probe", cwd: breadcrumbCwd })}\n`);
     }

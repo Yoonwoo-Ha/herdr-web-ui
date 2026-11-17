@@ -8,6 +8,8 @@ import { KEY_REPEAT_DELAY_MS, KEY_REPEAT_INTERVAL_MS } from "../src/lib/keyRepea
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 
+// The disposable app only listens on loopback; no herdr session, user terminal or real input
+// transport is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-key-bar-hold-repeat-"));
 const evidence = process.env.UI_EVIDENCE_DIR;
 const HOLD_MS = KEY_REPEAT_DELAY_MS + 10 * KEY_REPEAT_INTERVAL_MS;
@@ -62,6 +64,8 @@ try {
   const index = join(app, "index.html");
   const html = readFileSync(index, "utf8");
   assert.match(html, /<script type="module"/);
+  // The demo replaces WebSocket itself. Install this synchronous send recorder after the
+  // transport and before the app, so release checks cannot race delayed WS frame reporting.
   const record = `<script>(() => {
     const Demo = window.WebSocket;
     window.keyBarFrames = [];
@@ -117,6 +121,7 @@ try {
         const ctrl = bar.locator('.key[data-key="Control"]');
         const cdp = await context.newCDPSession(page);
 
+        // 1. Playwright's touch tap drives pointerdown, pointerup and the normal click path.
         let before = (await framesOf(page)).length;
         await left.tap();
         await Bun.sleep(NO_SEND_WAIT_MS);
@@ -142,6 +147,8 @@ try {
         assert.deepEqual(sentKeys(await framesSince(page, before)), ["left"], "a short hold remains exactly one click");
         console.log("PASS a hold shorter than the repeat delay sends exactly one key on release");
 
+        // 4. The seeded layout really overflows. Keep native CDP panning enabled: synthetically
+        // dispatching pointermove would test cancellation but could not prove the row scrolls.
         await bar.evaluate((row) => { row.scrollLeft = 0; });
         await settled(page);
         const scroll = await bar.evaluate((row) => ({ left: row.scrollLeft, width: row.clientWidth, content: row.scrollWidth }));
@@ -253,6 +260,7 @@ try {
         });
         console.log("PASS a held arrow prevents the contextmenu default");
 
+        // 8. Outside iOS the terminal's helper textarea keeps xterm's own empty, unwrapped field.
         const helper = page.locator(".xterm-helper-textarea");
         assert.deepEqual(await helper.evaluate((field: HTMLTextAreaElement) => ({ value: field.value, wrap: getComputedStyle(field).whiteSpace })),
           { value: "", wrap: "nowrap" }, "a non-iOS phone keeps xterm's helper textarea as it was");

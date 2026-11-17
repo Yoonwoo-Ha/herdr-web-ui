@@ -1,9 +1,14 @@
 /**
+ * - The built site is served under /herdr-web-ui/ by a small Bun.serve, like GitHub Pages does.
  * - Chrome gets the brand fonts (Pretendard Variable, JetBrains Mono) as local fonts through its own
  *   fontconfig, downloaded once to _film/fonts: the app names them first but ships no webfont, and a
  *   local font is there before xterm measures its cells.
+ * - Recordings use hand.ts (CDP screencast frames with paint times, cue log of the hand; the README's
+ *   scripts/readme-media/record.ts with a device scale, a clock-driven glide, place and press). Each one is kept raw (JPEG frames, frames.json, cues.json, marks) and turned into a
+ *   constant 60 fps MP4 by holding every frame until the next one was painted.
  * - Scale: FILM_SCALE (default 2) sets R10/R11's device scale factor. 3x was tried and the screencast
  *   painted ~13 fps (the brief asks for 40), so every take is 2x (crop limit: >= 960 CSS px of width).
+ * - Chrome runs with --hide-scrollbars: no scrollbar shows in any shot.
  *
  *   bun run build:site && bun scripts/film/capture.ts [stills] [rec] [stepped] [R1 R1b … S1 … | still names]
  *
@@ -102,12 +107,20 @@ interface Open {
   theme?: "dark" | "light";
   language?: "en" | "ko";
   mods?: { todo?: boolean; real?: boolean; worked?: boolean; stream?: boolean; story?: "opening" | "before" | "after" | "after-plain" | "next" };
+  /** ms after the app is up before the caller takes over; the Claude turn ends 4.5 s after load */
   settle?: number;
   scale?: number;
   hold?: number[];
   terminalFont?: number;
 }
 
+/**
+ * Runs in the page before the demo transport: a setTimeout whose delay is armed is kept instead of
+ * scheduled, until `__herdrFilm.release()` runs it. The demo schedules its scripted events with
+ * fixed delays (the Claude turn ends at 4500 ms, a chat answer comes 2400 ms after sending) and the
+ * app uses neither, so arming one holds exactly that event: a turn stays running as long as a take
+ * needs. `caught()` counts what was held, per delay, for the take's notes.
+ */
 function filmHold(initial: number[]): void {
   const native = window.setTimeout.bind(window);
   const armed = new Set<number>(initial);
@@ -476,6 +489,7 @@ async function writeRecording(name: string, recording: Recording, marks: Marks, 
   return { file: `${name}.mp4`, kind: "recording", shows: "", resolution: `${w}x${h} (${recording.width}x${recording.height} @${scale}x), ${FPS} fps (screencast painted ${paintFps(files)})`, duration: Math.round(duration * 100) / 100, marks: markList };
 }
 
+/** screencast paint rate while something moves: median frames/s over intervals under 250 ms (a still page paints nothing) */
 function paintFps(files: { t: number }[]): string {
   const gaps = files.slice(1).map((f, i) => f.t - files[i]!.t).filter((g) => g > 0 && g < 0.25).sort((a, b) => a - b);
   if (gaps.length === 0) return "n/a";
@@ -519,6 +533,10 @@ async function chatToEnd(page: Page): Promise<void> {
   await Bun.sleep(300);
 }
 
+/**
+ * Where the status dots' 1.6 s pulse is (CSS `pulse`, opacity 1 -> 0.35 at 50% -> 1): a mark per
+ * dot "pulse <class> <ms into its cycle>", so a cut can start on a trough (800 ms into a cycle).
+ */
 async function markPulse(page: Page, marks: Marks): Promise<number> {
   const dots = await page.evaluate(() => document.getAnimations().filter((a: any) => a.animationName === "pulse").map((a: any) => ({
     what: String((a.effect?.target as Element | null)?.className ?? "?").split(" ")[0] ?? "?", ms: Math.round(Number(a.currentTime) % 1600),

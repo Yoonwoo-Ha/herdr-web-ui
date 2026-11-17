@@ -1,3 +1,7 @@
+/** Docker-backed SSH lifecycle test. Build scripts/fixtures/herdr-ssh first.
+ * HERDR_SSH_QA_BUNDLE must point to a verified official bundle for the Docker host platform.
+ * Uses a temporary container/account, real SSH, real Herdr and no API mocks.
+ */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -134,6 +138,8 @@ try {
   await until(machines, (ms) => ms.some((m) => m.id === machine.id && m.state === "connected"), "approved bridge auto-restart");
   assert.ok((await api<{ snapshot: SessionSnapshot }>(path + "/session")).snapshot.panes.some((p) => p.pane_id === created.pane_id));
   console.log("PASS manager restart and approved bridge restart preserve existing panes");
+  // A second, fresh web state connects to the existing bridge with keys only.
+  // That grants reconnection, but not permission to start the bridge after it stops.
   server.stop();
   const connectionState = join(root, "connection-only");
   writeFileSync(config, readFileSync(config, "utf8") + `  IdentityFile ${join(state, "ssh", machine.id)}\n`);

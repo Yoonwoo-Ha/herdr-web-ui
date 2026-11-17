@@ -76,6 +76,7 @@ try {
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   assert.deepEqual(inputs.at(-1), { machine: b, pane: paneId });
   await select("QA remote");
+  // SSH_TEST_KEEP creates a loopback fixture with a private remoteHome.
   assert.match(fixture.root, /\/herdr-ssh-qa-[^/]+$/);
   assert.equal(fixture.remoteHome, join(fixture.root, "remote"));
   const program = join(fixture.remoteHome, "claude"); copyFileSync(process.execPath, program); chmodSync(program, 0o755);
@@ -118,6 +119,7 @@ try {
   assert.equal(await page.locator(".pending-message-bubble").innerText(), "PENDING_A_MUST_NOT_REPLAY");
   await page.getByRole("button", { name: "Discard saved copy", exact: true }).click();
   await pendingRows.waitFor({ state: "hidden" });
+  // Older versions' held messages remain editable, manual and scoped to their PC.
   await page.evaluate(({ owner }) => localStorage.setItem(`ovis:queue:${owner}`, JSON.stringify({ version: 1, messages: [{ id: "legacy-machine-browser", text: "HELD_A_MUST_NOT_SEND" }] })), { owner: paneStorageId(a, paneId) });
   await page.reload(); await page.locator(".composer-queue-text").waitFor();
   await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "claude", state: "blocked" }, socket);

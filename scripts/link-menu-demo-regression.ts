@@ -9,7 +9,7 @@ import { chromePath } from "./chrome-path.ts";
 
 // A desktop Chromium turns no held touch into a contextmenu,
 // so each long press is the touch-typed contextmenu the Android WebView sends for one (checked on
-// an emulator in the PR).
+// an emulator in the PR). Loopback only; no herdr.
 const app = mkdtempSync(join(tmpdir(), "herdr-link-menu-demo-"));
 const evidence = process.env["UI_EVIDENCE_DIR"];
 
@@ -166,6 +166,7 @@ try {
           assert.equal(await page.locator(".terminal-stack.is-chat").count(), 1, "the app did not fall to its crash screen");
           console.log("PASS android: an address no URL parser takes gets its sheet and is copied as written");
 
+          // other words keep the WebView's own long press (it selects them), and so does a mouse's menu on a link
           assert.equal(await longPress(page, words, "plain words here"), false, "a long press on other words is left to the WebView");
           assert.equal(await longPress(page, link, WORDS, "mouse"), false, "the contextmenu Android ends a dragged selection with is not the link's");
           assert.equal(await page.locator(".row-sheet").count(), 0, "neither opens the sheet");

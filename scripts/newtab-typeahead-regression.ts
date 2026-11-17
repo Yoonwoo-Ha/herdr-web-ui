@@ -1,3 +1,8 @@
+/**
+ * Keys typed right after a New tab choice (the +, the tab list's New terminal, the New tab dialog's Start) reach
+ * the new tab, every one and in order, and none the old tab; a Space or Enter typed then opens no second tab.
+ * What may not go by itself (a paste, keys typed before the user went elsewhere) is held for review instead.
+ */
 import assert from "node:assert/strict";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,7 +37,12 @@ async function until(check: () => boolean | Promise<boolean>, label: string): Pr
   }
 }
 
-/** Awaited before the page's goto: an init script runs only in documents loaded after it is installed. */
+/**
+ * What the page sends a pane, as the browser's frame events report it (they can come later than the shell's output on a
+ * busy machine), and how many input and keys frames have been heard in all: the page counts what it sends itself
+ * (sentByPage), so a check can wait until everything sent so far, an unexpected extra frame included, has been heard.
+ * Awaited before the page's goto: an init script runs only in documents loaded after it is installed.
+ */
 async function watch(page: Page): Promise<{ sent: Sent[]; ready: Set<string>; heard: { count: number } }> {
   const sent: Sent[] = [];
   const ready = new Set<string>();
@@ -127,8 +137,11 @@ async function typeAhead(browser: Browser, origin: string, item: Case): Promise<
         throw new Error(`${(error as Error).message}; sent to it: ${JSON.stringify(textOf(sent, second!))}, held for review: ${held > 0}, its last lines: ${JSON.stringify((await lines()).filter(Boolean).slice(-4))}`);
       });
       if (item.sent !== undefined) {
+        // the shell's line is read through herdr, the page's frames through the browser's own events, which can come
+        // later on a busy machine: what the page sent is read once every frame it has sent by now has been heard
         const expected = item.sent;
         const sentByPage = await page.evaluate(() => (window as unknown as { sentByPage?: number }).sentByPage);
+        // without the counter the wait below could never end: say so at once
         assert.ok(typeof sentByPage === "number", `${item.name}: the page has no frame counter (window.sentByPage is ${String(sentByPage)}): watch() must install it before the page loads`);
         await until(() => heard.count >= sentByPage, `${item.name}: the page's frames for the new tab are all heard`).catch((error: unknown) => {
           throw new Error(`${(error as Error).message}; expected ${JSON.stringify(expected)}, heard ${JSON.stringify(textOf(sent, second!))}`);
@@ -319,6 +332,7 @@ async function twoCatches(browser: Browser, origin: string): Promise<void> {
   } finally { await owned.close(); }
 }
 
+/** What an open composition commits after the new tab shows a masked prompt goes as a secret: no receipt keeps it. */
 async function secretAfterComposition(browser: Browser, origin: string): Promise<void> {
   const receipts: { held: boolean; socket: WebSocketRoute | null } = { held: false, socket: null };
   const owned = await ownedPage(browser, origin, "ovis-test-newtab-secret", receipts);
@@ -342,6 +356,8 @@ async function secretAfterComposition(browser: Browser, origin: string): Promise
     if (await page.evaluate(() => document.activeElement?.className) === "type-ahead") await cdp.send("Input.insertText", { text: "한" });
     let composed: Sent | undefined;
     await until(() => (composed = sent.find((message) => message.pane_id === second && /[하한]/.test(message.text ?? ""))) !== undefined, "the composed text reaches the prompt");
+    // typed into a masked prompt it goes as a password: the connection ends before its receipt, and the terminal says a
+    // key may not have arrived and keeps nothing of it, where a key typed as usual would come back in a draft
     await receipts.socket!.close();
     await page.getByText("A key may not have reached the terminal", { exact: false }).first().waitFor();
     await page.locator(".conn-live").waitFor();

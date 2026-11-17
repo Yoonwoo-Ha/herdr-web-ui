@@ -48,6 +48,7 @@ const RY = (deg: number): M4 => { const a = (deg * Math.PI) / 180, c = Math.cos(
 
 export type Kind = "window" | "phone";
 
+/** Chrome unit: the window's 38 px bar at a 1500 px wide window; the phone's 10 px bezel at 1 px per CSS px. */
 export const unit = (kind: Kind, k: number): number => (kind === "window" ? k / 1.172 : k);
 
 export function local(kind: Kind, k: number, x: number, y: number): [number, number] {

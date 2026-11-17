@@ -4,10 +4,16 @@ import { join } from "node:path";
 import { GITHUB_HOSTED_LABELS, parseWorkflow, root, type Job } from "./shell-workflow-rules.ts";
 import { evaluateValue, type Contexts, type Value } from "./workflow-expression.ts";
 
+// Light jobs (Detect changes, the PR title check, ...) take the self-hosted pool so they do not wait
+// in GitHub's hosted queue, but a fork pull request's job must never reach that pool: the guard comes
+// first, so a fork gets ubuntu-24.04 whatever the repository variables say.
 const FORK_GUARD = "github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-24.04'";
 const LIGHT = `\${{ ${FORK_GUARD} || fromJSON(github.ref == 'refs/heads/main' && vars.CI_MAIN_SELF_HOSTED_LABELS || vars.CI_LIGHT_LABELS || vars.CI_SELF_HOSTED_LABELS || '["self-hosted","self-hosted-ovis"]') }}`;
+// ci.yml's heavy Linux jobs: scripts/ci-runner-route.sh keeps forks hosted (scripts/ci-runner-route.test.ts)
 const ROUTED = "${{ fromJSON(needs.changes.outputs.linux) }}";
+// Fast checks: the Linux jobs' runner, or CI_FAST_SELF_HOSTED_LABELS only when those name ovis-vm (never a fork's)
 const ROUTED_FAST = "${{ fromJSON(needs.changes.outputs.fast) }}";
+// ci.yml's macOS session job: a fork stays on macos-15
 const MAC_FORK_GUARD = "github.event.pull_request && github.event.pull_request.head.repo.full_name != github.repository && 'macos-15'";
 const MAC = `\${{ ${MAC_FORK_GUARD} || fromJSON(github.workflow == 'CI' && vars.CI_MAC_LABELS || '"macos-15"') }}`;
 const MAC_PULL_REQUEST = "${{ fromJSON(matrix.os == 'macos-15' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_MAC_LABELS || toJSON(matrix.os)) }}";
@@ -38,6 +44,7 @@ for (let grew = true; grew; ) {
   }
 }
 
+/** Why `job` can never send a fork pull request's code to a self-hosted runner, or null. */
 function forkSafe(job: Job & { strategy?: { matrix?: { include?: { os?: unknown }[] } } }): string | null {
   const runsOn = job["runs-on"];
   if (typeof runsOn !== "string") return null;
@@ -51,6 +58,7 @@ function forkSafe(job: Job & { strategy?: { matrix?: { include?: { os?: unknown 
     const hosted = include.length > 0 && include.every((entry) => typeof entry.os === "string" && HOSTED.test(entry.os));
     return hosted ? (runsOn === MAC_PULL_REQUEST ? "mac on this repository's pull requests" : "hosted matrix") : null;
   }
+  // a job that never runs for a pull request may take any runner: its condition must require that
   const condition = job.if ?? "";
   return /^(.+ && )?github\.event_name != 'pull_request'( && .+)?$/.test(condition) && !condition.includes("||") ? "not on pull requests" : null;
 }

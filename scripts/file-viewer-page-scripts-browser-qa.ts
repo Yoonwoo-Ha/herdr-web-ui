@@ -1,4 +1,6 @@
 /**
+ * Browser regression with the real file viewer and the server's real Page renderer: an HTML page is drawn without
+ * its scripts until the person asks for them, and beside the pane a page with scripts cannot take the app's keys.
  * `PAGE_SCRIPTS_SHOTS` names a folder for screenshots of each state; `PAGE_SCRIPTS_ENGINE=webkit` runs it on
  * Playwright's WebKit instead of Chrome (CI runs Chrome).
  */
@@ -99,6 +101,7 @@ try {
   assert.equal(await notice.innerText().then((text) => text.replace(/\s+/g, " ").trim()), "Scripts in this page are off. Run scripts");
   assert.deepEqual(await messages("ran"), [], "no script of the page ran");
   await shot("after-popup-scripts-off");
+  // a field with autofocus in the page does not take the keys either
   await composer.focus();
   await page.keyboard.type("abc");
   assert.equal(await composer.inputValue(), "abc");
@@ -109,6 +112,7 @@ try {
   assert.deepEqual(await messages("ran"), [""]);
   assert.equal(await notice.count(), 0);
   await shot("after-popup-scripts-on");
+  // another file, and the same file opened again, start without scripts: nothing is remembered
   await open(other, false);
   await draws(STATIC, "another file starts without its scripts");
   assert.deepEqual(await messages("ran"), []);
@@ -118,6 +122,7 @@ try {
   await draws(STATIC, "the file opened again starts without its scripts");
   assert.equal(await run.count(), 1);
   assert.deepEqual(await messages("ran"), []);
+  // in the popup a page that takes the focus keeps its scripts: the dialog holds the focus, and the app under it takes no keys
   await open(grabber, false);
   await run.click();
   await draws(RAN, "the popup runs a page that takes the focus");
@@ -134,9 +139,11 @@ try {
   assert.equal(await composer.inputValue(), "before");
   await composer.fill("");
   await shot("after-docked-scripts-off");
+  // its scripts run on the press; this page takes the focus by itself, which the press that asked for it allows
   await run.click();
   await draws(RAN, "beside the pane the press runs the page's scripts");
   await shot("after-docked-scripts-on");
+  // back in the message box the keys are the app's: the page takes the focus again, loses its scripts for it, and gets no key
   await forget();
   // the status line is already in the document, clipped and without words: the words it gets next are announced
   assert.equal(await page.locator("div.visually-hidden > span[role=status]").textContent(), "");
@@ -151,6 +158,7 @@ try {
   await composer.fill("");
   await shot("after-docked-took-the-keyboard");
 
+  // 3. beside the pane, a page that leaves the focus alone: a press on it gives it the keys, and so does Tab
   await open(quiet, true);
   await run.click();
   await draws(RAN, "the quiet page runs");
@@ -169,6 +177,7 @@ try {
   await page.waitForFunction(() => window.pageScriptsQa.messages.filter((each) => each["probe"] === "key").length === 2);
   assert.equal(await composer.inputValue(), "mine");
   assert.equal(await frame.getAttribute("sandbox"), "allow-scripts", "a page the person pressed keeps its scripts");
+  // back in the app, then Tab from the control before the frame into it: the page keeps its scripts
   await composer.click();
   await shield.waitFor();
   await page.locator("aside.file-panel").getByRole("button", { name: "Source", exact: true }).focus();

@@ -263,6 +263,8 @@ try {
       const before = await page.locator(".file-viewer-body").evaluate((body, selector) => {
         const box = document.querySelector<HTMLElement>(selector)!;
         body.scrollTop += box.getBoundingClientRect().top - body.getBoundingClientRect().top - 40;
+        // the stroke's fling ends past its start; the next stroke waits for it, or the fling still
+        // moving the document would carry it off the box
         const done = body.scrollTop + 60;
         body.dataset["flung"] = "";
         const ended = () => { if (body.scrollTop < done) return; body.dataset["flung"] = "yes"; body.removeEventListener("scrollend", ended); };

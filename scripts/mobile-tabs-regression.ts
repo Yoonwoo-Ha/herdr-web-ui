@@ -184,6 +184,7 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     const created = await workspaceCreate({ cwd: root, label: "ovis-test-mobile-tabs" });
     workspaceId = created.workspace.workspace_id;
     const first = created.root_pane.pane_id;
+    // herdr keeps the first pane in front: the split one is seen only where the browser opens it
     const second = (await paneSplit(first, "right", false)).pane_id;
     const other = await workspaceCreate({ cwd: root, label: "ovis-test-mobile-tabs-other" });
     otherWorkspaceId = other.workspace.workspace_id;
@@ -275,6 +276,8 @@ export async function checkMobileTabs(browser: Browser, origin: string): Promise
     await pickTab(page, "Tab 1");
     await page.locator(`[data-layout-pane=${JSON.stringify(first)}]`).waitFor({ state: "visible" });
 
+    // The pane a tab and a workspace row were last seen on outlives a reload (a phone drops a page
+    // left in the background): both open the split pane last seen, not the one herdr has in front.
     const shown = (pane: string) => page.locator(`[data-layout-pane=${JSON.stringify(pane)}]`).waitFor({ state: "visible" });
     await page.goto(`${origin}/?pane=${encodeURIComponent(second)}`);
     await page.locator(".conn-live").waitFor();

@@ -1,4 +1,6 @@
 /**
+ * TypeScript types for the herdr-core (`hc`) API, generated from hc's own OpenRPC document
+ * (`hc schema`, herdr-core's schema/hc.openrpc.json, Apache-2.0).
  * - String enums widen with `(string & {})`, as herdr's do: hc grows its vocabulary between
  *   releases, and a word from a newer core must still flow through.
  */
