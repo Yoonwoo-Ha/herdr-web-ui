@@ -208,6 +208,13 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")("kit lin
     expect(readdirSync(inside)).toEqual([]);
   });
 
+  test("an address with a user name or password gets no kit: the line would print it", () => {
+    const { server, pty, at } = programs();
+    for (const changed of [{ url: "https://user:secret@kit.join.test:7443/kit" }, { relay: "wss://relay:secret@relay.join.test:8443" }, { account: "https://user@account.join.test:9443" }]) {
+      expect(() => makeKit({ server, pty, out: join(at, "kit"), ...origins, ...changed })).toThrow(/without a user name or password/);
+    }
+  });
+
   test("a kit folder whose file differs from SHA256SUMS, or that holds another file, gets no line", () => {
     const { server, pty, at } = programs();
     makeKit({ server, pty, out: join(at, "kit"), ...origins });

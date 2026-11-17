@@ -54,6 +54,8 @@ function origin(value: string, schemes: readonly string[], flag: string): string
   let url: URL;
   try { url = new URL(value); } catch { throw new KitError(`${flag} ${value} is not an address`); }
   if (!schemes.includes(url.protocol) || (url.protocol !== "file:" && url.host === "")) throw new KitError(`${flag} takes a ${schemes.join(" or ")} address`);
+  // the join line is printed and pasted on another machine: a user name or password in it would travel with it
+  if (url.username !== "" || url.password !== "") throw new KitError(`${flag} takes an address without a user name or password`);
   // the line quotes it in single quotes: it can hold none
   if (value.includes("'")) throw new KitError(`${flag} ${value} holds a quote`);
   return value.replace(/\/+$/, "");

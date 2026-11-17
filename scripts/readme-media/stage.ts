@@ -4,6 +4,8 @@
  * their agent worktrees and the release shell tab, and curated chats served in place of real
  * transcripts. The real hostname never reaches the page.
  */
+// with HERDR_TEST_LIVE=1 test-herdr.ts leaves the session alone, and staging would close every workspace in the one you work in
+if (process.env["HERDR_TEST_LIVE"] === "1") throw new Error("readme-media/stage.ts stages its own herdr session: unset HERDR_TEST_LIVE");
 process.env["HERDR_TEST_SESSION"] = "ovis-demo";
 await import("../test-herdr.ts");
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
