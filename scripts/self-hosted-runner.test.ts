@@ -339,6 +339,7 @@ case "$1" in
   run)
     # docker's own refusal of a CPU list the host does not have
     case " $* " in *" --cpuset-cpus 0-500 "*) echo "docker: Requested CPUs are not available" >&2; exit 125 ;; esac
+    case " $* " in *" --cgroup-parent missing "*) echo "docker: cgroup-parent for systemd cgroup should be a valid slice" >&2; exit 125 ;; esac
     # the launcher's check of its CPU list, and the check slots' keeper: neither reads a token
     case " $* " in
       *" --entrypoint true "*) exit 0 ;;
@@ -538,7 +539,7 @@ exec "${sleep}" "$@"
   }
 }
 
-const runnerRun = /^docker run (?:--cpuset-cpus \S+ )?--rm -i /;
+const runnerRun = /^docker run (?:--cpuset-cpus \S+ )?(?:--cgroup-parent \S+ )?--rm -i /;
 const commitSha = "1".repeat(40);
 const lockBlob = "2".repeat(40);
 const otherCommit = "3".repeat(40);
@@ -653,6 +654,27 @@ describe.skipIf(process.platform === "win32")("self-hosted runner launcher", () 
     expect(runs.filter((call) => runnerRun.test(call))).toHaveLength(2);
     for (const call of runs) expect(call).toContain("--cpuset-cpus 0-95 ");
     expect(runRunner().calls).not.toContain("--cpuset-cpus");
+  });
+
+  it("puts every container it starts under --cgroup-parent, after --cpuset-cpus, and none without it", () => {
+    const { result, calls } = runRunner({ count: 2, args: ["--cgroup-parent", "ovis-ci.slice", "--cpuset-cpus", "0-95"] });
+    expect(result.status).toBe(0);
+    const runs = calls.split("\n").filter((call) => call.startsWith("docker run "));
+    expect(runs.filter((call) => runnerRun.test(call))).toHaveLength(2);
+    for (const call of runs) expect(call).toContain("--cpuset-cpus 0-95 --cgroup-parent ovis-ci.slice ");
+    expect(runRunner().calls).not.toContain("--cgroup-parent");
+    const built = runRunner({ args: ["--build", "--cgroup-parent", "ovis-ci.slice"] }).calls.split("\n").filter((call) => call.startsWith("docker build "));
+    expect(built).toHaveLength(1);
+    expect(built[0]).toStartWith("docker build --cgroup-parent ovis-ci.slice -t ");
+    expect(runRunner({ args: ["--build"] }).calls).not.toContain("--cgroup-parent");
+  });
+
+  it("refuses a cgroup parent docker cannot use before starting anything", () => {
+    const { result, calls } = runRunner({ count: 2, args: ["--cgroup-parent", "missing"] });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("--cgroup-parent missing");
+    expect(calls).not.toContain("registration-token");
+    expect(calls.split("\n").filter((call) => runnerRun.test(call) || call.includes(" -d "))).toEqual([]);
   });
 
   it("refuses a CPU list docker cannot give before starting anything", () => {

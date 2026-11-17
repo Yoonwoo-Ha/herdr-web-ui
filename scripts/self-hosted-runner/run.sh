@@ -4,7 +4,7 @@
 # Usage: scripts/self-hosted-runner/run.sh [--repo OWNER/NAME] [--count N] [--labels self-hosted-ovis]
 #          [--reserved N] [--reserved-labels self-hosted-ovis-main] [--env-file FILE] [--build] [--once]
 #          [--cache-dir DIR [--cache-wait SECONDS] | --no-cache] [--build-cache DIR [--build-cache-mb N] [--build-cache-writer LOGIN]]
-#          [--cpuset-cpus LIST]
+#          [--cpuset-cpus LIST] [--cgroup-parent SLICE]
 #          [--work-tmpfs SIZE]
 set -euo pipefail
 
@@ -25,7 +25,8 @@ CACHE_WAIT=120
 BUILD_CACHE=""
 BUILD_CACHE_MB=2048
 BUILD_CACHE_WRITER=""
-CPUSET_ARGS=()
+CPUSET=""
+CGROUP_PARENT=""
 WORK_TMPFS=""
 
 usage() {
@@ -48,7 +49,8 @@ while [ $# -gt 0 ]; do
     --build-cache) BUILD_CACHE="${2:?--build-cache needs a value}"; shift 2 ;;
     --build-cache-mb) BUILD_CACHE_MB="${2:?--build-cache-mb needs a value}"; shift 2 ;;
     --build-cache-writer) BUILD_CACHE_WRITER="${2:?--build-cache-writer needs a value}"; shift 2 ;;
-    --cpuset-cpus) CPUSET_ARGS=(--cpuset-cpus "${2:?--cpuset-cpus needs a value}"); shift 2 ;;
+    --cpuset-cpus) CPUSET="${2:?--cpuset-cpus needs a value}"; shift 2 ;;
+    --cgroup-parent) CGROUP_PARENT="${2:?--cgroup-parent needs a value}"; shift 2 ;;
     --work-tmpfs) WORK_TMPFS="${2:?--work-tmpfs needs a value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -62,6 +64,9 @@ case "$CACHE_WAIT" in ''|*[!0-9]*|?????*) echo "--cache-wait must be a whole num
 case "$BUILD_CACHE_MB" in ''|*[!0-9]*|??????*) echo "--build-cache-mb must be a positive whole number of MiB" >&2; exit 2 ;; esac
 if [ "$((10#$BUILD_CACHE_MB))" -eq 0 ]; then echo "--build-cache-mb must be a positive whole number of MiB" >&2; exit 2; fi
 case "$BUILD_CACHE_WRITER" in *[!A-Za-z0-9-]*|-*|??????????????????????????????????????*) echo "--build-cache-writer must be a GitHub login" >&2; exit 2 ;; esac
+PLACE_ARGS=()
+if [ -n "$CPUSET" ]; then PLACE_ARGS+=(--cpuset-cpus "$CPUSET"); fi
+if [ -n "$CGROUP_PARENT" ]; then PLACE_ARGS+=(--cgroup-parent "$CGROUP_PARENT"); fi
 WORK_TMPFS_ARGS=()
 if [ -n "$WORK_TMPFS" ]; then
   case "$WORK_TMPFS" in [1-9]*[mg]) ;; *) echo "--work-tmpfs must be a size like 4g or 4096m" >&2; exit 2 ;; esac
@@ -139,10 +144,10 @@ SLOT_FILES=()
 for port in $(seq 41737 41770); do SLOT_FILES+=("$port"); done
 
 if [ "$BUILD" = 1 ] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  docker build -t "$IMAGE" "$SCRIPT_DIR"
+  docker build ${CGROUP_PARENT:+--cgroup-parent "$CGROUP_PARENT"} -t "$IMAGE" "$SCRIPT_DIR"
 fi
-if [ "${#CPUSET_ARGS[@]}" -gt 0 ] && ! docker run --rm "${CPUSET_ARGS[@]}" --network none --entrypoint true "$IMAGE" >/dev/null 2>&1; then
-  echo "--cpuset-cpus ${CPUSET_ARGS[1]}: docker cannot run a container on those CPUs" >&2
+if [ "${#PLACE_ARGS[@]}" -gt 0 ] && ! docker run --rm "${PLACE_ARGS[@]}" --network none --entrypoint true "$IMAGE" >/dev/null 2>&1; then
+  echo "${PLACE_ARGS[*]}: docker cannot start a container there" >&2
   exit 2
 fi
 
@@ -157,7 +162,7 @@ start_slots() {
   local try
   if [ "$(docker container inspect -f '{{.State.Running}}' "$SLOTS" 2>/dev/null || true)" != true ]; then
     docker rm "$SLOTS" >/dev/null 2>&1 || true
-    docker run ${CPUSET_ARGS[@]+"${CPUSET_ARGS[@]}"} -d --rm \
+    docker run ${PLACE_ARGS[@]+"${PLACE_ARGS[@]}"} -d --rm \
       --name "$SLOTS" \
       --network none \
       --security-opt no-new-privileges \
@@ -226,7 +231,7 @@ build_cache_args() {
     find "$outbox" -mindepth 1 -maxdepth 1 ! -type d -delete 2>/dev/null || true
     find "$outbox" -mindepth 1 -maxdepth 1 -type d -name 'judged-*' -user "$(id -u)" -empty -delete 2>/dev/null || true
     if [ -n "$(find "$outbox" -mindepth 1 -print -quit 2>/dev/null)" ]; then
-      docker run ${CPUSET_ARGS[@]+"${CPUSET_ARGS[@]}"} --rm --network none --security-opt no-new-privileges --cap-drop ALL --user 1001:1001 \
+      docker run ${PLACE_ARGS[@]+"${PLACE_ARGS[@]}"} --rm --network none --security-opt no-new-privileges --cap-drop ALL --user 1001:1001 \
         -v "$outbox:/outbox" --entrypoint sh "$IMAGE" -c 'chmod -R u+rwX /outbox 2>/dev/null; find /outbox -mindepth 1 -delete' </dev/null >/dev/null 2>&1 || true
     fi
     if [ -n "$(find "$outbox" -mindepth 1 -maxdepth 1 ! -type d -print -quit 2>/dev/null)" ]; then
@@ -242,7 +247,7 @@ build_cache_args() {
 
 clean_taken() {
   [ -n "$(find "$BUILD_CACHE_OUTBOXES/.taken" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ] || return 0
-  docker run ${CPUSET_ARGS[@]+"${CPUSET_ARGS[@]}"} --rm --network none --security-opt no-new-privileges --cap-drop ALL --cap-add DAC_OVERRIDE --user 0:0 \
+  docker run ${PLACE_ARGS[@]+"${PLACE_ARGS[@]}"} --rm --network none --security-opt no-new-privileges --cap-drop ALL --cap-add DAC_OVERRIDE --user 0:0 \
     -v "$BUILD_CACHE_OUTBOXES/.taken:/taken" --entrypoint find "$IMAGE" /taken -mindepth 1 -delete </dev/null >/dev/null 2>&1 || true
 }
 
@@ -333,7 +338,7 @@ refresh_bun_cache() {
     # the container a PID 1 that passes the deadline's SIGTERM on (a bare PID 1 ignores it), and -k
     # ends the client if it still waits. Whatever ended it, docker rm -f below ends the container.
     status=0
-    timeout --foreground -k 5 900 docker run ${CPUSET_ARGS[@]+"${CPUSET_ARGS[@]}"} --rm --init \
+    timeout --foreground -k 5 900 docker run ${PLACE_ARGS[@]+"${PLACE_ARGS[@]}"} --rm --init \
       --name "$CACHE_CONTAINER" \
       --security-opt no-new-privileges \
       --cap-drop ALL \
@@ -522,7 +527,7 @@ slot_loop() {
     delay=30
     cache_args
     build_cache_args "$name"
-    if printf '%s\n' "$token" | docker run ${CPUSET_ARGS[@]+"${CPUSET_ARGS[@]}"} --rm -i \
+    if printf '%s\n' "$token" | docker run ${PLACE_ARGS[@]+"${PLACE_ARGS[@]}"} --rm -i \
       --name "$name" \
       --network "$name-net" \
       --security-opt no-new-privileges \
