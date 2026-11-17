@@ -165,6 +165,8 @@ class ForegroundClient {
     if (clients.get(this.expected.pid) === this) clients.delete(this.expected.pid);
   }
 
+  // Ownership reads the whole network-namespace TCP table, which can take hundreds of ms on a busy
+  // host, so it is proven once on connect and once at the end of each read, not around every request.
   private check(): void {
     if (this.failure !== null) throw this.failure;
   }

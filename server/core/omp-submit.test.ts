@@ -236,6 +236,7 @@ describe("a message sent to omp", () => {
     const warn = spyOn(console, "warn").mockImplementation(() => {});
     try {
       await createSubmitText({
+        // past processStartedAt's up to one second of boot-time rounding, so the wait really runs
         options: { submitDelayMs: 0, ompReportPollMs: 5, ompStartupMs: 2_500 }, lastTyped: new Map(), attachments: new Map(), terminalAttach: async () => false,
         SUBMIT_DEADLINE_MS: 20_000, TYPED_SETTLE_MS: 0, DRAFT_CLEAR_WAIT_MS: 0, DRAFT_CLEAR_POLL_MS: 0, SUBMIT_DELAY_MS: 0,
       })("w:p1", "/effort", "/effort", Date.now());
@@ -296,6 +297,7 @@ describe("a message sent to omp", () => {
     const replacement = Bun.spawn(["sleep", "60"], { env: { ...process.env, HOME: root } });
     try {
       const sent = createSubmitText({
+        // past processStartedAt's up to one second of boot-time rounding, so the wait really runs
         options: { submitDelayMs: 0, ompReportPollMs: 5, ompStartupMs: 2_500 }, lastTyped: new Map(), attachments: new Map(), terminalAttach: async () => false,
         SUBMIT_DEADLINE_MS: 20_000, TYPED_SETTLE_MS: 0, DRAFT_CLEAR_WAIT_MS: 0, DRAFT_CLEAR_POLL_MS: 0, SUBMIT_DELAY_MS: 0,
       })("w:p1", "/effort", "/effort", Date.now());

@@ -113,6 +113,8 @@ it("binds a queued command's outcome to the OmO it was queued for when another h
   expect(holderReads).toHaveBeenCalled();
 });
 
+// #511: a session holder record outlives an exec at its PID (same PID, start and cwd), so it is no proof of the agent for a
+// message only an agent may take: after the OmO execs ash under its paste, the Enter is held back
 it("holds back the Enter of an agent-only message when the OmO holding its session execs ash after the paste", async () => {
   const omoProgram: Foreground = { pid: PID + 1, name: "omo", argv: ["/usr/local/bin/omo"] };
   const fixture = omoPane([omoProgram.pid], [omoProgram]);

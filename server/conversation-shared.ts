@@ -105,10 +105,12 @@ export function bindFile(path: string, identity: FileIdentity): void {
   if (boundFiles !== null && !boundFiles.has(path)) boundFiles.set(path, { dev: identity.dev, ino: identity.ino });
 }
 
+/** Refuses `fd`, opened from `path`, when `path` is bound to another file: the read is pending. */
 export function checkBound(path: string, fd: number): void {
   if (boundFiles?.has(path) === true) checkBoundFile(path, fstatSync(fd, { bigint: true }));
 }
 
+/** Refuses `opened`, a file opened from `path` (its stats), when `path` is bound to another file: the read is pending. */
 export function checkBoundFile(path: string, opened: FileIdentity): void {
   const identity = boundFiles?.get(path);
   if (identity !== undefined && !sameFile(identity, opened)) throw new ConversationReadPending();
@@ -145,6 +147,11 @@ export type RecognizedConversation = {
   metadata: ConversationMetadata;
   screen?: true;
   cursor: string | null;
+  /**
+   * Turns the file holds on paths a `/tree` walked away from, which no page of this conversation
+   * can reach; absent for every agent that keeps no entry tree. pi moves its leaf without writing
+   * anything, so the chat would otherwise drop those turns with no sign they were ever there.
+   */
   abandoned?: { count: number; branches: number; summary: string | null };
   transcript_bytes?: number;
   history_id: string;

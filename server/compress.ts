@@ -17,6 +17,7 @@ const KEPT_ENTRY_BYTES = 2 * 1024 * 1024;
 const kept = new Map<string, Uint8Array<ArrayBuffer>>();
 let keptBytes = 0;
 
+/** Whether Accept-Encoding takes gzip: named (or `*`) with a quality above 0, a named gzip outranking `*`. */
 function acceptsGzip(request: Request): boolean {
   let gzip: number | null = null;
   let any: number | null = null;
@@ -32,6 +33,8 @@ function acceptsGzip(request: Request): boolean {
 }
 
 function negotiable(pathname: string, response: Response): boolean {
+  // Immutable static variants have already selected br/gzip/identity by quality.
+  // Recompressing their identity choice would override the browser's preference.
   if (pathname.startsWith("/assets/") && /\bimmutable\b/i.test(response.headers.get("cache-control") ?? "") && /\baccept-encoding\b/i.test(response.headers.get("vary") ?? "")) return false;
   if (/\/fs\/file$/.test(pathname)) return false;
   if (response.status === 304) return true;

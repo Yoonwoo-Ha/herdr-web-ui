@@ -30,6 +30,11 @@ const localProc: DevinProc = {
 export interface DevinLockProof { session: string; binding: string }
 const LOCK_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/**
+ * No lock to read: no session_locks (an older Devin), a store reached through a symlink, no ACP
+ * child, or no lock held yet. A caller may then read a session the pane names explicitly; any
+ * other failure (two locks, a foreign owner, a replaced file) contradicts one and refuses.
+ */
 export class DevinLockMissing extends ConversationUnavailable {
   constructor() { super("no_session_id"); }
 }
@@ -100,6 +105,7 @@ export function devinLockProof(pid: number, dbPath: string, proc: DevinProc = lo
         const lockLines = fdinfo.split("\n").filter((line) => line.startsWith("lock:"));
         const lock = new RegExp(`^lock:\\s+\\d+: FLOCK\\s+ADVISORY\\s+WRITE\\s+${child}\\s+[0-9a-fA-F]+:[0-9a-fA-F]+:${file.ino}\\s+0\\s+EOF\\s*$`);
         if (lockLines.length !== 1 || !lock.test(lockLines[0]!)) throw unavailable();
+        // the store's own inode too: a database replaced between two proofs changes the binding
         proofs.push({ session, binding: JSON.stringify([pid, outer.start, outer.exe, child, info.start, file.dev, file.ino, fd, db.dev, db.ino]) });
       }
     }

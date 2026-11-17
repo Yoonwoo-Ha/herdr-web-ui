@@ -94,7 +94,8 @@ export const OMP_REPORT_POLL_MS = 250;
  * its slash commands are loaded, so a message agent.prompt sends meanwhile stays typed in the box and
  * never runs. herdr's omp integration reports the session from omp's `session_start`, which omp emits
  * only after connecting that handler, so while an omp that started moments ago has not reported, the
- * send waits for the report.
+ * send waits for the report (at most OMP_STARTUP_MS after the process started) and then sends once:
+ * nothing is pressed after a send.
  */
 export async function untilOmpReported(paneId: string, pane: HerdrPane, inTime: () => void, options: { ompReportPollMs?: number; ompStartupMs?: number },
   { strict = false, waiting }: { strict?: boolean; waiting?: () => void } = {}): Promise<HerdrPane> {
@@ -109,15 +110,23 @@ export async function untilOmpReported(paneId: string, pane: HerdrPane, inTime: 
     await Bun.sleep(pollMs);
     inTime();
     pane = await paneGet(paneId);
+    // an omp that quit while it started leaves its shell: the message was for omp, so it is not typed there
     if (resolveAgent(pane).agent !== "omp") throw new HerdrError("pending_target_changed", "The omp this message waited for stopped while it started; nothing was sent");
     if (pane.agent_session?.source === "herdr:omp") { reported = true; break; }
   }
+  // reported or out of time, a pane restarted into another omp meanwhile is not the one the message waited for
+  // (a lookup that finds no omp proves nothing: the look above already found the pane's agent still omp)
   const now = (await ompProcess(paneId).catch(() => null))?.pid ?? null;
   if (now !== null && now !== starting.pid) throw new HerdrError("pending_target_changed", "The omp this message waited for was replaced while it started; nothing was sent");
   if (!reported) console.warn(`[omp] ${paneId}: herdr's omp integration reported no session within ${startupMs / 1000} s of omp starting; sending anyway`);
   return pane;
 }
 
+/**
+ * A look at its process that herdr does not answer says nothing either way. The immediate send takes it for
+ * no omp starting and sends, as it always did; `strict` (the queue) fails on it: not known is not ready, and
+ * a message typed into an omp that does not take input yet is one its row says was sent.
+ */
 async function startingOmp(paneId: string, pane: HerdrPane, startupMs: number, strict: boolean): Promise<{ pid: number; until: number } | null> {
   if (pane.agent_session?.source === "herdr:omp") return null;
   const omp = await ompProcess(paneId).catch((error: unknown) => { if (strict) throw error; return null; });
@@ -149,6 +158,7 @@ export async function blockedOnlyByCodexQueue(paneId: string): Promise<boolean> 
   if (!(await codex())) return false;
   // A collapsed queue in scrollback must not bypass an approval on the live screen.
   if (!codexQuestionsCollapsed((await paneRead({ paneId, source: "detection", format: "text" })).text)) return false;
+  // the screen was Codex's only if Codex still runs once it is read: one that exited meanwhile left a shell to type into
   return await codex();
 }
 
@@ -179,6 +189,12 @@ export const pendingText = (text: string): string => {
 const MAX_CHAT_SUBMIT_CHARS = 20_000;
 const MAX_TYPED_SUBMIT_CHARS = 32_768;
 
+/**
+ * `text` is the message as written: trailing newlines dropped, CRLF and a lone CR read as LF, and no terminal
+ * control character but tab and newline, so it holds no paste marker. `payload` must be that text with each LF a CR, bare or inside exactly one bracketed-paste pair:
+ * a payload that ends its own paste early, or carries bytes its text does not, would run what follows as
+ * commands.
+ */
 export function submitFraming(text: string, payload: string, typed: boolean): { text: string; payload: string } {
   const written = withoutTrailingBreaks(text);
   const limit = typed ? MAX_TYPED_SUBMIT_CHARS : MAX_CHAT_SUBMIT_CHARS;
@@ -253,6 +269,8 @@ const screenText = (text: string): string => stripVTControlCharacters(text).spli
  * with one of its own screens up (a list such as `/model` or `/permissions`, `/rename`'s field, the `/diff` pager:
  * dialogs/codex.ts codexOwnScreenOpen), so agent.prompt would paste the message there and its Enter would take the
  * row under the cursor.
+ * herdr cannot compare and write in one step: a screen that opens during this read's
+ * answer or herdr's write is not seen.
  */
 export async function freeCodexInput(paneId: string): Promise<void> {
   if (codexOwnScreenOpen((await paneRead({ paneId, source: "detection", format: "text" })).text)) {
@@ -288,7 +306,7 @@ export async function claudeBoxReads(paneId: string): Promise<[string, string | 
     const colors = await recent();
     const live = (await paneRead({ paneId, source: "detection", format: "text" })).text;
     // read again last, after the live screen: equal words do not prove equal colors (a suggestion
-    // accepted with Tab keeps its words)
+    // accepted with Tab keeps its words), so any change across the reads refuses as a draft does.
     const colorsAfter = await recent();
     if (historyEndShowsLive(colors, colorsAfter, [before, live])) return [live, colors];
     if (claudeRewindOpen(stripVTControlCharacters(colorsAfter))) throw new HerdrError("rewind_dialog_open", CLAUDE_REWIND_OPEN_MESSAGE);
@@ -303,6 +321,11 @@ export async function claudeBoxReads(paneId: string): Promise<[string, string | 
 /**
  * Claude puts the chat's last message back as typed text when the send right after it is cancelled.
  * Two Esc presses empty that copy; Ctrl+C would arm "press Ctrl-C again to exit".
+ * An `automatic` send (a queued message, whether the drain or its own request types it) refuses over that copy too: the user stopped
+ * that send, and the composer gets it back only from its next prompt read, seconds after the drain.
+ * `authorize` throws once the sender may no longer send: it is asked before each Esc, and again
+ * right before herdr is written to. A send with less than RESTORED_CLEAR_RESERVE_MS left before its
+ * `deadline` clears nothing: it would erase the copy, then time out without sending.
  */
 export async function freeClaudeBox(paneId: string, working: boolean, authorize: () => void, deadline: number, automatic = false): Promise<void> {
   let refused: unknown;
@@ -368,6 +391,15 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
    * sends one more Enter, and only while the message is the one row queued (sendGrokQueuedNow).
    * A plain Send, an idle Grok, and the terminal's own input line keep the single Enter.
    */
+
+  /**
+   * `clearDraft`: the draft an input_draft refusal named, which the user asked to clear and send
+   * over. It goes only while the box still holds exactly that, and the message only once the box
+   * reads empty.
+   * `sendAnyway`: the user saw the box a refusal naming no draft showed and chose to send: only into
+   * the Claude terminal and session that refusal was for (`confirmation` with no draft), and only while
+   * the box still shows what they saw or reads empty. Never typed instead of agent.prompt.
+   */
   async function submitText(paneId: string, text: string, payload: string, arrivedAt: number, fromTerminal = false, authorize: () => void = () => {},
     clearDraft?: string, confirmation?: { draft: string | null; identity: PendingIdentity; box?: string | null }, sendAnyway = false, agentOnly = false,
     sendNow = false): Promise<void> {
@@ -392,11 +424,18 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
         throw new HerdrError("submit_timeout", "the message waited too long behind earlier input; nothing was typed");
       }
     };
+    // agent.prompt asks the sender once more right before herdr is written to: it can be revoked, or switch
+    // to watching, while the connection opens. Its refusal sends nothing, and nothing is typed instead.
     let refused: unknown;
     const mayType = (): boolean => {
       try { authorize(); return true; } catch (error) { refused = error; return false; }
     };
     const refusal = (error: unknown): never => { throw refused ?? error; };
+    /**
+     * Send now's one more Enter for a Grok that queued the message (sendGrokQueuedNow), only on a fresh read of the
+     * Grok terminal and session the send began in. The queue Enter already landed, so a failure here is submit_changed,
+     * never "nothing was typed", or chat would type it again.
+     */
     const confirmGrokQueue = async (message: string): Promise<void> => {
       if (fromTerminal || grokSendNow === undefined) return;
       const { target, before } = grokSendNow;
@@ -407,6 +446,7 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
         look: async () => {
           const latest = await paneGet(paneId);
           inTime();
+          // a Grok restarted in the pane (another session) has a queue of its own: nothing goes into it
           const now = pendingIdentity(latest);
           if (now.agent !== "grok" || now.terminalId !== target.terminalId || now.session !== target.session) {
             throw new HerdrError("submit_changed", GROK_SEND_UNCONFIRMED_MESSAGE);
@@ -445,6 +485,7 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
           throw new HerdrError("pending_target_changed", "The refused message's Claude terminal or session changed, or nothing was refused; nothing was sent");
         }
         if (sendAnyway) {
+          // only over the box the user was shown: anything typed there since is refused again, and shown
           const reads = await claudeBoxReads(paneId);
           beforeScreen = reads[0];
           inTime();
@@ -460,6 +501,7 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
         const claudeRoots = labelledClaude && resolveAgent(pane!, typingRoots(labelledClaude)).agent === "claude" ? labelledClaude : null;
         const claude = claudeRoots !== null;
         seen = claudeRoots?.processes;
+        // the process lookup waited on herdr: the device may have lost its access meanwhile
         inTime();
         if (claude && !sendAnyway) {
           if (clearDraft === undefined) {
@@ -488,10 +530,13 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
             }
           };
           if (clearDraft !== undefined) await clearScreenReady();
+          // Send it names the terminal's draft as the message itself. An empty box can mean it
+          // was already sent there; only Clear it and send of different text may continue.
           if (clearDraft !== undefined && text === clearDraft && claudeInputEmpty(...reads)) {
             throw new HerdrError("agent_not_ready", "The named draft is no longer in Claude Code's input box; nothing was cleared or sent");
           }
           if (claudeInputDraft(...reads)) {
+            // only the draft the user was shown goes, never what has since replaced it
             const draft = claudeClearableDraft(...reads);
             if (clearDraft === undefined || draft !== clearDraft) throw new InputDraftError(draft, identity ?? undefined, clearDraft === undefined ? claudeSendAnywayBox(reads[0]) : null, claudeRefusalMessage(reads[0]));
             const reserve = DRAFT_CLEAR_WAIT_MS + 500;
@@ -552,6 +597,7 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
         payload = switched === text ? closeBackslash(agent, payload) : sent;
         if (pane && agent === "omp") {
           pane = await untilOmpReported(paneId, pane, inTime, options);
+          // the last look waited on herdr: the device may have lost its access meanwhile
           inTime();
         }
         if (pane) command = prepareCommandSend(pane, text, beforeScreen);
@@ -568,6 +614,8 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
         let skills: string[] = [];
         if (pane) ({ sent: command, skills } = await openCodeSkillsToType(pane, command, text, beforeScreen, options.openCodeStateDir));
         inTime();
+        // a message for an agent alone goes whole through agent.prompt (#511): typing it key by key checks the agent
+        // between writes, never with them, so its @skills stay text, as its send says
         if (agentOnly && command) command = skillsNotAttached(command, skills);
         if (pane && command && skills.length > 0 && !agentOnly) {
           const expected = pendingIdentity(pane);
@@ -623,6 +671,9 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
             throw new HerdrError("submit_partial", "Part of the message was typed into OpenCode's input, but sending was not confirmed. Your chat text stayed here. Check the terminal before sending again.");
           }
         }
+        // the last read before herdr is written to: one of Codex's own screens gets no paste and no Enter
+        // and what a person typed into the agent's own box, which the paste would join (Claude's and Hermes' were read
+        // above): for Codex both on the same last read
         const boxAgent = pane && labelledClaude && !claude ? resolveAgent(pane, typingRoots(labelledClaude)).agent : agent;
         if (pane && !claude && !hermes && readsTypedDraft(boxAgent)) {
           await freeAgentInput(paneId, boxAgent, identity ?? undefined, boxAgent === "codex");
@@ -632,6 +683,7 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
           pickerAgent = agent;
           await freeAgentPicker(paneId, agent);
         }
+        // a plain Send queues behind a working Grok's turn, as typing in the terminal does: only Send now goes ahead
         if (sendNow && agent === "grok" && pane) {
           const latest = await paneGet(paneId);
           inTime();
@@ -656,11 +708,14 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
           return;
         } catch (error) {
           watch?.cancel();
+          // a revoked sender after the queue Enter is submit_changed, not the refusal from before the write
           if (error instanceof HerdrError && error.code === "submit_changed") throw error;
           if (refused !== undefined) throw refused;
           if (!(error instanceof HerdrError)) throw error;
           if (clearDraft !== undefined || sendAnyway) throw error;
+          // a message for an agent alone (#511) is never typed into what is there once the agent has gone
           if (agentOnly && (error.code === "agent_not_found" || error.code === "agent_not_ready")) throw new HerdrError("agent_not_ready", NO_AGENT_MESSAGE);
+          // nor typed past a collapsed queue: herdr cannot type only if the agent still runs, and Codex may exit first
           const queuedOnly = !agentOnly && error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
           if (error.code !== "agent_not_found" && error.code !== "agent_not_ready" && !queuedOnly) throw error;
         }

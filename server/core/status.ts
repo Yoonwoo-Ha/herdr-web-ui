@@ -112,6 +112,7 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   });
   const stopMutes = preferences.subscribe(() => push.mutesChanged());
 
+  // on herdr-core every status is the program's own report (completion.ts reportedOnly)
   const completions = new CompletionTracker(join(options.stateDir ?? defaultStateDir(), "completions.json"), undefined, () => capabilities().agents === "reported");
   const finishes = new Finishes(options.herdrIdentity);
   let liveHerdr: string | null = null;
@@ -178,6 +179,10 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     if (status !== "working" || omo.runs(paneId) || gjc.runs(paneId)) return status;
     return claudeAgents.restsOn(paneId) ? "idle" : status;
   }
+  /**
+   * Its working event may be a turn the transcript does not show yet (ClaudeSubagentStatus.busy), even with no
+   * idle before it: the subagents' spinner keeps herdr at working across turns.
+   */
   function hearClaude(paneId: string, agent: string | null | undefined, status: AgentStatus, event: boolean): void {
     if (agent !== "claude") { heard.delete(paneId); return; }
     const before = heard.get(paneId);
@@ -185,6 +190,14 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     if (status === "working" && (event || (before !== undefined && before !== "working"))) claudeAgents.busy(paneId, "herdr");
     else if (status !== "working") claudeAgents.quiet(paneId, event);
   }
+  /**
+   * The status the pane's queued input goes by: a Claude pane shown at rest while a busy signal
+   * whose turn was never written holds it (ClaudeSubagentStatus.holdsQueue) is not ready for it.
+   * Nor is one whose turn Claude resumed by itself (a /loop wakeup, a scheduled task, a background
+   * task's notice) and no rest was written since, which herdr may still read at rest, or at rest
+   * again (loopHolds, #3494): that hold is the transcript's alone, so no word of herdr's begins or
+   * ends it.
+   */
   function queueStatus(paneId: string, status: AgentStatus): AgentStatus {
     if (agentNow.get(paneId) !== "claude" || (status !== "idle" && status !== "done")) return status;
     return (heard.get(paneId) === "working" && claudeAgents.holdsQueue(paneId)) || claudeAgents.loopHolds(paneId) ? "working" : status;
@@ -444,6 +457,9 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   const logPushError = (error: unknown): void => {
     console.error(`web push: ${error instanceof Error ? error.message : String(error)}`);
   };
+  // a device durably enrolled: every other device with alerts on hears of it at once (server/devices.ts announces
+  // only after the registry write succeeded, so nothing is told of a pairing that did not happen)
+  // nor is the browser that paired, by its stream keys, whatever access its subscriptions came through
   devices.onPaired((event, origin) => { push.devicePaired(event, origin).catch(logPushError); });
 
   function omoChanged(paneId: string, derived: AgentStatus, background: number, turn: boolean, rest: OmoRest | undefined): void {
@@ -534,7 +550,9 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
     agentNow.set(paneId, named[0]!.agent ?? null);
     agentRead.set(paneId, opencodeAgents.beginRead());
     if (eventAgent.get(paneId)?.agent !== (named[0]!.agent ?? null)) eventAgent.set(paneId, { agent: named[0]!.agent ?? null, since: statusNow() });
-    // herdr says `claude/idle` for an OmO pane whatever it does, and a provider child's work for a GJC one
+    // herdr says `claude/idle` for an OmO pane whatever it does, and a provider child's work for
+    // a GJC one while its transcript is tracked: their own status stands, and no Claude turn waits there
+    // (an OmO pane's wait on its background tasks is omoChanged's)
     if (omo.tracks(paneId)) return;
     if (gjc.tracks(paneId) || letta.tracks(paneId)) {
       waits.forget(paneId);
@@ -544,6 +562,8 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   }
 
   function reportStatus(paneId: string, raw: AgentStatus, agent: string | null): void {
+    // back at work, the agent has had its answer, maybe from a terminal: the same prompt on
+    // its screen after this is another asking, which an answer to the old card must not take.
     if (raw === "working") promptWaitEnded(paneId);
     if (raw === "working" || agent !== "codex") codexWorking(paneId, raw === "working" && agent === "codex");
     if (raw === "working" || agent !== "claude") claudeWorking(paneId, raw === "working" && agent === "claude");
@@ -675,6 +695,9 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
       for (const pane of projected) if (pane.agent === "claude" || pane.agent === "opencode" || isTaskAgent(pane.agent)) waits.seed(pane.pane_id, pane.agent_status);
       push.seed(projected.map((pane) => ({ ...pane, agent_status: alertStatus(pane.agent_status, waits.waiting(pane.pane_id)) })));
       for (const pane of projected) {
+        // A fast mirrored client may queue before the collector's first baseline. A
+        // known ready baseline can schedule a fresh guarded check even when the tracker
+        // still remembers working; an unknown baseline never supplies that permission.
         const status = pane.agent_status === "idle" || pane.agent_status === "done" ? pane.agent_status : completions.current(pane.pane_id) ?? pane.agent_status;
         pending.status(pane.pane_id, queueStatus(pane.pane_id, status)); drainPending(pane.pane_id);
       }
@@ -755,6 +778,10 @@ export function createStatusHub<Owner, Lease>({ options, devices, preferences, c
   const untrackOpenCode = trackVerifiedOpenCodePanes((paneId) => collector.trackPane(paneId), () => collector.refresh());
   const tracked = { ...collector, stop() { untrackOpenCode(); stopMutes(); stopSubmitted(); desktopActivity?.stop(); taskAgents.stop(); collector.stop(); } };
 
+  /**
+   * `fresh` is asked of every caller: a wiring that dropped it would make delivery's last checks read an answer up
+   * to a poll old, with every test still passing.
+   */
   const queueHeld = (paneId: string, fresh: boolean): boolean =>
     fresh ? agentNow.get(paneId) === "claude" && claudeAgents.loopHoldsNow(paneId) : queueStatus(paneId, "idle") === "working";
   /** A socket file alone proves nothing: a herdr that died can leave its file behind. */

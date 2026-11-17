@@ -119,6 +119,8 @@ type Way = "a queue request typed at once" | "Send now of a held message" | "a n
 const WAYS: Way[] = ["a queue request typed at once", "Send now of a held message", "a new pane's first message"];
 const BY_HAND: Way[] = ["a queue request typed at once", "Send now of a held message"];
 
+// omp draws its input box, and herdr shows it at rest, seconds before it takes an Enter: a message typed meanwhile stays
+// in the box and never runs, while its row says sent.
 it.each(WAYS)("types %s into an omp still starting only once its session is reported", async (way) => {
   const d = omp();
   d.hooks.look = (looks) => {

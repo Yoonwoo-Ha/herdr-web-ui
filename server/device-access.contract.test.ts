@@ -347,6 +347,7 @@ it("revocation closes an active device's terminal and roster stream without disc
 it("revoking every device closes each paired client's streams at once, voids every credential, and leaves the token, this PC and the Tailscale login in, also after a restart", async () => {
   const root = mkdtempSync(join(tmpdir(), "herdr-device-revoke-all-"));
   const OWNER = "owner@example.com";
+  // a device that only watches: issued through the store itself, since the pairing route pairs drivers only
   const seed = new DeviceStore(root);
   const watch = seed.pair(seed.startPairing().code, "Watch", "watch")!;
   seed.match(watch.token);
@@ -401,6 +402,7 @@ it("revoking every device closes each paired client's streams at once, voids eve
       await output;
     }
 
+    // the refusals: no mutation guard, another origin, a watching device, a misspelled route
     const revokeAll = (headers: Record<string, string>, method = "POST") => fetch(`${base}/api/devices/revoke-all`, { method, headers });
     expect((await revokeAll({ authorization: "Bearer test-revoke-all" })).status).toBe(403);
     expect((await revokeAll({ ...admin, origin: "https://elsewhere.example" })).status).toBe(403);
@@ -412,6 +414,7 @@ it("revoking every device closes each paired client's streams at once, voids eve
     expect(a.socket.readyState).toBe(WebSocket.OPEN);
     for (const cookie of [cookieA, cookieB, cookieC, cookieD, watchCookie]) expect((await fetch(`${base}/api/session`, { headers: { ...stranger, cookie } })).status).toBe(200);
 
+    // the revocation, from a paired device that can drive: everything paired goes, its own pairing included
     const closures = Promise.all([a.closed, b.closed, streamA.ended, streamC.ended]);
     const revoked = await revokeAll({ ...guard, ...stranger, cookie: cookieD });
     expect(revoked.status).toBe(200);
@@ -423,6 +426,8 @@ it("revoking every device closes each paired client's streams at once, voids eve
     expect((await (await fetch(`${base}/api/devices`, { headers: admin })).json() as { devices: unknown[] }).devices).toEqual([]);
     const registry = JSON.parse(readFileSync(join(root, "devices.json"), "utf8")) as { gate_closed_at: string | null; devices: unknown[] };
     expect(registry).toEqual({ gate_closed_at: expect.any(String), devices: [] });
+    // the owner's stream and the token are untouched, and the policy for the rest is what it was: with a token
+    // configured, this PC itself and the PC's Tailscale login are asked for it (token_required), a stranger too
     expect(owner.events.length).toBeGreaterThan(0);
     expect((await fetch(`${base}/api/session`, { headers: { authorization: "Bearer test-revoke-all" } })).status).toBe(200);
     const authOf = async (headers: Record<string, string>) => ((await (await fetch(`${base}/api/health?scope=bridge`, { headers })).json()) as { auth: { authenticated: boolean; reason?: string } }).auth;
@@ -430,8 +435,10 @@ it("revoking every device closes each paired client's streams at once, voids eve
     expect(await authOf(tailscale)).toMatchObject({ authenticated: false, reason: "token_required" });
     expect(await authOf(stranger)).toMatchObject({ authenticated: false, reason: "token_required" });
     expect(await authOf({ ...stranger, cookie: cookieA })).toMatchObject({ authenticated: false });
+    // a late socket with a revoked cookie is refused at the upgrade, as the gate is closed to it
     expect((await fetch(`${base}/ws`, { headers: { ...stranger, cookie: cookieA } })).status).toBe(401);
 
+    // after a restart the gate is still closed and every old credential still void; pairing anew works
     abort.abort();
     await owner.ended;
     server.stop();
@@ -517,12 +524,14 @@ it("revoking every device closes relayed remote terminals through /ws?machine_id
     expect((await a.closed).code).toBe(1008);
     await within(() => closedUpstreams >= 1, "A's connection to the other PC closed");
 
+    // the pending upgrade completes only now; its device is gone, so it is ended at admission, with its relay
     release();
     const closedB = await Promise.race([bClosed, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("B's late relayed socket was left open")), 5000))]);
     expect(closedB.code).toBe(1008);
     await within(() => opened.length === 2 && closedUpstreams === 2, "B's connection to the other PC closed");
     expect(bMessages.filter((raw) => (JSON.parse(raw) as { type?: string }).type !== "error")).toEqual([]);
 
+    // a later relayed upgrade with a revoked cookie is refused before the other PC is dialled
     const dialled = upgrades.length;
     for (const cookie of [cookieA, cookieB]) {
       expect((await fetch(`${base}/ws?machine_id=fictional-remote`, { headers: { ...stranger, cookie } })).status).toBe(401);
@@ -563,6 +572,7 @@ it("a revocation of every device that cannot be persisted changes nothing, and o
     const failed = await revokeAll();
     expect(failed.status).toBe(500);
     expect(await failed.json()).toMatchObject({ error: { code: "internal_error" } });
+    // nothing changed: the gate is still open, no registry was written, and a confirmation that cannot be written is refused too
     expect((await session(forwarded)).status).toBe(200);
     expect(() => readFileSync(join(root, "devices.json"), "utf8")).toThrow();
     expect((await session({ ...forwarded, cookie: candidate })).status).toBe(500);
@@ -572,6 +582,7 @@ it("a revocation of every device that cannot be persisted changes nothing, and o
     expect((await session({ ...forwarded, cookie: candidate })).status).toBe(200);
     expect(((await told) as DevicePairedEvent).device_id).toMatch(/^[0-9a-f]{16}$/);
     expect(pairings()).toHaveLength(1);
+    // a sibling candidate is stale once a first cookie closed the gate (the rule from before this route)
     expect((await session({ ...forwarded, cookie: sibling })).status).toBe(401);
     const staleCode = await start();
     const revoked = await revokeAll();
@@ -640,6 +651,8 @@ it("keeps a forwarded first-pair gate open until a returned cookie is durably co
     expect((await (await fetch(`${base}/api/devices`, { headers: forwarded })).json()).devices).toEqual([]);
     expect(() => readFileSync(join(root, "devices.json"), "utf8")).toThrow();
 
+    // A lost cookie can be retried through the proxy; issuing another cookie still does
+    // not close the gate until one of them returns in a later request.
     const retryCookie = await issue(await start());
     expect((await stranger()).status).toBe(200);
     expect(retryCookie).not.toBe(droppedCookie);
@@ -727,6 +740,7 @@ it("never tells a browser of the device it paired itself, on any stream or push 
     expect((await fetch(`${base}/api/devices`, { headers: { cookie: browser.header() } })).status).toBe(200);
     const self = (await Promise.all(heardSelf))[0] as DevicePairedEvent;
     await pushedSelf;
+    // a key grants nothing: from another address, the browser's keys alone are refused like no cookie at all
     const keysOnly = browser.header().split("; ").filter((pair) => pair.startsWith("ovis_stream_")).join("; ");
     expect(keysOnly.split("; ")).toHaveLength(2);
     expect((await fetch(`${base}/api/machines/events`, { headers: { cookie: keysOnly, "x-forwarded-for": "192.0.2.1" } })).status).toBe(401);
@@ -784,6 +798,7 @@ it("watch credentials cannot mutate HTTP state, read credential files, or elevat
     for (const path of ["pane/input", "workspace/create", "tab/create", "tab/rename", "tab/close", "machines/setup", "updates/install", "herdr/update", "portal/start", "portal/stop", "portal/invite"]) {
       expect((await fetch(`${base}/api/${path}`, { method: "POST", headers, body: "{}" })).status).toBe(403);
     }
+    // the shared settings: a watching device reads them, and cannot change them for every browser
     expect((await fetch(`${base}/api/preferences`, { headers })).status).toBe(200);
     expect((await fetch(`${base}/api/preferences`, { method: "PUT", headers, body: JSON.stringify({ settings: { theme: "light" }, pins: [] }) })).status).toBe(403);
     expect((await fetch(`${base}/api/herdr-ui`, { headers })).status).toBe(200);
@@ -792,11 +807,13 @@ it("watch credentials cannot mutate HTTP state, read credential files, or elevat
     expect(told.status).toBe(403);
     expect(await told.json()).toMatchObject({ error: { code: "read_only" } });
     expect((await fetch(`${base}/api/fs/file?path=${encodeURIComponent(join(root, "devices.json"))}`, { headers })).status).toBe(403);
+    // a PC's file is read without the origin check (#448, Android's Open button): the watch refusal still comes first, for GET and HEAD alike
     for (const method of ["GET", "HEAD"]) {
       const response = await fetch(`${base}/api/machines/pc1/fs/file?path=%2Fetc%2Fhostname`, { method, headers: { ...headers, "sec-fetch-site": "cross-site" } });
       expect(response.status).toBe(403);
       if (method === "GET") expect(await response.json()).toMatchObject({ error: { code: "read_only" } });
     }
+    // a repository's changes are file contents: refused like a file read, on this PC and through a PC's route
     for (const path of ["workspace/diff/files", "workspace/diff/file", "workspace/diff/refs", "machines/pc1/workspace/diff/files", "machines/pc1/workspace/diff/file", "machines/pc1/workspace/diff/refs", "machines/local/workspace/diff/file"]) {
       const response = await fetch(`${base}/api/${path}?directory=${encodeURIComponent(root)}&path=devices.json`, { headers });
       expect([path, response.status]).toEqual([path, 403]);
@@ -805,6 +822,7 @@ it("watch credentials cannot mutate HTTP state, read credential files, or elevat
     for (const path of ["api//workspace/diff/file", "api/workspace//diff/file", "api/machines/pc1//workspace/diff/file"]) {
       expect((await fetch(`${base}/${path}?directory=${encodeURIComponent(root)}&path=devices.json`, { headers })).status).toBe(404);
     }
+    // an empty segment must not turn a file read into "some other route" (the PC proxy drops it)
     for (const path of ["api//fs/file", "api/machines/pc1//fs/file", "api/machines/pc1/fs//file"]) {
       expect((await fetch(`${base}/${path}?path=${encodeURIComponent(join(root, "devices.json"))}`, { headers })).status).toBe(404);
     }
@@ -840,6 +858,8 @@ it("a route spelled with a trailing, doubled or encoded slash is no route, for a
   const base = `http://127.0.0.1:${server.port}`;
   const query = "?workspace_id=w1&agent=pi";
   try {
+    // the PC proxy drops empty segments before it forwards with the PC's own credential, so each
+    // of these would reach the PC's history past the watch refusal if it were taken for a route
     const spellings = [
       "api/sessions/history/", "api/sessions//history", "api/sessions%2Fhistory", "api/sessions%2fhistory", "api/machines/local/sessions/history/",
       "api/machines/pc1/sessions/history/", "api/machines/pc1/sessions//history", "api/machines/pc1//sessions/history", "api/machines/pc1/sessions%2Fhistory",
@@ -876,6 +896,7 @@ it("a pane's command rows are refused to a watching device on this PC, its alias
   const base = `http://127.0.0.1:${server.port}`;
   const query = "?pane_id=ovis-test-absent:p1";
   try {
+    // a custom command's row carries its file's first line and its path: what a folder's command files hold
     for (const path of ["api/pane/commands", "api/machines/local/pane/commands", "api/machines/pc1/pane/commands"]) {
       const response = await fetch(`${base}/${path}${query}`, { headers: { cookie: `ovis_device=${watch.token}` } });
       expect([path, response.status, ((await response.json()) as { error: { code: string } }).error.code]).toEqual([path, 403, "read_only"]);
@@ -900,6 +921,7 @@ it("the paths under a pane's folder and a plugin run's output are refused to a w
   store.match(drive.token);
   const server = createServer({ port: 0, stateDir: root, token: "test-pane-files", tailscaleOwner: null });
   const base = `http://127.0.0.1:${server.port}`;
+  // the @-mention picker's paths, and where a plugin action's run stands (what its command printed when it failed)
   const routes = ["pane/files?pane_id=ovis-test-absent:p1&q=commands", "plugin/action?plugin_id=ovis-test-absent&log_id=plugin-log-1", "pane/docs?pane_id=ovis-test-absent:p1"];
   try {
     for (const route of routes) {
@@ -1015,6 +1037,8 @@ it("never announces a pairing to a stream that came in through the open LAN: it 
     const heardFirst = local.next(isPairing("First"), "this PC hears of First");
     await pair("First");
     await heardFirst;
+    // the gate is closed: the LAN client is refused on any new request, and the stream it opened before has ended
+    // without a word of the pairing that closed it
     expect((await fetch(`${base}/api/session`, { headers: lan })).status).toBe(401);
     await Promise.race([open.ended, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the open stream outlived the gate")), 5000))]);
     expect(pairedLabels(open)).toEqual([]);
@@ -1042,6 +1066,7 @@ it("a script pairs for its token in JSON and authenticates with Authorization: D
   const admin = { ...guard, authorization: "Bearer configured" };
   const code = async () => ((await (await fetch(`${base}/api/devices/pair/start`, { method: "POST", headers: admin })).json()) as { code: string }).code;
   try {
+    // a browser's pairing keeps its answer: no body, the HttpOnly cookie only
     const browser = await fetch(`${base}/api/devices/pair`, { method: "POST", headers: guard, body: JSON.stringify({ code: await code(), label: "Browser" }) });
     expect(browser.status).toBe(204);
     expect(await browser.text()).toBe("");
@@ -1063,6 +1088,7 @@ it("a script pairs for its token in JSON and authenticates with Authorization: D
     expect((await session(`device ${token}`)).status).toBe(200);
     expect((await listed()).last_seen_at).not.toBeNull();
     expect((await session(`Device ${token}x`)).status).toBe(401);
+    // the device's token is not the shared token
     expect((await session(`Bearer ${token}`)).status).toBe(401);
     const { devices } = await (await fetch(`${base}/api/devices`, { headers: { authorization: `Device ${token}` } })).json() as { devices: { label: string; current: boolean }[] };
     expect(devices.find((d) => d.current)?.label).toBe("Script");
@@ -1277,6 +1303,7 @@ it("ends an events stream the open LAN let in once the gate closes, and refuses 
   try {
     const events = await openEvents(base, stranger, abort.signal);
     await events.next((event) => event.type === "machines", "initial roster");
+    // the relay turned on: the gate closes with no device paired, and the stream that read this PC's roster ends
     app.context.services.devices.closeGate();
     await Promise.race([events.ended, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("the open stream outlived the gate")), 5000))]);
     expect((await fetch(`${base}/api/machines/events`, { headers: stranger })).status).toBe(401);

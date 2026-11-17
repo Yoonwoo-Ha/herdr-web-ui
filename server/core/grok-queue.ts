@@ -18,8 +18,10 @@ export type GrokQueue =
   | { readonly mode: "minimal"; readonly count: number };
 
 const QUEUE_ROW = /^ {4}#(\d+) (.*)$/;
+/** a row of the agent's output, which Grok indents by five */
 const OUTPUT_ROW = /^ {5}\S/;
 
+/** null: neither layout is on the screen, or the queue pane holds the focus and frames its rows. */
 export function grokQueue(screen: string): GrokQueue | null {
   const rows = stripVTControlCharacters(screen).split("\n").map((row) => row.trimEnd());
   const last = rows.filter((row) => row.trim() !== "").at(-1) ?? "";
@@ -58,6 +60,7 @@ export function showsMessage(row: string, message: string): boolean {
   return cut !== "" && first.startsWith(cut);
 }
 
+/** a prompt as Grok echoes it in the transcript once sent: `     ❯ first line` (its time on the right), the rest under it */
 const ECHO_ROW = /^ {5}❯ (.*)$/;
 const ECHO_MORE = /^ {7}\S/;
 
@@ -78,6 +81,10 @@ export function grokEcho(screen: string): GrokEcho | null {
   return { text: squash(echo.join(" ")), echoes: echoes.filter(Boolean).length };
 }
 
+/**
+ * An echo already drawn then (an earlier prompt of the same words) is not the message's, nor a new one drawn as the
+ * oldest scrolls off the top (the safe direction); the echo's time is to the minute, so it does not tell.
+ */
 function echoesMessage(screen: string, before: GrokEcho | null, message: string): boolean {
   const echo = grokEcho(screen);
   if (echo === null) return false;
@@ -119,6 +126,9 @@ function sendNowStep(seen: { status: string; screen: string }, before: GrokBefor
       const at = queue.rows.map((row) => showsMessage(row, message)).lastIndexOf(true);
       if (at < 0) throw changed(GROK_SEND_UNCONFIRMED_MESSAGE);
       if (at > 0) throw changed(grokQueuedBehindMessage(at));
+      // the top row reads as the message, but an older row can be drawn the same way (the same cut prefix, first line and
+      // line count, or words) while the message's own row is not drawn yet: it is the message only as the one row of a
+      // queue that held none before the send
       if (before.queue?.mode !== "fullscreen") throw changed(GROK_SEND_UNCONFIRMED_MESSAGE);
       if (before.queue.rows.length > 0 || queue.rows.length > 1) throw changed(GROK_QUEUED_MESSAGE);
       if (seen.status !== "working" || !queue.enterSendsNow || !grokPromptEmpty(seen.screen)) throw changed(GROK_QUEUED_MESSAGE);
@@ -131,6 +141,15 @@ function sendNowStep(seen: { status: string; screen: string }, before: GrokBefor
   }
 }
 
+/**
+ * After the Enter that typed `message` into Grok (`delayMs` later, on a fresh read `look` that throws once the pane holds
+ * another Grok session), one more Enter goes only when the screen shows the message as the one row of a queue that held
+ * none before the send (`before`), herdr reports the pane working, and the shortcuts row offers `Enter:send now` over
+ * Grok's empty prompt; and once more `delayMs` later, with the same one row: another row in its place says the message is
+ * behind a row another client queued, and a second row under the same one says it is queued (the screen does not tell
+ * whose the first row is). `lastScreen`: the screen once more, read last before the Enter's write when `look`
+ * awaits more after its own read; that read must say the same, or nothing is pressed.
+ */
 export async function sendGrokQueuedNow(opts: {
   message: string;
   before: GrokBeforeSend;
@@ -143,6 +162,10 @@ export async function sendGrokQueuedNow(opts: {
   await Bun.sleep(opts.delayMs);
   const seen = await opts.look().catch(() => { throw changed(GROK_SEND_UNCONFIRMED_MESSAGE); });
   if (sendNowStep(seen, opts.before, opts.message) === "done") return;
+  // the one row can be another client's, queued between the read before the send and its Enter and drawn the same way
+  // (`yes`, the same first line and line count, the same cut prefix), with the message's own row not drawn yet: read once
+  // more, and it must still be that one row. Left after it, a limit of reading a screen: such a row with the message's own
+  // row drawn only after this read, as Grok draws no owner on a row
   // fixed wait: one more SUBMIT_DELAY_MS for Grok to draw a row queued after the one the read above showed
   await Bun.sleep(opts.delayMs);
   const again = await opts.look().catch(() => { throw changed(GROK_SEND_UNCONFIRMED_MESSAGE); });

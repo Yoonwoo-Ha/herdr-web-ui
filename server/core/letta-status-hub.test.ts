@@ -13,6 +13,7 @@ const turn = readFileSync(join(import.meta.dir, "..", "fixtures", "letta", "mess
 
 const resolved: { mockRestore(): void }[] = [];
 const resolving = () => { const spy = spyOn(lettaStore, "resolveLettaTranscript"); resolved.push(spy); return spy; };
+/** the server serves herdr-core, where Letta panes report nothing; on herdr's TUI the tracker stays out */
 const core = (serving = true) => { const spy = spyOn(served, "capabilities").mockReturnValue(serving ? HERDR_CORE : HERDR); resolved.push(spy); };
 afterEach(() => { for (const spy of resolved.splice(0)) spy.mockRestore(); });
 
@@ -187,6 +188,7 @@ describe("a Letta pane's status in the hub, where no report gives one", () => {
     await h.status.letta.refresh([letta("[ ! ] Action Required | Tutor")] as never);
     await h.snapshot();
     expect(h.last().status).toBe("blocked");
+    // denied: Letta writes an aborted answer while the title still asks, then its title rests
     const aborted = JSON.parse(turn.at(-1)!);
     aborted.message.stopReason = "aborted";
     aborted.timestamp = new Date().toISOString();

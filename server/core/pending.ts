@@ -1,3 +1,21 @@
+/**
+ * Messages a connection sends to wait for the agent: queued for its next turn, or held for the
+ * sender's Send now. Each carries a lease on the pane's terminal and on the sender's authority,
+ * checked again before every write, so a message is typed only into the attach it was sent from
+ * while that connection may still type. A turn's end sends the pane's next message; losing the
+ * lease holds it for the sender to review instead of sending it.
+ *
+ * A create request's first message (POST /api/workspace/create and /api/tab/create `first_message`)
+ * is listed by the bridge (FIRST_MESSAGE_OWNER), so every connection attached to the pane sees it among
+ * its pending messages and may discard or send it now; one pane holds one. It is typed on its own only
+ * through the page connection that sent the request (`first_message_connection`), while that connection
+ * has the pane attached, with the same checks as its own queued messages. Once that connection closes
+ * or leaves the pane before it went, or when the request named none, it is held: nothing the user typed
+ * goes automatically after a disconnect, another device attaching later never types it on its own, and
+ * the pane's other messages are not left behind it. It is bound to the agent the launch brought up: the
+ * process and session in front when it is queued, and what herdr says of that agent at each event of the
+ * pane after, so another session or process of the same kind gets none.
+ */
 import { AGENT_PICKER_MESSAGE, closeBackslash, closeMention, type createSubmitText, freeAgentInput, freeClaudeBox, freeHermesInput, InputDraftError, modelSwitchText, OMP_REPORT_POLL_MS, OMP_STARTUP_MS, ompStartingUntil, pendingFault, pendingIdentity, pendingText, submitFraming, untilOmpReported } from "./composer.ts";
 import { grokEcho, grokQueue, sendGrokQueuedNow } from "./grok-queue.ts";
 import { type Client, connectionOf, send } from "./connections.ts";
@@ -34,12 +52,24 @@ export const FIRST_MESSAGE_OWNER: FirstMessageOwner = { firstMessages: true };
 export type PendingOwner = Client | FirstMessageOwner;
 const isClient = (owner: PendingOwner): owner is Client => owner !== FIRST_MESSAGE_OWNER;
 const withoutEscapes = (screen: string): string => screen.replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, "");
+/** a first message's lease is the delivering connection's, taken at each attempt: none is kept on the record */
 type PendingItem = PendingRecord<PendingOwner, PendingLease | null>;
 type SubmitReply = { ok: boolean; pending?: PendingMessage; sending_at?: string; code?: string; message?: string; refusal?: { draft: string | null; box: string | null; identity: PendingIdentity };
   unannounced?: true };
+/**
+ * `agent_blocked` for one of Codex's own screens (dialogs/codex.ts codexOwnScreenOpen). herdr reports Codex at rest
+ * under it and says nothing when it closes. So a queued message refused for it is held with this reason, for its
+ * Send now: queued again it would wait with no reason shown while Codex sits idle, and go out by itself at whatever
+ * status event comes next, which may be the end of a turn the user started since.
+ */
 class CodexOwnScreenRefusal extends HerdrError {
   constructor(message = CODEX_OWN_SCREEN_MESSAGE) { super("agent_blocked", message); }
 }
+/**
+ * A picker of the agent's own that has the input of an agent no reader knows (registry agentPickerWaits: Devin's or
+ * Copilot's folder trust). herdr reports the agent at rest under it and says nothing when it is answered, so a queued
+ * message refused for it is held as one refused for Codex's own screens is.
+ */
 const agentPickerRefusal = (): HerdrError => new CodexOwnScreenRefusal(AGENT_PICKER_MESSAGE);
 /** Codex's question whether to trust the folder it was started in, by its card's title (0.167, and as older versions asked it). */
 const CODEX_FOLDER_QUESTION_RE = /^(?:Trust this folder\?|Do you trust the contents)/i;
@@ -72,6 +102,11 @@ type PiTypedReceipt = { owner: Client; resumeKey?: string; message: PendingMessa
 const FIRST_MESSAGE_RETRY_CODES = new Set(["input_not_ready", "pending_lease_lost", "disconnected", "read_only"]);
 const FIRST_MESSAGE_UNATTENDED = { code: "first_message_unattended", message: "The page that sent this first message is gone; send it now or discard it" };
 const AGENT_NOT_READY = { code: "agent_not_ready", message: NO_AGENT_MESSAGE };
+/**
+ * An agent runs where herdr names one and its own program is in front (#511): herdr can keep naming an agent that
+ * has exited, and a shell, the pane's own or one started since, is no agent for a message whose `> quote` lines it
+ * would run as redirects.
+ */
 function runsAgentProgram(entry: { name?: string | null; argv0?: string | null; argv?: readonly string[] | null }, agent: string | null): boolean {
   if (agent === null) return false;
   if (agentProcesses([entry], agent).length > 0) return true;
@@ -89,6 +124,7 @@ function runsOtherProgram(entry: { name?: string | null; argv0?: string | null; 
 const agentRuns = (identity: PendingIdentity, recognized: boolean): boolean => identity.agent !== null && identity.processPid !== null && recognized;
 const TARGET_CHANGED = { code: "pending_target_changed", message: "The pane's terminal or agent session changed; review the message before sending it again" };
 const LAUNCH_GONE = { code: "first_message_launch_ended", message: "The agent started for this message has ended; review the message before sending it" };
+/** why a message that waited for a starting omp is held: its paste would follow what was typed into omp's input box meanwhile, and its Enter send both */
 const TYPED_WHILE_WAITING = { code: "typed_while_waiting", message: "Something was typed in this terminal while omp was starting. Check its input line there, then send this message" };
 const FIRST_MESSAGE_RECEIPTS = 8;
 
@@ -112,6 +148,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
 }) {
   const pendingAuthorities = new WeakMap<Client, Map<string, object>>();
   const firstReceipts = new Map<string, Array<{ id: string; outcome: "sent" | "discarded" | "dismissed" }>>();
+  /** the connections that could type into the pane now: attached, allowed to type, and with a ready lease */
   const typists = (paneId: string): Client[] => [...clients].filter((client) => {
     if (!client.data.attached.has(paneId)) return false;
     try { authorizeSocket(client); } catch { return false; }
@@ -141,6 +178,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     if (item.message.state === "held") pending.rehold(item, fault);
     else pending.holdItem(item, fault);
   };
+  /** the page connection that sent each first message: the only one that types it on its own */
   const requesters = new WeakMap<PendingItem, Client>();
   const requested = new WeakMap<Client, Set<PendingItem>>();
   const present = (client: Client): boolean => clients.has(client) && !connectionOf(client).closing;
@@ -154,9 +192,17 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   const PI_RESUME_MS = 10 * 60 * 1000, PI_RESUME_LIMIT = 1024;
   const livePiOwner = (owner: Client): boolean => clients.has(owner) && !connectionOf(owner).closing;
   const piCompleted: Array<{ paneId: string; key: string; id: string; at: number }> = [];
+  /**
+   * `at` is on `elapsed`, a clock that only moves forward: a PC clock set forward must not end a receipt before the
+   * proof a page counts on its own clock, and one set back must not stretch it.
+   */
   const completed: Array<{ paneId: string; key: string; id: string; outcome: "sent" | "discarded" | "held" | "uncertain" | "sending"; at: number; hash?: string;
     gone?: true }> = [];
   const elapsed = (): number => performance.now();
+  /**
+   * herdr may give the ID to another pane: a follow-up taken before that time was written for the pane that ended,
+   * and gets no held receipt (keepReceipts), so no browser is offered it with Send now for the pane that has the ID next.
+   */
   const endedPanes = new Map<string, number>();
   const receiptKeys = new WeakMap<Client, Map<string, string>>();
   const resumeKey = (client: Client, paneId: string): string | undefined => {
@@ -166,6 +212,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   const prunePi = (): void => {
     const cutoff = Date.now() - PI_RESUME_MS;
     while (piCompleted.length && (piCompleted[0]!.at < cutoff || piCompleted.length > PI_RESUME_LIMIT)) piCompleted.shift();
+    // A sent or uncertain one stays its whole window (their number is bounded by the
+    // sends a pane takes in ten minutes). It is what answers a resend of that ID once its resend record (a minute)
+    // is gone, and every held receipt issued for the ID came before the send, so it ends before this does: a tab
+    // that still holds its copy on one never types what another tab already sent, or may have sent.
     const ended = elapsed() - PI_RESUME_MS;
     for (let at = 0; at < completed.length && completed[at]!.at < ended;) {
       if (completed[at]!.outcome === "sending") at++; else completed.splice(at, 1);
@@ -221,6 +271,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     if (found === null) return null;
     const path = "unwritten" in found ? found.unwritten.path : found.path;
     if (!("unwritten" in found)) return capturePiDeliveryAnchorRetrying(path);
+    // Pi 1.3 names a prospective file `<UTC timestamp>_<session UUID>.jsonl`; its header
+    // carries only that UUID. Anything outside the exact contract is confirmation-unavailable.
     const expected = piUnwrittenHeaderId(path);
     return expected === null ? null : capturePiDeliveryAnchorRetrying(path, true, expected);
   };
@@ -287,6 +339,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       const entries = piConsumed.get(paneId) ?? new Set<string>();
       piConsumed.set(paneId, entries);
       let result = matchPiDeliveries(path, candidates, entries);
+      // fs.watch may report the first chunk of Pi's append. Retry only an explicitly unstable
+      // snapshot, briefly and boundedly; absence of a matching user record is never polled.
       for (let attempt = 0; result.retry && attempt < 4; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 25));
         matching = matching.filter((item) => activePiReceipt(paneId, item));
@@ -339,6 +393,11 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     pending.hold(owner, paneId);
     holdRequested(owner, paneId);
   }
+  /**
+   * The first messages `client`'s page sent, in `paneId` or in every pane, that have not gone: once it
+   * leaves the pane, may no longer type or closes, each is held for an explicit Send now or Discard, and
+   * the pane's other messages go at their turn. One on its way settles held, not retried.
+   */
   function holdRequested(client: Client, paneId?: string): void {
     const items = requested.get(client);
     if (!items) return;
@@ -353,6 +412,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   function holdPendingPane(paneId: string, fault: { code: string; message: string }): void {
     for (const owner of clients) pendingAuthorities.get(owner)?.delete(paneId);
     pending.holdPane(paneId, fault);
+    // A typed Pi receipt is never re-sent. Losing its exact terminal only stops automatic
+    // transcript confirmation and makes the saved receipt dismissible.
     failPi(paneId, piTyped.get(paneId) ?? []);
     if (fault.code === "pane_not_found") {
       for (const message of pending.list(FIRST_MESSAGE_OWNER, paneId)) {
@@ -360,6 +421,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         if (item) pending.discard(item);
       }
       firstReceipts.delete(paneId);
+      // Its held receipts go with it too: herdr may give the ID to another pane, and a browser that attaches there
+      // must not be told the old pane's copy is held, with Send now, for a terminal it was never written for.
       ompUnknown.delete(paneId);
       forgetOmpStart(paneId);
       endedPanes.delete(paneId);
@@ -373,6 +436,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       }
     }
   }
+  /**
+   * herdr moved the pane under a new ID: its messages follow it there, held for an explicit send, since the
+   * leases and typed Pi receipts they had were for the old ID's terminal (#1503).
+   */
   function movePendingPane(from: string, to: string): void {
     if (from === to) return;
     const fault = { code: "pane_moved", message: "The pane moved to another workspace; review this message and send it again" };
@@ -400,7 +467,17 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     if (facts.currentHeld) throw new HerdrError("attach_held", ATTACH_HELD_MESSAGE);
     if (!typingGuards.pendingLease(facts)) throw new HerdrError("input_not_ready", "The pending message's pane connection changed");
   }
+  /**
+   * Its process is the agent's in front of the pane, as a command outcome picks it (agentProcessInFront): `bound`
+   * (the process a message was bound to, or its launch reported) while it is among those in front, else the
+   * agent's own program, so a wrapper that does not exec its agent (a shim, a launcher, `sh -c` with more to run)
+   * and stays listed before it is not taken for it. Its birth is read without holding the event loop (no `ps` on
+   * it on macOS); the foreground is then read again, and a process no longer in front by then is not the one that
+   * runs now: the reads are made again from what is, so a replacement that came meanwhile is never checked against
+   * the old process's birth.
+   */
   async function currentIdentity(paneId: string, bound: number | null = null, kind: string | null = null): Promise<{ pane: HerdrPane; identity: PendingIdentity; shellPid: number | null; processes: ProcessInfo | undefined;
+    /** the process, as the last read shows it, is the agent's own program (runsAgentProgram); a holder record alone is no proof */
     recognized: boolean;
     held: { pid: number; started: number | null } | null }> {
     const pane = (await clientSnapshot()).panes.find((candidate) => candidate.pane_id === paneId);
@@ -430,6 +507,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         // Windows names only the pane's shell in front, whatever runs in it, and has no foreground process group
         // (windows-processes.ts): which program takes the pane's input cannot be told there, so no agent is recognized
         // and a message for an agent alone is refused (#511, a known limit)
+        // only positive evidence of the agent's own program counts: a session holder record outlives an exec at its PID,
+        // so an argv-silent OmO known by that record alone is refused (fail closed)
         const recognized = process.platform !== "win32" && entry !== undefined && runsAgentProgram(entry, base.agent);
         return { pane, shellPid: after?.shell_pid ?? null, processes: after, held: processHeld, recognized, identity: {
           ...base, processPid, processBirth: settled ? processBirth : null,
@@ -448,6 +527,9 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     const pid = pinned?.processPid ?? current;
     const inFront = async (): Promise<NonNullable<ProcessInfo["foreground_processes"]>> => {
       if (agentOnly) {
+        // a message for an agent alone (#511): by this last read too, the PID it was checked against runs the agent's
+        // own program, by the identity check its send started with (currentIdentity's `recognized`). Anything else
+        // there, a shell, another program or one not known, is no agent
         const now = await currentIdentity(paneId, pid ?? null);
         if (pid == null || now.identity.processPid !== pid || !agentRuns(now.identity, now.recognized)) throw new HerdrError(AGENT_NOT_READY.code, AGENT_NOT_READY.message);
         return now.processes?.foreground_processes ?? [];
@@ -469,11 +551,22 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     }
     await sameStart(pinned);
   }
+  /**
+   * The bound process by its start: one that ended and left its PID to another, or whose known start cannot be read any
+   * more, is not the one checked (samePendingIdentity). Read from /proc or sysctl, no herdr call.
+   */
   async function sameStart(pinned: PendingIdentity | null): Promise<void> {
     if (pinned?.processPid == null || pinned.processBirth == null) return;
     const birth = await processStartedAtAsync(pinned.processPid);
     if (!samePendingIdentity(pinned, { ...pinned, processBirth: birth })) throw new HerdrError(TARGET_CHANGED.code, TARGET_CHANGED.message);
   }
+  /**
+   * The screen once more, right before a write and after every other check: a masked prompt that came up while those were
+   * awaited gets no paste and no Enter, and neither does a screen of Codex's own (a list, a field, a pager), which herdr
+   * reports as Codex at rest. Then the bound process's start again, which costs no herdr call: one that took
+   * its PID during this read is not written to. herdr cannot compare and write in one step, so what changes during the
+   * last reads or herdr's write is still not seen: the window is those reads and the write's own call.
+   */
   async function noMaskedPrompt(paneId: string, cols: number | undefined, pinned: PendingIdentity | null): Promise<void> {
     const screen = (await paneRead({ paneId, source: "detection", format: "text" })).text;
     if (secretPrompt(screen, cols) !== null) {
@@ -487,6 +580,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   async function pendingContext(owner: Client, paneId: string, lease: PendingLease, identity?: PendingIdentity, pasted = false, agentOnly = false): Promise<{ pane: HerdrPane; identity: PendingIdentity; working: boolean; screen: string; processes: ProcessInfo | undefined; held: { pid: number; started: number | null } | null; collapsed: boolean; agentInFront: boolean }> {
     authorizePending(owner, paneId, lease);
     let { pane, identity: current, processes, held: holder, recognized } = await currentIdentity(paneId, identity?.processPid ?? null);
+    // a Claude session known before and unknown now (its PID record or its job's state cannot be read) may be
+    // another one: nothing is typed for it (#2125). It is read once more first, as a record being rewritten
+    // fails only for a moment. After this delivery's own paste too: an Enter for a session that cannot be told
+    // may commit the paste in another one, so the message is left uncertain without it (#2279).
     const unknown = (): boolean => identity?.claudeSession != null && current.claudeSession == null;
     if (unknown()) ({ pane, identity: current, processes, held: holder, recognized } = await currentIdentity(paneId, identity?.processPid ?? null));
     const lost = unknown();
@@ -507,9 +604,15 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       throw new HerdrError("agent_blocked", "The terminal is waiting for masked input; answer it with the secret-input form first");
     }
     const collapsed = current.agent === "codex" && codexQuestionsCollapsed(screen);
+    // a message Claude Code holds for its invisible characters is a card to answer first, also once its hint has gone.
+    // Not so with this delivery's own paste in the box (`pasted`), which the check before the paste found
+    // free of a held message: the same words as the message noted before would be taken for that one,
+    // and so would any paste under a hint left up from it (typing does not take Claude's hint down)
     const held = !pasted && current.agent === "claude" ? heldCandidate(paneId) : null;
     const prompt = current.agent ? parseInteractivePrompt(current.agent, screen, null, true, [], held) : null;
     const waits = prompt !== null && !(pasted && isClaudeHeld(prompt)) && !(await claudeHeldIsGrey(paneId, prompt));
+    // One of Codex's own screens (a list, a field, a pager) has the input while herdr reports Codex at rest: as a menu
+    // herdr does report, nothing is typed into it (codexScreenRefusal says as which of the two it is refused)
     const own = current.agent === "codex" ? codexScreenRefusal(screen, waits ? prompt : null, pane.agent_status === "blocked" ? "blocked" : "rest") : null;
     if (own !== null) throw own;
     if (current.agent && pane.agent_status !== "blocked" && agentPickerWaits(current.agent, screen)) throw agentPickerRefusal();
@@ -530,6 +633,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     requestId = 0, agentOnly = false, queued = false,
     row: { withdrawn?: () => boolean; waiting?: (waits: boolean) => void } = {}): Promise<SubmitReply> {
     let wrote = false;
+    // a message for an agent alone pasted and then refused its Enter (#511): its text may sit in the input line, so it is
+    // held for the user and never pasted again automatically
     let stranded = false;
     let watch: OpenCodeWatch | null = null;
     let piReservation: PiReceiptReservation<Client> | null = null;
@@ -540,8 +645,12 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
       mark = pending.mark(paneId);
       let context = await pendingContext(owner, paneId, lease, identity);
+      // omp draws its input box, and herdr shows it at rest, before it takes an Enter: typed then, the message stays in
+      // the box and never runs while its row says sent.
       let waitedForOmp = false, endsOmpStart = false;
       if (context.identity.agent === "omp" && automatic) {
+        // one the queue makes by itself never waits here, with the pane's lane held and every key typed there behind
+        // it: it waited before it was taken up (awaitsOmp).
         const until = await ompStartingUntil(paneId, context.pane, options);
         if (until !== null) {
           waitForOmp(paneId, until);
@@ -561,6 +670,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
           }
         } finally { if (waitedForOmp) row.waiting?.(false); }
       }
+      // a message for an agent alone (#511) is typed only as the immediate path would: never into no agent, and never
+      // past Codex's collapsed question queue, as Codex may exit before the write
       if (agentOnly && !context.agentInFront) throw new HerdrError(AGENT_NOT_READY.code, AGENT_NOT_READY.message);
       if (agentOnly && context.collapsed) throw new HerdrError("agent_blocked", "The agent is waiting for an answer in the terminal");
       const sent = closeBackslash(context.identity.agent, modelSwitchText(context.identity.agent, text));
@@ -572,10 +683,13 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         pending.observe(paneId, "working", mark);
         throw new HerdrError("pending_wait", "The agent is working again; this message still waits for its next turn");
       }
+      // a draft typed in the terminal is the user's: the paste would join it and the Enter send both (#609).
+      // The box is the live screen's; only the viewport read tells Claude's grey text from a draft.
       if (context.identity.agent === "claude") await freeClaudeBox(paneId, context.working, () => authorizePending(owner, paneId, lease), arrivedAt + (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS), automatic || queued)
         .catch((error: unknown) => { throw error instanceof InputDraftError ? new InputDraftError(error.draft, context.identity, error.box, error.message) : error; });
       else if (context.identity.agent === "hermes") context.screen = await freeHermesInput(paneId, context.identity);
       else await freeAgentInput(paneId, context.identity.agent, context.identity);
+      // OpenCode v2 attaches a skill only through its autocomplete, never from a paste.
       const opencode = await openCodeSkillsToType(context.pane, prepareCommandSend(context.pane, text, context.screen), text, context.screen, options.openCodeStateDir);
       let command = opencode.sent;
       bindCommandProcess(paneId, command, context.processes, context.pane, context.identity.agent === "omo" ? context.held : undefined);
@@ -596,6 +710,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       const allowed = (): boolean => {
         try { authorizePending(owner, paneId, lease); return true; } catch { return false; }
       };
+      // Pending input is a guarded literal paste + Enter, never Codex's native Tab queue.
+      // Keep the final key here so a disconnect, pane switch or new menu can cancel it.
       wrote = true;
       if (command && skills.length > 0) {
         let typed = false;
@@ -603,8 +719,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         const revalidate = async (): Promise<void> => {
           const current = await pendingContext(owner, paneId, lease, identity, typed);
           if (automatic && !typed && (current.working || queueHeld(paneId, false))) throw new HerdrError("pending_wait", "The agent is working again; this message still waits for its next turn");
+          // and the screen last, as before the plain paste: no skill key goes into a masked prompt that came up meanwhile
           await noMaskedPrompt(paneId, lease.sighting.facts().cols, identity);
         };
+        // the skill-accept key goes on a screen read after revalidate: no masked prompt on it, and still the bound process
         const beforeKey = async (screen: string): Promise<void> => {
           if (secretPrompt(withoutEscapes(screen), lease.sighting.facts().cols) !== null) {
             throw new HerdrError("agent_blocked", "The terminal is waiting for masked input; answer it with the secret-input form first");
@@ -639,6 +757,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       let beforeEnter = await pendingContext(owner, paneId, lease, identity, true, agentOnly).catch(enterRefused);
       if (automatic && (beforeEnter.working || queueHeld(paneId, false))) enterRefused(new HerdrError("pending_wait", "The agent started another turn before this queued message could be committed"));
       authorizePending(owner, paneId, lease);
+      // Status is deliberately not evidence: Pi can report idle/done while its TUI is staging an automatic-compaction input.
       const beforeCapturePid = beforeEnter.identity.processPid;
       const piAnchor = piTracked ? await preparePiReceipt(paneId, beforeEnter.identity).catch(() => null) : undefined;
       if (piAnchor !== undefined) {
@@ -646,9 +765,14 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         if (automatic && (beforeEnter.working || queueHeld(paneId, false))) enterRefused(new HerdrError("pending_wait", "The agent started another turn before this queued message could be committed"));
         await stillInFront(paneId, beforeCapturePid, identity, agentOnly).catch(enterRefused);
       }
+      // its Enter only into the agent it was pasted for, never once the shell is in front or Codex's queue collapsed
       if (agentOnly && !beforeEnter.agentInFront) enterRefused(new HerdrError(AGENT_NOT_READY.code, AGENT_NOT_READY.message));
       if (agentOnly && beforeEnter.collapsed) enterRefused(new HerdrError("agent_blocked", "The agent is waiting for an answer in the terminal"));
       await noMaskedPrompt(paneId, lease.sighting.facts().cols, identity).catch(enterRefused);
+      // a turn Claude resumed by itself since the paste (a /loop wakeup, a scheduled task, a background task's notice,
+      // #3494) holds the queue whatever herdr reads the pane as: read from the transcript after the last of those reads,
+      // it turns away an automatic send and one queued and typed at once, whose Enter (Ctrl+Enter, once herdr tells that
+      // turn) would go into the turn at work.
       const resumed = (): boolean => (automatic || queued) && queueHeld(paneId, true);
       const refuseResumed = (): never => enterRefused(new HerdrError("pending_wait", "The agent started another turn before this queued message could be committed"));
       if (resumed()) refuseResumed();
@@ -658,6 +782,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       // Claude Code queues what Enter commits during a turn; Ctrl+Enter sends it now (#737). herdr
       // encodes the key as the pane asked, and as a plain CR for a program that asked for nothing.
       const sentAt = Date.now();
+      // Not seen: a task whose fire Claude has not written by then (the entry reaches the transcript some tens of milliseconds
+      // after the task fires), or that fires while herdr hands the key to the pane
       let refused = false;
       await paneSendKeys(paneId, [steering && beforeEnter.identity.agent === "claude" ? "ctrl+enter" : "Enter"], undefined, () => allowed() && !(refused = resumed()))
         .catch((error: unknown) => { if (refused) refuseResumed(); throw error; });
@@ -665,6 +791,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       // can start a turn before the Enter, and in minimal mode herdr does not tell a running turn. Compared with the
       // queue as read right before that Enter, with this delivery's paste in the prompt
       if (interruptWorkingCodex && beforeEnter.identity.agent === "grok") {
+        // the queue Enter already went: every failure here is submit_changed (wrote is set), never enterRefused's
+        // paste left unsent, or a retry would queue the message twice.
         await sendGrokQueuedNow({
           message: closeMention(sent),
           before: { working: beforeEnter.working, queue: grokQueue(beforeEnter.screen), echo: grokEcho(beforeEnter.screen) },
@@ -674,6 +802,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             authorizePending(owner, paneId, lease);
             return { status: current.pane.agent_status, screen: current.screen };
           },
+          // pendingContext's process and /proc reads come after its screen read: a card or a draft that came up during
+          // them gets no Enter. The window left is this read and the write's own call (herdr has no compare-and-send)
           lastScreen: async () => (await paneRead({ paneId, source: "detection", format: "text" })).text,
           sendEnter: async () => {
             authorizePending(owner, paneId, lease);
@@ -682,6 +812,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         });
       }
       if (endsOmpStart) forgetOmpStart(paneId);
+      // This proves only that Ovis committed Enter to Pi, not that Pi accepted, queued or recorded
+      // the message. Keep a non-resendable receipt until the bound JSONL active branch appends it.
       if (receiptText !== undefined) {
         try { recordPiTyped(owner, paneId, requestId, receiptText, beforeEnter.identity, piAnchor, piReservation, piTemplate); } catch {}
       }
@@ -690,11 +822,14 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         read: async () => {
           const status = pending.current(paneId);
           const current = await pendingContext(owner, paneId, lease, identity, true);
+          // no Escape into a masked prompt that came up during the read's last process check
           await noMaskedPrompt(paneId, lease.sighting.facts().cols, identity);
           statusAtRead = status;
           return { agent: current.identity.agent, working: current.working, screen: current.screen };
         },
         restarting: () => committing(true, true),
+        // herdr has no compare-and-send: the screen can change between this read and the write, so the
+        // write is refused when the lease, the deadline or the pane's status moved meanwhile
         escape: (fresh) => paneSendKeys(paneId, ["Escape"], undefined, () => allowed() && fresh() && pending.current(paneId) === statusAtRead),
       });
       noteSubmitted(paneId, sent, command, sentAt);
@@ -723,11 +858,18 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       reply = { ok: false, ...pendingFault(error, options.herdrFailure) };
     }
     const code = reply.code ?? "";
+    // a first message its page could not type yet stays queued for that page's next attach or turn. One whose
+    // page left or closed during its own automatic send is held as at that leaving, never retried: no page is
+    // left to type it, and queued again it would head the pane's queue ahead of the other devices' messages
     const requester = requesters.get(item);
     const unattended = automatic && !isClient(item.owner) && (requester === undefined || !present(requester));
     const retryable = (["pending_wait", "agent_blocked"].includes(code) && reply.unannounced !== true) || (!isClient(item.owner) && FIRST_MESSAGE_RETRY_CODES.has(code));
     const fault = reply.ok ? undefined : unattended && retryable ? FIRST_MESSAGE_UNATTENDED : { code: reply.code!, message: reply.message! };
+    // a paste left in the input line (#511) is uncertain like a delivery not confirmed: the pane's queue stops behind it, and
+    // only the user copies or discards it
     pending.settle(item, fault, reply.code === "submit_changed" || reply.code === "pasted_not_sent", automatic && retryable && !unattended);
+    // The messages queued behind one held for a screen of Codex's own are held with it, in the same step: tried one
+    // by one, a later one would be typed ahead of it if the screen closed between two tries.
     if (automatic && reply.unannounced === true && fault !== undefined) pending.holdPane(item.paneId, fault);
     return reply;
   }
@@ -740,6 +882,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     }
     pendingDrains.add(paneId);
     const arrivedAt = Date.now();
+    // drained again only after a dispatch: a message no connection can type yet waits for the next
+    // attach, readiness or status event, where draining again at once would spin the event loop
     let dispatched = false;
     void serialize(paneId, async () => {
       if (learning) await learnLaunched(paneId);
@@ -763,6 +907,12 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     });
   }
   const drainAgain = new Set<string>();
+  /**
+   * A first message whose pane ended while it was on its way (since `since`) goes with the pane after all, once its
+   * send has ended. The pane's end could not take it then (holdPendingPane discards what is not on its way), and no
+   * connection's end expires a first message: left under the pane's id, it is what the next pane herdr gives that
+   * id shows, and takes that pane's own first message's place.
+   */
   function takenWithPane(item: PendingItem, since: number): void {
     if (!isClient(item.owner) && (endedPanes.get(item.paneId) ?? -Infinity) >= since && pending.discard(item)) firstReceipts.delete(item.paneId);
   }
@@ -771,6 +921,11 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   const ompStarts = new Map<string, { typed: number; until: number }>();
   const linesTyped = new Map<string, number>();
   const typedCount = (paneId: string): number => typedInto(paneId) + (linesTyped.get(paneId) ?? 0);
+  /**
+   * omp has no check of its input box as Claude and Hermes have, and before it takes input even a line's own Enter leaves the
+   * line in the box: pasted behind it, a message would be sent with those words as one. So from then until that
+   * start is over, no message goes to the pane unless a person sends it: what waits is held, and so is what comes.
+   */
   function typedWhileOmpStarted(paneId: string): boolean {
     const start = ompStarts.get(paneId);
     if (!start) return false;
@@ -800,6 +955,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       until = !pane || pendingIdentity(pane).agent !== "omp" ? null : await ompStartingUntil(paneId, pane, options);
       ompUnknown.delete(paneId);
     } catch {
+      // herdr did not say whether omp is starting: not known is not ready, and left at that the message would stay
+      // queued with nothing to drain it.
       const since = ompUnknown.get(paneId) ?? Date.now();
       if (Date.now() - since >= (options.ompStartupMs ?? OMP_STARTUP_MS)) { ompUnknown.delete(paneId); return false; }
       ompUnknown.set(paneId, since);
@@ -856,10 +1013,20 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       if (pendingDrains.has(paneId)) drainAgain.add(paneId); else drainPending(paneId);
     });
   }
+  /**
+   * A create request's first message for the pane's agent, queued as the request's own send: typed once
+   * the agent is ready through `requester`, the id of the page connection that sent the request, while it
+   * has the pane attached (drainPending), and listed to every connection attached to the pane. Without a
+   * connection of that id it is held from the start. Refused as a submit frame's text would be.
+   */
   async function queueFirstMessage(paneId: string, raw: string, kind: string, requester: string | null = null, launchedPid: number | null = null): Promise<PendingMessage> {
     const text = pendingText(raw);
     const page = requester === null ? undefined : [...clients].find((client) => client.data.connectionId === requester && present(client));
     const message = await serialize(paneId, async () => {
+      // bound to the terminal and the kind launched there, and to the process the launch left in front when
+      // it runs that kind's program: a replacement of the same kind is not what the message was sent to. Right
+      // after a launch herdr may name no agent yet, and what is in front may be a child the agent runs as it
+      // starts (Claude Code's git and gh); that binding is completed when herdr names it (learn, bindLaunched)
       const { pane, identity, shellPid, processes, held } = await currentIdentity(paneId, launchedPid, kind);
       const launchedProcess = launchedPid !== null
         ? { processPid: launchedPid, processBirth: identity.processPid === launchedPid ? identity.processBirth : await processStartedAtAsync(launchedPid) }
@@ -883,6 +1050,11 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     drainPending(paneId);
     return { ...message };
   }
+  /**
+   * The first agent seen there is the launched one, and a part once learned is
+   * never replaced, so a later session or process of the same kind is another; pendingContext holds the
+   * message for it with pending_target_changed.
+   */
   function learn(item: PendingItem, identity: PendingIdentity, shellPid: number | null, processes: ProcessInfo | undefined, held: { pid: number } | null = null): void {
     if (identity.terminalId !== item.identity.terminalId || identity.agent !== item.identity.agent || !samePendingIdentity(item.identity, identity)) return;
     item.identity.session ??= identity.session;
@@ -922,6 +1094,12 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   function targetChanged(item: PendingItem, identity: PendingIdentity): boolean {
     return identity.terminalId !== item.identity.terminalId || (identity.agent !== null && !samePendingIdentity(item.identity, identity));
   }
+  /**
+   * Whether the agent launched for a first message came up and left: the process learned for it is no longer
+   * the one in front, and herdr names no agent in its terminal, or still names the launched kind while the
+   * pane's shell itself is back in front (herdr's name can outlast the process). An exec keeps the shell's
+   * pid, so the process there counts as the shell only under a name other than the launched agent's.
+   */
   function launchGone(item: PendingItem, identity: PendingIdentity, shellPid: number | null, processes: ProcessInfo | undefined): boolean {
     const launched = item.identity.processPid;
     if (launched == null || identity.terminalId !== item.identity.terminalId) return false;
@@ -940,6 +1118,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     let resumable = true;
     try { authorizeSocket(client); } catch { resumable = false; }
     if (!resumable) {
+      // only its held receipts go: the keys stay, so a send still on its way when the connection closed leaves its
+      // sent or discarded receipt as before (replayed only to a connection that may resume, resumePi)
       const keys = receiptKeys.get(client);
       if (keys) for (const id of keys.keys()) {
         const at = completed.findIndex((entry) => entry.id === id && entry.outcome === "held");
@@ -988,7 +1168,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         ];
         const held = mine.filter(({ outcome }) => outcome === "held");
         if (removed.length || held.length) send(client, { type: "pending-messages", pane_id: paneId, messages: [], ...(removed.length ? { removed } : {}), ...(held.length ? heldPart(held) : {}) });
-      } catch {}
+      } catch { /* failed authorization cannot resume even presentation */ }
     }
     return rebound;
   }
@@ -1004,9 +1184,13 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       try {
         authorizeSocket(successor);
         send(successor, { type: "pending-messages", pane_id: paneId, messages: [], ...part });
-      } catch {}
+      } catch { /* failed authorization cannot resume even presentation */ }
     }
   }
+  /**
+   * Only an exact outcome is kept (never a dismissed
+   * uncertain copy), bound to the device and browser that sent it, and it is presentation only: nothing is typed.
+   */
   function keepReceipts(owner: Client, paneId: string, messages: PendingMessage[], removed: readonly PendingRemoval[] | undefined): void {
     let resumable = true;
     try { authorizeSocket(owner); } catch { resumable = false; }
@@ -1022,6 +1206,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         continue;
       }
       if (existing >= 0 && completed[existing]!.outcome === "held" && completed[existing]!.paneId === paneId) continue;
+      // only once its connection is gone: while it lives, it alone may send the held copy, and another
+      // tab told it is held could offer it again after that send's outcome became uncertain
       if (livePiOwner(owner)) continue;
       const ended = endedPanes.get(paneId);
       if (ended !== undefined && Date.parse(message.created_at) <= ended) continue;
@@ -1097,16 +1283,19 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         result(false, "invalid_delivery", "A resend generation must be a nonnegative integer with a held-copy id");
         return;
       }
+      // #511: a chat message for an agent alone (comments on a reply, whose `> quote` lines a shell would run as redirects)
       if (message.agent_only !== undefined && (message.agent_only !== true || message.typed === true)) {
         result(false, "invalid_delivery", "Only a chat message can be for an agent alone, with agent_only true");
         return;
       }
+      // a saved copy's resend keeps the rule its accepted message had, even from a page that lost the flag
       const agentOnly = message.agent_only === true
         || (typeof message.resend_id === "string" && pending.agentOnly(message.pane_id, message.resend_id));
       if (connectionOf(client).mode === "observe") {
         result(false, "read_only", "this connection is in observe mode");
         return;
       }
+      // another web bridge has this pane's terminal: its user types there, not this one
       if (attachments.get(message.pane_id)?.held) {
         result(false, "attach_held", ATTACH_HELD_MESSAGE);
         return;
@@ -1134,6 +1323,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             let waited = false;
             if (!context.working && !held) {
               if (context.identity.agent === null) throw new HerdrError(AGENT_NOT_READY.code, AGENT_NOT_READY.message);
+              // A request that raced the turn's finish still needs cancellable
+              // paste + Enter; agent.prompt commits its key inside herdr.
+              // A held message is never typed by arriving after the turn: it waits for Send now.
+              // Queued, it never clears a stopped send Claude put back in its box, as the drain does not (#2546).
               if (message.delivery === "queue" && !pending.waiting(message.pane_id) && !typedWhileOmpStarted(message.pane_id)) {
                 const sendingAt = new Date().toISOString();
                 const typed = await dispatchPendingText(client, message.pane_id, text, lease!, context.identity, false, arrivedAt, undefined, false, message.id, agentOnly, true);
@@ -1142,6 +1335,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
               }
             }
             if (!waited) pending.observe(message.pane_id, held && !context.working ? "working" : context.pane.agent_status, mark);
+            // hold: kept for the owner's Send now, never sent by the turn's end
             const item = pending.enqueue(client, message.pane_id, message.id, text, lease!, context.identity, message.delivery === "hold", agentOnly);
             if (typedWhileOmpStarted(message.pane_id)) pending.holdQueued(message.pane_id, TYPED_WHILE_WAITING);
             return { ok: true, pending: item.message };
@@ -1165,6 +1359,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         let behind: PendingMessage | undefined;
         const dispatch = async () => {
           if (attachments.get(message.pane_id)?.held) throw new HerdrError("attach_held", ATTACH_HELD_MESSAGE);
+          // A chat message sent at once while the pane's queue waits for its omp to take input (a new workspace's first
+          // message) would wait for the same report with the pane's lane held, and be typed ahead of what waits there.
+          // And one sent after the terminal was typed into during that start would be pasted behind those words: it is accepted
+          // and held, as what waited was.
           if (message.typed !== true && message.resend_id === undefined && message.clear_draft === undefined && message.send_anyway !== true
             && ((ompWaits.has(message.pane_id) && pending.waiting(message.pane_id)) || typedWhileOmpStarted(message.pane_id))) {
             const lease = pendingLease(client, message.pane_id);
@@ -1185,7 +1383,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             await submitText(message.pane_id, framed.text, framed.payload, arrivedAt, message.typed === true, () => authorizeSocket(client), message.clear_draft,
               draftConfirmations.get(client)?.get(message.pane_id), message.send_anyway === true, agentOnly, message.resend_id !== undefined);
             if (identity !== null && receiptText !== undefined) {
-              try { recordPiTyped(client, message.pane_id, message.id, receiptText, identity, piAnchor, reservation, current !== null && piListsTemplate(current.pane, framed.text)); } catch {}
+              try { recordPiTyped(client, message.pane_id, message.id, receiptText, identity, piAnchor, reservation, current !== null && piListsTemplate(current.pane, framed.text)); } catch { /* The send succeeded; receipt tracking cannot make it retryable. */ }
             }
           } finally { piCapacity.release(reservation); }
         };
@@ -1194,10 +1392,13 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
           const id = message.resend_id, pane = message.pane_id, key = resumeKey(client, pane);
           const hash = new Bun.CryptoHasher("sha256").update(framed.text).digest("hex");
           let typedNow = false;
+          // Every check and claim on the receipts runs in the pane's serialized turn, by the original ID: two
+          // resends of one copy (any generations) see each other's claim, so the text is typed once.
           const answer = await serialize(pane, async () => {
             if (completed.some((entry) => entry.id === id && entry.outcome === "sending")) return { ok: false, code: "pending_busy", message: "This message is already being sent" };
             if (completed.some((entry) => entry.id === id && entry.outcome === "sent" && entry.paneId === pane && (entry.hash === undefined || entry.hash === hash))) return { ok: true };
             if (completed.some((entry) => entry.id === id && entry.outcome === "uncertain" && entry.paneId === pane)) return { ok: false, code: "pending_uncertain", message: "Check the terminal before sending this message again" };
+            // the held receipt is this pane's and this browser's to claim, no other's
             const at = completed.findIndex((entry) => entry.id === id && entry.outcome === "held" && entry.paneId === pane && entry.key === key);
             const held = at >= 0 ? completed.splice(at, 1)[0] : undefined;
             const claim: (typeof completed)[number] = { paneId: pane, key: held?.key ?? key ?? "", id, outcome: "sending", at: elapsed() };
@@ -1281,6 +1482,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
           if (marked) withdrawn.delete(marked);
           authorizeSocket(client);
           if (!clients.has(client) || connectionOf(client).closing) throw new HerdrError("disconnected", "This connection closed");
+          // A typed Pi receipt is never sendable again. Once its transcript confirmation became
+          // unavailable, Discard dismisses only the receipt. It cannot retract terminal input.
           const piReceipt = client.data.attached.has(message.pane_id)
             ? piTyped.get(message.pane_id)?.find((candidate) => candidate.owner === client && candidate.message.id === message.pending_id) : undefined;
           if (piReceipt) {
@@ -1289,6 +1492,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             return discardPiReceipt(client, message.pane_id, message.pending_id)
               ? { ok: true } : { ok: false, code: "pending_busy", message: "Pi transcript confirmation is still pending" };
           }
+          // a pane's first message is every attached connection's to send now or discard
           const item = pending.get(client, message.pane_id, message.pending_id)
             ?? (client.data.attached.has(message.pane_id) ? pending.get(FIRST_MESSAGE_OWNER, message.pane_id, message.pending_id) : undefined);
           if (!item) return replayPendingOutcome(client, message.pane_id, message.pending_id)

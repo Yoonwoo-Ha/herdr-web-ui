@@ -41,6 +41,7 @@ it("types nothing when Codex exits while its collapsed queue is read", async () 
   expect(writes).toEqual([]);
 });
 
+// #511: herdr cannot type only if the agent still runs, so a message for an agent alone never takes the raw fallback
 it("refuses an agent-only message while Codex's collapsed queue blocks its prompt, and types nothing", async () => {
   const { writes, send } = codexQueue(false);
   await expect(send(true)).rejects.toMatchObject({ code: "agent_blocked" });

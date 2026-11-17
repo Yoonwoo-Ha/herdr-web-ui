@@ -482,6 +482,7 @@ describe("pi's slash commands", () => {
     expect(extra).toMatchObject([
       { name: "plain", description: "First line wins when there is no frontmatter", source: "user" },
       { name: "review", description: "Review staged git changes", source: "user" },
+      // a skill is a command under skill:, which is how pi names it and how it must be typed
       { name: "skill:from-agents", description: "Found under ~/.agents", source: "skill", origin: "user" },
       { name: "skill:pdf-tools", description: "Extract text from PDFs", source: "skill", origin: "user" },
     ]);
@@ -519,6 +520,7 @@ describe("pi's slash commands", () => {
   it("reads no deeper than pi does in a prompt directory", () => {
     const home = temp("pi-home-");
     put(join(home, ".pi", "agent", "prompts", "top.md"), "---\ndescription: a direct child\n---\n");
+    // pi loads direct .md children of a conventional prompt directory and nothing below one
     put(join(home, ".pi", "agent", "prompts", "sub", "deep.md"), "---\ndescription: a nested one\n---\n");
     const names = paneCommands("pi", null, home).filter((command) => command.source === "user").map((command) => command.name);
     expect(names).toEqual(["top"]);
@@ -529,6 +531,9 @@ describe("pi's slash commands", () => {
     const cwd = temp("pi-project-");
     put(join(cwd, ".pi", "prompts", "proj-template.md"), "---\ndescription: a project template\n---\n");
     skill(join(cwd, ".pi", "skills"), "proj-skill", "A project skill");
+    // offered only where pi would run them, and which folder pi calls the project is its own
+    // decision behind ~/.pi/agent/trust.json: a listed command the agent refuses is worse than
+    // one missing from the menu, so a project's resources stay in the terminal's menu
     const commands = paneCommands("pi", cwd, home);
     expect(commands.some((command) => command.source === "project")).toBeFalse();
     expect(commands.map((command) => command.name)).not.toContain("proj-template");
@@ -540,6 +545,10 @@ describe("pi's slash commands", () => {
   });
 });
 
+// The catalog reads files above the skill roots; a FIFO named like one of them must not block the
+// server. Discovery runs in a child with a deadline, since a blocking read would hang this process.
+// Command Code's discovery reads settings a repository may commit; it must stay bounded however they
+// are made. In a child with a deadline, since a blocking read or walk would hang this process.
 describe.skipIf(process.platform === "win32")("Command Code discovery stays bounded", () => {
   const cmdInChild = (home: string, cwd: string) => {
     const script = `const { AGENT_SOURCES } = await import(${JSON.stringify(join(import.meta.dir, "skills", "index.ts"))});`

@@ -755,6 +755,7 @@ it.skipIf(process.platform !== "linux")("reads a resumed CLI without marker or r
     try {
       const peer = duplicate.root_pane.pane_id;
       await startFixture(peer, resumed, `--resume=${resumed} --lifecycle`);
+      // herdr names the peer before it logs its Registering line: until then the first pane still owns the log
       const peerUrl = `http://127.0.0.1:${app.port}/api/pane/conversation?pane_id=${encodeURIComponent(peer)}`;
       for (const [who, target] of [["the first pane", url], ["the peer", peerUrl]] as const) {
         for (const deadline = Date.now() + 5000;;) {

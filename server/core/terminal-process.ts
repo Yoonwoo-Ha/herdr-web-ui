@@ -28,6 +28,7 @@ const ATTACH_HELD_RE = /terminal attach failed: [^\r\n]*(?:already has an attach
 export const ATTACH_RETRY_FOR_MS = 20_000;
 const ATTACH_RETRY_MS = 50;
 const ATTACH_RETRY_MAX_MS = 500;
+/** a refused attach says so within milliseconds of its first bytes: those are held this long */
 export const ATTACH_HOLD_MS = 100;
 /**
  * What `herdr terminal attach` writes itself before herdr has answered, and as the teardown of a
@@ -45,9 +46,15 @@ const ATTACH_REFUSAL_LEADS = ["herdr: ", "terminal attach"];
 export function attachScreenStarted(held: string): boolean {
   const rest = held.replace(ATTACH_CONTROL_HEAD_RE, "");
   if (rest === "" || rest.startsWith("\x1b")) return false;
+  // herdr's words anywhere in it (a sequence cut short can swallow the line's first letter) wait out the hold
   return !ATTACH_REFUSAL_LEADS.some((lead) => rest.includes(lead) || lead.startsWith(rest));
 }
 
+/**
+ * Where a refusal line may begin in output that came after an early release: the refusal is the
+ * attach's last line, so only a line herdr's words start and nothing follows, or the start of those
+ * words at the very end.
+ */
 export function refusalLineStart(text: string): number {
   let at = -1;
   for (const lead of ATTACH_REFUSAL_LEADS) {
@@ -66,8 +73,17 @@ export function refusalLineStart(text: string): number {
   }
   return at;
 }
-/** herdr draws its first screen at the grid the attach started at and redraws for a new grid about 50 ms after the resize (herdr 0.9.5). */
+/**
+ * herdr draws its first screen at the grid the attach started at and redraws for a new grid
+ * about 50 ms after the resize (herdr 0.9.5): a hold that ran out before that redraw sent the old-size
+ * screen as the first frame (#2289).
+ */
 export const ATTACH_RESIZE_REDRAW_MS = 1_000;
+/**
+ * The most output any hold keeps: it goes out as one frame, and a frame over a client's output window
+ * (OUTPUT_HARD_BYTES, 1 MiB) ends that client as stalled. A busy pane fills it well within the wait,
+ * and can in the 100 ms hold too. A refusal is a line, so it is never this long.
+ */
 export const ATTACH_HOLD_MAX_BYTES = 256 * 1024;
 export const SYNC_START = "\x1b[?2026h";
 export const SYNC_END = "\x1b[?2026l";
@@ -102,6 +118,10 @@ export function screenGrid(update: string): { cols: number; rows: number } | nul
 export const ATTACH_HELD_RETRY_MS = 3_000;
 const ATTACH_REFUSING_RE = /terminal attach failed[^\r\n]*\s*$/;
 const ATTACH_REFUSAL_EXIT_MS = 2_000;
+/**
+ * how long herdr's whole takeover diagnostic waits for the exit that confirms it: a busy host's
+ * exit comes after ATTACH_HOLD_MS, and the displaced tab would show herdr's words.
+ */
 export const ATTACH_TAKEOVER_EXIT_MS = 2_000;
 export const ATTACH_HELD_MESSAGE = "Another web bridge has this pane open. It connects here as soon as that bridge lets go.";
 /**
@@ -126,6 +146,7 @@ interface AttachmentState {
   driver?: Client;
   replay: ReplayBuffer;
   stalled: Map<Client, number>;
+  /** another web bridge holds herdr's one attach slot for this terminal: waiting for it to let go */
   held?: boolean;
   recovering?: boolean;
   retry?: ReturnType<typeof setTimeout>;
@@ -266,6 +287,7 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
     let refusedSince: number | null = null;
     let takeover: Client | null = null;
     let takeoverWanted: Client | null = null;
+    /** A click counts only while its client is still here and may type: no later start acts for one that left or observes. */
     const mayTakeOver = (client: Client | null): client is Client =>
       client !== null && attachment.clients.has(client) && connectionOf(client).mode === "interact" && !connectionOf(client).closing;
     let trying = false;
@@ -350,7 +372,11 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
         if (data) guard(data);
       };
       const took = (): void => {
+        // a closed attachment's kill skips onExit, which would clear this timer: a newer
+        // attachment on the pane must not hear this one's resume
         if (attachments.get(paneId) !== attachment) return;
+        // a refusal whose exit comes late (a busy PC) is not an attach: resuming would free
+        // the input to a pane another bridge may hold. Only output after it is an attach's.
         if (ATTACH_REFUSING_RE.test(output)) {
           if (Date.now() - heldSince < ATTACH_REFUSAL_EXIT_MS) {
             holdTimer = setTimeout(took, holdFor);
@@ -361,6 +387,7 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
           ended(null);
           return;
         }
+        // A click is consumed by success, including an ordinary retry that won the slot.
         takeoverWanted = null;
         takeover = null;
         takingOver = null;
@@ -373,6 +400,8 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
         broadcast(paneId, { type: "input-ready", pane_id: paneId });
         inputReady(paneId);
         release();
+        // A replacement that only flashes ready before exiting must not create an endless series
+        // of fresh recovery windows.
         if (recoveryDeadline !== null) {
           clearTimeout(attachment.recovery);
           const recovered = session;
@@ -419,6 +448,7 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
           if (now < Math.min(refusedDeadline, retryDeadline)) {
             held = null;
             retries += 1;
+            // An explicit request survives a read race only until an attach succeeds.
             takeover = mayTakeOver(takingOver) ? takingOver : takeoverWanted;
             takeoverWanted = null;
             const delay = Math.min(ATTACH_RETRY_MS * 2 ** (retries - 1), ATTACH_RETRY_MAX_MS, retryDeadline - now);
@@ -442,6 +472,7 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
           // to let go, trying again while anyone here still has it open, instead of ending.
           if (!attachment.held) broadcast(paneId, { type: "error", code: "attach_held", message: ATTACH_HELD_MESSAGE, pane_id: paneId });
           attachment.held = true;
+          // Displaced after attaching: a click this attach waited on is spent, only a new one takes it back.
           if (!displaced && mayTakeOver(takeoverWanted)) {
             takeover = takeoverWanted;
             takeoverWanted = null;
@@ -458,6 +489,10 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
         trying = true;
         release();
         flushTail();
+        // herdr ended the attach, maybe not the pane: after a live handoff the pane lives on under
+        // a new terminal, and a transient attach EOF may leave the same terminal live. One deadline
+        // and exponential backoff span every replacement that also exits, so a broken attach command
+        // cannot reset itself into an unbounded spawn loop.
         const firstRecovery = recoveryDeadline === null;
         const deadline = recoveryDeadline ??= Date.now() + relookupFor;
         const retryLookup = (): void => {
@@ -486,6 +521,8 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
               refusedSince = null;
               retries = 0;
             }
+            // The exact same terminal id is positive liveness too: the attach process, not the pane,
+            // ended. Restart its stream rather than waiting out the window and claiming the pane died.
             try {
               attachment.process = start();
             } catch (error) {
@@ -514,6 +551,10 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
             : `hc could not be started: ${command} is not an executable on the server's PATH (set OVIS_HC_BIN to hc's full path)`
           : `herdr could not be started: ${command} is not an executable on the server's PATH (set OVIS_HERDR_BIN to herdr's full path)`);
       }
+      // A resize since this attach started, even one back to its first grid, makes herdr's screens
+      // until its redraw for the pty's current grid the wrong size (#2289). Only an update that began
+      // after the latest resize can be that redraw, and only the latest whole screen counts: a read can
+      // bring the old grid's screen queued from before a resize and a redraw for a grid in between.
       let resizes = attachment.resizes ?? 0;
       const startGrid = `${attachment.cols}x${attachment.rows}`;
       let resized = false;
@@ -583,6 +624,7 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
             forward(data);
             return;
           }
+          // herdr's startup queries are the bridge's to answer: never readiness, broadcast or replay
           if (probes && !holding && held !== null) {
             const before = held;
             const taken = probes.take(data, (text) => ATTACH_PREAMBLE_RE.test(before + text));
@@ -607,6 +649,9 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
             heldSince = Date.now();
             holdTimer = setTimeout(holdEnded, holdFor);
           }
+          // A pane another bridge held keeps the whole hold: a displacement right after its screen spends no click.
+          // A pane resized since the attach started waits for herdr's screen at its current grid:
+          // input sent before it would reach the program before that grid
           if (holding && (redrawWait || !attachment.held) && atGrid() && attachScreenStarted(held)) {
             clearTimeout(holdTimer);
             if (!redrawWait) guardUntil = heldSince + holdFor;
@@ -615,6 +660,7 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
         },
         onExit: ended,
       };
+      // on herdr-core the stream is a channel on the server's own hc connection: no `hc attach`, no PTY host
       const session: PtySession | CoreAttachSession = onCore
         ? new CoreAttachSession({ hc: coreConnection(), terminal: attachedTerminal, cols: options.cols, rows: options.rows, onData: options.onData, onExit: ended })
         : new PtySession(options);
@@ -633,6 +679,9 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
     try {
       attachment.process = start();
     } catch (error) {
+      // Bun.spawn throws synchronously (node missing from PATH, fd or process limits): the
+      // placeholder must go with it, or the next attach joins a record with no pty and
+      // its close dereferences one (#154).
       attachments.delete(paneId);
       spawnFailure(paneId, error);
       throw error;
@@ -641,6 +690,7 @@ export function createSpawnAttachment({ attachments, retiringAttachments, termin
     return attachment;
   }
 
+  /** The server's log line for an attach that could not start: the error's own words, which stay on this PC. */
   function spawnFailure(paneId: string, error: unknown): void {
     console.error(`terminal attach for pane ${paneId} failed to start: ${error instanceof Error ? error.message : String(error)}`);
   }

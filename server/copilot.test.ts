@@ -78,6 +78,7 @@ it.skipIf(process.platform !== "linux")("reads a log Copilot opens a second time
     appendFileSync(log, register(session));
     const before = fixture.binding();
     expect(before?.sessionId).toBe(session);
+    // Copilot 1.0 reads its open log on a second descriptor while it copies it for a rotation
     await fixture.command("reread");
     expect(fixture.binding()).toEqual(before);
     appendFileSync(log, register(other));
@@ -365,6 +366,7 @@ it.skipIf(process.platform !== "linux")("keeps a binding the copies carried on w
     appendFileSync(log, "later output\n");
     const before = fixture.binding();
     expect(before?.sessionId).toBe(session);
+    // then refreshes the log's timestamps, as it does every 15 minutes
     const stat = statSync(log);
     fs.utimesSync(log, stat.atime, new Date(stat.mtimeMs + 1000));
     expect(fixture.binding()).toEqual(before);
@@ -399,6 +401,7 @@ it.skipIf(process.platform !== "linux")("never keeps a binding when the log is e
 });
 
 it.skipIf(process.platform !== "linux")("never keeps a binding when a switch lost to a rewrite is followed by Copilot's timestamp refresh", async () => {
+  // Copilot keeps holding the previous session's marker after a switch
   const fixture = await logFixture([session, other]);
   const { environment, log, pid } = fixture;
   const copy = log.replace(/\.log$/, ".1.log");
@@ -803,6 +806,7 @@ for (const between of ["output", "another registration"] as const) {
       writeFileSync(copy(1), readFileSync(log));
       fs.truncateSync(log, 0);
       appendFileSync(log, "after the first rotation\n");
+      // Copilot 1.0 moves the copies up before it renames the new one into place
       fs.renameSync(copy(1), copy(2));
       expect(read().diagnostic).toBe("copilot_log_read_raced");
       expect(read().diagnostic).toBe("copilot_log_read_raced");
@@ -1466,6 +1470,9 @@ it.skipIf(process.platform !== "linux")("answers nothing from another session's 
   const snapshots = spyOn(herdr, "sessionSnapshot").mockResolvedValue({
     panes: [{ pane_id: "own", agent: "copilot", cwd: root }], agents: [],
   } as unknown as SessionSnapshot);
+  // Each pinned open (O_NOFOLLOW, as openCopilotFile opens) finds the other folder in place, held there
+  // until that descriptor closes, so its own checks against the path pass; the page's verified open, which
+  // follows a link, and the identity checks around the read see the pane's own.
   let armed = false;
   const swapped = new Set<number>();
   const away = join(root, "away");

@@ -26,6 +26,7 @@ describe("the gate closing", () => {
     let told = 0;
     const stop = store.onGateClosed(() => { told++; });
     const phone = store.pair(store.startPairing().code, "Phone", "drive")!;
+    // an unconfirmed first pairing closes nothing: a cookie that never came back must not lock the LAN out
     expect([store.gated, told]).toEqual([false, 0]);
     const seen: boolean[] = [];
     store.onGateClosed(() => { throw new Error("a teardown that failed"); });
@@ -70,6 +71,7 @@ describe("a code started while the gate was open", () => {
     const stop = store.onPairingStarted(() => { told++; });
     store.match(phone.token);
     expect([store.gated, told]).toEqual([true, 1]);
+    // that code admits whoever holds it: it does not outlive the gate it was started under
     expect(store.pair(stranger, "Stranger", "drive")).toBeNull();
     expect(store.list(null).map((device) => device.label)).toEqual(["Phone"]);
     const tablet = store.startPairing().code;
@@ -77,6 +79,8 @@ describe("a code started while the gate was open", () => {
     expect(store.pair(tablet, "Tablet", "drive")).not.toBeNull();
     expect(told).toBe(2);
     stop();
+    // one this PC itself started under the open gate stays: the request that brings the first cookie back may
+    // be the one that redeems it
     const own = new DeviceStore(mkdtempSync(join(dir, "gate-keeps-own-code-")));
     const first = own.pair(own.startPairing().code, "Phone", "drive")!;
     const second = own.startPairing().code;
@@ -353,6 +357,7 @@ describe("relay device", () => {
     let asked = 0;
     const refuse = () => { asked++; return false; };
     expect(store.pairRelay(store.startPairing().code, "Phone", known.publicKeySpki)).not.toBeNull();
+    // a key new to this PC is asked about, and a refusal makes no device and spends no code
     const code = store.startPairing().code;
     expect(store.pairRelay(code, "Stranger", stranger.publicKeySpki, undefined, refuse)).toBeNull();
     expect(asked).toBe(1);
@@ -433,7 +438,7 @@ describe("DeviceStore", () => {
     expect(store.gated).toBe(false);
     expect(store.list(null)).toEqual([]);
     expect(() => statSync(join(dir, "devices.json"))).toThrow();
-    expect(new DeviceStore(dir).gated).toBe(false);
+    expect(new DeviceStore(dir).gated).toBe(false); // an unreturned cookie is not durable across restart
     expect(new DeviceStore(dir).match(paired!.token)).toBeNull();
     expect(store.match(paired!.token)).toEqual({ id: paired!.device.id, label: "My phone", role: "drive" });
     expect(store.gated).toBe(true);
@@ -537,6 +542,7 @@ describe("DeviceStore", () => {
     expect(store.revoke(a.device.id)).toBe(false);
     expect(store.match(a.token)).toBeNull();
     expect(store.match(b.token)?.label).toBe("Bee");
+    // revoking the last device does not reopen the gate, not even after a restart
     expect(store.revoke(b.device.id)).toBe(true);
     expect(store.gated).toBe(true);
     expect(new DeviceStore(root).gated).toBe(true);
@@ -559,6 +565,7 @@ describe("revoking a device unless an account vouches for it", () => {
     const kept = await revoke(store, own.id, "acct_1");
     expect([kept.status, await kept.json()]).toEqual([409, { error: { code: "account_member", message: "that device is a member of the account by now" } }]);
     expect(store.list(null).map((device) => device.id)).toEqual([own.id]);
+    // a member of another account is vouched for by nobody the caller named, and one in no account by nobody at all
     expect((await revoke(store, own.id, "acct_2")).status).toBe(204);
     const stray = await pair("Stray");
     expect((await revoke(store, stray.id, "acct_1")).status).toBe(204);
@@ -578,6 +585,7 @@ describe("revoking a device that holds a pairing code", () => {
 
   it("ends the code that device started through the relay, so nobody pairs with it after the device is gone", async () => {
     const store = new DeviceStore(mkdtempSync(join(dir, "revoke-code-relay-")));
+    // let in by a code this PC showed, on a PC in no account: any driving relay device may start a code there
     const keys = await relayKeys();
     const stranger = store.pairRelay(store.startPairing().code, "Stranger", keys.publicKeySpki)!.device;
     let told = 0;
@@ -620,6 +628,7 @@ describe("revoking a device that holds a pairing code", () => {
     const paired = store.pair(store.startPairing().code, "Laptop", "drive")!;
     store.match(paired.token);
     const laptop = paired.device;
+    // revoked while its request was on its way (a relay round trip, a look-up of who asks)
     expect(store.revoke(laptop.id)).toBe(true);
     expect(() => store.startPairing(Date.now(), { remote: false, startedBy: null, memberRequired: false, by: laptop.id })).toThrow(DeviceGoneError);
     expect(() => store.startPairing(Date.now(), { remote: true, startedBy: laptop.id, memberRequired: false })).toThrow(DeviceGoneError);
@@ -645,6 +654,8 @@ describe("revoking a device that holds a pairing code", () => {
   });
 });
 
+// The relay tab's QR code (POST /api/relay/offer with x-ovis-no-account-only): whoever scans it signed in becomes the
+// PC's first account member, so it is for a PC in no account only.
 describe("a pairing code made only for a PC in no account", () => {
   const paired = async (store: DeviceStore, label: string) => {
     const key = (await relayKeys()).publicKeySpki;
@@ -709,6 +720,7 @@ describe("a pairing code made only for a PC in no account", () => {
     const qr = store.pairingForNoAccount();
     const pending: unknown = Reflect.get(store, "pending");
     expect(store.linkAccountKey(laptop.id, laptop.key, laptop.key, "acct_1")).not.toBeNull();
+    // the end on join is one guard; the check at redeem is the other, should a code outlive the join
     Reflect.set(store, "pending", pending);
     expect(store.pairRelay(qr.code, "Stranger", (await relayKeys()).publicKeySpki)).toBeNull();
     expect(store.activePairing()).toBeNull();
@@ -791,6 +803,7 @@ describe("revoke all", () => {
     const code = store.startPairing().code;
     expect(store.gated).toBe(false);
     expect(store.revokeAll()).toEqual([]);
+    // revoking closes the gate durably even though no device was ever confirmed
     expect(store.gated).toBe(true);
     expect(new DeviceStore(root).gated).toBe(true);
     expect(store.match(candidate.token)).toBeNull();
@@ -859,6 +872,7 @@ describe("revoke all", () => {
     expect(sameBrowser([a, b], [b])).toBe(true);
     expect(sameBrowser([a], [b])).toBe(false);
     expect(sameBrowser([], [a])).toBe(false);
+    // the cookie that issues one: its own name, no authority, a year like the device cookie
     expect(streamCookie(a, true)).toBe(`ovis_stream_${a}=1; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000; Secure`);
     expect(streamCookie(a, false)).not.toContain("Secure");
     expect(newStreamKey()).toMatch(/^[0-9a-f]{32}$/);

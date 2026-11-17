@@ -10,6 +10,7 @@ const submitter = () => createSubmitText({
   SUBMIT_DEADLINE_MS: 1000, TYPED_SETTLE_MS: 0, DRAFT_CLEAR_WAIT_MS: 0, DRAFT_CLEAR_POLL_MS: 0, SUBMIT_DELAY_MS: 0,
 });
 
+/** #1174's example: one line of 24 sentences, which typed raw reached Claude Code as only its tail */
 const LONG = Array.from({ length: 24 }, (_, i) => `This is sentence number ${i + 1} of a long dictated message.`).join(" ");
 
 const herdr = () => ({
@@ -93,6 +94,8 @@ it("refuses a chat message over Devin's folder trust and writes nothing", async 
   expect(keys).not.toHaveBeenCalled();
 });
 
+// the trust can come up after the read before agent.prompt: once herdr refuses the prompt, the paste typed instead
+// would land in it, so the screen is read for a picker again right before that paste
 it("types no chat message after a refused prompt once Devin's folder trust came up", async () => {
   const { prompt, typed, keys } = herdr();
   spyOn(client, "paneGet").mockResolvedValue({ pane_id: "w:p1", agent: "devin", agent_status: "idle", cwd: "/tmp", terminal_id: "devin-test" } as Awaited<ReturnType<typeof client.paneGet>>);

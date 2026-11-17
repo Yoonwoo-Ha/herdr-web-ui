@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { darwinStartTime, darwinTerminal, procTerminalDevice } from "./darwin-process.ts";
 
+/** A 648-byte kinfo_proc that started at `seconds` (plus `micros`) on terminal device `device`. */
 function kinfo(seconds: number, micros: number, device: number): Uint8Array {
   const answer = new Uint8Array(648);
   const view = new DataView(answer.buffer);

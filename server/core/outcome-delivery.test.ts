@@ -233,6 +233,7 @@ for (const dependency of ["send-time process", "scroll"] as const) {
 }
 
 it("records a send's history row as the live screen's while another device has the terminal scrolled up", async () => {
+  // herdr's detection read is the live screen: its first row is max_offset_from_bottom, whatever a device scrolled
   const target: HerdrPane = { ...pane, pane_id: "delivery-scrolled-device", agent: "claude",
     agent_session: { agent: "claude", kind: "id", source: "herdr:claude", value: "known" },
     scroll: { max_offset_from_bottom: 7, offset_from_bottom: 3, viewport_rows: 40 } };

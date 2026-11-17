@@ -96,6 +96,7 @@ it.each([
   ["pi", ["pi"], "pi/draft-slash-119.ansi"],
   ["codex", ["codex"], "codex-0.167.0/composer-ultra-empty-100.ansi"],
   ...["gjc", "muse", "qwen", "cline", "dsh-tui", "letta", "maki", "kimi", "gemini", "kilo", "omp"].map((agent): [string, string[], string] => [agent, [agent], `${agent}/draft-empty-119.ansi`]),
+  // omp 18.8.7's framed editor was recorded only empty: its box reports no typed cells, so it is sent to as before
   ["omp", ["omp"], "omp/settings-idle-119.ansi"],
   ["an-unrecorded-agent", ["an-unrecorded-agent"], "pi/draft-typed-119.ansi"],
 ])("sends to %s when its box shows no typed text (%s)", async (agent, argv, screen) => {

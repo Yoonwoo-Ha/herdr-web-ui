@@ -35,6 +35,10 @@ import { focusFromMove, HerdrError, sessionSnapshot, subscribeEvents, type Event
  *   The snapshot that shows the pane set changed is such evidence too: the connection is
  *   closed on its account, and an event herdr had sent but this side had not read yet goes
  *   with it (traced: the snapshot already showed `unknown`, the event for it never came).
+ *
+ * Status frames are flat (`{event:"pane.agent_status_changed", data:{pane_id, agent_status, ...}}`)
+ * while structure frames carry a snake_case `data.type` - both shapes below parse only
+ * what the live server actually sends.
  */
 
 const RECONNECT_MIN_MS = 250;
@@ -55,9 +59,17 @@ export interface StatusCollectorHandlers {
   onResync?: (panes: readonly HerdrPane[], newer: ReadonlySet<string>) => void;
   onReconciled?: (panes: readonly HerdrPane[]) => void;
   onPaneEnded: (paneId: string) => void;
+  /**
+   * A pane closed with no exit frame (herdr's `pane.close`, hc's `terminal.kill`): what it held goes,
+   * but nothing ended by itself, so no "terminal ended" alert. It can follow `onPaneEnded` for a
+   * program that ended and whose pane then closed.
+   */
   onPaneClosed?: (paneId: string) => void;
   onPaneMoved?: (previousPaneId: string, paneId: string) => void;
   onStructureChange: () => void;
+  /**
+   * A herdr that died closes it, while its socket file can stay behind; a file replaced meanwhile names none.
+   */
   herdrLive?: { identity: () => string | null; onChange: (identity: string | null) => void };
   onFocus?: (paneId: string, passing: boolean) => void;
 }
@@ -93,6 +105,9 @@ export interface StatusCollector {
   stop: () => void;
 }
 
+/**
+ * `displayAgent` is the line a plugin reports for the agent (`report-metadata --display-agent`), absent from the frame when none is.
+ */
 export function parseStatusFrame(frame: EventFrame): { paneId: string; status: AgentStatus; agent: string | null; displayAgent: string | null } | null {
   if (frame.event !== "pane.agent_status_changed") return null;
   const data = frame.data as { pane_id?: unknown; agent_status?: unknown; agent?: unknown; display_agent?: unknown } | undefined;
@@ -288,6 +303,8 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
           displayAgents.set(parsed.paneId, parsed.displayAgent);
           if (shown !== undefined && shown !== parsed.displayAgent) scheduleStructureChange();
         },
+        // herdr's contract: subscribe, wait until it started, then snapshot. The snapshot
+        // that chose these panes came before: one more closes the gap it leaves.
         onStarted: () => {
           started = true;
           if (statusSubscription !== subscription) return;
@@ -339,6 +356,8 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
       const resynced = resync !== null && resync === statusGeneration && statusSubscription !== null;
       if (resynced) {
         recovering = false;
+        // an exit since the snapshot was asked for is newer than it too. A focus is not: work that
+        // ended during the loss is still to be settled, or it would read as going on for good
         const newer = new Set([...lastEventOf, ...actedOn].filter(([, seq]) => seq > askedAt).map(([paneId]) => paneId));
         handlers.onResync?.(snapshot.panes, newer);
         for (const pane of snapshot.panes) if (!newer.has(pane.pane_id)) displayAgents.set(pane.pane_id, pane.display_agent ?? null);
@@ -419,6 +438,8 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
   }
 
   function scheduleStructureChange(): void {
+    // Separate from snapshot retry timers: an unreachable herdr must not delay
+    // the browser's invalidation, and a continuous burst must not starve it.
     if (stopped || structureTimer !== null) return;
     structureTimer = setTimeout(() => {
       structureTimer = null;
@@ -441,8 +462,12 @@ export function startStatusCollector(handlers: StatusCollectorHandlers, override
         handlers.onPaneEnded(parsed.paneId);
       }
       else {
+        // a move inside one workspace keeps the pane ID: its subscription and status history stay as they are
         if (parsed.moved !== undefined && parsed.moved.previousPaneId !== parsed.moved.paneId) {
           const { previousPaneId, paneId, status, agent } = parsed.moved;
+          // The lifecycle connection can overtake a queued working/blocked event
+          // on the old status connection. The move's active payload advances a
+          // resting baseline; a resting payload must not erase unfinished work.
           const before = heard.get(previousPaneId);
           heard.delete(previousPaneId);
           heard.set(paneId, before === undefined || status === "working" || status === "blocked" ? { status, agent } : before);

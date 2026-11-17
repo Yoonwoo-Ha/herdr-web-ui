@@ -79,6 +79,7 @@ it("offers no watch where none can be drawn (herdr-core), and ends a watch sent 
   expect(frames.map((frame) => frame.type)).toEqual(["features", "snapshot"]);
   for (const frame of frames) {
     expect(frame.features).not.toContain("watch");
+    // herdr-core keeps no viewport to scroll: its attaches replay history for the browser to keep
     expect(frame.features).toContain("terminal-history");
     expect(frame.features).toEqual(expect.arrayContaining(["submit", "pending-input", "conversation-watch", "terminal-insert"]));
   }
@@ -104,6 +105,9 @@ it("refuses a watch whose pane id is no nonempty string before anything is start
   const client: Client = { data: connectionData({ deviceId: undefined, readOnly: true }), readyState: WebSocket.OPEN, getBufferedAmount: () => 0, send: (raw: string) => { frames.push(JSON.parse(raw)); return raw.length; }, close() {} };
   await handler.open!(client);
   frames.length = 0;
+  // an array is another Map key every time: each such frame would start one more observe process, which no unwatch could name
+  // and an id shaped as an option would be read as one by herdr's own command line, which is handed the id as it came
+  // and one no pane has: megabytes of it would be logged and sent back for each frame
   for (const paneId of [["w1:p1"], 7, null, undefined, "", "   ", { id: "w1:p1" }, "--help", "-V", "--socket=/tmp/x", " --help", "p".repeat(257), "w1:p1\u0000", "w1\np1"]) {
     await handler.message!(client, JSON.stringify({ type: "watch", pane_id: paneId, cols: 80, rows: 24 }));
     await handler.message!(client, JSON.stringify({ type: "unwatch", pane_id: paneId }));

@@ -33,6 +33,7 @@ interface Failure {
   visible: boolean;
 }
 
+/** Bounded failure episodes: no access log, input, credentials, peer names, or exception text. */
 export class ConnectionDiagnostics {
   private failures = new Map<string, Failure>();
 
@@ -49,6 +50,8 @@ export class ConnectionDiagnostics {
     if (failure) {
       this.failures.delete(key);
     } else {
+      // Retain recent healthy keys too: clearing their throttle lets rapid failure/recovery
+      // cycles flood the log.
       if (this.failures.size >= MAX_FAILURES) this.failures.delete(this.failures.keys().next().value!);
       failure = { id: randomUUID(), since: now, loggedAt: -Infinity, code, count: 0, suppressed: 0, active: false, visible: false };
     }

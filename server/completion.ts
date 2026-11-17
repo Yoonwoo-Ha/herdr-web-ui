@@ -18,6 +18,9 @@ import { writeStateDocument } from "./state-document.ts";
  * which never move it: an agent finishing in that pane finished as plain `idle`, READY
  * and no alert, whoever was looking.
  *
+ * And the `unknown` in between, while another agent is there, is reported as `working`
+ * (omo's whole turn read `claude/unknown` after `pi/working`, and the sidebar showed no RUN).
+ *
  * The agent that worked reading `unknown` itself is a finish, not more work: Codex, which
  * herdr follows through its integration, reads `codex/working` for a turn and then
  * `codex/unknown` at rest (live, herdr 0.9.3). Reported as working, every Codex pane that
@@ -42,6 +45,10 @@ export class CompletionTracker {
   private order = 0;
   private saved = "";
 
+  /**
+   * `reportedOnly` (herdr-core): a status is the program's own report (OSC 7501) or one its own session files give (OmO, GJC,
+   * a resting Claude), never a guess from the screen.
+   */
   constructor(private readonly file: string | null = null, private readonly herdr: () => string | null = herdrSocketId, private readonly reportedOnly: () => boolean = () => false) {
     if (file === null) return;
     try {
@@ -94,6 +101,11 @@ export class CompletionTracker {
     this.save();
   }
 
+  /**
+   * Between two statuses at rest it is news only while the pane is shown as working (`unknown`
+   * under another agent's name reads as work going on): herdr reads a finish nobody saw
+   * as `done` in one place and `idle` in another, and that difference must not undo a DONE.
+   */
   replayed(paneId: string, status: AgentStatus, before: { before: AgentStatus; agent: string | null }): boolean {
     const busy = (value: AgentStatus): boolean => value === "working" || value === "blocked";
     const shown = this.reported.get(paneId);

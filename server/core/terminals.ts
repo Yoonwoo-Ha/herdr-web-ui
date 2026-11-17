@@ -22,6 +22,7 @@ export interface TerminalSighting {
   readonly pty: unknown;
   readonly claim: unknown;
   facts(): SightingFacts;
+  /** `automatic`: the viewer's terminal made the bytes itself; only a herdr-core stream can tell hc so. */
   write(data: string, automatic?: boolean): boolean | void;
 }
 
@@ -135,6 +136,9 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
     clearTimeout(attachment.relookup);
     clearTimeout(attachment.recovery);
     clearTimeout(attachment.repaint);
+    // its members hold nothing on this pane any more (a pty that exited leaves them on
+    // the "terminal ended" screen): a stale entry would read as a live claim in
+    // releaseUnclaimed and keep a later, empty pty on this pane running
     for (const member of attachment.clients) member.data.attached.delete(paneId);
     for (const member of attachment.clients) member.data.conversationInterests.delete(paneId);
     for (const member of attachment.clients) member.data.output.delete(paneId);
@@ -217,6 +221,9 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
   function ensureAttachment(paneId: string, cols: number, rows: number, forObserver: boolean): Promise<PaneAttachment> {
     const existing = attachments.get(paneId);
     if (existing) return Promise.resolve(existing);
+    // a second attach arriving while the first is still resolving the terminal joins
+    // that creation: two creations would spawn two ptys, and the orphaned one keeps
+    // streaming into the surviving attachment and kills it when it exits
     const pending = pendingAttachments.get(paneId);
     if (pending) return pending;
 
@@ -295,6 +302,9 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
         send(client, { type: "error", code: "invalid_geometry", message: "cols and rows must be integers in 1..1000" });
         return;
       }
+      // record the pane before the await: a detach (switching panes) or a close
+      // that lands while the terminal is looked up must cancel this attach, and
+      // neither can see a client that only joins the attachment afterwards
       const claim = client.data.attached.get(message.pane_id) ?? { keepSize: false };
       claim.keepSize = message.keep_size === true;
       // An opaque, bounded presentation correlator only: never used by input guards.
@@ -325,15 +335,24 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
       const alreadyAttached = attachment.clients.has(client);
       attachment.clients.add(client);
       if (!alreadyAttached && message.flow_control === "ack") client.data.output.set(message.pane_id, new OutputWindow());
+      // a mirrored screen is drawn for the pane's own grid: the client takes that size
+      // before the screen, or the rows would wrap in a grid of another width
       if (attachment.kind === "mirror") send(client, { type: "pane-geometry", pane_id: message.pane_id, cols: attachment.cols, rows: attachment.rows, fixed: true });
       const tail = attachment.kind === "mirror" ? attachment.process.current ?? "" : attachment.replay.text();
+      // a herdr-core joiner keeps the history it already holds: a tail that lost the attach's clear would double
+      // it. A tail on the alternate screen gets the clear where it leaves that screen (leaving it first would blank
+      // what the tail restores there), so the main-screen lines after it land once
       const clear = attachment.kind === "pty" && attachment.replay.truncated && "replayPrefix" in attachment.process ? attachment.process.replayPrefix : "";
       const alternate = attachment.kind === "pty" && attachment.replay.alternateScreen;
       const replay = !tail || !clear ? tail : alternate ? tail.replace("\x1b[?1049l", clear) : clear + tail;
+      // the members heard `input-ready: false` when the stream ended; a newcomer is told the replay
+      // is the screen from before in a frame of its own, as an early negative receipt would pass for
+      // the attach-complete barrier queued input waits on
       if (!alreadyAttached && attachment.recovering) send(client, { type: "output-recovering", pane_id: message.pane_id });
       if (!alreadyAttached && replay) {
         const ahead = backlog(client);
         client.data.output.get(message.pane_id)?.join(replay, ahead, Date.now(), client.getBufferedAmount() - ahead);
+        // marked as the screen from before: the client draws it but takes no new clipboard write from it
         sendOutput(client, message.pane_id, replay, true);
         if (attachment.kind !== "mirror" && attachment.ready && !attachment.held && attachment.replay.truncated) requestRepaint(message.pane_id);
       }
@@ -425,6 +444,9 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
         send(client, { type: "error", code: "invalid_geometry", message: "cols and rows must be integers in 1..1000" });
         return;
       }
+      // the pty is still being created (an attach from the chat lens, then the switch to the
+      // terminal lens before the terminal was looked up): the resize waits for it. Dropped,
+      // it would leave the pty at the pane's own grid under a terminal fitted to another.
       const claim = client.data.attached.get(message.pane_id);
       if (claim) claim.keepSize = false;
       const creating = attachments.has(message.pane_id) ? undefined : pendingAttachments.get(message.pane_id);
@@ -439,6 +461,8 @@ export function createTerminalRegistry({ options, clients, stopped, terminalAtta
       if (connectionOf(client).mode !== "interact") return;
       const claim = client.data.attached.get(message.pane_id);
       if (!claim) return;
+      // Remember the release before looking up the attachment: its initial creation can
+      // still be awaiting herdr, and must not revive this hidden grid when it completes.
       claim.keepSize = true;
       const attachment = typeof message.pane_id === "string" ? attachments.get(message.pane_id) : undefined;
       if (!attachment || attachment.kind === "mirror") return;

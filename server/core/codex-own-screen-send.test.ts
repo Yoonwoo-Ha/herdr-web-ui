@@ -6,6 +6,11 @@ import { stripVTControlCharacters } from "node:util";
 import { HerdrError } from "../herdr/client.ts";
 import { createSubmitText } from "./composer.ts";
 
+/**
+ * A Chat send to a Codex pane with one of Codex's own screens up (recorded: src/lib/fixtures-input-rows/codex,
+ * Codex 0.163.0, and ./fixtures-codex-screens, 0.167.0): herdr still reports the agent idle, so agent.prompt
+ * would paste the message into the list and send the Enter that takes the row under the cursor.
+ */
 let root: string;
 let listener: ReturnType<typeof Bun.listen>;
 let socketBefore: string | undefined;

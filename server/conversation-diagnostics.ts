@@ -9,6 +9,7 @@ const EXPECTED = new Set(["no_recognized_transcript"]);
 const INTERVAL_MS = 30_000;
 const MAX_LINES = 16;
 
+/** Keys stay private; only fixed reasons and server-generated request IDs leave the process. */
 export class ConversationDiagnostics {
   private readonly episodes: ConnectionDiagnostics;
   private windowAt = -Infinity;

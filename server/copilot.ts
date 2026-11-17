@@ -24,6 +24,11 @@ function outputRef(id: string, requestAt: number, resultAt: number, request: str
   return `${id}@${requestAt.toString(36)}@${resultAt.toString(36)}@${outputSeal(id, requestAt, resultAt, request, result)}`;
 }
 
+/**
+ * A picture Copilot interned in its session: the CLI writes a picture's bytes once, as base64 in a
+ * `session.binary_asset` record named `sha256:<digest of the bytes>`, and a prompt's attachments and a
+ * tool's `binaryResultsForLlm` name it by that id (1.0.105).
+ */
 export const COPILOT_IMAGE_REF = /^copilot:([a-f0-9]{64})$/;
 const ASSET_ID = /^sha256:([a-f0-9]{64})$/;
 const RASTER_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
@@ -82,6 +87,11 @@ async function* boundedLines(fd: number): AsyncGenerator<string> {
   }
 }
 
+/**
+ * The picture `ref` names in the Copilot transcript `path`, from the root `session.binary_asset`
+ * record that interned it, and only when its bytes are a raster within MAX_IMAGE_BYTES (inlineImageType,
+ * as the other agents' inline pictures) that hash to the digest the ref names.
+ */
 export async function copilotImage(path: string, ref: string): Promise<{ mediaType: string; bytes: Uint8Array<ArrayBuffer> } | null> {
   const digest = COPILOT_IMAGE_REF.exec(ref)?.[1];
   if (digest === undefined) return null;
@@ -112,6 +122,7 @@ export function copilotRootRecord(value: unknown): boolean {
   return entry !== null && entry.agentId == null && row(entry.data)?.agentId == null;
 }
 
+/** Lines written by the CLI, not its ephemeral streaming updates or nested agents. */
 export function copilotRecords(jsonl: string, strict = false, baseOffset?: number): { type: string; data: Row; timestamp: string | null; offset?: number; raw?: string }[] {
   const records: { type: string; data: Row; timestamp: string | null; offset?: number; raw?: string }[] = [];
   const lines = jsonl.split("\n");
@@ -144,6 +155,7 @@ export function copilotRecords(jsonl: string, strict = false, baseOffset?: numbe
   return records;
 }
 
+/** A line copilotSetAside stands in for: the byte length of the record it replaces, behind a mark made for this process that no file holds. */
 const SET_ASIDE_MARK = `\u0000copilot-set-aside:${randomBytes(16).toString("hex")}:`;
 const SET_ASIDE = new RegExp(`^${SET_ASIDE_MARK}(\\d{1,10})$`);
 
@@ -306,6 +318,14 @@ export function copilotOffsetOutput(fd: number, ref: string, outputMax: number):
   return typeof content === "string" ? content.length > outputMax ? `${content.slice(0, outputMax)}\n… trimmed` : content : null;
 }
 
+/**
+ * Legacy direct ID lookup, retained for callers of transcriptToolOutput; pane refs
+ * carry signed offsets instead. Scan a pinned descriptor forward in 64 KiB reads,
+ * holding at most one 8 MiB record.
+ * Oversized unrelated lines are discarded without parsing; an oversized line that
+ * mentions the requested ID fails closed. I/O is linear up to the first result (or
+ * EOF for a missing ID), capped at 32 MiB total on the server event loop.
+ */
 export function copilotOutput(fd: number, ref: string, outputMax: number): string | null {
   if (!CALL_ID.test(ref)) return null;
   const chunk = Buffer.alloc(64 * 1024);
@@ -356,5 +376,6 @@ export function copilotOutput(fd: number, ref: string, outputMax: number): strin
       at = newline + 1;
     }
   }
+  // The limit can cut a record: never interpret that prefix as a complete one.
   return null;
 }

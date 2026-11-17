@@ -6,6 +6,11 @@ import { HerdrError } from "../herdr/client.ts";
 import { createSubmitText } from "./composer.ts";
 import { handlePaneRequest } from "../pane-routes.ts";
 
+/**
+ * A Chat send to a Claude Code pane whose rewind dialog is open (recorded, 2.1.304, 40 columns): herdr
+ * still reports the agent idle, and the dialog shows no input box. On a Summarize row the confirm step
+ * is an add-context field: a message typed there, and its Enter, would start "Summarize from here".
+ */
 let root: string;
 let listener: ReturnType<typeof Bun.listen>;
 let socketBefore: string | undefined;

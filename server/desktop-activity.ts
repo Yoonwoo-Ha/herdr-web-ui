@@ -1,3 +1,7 @@
+/**
+ * A read that fails counts as none working: the app must never
+ * hold the computer awake on a count nobody can confirm.
+ */
 import { renameSync, rmSync, writeFileSync } from "node:fs";
 import type { HerdrPane } from "../shared/protocol.ts";
 

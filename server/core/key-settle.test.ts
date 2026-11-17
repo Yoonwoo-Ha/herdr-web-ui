@@ -49,6 +49,7 @@ it("sends a key KEY_SETTLE_MS after the letter typed into the pty before it", as
   type("a");
   await keys(["left"]);
   expect(events.map((e) => e.what)).toEqual(["pty \"a\"", "keys left"]);
+  // timers count whole milliseconds: one may fire up to a millisecond before Date.now() says it is due
   expect(gap("pty \"a\"", "keys left")).toBeGreaterThanOrEqual(Math.max(KEY_SETTLE_MS, PTY_PIPELINE_MARGIN_MS) - 1);
 });
 
@@ -73,6 +74,7 @@ it("types a letter that comes while a key waits after the key, through herdr, no
 it("writes the terminal's own reply that comes while a key waits into the attach it answers, never typed through herdr", async () => {
   const { events, keys, reply } = lane();
   const sent = keys(["left"]);
+  // a herdr-core attach takes these out of what reaches the program; typed through herdr, the program reads them
   reply("\x1b[I");
   reply("\x1b]10;rgb:d8d8/d0d0/c3c3\x1b\\");
   await sent;

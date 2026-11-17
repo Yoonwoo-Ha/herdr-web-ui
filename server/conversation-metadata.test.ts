@@ -8,6 +8,8 @@ import { forgetPiModels } from "./pi-models.ts";
 
 const jsonl = (...entries: unknown[]) => entries.map((entry) => JSON.stringify(entry)).join("\n");
 
+// A pi window is looked up in the agent dir's models.json, so a test that left that unset
+// would read whatever machine ran it: the same test would pass here and fail on a laptop.
 const emptyDir = mkdtempSync(join(tmpdir(), "herdr-meta-empty-"));
 const previousAgentDir = process.env["PI_CODING_AGENT_DIR"];
 process.env["PI_CODING_AGENT_DIR"] = emptyDir;

@@ -43,6 +43,10 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
   stopped: () => boolean;
   admit: (client: Client) => boolean;
   setRole: (client: Client, mode: ClientRole) => void;
+  /**
+   * whether a watch can be drawn here: herdr-core has no view drawn for a viewer's grid (`hc attach
+   * --observe` streams a terminal at its own size, which a release hands to the Herdr app's window)
+   */
   watchable: () => boolean;
   terminalHistory: () => boolean;
   watchPane: (client: Client, paneId: string, geometry: { cols: number; rows: number }) => void;
@@ -123,6 +127,9 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
   const handlers: FrameHandlers = { ...connectionFrames, ...frames };
 
   return {
+    // Only a last guard: send() holds each client to OUTPUT_HARD_BYTES itself, past which Bun would drop
+    // the next frame, and the queue may also hold larger frames (connections.ts `backlog`), a snapshot among
+    // them, as large as herdr's largest reply together (#2566, #2573).
     backpressureLimit: OUTPUT_HARD_BYTES + LARGE_REPLY_BYTES,
     closeOnBackpressureLimit: true,
     drain(client) {
@@ -136,6 +143,8 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
       const features: ServerFeature[] = watchable() ? [...SERVER_FEATURES] : SERVER_FEATURES.filter((feature) => feature !== "watch");
       if (terminalHistory()) features.push("terminal-history");
       if (client.data.machineEvents) features.push("machine-events");
+      // a folder OVIS_PASTE_DIR names lets the page read an upload's path whole through it (#2771); a
+      // watch-only connection, which may list no folder, is not told where it is
       const pasteDir = client.data.readOnly ? undefined : pasteDirectoryForAll();
       send(client, { type: "features", features, connection: client.data.connectionId, server_time: Date.now(), ...(lifetime === undefined ? {} : { herdr_lifetime: lifetime }), ...(pasteDir === undefined ? {} : { paste_dir: pasteDir }) });
       const snapshot = clientSnapshot();
@@ -171,6 +180,8 @@ export function createSocket({ clients, present, stopped, admit, setRole, watcha
         await frame?.(client, message);
       } catch (error) {
         const code = error instanceof HerdrError ? error.code : "command_failed";
+        // an attach that could not start names its pane: the panes of a PC share this connection, and one
+        // without a pane would end every terminal on it
         const failed = code === "attach_failed" && message.type === "attach" ? { pane_id: message.pane_id } : {};
         const fault = faultOf(error, code, herdrFailure);
         send(client, { type: "error", code: fault.code, message: fault.message, ...failed });

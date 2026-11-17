@@ -276,6 +276,8 @@ describe("native OpenCode ownership without a status event", () => {
       reconciled = Promise.withResolvers<void>();
       expect(await openCodePaneService(pane)).not.toBeNull();
       await reconciled.promise;
+      // When the user stops OpenCode with Ctrl+Z: herdr 0.9.5 keeps calling the pane OpenCode and names the
+      // shell alone in front, as right after an exit (live-checked), while OpenCode is the shell's stopped job.
       h.herdrSays(pane);
       info = spyOn(herdr, "paneProcessInfo").mockResolvedValue({
         pane_id: pane.pane_id, shell_pid: 41000, foreground_process_group_id: 41000, foreground_processes: [{ pid: 41000, name: "bash", argv: ["/bin/bash"] }],
@@ -743,11 +745,16 @@ describe("a /loop wakeup that fires at a Claude pane herdr reads at rest (#3494)
     appendFileSync(path, line({ type: "system", subtype: "scheduled_task_fire", taskKind: "loop", taskId: "591b6f5a", timestamp: new Date(written).toISOString() }));
   const turnEnds = (h: Pick<Fixture, "path">) =>
     appendFileSync(h.path, line({ type: "system", subtype: "turn_duration", timestamp: new Date(at + 6000).toISOString() }));
+  /** The prompt of the turn a wakeup resumed, with the keys Claude Code 2.1.318 writes on it right after the fire. */
   const resumes = (path: string) =>
     appendFileSync(path, line({ type: "user", isMeta: true, isSidechain: false, permissionMode: "auto", promptSource: "system", queuePriority: "later", turnOrigin: "scheduled", wakeupSource: "loop_wakeup", scheduledTaskId: "591b6f5a", timestamp: new Date(at + 4100).toISOString(), message: { role: "user", content: "check the deploy" } }));
   const NOTICE = '<task-notification>\n<task-id>bq1</task-id>\n<tool-use-id>toolu_bq1</tool-use-id>\n<status>completed</status>\n<summary>Background command "bun test" completed (exit code 0)</summary>\n</task-notification>';
   const taskEnds = (path: string) =>
     appendFileSync(path, line({ type: "queue-operation", operation: "enqueue", timestamp: new Date(at + 4000).toISOString(), content: NOTICE }));
+  /**
+   * Claude resumes a turn on that notice: it takes it off its queue and writes the turn's prompt, the notice itself as a
+   * user entry, with the keys Claude Code 2.1.296 to 2.1.321 write on it (read from the transcripts of this PC).
+   */
   const noticeTurn = (path: string) =>
     appendFileSync(path, line({ type: "queue-operation", operation: "dequeue", timestamp: new Date(at + 4040).toISOString() })
       + line({ type: "user", isSidechain: false, origin: { kind: "task-notification" }, permissionMode: "auto", turnOrigin: "task_notification", timestamp: new Date(at + 4040).toISOString(), message: { role: "user", content: NOTICE } }));
@@ -1325,6 +1332,9 @@ describe("a /loop wakeup that fires at a Claude pane herdr reads at rest (#3494)
       const h = await workingClaude();
       const id = h.pane.pane_id;
       queue(h);
+      // The turn rests and Claude begins the notice's turn at once, its prompt written before herdr's idle word for
+      // the turn before is heard (the prompt is dated 24 to 97 ms after that rest in the transcripts of this PC, and
+      // read once as it reached the file, 133 ms after that date).
       taskEnds(h.path); h.rest(); noticeTurn(h.path);
       h.herdrSays(h.pane);
       handlers.onStatus(id, "idle", "claude");
@@ -1909,6 +1919,10 @@ describe("a /loop wakeup that fires at a Claude pane herdr reads at rest (#3494)
         says(h, "working");
         await submit(36, "at the rest");
         taskEnds(h.path);
+        // That turn rests and the notice's turn begins at once, but herdr's idle word is heard before Claude has written
+        // that turn's prompt: the check before the paste has no prompt to read, and the prompt is in the file for the
+        // read before the Enter (written here during the paste). A known bound: nothing holds between that rest and
+        // the prompt's line, which reaches the file up to a few tenths of a second after that rest.
         d.on.paste = () => { delete d.on.paste; noticeTurn(h.path); };
         turnEnds(h);
         h.herdrSays(h.pane);
@@ -2222,6 +2236,7 @@ describe("Claude turn starts the transcript does not show yet (#2072)", () => {
       const ts = (ms: number) => new Date(at + ms).toISOString();
       const bash = line({ type: "user", timestamp: ts(6000), message: { role: "user", content: "<bash-input>ls</bash-input>" } })
         + line({ type: "user", timestamp: ts(6001), message: { role: "user", content: "<bash-stdout>README.md</bash-stdout><bash-stderr></bash-stderr>" } });
+      // Claude Code 2.1.311 answers it in a model turn; versions before it may write the records alone
       if (shape === "model turn") {
         appendFileSync(h.path, line({ type: "api-request", timestamp: ts(6002) }) + bash);
         h.poll();

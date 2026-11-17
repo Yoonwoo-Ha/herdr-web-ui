@@ -22,8 +22,10 @@ export interface SocketData {
   bridge?: boolean;
   surface?: TelemetrySurface;
   ingress?: TelemetryIngress;
+  /** a visitor Portal signed in: the socket is closed after this many ms, and the page's reconnect meets Portal's sign-in again (server/portal.ts `recheckMs`) */
   recheckMs?: number;
   connectionId: string;
+  /** A fresh claim per attach lifetime; deleting it invalidates queued terminal keys. */
   attached: Map<string, { keepSize: boolean; receiptResumeId?: string }>;
   conversationInterests: Set<string>;
   conversationWatches: Set<string>;
@@ -50,6 +52,7 @@ interface ConnectionState {
 
 interface ExcusedFrame { ahead: number; frame: number; timer: ReturnType<typeof setTimeout> }
 
+/** Keyed by the very `data` object the upgrade passed, which Bun hands to every handler of the connection. */
 const states = new WeakMap<SocketData, ConnectionState>();
 
 function stateOf(client: Client): ConnectionState {
@@ -58,6 +61,7 @@ function stateOf(client: Client): ConnectionState {
   return state;
 }
 
+/** The data for a connection's upgrade: it starts to interact unless its access is read-only. */
 export function connectionData(fields: { machineEvents?: MachineEventDocument; relay?: MachineRelay; deviceId: string | undefined; readOnly: boolean; open?: boolean; bridge?: boolean; surface?: TelemetrySurface; ingress?: TelemetryIngress; recheckMs?: number }): SocketData {
   const data: SocketData = { connectionId: crypto.randomUUID(), attached: new Map<string, { keepSize: boolean }>(), conversationInterests: new Set<string>(), conversationWatches: new Set<string>(), promptWatches: new Set<string>(), output: new Map(), ...fields };
   states.set(data, { closing: false, revoked: false, mode: fields.readOnly ? "observe" : "interact", roles: 0, watches: new Map<string, PaneView>(), waiting: new Map() });
@@ -193,6 +197,10 @@ function expire(client: Client, frame: ExcusedFrame): void {
   if (state.excused?.frames.includes(frame)) client.close(OUTPUT_STALLED_CLOSE_CODE, "terminal output transport stalled");
 }
 
+/**
+ * Each watch is a `herdr terminal session observe` process with three descriptors, and a watching device may ask
+ * for one: without a bound, frames alone could take the PC's processes and descriptors.
+ */
 const WATCHES = 64;
 
 interface PaneView {
@@ -223,6 +231,11 @@ export function createConnections({ clients, present, pending, devices, detachCl
     if (client.data.readOnly || state.mode === "observe") throw new HerdrError("read_only", "this connection can only watch");
   }
 
+  /**
+   * Ends the connection when its device is revoked, at once for one revoked already: then it is not admitted. One
+   * the open LAN let in ends when the pairing gate closes (the first device paired, the relay turned on), as its
+   * requests are refused from then on; it is not admitted either when the gate closed while its upgrade was pending.
+   */
   function admit(client: Client): boolean {
     const state = stateOf(client);
     if (client.data.open) {
@@ -258,6 +271,9 @@ export function createConnections({ clients, present, pending, devices, detachCl
     if (waiting.has(paneId)) { waiting.set(paneId, geometry); return; }
     const current = watches.get(paneId);
     if (current && wanted(current)) {
+      // A pane has one process at a time: started at each frame, frames naming one pane over and over would each
+      // hold a process until the event loop turned, past any count of panes. herdr's observe process is gone within
+      // a millisecond of being asked, and one that is not is killed (watch.ts)
       current.next = geometry;
       stopView(current);
       return;

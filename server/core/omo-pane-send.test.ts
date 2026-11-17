@@ -129,6 +129,7 @@ describe.skipIf(process.platform !== "linux")("omo panes", () => {
 it("sends into a Claude-labelled omo pane without Claude's draft refusal, and still refuses a real Claude pane", async () => {
   screens["w:p1"] = DRAFT_SCREEN;
   screens["w:p2"] = DRAFT_SCREEN;
+  // omo's claude-sdk child runs, so herdr labels the pane claude; the pane runs omo
   panes["w:p1"] = { agent: "claude", process: [await heldOmo()] };
   panes["w:p2"] = { agent: "claude", process: [{ pid: 2147483646, argv: ["/usr/bin/claude"], cwd: root }] };
   await submitter()("w:p1", "hello", "hello", Date.now());

@@ -4,6 +4,7 @@ import { answerKeys, parseInteractivePrompt } from "../prompt.ts";
 import { finishPrompt, publicPrompt } from "./shared.ts";
 import { agyWriteInWaits } from "./agy.ts";
 
+// Antigravity 1.5.6's ask_question, one question asked alone, as it drew it at 120 columns: its hint names Enter "Select"
 const screen = readFileSync(new URL("../fixtures/agy-1.5.6-ask.txt", import.meta.url), "utf8");
 
 test("reads Antigravity 1.5.6's single question, whose hint names Enter Select", () => {
@@ -14,6 +15,7 @@ test("reads Antigravity 1.5.6's single question, whose hint names Enter Select",
   expect(answerKeys(prompt, { option_index: 1 })).toEqual([{ keys: ["down"] }, { keys: ["enter"] }]);
 });
 
+// A question Antigravity left on the screen when it exited, a shell's prompt under it: its keys would go to the shell
 test.each(["agy-1.5.6-ask", "agy-1.5.6-ask-multi"])("reads no question once other output stands under %s's key hint", (name) => {
   const recorded = readFileSync(new URL(`../fixtures/${name}.txt`, import.meta.url), "utf8");
   expect(parseInteractivePrompt("agy", recorded)).not.toBeNull();
@@ -47,6 +49,7 @@ test("gives a multiple choice a new card when its ticks change in the terminal",
   const mobile = parseInteractivePrompt("agy", multi.replace("[ ] Mobile", "[x] Mobile"))!;
   expect(desktop.default_option_indices).toEqual([0]);
   expect(mobile.default_option_indices).toEqual([1]);
+  // a card already shown with the first ticks would otherwise stay, and its answer would undo the terminal's
   expect(mobile.id).not.toBe(desktop.id);
 });
 

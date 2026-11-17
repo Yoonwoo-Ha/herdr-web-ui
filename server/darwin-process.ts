@@ -79,7 +79,11 @@ export function darwinProcessGroup(pid: number): { pid: number; parent: number; 
   return found;
 }
 
-/** sysctl CTL_KERN, KERN_PROCARGS2: an int argc, the executable path, its NUL padding, then argc NUL-terminated arguments. */
+/**
+ * A process's arguments as the kernel keeps them (CTL_KERN, KERN_PROCARGS2): an int argc, the
+ * executable's path, its NUL padding, then argc NUL-terminated arguments. Null when it cannot be read
+ * (another user's process, one gone) or the answer is cut short.
+ */
 export function darwinArgv(pid: number): string[] | null {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   const call = sysctlCall();
@@ -103,7 +107,7 @@ export function darwinArgv(pid: number): string[] | null {
   return words;
 }
 
-/** sysctl CTL_KERN, KERN_PROC, KERN_PROC_PID */
+/** CTL_KERN, KERN_PROC, KERN_PROC_PID: the process's kinfo_proc, empty when no such process runs. */
 function kinfoProc(pid: number): Uint8Array | null {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   const answer = new Uint8Array(4096);
@@ -111,6 +115,7 @@ function kinfoProc(pid: number): Uint8Array | null {
   return length === null ? null : answer.subarray(0, length);
 }
 
+/** The kernel's process birth time in microseconds, including those `ps -o lstart` drops. */
 export function darwinStartTime(pid: number): bigint | null {
   const answer = kinfoProc(pid);
   return answer === null ? null : procStartTime(answer);
@@ -122,6 +127,11 @@ function deviceName(device: number): string | null {
   return name === null ? null : String(name) || null;
 }
 
+/**
+ * The process's controlling terminal under /dev (`ttys003`, as `ps -o tty=` prints it) and its start
+ * in ms, both from one kinfo_proc: two reads could describe two processes when the PID is reused
+ * between them.
+ */
 export function darwinTerminal(
   pid: number,
   read: (pid: number) => Uint8Array | null = kinfoProc,

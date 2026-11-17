@@ -572,7 +572,7 @@ describe("Devin pane identity", () => {
       mockedProcesses = [];
       rmSync(root, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 15_000); // Seven awaited pane reads, including three complete ancestry/cache builds.
 });
 
 const lines = [
@@ -965,6 +965,8 @@ describe("parseClaudeTranscript", () => {
 
   it("strips escapes in work linear in a malformed answer's length", () => {
     const local = (n: number, unit: string) => JSON.stringify({ type: "system", subtype: "local_command", timestamp: "2026-10-07T19:00:00.000Z", content: `<local-command-stdout>${unit.repeat(n)}</local-command-stdout>` });
+    // Counted, not timed: the parse takes well under a millisecond, and two such timings divide
+    // into noise.
     const work = (line: string): number => {
       let steps = 0;
       const text = String.prototype;
@@ -1004,6 +1006,8 @@ describe("parseClaudeTranscript", () => {
       return steps;
     };
     for (const unit of ["\u001b]x", "</local-command-stdout> x"]) {
+      // doubling the input doubles the work (2.00 measured for both); a rescan from every
+      // unterminated opener, or from every closing tag, quadruples it.
       expect(work(local(40_000, unit)) / work(local(20_000, unit))).toBeLessThan(2.5);
     }
   });
@@ -1147,6 +1151,9 @@ describe("parseClaudeTranscript", () => {
   });
 
   it("hides the cancelled prompt on the live page too once its re-send arrives", () => {
+    // Live records: user a35be47b parented on 07055903, cancelled before any reply (only
+    // attachment/last-prompt bookkeeping after it), then re-send 7477aa61 on the same
+    // parent and the answer.
     const root = mkdtempSync(join(tmpdir(), "herdr-resend-page-"));
     try {
       const path = join(root, "session.jsonl");
@@ -2477,6 +2484,7 @@ describe("transcriptImage", () => {
       const tool = parseClaudeTranscript(readFileSync(path, "utf8")).flatMap((turn) => turn.parts).find((part) => part.kind === "tool");
       expect(tool?.kind === "tool" ? tool.images : null).toEqual([{ media_type: "image/png", ref: `${uuid}:1:1` }]);
       for (const ref of [`${uuid}:1:0`, `${uuid}:0:0`, `${uuid}:1:9`, `${uuid}:1`, `${uuid}:1:2`, `${uuid}:1:3`, `${uuid}:1:1:0`, `${uuid}:1:x`]) expect(transcriptImage(path, ref)).toBeNull();
+      // a /clear puts the pictures before it out of reach, as it does their page
       appendFileSync(path, `\n${JSON.stringify({ type: "user", message: { role: "user", content: "<command-name>/clear</command-name>" } })}\n`);
       expect(transcriptImage(path, `${uuid}:1:1`)).toBeNull();
     } finally { rmSync(dir, { recursive: true, force: true }); forgetTranscriptState(); }
@@ -3167,6 +3175,8 @@ describe("a page read that settles its transcript's revision off the event loop"
     const foreign = fs.statSync(join(elsewhere, "session.jsonl")).ino;
     restores.push(spyOn(cmd, "cmdTranscriptPath").mockResolvedValue({ path }));
     const base = await paneConversation(pane.pane_id);
+    // the first call off the event loop for the path after the pane's transcript was authorized swaps
+    // the folder for another agent's; the page read's own stat puts it back
     let swapped = false;
     let swaps = 0;
     const swap = () => {
@@ -3246,6 +3256,8 @@ describe("a page read that settles its transcript's revision off the event loop"
     writeFileSync(path, JSON.stringify({ type: "session", id: "cmd-ownses", version: 3 }) + "\n" + message("u1", null, "the pane's own words"));
     writeFileSync(join(elsewhere, "session.jsonl"), JSON.stringify({ type: "session", id: "cmd-foreig", version: 3 }) + "\n" + message("u1", null, "PI FOREIGN SECRET..."));
     restores.push(spyOn(cmd, "cmdTranscriptPath").mockResolvedValue({ path }));
+    // no page of it is cached: every synchronous open of the path is made with the other agent's folder swapped in, put back
+    // right after: the identity checks around the page read see only the pane's own
     let swaps = 0;
     const { openSync } = fs;
     restores.push(spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
@@ -3308,6 +3320,7 @@ describe("a page read that settles its transcript's revision off the event loop"
 
   it.skipIf(process.platform !== "linux")("is pending, never waits, where a folder swap puts a FIFO at the path for an open after the verified one", async () => {
     folders(JSON.stringify({ type: "session", id: "cmd-ownses", version: 3 }) + "\n" + message("u1", null, "own words"), "");
+    // the other folder holds a FIFO no one writes: a blocking open of it never returns
     rmSync(join(root, "elsewhere", "session.jsonl"));
     execFileSync("mkfifo", [join(root, "elsewhere", "session.jsonl")]);
     const counts = swapOpens((open) => open > 0);
@@ -4254,6 +4267,9 @@ describe("a model drawn only in the history above the live screen", () => {
     for (const [name, value] of Object.entries(homes)) if (value === undefined) delete process.env[name]; else process.env[name] = value;
     rmSync(root, { recursive: true, force: true });
   });
+  /** A pane whose viewport (at the bottom) shows `live`, and whose detection read also reaches `history`;
+   * each scroll position herdr reports in turn (offset from the bottom, rows of history; null for none,
+   * as herdr's scroll is optional; "fail" for a lookup that fails), the last one from then on. */
   const shown = (agent: string, status: string, history: string, live: string, scrolls: ([number, number] | null | "fail")[] = [[0, 30]]): string => {
     const pane = { pane_id: `screen-history-${agent}`, cwd: root, foreground_cwd: root, agent, agent_status: status } as HerdrPane;
     mocks.push(spyOn(herdr, "sessionSnapshot").mockResolvedValue({ panes: [pane] } as SessionSnapshot));
@@ -4352,6 +4368,7 @@ it("finds the Claude below a Windows pane's shell and its session by the PID rec
     { pid: 3244, parent: 900, path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe", commandLine: "pwsh.exe", started: started - 60_000 },
     { pid: 10108, parent: 3244, path: "C:\\Users\\demo\\.local\\bin\\claude.exe", commandLine: "claude", started },
   ]);
+  // Windows reads the home from USERPROFILE first (user-home.ts)
   process.env["HOME"] = home;
   process.env["USERPROFILE"] = home;
   Object.defineProperty(process, "platform", { value: "win32" });
@@ -4489,6 +4506,7 @@ it("finds a Windows pane's session by the child claude.exe holding the PID recor
   const home = mkdtempSync(join(tmpdir(), "claude-win32-launcher-"));
   const previousHome = process.env["HOME"];
   const previousProfile = process.env["USERPROFILE"];
+  // or the lookup reads the developer's own store too
   const previousConfig = process.env["CLAUDE_CONFIG_DIR"];
   delete process.env["CLAUDE_CONFIG_DIR"];
   const session = "7d9f3a52-4e2c-4b1a-9c5d-8e7f6a5b4c32";
@@ -4553,6 +4571,8 @@ it("reads a Claude pane's process start from the kernel on macOS, with no ps for
     ? { agent: { agent_session: { value: session } } }
     : { process_info: { foreground_processes: [{ pid: 4242, name: "claude", argv: ["claude"] }] } }) as unknown as typeof herdr.herdrRpc);
   const blocking = spyOn(Bun, "spawnSync");
+  // the kernel's process record answers the start; no ps asks it, awaited or not (#1404). Claude's own
+  // store may still ask an awaited ps for the process's environment on a real Mac.
   const kernel = spyOn(darwinProcess, "darwinStartTime").mockReturnValue(1_000_000n);
   const awaited = spyOn(Bun, "spawn");
   process.env["HOME"] = home;

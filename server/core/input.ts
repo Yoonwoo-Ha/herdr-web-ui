@@ -9,6 +9,7 @@ import { secretPrompt, validSecret } from "../../shared/secret-prompt.ts";
 import { insertTextProblem } from "../../shared/terminal-insert.ts";
 import { mirrorInput } from "../mirror-input.ts";
 
+/** Keys that may wait to join one `pane.send_keys` while herdr answers the one before (a held arrow repeats ~30/s). */
 const MAX_WAITING_KEYS = 256;
 const REPLY_RE = /^\x1b(?:\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]|\][^\x07\x1b]*(?:\x07|\x1b\\)|P[^\x1b]*\x1b\\)$/;
 const INSERT_DEADLINE_MS = 45_000;
@@ -64,6 +65,10 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
         receipt(false, "read_only");
         return;
       }
+      // typing goes straight through the pty, unless a composer message is still in
+      // flight: then it waits its turn and goes the message's own way (send_text), since
+      // the pty holds a lone ESC ~150ms and a Stop would overtake nothing
+      // typing reaches an attached pane only, queued or not
       const sighting = sight(client, message.pane_id);
       const seen = sighting.facts();
       const inputFailed = () => {
@@ -75,18 +80,26 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
       // The turn is taken before herdr is asked what it can do: a message sent while
       // that answer is on its way must not overtake the typing.
       if (terminalAttachKnown() === false || (!seen.attached && terminalAttachKnown() === null)) {
+        // an attach this client is not a member of owns this pane's screen, and typing
+        // here would reach past it — the same refusal the pty branch below makes. A
+        // pane with no attachment at all is left as it was: that is the key bar, and
+        // an older bridge's composer send, neither of which attaches first.
         if (seen.attached && !seen.member) {
           send(client, { type: "error", code: "input_not_ready", message: "Terminal input is not ready. Nothing was sent.", pane_id: message.pane_id });
           receipt(false, "input_not_ready");
           return;
         }
         const text = message.text;
+        // typed into the attach it saw, or into none: one left meanwhile (even attached again) takes none of it
         const roles = connectionOf(client).roles;
+        // checked again right before herdr is written to: its connect is awaited (#545)
+        // and into the same attach, or still none: one made while this waited is someone else's (#732)
         const allowed = () => mayType(client) && connectionOf(client).roles === roles && typingGuards.herdrTyping(sighting.facts());
         void serialize(message.pane_id, async () => {
           if (await terminalAttach()) { inputFailed(); return; }
           const shaped = await mirrorInput(text, () => paneAgentOf(message.pane_id));
           if (!typingGuards.herdrTyping(sighting.facts())) { inputFailed(); return; }
+          // nothing typed outlives its connection
           if (!clients.has(client)) return;
           authorizeSocket(client);
           await paneSendText(message.pane_id, shaped, undefined, allowed);
@@ -96,6 +109,7 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
         }).catch(inputFailed);
         return;
       }
+      // another web bridge has this pane's terminal: nothing typed here reaches it
       if (!seen.member || !seen.ready || seen.held) {
         send(client, { type: "error", code: "input_not_ready", message: "Terminal input is not ready. Nothing was sent.", pane_id: message.pane_id });
         receipt(false, "input_not_ready");
@@ -109,17 +123,25 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
         }
       };
       const stop = message.stop === true && message.text === "\u001b";
+      // the viewer's terminal answering a query (a herdr-core attach's own, or the program's) is no one
+      // typing: it goes to the attach it answers, which takes out what was its own; typed through herdr
+      // behind queued input, the program would read those answers as keystrokes. Tagged by a client, so
+      // only what one answer looks like: a single CSI report, OSC reply or DCS string, nothing around it.
       const reply = !stop && message.automatic === true && REPLY_RE.test(message.text);
       if ((paneQueues.has(message.pane_id) && !reply) || stop) {
         const text = message.text;
         // a click or a wheel (a click replayed behind a held arrow) is the attach's own mouse:
         // herdr encodes it for the program's mouse mode, send_text would type its bytes (#667).
+        // The terminal's answers to its attach's questions go to that attach too, or they are typed (#2816):
+        // only what the browser's terminal made itself, so a paste of the same bytes is still typed
         const viaAttach = isMouseReport(text) || (message.automatic === true && isTerminalReply(text));
+        // typed into the attach it saw: one that ended meanwhile (and was attached again) takes none of it
         const roles = connectionOf(client).roles;
         const allowed = () => mayType(client) && connectionOf(client).roles === roles && typingGuards.queuedTyping(sighting.facts());
         void serialize(message.pane_id, async () => {
           if (stop) await settleAfterTyping(message.pane_id);
           if (!typingGuards.queuedTyping(sighting.facts())) { inputFailed(); return; }
+          // nothing typed outlives its connection
           if (!clients.has(client)) return;
           authorizeSocket(client);
           if (viaAttach) {
@@ -146,6 +168,8 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
         send(client, { type: "error", code: "read_only", message: "this connection is in observe mode" });
         return;
       }
+      // Terminal chords belong to the attachment that accepted them, just like input.
+      // Unattached RPC keys retain their existing path (including native Windows).
       const sighting = sight(client, message.pane_id);
       const seen = sighting.facts();
       const roles = connectionOf(client).roles;
@@ -153,6 +177,8 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
         send(client, { type: "error", code: "attach_held", message: ATTACH_HELD_MESSAGE, pane_id: message.pane_id });
         return;
       }
+      // an attach still being looked up: its chord has no attachment to belong to yet, and must
+      // not take the unattached RPC path around the claim it will be checked against
       if (!seen.origin && seen.claimed) {
         send(client, { type: "error", code: "input_not_ready", message: "Terminal input is not ready. Nothing was sent.", pane_id: message.pane_id });
         return;
@@ -174,6 +200,9 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
         // waits for that typing as a composer message does, or it overtakes it (a lone ESC is
         // held there ~150ms). The checks below run after the wait.
         if (seen.origin && !seen.mirror) await settleAfterTyping(message.pane_id);
+        // the attach this chord was pressed in is gone (left, replaced, or left and joined again).
+        // `input_failed`, as queued typing answers: `input_not_ready` makes the client drop the
+        // pane's readiness, and the attach it holds by now has already been told it is ready
         const facts = sighting.facts();
         if (facts.origin && (!facts.sameAttachment || !facts.samePty || !facts.sameClaim || !facts.member)) {
           if (clients.has(client)) send(client, { type: "error", code: "input_failed", message: "Terminal input could not be confirmed. Check the terminal before typing again.", pane_id: message.pane_id });
@@ -187,6 +216,7 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
           send(client, { type: "error", code: "attach_held", message: ATTACH_HELD_MESSAGE, pane_id: message.pane_id });
           return;
         }
+        // a key pressed by a connection that has gone since is not pressed
         if (!clients.has(client)) return;
         authorizeSocket(client);
         const allowed = () => mayType(client) && connectionOf(client).roles === roles && typingGuards.keys(sighting.facts());
@@ -241,9 +271,12 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
           if (!facts.ready || facts.held || !facts.samePty) { result(false, "input_not_ready"); return; }
           if (secretPrompt(screen.text, facts.cols) !== message.prompt) { result(false, "prompt_changed"); return; }
           if (facts.mirror) {
-            // a `\r` inside the text is not Enter to every shell
+            // A mirrored pane has no pty to type into: the secret is herdr's text, then the
+            // Enter key (a `\r` inside the text is not Enter to every shell). Both are awaited,
+            // so a send herdr refused is answered as failed, not as entered.
             const allowed = () => mayType(client) && connectionOf(client).roles === roles && typingGuards.mirrorSecret(sighting.facts());
             try {
+              // no passphrase (validSecret): the Enter key alone
               if (message.secret) await paneSendText(message.pane_id, message.secret, undefined, allowed);
             } catch (error) {
               if (error instanceof HerdrError && error.code === "cancelled") { result(false, "not_attached"); return; }
@@ -262,6 +295,7 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
               return;
             }
           } else {
+            // Direct attach keystrokes: no agent transcript, RPC payload or delayed Enter.
             if (!sighting.write(`${message.secret}\r`)) { result(false, "input_not_ready"); return; }
           }
           personTyped(message.pane_id);
@@ -273,6 +307,14 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
       } finally { message.secret = ""; }
       return;
     },
+    /**
+     * The terminal's input line typed without Enter: herdr's `pane.send_text`, awaited, so the
+     * answer says herdr has the bytes (never that the program ran them). It takes the pane's turn
+     * like queued typing, behind a message in flight and the last pty keystroke, and the sender's
+     * attach, session, claim and role are checked again at every step after an await, and once more
+     * by herdr's own guard right before the write. No Enter, key, terminator, focus or take-over
+     * follows it, and nothing of it outlives the connection or is tried again.
+     */
     async insert(client: Client, message: Frame<"insert">): Promise<void> {
       const result = (ok: boolean, code?: string, text?: string) => {
         if (clients.has(client)) send(client, { type: "insert-result", id: message.id, pane_id: message.pane_id, ok, ...(code ? { code, message: text } : {}) });
@@ -317,6 +359,7 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, sight
           authorizeSocket(client);
           const allowed = () => mayType(client) && standing() === null && typingGuards.queuedTyping(sighting.facts());
           try {
+            // one line, no line break and no escape (insertTextProblem): typed as it came, on an attach or a mirror
             await paneSendText(message.pane_id, message.text, undefined, allowed);
             personTyped(message.pane_id);
           } catch (error) {

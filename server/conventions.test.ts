@@ -240,6 +240,8 @@ describe("runtime gates", () => {
 });
 
 describe("remote PC bundle boundary", () => {
+  // scripts/build-remote-bundle.ts ships server/, shared/ and integrations/ but not src/ or relay/: code
+  // there that imports either loads from a checkout, where every check runs, and not on a remote PC (#2220)
   const SRC_IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)["']((?:\.\.\/)+(?:src|relay)\/[^"']*)["']/;
   const leavesBundle = (file: string, spec: string) => /^(?:src|relay)\//.test(posix.normalize(posix.join(posix.dirname(file), spec)));
 
@@ -262,6 +264,8 @@ describe("remote PC bundle boundary", () => {
 });
 
 describe("server entries", () => {
+  // The compiled binary (scripts/build-server.ts) has no .ts files: a child started by a source file's
+  // path works only from a checkout.
   const START_BY_PATH = /\bprocess\.execPath\s*,\s*\[?\s*(?:join\s*\(|resolve\s*\(|["'`][^"'`\n]*\.(?:ts|tsx|js|mjs)["'`])/;
   const ALLOWED: Record<string, string> = {
     "server/supervisor.ts": "installs the Rust PTY host with the script of a release checked out from source, which only the source updater makes",

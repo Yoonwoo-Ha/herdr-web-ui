@@ -12,9 +12,16 @@ const record = (value: unknown): RecordValue => value !== null && typeof value =
 const label = (value: unknown): string | null => typeof value === "string" && value.trim() && !value.startsWith("<") ? value.trim() : null;
 const count = (value: unknown): number => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 
+/** Claude's standard window; a request past it can only have run in the 1M one. */
 const CLAUDE_STANDARD_WINDOW = 200_000;
 const CLAUDE_LONG_WINDOW = 1_000_000;
 
+/**
+ * Only Codex records its window; a Claude model is known to run in the 1M one once a request
+ * went past 200k (and keeps it: a compaction shrinks the use, not the window). A pi model
+ * states no window either, so it is looked up in the catalog pi reads its own providers from
+ * (`piContextWindow`); unresolved, no ring is drawn rather than one drawn on a guess.
+ */
 export function contextOf(used: number, model: string | null, window: number | null, before: ConversationMetadata["context"], piProvider?: string | null, piAgentDir?: string | null): ConversationMetadata["context"] {
   if (used === 0) return before;
   if (window !== null) return { used, window };
@@ -30,6 +37,7 @@ export function contextOf(used: number, model: string | null, window: number | n
 // before "and saved" / "for this session" in older versions (bold ones lose the bold to the strip)
 const CLAUDE_MODEL_SET = /^Set model to (?:`([^`]+)`|(.+?)(?= and saved | for this session|$))/u;
 const CLAUDE_MODEL_NAME = new RegExp(`^(${CLAUDE_FAMILY}) (${VERSION})(?:\\.(0|${VERSION}))?(?: \\(1M context\\))?(?: \\(default\\))?$`, "iu");
+// the efforts Claude Code records on its answers (`entry.effort`)
 const CLAUDE_EFFORT = "(low|medium|high|xhigh|max)";
 const CLAUDE_EFFORT_SET = new RegExp(`^Set effort level to ${CLAUDE_EFFORT}(?= |$)`, "u");
 const CLAUDE_MODEL_EFFORT = new RegExp(` with \`${CLAUDE_EFFORT}\` effort$`, "u");
@@ -60,6 +68,11 @@ function claudeCommandSetting(entry: RecordValue): { model: string | null; effor
   return effort && (command === null || command === "effort") ? { model: null, effort: effort[1]! } : none;
 }
 
+/**
+ * The model and effort one Claude record sets, as parseConversationMetadata reads it: an answer names
+ * what it ran at (any answer names its model; one that records an effort names that too, even an
+ * empty one), and a /model or /effort answer what it set (claudeCommandSetting).
+ */
 export function claudeSetting(value: unknown): { model?: string; effort?: string | null } {
   const entry = record(value);
   const set: { model?: string; effort?: string | null } = {};
@@ -72,6 +85,7 @@ export function claudeSetting(value: unknown): { model?: string; effort?: string
   return set;
 }
 
+/** Codex turn_context is a snapshot; omp/omo setting changes are separate events. */
 export function parseConversationMetadata(text: string, source: ConversationResponse["source"], before?: ConversationMetadata, piAgentDir?: string | null): ConversationMetadata {
   const metadata: ConversationMetadata = before ? { ...before } : { model: null, reasoning_effort: null };
   // Agy's exported rows do not attest the selected model or reasoning effort.
@@ -106,6 +120,8 @@ export function parseConversationMetadata(text: string, source: ConversationResp
   }
   // Muse names its model, but no effort or context window; most of its lines are skipped unparsed
   if (source === "muse-transcript") return { ...metadata, model: museModel(text, metadata.model) };
+  // pi states the provider on the same records that state usage, so the window is asked for
+  // from what this line says rather than remembered across sources
   let piProvider: string | null = null;
   for (const line of text.split("\n")) {
     let entry: RecordValue;

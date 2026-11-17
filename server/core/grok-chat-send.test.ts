@@ -11,6 +11,11 @@ const submitter = () => createSubmitText({
   SUBMIT_DEADLINE_MS: 20_000, TYPED_SETTLE_MS: 0, DRAFT_CLEAR_WAIT_MS: 0, DRAFT_CLEAR_POLL_MS: 0, SUBMIT_DELAY_MS: 0,
 });
 
+/**
+ * A stand-in Grok in pane w:p1, drawn as Grok 1.0.77 draws its screen (grok-screen.fake.ts). Enter on a typed prompt
+ * queues it during a turn, and sends it at rest; Enter on its empty prompt sends the top queued row now; Enter on its
+ * approval card answers it.
+ */
 function grok(options: { status?: string; herdr?: string; queued?: string[]; output?: string[]; minimal?: boolean; onQueued?: (state: GrokState) => void } = {}) {
   const state: GrokState = { status: options.status ?? "working", session: "s1", output: options.output ?? ["word1 word2 word3"], card: false, minimal: options.minimal ?? false, prompt: "", queue: [...options.queued ?? []], sent: [] };
   let queuedOnce = false;

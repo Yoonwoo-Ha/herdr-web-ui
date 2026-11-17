@@ -22,8 +22,9 @@ type Recorded = { sends: { sent: Read; after: Read }[] };
 const load = (name: string): Recorded =>
   JSON.parse(readFileSync(join(import.meta.dir, "..", "fixtures", "hermes-results", `${name}.json`), "utf8")) as Recorded;
 const recorded = load("status-repeat-120");
-// Hermes 0.21.5 redrew its input area for a fresh attach: the first send's detection read shows the
-// input line alone, without the status bar and rules around it.
+// A fresh Hermes 0.21.5 pane (120x40, same setup) on a loaded host, /status sent three times from a Chat page that had
+// just attached its terminal. Hermes redrew its input area for that attach: the first send's detection read shows the
+// input line alone, without the status bar and rules around it. The reads after each send are the screens once the block printed.
 const redrawn = load("status-first-redraw-120");
 
 afterEach(() => mock.restore());
@@ -36,6 +37,7 @@ const ownBlock = (read: Read): string => {
 
 function hermesPane(paneId: string, first: Read = recorded.sends[0]!.sent) {
   let shown: Read = first;
+  // rows another device has the terminal scrolled up by: herdr's detection read stays on the live screen
   let scrolledUp = 0;
   const pane = () => ({
     pane_id: paneId, workspace_id: "w", tab_id: "t", terminal_id: `${paneId}-terminal`, cwd: "/fixture", focused: false, revision: 0,

@@ -85,7 +85,8 @@ it.each([
 });
 
 // Claude moves to another session in the same process (/clear, /resume, a `claude attach` job's state rewritten): its
-// PID stays in front, so only the session it names tells the message's target went (#2279).
+// PID stays in front, so only the session it names tells the message's target went (#2279). `misses` reads after the
+// switch find no session, as a record caught while being rewritten does, before `to` is read.
 it.each([
   { when: "box", to: "B", misses: 0, label: "the input-box read before the paste, to a readable session", writes: [] as string[], state: "held" },
   { when: "box", to: null, misses: 0, label: "the input-box read before the paste, to an unreadable session", writes: [] as string[], state: "held" },
@@ -93,6 +94,8 @@ it.each([
   { when: "paste", to: "B", misses: 0, label: "the paste, to a readable session", writes: ["paste"] as string[], state: "uncertain" },
   { when: "paste", to: null, misses: 0, label: "the paste, to an unreadable session", writes: ["paste"] as string[], state: "uncertain" },
   { when: "paste", to: "A", misses: 1, label: "the paste, unreadable for one read (control)", writes: ["paste", "Enter"] as string[], state: "removed" },
+  // the window left (herdr cannot compare and write in one step): a switch during the process read that closes the
+  // last check before the paste reaches the paste, and the check before Enter withholds the Enter
   { when: "after check", to: "B", misses: 0, label: "the process read that closes the last check before the paste", writes: ["paste"] as string[], state: "uncertain" },
   { when: "replaced before paste", to: "A", misses: 0, label: "the last session read before the paste, to another process", writes: [] as string[], state: "held" },
   { when: "replaced before Enter", to: "A", misses: 0, label: "the last session read before Enter, to another process", writes: ["paste"] as string[], state: "uncertain" },
