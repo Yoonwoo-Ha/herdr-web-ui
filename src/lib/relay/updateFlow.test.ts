@@ -23,7 +23,6 @@ afterEach(() => {
   setTransport(nativeTransport);
 });
 
-/** Both web storages, as the page sees them; the returned maps are what each holds. */
 function webStorage(): { readonly local: Map<string, string>; readonly session: Map<string, string> } {
   const local = new Map<string, string>(), session = new Map<string, string>();
   for (const [key, values] of [["localStorage", local], ["sessionStorage", session]] as const) {
@@ -70,7 +69,6 @@ it("keeps a PC's admitted version in its saved record across a reload, never in 
     await flow.admit(opened, attempt);
     expect(observedVersions().get(offer.server_id)).toEqual({ version: "0.0.1", outdated: true });
     expect(states.at(-1)).toMatchObject({ kind: "outdated", update: { phase: "manual" } });
-    // a reload starts with nothing in memory and reads the saved records
     await loadObservedVersions(memoryStore(new Map()));
     expect(observedVersions().size).toBe(0);
     await loadObservedVersions(store);
@@ -141,7 +139,6 @@ it("never installs after cancellation while an update-status read was pending", 
 
 it.each([["pc-outdated", "0.0.1"], ["server-newer", "2.0.0"]] as const)("drops a %s admission cancelled while its version was being saved", async (_skew, version) => {
   webStorage();
-  // the tab's reload memory lives in window.sessionStorage
   Object.defineProperty(globalThis, "window", { configurable: true, value: globalThis });
   const offer = { v: 1 as const, server_id: "12".repeat(16), server_public_key: "unused", relay: "wss://relay.ovis.sh" };
   const devices = new Map([[offer.server_id, await savedDevice(offer.server_id)]]);
@@ -169,7 +166,6 @@ it.each([["pc-outdated", "0.0.1"], ["server-newer", "2.0.0"]] as const)("drops a
   } finally { flow.cancel(); opened.close(); }
 });
 
-/** Captures the actual controller/view boundary; transports below supply only PC responses. */
 function shellFixture() {
   const browser = createShellTestPage();
   const devices = new Map<string, RelayDevice>();

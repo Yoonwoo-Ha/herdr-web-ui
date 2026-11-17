@@ -1,4 +1,3 @@
-/** Hosted-shell routing and the pairing state machine. */
 // allow: SIZE_OK - One state-machine closure shares attempt ownership across connection, cancellation and admission handlers.
 import { createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -55,7 +54,6 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const findByCode = mount.findByCode ?? offerFromCode;
   const pendingPush = mount.pendingPush ?? indexedPendingPush;
   const registerPending = (serverId: string): void => {
-    // with this device's alert choices, as the app's own registration sends them, which then skips it
     registerPendingPush(serverId, pendingPush, withAlertFilters(alertPrefs(loadSettings()), readAlertFilters())).catch((error: unknown) => {
       console.warn("Ovis: the PC did not take this device's new push subscription", error);
     });
@@ -77,16 +75,13 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   let pressed: "unlisted" | "listed" | "own" | undefined;
   // bumped by every press and by everything that ends one (Not now, Back, another link): a press whose read lands later does nothing
   let press = 0;
-  // the sign-in, or its directory, was not read in time: what was not read says nothing, as after a read that failed
   let unanswered = false;
   let readWait: ReturnType<typeof setTimeout> | undefined;
   // the sign-in each confirm that names an account was drawn for (kept off the rendered state: it holds the tokens)
   const drawnFor = new WeakMap<RelayShellState, AccountSession>();
   const accountChanged = async (): Promise<void> => {
-    // a sign-in still finishing has not been read: its answer decides what the confirm says
     const read = account.state?.kind !== "signing-in";
     if (read) accountRead = true;
-    // an answer came, or there is no directory to wait for
     if (read && (account.state?.kind !== "signed-in" || account.state.pcs !== null)) unanswered = false;
     if (app === null && shown?.kind === "confirm") show(confirmOf(shown.offer));
     else if (frontUp()) { if (sheetJoin && shown) show(shown); else await showFront(); }
@@ -110,7 +105,6 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     if (signIn !== undefined && (said === "listed" || said === "unlisted")) drawnFor.set(state, signIn);
     return state;
   };
-  /** A confirm still "checking" when the wait runs out is drawn without what was not read (the sign-in, or its directory), so its button works. */
   const waitForRead = (): void => {
     clearTimeout(readWait);
     // fixed wait: a sign-in or an account service that takes longer than this counts as one that did not answer
@@ -120,11 +114,6 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       show(confirmOf(shown.offer));
     }, ACCOUNT_READ_WAIT_MS);
   };
-  /**
-   * Reads the sign-in and its directory again, with the confirm on "checking" meanwhile, then draws what holds now and
-   * hands it to `after`. Nothing happens once the press was ended (`press` moved), and a service that does not answer
-   * in time is not waited for.
-   */
   const readAgain = (offer: RelayOffer, after: (now: Extract<RelayShellState, { kind: "confirm" }>) => void, asked?: Extract<RelayShellState, { kind: "confirm" }>): void => {
     const mine = ++press;
     confirming = true;
@@ -188,7 +177,6 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     if (last !== attempt) return;
     comparison = null;
     if (pairsAgainWithoutKey(error, { ...attempt, codeless: attempt.codeless === true })) {
-      // a Cancel or another link while the key goes ends this recovery: the newer attempt owns the screen
       await store.remove(attempt.offer.server_id);
       if (last !== attempt) return;
       await connect({ ...attempt, refreshed: true });
@@ -216,7 +204,6 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   };
 
   const connect = async (attempt: Attempt): Promise<void> => {
-    // digits shown on an earlier try say nothing about how this one fails
     attempt.compared = false;
     last = attempt;
     opening?.abort();
@@ -250,9 +237,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       });
     } catch (error) {
       if (controller.signal.aborted) return;
-      // the sign-in the confirm named is not the one stored any more
       if (error instanceof ConsentChangedError && last === attempt) {
-        // nothing was paired: the question is asked again
         if (!attempt.paired && entry.offer === attempt.offer) { last = null; opening = null; readAgain(attempt.offer, () => undefined); return; }
         // a PC this page already paired opens with the key it holds, and joins no account
         if (attempt.paired) { await connect({ ...attempt, accountless: true }); return; }
@@ -291,7 +276,6 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     last = { ...attempt, fresh: false };
   };
   const openPc = (): void => { if (app === null && shown?.kind === "ready" && transport && last) enterApp(transport, last); };
-  /** `settled`: told once nothing more of the enrollment ends or renews the session (accountController.ts, EnrollOptions). */
   const enroll = (opened: RelayTransport, attempt: Attempt, settled?: () => void): void => {
     // the confirm said this device gets a key of its own: a sign-in stored since then adds nothing to its account here
     if (attempt.accountless) return;
@@ -307,13 +291,11 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     show, failed, reload: mount.reload ?? (() => reloadPage(entry.serverId)),
     accepted: (opened, attempt) => {
       if (transport !== opened) return;
-      // adding this PC to the account failed on an earlier open: it stops here, where Try again is, before the app
       if (attempt.retryEnrollment) { last = attempt; show({ kind: "ready", name: attempt.offer.name ?? null, server_id: attempt.offer.server_id, enrollment: attempt.accountEnrollment ? "pending" : "local" }); enroll(opened, attempt); return; }
       // paired with the account's key just now: the PC's row for this device joins the account by a link, which ends
       // the row's other sessions (this one too), and the session then signs in again. Both happen here, behind the
       // connecting screen, before the app has a terminal for them to end; the rest of the enrollment goes on behind the app
       if (attempt.fresh && attempt.accountEnrollment && !attempt.accountless) {
-        // an admission after an update hands a copy of the attempt: this one is the latest
         last = attempt;
         show({ kind: "connecting", name: attempt.offer.name ?? null });
         let waited: ReturnType<typeof setTimeout> | undefined;
@@ -341,7 +323,6 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const confirmed = (): void => {
     const asked = shown, offer = entry.offer;
     if (offer === null || asked?.kind !== "confirm" || asked.account === "checking") return;
-    // the Add-a-PC sheet's confirm has wording of its own, kept fresh by the front page's reads; with no account there is nothing to read
     if (sheetJoin !== null || !account.enabled) { pair(); return; }
     const named = drawnFor.get(asked);
     // a confirm that names an account was drawn for a sign-in: without one, there is nothing it can be held to
@@ -408,7 +389,6 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const forget = (): void => {
     const serverId = last?.offer.server_id ?? entry.serverId, name = last?.offer.name ?? null;
     cancelAttempt(); entry = { ...entry, offer: null };
-    // what a confirm left for a reload goes with the pairing it was for
     if (serverId !== null && deviceOnlyPc() === serverId) keepDeviceOnlyPc(null);
     if (serverId !== null && confirmedSignIn()?.server_id === serverId) keepConfirmedSignIn(null);
     void (async () => { if (serverId !== null) { account.cancelEnrollment(serverId); await forgetSavedPc(serverId, store); } show({ kind: "forgotten", name }); })();
@@ -449,7 +429,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
 
 
   // read, not taken: this load may itself be reloaded or interrupted before the PC opens, and the load after it must
-  // find them too. They go when the app opens (enterApp), when a confirm is acted on (connect), or with a Forget
+  // find them too.
   const deviceOnly = deviceOnlyPc(), namedSignIn = confirmedSignIn();
   if (arrived()) return;
   if (entry.serverId !== null) {

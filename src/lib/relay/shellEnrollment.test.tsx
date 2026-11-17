@@ -28,7 +28,6 @@ describe("account pairing completion", () => {
   beforeEach(() => { browser = createShellTestPage(); browser.setVisibility("hidden"); });
   afterEach(() => { jest.useRealTimers(); for (const transport of transports.splice(0)) transport.close(); setTransport(nativeTransport); browser.dispose(); });
 
-  /** `code`: a link with a pairing code, opened by navigation (no sheet). `outdatedFirst`: the PC answers once as a version too old, and Try again reaches it updated. */
   async function pairing(introduction?: () => Response, options: { readonly code?: string; readonly outdatedFirst?: boolean } = {}) {
     const identity = generateKeyPair();
     const offer = { v: 1 as const, server_id: deriveServerId(identity.publicKey), server_public_key: exportPublicKey(identity.publicKey), relay: "wss://relay.ovis.sh", name: "Desk", ...(options.code === undefined ? {} : { code: options.code }) };
@@ -132,7 +131,6 @@ describe("account pairing completion", () => {
     expect((await run.rows())[0]).toMatchObject({ paired: true, linked: false, enrollment: "failed" });
     expect(run.apps()).toBe(1);
     expect(run.kinds).not.toContain("ready");
-    // the next open of the PC's own page: the enrollment is tried again, and its failure stays on screen before the app
     await run.mountAt(run.pcPage);
     await until(() => { const state = run.current().state; return state.kind === "ready" && state.enrollment === "failed"; });
     const state = run.current().state;
@@ -158,7 +156,6 @@ describe("account pairing completion", () => {
     const run = await pairing(() => { introductions++; return Response.json({ pcs: [] }); }, options);
     jest.useFakeTimers();
     run.enrollment.resolve(Response.json({ results: [] }));
-    // the enrollment signs and reads between its waits, which no faked clock runs: each turn lets that work land
     for (let turn = 0; (await run.rows())[0]?.enrollment === "pending" && turn < 5_000; turn++) {
       if (introductions > 0 && jest.getTimerCount() > 0) jest.advanceTimersByTime(3_000);
       await crypto.subtle.digest("SHA-256", new Uint8Array(1));
@@ -178,7 +175,6 @@ describe("account pairing completion", () => {
     const line = /data-pc-enrollment="">([^<]+)</.exec(html)?.[1];
     expect(action?.[2]).toBe("Open");
     expect(line).toBe("Account setup is incomplete. Open it to try again.");
-    // Open is a link to the PC's own page, which retries the saved failed enrollment as it opens
     const before = run.enrolls();
     run.retrySuccess();
     await run.mountAt(new URL(action?.[1] ?? "/", "https://app.ovis.sh").href);
