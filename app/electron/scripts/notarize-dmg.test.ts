@@ -105,6 +105,7 @@ describe("notarizeDmg", () => {
     const { waits, sleep, budget } = sleeper();
     budget.waited = 6 * 60_000;
     await expect(notarizeDmg("dist/Ovis.dmg", { env: key, run, log: quiet, sleep, budget })).rejects.toThrow(/Error 68/);
+    // 6 min spent: 20 + 40 + 60 s fill the 8 min budget, so the 90 s wait is never taken
     expect(waits).toEqual([20_000, 40_000, 60_000]);
     expect(calls.filter((call) => call[2] === "staple")).toHaveLength(4);
   });

@@ -22,6 +22,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * A plain `ws://` WebSocket client (RFC 6455) for one direct carrier (OvisDirectPlugin): the app has no
+ * WebSocket library, and a carrier is never TLS (Noise inside the relay channel proves the PC).
+ * Bounded both ways: a message over MAX_MESSAGE, or more than MAX_MESSAGE
+ * bytes or MAX_QUEUED frames waiting to go out (pongs included), ends the socket with 1009; a peer that
+ * does not finish the upgrade within the handshake time ends it too.
+ */
 final class DirectSocket {
     static final int MAX_MESSAGE = 4 * 1024 * 1024;
     static final int MAX_BASE64_MESSAGE = (MAX_MESSAGE + 2) / 3 * 4;
@@ -44,6 +51,7 @@ final class DirectSocket {
         void onClose(int code, String reason, boolean failed);
     }
 
+    /** host and port of `url` when it is exactly a direct carrier's channel address on a private IPv4 address, else null */
     static String[] carrier(String url) {
         if (url == null) return null;
         Matcher match = CARRIER.matcher(url);
@@ -53,6 +61,7 @@ final class DirectSocket {
         int b = Integer.parseInt(octets[1]);
         for (String octet : octets) if (Integer.parseInt(octet) > 255) return null;
         if (Integer.parseInt(match.group(2)) > 65535) return null;
+        // RFC 1918, link-local, and Tailscale's 100.64/10 (the PC's Tailscale address, which only its tailnet reaches)
         boolean privateAddress = a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || (a == 169 && b == 254) || (a == 100 && b >= 64 && b <= 127);
         return privateAddress ? new String[] { match.group(1), match.group(2) } : null;
     }
@@ -104,6 +113,7 @@ final class DirectSocket {
         enqueue(0x2, bytes, false);
     }
 
+    /** A code an endpoint may not send (1005, 1006, 1015, an unassigned one) goes out as 1000. */
     void close(int code, String reason) {
         if (!validCloseCode(code)) code = 1000;
         boolean beforeUpgrade;

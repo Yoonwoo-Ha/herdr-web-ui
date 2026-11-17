@@ -1,4 +1,6 @@
 name: Desktop app
+# The feed is the latest release's assets, so an installed app sees a version once it
+# is GitHub's latest (docs/development.md#releasing).
 on:
   pull_request:
     paths:
@@ -17,6 +19,7 @@ on:
         description: 'Release tag (vX.Y.Z)'
         required: true
         type: string
+    # only the Mac signing hook's secrets, never the repository's others
     secrets:
       MAC_DEVELOPER_ID_P12:
         required: false
@@ -96,6 +99,10 @@ jobs:
       - name: Type check
         working-directory: app/electron
         run: bun run typecheck
+      # The hook for a signed and notarized Mac build: off until the repository variable
+      # DESKTOP_MAC_SIGN is 'true', then it takes the Developer ID and notary key Ovis for Mac uses
+      # (app/mac/README.md): electron-builder signs with them (scripts/sign-mac.mjs) and
+      # scripts/notarize-dmg.mjs notarizes and staples, failing rather than shipping an unnotarized dmg.
       - name: Mac signing
         id: sign
         if: inputs.tag != '' && startsWith(matrix.target, 'darwin-') && vars.DESKTOP_MAC_SIGN == 'true'
@@ -118,6 +125,9 @@ jobs:
           (umask 077 && printf '%s' "$MAC_NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary-key.p8")
           echo "key=$RUNNER_TEMP/notary-key.p8" >> "$GITHUB_OUTPUT"
           echo "on=true" >> "$GITHUB_OUTPUT"
+      # The hook for a signed Windows installer: off (unsigned, SmartScreen warns) until the repository
+      # variable DESKTOP_WIN_SIGN is 'true', then electron-builder signs the app and the installer with
+      # the code signing certificate in WIN_CSC_LINK (a base64 .pfx) and WIN_CSC_KEY_PASSWORD.
       - name: Windows signing
         id: winsign
         if: inputs.tag != '' && startsWith(matrix.target, 'win32-') && vars.DESKTOP_WIN_SIGN == 'true'
@@ -174,7 +184,8 @@ jobs:
             app/electron/dist/Ovis-*
             app/electron/dist/latest*.yml
           if-no-files-found: error
-  # Each Mac build wrote its own latest-mac.yml; electron-updater reads one for both CPUs.
+  # Each Mac build wrote its own latest-mac.yml; electron-updater reads one for both CPUs. No secret
+  # and read-only: it gathers the files to attach, with the two Mac feeds merged.
   feed:
     needs: build
     if: inputs.tag != ''
@@ -216,6 +227,7 @@ jobs:
           name: desktop-release-files
           path: ${{ runner.temp }}/release
           if-no-files-found: error
+  # the write token runs no repository code: it only uploads what feed gathered
   attach:
     needs: feed
     runs-on: ubuntu-24.04
@@ -237,10 +249,13 @@ jobs:
             echo "::error::$RELEASE_TAG is not a published release." >&2
             exit 1
           fi
+          # installed apps read the latest release's feed: replacing its installers (rebuilt, with other
+          # hashes) under that feed would fail their updates, so a latest release is fixed by a new one
           if [ "$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)" = "$RELEASE_TAG" ]; then
             echo "::error::$RELEASE_TAG is already the latest release; publish a new patch release instead of replacing its desktop files." >&2
             exit 1
           fi
+          # installers first, the feed files last: an app never reads a feed whose files are missing
           cd "$RUNNER_TEMP/release"
           find . -maxdepth 1 -type f ! -name 'latest*.yml' -print0 | xargs -0 gh release upload "$RELEASE_TAG" --clobber
           gh release upload "$RELEASE_TAG" latest*.yml --clobber

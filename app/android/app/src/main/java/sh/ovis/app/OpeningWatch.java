@@ -1,5 +1,12 @@
 package sh.ovis.app;
 
+/**
+ * Times are in milliseconds on any one clock (SystemClock.elapsedRealtime
+ * in the app); byte counts are the app's received total (TrafficStats), or a negative number where
+ * the phone cannot count them. That total is the whole app's, not this load's alone (a check still
+ * running from an earlier screen counts too), which is why bytes without an answer only put the
+ * limit off, never past UNANSWERED_MAX_MS.
+ */
 final class OpeningWatch {
     enum Stage {
         OPENING,
@@ -23,6 +30,11 @@ final class OpeningWatch {
 
     static final long UNANSWERED_MAX_MS = 60000;
 
+    /**
+     * The most the bar shows, in thousandths, until the client is up: the byte count includes TLS and
+     * headers, so it can reach the files' total before the last of them has arrived, and the
+     * script still has to run.
+     */
     static final int MAX_PERMILLE = 950;
 
     private int shownPermille = -1;

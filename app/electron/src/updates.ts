@@ -1,3 +1,8 @@
+/**
+ * Whether the app updates itself, and from where. A packaged build does when it was built with a
+ * feed (OVIS_UPDATE_FEED at build time writes electron-builder's app-update.yml); OVIS_UPDATE_URL
+ * only replaces that feed, since electron-updater reads app-update.yml again when it downloads.
+ */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AppUpdater } from "electron-updater";
@@ -13,6 +18,11 @@ export type Installer = "default" | "appimage" | "deb";
 export type UpdatePlan = { enabled: false; reason: string } | { enabled: true; feed: string | null; channel: UpdateChannel; installer: Installer };
 
 /**
+ * How a downloaded .deb is installed (as root, behind the password prompt): apt-get resolves its
+ * dependencies in the same command, fails when it did not install, and with --no-remove stops
+ * rather than remove another package. No --allow-* flags: the feed only ever offers a newer
+ * version, and a local file needs no repository signature.
+ *
  * `file` is electron-updater's installerPath, escaped for one shell except for `'`. Behind the
  * prompt (`prompted`) it runs the command as `bash -c '<command>'`, where a `'` would end the
  * quotes: it goes in as `\'\''`. Run as root, one shell reads the command, and `\'` is enough.
@@ -43,8 +53,11 @@ export function updatePlan(options: { packaged: boolean; env: Env; platform: str
     // depends on which target builds first). An AppImage only when this program runs from its mount:
     // APPIMAGE alone may be left over from another AppImage that started this one, and the
     // AppImage updater would overwrite that file.
+    // (an APPDIR of / would contain every program)
     const mount = env["APPDIR"]?.replace(/\/+$/, "");
     if (env["APPIMAGE"] && mount && options.execPath?.startsWith(`${mount}/`)) {
+      // the AppImage updater puts the new file in the place of the old one. In a folder the user cannot
+      // write (one under /opt, say) that fails, after Restart to Update has stopped the server for it
       const folder = dirname(env["APPIMAGE"]);
       if (options.writable && !options.writable(folder)) return { enabled: false, reason: `the AppImage is in a folder that cannot be written (${folder}), so it cannot replace itself there` };
       installer = "appimage";
@@ -80,6 +93,7 @@ export interface HeldUpdate {
  * refuses).
  */
 export interface UpdateOffer {
+  /** a Mac only: downloaded and handed to Squirrel, which has not said it holds it */
   staging: HeldUpdate | null;
   ready: HeldUpdate | null;
 }
@@ -88,16 +102,33 @@ export const NO_OFFER: UpdateOffer = { staging: null, ready: null };
 
 export type UpdaterEvent = { is: "downloaded"; update: HeldUpdate } | { is: "staged" } | { is: "error" };
 
+/**
+ * The offer after `event`. An error drops what Squirrel had not taken yet (the next check hands it
+ * over again); what it already holds stays, also while a newer version stages, since that is what
+ * a restart installs until the newer one is held.
+ */
 export function nextOffer(offer: UpdateOffer, event: UpdaterEvent, platform: string): UpdateOffer {
   if (event.is === "downloaded") return platform === "darwin" ? { ...offer, staging: event.update } : { staging: null, ready: event.update };
   if (offer.staging === null) return offer;
   return event.is === "staged" ? { staging: null, ready: offer.staging } : { ...offer, staging: null };
 }
 
+/**
+ * The update the app still holds: none once its file is gone. A later download that fails empties
+ * electron-updater's folder, the held file with it, and Restart to Update would then stop the
+ * server and find nothing to install.
+ */
 export function stillHeld<Held extends HeldUpdate>(held: Held | null, exists: (file: string) => boolean): Held | null {
   return held !== null && exists(held.file) ? held : null;
 }
 
+/**
+ * Whether a check downloads the version the feed names (`found`). Not the one the app already
+ * holds: electron-updater answers that download with the file it has and says "update-downloaded"
+ * again, every check (on a Mac it copies the zip and hands it to Squirrel again first). A held
+ * file that is gone is downloaded again, and so is anything once the updater reported an error
+ * (`failed`): whatever failed, a Mac's staging of the download too, gets the try it always got.
+ */
 export function downloadsUpdate(check: { found: string; held: HeldUpdate | null; failed: boolean; exists: (file: string) => boolean }): boolean {
   return check.failed || stillHeld(check.held, check.exists)?.version !== check.found;
 }

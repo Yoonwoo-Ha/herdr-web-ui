@@ -1,6 +1,8 @@
 name: Growth snapshot
-# GitHub keeps the traffic for 14 days only, and anyone signed in to GitHub can download the artifacts
-# of a public repository, so the result is encrypted before upload.
+# Once a week, the repository's stars (their dates, never who) and its traffic (views, clones,
+# referrers, paths), which GitHub keeps for 14 days only: scripts/growth-snapshot.ts. The result is
+# encrypted before upload, because anyone signed in to GitHub can download the artifacts of a public
+# repository. Secrets and reading the result: docs/development.md, "Growth snapshot".
 on:
   schedule:
     - cron: "17 3 * * 1"

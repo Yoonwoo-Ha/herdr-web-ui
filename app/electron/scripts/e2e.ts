@@ -1,3 +1,8 @@
+/**
+ * End-to-end checks of a built desktop app, on a PC without herdr: everything runs in a fresh
+ * temporary HOME with its own hc session, user data folder and PATH, so the PC's own herdr, hc
+ * core and Ovis state are never touched.
+ */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -26,6 +31,7 @@ if (updateMode && process.platform !== "linux") throw new Error("--update runs o
 const root = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "ovis-e2e-"));
 const out = resolve(option("--out") ?? mkdtempSync(join(tmpdir(), "ovis-e2e-out-")));
 mkdirSync(out, { recursive: true });
+/** in the environment of every process the run starts, and inherited by theirs: what cleanup ends, and the inspector proves */
 const runId = randomUUID();
 const checks: Check[] = [];
 const owned: ChildProcess[] = [];
@@ -230,6 +236,7 @@ function command(app: string): string {
   return app.endsWith(".app") ? join(app, "Contents", "MacOS", basename(app, ".app")) : app;
 }
 
+/** Electron's own user data folder in the run's HOME, as an app started without --user-data-dir uses */
 const defaultUserData = () => process.platform === "darwin" ? join(home, "Library", "Application Support", "Ovis") : join(home, ".config", "Ovis");
 
 async function launch(app: string, userData: string | null, options: { env?: Record<string, string>; args?: string[]; label: string }): Promise<App> {
@@ -247,6 +254,7 @@ async function launch(app: string, userData: string | null, options: { env?: Rec
   await inspector.send("Runtime.enable");
   await inspector.send("Runtime.runIfWaitingForDebugger");
   const frame = (await within(paused, 60_000, "the app's first pause")).callFrames[0];
+  // another program may have taken the port between the probe and the app: only this run's app is driven
   const whose = await inspector.send("Debugger.evaluateOnCallFrame", { callFrameId: frame.callFrameId, expression: "process.env.OVIS_E2E_RUN ?? null", returnByValue: true });
   if (whose.result?.value !== runId) throw new Error(`The inspector on port ${port} is not this run's app`);
   const hooked = await inspector.send("Debugger.evaluateOnCallFrame", { callFrameId: frame.callFrameId, expression: HOOK, returnByValue: true });
@@ -460,6 +468,7 @@ async function update(): Promise<void> {
   for (const name of readdirSync(join(builds, "new"))) if (name.endsWith(".AppImage") || name.endsWith(".yml") || name.endsWith(".blockmap")) copyFileSync(join(builds, "new", name), join(feedDir, name));
   check("the newer build writes its feed file", existsSync(join(feedDir, "latest-linux.yml")));
 
+  // the feed, over https with a certificate made for it (the app is told to accept it)
   const cert = join(root, "cert");
   mkdirSync(cert);
   await Bun.$`openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=127.0.0.1 -addext subjectAltName=IP:127.0.0.1 -keyout ${join(cert, "key.pem")} -out ${join(cert, "cert.pem")}`.quiet();
@@ -482,6 +491,7 @@ async function update(): Promise<void> {
     copyFileSync(join(builds, "old", oldImage), installed);
     chmodSync(installed, 0o755);
 
+    // in a folder that cannot be written the AppImage cannot replace itself: it says its updates are off, and asks its feed for nothing
     if (process.getuid?.() === 0) {
       log("run as root, who can write everywhere: the AppImage in a folder that cannot be written is not checked");
     } else {
@@ -616,6 +626,7 @@ async function update(): Promise<void> {
 }
 
 
+/** the processes this run started, and theirs: every one whose environment carries the run's id */
 async function runProcesses(): Promise<number[]> {
   const mark = `OVIS_E2E_RUN=${runId}`;
   if (process.platform === "linux") {
@@ -635,6 +646,7 @@ async function cleanUp(): Promise<void> {
   for (const userData of [join(root, "user-data"), defaultUserData()]) {
     if (existsSync(join(userData, "bin", "herdr-core"))) await within(hc(userData, "server", "stop"), 30_000, "hc server stop").catch(() => {});
   }
+  // a server or app still up may start the core again while the others go: swept until none is left
   const sweep = async () => {
     const pids = (await runProcesses()).filter((pid) => pid !== process.pid);
     for (const pid of pids) {

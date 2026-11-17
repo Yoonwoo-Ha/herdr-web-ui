@@ -65,6 +65,7 @@ final class RunningCodeTests: XCTestCase {
         let release = try code("release-3")
         XCTAssertNil(Model.codeDir(other, root: root))
         XCTAssertNil(Model.codeDir("release-3", root: root))
+        // a release whose plugin.ts is a link out of it, as scripts/plugin-runtime.ts refuses
         try FileManager.default.removeItem(atPath: "\(release)/scripts/plugin.ts")
         try FileManager.default.createSymbolicLink(atPath: "\(release)/scripts/plugin.ts", withDestinationPath: "\(other)/scripts/plugin.ts")
         XCTAssertNil(Model.codeDir(release, root: root))
@@ -170,6 +171,7 @@ final class LogRotationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let log = dir.appendingPathComponent("herdr-server.log").path
         try Data("0123456789abcdef\n".utf8).write(to: URL(fileURLWithPath: log))
+        // launchd opens the log for appending and keeps it open while herdr runs
         let launchd = open(log, O_WRONLY | O_APPEND)
         XCTAssertGreaterThanOrEqual(launchd, 0)
         defer { close(launchd) }

@@ -243,6 +243,7 @@ namespace Ovis
 
             private void Format(int mask)
             {
+                // Level M's two format bits are zero.
                 int rem = mask;
                 for (int i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >> 9) * 0x537);
                 int bits = (mask << 10 | rem) ^ 0x5412;
@@ -281,6 +282,7 @@ namespace Ovis
             private int Penalty()
             {
                 int result = 0, dark = 0;
+                // N1 and N3: same-color runs and 1:1:3:1:1 finder-like runs.
                 for (int axis = 0; axis < 2; axis++)
                     for (int line = 0; line < size; line++)
                     {
@@ -313,6 +315,7 @@ namespace Ovis
                     {
                         bool color = Modules[y, x];
                         if (color) dark++;
+                        // N2: monochrome 2x2 blocks.
                         if (x + 1 < size && y + 1 < size && color == Modules[y, x + 1] &&
                             color == Modules[y + 1, x] && color == Modules[y + 1, x + 1])
                             result += 3;
@@ -323,6 +326,7 @@ namespace Ovis
 
             private void AddHistory(int run, int[] history)
             {
+                // Treat the outside as a light border.
                 if (history[0] == 0) run += size;
                 Array.Copy(history, 0, history, 1, history.Length - 1);
                 history[0] = run;

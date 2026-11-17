@@ -19,6 +19,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "OvisAuth")
 public class OvisAuthPlugin extends Plugin {
     private PluginCall waiting;
+    /** the state of the sign-in waiting: only a return naming it is taken */
     private String expectedState;
 
     private void release(PluginCall call) {
@@ -68,6 +69,7 @@ public class OvisAuthPlugin extends Plugin {
         if (data == null || !"ovis".equals(data.getScheme()) || !"account".equals(data.getHost()) || !"/callback".equals(data.getPath())) return;
         PluginCall call = waiting;
         if (call == null) return;
+        // another app can send this address too: only this sign-in's own return, with a code or an error, ends the wait
         String state = data.getQueryParameter("state");
         boolean answered = data.getQueryParameter("code") != null || data.getQueryParameter("error") != null;
         if (expectedState == null || !expectedState.equals(state) || !answered) return;

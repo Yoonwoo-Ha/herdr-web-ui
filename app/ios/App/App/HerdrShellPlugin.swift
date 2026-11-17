@@ -24,6 +24,8 @@ public class HerdrShellPlugin: CAPPlugin, CAPBridgedPlugin {
         ])
     }
 
+    /// `url`: an http or https address; the address itself (a pairing link's code or a relay pairing
+    /// offer's fragment included) is the first page.
     @objc func open(_ call: CAPPluginCall) {
         guard let text = call.getString("url"), let url = URL(string: text), let origin = PCStore.origin(of: url) else {
             call.reject("That is not an http or https address.")

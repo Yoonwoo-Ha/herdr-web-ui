@@ -8,6 +8,7 @@ export function t(en, ko) {
   return korean ? ko : en;
 }
 
+/** On a Korean phone, puts in each element's data-ko text, as text: a page with the native bridge has no HTML sink. */
 export function localize() {
   if (!korean) return;
   document.documentElement.lang = "ko";
@@ -29,26 +30,37 @@ export function publicHttp(url) {
   return url.protocol === "http:" && !homeHost(url.hostname);
 }
 
+/** Whether `hostname` (a URL's) is this phone itself: localhost, 127.0.0.0/8 or ::1. */
 export function loopbackHost(hostname) {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   return host === "localhost" || host.endsWith(".localhost") || /^127\.\d+\.\d+\.\d+$/.test(host) || host === "::1";
 }
 
+/** Whether `hostname` is a MagicDNS name or a Tailscale IP (100.64.0.0/10, fd7a:115c:a1e0::/48), which opens only while Tailscale is on; error.html has the same test. */
 export function tailnetHost(hostname) {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   const ipv4 = host.match(/^100\.(\d+)\.\d+\.\d+$/);
   return host.endsWith(".ts.net") || (ipv4 !== null && Number(ipv4[1]) >= 64 && Number(ipv4[1]) <= 127) || host.startsWith("fd7a:115c:a1e0:");
 }
 
+/**
+ * Whether `hostname` is an address of a home network or a tailnet, which opens only from inside it:
+ * this phone itself, a private or link-local IP, a Tailscale address, a one-word name or a name
+ * under .local, .lan, .home.arpa or .internal. Any other name is a public server. error.html has
+ * the same test.
+ */
 export function homeHost(hostname) {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (loopbackHost(host) || tailnetHost(host)) return true;
   const ipv4 = host.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
   if (ipv4) {
     const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    // 10/8, 172.16/12, 192.168/16 and link-local 169.254/16 (127/8 and Tailscale's 100.64/10 above)
     return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
   }
+  // unique local fc00::/7 and link-local fe80::/10 (::1 above)
   if (host.includes(":")) return /^f[cd]/.test(host) || /^fe[89ab]/.test(host);
+  // a one-word name (a MagicDNS short name) or a home network name
   return !host.includes(".") || /\.(local|lan|home\.arpa|internal)$/.test(host);
 }
 
@@ -100,6 +112,11 @@ function refusedHelp(url, host) {
   ) : text;
 }
 
+/**
+ * What the user typed or scanned, as the URL to open, or null. A missing scheme becomes
+ * http for an IPv4 address (a tailnet or LAN IP, served plain) and https for a name.
+ * A pairing link (`?pair=CODE`, the PC's QR code) keeps its code.
+ */
 export function parseAddress(text) {
   let value = String(text).trim();
   if (value === "") return null;
@@ -113,6 +130,15 @@ export function parseAddress(text) {
 const OFFER = "#offer=";
 const SCOPE = /^\/s\/([0-9a-f]{32})\/?$/;
 
+/**
+ * What `url` (from parseAddress) opens through the Ovis relay, or null for a PC's own address.
+ * A PC's page on the app's origin, `/s/<server_id>/`, with its pairing offer (`#offer=`, the QR code
+ * the PC shows for the relay) or without (a PC saved before), is `{ url, scope, name }`: the address
+ * to open, the fragment kept, the scope the app saves the PC under, and its label from the offer.
+ * Anything else is `{ error }`: "foreign-offer" for an offer on another origin, which only the app's
+ * origin may take, "bad-offer" for an offer that does not name this scope's PC, and "not-a-pc" for
+ * another page of the app's origin. The hosted shell checks the offer in full before it pairs.
+ */
 export function relayLink(url, appOrigin = APP_ORIGIN) {
   if (url.origin !== new URL(appOrigin).origin) return url.hash.startsWith(OFFER) ? { error: "foreign-offer" } : null;
   const serverId = SCOPE.exec(url.pathname)?.[1];

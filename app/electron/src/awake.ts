@@ -1,3 +1,8 @@
+/**
+ * The server the app runs writes how many agents work (server/desktop-activity.ts); while the setting
+ * is on, the server runs and one works, the app holds off system sleep (Electron's powerSaveBlocker,
+ * `prevent-app-suspension`: the display may still turn off).
+ */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { desktopText, type TextKey } from "./text.ts";

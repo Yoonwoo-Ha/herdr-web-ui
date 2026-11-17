@@ -1,4 +1,7 @@
 name: Windows terminal QA
+# A mirrored pane on native Windows (scripts/windows-terminal-browser-qa.ts): there the browser
+# draws a pane from pane.read instead of attaching to it.
+# GitHub-hosted only: a fork's pull request never reaches the self-hosted runners.
 on:
   pull_request:
     paths:
@@ -51,6 +54,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-ci
+      # herdr's own installer takes its newest release; CI tests against 0.9.3 everywhere else
       - name: Install checksum-pinned herdr 0.9.3
         shell: pwsh
         run: |

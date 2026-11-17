@@ -1,4 +1,6 @@
 name: Release validation
+# The verdict job names which of the two validated the commit, and release.yml's publish job refuses
+# to tag without that name: a skipped, failed or cancelled job here can stop a release, never pass one.
 on:
   workflow_call:
     inputs:
@@ -23,9 +25,12 @@ permissions:
 jobs:
   reuse:
     name: Main's CI for this commit
+    # GitHub-hosted whatever the runner variables say: it may wait for main's run, which needs the
+    # self-hosted runners itself, and scripts/ci-runner-route.sh would count a job waiting there as busy
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     continue-on-error: true
+    # actions: read lets the script read main's run and its jobs
     permissions:
       contents: read
       actions: read
@@ -46,8 +51,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REVALIDATE: ${{ inputs.revalidate }}
+          # main's run takes 15 to 30 minutes, so one still going is given 40
           RELEASE_CI_WAIT_SECONDS: '2400'
         run: |
+          # only a whole yes with its run id is passed on: a crash, half an answer or anything else is a no
           answer=$(bun scripts/release-ci-reuse.ts) || answer=''
           yes=$'^green=true\nrun=[1-9][0-9]*$'
           if [[ "$answer" =~ $yes ]]; then
@@ -55,7 +62,13 @@ jobs:
           else
             printf 'green=false\nrun=\n' >> "$GITHUB_OUTPUT"
           fi
-  # a job that may fail reports success either way: the verdict reads the answer its `passed` step writes
+  # ci.yml's Fast checks once more, for a release that main's run stands in for. That run's own Fast
+  # checks ran where a push to main runs it, the self-hosted PC, whose container has no pwsh, no
+  # setfacl and no process of another user: the unit tests that need one skip themselves there. Here
+  # they run on GitHub's image whatever the runner variables say.
+  # When the answer is no, ci.yml runs Fast checks of its own and
+  # this job's is not read, so it may fail without failing the run; the verdict then reads the
+  # answer its `passed` step writes, since a job that may fail reports success either way.
   fast:
     name: Fast checks (GitHub-hosted)
     if: ${{ !inputs.revalidate }}
@@ -103,8 +116,10 @@ jobs:
           if-no-files-found: ignore
   ci:
     needs: reuse
+    # skipped only for a verified yes: a reuse job that failed, was skipped or gave no answer runs it
     if: ${{ !cancelled() && (inputs.revalidate || needs.reuse.result != 'success' || needs.reuse.outputs.green != 'true') }}
     uses: ./.github/workflows/ci.yml
+    # the Release run publishes and signs: every job of it is GitHub-hosted and cacheless (scripts/privileged-jobs-workflow.test.ts)
     with:
       hosted_only: true
     permissions:

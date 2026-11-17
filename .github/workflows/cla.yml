@@ -2,6 +2,9 @@ name: CLA Assistant
 # Asks every commit author of a pull request to sign CLA.md once, by commenting the sign phrase on
 # the PR, and records the signature in signatures/cla.json on the `cla-signatures` branch (the
 # branch must exist; it holds nothing else). The maintainer and bots are allowlisted.
+# pull_request_target runs this file from main with the base repository's token, so a fork's PR
+# is checked without a maintainer approving the run. It never checks out or runs the PR's code:
+# the action reads the PR's commit authors through the API only.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
@@ -25,7 +28,11 @@ jobs:
       # The action checks only commit authors, which anyone can set to another account's email, so
       # the account that opened the PR must also author one of its commits and sign. Without a
       # linked account the action falls back to the free-text git author name, which the allowlist
-      # would accept (`devswha`, `x[bot]`), and it reads only the first 100 commits.
+      # would accept (`devswha`, `x[bot]`), and it reads only the first 100 commits. When the
+      # maintainer opens a PR from someone else's fork, the fork's owner stands in for the opener;
+      # a fork with no personal owner (an organization's, or a deleted one) needs an outside opener.
+      # Co-authors are not checked: agents co-author as ordinary accounts (`claude`, `cursoragent`),
+      # and the action takes a signature only from a commit author.
       - name: Require a GitHub account on every commit
         shell: bash
         env:

@@ -1,3 +1,6 @@
+// Ovis for Mac writes this into the page at a new address (another port is another origin, with
+// storage of its own) before the page's code starts: the unsent drafts read from the page the window
+// left (WebPage.swift). Nothing here sends anything; a draft waits in the page for Send or Discard.
 function ovisCarryDrafts(storage, carried, shared, token, loaded, given, post) {
   const MARK = "ovis-mac:carried";
   let mark = null;
@@ -29,6 +32,7 @@ function ovisCarryDrafts(storage, carried, shared, token, loaded, given, post) {
       } catch {
       }
     }
+    // the mark first, with every baseline: a draft written without one could be written again over typing
     if (!save()) return;
     if (!loaded && !shared) {
       try {

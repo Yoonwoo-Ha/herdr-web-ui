@@ -27,6 +27,11 @@ namespace Ovis
         public static readonly string InstalledExe = Path.Combine(LocalAppData, "Programs", "Ovis", "Ovis.exe");
         public static readonly string StartMenuShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Ovis.lnk");
 
+        /// <summary>
+        /// The PATH a new terminal would get, read again from the registry: an app opened from Explorer keeps the
+        /// PATH of the login, and Git, herdr or Bun installed since are on the new one. The official installers'
+        /// own directories come first, as install.ps1 puts them.
+        /// </summary>
         public static void RefreshPath()
         {
             var parts = new[]
@@ -42,6 +47,7 @@ namespace Ovis
             if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HOME"))) Environment.SetEnvironmentVariable("HOME", Home);
         }
 
+        /// <summary>The first program of that name on PATH, as cmd would find it.</summary>
         public static string Which(string name)
         {
             foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
@@ -54,6 +60,7 @@ namespace Ovis
                         var candidate = Path.Combine(directory, name + extension);
                         if (File.Exists(candidate)) return candidate;
                     }
+                    // a PATH entry with characters a path cannot have
                     catch (ArgumentException) { }
                 }
             }
@@ -69,6 +76,7 @@ namespace Ovis
             }
         }
 
+        /// <summary>True when this process runs from the Store's MSIX (it has package identity).</summary>
         public static bool Packaged
         {
             get

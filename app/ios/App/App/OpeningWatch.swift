@@ -43,6 +43,9 @@ struct OpeningWatch {
         return shown
     }
 
+    /// Whether `host` (a URL's host, IPv6 in brackets or not) is an address of a home network or a
+    /// tailnet, which opens only from inside it, as homeHost in app/web/shell.js decides: only there
+    /// do the PC, the home network and its firewall explain no answer.
     static func homeHost(_ host: String) -> Bool {
         let name = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
         if name == "localhost" || name.hasSuffix(".localhost") || name == "::1" || name.hasSuffix(".ts.net") || name.hasPrefix("fd7a:115c:a1e0:") { return true }

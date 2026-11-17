@@ -16,6 +16,7 @@ describe("extractedAppDir", () => {
   it("leaves a FUSE mount, a .deb install and another AppImage's folder alone", () => {
     expect(extractedAppDir({ ...env, APPDIR: "/tmp/.mount_OvisAb" }, "/tmp/.mount_OvisAb/ovis")).toBeNull();
     expect(extractedAppDir({}, "/opt/Ovis/ovis")).toBeNull();
+    // started from an unpacked AppImage of another program: its APPDIR is not where this one runs
     expect(extractedAppDir(env, "/opt/Ovis/ovis")).toBeNull();
     expect(extractedAppDir({ ...env, APPIMAGE: undefined }, `${dir}/ovis`)).toBeNull();
     expect(extractedAppDir({ ...env, APPDIR: "/tmp/appimage_extracted_x/../home" }, "/tmp/appimage_extracted_x/../home/ovis")).toBeNull();

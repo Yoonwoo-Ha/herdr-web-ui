@@ -15,6 +15,8 @@ namespace Ovis
 
         public MainForm()
         {
+            // made here, not in a field initializer: the Model keeps the window thread's context, which the
+            // base Form constructor installs
             model = new Model();
             Text = "Ovis";
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -227,6 +229,7 @@ namespace Ovis
             }
             else if (step == PhoneStep.TokenNeeded)
             {
+                // what the server told without its token is not that Tailscale is missing: say what stood in the way
                 body.Controls.Add(Heading(Lang.L("Ovis cannot read this PC's phone address", "이 PC의 휴대폰 주소를 읽지 못했습니다")));
                 body.Controls.Add(Paragraph(Lang.L(
                     "The Ovis server asks for its token, and Ovis did not find it, or it did not work, in the server's settings (env or .env in herdr's config folder for the plugin). Open Ovis in the browser to connect your phone, or put the server's token there and check again.",

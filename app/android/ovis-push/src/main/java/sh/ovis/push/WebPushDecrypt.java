@@ -15,6 +15,7 @@ import javax.crypto.spec.SecretKeySpec;
  * the PC encrypted it for this phone's keys, and the relay passed it on through FCM unread.
  */
 final class WebPushDecrypt {
+    /** salt (16), record size (4), key id length (1) and the sender's public key (65) */
     private static final int HEADER_BYTES = 86;
     private static final int TAG_BYTES = 16;
 
@@ -30,6 +31,7 @@ final class WebPushDecrypt {
         if ((header.get() & 0xff) != 65) throw new GeneralSecurityException("the key id is not a P-256 key");
         byte[] senderKey = new byte[65];
         header.get(senderKey);
+        // server/push.ts sends one record (4096 bytes at most, the size it declares)
         if (message.length - HEADER_BYTES > recordSize) throw new GeneralSecurityException("more than one record");
 
         KeyAgreement agreement = KeyAgreement.getInstance("ECDH");

@@ -1,3 +1,6 @@
+//! The program in a PTY with no core running and a fake `hc` on `PATH` that records any call: it
+//! starts no core (a core started from it would inherit its environment and hand it to every
+//! agent), says how to start one, and leaves.
 #![cfg(unix)]
 
 #[path = "../upstream/crates/hc-tui/tests/common/pty.rs"]
@@ -23,6 +26,8 @@ fn scratch() -> PathBuf {
     root
 }
 
+/// The hosted program, killed when the test ends however it ends: a failed assertion must not
+/// leave it running.
 struct Hosted(Pty);
 
 impl Drop for Hosted {

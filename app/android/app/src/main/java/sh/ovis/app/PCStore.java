@@ -30,16 +30,28 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+/**
+ * The PCs this app knows, kept in SharedPreferences, as PCStore in the iOS app keeps them in
+ * UserDefaults. The WebView's cookies (a paired device's sign-in) live in its own store.
+ */
 final class PCStore {
     private static final String PREFS = "herdr";
     private static final String JS_TRIM_WHITESPACE = "[\\s\\p{Z}\\uFEFF]";
 
+    /** The address to open instead of the bare origin until a PC page loads: a pairing link keeps its code through Try again. In memory only, as it can hold that code. */
     static String pendingStart;
 
+    /** A PC's page on the hosted shell the app was opened with (appLink), until the connect screen takes it. In memory only, as it can hold a pairing offer's code. */
     static volatile String link;
 
     private static final Pattern PC_SCOPE = Pattern.compile("/s/([0-9a-f]{32})/?");
 
+    /**
+     * `data` when an intent of `action` is a view of a PC on the hosted shell
+     * (`https://app.ovis.sh/s/<server_id>/`, within the manifest's verified link), whatever its
+     * fragment or query, else null: a link to another page of the hosted shell is not taken, so it
+     * does not close the page that is open.
+     */
     static String appLink(String action, String data) {
         if (!"android.intent.action.VIEW".equals(action) || data == null) return null;
         return appScope(data) == null ? null : data;
@@ -59,12 +71,19 @@ final class PCStore {
 
     private static final Pattern SERVER_ID = Pattern.compile("[0-9a-f]{32}");
 
+    /**
+     * The PC is the one the alert's endpoint was made for (`origin`, the push module's key for it) when
+     * that origin is a saved PC; a relay PC, which shares the hosted shell's origin with every other, is
+     * named by its relay ID (`serverId`) instead. Its pane rides in the scope's fragment there, as the
+     * hosted shell's host never hears it.
+     */
     static String[] alertLink(List<String> saved, String origin, String serverId, String machine, String workspace, String pane) {
         if (pane == null || pane.isEmpty()) return null;
         String query = "machine=" + encoded(machine == null || machine.isEmpty() ? "local" : machine)
             + (workspace == null || workspace.isEmpty() ? "" : "&ws=" + encoded(workspace))
             + "&pane=" + encoded(pane) + "&view=chat";
         String key = origin(origin);
+        // the hosted shell's own origin is every relay PC's, and "Your PCs" when that is saved: never the PC itself
         if (key != null && saved.contains(key) && !scoped(key) && !sameOrigin(key, "https://app.ovis.sh")) return new String[] { key, key + "/?" + query };
         if (serverId != null && SERVER_ID.matcher(serverId).matches()) {
             String scope = "https://app.ovis.sh/s/" + serverId + "/";
@@ -120,6 +139,7 @@ final class PCStore {
         return read == null || read.replaceAll(JS_TRIM_WHITESPACE, "").isEmpty();
     }
 
+    /** The first value of `name` in `query` (a raw query, `?` optional), decoded as URLSearchParams decodes it, or null. */
     private static String queryValue(String query, String name) {
         if (query == null) return null;
         for (String pair : (query.startsWith("?") ? query.substring(1) : query).split("&")) {
@@ -135,6 +155,12 @@ final class PCStore {
         return decoded == null ? spaced : decoded;
     }
 
+    /**
+     * The script MainActivity runs in the open page with an AlertTap's `selection`, which goes in as a
+     * JSON value, never as code. It is dispatched on the page's window as "ovis-select-pane"
+     * (SELECT_PANE_EVENT in src/lib/notificationTarget.ts), which a page on plain http, with no
+     * navigator.serviceWorker, hears too; that page cancels it.
+     */
     static String selectionScript(String selection) {
         return "(() => { const data = " + selection + "; "
             + "if (window.dispatchEvent(new MessageEvent('ovis-select-pane', { data, cancelable: true }))) { "
@@ -149,6 +175,11 @@ final class PCStore {
         }
     }
 
+    /**
+     * Whether an app link is one to pair from: the PC's scope alone or with its pairing offer, which
+     * the connect screen checks as it does a scanned QR code (app/web/shell.js relayLink). Any other
+     * fragment or query is a view of the PC (a file, a pane), which opens only a PC already saved.
+     */
     static boolean pairingLink(String link) {
         URI uri = URI.create(link);
         String fragment = uri.getRawFragment();
@@ -170,6 +201,7 @@ final class PCStore {
 
     static final long PAGE_FLOOR_MS = 5000;
 
+    /** Redirects in a row that made another origin the PC (MainActivity), so two servers that redirect to each other stop. */
     static volatile int redirects;
 
     static final int MAX_REDIRECTS = 5;
@@ -178,6 +210,7 @@ final class PCStore {
 
     static final long PROBE_BUDGET_MS = 10000;
 
+    /** More than /api/health ever answers. */
     private static final int PROBE_MAX_BYTES = 64 * 1024;
 
     static final int MIN_BRIDGE_PROTOCOL = 1;
@@ -286,6 +319,11 @@ final class PCStore {
         return scope.equals(origin + path) && belongs(url, scope) ? scope : null;
     }
 
+    /**
+     * Whether `url` is a page of the PC `key`: on its origin, and for a relay PC within its scope, path
+     * segment by path segment (`/s/A/` is not within `/s/AB/`) and only as a browser would load it
+     * (cleanPath): `<scope>../<other>/` resolves to another PC. A PC saved by its origin takes any page of it.
+     */
     static boolean belongs(String url, String key) {
         String origin = origin(url);
         if (origin == null || !origin.equals(origin(key))) return false;
@@ -304,6 +342,11 @@ final class PCStore {
         return here != null && before != null && belongs(here, place) && belongs(before, place);
     }
 
+    /**
+     * `path` (percent-encoded, as a URL carries it) when a browser loads it as written, else null: no
+     * `.` or `..` segment, plain or percent-encoded (once or twice), no encoded `/` and no `\`, which a
+     * browser reads as `/`. A page within a scope never needs any of them.
+     */
     static String cleanPath(String path) {
         if (path == null || path.indexOf('\\') >= 0) return null;
         String lower = path.toLowerCase(Locale.ROOT);
@@ -362,6 +405,12 @@ final class PCStore {
         }
     }
 
+    /**
+     * Asks `/api/health?scope=bridge`,
+     * which Ovis answers to anyone so a client can find its gate, and follows at most MAX_REDIRECTS
+     * redirects of that request: a sign-in page, another site, a loop or no answer is not Ovis. Only
+     * such an origin may become the PC, the one origin that gets Capacitor's bridge.
+     */
     static String ovisOrigin(String target, long budgetMs, List<String> path) {
         long deadline = System.nanoTime() + budgetMs * 1_000_000L;
         String next = origin(target);
@@ -438,6 +487,16 @@ final class PCStore {
         }
     }
 
+    /**
+     * Whether `url` is Ovis, before the app opens it as a PC or keeps it: asks its origin's
+     * `/api/health?scope=bridge`, which every Ovis since 0.1 answers to anyone with `ok` and `auth`
+     * (older ones without `bridge_protocol`, so this is looser than answersAsOvis, which decides
+     * which origin gets the bridge). A redirect is left to the WebView, as a sign-in in front of the PC
+     * (Cloudflare Access) answers so. The hosted app (app.ovis.sh, or a copy of it) has no
+     * /api/health: its page says what it is (`<meta name="ovis-shell">`, scripts/shell-build.ts), on
+     * the answer itself where every path serves it, else on `url`'s own page (its path only, never a
+     * pairing link's code). `cookies` (the WebView's for the origin, or null) go with both requests.
+     */
     static Check check(String url, String cookies, long budgetMs) {
         String origin = origin(url);
         if (origin == null) return new Check("no-answer", "not an http or https address");
@@ -480,6 +539,7 @@ final class PCStore {
         return SHELL_META.matcher(body).find();
     }
 
+    /** `url`'s path alone ("/" when it has none): the page to ask, without a pairing link's code. */
     private static String cleanStart(String url) {
         String path = rawPath(url);
         return path.isEmpty() ? "/" : path;
@@ -510,6 +570,7 @@ final class PCStore {
     }
 
     private static Answer fetch(String url, String cookies, long deadline) throws IOException {
+        // rounded up, so the disconnect comes at the deadline or after it, and failureKind reads it as a timeout
         long left = (deadline - System.nanoTime() + 999_999L) / 1_000_000L;
         if (left <= 0) throw new java.net.SocketTimeoutException("no answer in time");
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
@@ -537,6 +598,12 @@ final class PCStore {
         }
     }
 
+    /**
+     * The first origin of `path`, the way from the address being opened (`from`) to an Ovis server,
+     * that went over plain http the app should not switch to on its own: a public address (the connect
+     * screen warns before one, as `publicHttp` in app/web/shell.js) or any http after https. Null when
+     * the whole way is fine.
+     */
     static String insecureHop(String from, List<String> path) {
         boolean https = from != null && from.startsWith("https://");
         for (String hop : path) {
@@ -546,6 +613,14 @@ final class PCStore {
         return null;
     }
 
+    /**
+     * The origin on the way from the address being opened (`from`) to a held-back redirect's `target`
+     * that the app refuses to go to on its own, or null. With `ovis`, the Ovis server ovisOrigin found
+     * over `path`, it is judged by that whole way (insecureHop). Without one the target is taken for a
+     * sign-in in front of the PC, which loads without the bridge: judged by the target's own origin,
+     * as the probe's later hops are not where the WebView goes; a target with no origin this class can
+     * read (an underscore in its host) is refused as it is.
+     */
     static String refusedHop(String from, String target, String ovis, List<String> path) {
         if (ovis != null) return insecureHop(from, path);
         String next = origin(target);
@@ -556,6 +631,7 @@ final class PCStore {
     private static final Pattern NUMBER_LABEL = Pattern.compile("[0-9]+|0[xX][0-9a-fA-F]*");
     private static final Pattern HOME_NAME = Pattern.compile(".*\\.(ts\\.net|local|lan|home\\.arpa|internal)$");
 
+    /** Whether `origin` is plain http to an address outside a tailnet or a home network, as `publicHttp` in app/web/shell.js decides. */
     static boolean publicHttp(String origin) {
         if (origin == null || !origin.startsWith("http://")) return false;
         String host;
@@ -578,9 +654,12 @@ final class PCStore {
                 if (part[i] > 255) return true;
             }
             int a = part[0], b = part[1];
+            // 10/8, 127/8, 172.16/12, 192.168/16, link-local 169.254/16, and Tailscale's 100.64/10
             return !(a == 10 || a == 127 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) || (a == 169 && b == 254) || (a == 100 && b >= 64 && b <= 127));
         }
+        // ::1, unique local fc00::/7 (Tailscale's fd7a:115c:a1e0::/48 among them) and link-local fe80::/10
         if (host.contains(":")) return !(host.equals("::1") || host.matches("^f[cd].*") || host.matches("^fe[89ab].*"));
+        // a one-word name (a MagicDNS short name, localhost) or a tailnet or home network name
         return host.contains(".") && !HOME_NAME.matcher(host).matches();
     }
 
@@ -600,6 +679,7 @@ final class PCStore {
     }
 
     private static final class StrictJson {
+        /** Deeper nesting than any health answer, and short of the stack a hostile answer could exhaust. */
         private static final int MAX_DEPTH = 32;
         private final String text;
         private int at;
@@ -752,6 +832,7 @@ final class PCStore {
         }
     }
 
+    /** `target`'s path, query and fragment on `origin`: a pairing link keeps its code when its server's /api/health redirected to another origin. */
     static String startOn(String origin, String target) {
         try {
             URI uri = new URI(target);
@@ -769,6 +850,7 @@ final class PCStore {
             for (int read; (read = in.read(buffer)) != -1; ) {
                 out.write(buffer, 0, read);
                 if (out.size() > PROBE_MAX_BYTES) throw new IOException("answer too long");
+                // a body that trickles in ends here too, should the disconnect at the deadline not stop the read at once
                 if (System.nanoTime() > deadline) throw new IOException("answer too slow");
             }
             // malformed UTF-8 is not JSON: a decoder that reports it, where toString would put in U+FFFD
@@ -780,6 +862,11 @@ final class PCStore {
         }
     }
 
+    /**
+     * Whether two http(s) addresses are on one origin: scheme, host and port, the scheme's default port
+     * (80, 443) the same as none, as a browser compares them. Capacitor's own "stays in the WebView" test
+     * compares scheme and host only, so another port on the PC's host passes it.
+     */
     static boolean sameOrigin(String a, String b) {
         String first = normalizedOrigin(a);
         return first != null && first.equals(normalizedOrigin(b));
@@ -791,6 +878,7 @@ final class PCStore {
         return origin.replaceFirst("^(https://.*):443$", "$1").replaceFirst("^(http://.*):80$", "$1");
     }
 
+    /** scheme://host[:port] of a well-formed http or https address, the host in lowercase, or null: `http://pc:abc/` is refused, not saved for Capacitor to fail on at the next start. */
     static String origin(String text) {
         if (text == null) return null;
         URI uri;

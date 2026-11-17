@@ -33,6 +33,7 @@ export function layout(root: string, platform: NodeJS.Platform = process.platfor
   return { bun: join(root, "bin", `bun${exe}`), hc: join(root, "bin", `herdr-core${exe}`), server: join(root, "server"), serverBinary: join(root, "server", `ovis-server${exe}`) };
 }
 
+/** hc's session for the app's own core, apart from the `default` one another hc client may run. */
 export const HC_SESSION = "ovis";
 
 /** the lists an AppImage's AppRun puts its own folders in front of */
@@ -47,6 +48,7 @@ const APPIMAGE_LISTS = ["PATH", "LD_LIBRARY_PATH", "XDG_DATA_DIRS", "GSETTINGS_S
  */
 export function coreEnv(base: Env, execPath: string = process.execPath): Env {
   const env: Env = { ...base, HC_SESSION: base["HC_SESSION"]?.trim() || HC_SESSION };
+  // the app's own core: never one another client named with HC_SOCKET
   delete env["HC_SOCKET"];
   delete env["ELECTRON_RUN_AS_NODE"];
   delete env["ELECTRON_NO_ATTACH_CONSOLE"];
@@ -64,6 +66,11 @@ export function coreEnv(base: Env, execPath: string = process.execPath): Env {
   return env;
 }
 
+/**
+ * The server's environment: herdr-core as its runtime, through the bundled hc, on loopback only,
+ * with its state in the app's own folder. A herdr plugin's or supervisor's settings the app was
+ * started under are dropped: this server is neither.
+ */
 export function serverEnv(base: Env, options: { hc: string; stateDir: string; port: number }): Env {
   const env: Env = {
     ...coreEnv(base),
@@ -75,6 +82,7 @@ export function serverEnv(base: Env, options: { hc: string; stateDir: string; po
     OVIS_DESKTOP_APP: "1",
   };
   const dropped = new Set(["HERDR_PLUGIN_ROOT", "HERDR_SOCKET", "OVIS_MANAGED", "OVIS_BOOT_ID", "OVIS_TOKEN"]);
+  // the server would take a dropped setting back from its name before the rename (server/legacy-env.ts)
   for (const name of Object.keys(env)) if (dropped.has(name) || dropped.has(ovisName(name) ?? "")) delete env[name];
   return env;
 }
@@ -196,6 +204,7 @@ export function startServer(layout: Layout, env: Env, log: WriteStream, timeoutM
   });
 }
 
+/** Asks the server to stop, and ends it when it has not after `graceMs` (its own shutdown takes about 2 seconds). */
 export async function stopServer(server: Pick<RunningServer, "child" | "exited">, graceMs = 8_000): Promise<void> {
   if (server.child.exitCode !== null || server.child.signalCode !== null) return;
   server.child.kill("SIGTERM");
@@ -231,6 +240,10 @@ async function freePort(): Promise<number> {
   });
 }
 
+/**
+ * The port the server takes: the one it had last time while it is free, so the page keeps its
+ * address (and the browser storage that goes with it), else a free one the system gives.
+ */
 export async function choosePort(saved: number | null): Promise<number> {
   if (saved !== null && Number.isInteger(saved) && saved > 1024 && saved < 65536 && await portFree(saved)) return saved;
   return freePort();
@@ -238,6 +251,10 @@ export async function choosePort(saved: number | null): Promise<number> {
 
 export interface Saved {
   port: number | null;
+  /**
+   * the server it ran last, so a run after a crash can end one left behind; `started` is its start time (`ps -o lstart=`).
+   * `bun` is the program it ran: the server's binary, or the bundled Bun of an app from before the binary.
+   */
   server: { pid: number; bun: string; started: string | null } | null;
 }
 
@@ -267,13 +284,20 @@ export interface ProcessProbe {
 
 const SERVES = /^"? serve$/;
 
+/**
+ * Only the same process is ended: it still runs this app's Bun on its
+ * server and started at the recorded time. A pid the system has since
+ * given to another program, or to another server, is left alone.
+ */
 export async function endLeftover(saved: Saved["server"], probe: ProcessProbe = { command: processCommand, started: processStart }): Promise<boolean> {
   if (saved === null) return false;
   const line = await probe.command(saved.pid);
   // Windows writes the program's path in quotes when it has a space in it: `"C:\…\bun.exe" …`
   if (line === null) return false;
   const command = line.startsWith('"') ? line.slice(1) : line;
+  // the binary's `serve`, or the server's source on Bun as an app from before the binary ran it
   if (!command.startsWith(saved.bun) || !(SERVES.test(command.slice(saved.bun.length)) || command.includes(join("server", "index.ts")))) return false;
+  // without a start time it cannot be told from another process that got the pid since: left alone
   if (saved.started === null || await probe.started(saved.pid) !== saved.started) return false;
   try { process.kill(saved.pid, "SIGTERM"); } catch { return false; }
   return true;

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Run by .github/workflows/windows-app.yml (GH_TOKEN, GH_REPO, RELEASE_TAG set).
+#
 # GitHub cannot replace a release asset in place, so a file is swapped in three steps. The new one is uploaded
 # as NAME.uploading. The old one is renamed NAME.previous, and the new one takes NAME. Only when every file has
 # been swapped (marked by an ovis-windows-swap.committed asset) are the .previous files deleted. Each asset keeps
@@ -13,6 +15,7 @@ label="built from $(cat "$dir/build-source.txt" 2>/dev/null || echo unknown)"
 release_id=$(gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq .id)
 
 asset() { gh api "repos/$GH_REPO/releases/$release_id/assets" --paginate --jq ".[] | select(.name == \"$1\") | [.id, (.label // \"\")] | @tsv"; }
+# asset id, new name, label: retried, since a failure here is what can leave a release without its file
 rename() {
   for _ in 1 2 3 4 5; do
     gh api -X PATCH "repos/$GH_REPO/releases/assets/$1" -f name="$2" -f label="$3" >/dev/null && return 0

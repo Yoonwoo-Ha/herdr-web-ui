@@ -1,3 +1,6 @@
+# GitHub Actions only. Bun, Node and herdr are pinned by hand in the workflows (herdr by
+# checksum), and package bumps go through `bun install --frozen-lockfile` in a normal PR.
+# Actions are pinned to commit SHAs with a version comment, which Dependabot updates together.
 # "/" covers .github/workflows only, so the setup-ci composite action is listed as well.
 #
 # A new action release waits seven days before the monthly version-update PR takes it (GitHub

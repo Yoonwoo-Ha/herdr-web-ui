@@ -4,6 +4,9 @@ using System.Linq;
 
 namespace Ovis
 {
+    /// <summary>
+    /// The herdr answers are shaped as herdr 0.9.3 and 0.9.5 print them.
+    /// </summary>
     internal static class SetupTests
     {
         private static readonly Version App = new Version(0, 4, 19);
@@ -48,6 +51,7 @@ namespace Ovis
                 }),
                 Case("a server that updated itself is current: what it reports beats herdr's list and the status line", () =>
                 {
+                    // herdr lists the checkout as first installed, and a checkout from before the status line prints none
                     var plugin = Setup.ParsePlugin(List(Entry(Links.PluginId, "0.4.15")));
                     Equal(UpdateReason.None, Setup.Reason(plugin, "0.4.22", null, true, App));
                     Equal(UpdateReason.None, Setup.Reason(plugin, null, "0.4.19", false, App));
@@ -59,6 +63,7 @@ namespace Ovis
                     var plugin = Setup.ParsePlugin(List(Entry(Links.PluginId, "0.4.15")));
                     Equal(UpdateReason.None, Setup.Reason(plugin, null, null, false, App));
                     Equal(Phase.Installed, Setup.Choose(plugin, UpdateReason.None, null));
+                    // running, but not answering its version (a token): herdr's list is not taken for it
                     Equal(UpdateReason.VersionUnknown, Setup.Reason(plugin, null, null, true, App));
                     Equal(UpdateReason.VersionUnknown, Setup.Reason(Setup.ParsePlugin(List(Entry(Links.PluginId, "0.4.22"))), null, "0.4.22", true, App));
                     Equal(UpdateReason.None, Setup.Reason(Setup.ParsePlugin(List(Entry(Links.PluginId, "0.4.22"))), null, "0.4.22", false, App));
@@ -151,16 +156,19 @@ namespace Ovis
                     Equal("0.4.19", Setup.StatusVersion("running http://127.0.0.1:7317 (pid 4)\r\nversion: 0.4.19\r\nconfig: none\r\n"));
                     Equal(null, Setup.StatusVersion("down http://127.0.0.1:7317\nconfig: none (settings go in C:\\x\\env)\n"));
                     Equal(null, Setup.StatusVersion(""));
+                    // the process it recorded, alive, whether herdr answers ("running") or not ("down")
                     Equal(4, Setup.StatusPid("running http://127.0.0.1:7317 (pid 4)\r\nversion: 0.4.19\r\n"));
                     Equal(2, Setup.StatusPid("down http://127.0.0.1:17317 (pid 2)\nconfig: none\n"));
                     Equal((int?)null, Setup.StatusPid("down http://127.0.0.1:7317\nconfig: none (settings go in C:\\x (pid 9)\\env)\n"));
                     Equal((int?)null, Setup.StatusPid("down http://127.0.0.1:7317 (pid x)\n"));
                     Equal((int?)null, Setup.StatusPid(null));
+                    // what the plugin's own stop says when it ended a server it verified, in every release's words
                     Equal(true, Setup.StoppedServer("stopped Ovis (pid 4)\r\n"));
                     Equal(true, Setup.StoppedServer("stopped herdr web ui (pid 4)\n"));
                     Equal(false, Setup.StoppedServer("Ovis is not running\n"));
                     Equal(false, Setup.StoppedServer("herdr web ui is not running\n"));
                     Equal(false, Setup.StoppedServer(null));
+                    // the app's own bridge health, which needs no herdr, and not another program's answer on the port
                     Equal(true, Setup.BridgeHealth("{\"ok\":true,\"auth\":{\"required\":false,\"authenticated\":true},\"bridge_protocol\":1}"));
                     Equal(false, Setup.BridgeHealth("{\"ok\":true}"));
                     Equal(false, Setup.BridgeHealth("{\"ok\":false,\"bridge_protocol\":1}"));
@@ -178,6 +186,7 @@ namespace Ovis
                     Equal("new", Setup.EnvToken(new[] { "HERDR_WEB_TOKEN=old\nOVIS_TOKEN=new\n" }));
                     Equal("old", Setup.EnvToken(new[] { "HERDR_WEB_TOKEN=old\n" }));
                     Equal(null, Setup.EnvToken(new[] { "OVIS_TOKEN=\n", "PORT=1" }));
+                    // the environment as a layer under the files: only the old name set there still counts
                     var oldOnly = new Dictionary<string, string> { { "HERDR_WEB_TOKEN", "legacy" } };
                     Equal("legacy", Setup.EnvToken(new[] { Setup.EnvironmentLayer(name => oldOnly.ContainsKey(name) ? oldOnly[name] : null), "PORT=1\n" }));
                     Equal("file", Setup.EnvToken(new[] { Setup.EnvironmentLayer(name => oldOnly.ContainsKey(name) ? oldOnly[name] : null), "OVIS_TOKEN=file\n" }));
@@ -185,6 +194,7 @@ namespace Ovis
                 }),
                 Case("install.ps1's compiled server is asked through its run.ps1, which needs no Bun; a checkout through plugin.ts with Bun", () =>
                 {
+                    // install.ps1 (0.5.4 and newer) links %LOCALAPPDATA%\ovis\plugin, which holds herdr-plugin.toml and run.ps1 alone
                     var linked = @"C:\Users\u\AppData\Local\ovis\plugin";
                     var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { linked + @"\herdr-plugin.toml", linked + @"\run.ps1" };
                     Equal("powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " + linked + @"\run.ps1 status", string.Join(" ", Setup.PluginCommandLine(linked, "status", files.Contains)));
@@ -222,6 +232,7 @@ namespace Ovis
                 }),
                 Case("Windows PowerShell started as the app starts it writes its host, warning and error lines as text, not CLIXML", () =>
                 {
+                    // each word one argument, as cmd hands the app's words over
                     var words = Setup.PowerShellArguments("Write-Host 'a host line'; Write-Warning 'a warning'; Write-Error 'it broke'; exit 3");
                     var start = new System.Diagnostics.ProcessStartInfo("powershell.exe", string.Join(" ", words.Select(word => word.IndexOf(' ') >= 0 ? "\"" + word + "\"" : word)))
                     {

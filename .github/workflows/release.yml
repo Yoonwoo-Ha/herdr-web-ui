@@ -1,4 +1,5 @@
 name: Release
+# Installs discover Git tags directly. Never create a tag until its exact commit passes CI.
 on:
   workflow_dispatch:
     inputs:
@@ -18,6 +19,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   preflight:
+    # the release's run: GitHub-hosted whatever the runner variables say, and no shared cache (scripts/privileged-jobs-workflow.test.ts)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -50,6 +52,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+  # Its attest job signs each binary's build provenance, which needs these permissions.
   pty-sidecar:
     needs: preflight
     uses: ./.github/workflows/pty-sidecar.yml
@@ -59,8 +62,14 @@ jobs:
       attestations: write
     with:
       ref: ${{ github.sha }}
+  # The server as one compiled binary per platform (scripts/build-server.ts), attached beside the PTY host with the built
+  # client the installers unpack beside it (ovis-dist.tar.gz): ovis-server.json (version, the git trees of server/ and
+  # shared/, SHA-256 and size of each file), ovis-server.SHA256SUMS and the manifest's Ed25519 signature,
+  # ovis-server.json.sig. Bun compiles every platform's binary here; nothing in it runs a secret.
   server-binary:
+    # the Rust PTY hosts go under the signed manifest too: an installer runs no host the manifest does not name
     needs: [preflight, pty-sidecar]
+    # it builds what server-binary-sign signs and publish releases: GitHub-hosted whatever the runner variables say, and no shared cache (scripts/privileged-jobs-workflow.test.ts)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -69,6 +78,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # install scripts run here: neither restore a cache a self-hosted job could have written nor save one
       - uses: ./.github/actions/setup-ci
         with:
           cache: none
@@ -85,6 +95,7 @@ jobs:
             cp "$RUNNER_TEMP/pty-sidecar/$host" "$RUNNER_TEMP/server-binary/$host"
           done
           bun scripts/build-server.ts manifest "$RUNNER_TEMP/server-binary"
+      # the binary for this runner answers before anything is signed
       - name: The Linux x64 binary runs
         run: |
           set +e
@@ -97,6 +108,14 @@ jobs:
           name: ovis-server-unsigned
           path: ${{ runner.temp }}/server-binary/*
           if-no-files-found: error
+  # The signing key reaches this job alone, on GitHub's runner. Beside it run only Bun, installed by the SHA-pinned
+  # oven-sh/setup-bun, and scripts/build-server.ts with the scripts/server-manifest.ts it imports (Node's built-ins):
+  # none of the repository's dependencies is installed. The key is the secret OVIS_SERVER_SIGNING_KEY of the environment
+  # release-signing, which only main may use (docs/development.md, "The server binary's signing key"); no other job
+  # names that environment, and a job that deploys (production) never sees the key. Without the environment or its
+  # secret this job fails, and publish, which needs it, never runs: nothing is published unsigned. sign refuses a key
+  # whose public half is not RELEASE_PUBLIC_KEY (scripts/server-manifest.ts), the one key every installer trusts, so a
+  # key put into the secret by mistake fails the release too. In a fork the job is skipped, and so is publish.
   server-binary-sign:
     needs: server-binary
     if: github.repository == 'devswha/ovis' && github.ref == 'refs/heads/main'
@@ -133,6 +152,7 @@ jobs:
           name: ovis-server
           path: ${{ runner.temp }}/server-binary/*
           if-no-files-found: error
+  # signs each binary's and the manifest's build provenance, as pty-sidecar.yml's attest job does
   server-binary-attest:
     needs: server-binary-sign
     runs-on: ubuntu-24.04
@@ -155,6 +175,7 @@ jobs:
             server-binary/ovis-server.SHA256SUMS
   publish:
     needs: [validate, pty-sidecar, server-binary-sign, server-binary-attest]
+    # a write token: GitHub-hosted whatever the runner variables say (scripts/privileged-jobs-workflow.test.ts)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -183,6 +204,8 @@ jobs:
         with:
           name: ovis-server
           path: ${{ runner.temp }}/server-binary
+      # The checkout keeps no Git credential: the repository is public, so the fetch below reads it
+      # anonymously, and gh authenticates with GH_TOKEN alone.
       - name: Publish the validated commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -198,12 +221,20 @@ jobs:
           fi
           # shellcheck disable=SC2016 # JavaScript, not shell
           test "$(bun -e 'console.log((await Bun.file(process.argv[1]).json()).version)' "$RUNNER_TEMP/pty-sidecar/ovis-pty-sidecar.json")" = "$RELEASE_VERSION"
+          # the server's files by name, and only once they verify for this version against the committed key (not one the
+          # sign job reports about itself): a file anything else left in the folder is refused, never attached
           server_files=(ovis-server-linux-x64 ovis-server-linux-arm64 ovis-server-darwin-arm64 ovis-server-darwin-x64 ovis-server-windows-x64.exe ovis-dist.tar.gz ovis-server.json ovis-server.json.sig ovis-server.SHA256SUMS)
           bun scripts/build-server.ts verify "$RUNNER_TEMP/server-binary" --expect-version "$RELEASE_VERSION"
+          # the PTY hosts attached are the very ones ovis-server.json signed
           for host in ovis-pty-sidecar-linux-x64 ovis-pty-sidecar-linux-arm64 ovis-pty-sidecar-darwin-universal; do
             cmp "$RUNNER_TEMP/pty-sidecar/$host" "$RUNNER_TEMP/server-binary/$host"
           done
           gh release create "v$RELEASE_VERSION" "$RUNNER_TEMP"/pty-sidecar/* "${server_files[@]/#/$RUNNER_TEMP/server-binary/}" --target "$GITHUB_SHA" --title "Ovis v$RELEASE_VERSION" --notes-file "$RUNNER_TEMP/release-notes.md" --latest=false
+  # The hosted shell (https://app.ovis.sh/) is built from the release tag and nothing else. shell-build
+  # builds and packs it without any secret; shell-deploy waits for the `production` environment's
+  # reviewer and runs no repository code: it checks the tarball against shell-build's SHA-256 and runs
+  # the wrangler pinned by .github/deploy-tools/bun.lock. It passes with a notice while the Cloudflare
+  # secrets are unset (docs/development.md#releasing); shell-attach then attaches the tarball and its SHA-256.
   shell-build:
     needs: publish
     if: github.repository == 'devswha/ovis' && github.ref == 'refs/heads/main'
@@ -218,6 +249,7 @@ jobs:
         with:
           ref: refs/tags/v${{ inputs.version }}
           persist-credentials: false
+      # install scripts run here: neither restore a cache a self-hosted job could have written nor save one
       - uses: ./.github/actions/setup-ci
         with:
           cache: none
@@ -255,9 +287,11 @@ jobs:
           name: dist-shell
           path: ${{ runner.temp }}/shell
           if-no-files-found: error
+  # No checkout and no local action: nothing from the build's dependencies runs next to the token.
   shell-deploy:
     needs: shell-build
     if: github.repository == 'devswha/ovis' && github.ref == 'refs/heads/main'
+    # GitHub-hosted only: the Cloudflare token never reaches the shared self-hosted runners
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
@@ -305,6 +339,7 @@ jobs:
           for file in index.html build.json; do
             test -s "dist-shell/$file" || { echo "::error::the tarball holds no $file." >&2; exit 1; }
           done
+      # the manifest and lockfile of this commit, from GitHub rather than from the build job
       - name: Install the pinned wrangler
         run: |
           mkdir "$RUNNER_TEMP/deploy-tools"
@@ -344,8 +379,10 @@ jobs:
           SHELL_BUILD_URL: https://app.ovis.sh/build.json
           EXPECTED_REVISION: ${{ github.sha }}
         run: |
+          # a redirect or an error page is not the shell: only a 2xx whose build.json names this commit passes
           for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
             code=$(curl -sS -o "$RUNNER_TEMP/build.json" -w '%{http_code}' --max-time 20 -H 'Cache-Control: no-cache' "$SHELL_BUILD_URL?rev=$EXPECTED_REVISION") || code=000
+            # the top-level "revision" field, parsed, not a substring of the response; anything unparsable reads as empty
             # shellcheck disable=SC2016 # JavaScript, not shell
             revision=$(bun -e 'const body = JSON.parse(await Bun.file(process.argv[1]).text()); if (typeof body?.revision === "string") console.log(body.revision)' "$RUNNER_TEMP/build.json" 2>/dev/null) || revision=""
             if [[ "$code" =~ ^2[0-9][0-9]$ ]] && [ "$revision" = "$EXPECTED_REVISION" ]; then
@@ -357,8 +394,11 @@ jobs:
           done
           echo "::error::$SHELL_BUILD_URL did not serve revision $EXPECTED_REVISION (last HTTP $code)." >&2
           exit 1
+  # the write token stays out of the jobs that build and deploy; it attaches only after a deploy that
+  # did not fail (one skipped for unset secrets passes), and only the tarball shell-build hashed
   shell-attach:
     needs: [shell-build, shell-deploy]
+    # a write token: GitHub-hosted whatever the runner variables say (scripts/privileged-jobs-workflow.test.ts)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -378,6 +418,8 @@ jobs:
           cd "$RUNNER_TEMP/shell"
           echo "$EXPECTED_SHA256  dist-shell.tar.gz" | sha256sum --check --strict
           gh release upload "$RELEASE_TAG" dist-shell.tar.gz dist-shell.tar.gz.sha256 --clobber
+  # after desktop: either app job may make the release latest, and releases/latest/download must then
+  # hold the desktop installers and feeds too; a failed desktop job holds them back until it is rerun
   windows-app:
     needs: [publish, desktop]
     uses: ./.github/workflows/windows-app.yml

@@ -145,6 +145,7 @@ public class PCStoreTest {
 
     @Test
     public void anAnswerThatDoesNotTellIsLeftToTheWebView() throws IOException {
+        // Ovis stopped behind tailscale serve (502), a proxy or WAF that turns the probe away, a rate limit
         for (int status : new int[] {401, 403, 429, 500, 502, 503}) {
             PCStore.Check found = check(serve(status, null, "") + "/");
             assertEquals(status + "", "unsure", found.kind);
@@ -247,9 +248,11 @@ public class PCStoreTest {
         assertNull(probe(serve(200, null, "{\"ok\":false,\"ok\":true,\"auth\":{},\"bridge_protocol\":1}") + "/"));
         assertNull(probe(serve(200, null, "{'ok':true,'auth':{},'bridge_protocol':1}") + "/"));
         assertNull(probe(serve(200, null, "{\"ok\":true,\"auth\":{},\"bridge_protocol\":1,}") + "/"));
+        // a JSON escape takes ASCII hex digits only, not fullwidth ones
         assertNull(probe(serve(200, null, "{\"\\u\uFF10\uFF10\uFF16\uFF46\\u\uFF10\uFF10\uFF16\uFF42\":true,\"auth\":{},\"bridge_protocol\":1}") + "/"));
         String escaped = serve(200, null, "{\"\\u006f\\u006B\":true,\"auth\":{},\"bridge_protocol\":1}");
         assertEquals(escaped, probe(escaped + "/"));
+        // nested deeper than the stack would take, inside the size limit
         assertNull(probe(serve(200, null, "[".repeat(60000)) + "/"));
         byte[] start = "{\"ok\":true,\"auth\":{},\"bridge_protocol\":1,\"x\":\"".getBytes(StandardCharsets.UTF_8);
         byte[] malformed = java.util.Arrays.copyOf(start, start.length + 3);
@@ -281,6 +284,7 @@ public class PCStoreTest {
         assertNull(PCStore.refusedHop("http://100.64.0.1", "http://auth.tail1234.ts.net/sign_in", null, Collections.emptyList()));
         assertEquals("http://team.example.com", PCStore.refusedHop("https://ovis.example.com", "http://team.example.com/login", null, Collections.emptyList()));
         assertEquals("http://auth.example.com", PCStore.refusedHop("http://100.64.0.1", "http://auth.example.com/sign_in", null, Collections.emptyList()));
+        // an address with no origin Java can read (an underscore in the host) is refused, not a crash
         assertEquals("https://auth_server.corp.example/login", PCStore.refusedHop("https://ovis.example.com", "https://auth_server.corp.example/login", null, Collections.emptyList()));
         assertNull(PCStore.refusedHop("http://100.64.0.1", "https://pc.example.com/", "https://pc.example.com", Collections.singletonList("https://pc.example.com")));
         assertEquals("http://pc.example.com", PCStore.refusedHop("https://a.example.com", "https://b.example.com/", "http://pc.example.com", java.util.Arrays.asList("https://b.example.com", "http://pc.example.com")));
@@ -288,6 +292,7 @@ public class PCStoreTest {
 
     @Test
     public void publicHttpIsWhatTheConnectScreenWarnsAbout() {
+        // a number in any form but a plain dotted quad is some IPv4 address to the web view, never judged private
         for (String warned : new String[] {"http://8.8.8.8", "http://172.15.0.1", "http://100.128.0.1", "http://[2001:db8::1]", "http://pc.example.com", "http://134744072:7421", "http://010.0.0.1", "http://0x8.8.8.8", "http://10.0.0.256", "http://134217729", "http://0x08000001"}) {
             assertTrue(warned, PCStore.publicHttp(warned));
         }
@@ -444,6 +449,7 @@ public class PCStoreTest {
         assertNull(PCStore.alertLink(saved, null, "fedcba9876543210fedcba9876543210", null, null, "w1:p1"));
         assertNull(PCStore.alertLink(saved, null, "../evil", null, null, "w1:p1"));
         assertNull(PCStore.alertLink(saved, null, null, null, null, "w1:p1"));
+        // a relay ID never moves an alert from a saved address to the hosted shell
         assertNull(PCStore.alertLink(java.util.Collections.singletonList(scope), "http://forgotten.lan:7317", id, null, null, "w1:p1"));
         java.util.List<String> withList = java.util.Arrays.asList(home, scope, "https://app.ovis.sh");
         assertArrayEquals(new String[] { scope, scope + "#machine=local&pane=w1%3Ap1&view=chat" },
@@ -465,6 +471,7 @@ public class PCStoreTest {
         assertEquals("local", selection.getString("machine_id"));
         assertEquals("chat", selection.getString("view"));
         assertEquals("w1", selection.getString("workspace_id"));
+        // a relay PC's page at its scope too; the values reach the page as they came, whatever they hold
         String odd = "p\"); alert(1); //\u2028</script>";
         PCStore.AlertTap relay = PCStore.alertTap(saved, scope, scope + "#machine=local", "https://app.ovis.sh", id, "build box", null, odd);
         assertNull(relay.address);

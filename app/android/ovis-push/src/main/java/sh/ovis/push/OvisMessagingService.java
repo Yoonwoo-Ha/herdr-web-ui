@@ -20,6 +20,11 @@ import java.util.Base64;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+/**
+ * The relay sends FCM a data message whose "ovis" field is the PC's ciphertext
+ * (standard base64); it is decrypted here with this phone's keys and shown as the browser's
+ * service worker shows it (public/sw.js): the PC's title and body, one notification per tag.
+ */
 public class OvisMessagingService extends FirebaseMessagingService {
     public static final String ACTION_OPEN_ALERT = "sh.ovis.push.OPEN_ALERT";
     public static final String EXTRA_ORIGIN = "sh.ovis.push.origin";

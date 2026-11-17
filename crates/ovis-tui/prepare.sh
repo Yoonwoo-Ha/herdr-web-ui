@@ -1,4 +1,7 @@
 #!/bin/sh
+# It fetches one commit (hc-tui.pin names it) and that commit's Ghostty submodule, checks both commit
+# ids, applies every patch and commits them there, so a clean `git status` in ./upstream, at the commit
+# upstream/.ovis-prepared names, means the tree is exactly "the pin plus our patches".
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -33,6 +36,8 @@ trap cleanup EXIT
 trap 'trap - EXIT; cleanup; exit 130' INT TERM HUP
 rm -rf "$here"/.upstream.new.* "$here"/.upstream.old.*
 
+# One git query, its answer in $out. A query that fails is reported as work, so a tree git cannot
+# read (a broken index, a git too old for a flag) is never taken for an untouched one.
 ask() {
   out=$(git "$@" 2>/dev/null) && return 0
   out=""
@@ -71,6 +76,7 @@ work_in() {
   answer | grep -E '^(S|[a-z]) ' | sed 's/^[^ ]* /file whose edits git hides: /'
   s="$d/vendor/ghostty"
   if [ ! -e "$s/.git" ]; then
+    # never initialised (or deinitialised): git sees no files in it, but they are someone's
     [ -z "$(ls -A "$s" 2>/dev/null)" ] || echo "vendor/ghostty: files in it, though it is not a checkout"
     return 0
   fi
@@ -131,6 +137,8 @@ if [ -e "$dest" ]; then
   work=$(work_in "$dest")
   [ -z "$work" ] || refuse " (made while this ran; nothing was replaced)" "$work"
 fi
+# moved aside, not deleted in place: a run stopped between the two moves leaves no tree there (cleanup
+# deletes the one set aside; the next run makes it again), never a half-deleted one
 if [ -e "$dest" ]; then mv "$dest" "$old"; fi
 mv "$new" "$dest"
 rm -rf "$old"

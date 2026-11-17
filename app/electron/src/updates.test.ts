@@ -44,10 +44,13 @@ describe("updatePlan", () => {
     const appImage = { env: { APPIMAGE: "/home/u/Ovis.AppImage", APPDIR: "/tmp/.mount_OvisAb" }, execPath: "/tmp/.mount_OvisAb/ovis" };
     expect(updatePlan({ ...linux, ...appImage })).toEqual(plan("appimage"));
     expect(updatePlan({ ...linux, linuxPackage: "deb", execPath: "/opt/Ovis/ovis" })).toEqual(plan("deb"));
+    // electron-builder may leave the deb's package-type file in the AppImage too: a running AppImage stays one
     expect(updatePlan({ ...linux, ...appImage, linuxPackage: "deb" })).toEqual(plan("appimage"));
+    // started from another AppImage (a terminal, an editor): its APPIMAGE and APPDIR are not this program's
     const inherited = { APPIMAGE: "/home/u/Terminal.AppImage", APPDIR: "/tmp/.mount_TermXy" };
     expect(updatePlan({ ...linux, linuxPackage: "deb", execPath: "/opt/Ovis/ovis", env: inherited })).toEqual(plan("deb"));
     expect(updatePlan({ ...linux, execPath: "/opt/Ovis/ovis", env: inherited }).enabled).toBe(false);
+    // an inherited APPDIR of / would contain every program
     expect(updatePlan({ ...linux, linuxPackage: "deb", execPath: "/opt/Ovis/ovis", env: { APPIMAGE: "/home/u/Other.AppImage", APPDIR: "/" } })).toEqual(plan("deb"));
   });
 
@@ -57,6 +60,7 @@ describe("updatePlan", () => {
     expect(updatePlan({ ...appImage, writable: (folder) => { asked.push(folder); return false; } })).toEqual({ enabled: false, reason: "the AppImage is in a folder that cannot be written (/opt/ovis), so it cannot replace itself there" });
     expect(asked).toEqual(["/opt/ovis"]);
     expect(updatePlan({ ...appImage, writable: () => true })).toEqual({ enabled: true, feed: null, channel: "stable", installer: "appimage" });
+    // it stays an AppImage: the deb's package-type file left in it does not make it a .deb install
     expect(updatePlan({ ...appImage, linuxPackage: "deb", writable: () => false }).enabled).toBe(false);
     expect(updatePlan({ ...appImage, linuxPackage: "deb", execPath: "/opt/Ovis/ovis", writable: () => false })).toEqual({ enabled: true, feed: null, channel: "stable", installer: "deb" });
   });
@@ -72,11 +76,13 @@ describe("updatePlan", () => {
 
 // the deb's install line is run by a POSIX shell, which a Windows runner does not have at /bin/sh
 describe.skipIf(process.platform === "win32")("debInstallCommand", () => {
+  // electron-updater's installerPath (LinuxUpdater) escapes these for one shell, but leaves ' alone
   const electronUpdaterEscaped = (path: string) => path.replace(/\\/g, "\\\\").replace(/([`$!" ;|&()<>])/g, "\\$1");
   const printed = (shellLine: string) => Bun.spawnSync(["/bin/sh", "-c", shellLine]).stdout.toString();
   const path = "/home/O'Brien/.cache/my app (1)/Ovis-linux-x64.deb";
 
   it("hands apt-get the whole path behind the prompt's bash -c '…', and when Ovis already runs as root", () => {
+    // how electron-updater runs it: `pkexec … /bin/bash -c '<command>'`, or the command alone as root, both through a shell
     const prompted = debInstallCommand(electronUpdaterEscaped(path), true).at(-1);
     expect(printed(`/bin/bash -c 'printf %s ${prompted}'`)).toBe(path);
     const asRoot = debInstallCommand(electronUpdaterEscaped(path), false).at(-1);
@@ -105,6 +111,7 @@ describe("checkForUpdates", () => {
         const lines: string[] = [];
         await checkForUpdates(updater, (line) => lines.push(line));
         expect(await failed).toBe("connection reset");
+        // a rejection nobody handles is reported once the turn's own work is done
         await new Promise((resolve) => setImmediate(resolve));
         expect(unhandled).toEqual([]);
         expect(lines).toEqual([]);
@@ -159,6 +166,7 @@ describe("checkForUpdates", () => {
   });
 
   it("logs a download that fails before it begins, which the updater reports with no event", async () => {
+    // electron-updater's downloadUpdate is not async: a feed that names a version with no file for this app throws out of it
     const { updater } = feed("0.5.3");
     const broken = { ...updater, downloadUpdate: (): Promise<string[]> => { throw new Error("No files provided: latest-linux.yml"); } };
     const unhandled: unknown[] = [];
@@ -220,6 +228,7 @@ describe("nextOffer", () => {
   });
 
   it("never offers a Mac's download that Squirrel could not take, and offers it when a later try works", () => {
+    // run from the disk image or translocated, a signature it refuses: Squirrel's error comes after "update-downloaded"
     const failed = after("darwin", { is: "downloaded", update: v3 }, { is: "error" });
     expect(failed).toEqual(NO_OFFER);
     expect(nextOffer(failed, { is: "staged" }, "darwin")).toEqual(NO_OFFER);

@@ -7,6 +7,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
     }
 }
 
+/// Follows the installer's download only to its own HTTPS hosts: ovis.sh hands it over from herdrweb.dev.
 private final class InstallerRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(request.url.map(Ovis.isInstallerSource) == true ? request : nil)
@@ -32,6 +33,8 @@ struct Status: Equatable {
         return url
     }
 
+    /// `serving_url` as the phone may open it: Tailscale's HTTPS address of this Mac (`server/tailscale.ts`),
+    /// a `*.ts.net` name, the only one its certificate covers. Anything else draws no QR code.
     static func phoneAddress(_ text: String) -> URL? {
         guard text.count <= 300, let url = URL(string: text), url.scheme?.lowercased() == "https",
               let host = url.host?.lowercased(), host.hasSuffix(".ts.net"), host.count > ".ts.net".count,
@@ -93,7 +96,11 @@ final class Model: ObservableObject {
         self.status = status
         let origin = status.running ? status.origin : nil
         if origin != webOrigin, let old = webOrigin, WebPageController.isLoopback(old), let page {
+            // the page about to go holds its drafts in its own origin's storage: read them while it runs (only
+            // this Mac's own server's, and WebPageController writes them only into another of its addresses)
             let drafts = await page.unsentDrafts()
+            // a check that Install, Restart or Remove overtook drops what it read: their own refresh reads
+            // the page again, and a copy left here could later bring back a draft sent meanwhile
             guard work == started else { return }
             carriedDrafts.merge(drafts) { $1 }
         }
@@ -104,6 +111,8 @@ final class Model: ObservableObject {
         phase = .installed
     }
 
+    /// Every fifth miss (about 15 s) reads the status again: the server may be on another port
+    /// now, or stopped, and then the window shows Start.
     func monitor() async {
         var misses = 0
         while !Task.isCancelled {
@@ -150,6 +159,8 @@ final class Model: ObservableObject {
         reloads += 1
     }
 
+    /// The page as it is now (a pane's address), or the server's own address: only a web address, never
+    /// another app's link, goes to the browser.
     func openInBrowser() {
         if let url = [page?.webView.url, webOrigin, status?.origin].compactMap({ $0 }).first(where: Status.isWeb) { open(url) }
     }
@@ -170,6 +181,7 @@ final class Model: ObservableObject {
         phase = .working(L("Downloading the installer…", "설치 프로그램을 받는 중…"))
         let script: URL
         do {
+            // the script runs as this user: it comes over HTTPS from ovis.sh's own hosts or not at all
             let (data, response) = try await URLSession.shared.data(from: Ovis.installScript, delegate: InstallerRedirects())
             guard (response as? HTTPURLResponse)?.statusCode == 200, let source = response.url, Ovis.isInstallerSource(source) else {
                 throw URLError(.badServerResponse)
@@ -226,12 +238,15 @@ final class Model: ObservableObject {
         await waitUntilRunning()
     }
 
+    /// Run, as install.sh runs it, from the release that runs now: the plugin's own checkout stays at the first one.
     func makePhoneAddress() async {
         guard let root = pluginRoot else { return }
         work += 1
         retryAction = .phone
         log = []
         phase = .working(L("Making the phone address…", "휴대폰 주소를 만드는 중…"))
+        // the code the server runs now, read from its processes: herdr's checkout stays at the version first
+        // installed, and an update runs its release from the state dir.
         var code = root
         if let pid = await readStatus(root: root).pid, let running = await Self.runningCode(launcher: pid, root: root) { code = running }
         let script = "\(code)/scripts/plugin.ts"
@@ -240,6 +255,7 @@ final class Model: ObservableObject {
                    "이 버전의 Ovis 서버는 휴대폰 주소를 만들 수 없습니다. Ovis의 설정 → 업데이트에서 업데이트한 뒤 다시 시도해 주세요."))
             return
         }
+        // plugin.ts gives `tailscale serve` 180 s while the user turns HTTPS on for the tailnet
         guard await run(Paths.bun, [script, "phone"], timeout: 240, onLine: appendLine).status == 0 else {
             fail(L("Tailscale did not make the phone address. The log says why.", "Tailscale이 휴대폰 주소를 만들지 못했습니다. 이유는 로그에 있습니다."))
             return
@@ -247,6 +263,7 @@ final class Model: ObservableObject {
         await refresh()
     }
 
+    /// herdr, Bun and Node stay, and herdr keeps running: stopping it would end every agent in it.
     func uninstall() async {
         work += 1
         retryAction = .remove
@@ -261,6 +278,7 @@ final class Model: ObservableObject {
         }
         if case let .found(id, root) = lookup {
             let plugin = (id: id, root: root)
+            // the stop has to end before the uninstall removes the plugin's files: run it here, not as a queued action
             guard await run(Paths.bun, ["\(plugin.root)/scripts/plugin.ts", "stop"], env: ["LC_CTYPE": "UTF-8"], timeout: 60, onLine: appendLine).status == 0 else {
                 fail(L("Could not stop the Ovis server, so it was not removed.", "Ovis 서버를 멈추지 못해 제거하지 않았습니다."))
                 return
@@ -316,6 +334,7 @@ final class Model: ObservableObject {
         return result.output.split(separator: "\n").compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
     }
 
+    /// `bun <root>/server/managed.ts`: the launcher `plugin.ts start` of this checkout runs, not another one.
     nonisolated static func isLauncher(_ args: [String], root: String) -> Bool {
         let suffix = "/server/managed.ts"
         guard args.count >= 2, args[1].hasPrefix("/"), args[1].hasSuffix(suffix) else { return false }
@@ -323,6 +342,8 @@ final class Model: ObservableObject {
             == URL(fileURLWithPath: root).resolvingSymlinksInPath().path
     }
 
+    /// A bridge's dir, when it is the checkout or a release (`release-*`) whose scripts/plugin.ts is its own,
+    /// not a link out of it (scripts/plugin-runtime.ts).
     nonisolated static func codeDir(_ path: String, root: String) -> String? {
         let dir = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         guard path.hasPrefix("/"), dir.path == URL(fileURLWithPath: root).resolvingSymlinksInPath().path || dir.lastPathComponent.hasPrefix("release-") else { return nil }
@@ -331,6 +352,7 @@ final class Model: ObservableObject {
         return dir.path
     }
 
+    /// A process's working directory, from the kernel: this user's own processes only.
     nonisolated static func processDirectory(_ pid: Int32) -> String? {
         var info = proc_vnodepathinfo()
         let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
@@ -341,6 +363,7 @@ final class Model: ObservableObject {
         return path.isEmpty ? nil : path
     }
 
+    /// A process's arguments, as the kernel keeps them (`KERN_PROCARGS2`): this user's own processes only.
     nonisolated static func processArguments(_ pid: Int32) -> [String]? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
@@ -374,6 +397,7 @@ final class Model: ObservableObject {
         case failed
     }
 
+    /// The plugin under its id or, for an install of an older release, the old one, in `herdr plugin list --json`.
     nonisolated static func plugin(in output: String, status: Int32) -> PluginLookup {
         guard status == 0,
               let json = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any],
@@ -441,6 +465,8 @@ final class Model: ObservableObject {
     private func readStatus(root: String) async -> Status {
         let result = await run(Paths.bun, ["\(root)/scripts/plugin.ts", "status"], keepStderr: false, timeout: 10)
         var status = Status.parse(String(result.output.split(separator: "\n").first ?? ""))
+        // the phone address comes only from this Mac's own server, never through a redirect: it becomes the
+        // QR code the phone opens
         guard status.running, let origin = status.origin, WebPageController.isLoopback(origin) else { return status }
         var request = URLRequest(url: origin.appendingPathComponent("api/access"))
         request.timeoutInterval = 5
@@ -454,6 +480,10 @@ final class Model: ObservableObject {
         return status
     }
 
+    /// The server's health check that leaves herdr alone (`scope=bridge`); it answers without a sign-in.
+    /// Only Ovis's own answer counts, as in `scripts/plugin.ts`: another program can take a port Ovis
+    /// left, and its 200 would hide the server's new address. A redirect is not followed: one to the new
+    /// address would hide it the same way.
     private func answers(_ origin: URL) async -> Bool {
         guard let url = URL(string: "api/health?scope=bridge", relativeTo: origin)?.absoluteURL else { return false }
         let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 2)
@@ -516,6 +546,7 @@ enum LaunchAgent {
     /// emptied in place, not renamed: launchd keeps it open, and its appends go on at the new end.
     static func rotateLog(_ log: String = Paths.serverLog, limit: Int = 10 << 20) {
         let manager = FileManager.default
+        // a log that is a link is measured, copied and emptied where it points
         let path = URL(fileURLWithPath: log).resolvingSymlinksInPath().path
         guard let size = (try? manager.attributesOfItem(atPath: path))?[.size] as? Int, size > limit else { return }
         let old = "\(path).1"
@@ -547,6 +578,7 @@ enum LaunchAgent {
 
     private static func load(_ path: String) async throws {
         _ = await run("/bin/launchctl", ["enable", service])
+        // a loaded agent may be running herdr with the user's agents in it: never boot it out to reload
         if await loaded() { _ = await start(); return }
         let result = await run("/bin/launchctl", ["bootstrap", domain, path])
         guard result.status == 0 else { throw NSError(domain: "Ovis", code: Int(result.status), userInfo: [NSLocalizedDescriptionKey: result.output]) }
@@ -557,6 +589,7 @@ enum LaunchAgent {
         await run("/bin/launchctl", ["kickstart", service]).status == 0
     }
 
+    /// Stops it from starting at the next login without stopping the herdr that runs now.
     static func remove() async {
         _ = await run("/bin/launchctl", ["disable", service])
         try? FileManager.default.removeItem(atPath: Paths.launchAgent)

@@ -1,3 +1,4 @@
+/** The core and its terminals keep running, as for every hc client. */
 import { app, autoUpdater as squirrel, BrowserWindow, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, session, shell, Tray, type MenuItemConstructorOptions } from "electron";
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, rmSync, type WriteStream } from "node:fs";
 import { join } from "node:path";
@@ -34,6 +35,7 @@ const versions = (() => {
 const logs = join(app.getPath("userData"), "logs");
 const savedPath = join(app.getPath("userData"), "desktop.json");
 const stateDir = process.env["OVIS_STATE_DIR"] || join(app.getPath("userData"), "server");
+// from the app's root (this folder, or app.asar): the bundler fixes __dirname to where it was built
 const connectPage = join(app.getAppPath(), "renderer", "connect.html");
 const connectPageUrl = pathToFileURL(connectPage).href;
 const preload = join(app.getAppPath(), "out", "preload.js");
@@ -108,6 +110,7 @@ function openLink(query: string): void {
   tellLink();
 }
 
+/** To the server's page alone, once it has loaded (openLink.ts tellsLink); preload.ts holds it until the page listens. */
 function tellLink(loaded = false): void {
   const contents = window?.webContents;
   const page = contents ? { ours: ours(contents.getURL()), loadingMainFrame: contents.isLoadingMainFrame() } : null;
@@ -159,6 +162,7 @@ async function launch(): Promise<void> {
     const port = await choosePort(saved.port);
     if (quitting) return;
     try {
+      // recorded as soon as it runs, so a crash of the app before it listens still leaves its pid behind
       const running = await startServer(programs, serverEnv(process.env, { hc, stateDir, port }), log, 60_000, (child) => {
         spawning = child;
         writeSaved(savedPath, { port, server: { pid: child.pid!, bun: programs.serverBinary, started: processStartSync(child.pid!) } });
@@ -239,6 +243,11 @@ function createWindow(): void {
   void window.loadFile(connectPage);
 }
 
+/**
+ * The server's own pages may open more Ovis windows; any other address goes to the default browser.
+ * A blank window a page opens to send somewhere next (a sign-in) is allowed: once it heads for
+ * another address, that address opens in the default browser and the window closes.
+ */
 function guard(contents: Electron.WebContents, blank?: BrowserWindow): void {
   contents.setWindowOpenHandler(({ url }) => {
     if (ours(url) || (url === "about:blank" && ours(contents.getURL()))) {
@@ -332,6 +341,7 @@ function createMenu(): void {
 }
 
 function allowPermissions(): void {
+  // the Ovis page may use the microphone (dictation, never the camera), the clipboard and notifications; nothing else asks
   const allowed = new Set(["clipboard-sanitized-write", "clipboard-read", "notifications", "fullscreen"]);
   session.defaultSession.setPermissionRequestHandler((_contents, permission, callback, details) => {
     if (!ours(details.requestingUrl)) return callback(false);
@@ -362,6 +372,7 @@ function updateLine(): UpdateLine | null {
   return { version, closed: !updateNotice(version, notices).line, text: text("Ovis {version} is ready", { version }), action: text("Restart to Update") };
 }
 
+/** to the app's window: the windows a page opens carry no preload, and so no line */
 function sendUpdateLine(): void {
   window?.webContents.send("ovis:update", updateLine());
 }
@@ -381,6 +392,10 @@ function saveNotices(next: UpdateNotices): void {
   try { writeUpdateNotices(noticesPath, next); } catch (error) { console.error(`Saving ${noticesPath} failed: ${message(error)}`); }
 }
 
+/**
+ * A version counts as announced once the system showed it, so one that could not be shown (no
+ * notification service, an unsigned Mac build) is tried again by the next start.
+ */
 function announceUpdate(): void {
   sendUpdateLine();
   if (!offer.ready) return;
@@ -402,11 +417,22 @@ function announceUpdate(): void {
   notification.show();
 }
 
+/**
+ * Once the app is on its way out (this already pressed, or a quit) another press is dropped, and so
+ * is one for an update whose file is gone: installing stops the server first, and would then find
+ * nothing to install.
+ */
 function installUpdate(): void {
   if (quitting || heldUpdate() === null) return;
   installOffer?.();
 }
 
+/**
+ * Restart to Update where the app is replaced as it runs (the AppImage, Windows, a Mac): the
+ * server stops first, since the new copy starts at once. An install that then cannot go ahead
+ * (the held file gone while the server stopped, an installer that fails at once) starts Ovis
+ * again as it was, instead of leaving the window on a server that is gone.
+ */
 async function stopAndInstall(updater: { quitAndInstall(): void; once(event: "error", listener: () => void): unknown; removeListener(event: "error", listener: () => void): unknown }): Promise<void> {
   await stopForQuit();
   let refused = heldUpdate() === null;
@@ -466,6 +492,7 @@ async function startUpdates(): Promise<void> {
   autoUpdater.allowDowngrade = false;
   autoUpdater.autoDownload = false;
   updateLog(`Updates: ${plan.channel} channel.`);
+  // a .deb installs behind a password prompt: only when asked for (the tray's or a line's Restart to Update), never on a plain quit
   if (plan.installer === "deb") autoUpdater.autoInstallOnAppQuit = false;
   let failed = false;
   const told = (event: UpdaterEvent) => {
@@ -479,8 +506,12 @@ async function startUpdates(): Promise<void> {
     failed = true;
     updateLog(`Update failed: ${message(error)}`);
     told({ is: "error" });
+    // a download that failed emptied the updater's folder, the update held until now with it
     heldUpdate();
   });
+  // the .deb installs first and the app quits (stopping the server) only once it did, then starts again;
+  // a cancelled prompt leaves the app and its server running. The AppImage starts its new copy at
+  // once, so the server stops before.
   installOffer = plan.installer === "deb" ? () => autoUpdater.quitAndInstall() : () => void stopAndInstall(autoUpdater);
   const mac = process.platform === "darwin";
   autoUpdater.on("update-downloaded", (downloaded) => {
@@ -488,6 +519,7 @@ async function startUpdates(): Promise<void> {
     updateLog(`Update ${downloaded.version} is downloaded: ${mac ? "the system's updater takes it now" : "Restart to Update installs it"}.`);
     told({ is: "downloaded", update: { version: downloaded.version, file: downloaded.downloadedFile } });
   });
+  // a Mac: the update is offered once Squirrel says it holds it (updates.ts UpdateOffer)
   if (mac) {
     squirrel.on("update-downloaded", () => {
       if (offer.staging) updateLog(`Update ${offer.staging.version} is ready: Restart to Update installs it.`);
@@ -495,6 +527,7 @@ async function startUpdates(): Promise<void> {
     });
   }
   const check = () => {
+    // not once the app is on its way out: a download that fails then empties the folder the install reads
     if (quitting) return;
     void checkForUpdates(autoUpdater, updateLog, (version) => !quitting && downloadsUpdate({ found: version, held: offer.staging ?? heldUpdate(), failed, exists: existsSync }));
   };
@@ -525,11 +558,14 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.on("ovis:logs", (event) => {
     if (event.senderFrame?.url.startsWith("file:")) void shell.openPath(logs);
   });
+  // the downloaded update's line: for the connection screen and the server's own pages, nothing else
   const ownPage = (url: string | undefined) => url !== undefined && (url.startsWith("file:") || ours(url));
   ipcMain.handle("ovis:update", (event) => ownPage(event.senderFrame?.url) ? updateLine() : null);
   ipcMain.handle("ovis:update-install", (event) => {
     if (!ownPage(event.senderFrame?.url)) return undefined;
     installUpdate();
+    // Answered at once when the install returned: a .deb's prompt
+    // cancelled, with Ovis running on (or a .deb installed, a moment before it quits)
     return quitting ? new Promise<void>((answer) => { installWaiters.push(answer); }) : undefined;
   });
   ipcMain.on("ovis:update-close", (event, version: unknown) => {
@@ -537,6 +573,7 @@ if (!app.requestSingleInstanceLock()) {
     saveNotices({ ...notices, closed: offer.ready.version });
     sendUpdateLine();
   });
+  // signing in to the account (accountSignIn.ts): only the server's own pages may, and only to the account service named
   let signIn: LoopbackSignIn | null = null;
   ipcMain.on("ovis:account-service", (event) => {
     event.returnValue = ours(event.senderFrame?.url ?? "") && accountService !== null ? { service: accountService, providers: accountProviders } : null;
@@ -562,6 +599,9 @@ if (!app.requestSingleInstanceLock()) {
     // quit again only once this cancelled quit is over: a quit asked for inside it is dropped
     if (!quitting) void stopForQuit().then(() => setImmediate(() => app.quit()));
   });
+  // an AppImage run unpacked (no FUSE) leaves its folder in the temporary folder: the server, the
+  // last user of its files, has stopped by now (the core runs from its own copy). Another copy of the
+  // same AppImage runs from the same folder: then it stays
   const unpacked = process.platform === "linux" ? extractedAppDir(process.env, process.execPath) : null;
   if (unpacked) {
     app.on("quit", () => {

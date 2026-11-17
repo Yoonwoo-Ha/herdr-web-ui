@@ -36,6 +36,7 @@ early.progress(0.2)
 check(early.stage(at: 20) == .noAnswer, "WebKit's own progress before an answer is no answer")
 check(early.shownProgress() == 0, "the bar stays empty before an answer")
 
+// estimatedProgress held still while a large file arrives: still slow, never given up
 var held = OpeningWatch(now: 0, answerLimit: 20)
 held.answer(at: 1)
 held.progress(0.41)

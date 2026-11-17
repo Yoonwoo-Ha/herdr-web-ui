@@ -37,6 +37,7 @@ public enum WebPushDecrypt {
         Data(HMAC<SHA256>.authenticationCode(for: value, using: SymmetricKey(data: key)))
     }
 
+    /// All the HKDF expansions here fit in one SHA-256 block.
     private static func expandOneBlock(_ key: Data, _ info: Data, _ count: Int) -> Data {
         Data(hmac(key, info + Data([1])).prefix(count))
     }

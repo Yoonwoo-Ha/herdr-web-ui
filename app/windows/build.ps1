@@ -1,3 +1,9 @@
+# Builds Ovis for Windows into app/windows/build/: Ovis.exe (the direct download) and Ovis.msix (the
+# Microsoft Store package), on Windows with the .NET SDK and the Windows SDK (a GitHub windows-latest runner
+# has both).
+#
+# The MSIX takes its identity from OVIS_MSIX_NAME, OVIS_MSIX_PUBLISHER and OVIS_MSIX_PUBLISHER_DISPLAY_NAME
+# (Partner Center's Product identity page). Without them it gets a local identity, for a test install only.
 param([string]$Version = '0.0.0')
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'

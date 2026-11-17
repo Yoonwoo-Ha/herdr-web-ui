@@ -49,6 +49,7 @@ final class OvisWebView: WKWebView {
     }
 }
 
+/// The Ovis server's own pages stay in the app; any other address goes to the default browser.
 @MainActor
 final class WebPageController: NSObject, ObservableObject {
     enum State: Equatable {
@@ -72,6 +73,9 @@ final class WebPageController: NSObject, ObservableObject {
     private var carryShared = false
     private var carryBefore: [String: Any]?
 
+    /// Nothing here is sent by itself; it waits in the page for the user's Send or Discard.
+    /// A chat send on its way keeps its lease, as across a reload: until it runs out (2 minutes) the new
+    /// page does not offer that text again, which the old server may have taken.
     static let draftPrefixes = ["ovis:composer-draft:", "ovis:composer-sending:", "ovis:terminal-draft:", "ovis:terminal-line:", "ovis:queue:", "ovis:pending:"]
 
     /// A popup gets the configuration WebKit hands over for it; the main window's page makes its own.
@@ -88,6 +92,7 @@ final class WebPageController: NSObject, ObservableObject {
         guard !isPopup else { return }
         model.page = self
         reloads = model.$reloads.dropFirst().sink { [weak self] _ in self?.reload() }
+        // drafts go only to this Mac's own server, as they came only from it
         if Self.isLoopback(origin) {
             let shared = Self.popups.contains { !$0.closed && $0.webView.url.map(self.isOvis) == true }
             let token = UUID().uuidString
@@ -103,6 +108,7 @@ final class WebPageController: NSObject, ObservableObject {
 
     static func configuration() -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
+        // the page's sign-in cookie and its drafts stay across launches
         configuration.websiteDataStore = .default()
         configuration.applicationNameForUserAgent = userAgentSuffix
         return configuration
@@ -125,6 +131,8 @@ final class WebPageController: NSObject, ObservableObject {
         }
     }
 
+    /// The page's unsent drafts, read before it goes for a page at another address (another port is
+    /// another origin, whose storage holds none of them).
     func unsentDrafts() async -> [String: String] {
         let prefixes = String(data: (try? JSONSerialization.data(withJSONObject: Self.draftPrefixes)) ?? Data(), encoding: .utf8) ?? "[]"
         let source = """
@@ -132,6 +140,7 @@ final class WebPageController: NSObject, ObservableObject {
           if (key && \(prefixes).some((prefix) => key.startsWith(prefix))) found[key] = localStorage.getItem(key); } } catch {}
           return JSON.stringify(found); })()
         """
+        // a page whose code hangs never answers: the window must still move on
         let json: String? = await withCheckedContinuation { done in
             var answered = false
             let answer = { (value: String?) in
@@ -162,6 +171,7 @@ final class WebPageController: NSObject, ObservableObject {
         carryBefore = before
     }
 
+    /// This Mac's own server, which the app reaches without pairing: the only addresses drafts move between.
     static func isLoopback(_ url: URL) -> Bool {
         guard url.scheme?.lowercased() == "http" || url.scheme?.lowercased() == "https",
               let host = url.host?.lowercased() else { return false }
@@ -192,6 +202,9 @@ final class WebPageController: NSObject, ObservableObject {
         return scheme?.lowercased() == "https" ? 443 : 80
     }
 
+    /// Another app's link (a site in a web
+    /// panel can make any) asks first, as Safari does. A file (one dropped where the page takes none,
+    /// which would replace the page) and the page's own data stay where they are.
     private func openElsewhere(_ url: URL) {
         guard let scheme = url.scheme?.lowercased() else { return }
         if ["http", "https", "mailto"].contains(scheme) {
@@ -217,6 +230,7 @@ final class WebPageController: NSObject, ObservableObject {
 
     private func failed(_ error: Error) {
         let error = error as NSError
+        // a load stopped on purpose: a newer one, a link handed to the browser, a download
         if error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled { return }
         // WebKit's "frame load interrupted" (102) and "plug-in handled load" (204)
         if error.domain == "WebKitErrorDomain" && (error.code == 102 || error.code == 204) { return }
@@ -256,6 +270,8 @@ final class WebPageController: NSObject, ObservableObject {
 extension WebPageController: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if navigationAction.shouldPerformDownload {
+            // only an Ovis page saves into Downloads by itself; a site's (a web panel's) download goes to
+            // the browser, which asks as it does for any site
             if let source = navigationAction.sourceFrame as WKFrameInfo?, isOvis(source.securityOrigin) {
                 decisionHandler(.download)
             } else {
@@ -268,6 +284,7 @@ extension WebPageController: WKNavigationDelegate {
             decisionHandler(.cancel)
             return
         }
+        // a frame inside the page (a web panel) may show any site; only the page itself is kept to Ovis
         if navigationAction.targetFrame?.isMainFrame == false {
             decisionHandler(url.isFileURL ? .cancel : .allow)
             return
@@ -287,6 +304,8 @@ extension WebPageController: WKNavigationDelegate {
             decisionHandler(.allow)
             return
         }
+        // a page (main frame) is always Ovis's own; a file a frame inside it shows is saved only when it
+        // comes from the Ovis server, and a site's goes to the browser
         let url = navigationResponse.response.url
         if navigationResponse.isForMainFrame || url.map(isOvis) == true {
             decisionHandler(.download)
@@ -353,6 +372,8 @@ extension WebPageController: WKUIDelegate {
             openElsewhere(url)
             return nil
         }
+        // only the Ovis page itself opens app windows: a site in a web panel could otherwise fill a blank
+        // one by script, and it would stay hidden
         let source = navigationAction.sourceFrame
         guard let model, source.isMainFrame, isOvis(source.securityOrigin) else { return nil }
         let popup = WebPageController(origin: origin, model: model, popupConfiguration: configuration)
@@ -378,6 +399,8 @@ extension WebPageController: WKUIDelegate {
         }
     }
 
+    /// Dictation in the Ovis page: macOS asks once whether the app may use the microphone
+    /// (NSMicrophoneUsageDescription). Anything else, such as a site in a web panel, is asked about.
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
         decisionHandler(frame.isMainFrame && isOvis(origin) && type == .microphone ? .grant : .prompt)
     }
@@ -399,6 +422,7 @@ extension WebPageController: WKDownloadDelegate {
         DistributedNotificationCenter.default().post(name: Notification.Name("com.apple.DownloadFileFinished"), object: file.path)
     }
 
+    /// A download that goes on to another site is that site's: the browser has it, as for a site's own.
     func download(_ download: WKDownload, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, decisionHandler: @escaping (WKDownload.RedirectPolicy) -> Void) {
         guard let url = request.url, !isOvis(url) else {
             decisionHandler(.allow)
@@ -410,6 +434,7 @@ extension WebPageController: WKDownloadDelegate {
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         _ = ended(download)
+        // a redirect handed to the browser cancels the download: nothing went wrong
         if (error as NSError).domain == NSURLErrorDomain && (error as NSError).code == NSURLErrorCancelled { return }
         guard let window = (closed ? nil : webView.window) ?? model?.page?.webView.window else { return }
         NSAlert(error: error).beginSheetModal(for: window)

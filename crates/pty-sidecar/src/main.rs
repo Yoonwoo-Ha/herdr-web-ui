@@ -27,6 +27,8 @@ use std::time::{Duration, Instant};
 
 const EXIT_QUIET: Duration = Duration::from_millis(200);
 const EXIT_DRAIN_LIMIT: Duration = Duration::from_secs(2);
+/// Output paused when the child exits is held for the parent this long: the server resumes or drops a
+/// slow client within 10 s (OUTPUT_PAUSE_MAX_MS), and its kill unpauses.
 const EXIT_PAUSED_LIMIT: Duration = Duration::from_secs(15);
 const KILL_AFTER: Duration = Duration::from_secs(2);
 const REAP_WAIT: Duration = Duration::from_secs(1);
@@ -209,10 +211,12 @@ fn main() {
     finish(&shared, 0);
 }
 
+/// Input goes through its own thread: a command that does not read must never hold up the control frames.
 fn write_input(master: OwnedFd, input: &InputQueue) {
     let mut master = File::from(master);
     loop {
         let data = input.next();
+        // a pty whose command has gone refuses it (EIO): the pump ends the host then
         let _ = master.write_all(&data);
         input.written(data);
     }
@@ -259,6 +263,7 @@ fn control(shared: &Arc<Shared>, input: &InputQueue, master: RawFd) {
             eprintln!("pty-sidecar: discarded a control frame longer than {MAX_FRAME_BYTES} bytes");
         }
     }
+    // a last line without its newline is not a frame (pty-host.mjs drops it too)
     stop(shared);
 }
 
@@ -314,6 +319,7 @@ fn pump(shared: &Arc<Shared>, master: RawFd, wake: RawFd) {
     let mut drain = Drain { active: Instant::now(), resumed: None };
     let mut copy = |data: &[u8], discard: &mut bool| {
         if !*discard && stdout.write_all(data).is_err() {
+            // the parent is gone (EPIPE): end the child, and keep reading so it never blocks on output
             *discard = true;
             stop(shared);
         }
@@ -371,6 +377,8 @@ fn pump(shared: &Arc<Shared>, master: RawFd, wake: RawFd) {
             Err(_) => break,
         }
     }
+    // a command dying closes its terminal before it can be waited for: its end is its own unless it is
+    // still running after EXIT_QUIET, when it has closed its terminal without exiting
     {
         let mut state = shared.lock();
         let deadline = Instant::now() + EXIT_QUIET;

@@ -25,6 +25,7 @@ public class HerdrShellPlugin extends Plugin {
         call.resolve(state);
     }
 
+    /** url: an http or https address, the first page (a pairing link's code or a relay pairing offer's fragment included). */
     @PluginMethod
     public void open(PluginCall call) {
         String text = call.getString("url");
@@ -100,6 +101,10 @@ public class HerdrShellPlugin extends Plugin {
         return getBridge().getServerUrl() == null;
     }
 
+    /**
+     * A PC's page has the bridge too: an activity showing a PC (its
+     * server URL is the PC's) never hands the link out, as it may hold another PC's pairing code.
+     */
     @PluginMethod
     public void takeLink(PluginCall call) {
         String link = null;

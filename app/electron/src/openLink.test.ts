@@ -62,6 +62,7 @@ describe("tellsLink", () => {
 
   it("tells a waiting link to the server's page once that page itself has loaded", () => {
     expect(tellsLink("?pane=t3", page(true, false), false)).toBe(true);
+    // its did-finish-load: told even where isLoadingMainFrame has not caught up yet
     expect(tellsLink("?pane=t3", page(true, true), true)).toBe(true);
   });
 

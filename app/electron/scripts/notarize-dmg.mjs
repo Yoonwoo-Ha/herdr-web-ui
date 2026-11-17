@@ -6,6 +6,19 @@
  * afterSign (scripts/notarize-app.mjs) notarizes the app before the dmg and zip are made from it,
  * and artifactBuildCompleted (the default export here) the dmg. Plain JavaScript, so it loads under
  * whichever Node runs electron-builder.
+ *
+ * It runs when the notary key is set:
+ *
+ *   APPLE_API_KEY      path to an App Store Connect API key (.p8)
+ *   APPLE_API_KEY_ID   its key ID
+ *   APPLE_API_ISSUER   its issuer ID
+ *
+ * Signing takes electron-builder's own: CSC_LINK (a .p12, as a path or base64) with
+ * CSC_KEY_PASSWORD, or CSC_NAME for a Developer ID Application identity already in a keychain.
+ * Without an identity the build is unsigned. A build without the notary key goes unnotarized,
+ * unless OVIS_REQUIRE_NOTARIZATION=1 (a release), which stops it, signed or not; a notary key
+ * without a signed dmg stops the build too. Only the API key notarizes: electron-builder's Apple ID
+ * or keychain profile credentials stop the build rather than ship it unnotarized.
  */
 import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -14,7 +27,12 @@ import { basename, join } from "node:path";
 
 export const NOTARY_ENV = ["APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER"];
 
+/** waits between staple tries: six tries over about five and a half minutes */
 export const STAPLE_WAITS = [20_000, 40_000, 60_000, 90_000, 120_000];
+/**
+ * All the waiting one build may do, app and dmg together: the build, two notarizations and this
+ * stay within the Mac build job's 30 minutes (.github/workflows/desktop.yml).
+ */
 export const WAIT_BUDGET = 8 * 60_000;
 
 /** @typedef {(file: string, args: string[]) => Promise<string>} Run */
@@ -46,6 +64,7 @@ function defaults(options) {
 }
 
 /**
+ * The notarytool key arguments, or null when no key is set and the build may go unnotarized.
  * @param {Record<string, string | undefined>} env
  * @param {string} file
  */

@@ -36,6 +36,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      # no setup-bun: a PC that has neither herdr nor Bun is the case under test
       - name: Install this commit
         if: github.event_name == 'pull_request'
         env:

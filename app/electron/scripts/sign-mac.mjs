@@ -1,3 +1,10 @@
+/**
+ * electron-builder's mac.sign (electron-builder.yml): signs the app as electron-builder does, after
+ * signing the bundled Rust PTY host first. The server runs that host only while its record
+ * (`ovis-pty-sidecar.json`, written by scripts/pty-sidecar.ts install) holds the binary's SHA-256
+ * (server/pty/host.ts), and signing rewrites the binary: so the record takes the signed bytes' hash
+ * before the app's seal covers both, and the host is left out of the signing that follows.
+ */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

@@ -81,6 +81,7 @@ public class OpeningWatchTest {
 
     @Test
     public void withoutAByteCountTheAnswerAloneDecides() {
+        // TrafficStats.UNSUPPORTED (-1): no bytes are ever counted
         OpeningWatch watch = new OpeningWatch(0, LIMIT, -1);
         watch.received(3000, -1);
         assertEquals(OpeningWatch.Stage.NO_ANSWER, watch.stage(LIMIT));

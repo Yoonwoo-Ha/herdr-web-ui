@@ -14,6 +14,12 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * The PC's direct carriers for the hosted shell (src/lib/relay/directSocket.ts; docs/relay.md, "Direct on
+ * the same network"): a page on https cannot open plain `ws://`. Only the app's own origin may call it
+ * (allowed), only `ws://<private or Tailscale IPv4>:<port>/v1/ws?v=1` opens (DirectSocket.carrier), at most two at once.
+ * Noise inside the channel proves the PC: the address is only a hint.
+ */
 @CapacitorPlugin(name = "OvisDirect")
 public class OvisDirectPlugin extends Plugin {
     static final String APP_ORIGIN = "https://app.ovis.sh";
@@ -29,10 +35,12 @@ public class OvisDirectPlugin extends Plugin {
     }
 
     private final Map<String, Entry> sockets = new HashMap<>();
+    /** counts the pages this plugin served (closeAll): an open asked by an earlier page opens nothing */
     private int pages;
 
     @Override
     public void load() {
+        // a new page: the old one's sockets would hold both places and nobody reads them
         bridge.addWebViewListener(new WebViewListener() {
             @Override
             public void onPageStarted(WebView webView) {
@@ -106,6 +114,7 @@ public class OvisDirectPlugin extends Plugin {
             call.reject("Only a direct carrier on a private address opens", "invalid_url");
             return;
         }
+        // the page on screen, checked where the WebView lives: the bundled error page shares the bridge
         getActivity().runOnUiThread(() -> {
             String page = bridge.getWebView().getUrl();
             Uri url = page == null ? null : Uri.parse(page);

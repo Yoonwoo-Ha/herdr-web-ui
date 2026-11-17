@@ -58,6 +58,7 @@ jobs:
           path: remote-bundles/*
   bundle-windows:
     timeout-minutes: 20
+    # release publishes its bundle: GitHub-hosted whatever the runner variables say, and no shared cache (scripts/privileged-jobs-workflow.test.ts)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,6 +96,7 @@ jobs:
         run: curl.exe -fsSLo install.cmd https://herdr.dev/install.cmd && install.cmd && del install.cmd
       - run: bun run scripts/remote-bundle-smoke.ts
         shell: pwsh
+      # what only a real Windows PC shows: its process table and its path rules (server/windows-native.test.ts)
       - run: bun install --frozen-lockfile
       - name: Windows-only code on Windows
         shell: pwsh

@@ -14,6 +14,7 @@ const app = join(import.meta.dir, "..");
 const www = join(app, "www");
 rmSync(www, { recursive: true, force: true });
 cpSync(join(app, "web"), www, { recursive: true });
+// error.html stands alone: Android serves it without the files beside it while a PC is open
 const errorPage = join(www, "error.html");
 const link = '<link rel="stylesheet" href="shell.css">';
 const errorHtml = readFileSync(errorPage, "utf8");

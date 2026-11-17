@@ -1,5 +1,18 @@
+/**
+ * Signing in to the account from the desktop app (docs/account.md, "Signing in"): the provider's
+ * page opens in the system browser, and the account service sends it back to a server on this
+ * machine's loopback address, `http://127.0.0.1:<port>/callback`, with the code and state in the
+ * query (RFC 8252). The page itself finishes the sign-in, as in a browser; this only carries the
+ * return. One sign-in at a time; a new one ends the one before. Only a return naming the state of
+ * the sign-in the app opened, with a code or an error, ends the wait: anything else that finds the
+ * port is turned away and the wait goes on.
+ */
 import { createServer } from "node:http";
 
+/**
+ * The account service this app signs in with: account.ovis.sh, or the https origin
+ * OVIS_ACCOUNT_SERVICE_URL names; none when it is `off` or not https, and the app offers no sign-in.
+ */
 export function accountServiceOf(env: Record<string, string | undefined>): string | null {
   try {
     const url = new URL(env["OVIS_ACCOUNT_SERVICE_URL"] ?? "https://account.ovis.sh");
@@ -14,6 +27,7 @@ const CLOSED_PAGE = "<!doctype html><meta charset=\"utf-8\"><title>Ovis</title><
 export interface LoopbackSignIn {
   readonly redirectUri: string;
   readonly returned: Promise<string>;
+  /** the state of the sign-in the app opened: only a return naming it is taken */
   expect(state: string): void;
   close(): void;
 }

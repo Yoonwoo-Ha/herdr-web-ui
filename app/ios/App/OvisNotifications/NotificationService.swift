@@ -2,6 +2,9 @@ import Foundation
 import OvisPushCore
 import UserNotifications
 
+/// The relay's mutable-content alert carries the PC's ciphertext in "ovis"
+/// (RFC 8291, aes128gcm), opened here with the phone's keys from the keychain group shared with the
+/// app; the relay never holds a key that could read it.
 final class NotificationService: UNNotificationServiceExtension {
     private let lock = NSLock()
     private var handler: ((UNNotificationContent) -> Void)?

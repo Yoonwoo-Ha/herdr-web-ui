@@ -1,5 +1,7 @@
 name: Mac app
-# Release calls it after publishing: a release made with GITHUB_TOKEN fires no release event.
+# Release calls it after publishing (a release made with GITHUB_TOKEN fires
+# no release event, so nothing else would).
+# Without the signing secrets it skips with a notice; app/mac/README.md lists them.
 on:
   workflow_call:
     inputs:
@@ -20,6 +22,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   gate:
+    # it reads the signing secrets (only whether they are set), which Release passes on: GitHub-hosted whatever the
+    # runner variables say (scripts/privileged-jobs-workflow.test.ts)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:

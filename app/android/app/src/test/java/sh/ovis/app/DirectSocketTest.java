@@ -69,6 +69,7 @@ public class DirectSocketTest {
 
     private static final String GOOD = "Upgrade: websocket\r\nConnection: Upgrade\r\n";
 
+    /** A frame as a server sends it: unmasked, a short payload. */
     private static byte[] frame(int first, byte[] payload) {
         byte[] out = new byte[2 + payload.length];
         out[0] = (byte) first;

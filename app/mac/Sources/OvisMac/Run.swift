@@ -5,6 +5,7 @@ enum Ovis {
     static let legacyPluginID = "devswha.herdr-web-ui"
     static let agentLabel = "sh.ovis.herdr-server"
     static let installScript = URL(string: "https://ovis.sh/install.sh")!
+    /// Where the installer may come from: ovis.sh redirects to its copy on herdrweb.dev.
     static let installerHosts: Set<String> = ["ovis.sh", "herdrweb.dev"]
     static let support = URL(string: "https://ovis.sh/support/")!
     static let tailscaleDownload = URL(string: "https://tailscale.com/download/mac")!
@@ -21,6 +22,7 @@ enum Paths {
     static var bun: String { which("bun") ?? "\(home)/.bun/bin/bun" }
     static let launchAgent = "\(home)/Library/LaunchAgents/\(Ovis.agentLabel).plist"
     static let logDir = "\(home)/Library/Logs/Ovis"
+    /// herdr's output, written by launchd from the LaunchAgent.
     static let serverLog = "\(logDir)/herdr-server.log"
     /// An app opened from Finder gets launchd's bare PATH; the installer and the tools it adds need these.
     static let path = ["\(home)/.local/bin", "\(home)/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"].joined(separator: ":")
@@ -42,6 +44,7 @@ struct RunResult {
     let output: String
 }
 
+/// Splits a child's output into lines as it arrives; the pipe's handler and the exit handler run on different threads.
 final class LineCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var buffer = Data()
@@ -79,6 +82,8 @@ final class LineCollector: @unchecked Sendable {
     }
 }
 
+/// With a timeout, a program still running after it is terminated (killed 5 s later if it ignores that), so a
+/// hung check cannot hold the window.
 func run(_ executable: String, _ arguments: [String], env extra: [String: String] = [:], keepStderr: Bool = true, timeout: TimeInterval? = nil, onLine: (@Sendable (String) -> Void)? = nil) async -> RunResult {
     await withCheckedContinuation { continuation in
         let process = Process()
@@ -121,6 +126,7 @@ func run(_ executable: String, _ arguments: [String], env extra: [String: String
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                     guard process.isRunning else { return }
                     process.terminate()
+                    // a program that ignores SIGTERM still has to end, or the window waits with it
                     DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
                         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
                     }

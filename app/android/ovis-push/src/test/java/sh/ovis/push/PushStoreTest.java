@@ -204,6 +204,7 @@ public class PushStoreTest {
         assertFalse(PushStore.provesAlert(prefs, ""));
         assertTrue(prefs.values.isEmpty());
         String proof = PushStore.alertProof(prefs);
+        // made once, from 32 random bytes, and another install's is another
         assertEquals(proof, PushStore.alertProof(prefs));
         assertEquals(43, proof.length());
         assertNotEquals(proof, PushStore.alertProof(new MemoryPreferences()));

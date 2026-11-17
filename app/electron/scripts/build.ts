@@ -27,12 +27,14 @@ async function sh(argv: string[], cwd: string, env: Record<string, string | unde
   return output;
 }
 
+/** a pinned download, kept in the cache; a cached copy is used only while it still hashes to its pin */
 async function cached(name: string, pin: Pinned): Promise<string> {
   const path = join(cache, name);
   if (!existsSync(path) || sha256(readFileSync(path)) !== pin.sha256) writeFileSync(path, await download(pin));
   return path;
 }
 
+/** the checked archives, unpacked afresh into extracted/ on every build: nothing unpacked earlier is trusted */
 async function fetchRuntimes(): Promise<string> {
   mkdirSync(cache, { recursive: true });
   const hc = await cached(windows ? "hc.zip" : "hc.tar.gz", HC[target]);
@@ -64,6 +66,7 @@ async function stageAll(): Promise<void> {
   rmSync(stage, { recursive: true, force: true });
   for (const dir of ["bin", "licenses/herdr-core", "licenses/bun"]) mkdirSync(join(stage, dir), { recursive: true });
   copyExecutable(join(runtimes, "hc", `herdr-core${exe}`), join(stage, "bin", `herdr-core${exe}`));
+  // hc on Windows runs its terminals on the ConPTY beside it (conpty\conpty.dll, conpty\x64\OpenConsole.exe)
   if (windows) cpSync(join(runtimes, "hc", "conpty"), join(stage, "bin", "conpty"), { recursive: true });
   copyExecutable(join(runtimes, BUN[target].folder, `bun${exe}`), join(stage, "bin", `bun${exe}`));
   // THIRD-PARTY-NOTICES is a folder in the Windows zip, with ConPTY's license and notice in it
@@ -75,6 +78,9 @@ async function stageAll(): Promise<void> {
   if (bun !== BUN_VERSION) throw new Error(`The staged Bun says ${bun}, not ${BUN_VERSION}`);
 
   await sh(["bun", "run", "build"], repo);
+  // The release's Rust PTY host (checked against the release manifest) goes in
+  // with its record, which a sign-in the server follows in a terminal of its own needs on a PC without Node; without
+  // it the build goes on
   await sh(["bun", "scripts/pty-sidecar.ts", "install"], repo);
   const host = join(repo, "bin", "ovis-pty-sidecar");
   if (!existsSync(host)) console.log("no Rust PTY host for this version: the app's server falls back to Node, where the PC has it");

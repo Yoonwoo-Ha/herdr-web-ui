@@ -65,6 +65,7 @@ struct OvisCommands: Commands {
     }
 }
 
+/// No Cmd+Shift letter here or below: the page's own shortcuts are Cmd+Shift ones (src/lib/shortcuts.ts).
 private struct PhoneSetupItem: View {
     @Environment(\.openWindow) private var openWindow
 

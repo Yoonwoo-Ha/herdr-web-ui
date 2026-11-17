@@ -84,6 +84,7 @@ public class SaveImagePlugin extends Plugin {
         ContentValues values = new ContentValues();
         values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
         values.put(MediaStore.MediaColumns.MIME_TYPE, type);
+        // hidden from other apps until it is whole
         values.put(MediaStore.MediaColumns.IS_PENDING, 1);
         Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
         if (uri == null) throw new IOException("Downloads refused the picture");
@@ -105,6 +106,11 @@ public class SaveImagePlugin extends Plugin {
         }
     }
 
+    /**
+     * Each picture in a folder of its own under cache/saved (of the cache, res/xml/file_paths.xml
+     * shares only that folder), so the address an app was granted never shows another picture; the
+     * next share tries to remove those shared over an hour ago.
+     */
     private void toShareSheet(PluginCall call, String name, String type, byte[] bytes) throws IOException {
         File root = new File(getContext().getCacheDir(), "saved");
         File[] earlier = root.listFiles();

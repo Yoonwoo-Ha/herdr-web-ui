@@ -72,6 +72,8 @@ fn working_directory() -> io::Result<PathBuf> {
     }
 }
 
+/// This process's environment as pty-host.mjs and node-pty hand it on: no bridge token under either name,
+/// `TERM=xterm-256color`, `PWD` the working directory.
 fn environment(cwd: &OsStr) -> Vec<(OsString, OsString)> {
     let mut env: Vec<(OsString, OsString)> = std::env::vars_os()
         .filter(|(key, _)| key != "OVIS_TOKEN" && key != "HERDR_WEB_TOKEN" && key != "TERM" && key != "PWD")
@@ -111,6 +113,7 @@ pub fn spawn(command: &OsStr, args: &[OsString], cols: u16, rows: u16) -> io::Re
             let mut none: libc::sigset_t = std::mem::zeroed();
             libc::sigemptyset(&mut none);
             libc::pthread_sigmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
+            // a host killed outright (SIGKILL, the OOM killer) takes the command with it
             #[cfg(target_os = "linux")]
             {
                 check(libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL))?;
@@ -236,6 +239,9 @@ pub fn reap(pid: libc::pid_t, nohang: bool) -> Option<libc::c_int> {
     Some(status)
 }
 
+/// A wait status as the host's exit code: the child's own code, or 128 + the signal's number when a
+/// signal ended it (as a shell reports it, and pty-host.mjs); 0 when that signal is in `sent`, one the
+/// host itself sent to stop it.
 pub fn exit_code(status: libc::c_int, sent: &[libc::c_int]) -> i32 {
     if libc::WIFEXITED(status) {
         libc::WEXITSTATUS(status)
@@ -250,6 +256,7 @@ pub fn signal(pid: libc::pid_t, signal: libc::c_int) {
     unsafe { libc::kill(pid, signal) };
 }
 
+/// Signals every process in the group `group`, the child's: it is a session leader, so its pid is the group's id.
 /// Never 0 or 1: kill(0) and kill(-1) would reach this host's own group (the server's) or every process.
 pub fn signal_group(group: libc::pid_t, signal: libc::c_int) {
     if group > 1 {

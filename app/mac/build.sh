@@ -1,10 +1,16 @@
 #!/bin/sh
+#   OVIS_SIGN_IDENTITY   "Developer ID Application: …" to sign for distribution; ad hoc without it
+#   OVIS_KEYCHAIN        the keychain holding that identity, when it is not the default one
+#   OVIS_NOTARY_KEY      an App Store Connect API key (.p8) to notarize and staple the DMG, with
+#   OVIS_NOTARY_KEY_ID   its key ID and
+#   OVIS_NOTARY_ISSUER   its issuer ID
 set -eu
 cd "$(dirname "$0")"
 
 version=${OVIS_MAC_VERSION:-1.0.0}
 build=${OVIS_MAC_BUILD:-1}
 app=build/Ovis.app
+# numbers and dots only, as macOS takes a bundle's version: anything else would also break the sed below
 for value in "$version" "$build"; do
   case $value in
     '' | .* | *. | *..* | *[!0-9.]*)
@@ -13,6 +19,7 @@ for value in "$version" "$build"; do
       ;;
   esac
 done
+# the keychain as one argument, whatever its path holds
 if [ -n "${OVIS_KEYCHAIN:-}" ]; then set -- --keychain "$OVIS_KEYCHAIN"; else set --; fi
 
 swift build -c release --arch arm64 --arch x86_64

@@ -33,7 +33,9 @@ final class PushKeys {
     }
 
     final byte[] privateScalar;
+    /** the uncompressed point, 65 bytes: what a PC gets as p256dh */
     final byte[] publicPoint;
+    /** 16 bytes: what a PC gets as auth */
     final byte[] auth;
 
     PushKeys(byte[] privateScalar, byte[] publicPoint, byte[] auth) {
@@ -65,6 +67,7 @@ final class PushKeys {
             .add(parameters.getCurve().getB()).mod(prime);
         if (x.compareTo(prime) >= 0 || y.compareTo(prime) >= 0
             || !y.multiply(y).mod(prime).equals(right)) throw new Damaged();
+        // Only a completed check returning false proves that otherwise valid halves mismatch.
         Signature proof = Signature.getInstance("SHA256withECDSA");
         proof.initSign(keys.privateKey());
         proof.update(new byte[] { 0 });
@@ -93,6 +96,7 @@ final class PushKeys {
         return KeyFactory.getInstance("EC").generatePrivate(new ECPrivateKeySpec(new BigInteger(1, privateScalar), p256()));
     }
 
+    /** A P-256 public key from its uncompressed point (a sender's key in a push's header). */
     static PublicKey publicKey(byte[] point) throws GeneralSecurityException {
         if (point.length != 65 || point[0] != 4) throw new GeneralSecurityException("not an uncompressed P-256 point");
         ECPoint w = new ECPoint(new BigInteger(1, Arrays.copyOfRange(point, 1, 33)), new BigInteger(1, Arrays.copyOfRange(point, 33, 65)));

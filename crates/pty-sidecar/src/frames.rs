@@ -20,6 +20,7 @@ pub fn parse(line: &str) -> Option<Frame> {
         Err(_) => serde_json::from_str(&replace_lone_surrogates(line)?).ok()?,
     };
     match value.get("t")?.as_str()? {
+        // moved out, not copied: a frame can be 16 MiB
         "i" => match value.get_mut("d").map(Value::take) {
             Some(Value::String(text)) => Some(Frame::Input(text)),
             _ => None,
@@ -31,6 +32,7 @@ pub fn parse(line: &str) -> Option<Frame> {
     }
 }
 
+/// JavaScript's `parseInt(text, 10)`: leading whitespace, a sign, then digits; None without digits.
 pub fn js_parse_int(text: &str) -> Option<i64> {
     let text = text.trim_start();
     let (negative, digits) = match text.as_bytes().first() {
@@ -53,6 +55,8 @@ pub fn initial_size(text: &str, fallback: u16) -> u16 {
     }
 }
 
+/// pty-host.mjs's `clamp`: `parseInt(String(value), 10)`, below 1 (or no number) is 1, above 1000 is 1000.
+/// Except a float String() writes with an exponent (2e21, 5e-7): parseInt takes its leading digits, this 1.
 fn js_dimension(value: Option<&Value>) -> u16 {
     let parsed = match value {
         Some(Value::Number(number)) => match number.as_i64() {
@@ -85,6 +89,7 @@ pub fn replace_lone_surrogates(json: &str) -> Option<String> {
             continue;
         }
         let Some(unit) = unit_at(at) else {
+            // any other escape is two bytes: never read its second byte as the start of one
             at += 2;
             continue;
         };

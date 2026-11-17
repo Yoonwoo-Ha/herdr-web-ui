@@ -35,6 +35,7 @@ function stopPending() {
   showStatus("");
   if (android) void shell("cancelOpen");
 }
+/** PCs that loaded before (an origin, or a relay PC's scope), and the public http address the user was just warned about. */
 let savedOrigins = [];
 let warned = "";
 
@@ -58,6 +59,7 @@ async function open(text) {
   stopPending();
   const url = parseAddress(text);
   if (url === null) { error.textContent = t("That is not an http or https address.", "http 또는 https 주소가 아닙니다."); input.focus(); return; }
+  // a PC paired over the Ovis relay opens at its scope on the app's origin, saved under that scope
   const relay = relayLink(url);
   if (relay?.error) { error.textContent = relayErrors[relay.error](); input.focus(); return; }
   if (relay) {
@@ -143,6 +145,8 @@ async function load() {
 
 void load();
 
+// a PC's link on the app's origin tapped outside the app (a message, the camera reading the PC's QR
+// code), which Android hands to the app (MainActivity's app link): opened as a scanned QR code is
 async function openAppLink() {
   if (window.Capacitor?.getPlatform?.() !== "android") return;
   const { url } = await shell("takeLink");

@@ -28,6 +28,7 @@ impl LineSplitter {
             } else if self.partial.len() + line.len() <= self.limit {
                 self.partial.extend_from_slice(line);
                 frame(&self.partial);
+                // a frame can be 17 MiB: its memory goes with it
                 self.partial = Vec::new();
             } else {
                 self.partial = Vec::new();

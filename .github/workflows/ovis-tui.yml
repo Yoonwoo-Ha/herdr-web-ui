@@ -1,4 +1,5 @@
 name: Terminal client
+# hc-tui builds Ghostty's terminal library with Zig 0.16, which hc-tui's own script installs.
 on:
   pull_request:
     paths:
