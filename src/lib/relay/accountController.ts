@@ -1,4 +1,3 @@
-/** Account sign-in, directory refresh and authenticated PC enrollment for the hosted shell. */
 import { ACCOUNT_FEATURE } from "../../../shared/relay-mux.ts";
 import { importPublicKey } from "../../../shared/relay-e2ee.ts";
 import { newRecordId } from "../../../shared/account-records.ts";
@@ -26,10 +25,7 @@ import { openRelayTransport, type RelayTransport } from "./transport.ts";
 const INTRODUCTION_WAIT_MS = 60_000;
 const INTRODUCTION_POLL_MS = 3_000;
 const DIRECTORY_REFRESH_MS = 60_000;
-/**
- * `consent`: whose account the pairing was confirmed for. `settled`: told once, when nothing more of this enrollment
- * ends or renews the session it was given (its link and renewal are done, or it stopped before them).
- */
+/** `consent`: whose account the pairing was confirmed for. */
 interface EnrollOptions { readonly consent?: PairingConsent; readonly settled?: () => void }
 const wait = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
 /** A sign-in again, made to delete an account, landed in another account: nothing is deleted. */
@@ -64,14 +60,11 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
   const label = mount.label ?? deviceLabel(navigator.userAgent, navigator.maxTouchPoints ?? 0);
   const open = mount.open ?? openRelayTransport;
   const forgotten = new Map<string, number>();
-  // enrollments still running, with their PC: leaving the account cancels each, and waits for none
   const running = new Map<Promise<unknown>, string>();
   const cancelEnrollment = (id: string): void => { forgotten.set(id, (forgotten.get(id) ?? 0) + 1); };
   let accountView: AccountView | null = accountService === null ? null : { kind: "signed-out", error: null };
   let directory: readonly DirectoryPc[] = [];
-  // whom `directory` was last read for, so a failed read can age its rows again without reading it
   let listedFor: { readonly epoch: number; readonly accountKey: string; readonly account: string } | undefined;
-  // the sign-in the signed-in view was last read as
   let shownFor: AccountSession | undefined;
   let generation = 0;
   let leaving = false;
@@ -80,12 +73,10 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
    * it after a wait (the sign-in again, the second delete, what is drawn) goes on only while it is still this one.
    */
   let deletion: object | undefined;
-  // the read out now and the sign-in it is for: a read of an earlier sign-in never holds back the next one's
   let reading: { readonly epoch: number; readonly read: Promise<void> } | undefined;
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
   const changed = async (): Promise<void> => { await view.changed(); armRefresh(); };
   const refresh = async (initial = false, forced = false): Promise<void> => {
-    // a delete in flight draws what it ends in itself: no background read replaces its notice, only its own reads go on
     if (reading?.epoch === generation || leaving || (deletion !== undefined && !initial && !forced) || accountService === null || (!initial && !forced && (!view.active() || accountView?.kind !== "signed-in"))) return;
     const epoch = generation;
     let current = accountView;
@@ -118,7 +109,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
           if (!live()) return;
         }
         shownFor = session;
-        // the list of the sign-in read above: one stored meanwhile is not shown under this one's heading
         const listed = await account.forSignIn(session).listPcs();
         const devices = await store.list();
         const key = await accountStore.key();
@@ -134,7 +124,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
         sendQueuedAdds({ service: account, store: accountStore, account: session.account }).catch((error: unknown) => console.warn("Ovis: kept adds could not be sent", error instanceof Error ? error.name : error));
       } catch (error) {
         if (!live()) return;
-        // the sign-in this read began with is gone; another one stored meanwhile (another tab) is read in its place
         const next = error instanceof SignedOutError ? await account.session().catch(() => undefined) : undefined;
         if (next !== undefined) { if (live()) replacedBy(next); return; }
         if (!live()) return;
@@ -143,10 +132,8 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
           console.warn("Ovis: the account's PCs could not be read", error instanceof Error ? error.name : error);
           const devices = await store.list();
           if (!live()) return;
-          // the rows kept from the last read, with their time-based states aged to now (a PC unseen for long goes Offline)
           const kept = current?.kind === "signed-in" && current.pcs !== null && listedFor?.epoch === epoch
             ? myPcs(directory, devices, { now: Date.now(), outdated: view.outdated(), accountKey: listedFor.accountKey, account: listedFor.account })
-            // nothing kept (a first read, or rows dropped with the sign-in they were of): the PCs this device is paired with
             : current?.kind === "signed-in" && current.pcs !== null ? current.pcs : myPcs([], devices, { now: Date.now(), outdated: view.outdated() });
           if (accountView?.kind === "signed-in") accountView = { ...accountView, pcs: kept, error: t("The account service could not be reached. The PCs this device is paired with still work.") };
         }
@@ -161,16 +148,13 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
   };
   /**
    * The sign-in and its directory, read again now whatever screen is up: for a consent about to be acted on, which
-   * no timer keeps fresh (the confirm is not the front page). A sign-in still finishing is left to its own read.
+   * no timer keeps fresh (the confirm is not the front page).
    */
   const reread = async (): Promise<void> => {
     while (reading !== undefined) await reading.read.catch(() => undefined);
     if (accountView?.kind !== "signing-in") await refresh(accountView?.kind !== "signed-in", true);
   };
-  // the read a person asked for (Check again, Try again) that waits for the one out to land: later asks join it
   let asked: Promise<void> | undefined;
-  /** Reads the directory because the person asked: a read already out may have been answered before what they just did
-   *  (a PC added a moment ago), so the list is read once more after it. Settles when a read begun after the ask has landed. */
   const refreshNow = (): Promise<void> => {
     if (asked !== undefined) return asked;
     const out = reading;
@@ -178,7 +162,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
     const queued = (async () => {
       await out.read.catch(() => {});
       asked = undefined;
-      // a read that began meanwhile (the next sign-in's, after the one waited for) began after the ask too
       const next = reading;
       if (next?.epoch === generation) await next.read.catch(() => {});
       else await refresh();
@@ -213,7 +196,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
       if (session === undefined) throw new SignedOutError();
       return leaveAccount({ service: account, accountStore, relayStore: store, session });
     }).then(async ({ unconfirmed }) => {
-      // signed out, or in again, meanwhile: that view is not this leave's to change
       if (epoch !== generation) return;
       // a PC the account does not list kept this device: say so, rather than claim it is gone everywhere
       const names = new Map((await store.list()).map((device) => [device.server_id, device.name ?? device.server_id.slice(0, 8)]));
@@ -228,7 +210,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
     }).finally(() => { leaving = false; });
   };
 
-  /** What the service said to a delete it refused, in the person's words. */
   const deleteFailure = (error: unknown): string => {
     if (error instanceof AccountServiceError && error.code === "reauth_required") return t("To delete your account, sign out, sign in again, then delete it within ten minutes.");
     if (error instanceof AccountServiceError && error.code === "subscription_active") return t("Cancel your subscription first, then delete the account.");
@@ -236,8 +217,7 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
     return t("The account could not be deleted. Try again.");
   };
   /**
-   * Deletes the signed-in account at the account service (account/deleteAccount.ts), then shows the signed-out
-   * front page. The service wants a sign-in from the last ten minutes: the phone app signs in again in place, with
+   * The service wants a sign-in from the last ten minutes: the phone app signs in again in place, with
    * the method this sign-in used, and deletes only if that is the same account; a browser is told to sign in again.
    */
   const deleteAccount = (): Promise<void> => {
@@ -249,7 +229,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
     // the sign-in the signed-in view on screen speaks of, not the one stored now: one another tab stored meanwhile is
     // never deleted (deleteAccount.ts), and the view then reads it
     const from = accountView?.kind === "signed-in" ? shownFor : undefined;
-    // a refusal of an earlier press is not this one's
     if (accountView?.kind === "signed-in" && accountView.deleteError !== undefined) { const { deleteError: _earlier, ...rest } = accountView; accountView = rest; }
     return Promise.resolve(from).then(async (session) => {
       if (session === undefined) throw new SignedOutError();
@@ -270,24 +249,19 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
         await deleteAccountOf({ service: account, accountStore, session: again });
       }
     }).then(async () => {
-      // signed out or in meanwhile: that view is not this delete's to change
       if (!current()) return;
       // a sign-in that took the deleted one's place while the delete was out stays (deleteAccount.ts): it is shown
       if (await account.session().catch(() => undefined) !== undefined) { await refresh(true); return; }
       if (!current()) return;
-      // the account is gone: a PC being brought into it is not
       for (const serverId of running.values()) cancelEnrollment(serverId);
       directory = [];
       accountView = { kind: "signed-out", error: null, notice: t("Your account was deleted.") };
       armRefresh();
       await changed();
     }, async (error: unknown) => {
-      // called off by a sign-out or a sign-in: what that drew stays
       if (!current()) return;
       console.warn("Ovis: the account was not deleted", error instanceof AccountServiceError ? error.code : error instanceof Error ? error.name : error);
-      // the sign-in ended meanwhile, or a sign-in again landed in another account: read what is stored now
       if (error instanceof SignedOutError || error instanceof AnotherAccountError) await refresh(true);
-      // a sign-out or a sign-in while that read was out: what it drew stays
       if (!current()) return;
       if (error instanceof SignedOutError && await account.session().catch(() => undefined) === undefined) {
         // nothing is stored any more: the signed-out page. Whether the account went with it is not known here (a delete whose
@@ -299,9 +273,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
         await changed();
         return;
       }
-      // a sign-in that ended or was replaced deleted nothing, and the page now shown is not the one asked about: no
-      // failure is drawn on it to try again
-      // said on Devices alone, where Delete account was pressed: the directory's own failure keeps `error`
       if (accountView?.kind === "signed-in" && !(error instanceof SignedOutError)) accountView = { ...accountView, deleteError: deleteFailure(error) };
       await changed();
     }).finally(() => { if (deletion === mine) deletion = undefined; });
@@ -359,7 +330,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
    * hands an introduction over a moment later. A QR or code pairing gets none, and is not kept waiting for one.
    */
   const enroll = (opened: RelayTransport, serverId: string, fresh: boolean, introducible = false, options: EnrollOptions = {}): Promise<"local" | EnrollmentCompletion> => {
-    // told once: after the session's last renewal, or when the enrollment ends without reaching it
     let told = false;
     const settled = (): void => { if (told) return; told = true; options.settled?.(); };
     const done = enrollOwned(opened, serverId, fresh, introducible, { ...options, settled });
@@ -433,7 +403,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
         if (!recorded) throw new DOMException("This device is leaving the account", "AbortError");
         try { device = await linkThisDevice({ fetch, device, key, account: session.account, store: enrollmentStore }); }
         finally {
-          // settled: the pairing itself (pending_key) names a link whose answer was lost
           await accountStore.update("linking", (current) => {
             const { [link]: _settled, ...rest } = current ?? {};
             return Object.keys(rest).length > 0 ? rest : undefined;
@@ -444,10 +413,8 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
       if (linking || fresh) {
         await opened.renew();
         assertPairing(await store.get(serverId));
-        // a Devices panel open since before the link reads the list again, over the session that proved the new key
         if (linking) window.dispatchEvent(new Event(DEVICES_CHANGED_EVENT));
       }
-      // the link ended the PC's other sessions of this row, and the renewal reconnected this one: nothing below does either
       settled?.();
       // a PC of another account is not this account's to list or introduce from
       if (device.public_spki !== key.public_spki || (!linking && status.account !== session.account)) throw new AccountPcError(409, "enrolling");
@@ -494,7 +461,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
               assertPairing(await store.get(serverId));
               return response;
             }, store: accountStore, account: session.account, serverId, pc, listed, assertOwned: async () => { assertPairing(await store.get(serverId)); },
-            // a PC that could not be opened is one more that was not checked
             others: reached.map((result) => result.status === "fulfilled" ? result.value : { serverId: "", fetch: () => Promise.reject(result.reason) }),
           });
           if (enrollment?.finished !== true) throw new AccountPcError(409, "enrolling");
@@ -504,7 +470,6 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
           for (const peer of peers) peer.close();
         }
       }
-      // the approver hands the introduction over once this device's row exists, which may be a moment after it
       const deadline = Date.now() + (introducible ? INTRODUCTION_WAIT_MS : 0);
       for (;;) {
         if ((await takeIntroduction({ fetch, key, label, store: enrollmentStore, relay: device.relay })).length > 0 || Date.now() >= deadline) break;
@@ -527,6 +492,5 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
    */
   const stored = async (): Promise<AccountSession | undefined> => accountService === null ? undefined : await account.session().catch(() => undefined);
   return { get state() { return accountView; }, get directory() { return directory; },
-    /** the sign-in the signed-in view speaks of; none while signed out, or before a new sign-in's first read */
     get signedInAs() { return accountView?.kind === "signed-in" ? shownFor : undefined; }, enabled: accountService !== null, providers, load, refresh, refreshNow, reread, stored, signIn, signOut, leave, deleteAccount, prepare, enroll, cancelEnrollment, armRefresh };
 }

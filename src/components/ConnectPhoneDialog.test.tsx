@@ -21,8 +21,6 @@ const { ConfirmDialog } = await import("./ConfirmDialog.tsx");
 const { announcePairingCode, QR_CODE_ENDED_CHANNEL } = await import("../lib/useRelay.ts");
 const { ACCOUNT_QR_ALONE_MS, ACCOUNT_QR_LATE_MS, ACCOUNT_QR_POLL_MS, accountQrFindings, accountQrNoticeWaiting, addedBy, accountQrPending, resetAccountQrWatch, unvouched } = await import("../lib/accountQrWatch.ts");
 
-// Connect a phone on the phone itself: the QR codes wait behind Show QR code, a phone online with
-// the relay pairs itself in one tap through its own offer, and the desktop keeps its QR codes.
 const SERVER_ID = "0123456789abcdef0123456789abcdef";
 const APP = "https://app.ovis.example";
 const OFFER_URL = encodeOffer({ v: 1, server_id: SERVER_ID, server_public_key: exportPublicKey(generateKeyPair().publicKey), relay: "wss://relay.ovis.example", code: "482913", name: "Workstation" }, APP);
@@ -35,16 +33,11 @@ describe("Connect a phone on a phone", () => {
   let requests: string[];
   let assigned: string[];
   let shellMeta: boolean;
-  /** GET /api/machines/tailnet answers once this settles, with winvm older (`outdated`) or not */
   let tailnetAnswer: Promise<void>;
   let tailnetOutdated: boolean;
-  /** more rows GET /api/machines/ssh-candidates answers */
   let extraCandidates: object[];
-  /** the error code GET /api/machines/ssh-candidates refuses with (403), or null: it answers its list */
   let candidatesRefused: string | null;
-  /** the server's pending six-digit code; minting a typed code starts a new one, as server/relay/pair-code.ts does */
   let pending: string;
-  /** the next answers of POST /api/devices/pair/start, each held until its gate opens (none: the pending code at once) */
   let pairStarts: { code: string; gate: Promise<void> }[];
 
   beforeEach(() => {
@@ -146,14 +139,11 @@ describe("Connect a phone on a phone", () => {
     let answerOld: () => void = () => {};
     pairStarts = [{ code: "111111", gate: new Promise<void>((resolve) => { answerOld = resolve; }) }, { code: "222222", gate: Promise.resolve() }];
     const shown = () => renderer!.root.findAll((node) => node.type === "p" && typeof node.props.className === "string" && node.props.className.includes("devices-code")).map(text);
-    // opened: its code request is still out when the dialog closes
     await mount(<CodeRoute pairUrl="https://workstation.example.ts.net" startAtOnce />);
     await act(async () => { renderer!.unmount(); });
-    // reopened: the server's newer code (the one that pairs now) shows
     await mount(<CodeRoute pairUrl="https://workstation.example.ts.net" startAtOnce />);
     for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
     expect(shown()).toEqual(["222 222"]);
-    // the closed dialog's answer arrives last
     await act(async () => { answerOld(); });
     for (let flush = 0; flush < 3; flush += 1) await act(async () => {});
     expect(shown()).toEqual(["222 222"]);
@@ -165,10 +155,8 @@ describe("Connect a phone on a phone", () => {
   });
 
   it("keeps two relay QR codes on screen from replacing each other's code without end", async () => {
-    // the setup guide's and Settings' relay QR codes can be up at once
     await mount(<><RelayPairing /><RelayPairing /></>);
     for (let flush = 0; flush < 5; flush += 1) await act(async () => {});
-    // the server's offer reuses its pending code: both show it, and neither asks again for the other's
     expect(requests.filter((path) => path === "/api/relay/offer").length).toBeLessThanOrEqual(3);
     expect(qrCodes()).toHaveLength(2);
     expect(renderer!.root.findAll((node) => node.type === "p" && text(node).includes("This code expired."))).toHaveLength(0);
@@ -192,7 +180,6 @@ describe("Connect a phone on a phone", () => {
     await act(async () => { announcePairingCode({ code: "135790", expires_at, qrOnly: true }); });
     expect(shown()).toEqual([]);
     expect(qrCodes()).toHaveLength(0);
-    // a code another place started is still shown
     await act(async () => { announcePairingCode({ code: "246801", expires_at }); });
     expect(shown()).toEqual(["246 801"]);
   });
@@ -250,7 +237,6 @@ describe("Connect a phone on a phone", () => {
   it("opens on the relay tab for a waiting notice only where that tab can show it: a page with the Ovis account", () => {
     const all = ["ssh", "devices", "relay"] as const;
     expect(openingTab({ tabs: all, phone: false, noticeWaiting: true, hasAccount: true })).toBe("relay");
-    // without the account the relay tab is the relay's own pairing, which makes a code the moment it opens
     expect(openingTab({ tabs: all, phone: false, noticeWaiting: true, hasAccount: false })).toBe("ssh");
     expect(openingTab({ tabs: all, phone: true, noticeWaiting: true, hasAccount: false })).toBe("devices");
     expect(openingTab({ tabs: ["ssh", "devices"], phone: false, noticeWaiting: true, hasAccount: true })).toBe("ssh");
@@ -283,7 +269,6 @@ describe("Connect a phone on a phone", () => {
     await mount(<SshTab machines={[]} onAddPc={(preset) => { added.push(preset); }} onConnectMachine={() => {}} />);
     expect(requests).toContain("/api/machines/ssh-candidates");
     expect(text(renderer!.root)).toContain(hint);
-    // no list, no failure with Try again: the field alone
     expect(buttons()).toEqual(["Add"]);
     await act(async () => { renderer!.root.findByProps({ id: "connect-ssh-address" }).props.onChange({ target: { value: "mymac" } }); });
     await act(async () => { renderer!.root.findByType("form").props.onSubmit({ preventDefault() {} }); });
@@ -294,7 +279,6 @@ describe("Connect a phone on a phone", () => {
     await mount(<SshTab machines={[]} onAddPc={() => {}} onConnectMachine={() => {}} />);
     expect(text(renderer!.root)).not.toContain(hint);
     expect(buttons()).toEqual(["Add"]);
-    // and a list that answers shows no such line
     await act(async () => { renderer!.unmount(); });
     candidatesRefused = null;
     await mount(<SshTab machines={[]} onAddPc={() => {}} onConnectMachine={() => {}} />);
@@ -309,7 +293,6 @@ describe("Connect a phone on a phone", () => {
     expect(qrCodes()).toHaveLength(1);
     expect(text(renderer!.root)).toContain("7K3QD-M2XHA");
     expect(buttons()).not.toContain("Sign in to Ovis");
-    // off, the switch turns it on
     await act(async () => { renderer!.update(<SettingsProvider>{tab(relayState({ ...ONLINE, phase: "off" }))}</SettingsProvider>); });
     expect(renderer!.root.findAllByProps({ label: "Ovis relay", checked: false })).toHaveLength(1);
   });
@@ -369,29 +352,20 @@ describe("the relay tab's QR code behind a press", () => {
   const SERVICE = { service: "https://account.ovis.example", onOpen: () => undefined, onSignedIn: () => undefined };
   let renderer: ReactTestRenderer | undefined;
   let requests: string[];
-  /** the bodies POST /api/devices/pair/cancel got */
   let ended: unknown[];
-  /** what GET /api/account/status and GET /api/devices answer */
   let pcAccount: string | null;
   let devices: PairedDevice[];
-  /** whether the six-digit code the QR code carries is still pending on the PC */
   let codePending: boolean;
   let hidden: boolean;
   let visibility: EventTarget;
   let held: boolean[];
   let revokedAll: number;
-  /** the requests sent to outlive the page */
   let keptAlive: string[];
-  /** false: a PC from before POST /api/devices/pair/cancel */
   let endsPairings: boolean;
-  /** GET /api/account/status answers once this settles */
   let statusGate: Promise<void>;
-  /** the ids DELETE /api/devices/:id got; `removable` false: the PC refuses it */
   let removed: string[];
   let removable: boolean;
-  /** what each POST /api/relay/offer said it is for (x-ovis-no-account-only) */
   let offerMarks: (string | null)[];
-  /** the PC's own answer to POST /api/relay/offer, when it is not an offer */
   let offerAnswer: (() => Response | Promise<Response>) | null;
 
   const device = (extra: Partial<PairedDevice>): PairedDevice => ({ id: "a", label: "Laptop · Chrome", role: "drive", created_at: "2026-10-01T00:00:00Z", last_seen_at: null, current: false, ...extra });
@@ -418,7 +392,6 @@ describe("the relay tab's QR code behind a press", () => {
     for (const key of ["window", "document", "navigator", "getComputedStyle", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
     Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, value: () => ({ getPropertyValue: () => "" }) });
-    // the confirmation's focus trap asks what an element is
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: class {} });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: { languages: ["en"], userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36", maxTouchPoints: 0 } });
     const events = new EventTarget();
@@ -428,7 +401,6 @@ describe("the relay tab's QR code behind a press", () => {
       addEventListener: events.addEventListener.bind(events),
       removeEventListener: events.removeEventListener.bind(events),
       dispatchEvent: events.dispatchEvent.bind(events),
-      // the fake clock's, installed above
       setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
     } });
     Object.defineProperty(globalThis, "document", { configurable: true, value: {
@@ -487,7 +459,6 @@ describe("the relay tab's QR code behind a press", () => {
     descriptors.clear();
   });
 
-  /** `accountId`: the account this browser is signed in to; the default is the one the PC joins in most cases here */
   interface TabOptions { signedIn?: boolean; accountId?: string | null; joinBySignIn?: boolean; relay?: RelayState; active?: boolean }
   const tab = ({ signedIn = true, accountId = signedIn ? ACCOUNT_ID : null, joinBySignIn = false, relay = relayState(), active = true }: TabOptions = {}) => (
     <SettingsProvider>
@@ -554,7 +525,6 @@ describe("the relay tab's QR code behind a press", () => {
       expect(text(section()).includes("This browser is not signed in, so it cannot tell whether that account is yours")).toBe(whose === "unknown");
       expect(text(section()).includes("If that account is not yours, revoke every device (More settings → Devices and access)")).toBe(whose === "other");
       expect(text(section())).not.toContain("Add with a QR code");
-      // said once: the line main had above for this state is the section's now
       expect(text(renderer!.root)).not.toContain("On the new device, sign in to the same Ovis account.");
       expect(buttons()).toEqual([]);
       expect(qrCodes()).toHaveLength(0);
@@ -569,7 +539,6 @@ describe("the relay tab's QR code behind a press", () => {
     await mount({ signedIn: false, relay: relayState({ ...ONLINE, phase: "off" }) });
     expect(text(section())).toContain("This PC is in an Ovis account (acct_0123456).");
     expect(section().findAllByProps({ label: "Ovis relay", checked: false })).toHaveLength(1);
-    // the switch is the only thing to press
     expect(buttons()).toEqual([""]);
     expect(text(section())).not.toContain("this PC can show its QR code");
   });
@@ -580,7 +549,6 @@ describe("the relay tab's QR code behind a press", () => {
     expect(renderer!.root.findAllByProps({ label: "Ovis relay", checked: false })).toHaveLength(1);
     expect(text(renderer!.root)).not.toContain("add this PC to your account");
     expect(renderer!.root.findAll((node) => node.type === "button" && text(node) === "Open the account")).toHaveLength(0);
-    // with the switch above it the part keeps its hairline; alone under the tabs it has none
     expect(section().props["data-first"]).toBeUndefined();
     await update({ signedIn: true, joinBySignIn: true });
     expect(renderer!.root.findAllByProps({ label: "Ovis relay" })).toHaveLength(0);
@@ -590,7 +558,6 @@ describe("the relay tab's QR code behind a press", () => {
   it("a press on a PC that joined an account since the tab was drawn asks for no code, and says how a device is added", async () => {
     await mount();
     expect(buttons()).toEqual(["Show the QR code"]);
-    // added from its own Account settings meanwhile: a sign-in there, and an approval on the phone
     devices = [device({ account: ACCOUNT_ID, via_relay: true })];
     pcAccount = ACCOUNT_ID;
     await press("Show the QR code");
@@ -604,7 +571,6 @@ describe("the relay tab's QR code behind a press", () => {
 
   it("takes the QR code away at once when the PC refuses its code for having joined an account, and says which account", async () => {
     await mount();
-    // the PC joined between the press's read and its ask for the code: the laptop paired long before linked itself
     offerAnswer = () => {
       devices = [device({ account: ACCOUNT_ID, via_relay: true })];
       pcAccount = ACCOUNT_ID;
@@ -616,7 +582,6 @@ describe("the relay tab's QR code behind a press", () => {
     const notice = renderer!.root.findByProps({ "data-testid": "connect-account-joined" });
     expect(text(notice)).toContain("This PC is in your account (acct_0123456).");
     expect(text(notice)).toContain("Added by Laptop · Chrome.");
-    // before the next look at the PC was due, and with no refusal left on screen beside it
     expect(count("/api/relay/offer")).toBe(1);
     expect(section().findAllByProps({ role: "alert" })).toHaveLength(0);
     // it had no code: a typed code another place shows on the PC is left alone
@@ -629,7 +594,6 @@ describe("the relay tab's QR code behind a press", () => {
   it("when the PC joins an account another way while the QR code is up, the QR code leaves, its code is ended, and none is offered again", async () => {
     await mount();
     await press("Show the QR code");
-    // nobody scanned anything: the laptop paired long before signed in and linked itself
     devices = [device({ account: ACCOUNT_ID, via_relay: true })];
     pcAccount = ACCOUNT_ID;
     await advance(ACCOUNT_QR_POLL_MS);
@@ -720,9 +684,7 @@ describe("the relay tab's QR code behind a press", () => {
     expect(buttons()).toEqual(["Show a new code"]);
     expect(count("/api/relay/code/cancel")).toBe(0);
     expect(ended).toEqual([{ code: "482913" }]);
-    // no code to type was made in all that time, renewals included
     expect(count("/api/relay/code")).toBe(0);
-    // nothing renews it afterwards
     const before = minted().length;
     await advance(ACCOUNT_QR_MAX_MS);
     expect(minted()).toHaveLength(before);
@@ -751,7 +713,6 @@ describe("the relay tab's QR code behind a press", () => {
     await press("Show the QR code");
     hidden = true;
     await act(async () => { visibility.dispatchEvent(new Event("visibilitychange")); });
-    // the device slept: the clock moved, no timer ran
     const now = Date.now();
     spyOn(Date, "now").mockImplementation(() => now + ACCOUNT_QR_HIDDEN_MS);
     hidden = false;
@@ -786,11 +747,9 @@ describe("the relay tab's QR code behind a press", () => {
     await flush();
     expect(ended).toEqual([{ code: "482913" }]);
     expect(keptAlive).toEqual(["/api/devices/pair/cancel"]);
-    // a page kept for Back comes back without its QR code, and ends nothing twice
     expect(qrCodes()).toHaveLength(0);
     expect(buttons()).toEqual(["Show a new code"]);
     expect(count("/api/devices/pair/cancel")).toBe(1);
-    // with no QR code up, a page that goes sends nothing
     await act(async () => { window.dispatchEvent(new Event("pagehide")); });
     await flush();
     expect(count("/api/devices/pair/cancel")).toBe(1);
@@ -799,7 +758,6 @@ describe("the relay tab's QR code behind a press", () => {
   it("never ends a typed code, which is another place's: not when its own code was replaced, not on a PC that cannot end pairings", async () => {
     await mount();
     await press("Show the QR code");
-    // another window asked for a QR code meanwhile: this one's six-digit code is not the pending one any more
     codePending = false;
     await update({ active: false });
     expect(ended).toEqual([{ code: "482913" }]);
@@ -853,7 +811,6 @@ describe("the relay tab's QR code behind a press", () => {
   it("takes the QR code down by the clock when the device slept with the page in sight", async () => {
     await mount();
     await press("Show the QR code");
-    // the device slept: the clock moved, no timer ran, and no visibility change came
     const now = Date.now();
     spyOn(Date, "now").mockImplementation(() => now + ACCOUNT_QR_MAX_MS);
     await advance(ACCOUNT_QR_POLL_MS);
@@ -862,7 +819,6 @@ describe("the relay tab's QR code behind a press", () => {
     expect(ended).toEqual([{ code: "482913" }]);
   });
 
-  // a device that took the code just before the QR code came down links only seconds later
   for (const [name, down] of [
     ["another tab opened", async () => { await update({ active: false }); }],
     ["the page was hidden for a minute", async () => {
@@ -879,7 +835,6 @@ describe("the relay tab's QR code behind a press", () => {
       await down();
       expect(qrCodes()).toHaveLength(0);
       expect(renderer!.root.findAllByProps({ "data-testid": "connect-account-joined" })).toHaveLength(0);
-      // the dialog stays open for what may still come
       expect(held.at(-1)).toBe(true);
       devices = [devices[0]!, phoneDevice({ account: ACCOUNT_ID })];
       pcAccount = ACCOUNT_ID;
@@ -907,7 +862,6 @@ describe("the relay tab's QR code behind a press", () => {
     let noticed = 0;
     window.addEventListener("ovis:account-qr-watch", (event) => { if ((event as CustomEvent<{ notice: boolean }>).detail.notice) noticed += 1; });
     await advance(ACCOUNT_QR_POLL_MS);
-    // Devices and PCs opens Add a connection again on this
     expect(noticed).toBe(1);
     expect(accountQrNoticeWaiting()).toBe(true);
     expect(accountQrPending()).toBe(false);
@@ -954,7 +908,6 @@ describe("the relay tab's QR code behind a press", () => {
     await update({ active: true });
     await advance(ACCOUNT_QR_ALONE_MS + ACCOUNT_QR_POLL_MS);
     expect(text(renderer!.root.findByProps({ "data-testid": "connect-account-alone" }))).toContain("Paired with this PC but not signed in to an Ovis account, so this PC is in no account yet: iPhone · Safari.");
-    // kept, the PC is watched on: it signs in later
     await press("Keep it");
     expect(buttons()).toEqual(["Show a new code"]);
     expect(held.at(-1)).toBe(false);
@@ -987,7 +940,6 @@ describe("the relay tab's QR code behind a press", () => {
     await press("Show the QR code");
     await update({ active: false });
     expect(announced.at(-1)).toBe(new Date(0).toISOString());
-    // a code a device used up is not pending: nothing is announced, so the list's "Paired" line stays
     await update({ active: true });
     await press("Show a new code");
     const before = announced.length;
@@ -1022,10 +974,8 @@ describe("the relay tab's QR code behind a press", () => {
   it("offers no Done while a device the code let in is still in its ten seconds, and asks about it once they end", async () => {
     await mount();
     await press("Show the QR code");
-    // someone scanned first, signed in to nothing
     devices = [...devices, phoneDevice({ id: "s", label: "Stranger · Firefox" })];
     await advance(ACCOUNT_QR_POLL_MS);
-    // then the owner's phone, with a new code, which put the PC in its account
     devices = [...devices, phoneDevice({ account: ACCOUNT_ID, created_at: "2026-11-10T00:00:05Z" })];
     pcAccount = ACCOUNT_ID;
     await advance(ACCOUNT_QR_POLL_MS);
@@ -1049,7 +999,6 @@ describe("the relay tab's QR code behind a press", () => {
     pcAccount = ACCOUNT_ID;
     await advance(ACCOUNT_QR_POLL_MS);
     expect(buttons()).toEqual(["Done", "Not me: revoke every device"]);
-    // it typed the code at this PC's own address a moment before the code was ended
     devices = [...devices, device({ id: "c", label: "Tablet · Chrome", created_at: "2026-11-10T00:00:02Z" })];
     await press("Done");
     expect(text(renderer!.root.findByProps({ "data-testid": "connect-account-joined" }))).toContain("not in that account: Tablet · Chrome.");
@@ -1120,17 +1069,14 @@ describe("the relay tab's QR code behind a press", () => {
     devices = [...devices, phoneDevice()];
     await advance(ACCOUNT_QR_POLL_MS);
     await advance(ACCOUNT_QR_ALONE_MS);
-    // a second scan, with a new code, a moment before the first device is answered
     devices = [...devices, phoneDevice({ id: "s", label: "Stranger · Firefox" })];
     await press("Keep it");
     const notice = () => renderer!.root.findByProps({ "data-testid": "connect-account-alone" });
     expect(buttons()).toEqual(["Show a new code"]);
-    // kept, the first is asked about no more; the page watches on, and the second is asked about when its time is up
     await advance(ACCOUNT_QR_ALONE_MS + ACCOUNT_QR_POLL_MS);
     expect(text(notice())).toContain("Stranger · Firefox");
     expect(text(notice())).not.toContain("iPhone · Safari");
     expect(buttons()).toEqual(["Not me: remove it", "Keep it"]);
-    // answered with Not me while a third is still in its ten seconds: that one is being checked, with nothing to press
     devices = [...devices, phoneDevice({ id: "t", label: "Third · Edge" })];
     await press("Not me: remove it");
     expect(removed).toEqual(["s"]);
@@ -1170,11 +1116,9 @@ describe("the relay tab's QR code behind a press", () => {
     expect(renderer!.root.findAllByProps({ "data-testid": "connect-account-alone" })).toHaveLength(0);
     await advance(ACCOUNT_QR_ALONE_MS);
     const notice = renderer!.root.findByProps({ "data-testid": "connect-account-alone" });
-    // it may be signed in and still on its way into the account, and it may be nobody the owner knows
     expect(text(notice)).toBe("Paired with this PC but not signed in to an Ovis account, so this PC is in no account yet: iPhone · Safari.If that is your device, keep it and sign in on it to add this PC to your account.Not me: remove itKeep it");
     expect(qrCodes()).toHaveLength(0);
     expect(held.at(-1)).toBe(true);
-    // it signed in after all
     devices = [devices[0]!, phoneDevice({ account: ACCOUNT_ID })];
     pcAccount = ACCOUNT_ID;
     await advance(ACCOUNT_QR_POLL_MS);
@@ -1211,7 +1155,6 @@ describe("the relay tab's QR code behind a press", () => {
     expect(renderer!.root.findAllByProps({ "data-testid": "connect-account-alone" })).toHaveLength(1);
     expect(section().findAllByProps({ role: "alert" })).toHaveLength(1);
     removable = true;
-    // revoked meanwhile from the device list
     devices = [devices[0]!];
     await press("Not me: remove it");
     expect(renderer!.root.findAllByProps({ "data-testid": "connect-account-alone" })).toHaveLength(0);
@@ -1228,19 +1171,16 @@ describe("the relay tab's QR code behind a press", () => {
     await act(async () => { renderer!.unmount(); });
     renderer = undefined;
     await flush();
-    // Devices and PCs opens Add a connection on its relay tab for it the next time it is opened
     expect(accountQrNoticeWaiting()).toBe(true);
     await mount();
     expect(text(renderer!.root.findByProps({ "data-testid": "connect-account-alone" }))).toContain("iPhone · Safari");
     expect(buttons()).toEqual(["Not me: remove it", "Keep it"]);
-    // and what the PC became meanwhile is read again: the device signed in to an account that is not this browser's
     devices = [devices[0]!, phoneDevice({ account: "acct_stranger_000000000" })];
     pcAccount = "acct_stranger_000000000";
     await advance(ACCOUNT_QR_POLL_MS);
     expect(text(renderer!.root.findByProps({ "data-testid": "connect-account-joined" }))).toContain("This PC joined another Ovis account (acct_strange), not the one this browser is signed in to (acct_0123456).");
   });
 
-  // (1) the page knows which account it is signed in to: a PC that joined another one is told apart
   it("says so when the PC joined an account that is not the one this browser is signed in to, with Not me first", async () => {
     await mount();
     await press("Show the QR code");
@@ -1299,7 +1239,6 @@ describe("the relay tab's QR code behind a press", () => {
   it("never names a device that is no member of the joined account as the one that added the PC, and asks about it", async () => {
     await mount();
     await press("Show the QR code");
-    // a stranger took the code and is signed in to nothing; the owner's laptop, paired before, linked itself meanwhile
     devices = [device({ account: ACCOUNT_ID }), phoneDevice({ label: "Stranger · Firefox" })];
     pcAccount = ACCOUNT_ID;
     await advance(ACCOUNT_QR_POLL_MS);
@@ -1323,14 +1262,12 @@ describe("the relay tab's QR code behind a press", () => {
   it("with the dialog closed, still names only a member and asks about the device that is none when the dialog is back", async () => {
     await mount();
     await press("Show the QR code");
-    // a stranger took the code just before the dialog closed
     devices = [...devices, phoneDevice({ label: "Stranger · Firefox" })];
     codePending = false;
     await act(async () => { renderer!.unmount(); });
     renderer = undefined;
     await flush();
     expect(accountQrPending()).toBe(true);
-    // the PC joined the owner's account by the laptop paired long before
     devices = [device({ account: ACCOUNT_ID }), phoneDevice({ label: "Stranger · Firefox" })];
     pcAccount = ACCOUNT_ID;
     await advance(ACCOUNT_QR_POLL_MS);
@@ -1345,7 +1282,6 @@ describe("the relay tab's QR code behind a press", () => {
     await advance(ACCOUNT_QR_ALONE_MS - ACCOUNT_QR_POLL_MS);
     expect(text(notice())).toContain("not in that account: Stranger · Firefox.");
     expect(buttons()).toEqual(["Not me: remove it", "Keep it", "Not me: revoke every device"]);
-    // kept, it is asked about no more, and Done is offered
     await press("Keep it");
     expect(removed).toEqual([]);
     expect(buttons()).toEqual(["Done", "Not me: revoke every device"]);
@@ -1410,12 +1346,10 @@ describe("the relay tab's QR code behind a press", () => {
     await advance(ACCOUNT_QR_ALONE_MS);
     await press("Keep it");
     await advance(5 * 60_000);
-    // the owner's own phone, paired with the six-digit code from Phones and devices
     devices = [...devices, device({ id: "p", label: "Pixel · Chrome", created_at: new Date().toISOString() })];
     await advance(ACCOUNT_QR_POLL_MS);
     expect(renderer!.root.findAllByProps({ "data-testid": "connect-account-alone" })).toHaveLength(0);
     expect(buttons()).toEqual(["Show a new code"]);
-    // a later join is still told
     pcAccount = ACCOUNT_ID;
     devices = [devices[0]!, phoneDevice({ account: ACCOUNT_ID }), devices[2]!];
     await advance(ACCOUNT_QR_POLL_MS);
@@ -1452,7 +1386,6 @@ describe("the relay tab's QR code behind a press", () => {
     // one that paired at the PC's own address cannot become a member: asked about at once
     expect(accountQrFindings(list, null, known, 1000)).toEqual({ due: [{ id: "c", label: "Tablet", relay: false }], checking: [{ id: "s", label: "Stranger", relay: true }] });
     expect(accountQrFindings(list, null, known, 1000 + ACCOUNT_QR_ALONE_MS - 1).checking.map((stray) => stray.id)).toEqual(["s"]);
-    // the times travel with the press, so a notice drawn again later does not start them over
     expect(accountQrFindings(list, null, { ids: known.ids, seen: known.seen }, 1000 + ACCOUNT_QR_ALONE_MS)).toEqual({ due: [{ id: "s", label: "Stranger", relay: true }, { id: "c", label: "Tablet", relay: false }], checking: [] });
     // a member of the PC's account is vouched for
     expect(accountQrFindings([device({}), phoneDevice({ id: "s", account: ACCOUNT_ID })], ACCOUNT_ID, known, 2000)).toEqual({ due: [], checking: [] });
