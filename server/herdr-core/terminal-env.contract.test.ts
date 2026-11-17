@@ -7,11 +7,6 @@ import { workspaceCreate } from "../herdr/client.ts";
 import { coreDestination } from "../runtime-move-service.ts";
 import { startRuntime } from "./runtime.ts";
 
-/**
- * Terminals Ovis starts on a real hc whose core an agent's shell started first (herdr-core#86):
- * colour off there, and none of the tokens the user's profile exports. Runs only where
- * OVIS_TEST_HC_BIN names an hc.
- */
 const bin = process.env["OVIS_TEST_HC_BIN"];
 const TEST_MS = 60_000;
 

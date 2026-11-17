@@ -75,7 +75,7 @@ function shownFacts(report: unknown): string {
 }
 const NO_FACTS = JSON.stringify([null, null, null]);
 /** A status or layout notification must fit in 4 MiB, even across hc frames. */
-const EVENT_LINE_BYTES = 4 * 1024 * 1024;
+export const EVENT_LINE_BYTES = 4 * 1024 * 1024;
 
 interface ConnectionState {
   read: (chunk: Uint8Array) => void;

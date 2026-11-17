@@ -6,10 +6,8 @@ import { writePrivateState } from "./private-state.ts";
 import { holdsDocument, readStateDocument, setAsideDamaged } from "./state-document.ts";
 import { validateTarget } from "./machine-security.ts";
 
-/** `retiring`: this binding's key removal was started and has not succeeded yet. */
 interface ProfileState { binding: string; approved: boolean; connectionApproved: boolean; snapshot: SessionSnapshot | null; retiring?: true; herdrChoice?: Pick<SshTarget, "herdr_socket" | "start_new_herdr" | "own_ovis"> }
 
-// Existing routes accept UUID-shaped machine IDs; deriving one keeps browser storage stable.
 export function herdrMachineId(profileId: string): string {
   const digest = createHash("sha256").update("herdr-profile:" + profileId).digest("hex");
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-${digest.slice(12, 16)}-${digest.slice(16, 20)}-${digest.slice(20, 32)}`;
@@ -23,10 +21,7 @@ export class HerdrProfileState {
   private entries = new Map<string, ProfileState>();
   private dirty = false;
   private path: string;
-  /** the document this store last wrote: a flush that would write the same bytes writes nothing
-   * while the file still holds them */
   private written: string | undefined;
-  /** where a file that was not JSON was moved at startup (setAsideDamaged), its approvals with it */
   readonly setAside: string | null = null;
   constructor(directory: string) {
     this.path = join(directory, "herdr-profile-state.json");
@@ -55,9 +50,7 @@ export class HerdrProfileState {
   reconcile(id: string, target: SshTarget | null, retire?: () => void): boolean {
     const next = binding(target);
     const previous = this.entries.get(id);
-    // A removal that failed is owed even when the old target comes back: the same binding is not "unchanged" then.
     if (previous?.binding === next && !(previous.retiring && retire)) return false;
-    // Keep the old binding, marked, until its credentials are gone, so failures remain retryable.
     if (previous) { this.revoke(id); if (retire) { previous.retiring = true; retire(); } }
     const owed = !retire && previous?.retiring;
     this.entries.set(id, { binding: next, approved: false, connectionApproved: false, snapshot: null, ...(owed ? { retiring: true as const } : {}) }); this.dirty = true;
@@ -106,16 +99,10 @@ export class HerdrProfileState {
     if (errors.length) throw new AggregateError(errors, "Some saved machine keys could not be removed; cleanup will retry");
     return removed;
   }
-  /**
-   * Writes the approvals durably (writePrivateState): a crash must not leave the file unreadable. A
-   * refresh hands over a new snapshot object each time, so an unchanged one still marks the state
-   * dirty; only a document that differs from the one on disk pays for the write and its fsync.
-   */
   flush(): void {
     if (!this.dirty) return;
     const document = [...this.entries].map(([profile_id, state]) => ({ profile_id, ...state }));
     const text = JSON.stringify(document);
-    // the file on disk may have been deleted or replaced since this store wrote it
     if (text !== this.written || !holdsDocument(this.path, text)) { writePrivateState(this.path, document); this.written = text; }
     this.dirty = false;
   }

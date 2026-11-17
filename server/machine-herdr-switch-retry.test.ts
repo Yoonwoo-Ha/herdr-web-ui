@@ -10,10 +10,6 @@ import { posixHost, windowsHost } from "./remote-host.ts";
 import { SshConnection } from "./ssh.ts";
 import { tunnelRelays } from "./machine-tunnel.fixture.ts";
 
-// Each wait below (a setup settling, the switch asking B, the old PC's retries resuming) is bounded by this; every answer
-// the fixture gives is in-process or on loopback. The switch's two waits start together, so the test itself outlasts
-// three of them in a row and as long again for the rest: a stalled wait says what it waited for and `finally` restores
-// the spies. Cut short by the runner, they stay installed and break the next case.
 const SETTLE_MS = 5000;
 
 it.each([
@@ -34,7 +30,6 @@ it.each([
   const timers = new Map<number, () => void>();
   const set = globalThis.setTimeout, clear = globalThis.clearTimeout;
   const mocks = [
-    // Hold retry deadlines, not the setup or test deadlines: advance them explicitly, without a sleep.
     spyOn(globalThis, "setTimeout").mockImplementation(new Proxy(set, {
       apply(target, _receiver, [fn, delay, ...args]: unknown[]) {
         if (typeof fn !== "function" || delay !== undefined && typeof delay !== "number") throw new Error("Expected timer callback and delay");
@@ -54,16 +49,12 @@ it.each([
       return { platform: "linux-x64", home: "/home/fixture", herdrPath: "/fixture/herdr", expectedSocket: selected, bundleReady: true, bundleOlder: false,
         descriptors: selected === a.herdr_socket && oldLost ? [] : [descriptor(selected)], runtimeDir: "/runtime", registryDir: "/registry" };
     }),
-    // B's refusal makes detectHost ask whether the PC is Windows instead: the fixture is not, and that question must not
-    // run a real ssh to the fixture's address, whose name lookup a hosted runner can hold past the test's deadline
     spyOn(windowsHost, "inspect").mockRejectedValue(new Error("Not a Windows PC")),
     spyOn(posixHost, "herdrVersion").mockResolvedValue("herdr 0.9.3"),
     spyOn(posixHost, "alive").mockResolvedValue(true),
-    // a chosen socket the PC verifies as this account's and answering
     spyOn(posixHost, "chosenSocketStatus").mockResolvedValue("usable"),
     spyOn(posixHost, "start").mockImplementation(async () => { oldStarts++; resumed.resolve(); throw new Error("Old bridge unavailable"); }),
     spyOn(posixHost, "installBundle").mockResolvedValue(undefined),
-    // the SSH tunnel to a bridge (machine-tunnel.fixture.ts)
     ...tunnelRelays(relays, (remotePort) => {
       const socket = remotePort === 12345 ? a.herdr_socket : b.herdr_socket;
       return Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request, server) {

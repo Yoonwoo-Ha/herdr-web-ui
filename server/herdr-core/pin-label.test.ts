@@ -8,17 +8,11 @@ import { bridgePins } from "./pin-label.ts";
 
 type Held = { address: string; state: string; labels: Record<string, string>; status?: { app: string; state: string } | null };
 
-/** an agent's status, as the Agents list needs to draw a terminal */
 const AGENT = { app: "claude-code", state: "idle" };
 
-/**
- * hc's label and event calls over terminals held here: a label write comes back as hc tells it, a
- * `labels` event. `early` events reach the stream before its snapshot does, as hc may send them.
- */
 function fakeCore(terminals: Held[]) {
   const written: { terminal: string; labels: Record<string, string> }[] = [];
   const state = { failing: false, early: [] as Record<string, unknown>[], held: null as Record<string, unknown>[] | null, answer: null as Promise<void> | null };
-  /** resolves when the next label write reaches hc, before hc answers it */
   let writing = Promise.withResolvers<void>();
   let onData: ((chunk: Uint8Array) => void) | null = null;
   let onClose: (() => void) | null = null;
@@ -40,7 +34,6 @@ function fakeCore(terminals: Held[]) {
       const event = { type: "labels", terminal: found.address, data: { labels: { ...found.labels } } };
       if (state.held) state.held.push(event);
       else tell(event);
-      // hc's answer to the write waits, after its labels event was told
       if (state.answer) await state.answer;
       return found;
     },
@@ -53,9 +46,7 @@ function fakeCore(terminals: Held[]) {
       return { result: { channel: 1, seq: 1, terminals: snapshot }, channel: { close: async () => {} } };
     },
   };
-  /** the stream ends, as when hc restarts; resolves once the bridge has read the next snapshot */
   const drop = () => { opened = Promise.withResolvers<void>(); onClose?.(); return opened.promise; };
-  /** label events held back since `state.held` was set, told now */
   const release = () => { const held = state.held ?? []; state.held = null; for (const event of held) tell(event); };
   return { hc: hc as never, written, state, tell, drop, release, opened: () => opened.promise, writing: () => writing.promise };
 }
@@ -115,11 +106,9 @@ describe("bridgePins", () => {
       { terminal: "t1", labels: { "herdr.pinned": "" } },
       { terminal: "t2", labels: { "herdr.pinned": "1" } },
     ]);
-    // the Herdr app unpins t2, then a new terminal starts pinned there
     core.tell({ type: "labels", terminal: "t2", data: { labels: {} } });
     core.tell({ type: "created", terminal: "t4", data: { address: "t4", state: "live", status: AGENT, labels: { "herdr.pinned": "1" } } });
     expect(preferences.get().pins).toEqual(["local:t4"]);
-    // a settings change from a browser writes nothing
     preferences.set({ settings: { theme: "dark" } });
     await pins.idle();
     expect(core.written).toHaveLength(2);
@@ -136,7 +125,6 @@ describe("bridgePins", () => {
     await core.opened();
     await first.idle();
     first.stop();
-    // Ovis stopped; the Herdr app unpins t1, and a browser had pinned t2 meanwhile
     delete terminals[0]!.labels["herdr.pinned"];
     const preferences = new PreferenceStore(dir);
     preferences.set({ settings: {}, pins: ["local:t1", "local:t2"] });
@@ -185,11 +173,9 @@ describe("bridgePins", () => {
     expect(preferences.get().pins).toHaveLength(MAX_PINS);
     expect(new PreferenceStore(dir).get().pins).toHaveLength(MAX_PINS);
     expect(core.written).toEqual([]);
-    // a later change of anything else does not take it for an unpin
     preferences.set({ settings: { theme: "dark" } });
     await pins.idle();
     expect(core.written).toEqual([]);
-    // once the list has room, the pin joins it
     preferences.set({ settings: {}, pins: full.slice(1) });
     await pins.idle();
     expect(preferences.get().pins).toEqual([...full.slice(1), "local:t1"]);
@@ -204,7 +190,6 @@ describe("bridgePins", () => {
     await core.opened();
     await pins.idle();
     expect(preferences.get().pins).toEqual([]);
-    // a browser pins t2; its roster prunes nothing that it never had
     preferences.set({ settings: {}, pins: ["local:t2"] });
     await pins.idle();
     expect(core.written).toEqual([{ terminal: "t2", labels: { "herdr.pinned": "1" } }]);
@@ -234,7 +219,6 @@ describe("bridgePins", () => {
     await core.opened();
     await pins.idle();
     expect(preferences.get().pins).toEqual(["local:t1"]);
-    // back from a remote PC, t1 is a shell now; the Agents list then drops its pin when t2 is pinned
     core.tell({ type: "created", terminal: "t1", data: { address: "t1", state: "live", status: null, labels: { "herdr.pinned": "1" } } });
     preferences.set({ settings: {}, pins: ["local:t2"] });
     await pins.idle();
@@ -252,13 +236,11 @@ describe("bridgePins", () => {
     await first.opened();
     await earlier.idle();
     earlier.stop();
-    // Ovis stopped; the agent in t1 quit, leaving its shell
     terminals[0]!.status = null;
     const preferences = new PreferenceStore(dir);
     const core = fakeCore(terminals);
     const pins = bridge(core, preferences, dir);
     await core.opened();
-    // a browser pins t2; the Agents list drops the shell's pin
     preferences.set({ settings: {}, pins: ["local:t2"] });
     await pins.idle();
     core.tell({ type: "status", terminal: "t1", data: { status: AGENT } });
@@ -298,7 +280,6 @@ describe("bridgePins", () => {
     const earlier = bridge(first, preferences, dir);
     await first.opened();
     await earlier.idle();
-    // t1's agent quits; the Agents list drops the shell's pin as t2 is pinned; Ovis stops
     first.tell({ type: "status", terminal: "t1", data: { status: null } });
     preferences.set({ settings: {}, pins: ["local:t2"] });
     await earlier.idle();
@@ -340,7 +321,6 @@ describe("bridgePins", () => {
     await core.opened();
     preferences.set({ settings: {}, pins: ["local:t1"] });
     await pins.idle();
-    // the stream drops while t1's agent quits; then the Agents list drops the shell's pin as t2 is pinned
     terminals[0]!.status = null;
     await core.drop();
     preferences.set({ settings: {}, pins: ["local:t2"] });
@@ -359,7 +339,6 @@ describe("bridgePins", () => {
     const pins = bridge(core, preferences, dir);
     await core.opened();
     await pins.idle();
-    // hc is away: the unpin's label write fails, and t1's agent quits meanwhile
     core.state.failing = true;
     preferences.set({ settings: {}, pins: [] });
     await pins.idle();
@@ -385,7 +364,6 @@ describe("bridgePins", () => {
     core.state.failing = true;
     preferences.set({ settings: {}, pins: [] });
     await pins.idle();
-    // t1's agent quits; the Herdr app unpins it, then pins it again
     core.tell({ type: "status", terminal: "t1", data: { status: null } });
     core.tell({ type: "labels", terminal: "t1", data: { labels: {} } });
     core.tell({ type: "labels", terminal: "t1", data: { labels: { "herdr.pinned": "1" } } });
@@ -411,7 +389,6 @@ describe("bridgePins", () => {
     core.state.answer = null;
     answer.reject(new Error("reply lost"));
     await pins.idle();
-    // t1's agent quits; the Agents list drops the shell's pin as t2 is pinned
     core.tell({ type: "status", terminal: "t1", data: { status: null } });
     preferences.set({ settings: {}, pins: ["local:t2"] });
     await pins.idle();
@@ -438,7 +415,6 @@ describe("bridgePins", () => {
     const pins = bridge(core, preferences, dir);
     await core.opened();
     await pins.idle();
-    // Ovis unpins t1 and its write hangs; Ovis pins it again, then t1's agent quits and the write fails
     hanging.on = true;
     preferences.set({ settings: {}, pins: [] });
     await reached.promise;
@@ -447,7 +423,6 @@ describe("bridgePins", () => {
     gate.resolve();
     await pins.idle();
     hanging.on = false;
-    // the Agents list drops the shell's pin as t2 is pinned
     preferences.set({ settings: {}, pins: ["local:t2"] });
     await pins.idle();
     core.tell({ type: "status", terminal: "t1", data: { status: AGENT } });
@@ -473,7 +448,6 @@ describe("bridgePins", () => {
     const pins = bridge(core, preferences, dir);
     await core.opened();
     await pins.idle();
-    // the unpin fails; its retry hangs while Ovis pins t1 again and t1's agent quits, then fails too
     mode.now = "fail";
     preferences.set({ settings: {}, pins: [] });
     await reached.promise;
@@ -482,7 +456,6 @@ describe("bridgePins", () => {
     gate.resolve();
     await pins.idle();
     mode.now = "pass";
-    // the Agents list drops the shell's pin as t2 is pinned
     preferences.set({ settings: {}, pins: ["local:t2"] });
     await pins.idle();
     core.tell({ type: "status", terminal: "t1", data: { status: AGENT } });
@@ -513,7 +486,6 @@ describe("bridgePins", () => {
       mode.now = first === "hangs" ? "hang" : "fail";
       preferences.set({ settings: {}, pins: [] });
       await reached.promise;
-      // Ovis pins t1 again; its agent quits and the Agents list drops the shell's pin as t2 is pinned
       preferences.set({ settings: {}, pins: ["local:t1"] });
       core.tell({ type: "status", terminal: "t1", data: { status: null } });
       mode.now = "pass";
@@ -557,11 +529,9 @@ describe("bridgePins", () => {
         preferences.set({ settings: {}, pins: ["local:t1"] });
         preferences.set({ settings: {}, pins: [] });
       }
-      // t1's agent quits while the write waits, then the write fails
       core.tell({ type: "status", terminal: "t1", data: { status: null } });
       gate.resolve();
       await pins.idle();
-      // a restart from here still finds the change
       expect(JSON.parse(readFileSync(join(dir, "herdr-core-pins.json"), "utf8")).pending).toEqual(["c1/t1"]);
       mode.now = "pass";
       core.tell({ type: "status", terminal: "t1", data: { status: AGENT } });
@@ -590,7 +560,6 @@ describe("bridgePins", () => {
       const earlier = bridge(first, preferences, dir);
       await first.opened();
       await earlier.idle();
-      // Ovis unpins t1 and stops before hc answers; the unpin lands, and the Herdr app pins t1 again
       hanging.on = true;
       preferences.set({ settings: {}, pins: [] });
       await reached.promise;
@@ -625,7 +594,6 @@ describe("bridgePins", () => {
       const pins = bridge(core, preferences, dir);
       await core.opened();
       await pins.idle();
-      // Ovis pins t1 while hc is slow, and unpins it before hc answers; then t1's agent quits
       slow.on = true;
       preferences.set({ settings: {}, pins: ["local:t1"] });
       await reached.promise;
@@ -636,7 +604,6 @@ describe("bridgePins", () => {
       gate.resolve();
       await pins.idle();
       core.release();
-      // a restart from here still finds the change
       expect(JSON.parse(readFileSync(join(dir, "herdr-core-pins.json"), "utf8")).pending).toEqual(["c1/t1"]);
       core.tell({ type: "status", terminal: "t1", data: { status: AGENT } });
       await pins.idle();
@@ -662,7 +629,6 @@ describe("bridgePins", () => {
     const pins = bridge(core, preferences, dir);
     await core.opened();
     await pins.idle();
-    // Ovis unpins t1 while hc is slow and pins it again; t1's agent quits and the Agents list drops the shell's pin as t2 is pinned
     slow.on = true;
     preferences.set({ settings: {}, pins: [] });
     await reached.promise;
@@ -701,7 +667,6 @@ describe("bridgePins", () => {
       slow.on = true;
       core.state.answer = answer.promise;
       if (unpinOnly) {
-        // Ovis unpins t1; t1's agent quits and another client sets an unrelated label before the unpin lands
         preferences.set({ settings: {}, pins: [] });
         await reached.promise;
         core.tell({ type: "status", terminal: "t1", data: { status: null } });
@@ -711,7 +676,6 @@ describe("bridgePins", () => {
         beforeWrite.resolve();
         await wrote;
       } else {
-        // Ovis pins t1 and unpins it again; the pin's event comes while the agent runs, then the agent quits
         preferences.set({ settings: {}, pins: ["local:t1"] });
         await reached.promise;
         preferences.set({ settings: {}, pins: [] });
@@ -750,14 +714,12 @@ describe("bridgePins", () => {
     const pins = bridge(core, preferences, dir);
     await core.opened();
     await pins.idle();
-    // Ovis unpins t1 and its write hangs; Ovis pins it again, the agent quits, and the Agents list drops the shell's pin as t2 is pinned
     slow.on = true;
     preferences.set({ settings: {}, pins: [] });
     await reached.promise;
     preferences.set({ settings: {}, pins: ["local:t1"] });
     core.tell({ type: "status", terminal: "t1", data: { status: null } });
     preferences.set({ settings: {}, pins: ["local:t2"] });
-    // the agent starts again before the write fails
     core.tell({ type: "status", terminal: "t1", data: { status: AGENT } });
     gate.resolve();
     slow.on = false;
@@ -784,7 +746,6 @@ describe("bridgePins", () => {
     const earlier = bridge(first, preferences, dir);
     await first.opened();
     await earlier.idle();
-    // Ovis pins t1 and unpins it again; the pin's event comes while the agent runs, the agent quits, then hc answers
     slow.on = true;
     first.state.answer = answer.promise;
     preferences.set({ settings: {}, pins: ["local:t1"] });
@@ -797,7 +758,6 @@ describe("bridgePins", () => {
     answer.resolve();
     await earlier.idle();
     earlier.stop();
-    // Ovis restarts; an agent runs in t1 again
     terminals[0]!.status = null;
     const core = fakeCore(terminals);
     const pins = bridge(core, new PreferenceStore(dir), dir);
@@ -825,7 +785,6 @@ describe("bridgePins", () => {
     const pins = bridge(core, preferences, dir);
     await core.opened();
     await pins.idle();
-    // the first failed unpin cannot save its mark: the pins file's temporary path is taken
     const blocker = join(dir, `herdr-core-pins.json.${process.pid}.tmp`);
     mkdirSync(blocker);
     core.state.failing = true;
@@ -845,7 +804,6 @@ describe("bridgePins", () => {
     const pins = bridge(core, preferences, dir);
     await core.opened();
     await pins.idle();
-    // the pin's write reaches hc; the unpin comes before the write's own labels event does
     core.state.held = [];
     const reached = core.writing();
     preferences.set({ settings: {}, pins: ["local:t1"] });
@@ -859,7 +817,6 @@ describe("bridgePins", () => {
 
   it("writes no label from an old agreement while no browser has shared its pins", async () => {
     const dir = stateDir();
-    // agreed pinned by an earlier run, then preferences.json was lost: no list is shared now
     const first = fakeCore([{ address: "t1", state: "live", labels: { "herdr.pinned": "1" } }]);
     const earlier = bridge(first, store(dir, []), dir);
     await first.opened();
@@ -919,7 +876,6 @@ describe("bridgePins", () => {
     const reached = core.writing();
     preferences.set({ settings: {}, pins: ["local:t1"] });
     await reached;
-    // our pin landed and its event came; the Herdr app unpins before hc's answer does
     terminals[0]!.labels = {};
     core.tell({ type: "labels", terminal: "t1", data: { labels: {} } });
     core.state.answer = null;
@@ -952,7 +908,6 @@ describe("bridgePins", () => {
     terminals[0]!.labels = {};
     core.tell({ type: "labels", terminal: "t1", data: { labels: {} } });
     expect(preferences.get().pins).toEqual(["local:t1"]);
-    // the next change of anything else neither writes the pin back nor forgets the unpin
     failing.on = false;
     preferences.set({ settings: { theme: "dark" } });
     await pins.idle();
@@ -962,7 +917,6 @@ describe("bridgePins", () => {
 
   it("keeps an agreed pin when preferences.json is lost and another pinned terminal starts the list", async () => {
     const dir = stateDir();
-    // t2 agreed pinned by an earlier run, then preferences.json was lost
     const first = fakeCore([{ address: "t2", state: "live", labels: { "herdr.pinned": "1" } }]);
     const earlier = bridge(first, store(dir, []), dir);
     await first.opened();
@@ -988,7 +942,6 @@ describe("bridgePins", () => {
     const first = bridge(core, store(dir, []), dir);
     await core.opened();
     await first.idle();
-    // a quick pin and unpin in Ovis, both answered; only the pin's event comes, late
     core.state.held = [];
     const preferences = new PreferenceStore(dir);
     first.stop();
@@ -1004,7 +957,6 @@ describe("bridgePins", () => {
     again.state.held = null;
     again.tell(held[0]!);
     pins.stop();
-    // Ovis stopped; the Herdr app pins t1
     terminals[0]!.labels = { "herdr.pinned": "1" };
     const last = fakeCore(terminals);
     const third = bridge(last, new PreferenceStore(dir), dir);

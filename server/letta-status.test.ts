@@ -38,15 +38,12 @@ describe("a Letta pane's status from its local messages", () => {
       mkdirSync(folder, { recursive: true });
       const real = join(folder, "messages.jsonl");
       writeFileSync(real, `${"x".repeat(100)}\n${turn.join("\n")}\n`);
-      // a window a little longer than the turn's last record, much shorter than the file
       const file = lettaMessagesFile(turn.at(-1)!.length + 50);
       expect(file.stat(real)).not.toBeNull();
-      // the tail only: the long first line is past the window, the turn's last record is read
       const seen: string[] = [];
       await file.lines(real, 0, file.stat(real)!.size, (line) => { if ("text" in line) seen.push(line.text); }, () => true);
       expect(seen.some((line) => line.startsWith("xxxx"))).toBe(false);
       expect(seen.at(-1)).toBe(turn.at(-1));
-      // a link put where the file was, or a link for the conversation's folder, gives another conversation's status
       const other = join(dir, "other.jsonl");
       writeFileSync(other, turn.join("\n"));
       const linkedFolder = join(dir, "conversations", "linked");
@@ -55,7 +52,6 @@ describe("a Letta pane's status from its local messages", () => {
       expect(file.stat(join(linkedFolder, "messages.jsonl"))).toBeNull();
       symlinkSync(folder, join(dir, "conversations", "folder-link"));
       expect(file.stat(join(dir, "conversations", "folder-link", "messages.jsonl"))).toBeNull();
-      // nor does a link for a folder above it, here the store's conversations folder pointing into another store
       const otherStore = join(dir, "other-store");
       mkdirSync(join(otherStore, "conversations", "key"), { recursive: true });
       writeFileSync(join(otherStore, "conversations", "key", "messages.jsonl"), turn.join("\n"));
@@ -63,7 +59,6 @@ describe("a Letta pane's status from its local messages", () => {
       mkdirSync(linkedStore);
       symlinkSync(join(otherStore, "conversations"), join(linkedStore, "conversations"));
       expect(file.stat(join(linkedStore, "conversations", "key", "messages.jsonl"))).toBeNull();
-      // a FIFO is never waited on
       const fifoFolder = join(dir, "conversations", "fifo");
       mkdirSync(fifoFolder);
       spawnSync("mkfifo", [join(fifoFolder, "messages.jsonl")]);
@@ -79,7 +74,6 @@ describe("a Letta pane's status from its local messages", () => {
     });
     expect([...found]).toEqual([
       ["t1", { path: join("/h/.letta/lc-local-backend", "conversations", Buffer.from("default:agent-local-a").toString("base64url"), "messages.jsonl"), startedAt: 1000 }],
-      // a pane whose conversation cannot be told keeps its status unknown
       ["t4", { path: null, startedAt: null }],
     ]);
   });
@@ -88,13 +82,10 @@ describe("a Letta pane's status from its local messages", () => {
     const titled = (id: string, status: HerdrPane["agent_status"], title: string, agent = "letta") => ({ ...pane(id, agent, status), terminal_title: title } as HerdrPane);
     const panes = [titled("t1", "unknown", "⠋ Tutor"), titled("t2", "unknown", "Tutor"), titled("t3", "unknown", "⠋ Tutor"), titled("t4", "blocked", "⠋ Tutor"), titled("t5", "unknown", "⠋ x", "claude")];
     const last = new Map<string, HerdrPane["agent_status"]>();
-    // a first look at rest tells nobody; one at work does, so its end is a finish
     expect(lettaTitleStatus({ panes: panes }, (paneId) => paneId === "t3", last)).toEqual([{ paneId: "t1", status: "working" }]);
     expect(panes.map((p) => p.agent_status)).toEqual(["working", "idle", "unknown", "blocked", "unknown"]);
-    // a turn ends in t1 and starts in t2: both are told, as a tracked pane's turns are
     const next = [titled("t1", "unknown", "Tutor"), titled("t2", "unknown", "⠙ Tutor")];
     expect(lettaTitleStatus({ panes: next }, () => false, last)).toEqual([{ paneId: "t1", status: "idle" }, { paneId: "t2", status: "working" }]);
-    // a pane gone, or given a status by a report, is forgotten: its next title is a first look again
     expect(lettaTitleStatus({ panes: [titled("t2", "working", "Tutor")] }, () => false, last)).toEqual([]);
     expect([...last.keys()]).toEqual([]);
   });
@@ -106,7 +97,6 @@ describe("a Letta pane's status from its local messages", () => {
     const waiting = [titled("t1", "working", "[ ! ] Action Required | Tutor")];
     expect(lettaTitleStatus({ panes: waiting }, () => true, last)).toEqual([{ paneId: "t1", status: "blocked" }]);
     expect(waiting[0]!.agent_status).toBe("blocked");
-    // approved: the call runs, and its file says working again
     expect(lettaTitleStatus({ panes: [titled("t1", "working", "⠙ Tutor")] }, () => true, last)).toEqual([{ paneId: "t1", status: "working" }]);
   });
 
@@ -114,7 +104,6 @@ describe("a Letta pane's status from its local messages", () => {
     const titled = (id: string, status: HerdrPane["agent_status"], title: string) => ({ ...pane(id, "letta", status), terminal_title: title } as HerdrPane);
     const last = new Map<string, HerdrPane["agent_status"]>();
     lettaTitleStatus({ panes: [titled("t1", "working", "[ ! ] Action Required | Tutor")] }, () => true, last);
-    // approved, the call runs and the title spins, while the file still ends at an older answer
     const after = [titled("t1", "idle", "⠋ Tutor")];
     expect(lettaTitleStatus({ panes: after }, () => true, last)).toEqual([{ paneId: "t1", status: "working" }]);
     expect(after[0]!.agent_status).toBe("working");
@@ -137,7 +126,6 @@ describe("a Letta pane's status from its local messages", () => {
     expect(lookups).toBe(1);
     await tracker.refresh(titled("⠋ Tutor"));
     expect(lookups).toBe(2);
-    // another pane's title (a shell's, per command) is no reason to look Letta panes up again
     const withShell = (title: string) => [...titled("⠋ Tutor"), { ...pane("t2", null, "unknown"), terminal_title: title } as HerdrPane];
     await tracker.refresh(withShell("~/proj"));
     const before = lookups;
@@ -150,7 +138,6 @@ describe("a Letta pane's status from its local messages", () => {
     const titled = (id: string, status: HerdrPane["agent_status"], title: string) => ({ ...pane(id, "letta", status), terminal_title: title } as HerdrPane);
     const last = new Map<string, HerdrPane["agent_status"]>();
     lettaTitleStatus({ panes: [titled("t1", "working", "[ ! ] Action Required | Tutor")] }, () => true, last);
-    // an older read: the file's working, a title from before the approval was asked
     const stale = [titled("t1", "working", "⠋ Tutor")];
     expect(lettaTitleStatus({ panes: stale }, () => true, last, false)).toEqual([]);
     expect(stale[0]!.agent_status).toBe("blocked");
@@ -159,7 +146,6 @@ describe("a Letta pane's status from its local messages", () => {
   it("goes on from the status a tracked messages file gave when the file stops speaking", () => {
     const titled = (id: string, status: HerdrPane["agent_status"], title: string) => ({ ...pane(id, "letta", status), terminal_title: title } as HerdrPane);
     const last = new Map<string, HerdrPane["agent_status"]>();
-    // the file said working; then it is no longer tracked and the title rests: that is the turn's end
     expect(lettaTitleStatus({ panes: [titled("t1", "working", "⠋ Tutor")] }, () => true, last)).toEqual([]);
     expect(lettaTitleStatus({ panes: [titled("t1", "unknown", "Tutor")] }, () => false, last)).toEqual([{ paneId: "t1", status: "idle" }]);
   });

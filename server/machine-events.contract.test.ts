@@ -21,7 +21,6 @@ async function connection(base: string, open?: (url: string) => WebSocket) {
     waiting.add(check); check();
   });
   const features = await wait((frame) => frame.type === "features");
-  // a ping answered after a frame was sent proves the server has handled it, without a sleep
   let pings = 0;
   const fence = async () => { const id = ++pings; socket.send(JSON.stringify({ type: "ping", id })); await wait((frame) => frame.type === "pong" && frame.id === id); };
   return { socket, frames, wait, features, fence };
@@ -39,7 +38,6 @@ it("negotiates compact agents over HTTP, SSE and WS without changing legacy resp
   const pane = { pane_id: "w1:p1", terminal_id: "terminal", workspace_id: "w1", tab_id: "w1:t1", focused: true, revision: 1, agent_status: "working" as const, cwd: "/fixture/project" };
   const snapshot: SessionSnapshot = { version: "test", protocol: 22, workspaces: [], tabs: [], layouts: [], panes: [pane], agents: [{ ...pane, state_change_seq: 11 }] };
   const machines: Machine[] = [{ id: "local", name: "PC", kind: "local", enabled: true, state: "connected", error: null, snapshot }];
-  // This server and its state are isolated; no real pane is created or modified.
   const headers = { authorization: "Bearer test-token" };
   let client: Awaited<ReturnType<typeof connection>> | undefined;
   const abort = new AbortController();
@@ -105,7 +103,6 @@ it("multiplexes initial documents and live updates onto the existing authenticat
     const revision = (await change.json()).revision;
     await client.wait((frame) => frame.type === "machine-event" && frame.event.type === "preferences" && frame.event.preferences.revision === revision);
     expect(client.frames.filter((frame) => frame.type === "machine-event" && frame.event.type === "preferences" && frame.event.preferences.revision === revision)).toHaveLength(1);
-    // A ping fences unsubscribe, without a sleep or any terminal input.
     client.socket.send(JSON.stringify({ type: "machine-events", enabled: false }));
     client.socket.send(JSON.stringify({ type: "ping", id: 23 }));
     await client.wait((frame) => frame.type === "pong" && frame.id === 23);
@@ -152,7 +149,6 @@ it("keeps watch-device authority and closes its machine document when the device
   try {
     client.socket.send(JSON.stringify({ type: "machine-events", enabled: true }));
     await client.wait((frame) => frame.type === "machine-event" && frame.event.type === "preferences");
-    // Receiving the roster does not grant an observing device permission to type.
     client.socket.send(JSON.stringify({ type: "input", pane_id: "not-a-terminal", data: "never typed" }));
     await client.wait((frame) => frame.type === "error" && frame.code === "read_only");
     const closed = new Promise<number>((resolve) => { client.socket.onclose = (event) => resolve(event.code); });
@@ -194,7 +190,6 @@ it("tells a pairing to every machine-event socket but the asking browser's and o
     const told = local.wait((frame) => frame.type === "machine-event" && frame.event.type === "device-paired");
     const paired = await fetch(`${base}/api/devices/pair`, { method: "POST", headers: { ...guard, "x-forwarded-for": "192.168.0.30", cookie: askingBrowser }, body: JSON.stringify({ code, label: "Phone" }) });
     expect(paired.status).toBe(204);
-    // the first device on an open install is enrolled, and told, once it signs in
     const device = paired.headers.get("set-cookie")!.split(";")[0]!;
     expect((await fetch(`${base}/api/session`, { headers: { "x-forwarded-for": "192.168.0.30", cookie: device } })).status).toBe(200);
     expect(await told).toMatchObject({ event: { type: "device-paired", label: "Phone" } });

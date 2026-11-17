@@ -83,7 +83,6 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-/** Reads the owned pane through the authenticated conversation route. */
 const read = async (page: { before?: string; since?: string; from?: string } = {}): Promise<ConversationResponse> => {
   const query = new URLSearchParams({ pane_id: paneId, ...page });
   const response = await fetch(`http://127.0.0.1:${server.port}/api/pane/conversation?${query}`);
@@ -91,7 +90,6 @@ const read = async (page: { before?: string; since?: string; from?: string } = {
   return await response.json() as ConversationResponse;
 };
 
-/** Writes the real Hermes columns read by the bridge, with one complete exchange per session. */
 function hermesStore(home: string, sessions: ReadonlyArray<{ id: string; answer: string }>): void {
   mkdirSync(home, { recursive: true });
   const db = new Database(join(home, "state.db"));
@@ -371,7 +369,6 @@ it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("select
     const quotedHome = home.replaceAll("'", "'\\''");
     const quotedExecutable = executable.replaceAll("'", "'\\''");
     await herdrRpc("pane.send_text", { pane_id: target, text: `HERMES_HOME='${quotedHome}' '${quotedExecutable}' 60\n` });
-    // A real herdr process table has no completion signal; poll its observable process list to a deadline.
     for (let attempt = 0; attempt < 100; attempt++) {
       const info = await herdrRpc<{
         process_info?: { foreground_processes?: { pid: number; name?: string; argv0?: string; argv?: string[] }[] };
@@ -421,7 +418,6 @@ it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("select
 
     const breadcrumb = await start(profile);
     await herdrRpc("pane.report_agent", { pane_id: breadcrumb.paneId, source: "manual", agent: "hermes", state: "idle" });
-    // Agent detection is an asynchronous herdr status update; poll the public snapshot to a deadline.
     let identified = false;
     for (let attempt = 0; attempt < 100 && !identified; attempt++) {
       identified = (await sessionSnapshot()).panes.find((pane) => pane.pane_id === breadcrumb.paneId)?.agent === "hermes";

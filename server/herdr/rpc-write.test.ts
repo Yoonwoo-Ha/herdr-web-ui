@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HerdrError, herdrRpc, socketAddress } from "./client.ts";
 
-/** A real peer: no replacement for Bun.connect or the client's write/drain callbacks. */
 async function peer(accept: (socket: Socket) => void) {
   const root = mkdtempSync(join(tmpdir(), "ovis-rpc-write-"));
   const path = join(root, "rpc.sock");
@@ -33,7 +32,6 @@ it.each(["x", "🙂"])("delivers one complete large %s frame across real socket 
   const text = character.repeat(2 * 1024 * 1024);
   const chunks: Buffer[] = [];
   let lines = 0;
-  // the peer reads nothing until the first write was made, so that write can only be partial
   const started = Promise.withResolvers<void>();
   const fixture = await peer((socket) => {
     socket.pause();
@@ -47,7 +45,6 @@ it.each(["x", "🙂"])("delivers one complete large %s frame across real socket 
     });
   });
   try {
-    // the guard is asked before every write: more than one ask is more than one write
     let writes = 0;
     const guard = () => { writes++; started.resolve(); return true; };
     const result = await herdrRpc<{ method: string; text: string }>("fixture.write", { text }, fixture.path, 2_000, guard);
@@ -67,7 +64,6 @@ it("cuts a request short, never completing it, when the sender loses the right t
     socket.pause();
     socket.on("data", (chunk: Buffer) => { chunks.push(Buffer.from(chunk)); });
     socket.on("end", () => ended.resolve());
-    // revoked after the first (partial) write; only then does the peer read what was sent
     void started.promise.then(() => socket.resume());
   });
   try {
@@ -85,7 +81,6 @@ it("cuts a request short, never completing it, when the sender loses the right t
     expect(error).toBeInstanceOf(HerdrError);
     expect((error as HerdrError).code).toBe("socket_error");
     expect(asks).toBeGreaterThan(1);
-    // herdr got part of one request and no newline: nothing it can act on
     expect(received.length).toBeGreaterThan(0);
     expect(received.length).toBeLessThan(frame);
     expect(received.includes(10)).toBe(false);

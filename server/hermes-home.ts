@@ -17,7 +17,6 @@ export function platformHermesHome(home = userHome(), env: Record<string, string
   return !exists(join(current, "state.db")) && exists(join(legacy, "state.db")) ? legacy : current;
 }
 
-/** HERMES_HOME when set, otherwise Hermes's own platform default. */
 export function hermesHome(home = userHome(), env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform, exists: (path: string) => boolean = existsSync): string {
   return env["HERMES_HOME"] || platformHermesHome(home, env, platform, exists);
 }

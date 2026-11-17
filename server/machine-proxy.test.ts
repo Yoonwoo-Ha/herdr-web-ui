@@ -4,7 +4,6 @@ import { agentRowTokens } from "./herdr-sidebar.ts";
 import { handleMachineRequest } from "./machine-api.ts";
 import type { MachineManager } from "./machines.ts";
 
-// A remote bridge that answers like the local conversation route: an ETag, then 304 while unchanged.
 const asked: (string | null)[] = [];
 const promptAsked: (string | null)[] = [];
 const PLAN_CARD = { id: "claude-plan:abc", agent: "claude", kind: "plan", title: "Plan", question: "Would you like to proceed?", options: [{ label: "Yes", description: null }], multi_select: false, custom_option_index: null };
@@ -23,28 +22,21 @@ const remote = Bun.serve({
     const path = new URL(request.url).pathname;
     if (path === "/api/pane/conversation/image") return new Response(new Uint8Array([137, 80, 78, 71]), { headers: { "content-type": "image/png" } });
     if (path === "/api/pane/conversation/tool-output") return new Response("complete remote output", { headers: { "content-type": "text/plain; charset=utf-8" } });
-    // a PC that answers a file, or a stat that called it a PDF, with a document of its own and a policy that lets it run
-    // a PDF's type with another one after it: not a PDF
     if (path === "/api/fs/file" && new URL(request.url).searchParams.get("path")?.endsWith(".mixed")) {
       return new Response("<script>document.title = 'ran'</script>", { headers: { "content-type": "application/pdf, text/html" } });
     }
-    // a PDF's type with a parameter, then another type: a PDF, by its first type
     if (path === "/api/fs/file" && new URL(request.url).searchParams.get("path")?.endsWith(".pdfparams")) {
       return new Response("%PDF-1.7", { headers: { "content-type": "application/pdf;x=y, text/html" } });
     }
-    // a picture that runs a script, asked for as a page
     if (path === "/api/fs/file" && new URL(request.url).searchParams.get("path")?.endsWith(".svg")) {
       return new Response("<svg xmlns='http://www.w3.org/2000/svg'><script>parent.document.title = 'ran'</script></svg>", { headers: { "content-type": "image/svg+xml", "content-security-policy": "script-src *" } });
     }
-    // a page whose policy allows any host and any frame
     if (path === "/api/fs/file" && new URL(request.url).searchParams.get("path")?.endsWith(".loose")) {
       return new Response("<script>fetch('https://example.invalid/')</script>", { headers: { "content-type": "text/html", "content-security-policy": "default-src *; script-src 'unsafe-inline' *" } });
     }
-    // a page's type with a parameter, then a picture's
     if (path === "/api/fs/file" && new URL(request.url).searchParams.get("path")?.endsWith(".htmlparams")) {
       return new Response("<svg xmlns='http://www.w3.org/2000/svg'><script>parent.document.title = 'ran'</script></svg>", { headers: { "content-type": "text/html;x=y, image/svg+xml" } });
     }
-    // a page that names no policy of its own
     if (path === "/api/fs/file" && new URL(request.url).searchParams.get("path")?.endsWith(".bare")) {
       return new Response("<script>fetch('https://example.invalid/')</script>", { headers: { "content-type": "text/html; charset=utf-8" } });
     }
@@ -59,7 +51,6 @@ const remote = Bun.serve({
     }
     if (path === "/api/pane/commands" || path === "/api/agent/commands") {
       commandsAsked.push(path);
-      // a PC whose skill folders are too slow to scan in time (#2254)
       if (new URL(request.url).searchParams.get("pane_id") === "busy") return Response.json({ error: { code: "file_busy", message: "the skill folders did not answer in time" } }, { status: 503, headers: { "retry-after": "1" } });
       return Response.json({ commands: [{ name: "deploy", description: "SECRET", source: "custom", id: "/work/.commandcode/commands/deploy.md" }] });
     }
@@ -93,7 +84,6 @@ const remote = Bun.serve({
     if (path === "/api/pane/prompt") {
       const search = new URL(request.url).searchParams;
       promptAsked.push(search.get("plan"));
-      // pane `old` is a PC that does not know `plan=0` and always answers with the plan file
       const screen = search.get("plan") === "0" && search.get("pane_id") !== "old";
       return Response.json({ prompt: screen
         ? { ...PLAN_CARD, body: "4. The last step that fits the pane." }
@@ -126,7 +116,6 @@ describe("PC proxy", () => {
     const unchanged = await handleMachineRequest(new Request(url, { headers: { "if-none-match": "\"v1\"" } }), manager);
     expect(unchanged.status).toBe(304);
     expect(unchanged.headers.get("etag")).toBe("\"v1\"");
-    // that PC's clock as it answered, which its turns' times are on
     expect(unchanged.headers.get("x-server-time")).toBe("2026-11-05T10:00:00.000Z");
     expect(await unchanged.text()).toBe("");
     expect(asked).toEqual([null, "\"v1\""]);
@@ -166,7 +155,6 @@ it("never forwards a PC's session history to a watching device, nor a route spel
     }
   }
   expect(historyAsked).toEqual([]);
-  // a driving device gets the PC's answer, asked with the PC's credential
   const driven = await handleMachineRequest(new Request(`${base}/sessions/history${query}`), manager);
   expect(driven.status).toBe(200);
   expect(JSON.stringify(await driven.json())).toContain("a private prompt");
@@ -180,7 +168,6 @@ it("never asks a PC for a pane's or a folder's command rows for a watching devic
     expect([path, watched.status, ((await watched.json()) as { error: { code: string } }).error.code]).toEqual([path, 403, "read_only"]);
   }
   expect(commandsAsked).toEqual([]);
-  // a driving device gets the PC's rows
   const driven = await handleMachineRequest(new Request(`${base}/pane/commands?pane_id=w1:p1`), manager);
   expect(driven.status).toBe(200);
   expect(JSON.stringify(await driven.json())).toContain("SECRET");
@@ -216,7 +203,6 @@ it("never asks a PC for the paths under a pane's folder or a plugin run's output
     expect([path, watched.status, ((await watched.json()) as { error: { code: string } }).error.code]).toEqual([path, 403, "read_only"]);
   }
   expect(filesAsked).toEqual([]);
-  // a driving device gets the PC's answers
   for (const path of routes) {
     const driven = await handleMachineRequest(new Request(`${base}/${path}`), manager);
     expect([path, driven.status, JSON.stringify(await driven.json()).includes("SECRET")]).toEqual([path, 200, true]);
@@ -229,7 +215,6 @@ it("never asks a PC for a repository's checkouts for a watching device (#2250)",
   const watched = await handleMachineRequest(new Request(url), manager, undefined, undefined, true);
   expect([watched.status, ((await watched.json()) as { error: { code: string } }).error.code]).toEqual([403, "read_only"]);
   expect(worktreesAsked).toEqual([]);
-  // a driving device gets the PC's answer
   const driven = await handleMachineRequest(new Request(url), manager);
   expect([driven.status, JSON.stringify(await driven.json()).includes("SECRET")]).toEqual([200, true]);
   expect(worktreesAsked).toEqual(["/api/worktree/list"]);
@@ -248,7 +233,6 @@ it("forwards conversation images and complete output, while rejecting arbitrary 
 });
 
 it("opens a PC's file from a navigation another site started, and keeps every other route to this app", async () => {
-  // Chrome on Android shows a PDF in the viewer's frame as an "Open" button; its navigation is cross-site
   const file = "http://127.0.0.1/api/machines/pc1/fs/file?path=%2Ftmp%2Freport.pdf";
   for (const site of ["cross-site", "same-site"]) {
     const response = await handleMachineRequest(new Request(file, { headers: { "sec-fetch-site": site, "sec-fetch-mode": "navigate" } }), manager);
@@ -257,7 +241,6 @@ it("opens a PC's file from a navigation another site started, and keeps every ot
     expect(await response.text()).toBe("%PDF-1.7");
   }
   const head = await handleMachineRequest(new Request(file, { method: "HEAD", headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" } }), manager);
-  // another page loading the file as a picture (a rendered HTML page probing which files exist) is not a navigation
   const probe = await handleMachineRequest(new Request(file, { headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" } }), manager);
   expect(probe.status).toBe(403);
   expect((await probe.json()).error.code).toBe("cross_site");
@@ -284,25 +267,20 @@ it("regression: a PC's answer never runs as this app's origin, whatever type and
     expect(response.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
   }
-  // a page drawn with its scripts keeps that PC's policy, with this server's page policy after it: no network, no other site's frame
   const ours = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' data:; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
   const page = await handleMachineRequest(new Request(`${opened}&render=1`), manager);
   expect(page.headers.get("content-security-policy")).toBe(`script-src *, ${ours}`);
   expect(page.headers.get("content-type")).toBe("text/html; charset=utf-8");
-  // whatever that PC's policy allows: this server's is added all the same
   const loose = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/fs/file?path=%2Ftmp%2Freport.loose&render=1"), manager);
   expect(loose.headers.get("content-security-policy")).toBe(`default-src *; script-src 'unsafe-inline' *, ${ours}`);
-  // a page is passed on as HTML alone, whatever else its type names
   const typed = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/fs/file?path=%2Ftmp%2Freport.htmlparams&render=1"), manager);
   expect(typed.headers.get("content-type")).toBe("text/html; charset=utf-8");
   expect(typed.headers.get("content-security-policy")).toBe(ours);
   expect(page.headers.get("x-content-type-options")).toBe("nosniff");
-  // a real PDF is still drawn by the browser's viewer, which refuses a sandbox
   const pdf = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/fs/file?path=%2Ftmp%2Freport.pdf"), manager);
   expect(pdf.headers.get("content-type")).toBe("application/pdf");
   expect(pdf.headers.get("content-security-policy")).toBeNull();
   expect(pdf.headers.get("x-content-type-options")).toBe("nosniff");
-  // a PDF type with a parameter and another type after it is passed on as the PDF type alone
   for (const method of ["GET", "HEAD"]) {
     const named = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/fs/file?path=%2Ftmp%2Freport.pdfparams", { method }), manager);
     expect(named.status).toBe(200);
@@ -310,12 +288,10 @@ it("regression: a PC's answer never runs as this app's origin, whatever type and
     expect(named.headers.get("content-security-policy")).toBeNull();
     expect(named.headers.get("x-content-type-options")).toBe("nosniff");
   }
-  // only an HTML answer is drawn as a page: a picture asked to render keeps the file policy
   const svg = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/fs/file?path=%2Ftmp%2Fchart.svg&render=1"), manager);
   expect(svg.headers.get("content-type")).toBe("image/svg+xml");
   expect(svg.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'");
   expect(svg.headers.get("x-content-type-options")).toBe("nosniff");
-  // a page that names no policy gets this server's own page policy, which reaches no network
   const bare = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/fs/file?path=%2Ftmp%2Freport.bare&render=1"), manager);
   expect(bare.headers.get("content-security-policy")).toBe(ours);
   for (const method of ["GET", "HEAD"]) {
@@ -323,7 +299,6 @@ it("regression: a PC's answer never runs as this app's origin, whatever type and
     expect(mixed.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'");
     expect(mixed.headers.get("x-content-type-options")).toBe("nosniff");
   }
-  // nor does any other route of that PC's answer as a document of this origin
   const other = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/pane/conversation/tool-output?pane_id=w1:p1&ref=call"), manager);
   expect(other.status).toBe(200);
   expect(other.headers.get("content-security-policy")).toBe("sandbox; default-src 'none'");
@@ -337,7 +312,6 @@ it("asks a PC for a folder's project icon once, with the bridge's own credential
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect(await response.json()).toEqual({ icon: null });
   expect(faviconAsked).toEqual([{ search, authorization: "Bearer remote-token", cookie: null }]);
-  // unlike a file itself, it is never opened by a navigation from another site
   const crossSite = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/pc1/fs/favicon${search}`, { headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" } }), manager);
   expect(crossSite.status).toBe(403);
   expect(await crossSite.json()).toMatchObject({ error: { code: "invalid_origin" } });
@@ -366,7 +340,6 @@ it("forwards a repository diff or history read with its query and the bridge's o
     expect(await response.json()).toEqual({ files: [], total: 0, truncated: false });
   }
   expect(diffAsked.slice(before)).toEqual(routes.map((route) => ({ path: `/api/workspace/${route}`, search, authorization: "Bearer remote-token", cookie: null, forwarded: null })));
-  // only the three reads are routes: nothing else under that name reaches the PC
   for (const path of ["workspace/diff", "workspace/diff/file/extra", "workspace/diff/apply", "workspace/diffs/file", "workspace/git", "workspace/git/log/extra", "workspace/git/checkout"]) {
     const response = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/pc1/${path}${search}`), manager);
     expect(response.status).toBe(404);
@@ -391,7 +364,6 @@ it("gives a watching device a PC's plan card without Claude's plan file, even fr
     expect(watched.prompt).not.toHaveProperty("plan_file");
     expect(JSON.stringify(watched)).not.toContain("secret step");
   }
-  // a device that can drive still gets the whole plan
   expect((await poll("w1%3Ap1", false)).prompt).toMatchObject({ plan_file: "/home/u/.claude/plans/p.md", body: "1. A secret step from the plan file." });
   expect(promptAsked.slice(before)).toEqual(["0", "0", null]);
 });
@@ -406,12 +378,9 @@ it("passes a PC's session on without the token values this server's sidebar rows
     expect(text).not.toContain("off · private");
     expect((JSON.parse(text) as { snapshot: { panes: { tokens: unknown }[] } }).snapshot.panes[0]!.tokens).toEqual({ eta: "soon" });
   }
-  // any other method the PC answers with a body is filtered too (its session route takes them all)
   const asked = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/session", { method: "OPTIONS", headers: { "x-herdr-machine": "1" } }), manager, undefined, undefined, true, sidebar);
   expect(await asked.text()).not.toContain("off · private");
-  // a HEAD has no body to filter: it is answered as before
   expect((await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/session", { method: "HEAD" }), manager, undefined, undefined, true, sidebar)).status).toBe(200);
-  // a server whose config names no rows passes the session on whole
   const whole = await handleMachineRequest(new Request("http://127.0.0.1/api/machines/pc1/session"), manager, undefined, undefined, true, { get: () => null, subscribe: () => () => undefined });
   expect(await whole.text()).toContain("off · private");
 });

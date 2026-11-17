@@ -11,24 +11,16 @@ import { MachineScopedConnection } from "./machine-scope.ts";
 import { buildSnapshot } from "./snapshot.ts";
 import type { HerdrPane } from "../../shared/protocol.ts";
 
-/**
- * The hc client against a real hc, in a core of its own: a session name and state, config and
- * runtime folders no other core uses, so the user's core and the Herdr app never see it. Runs only
- * where OVIS_TEST_HC_BIN names an hc (generation 1).
- */
 const bin = process.env["OVIS_TEST_HC_BIN"];
 
 const WAIT_MS = 5000;
-/** each test and hook outlasts its own bounded waits and calls, so a failure names the wait that ran out */
 const TEST_MS = 30_000;
 
 interface Waiter { check: () => boolean; resolve: () => void }
 
 describe.skipIf(!bin)("hc client against a real hc", () => {
   let dir = "";
-  /** set only once every isolating variable is in it: nothing runs hc without it */
   let env: Record<string, string> | null = null;
-  /** the core and holder this test started, stopped (or killed) in afterAll */
   let pids: number[] = [];
   let hc: HcConnection;
   const waiters = new Set<Waiter>();
@@ -45,7 +37,6 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "ovis-hc-live-"));
     for (const sub of ["state", "config", "run"]) mkdirSync(join(dir, sub), { mode: 0o700 });
-    // an inherited HC_* (a terminal of the user's core, its socket) must not point this test at that core
     const inherited = Object.entries(process.env).filter((entry): entry is [string, string] => !entry[0].startsWith("HC_") && entry[1] !== undefined);
     const isolated = {
       ...Object.fromEntries(inherited),
@@ -61,7 +52,6 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
     const status = Bun.spawn([bin!, "server", "status", "--json"], { env: isolated, stdout: "pipe", stderr: "ignore" });
     const running = JSON.parse(await new Response(status.stdout).text()) as { pid: number; holder?: { pid: number } | null };
     pids = [running.pid, ...(running.holder ? [running.holder.pid] : [])];
-    // spawnHcConnect would run hc with the env this process started with: this core's env is passed explicitly
     hc = new HcConnection(() => {
       const child = Bun.spawn([bin!, "connect"], { env: isolated, stdin: "pipe", stdout: "pipe", stderr: "ignore" });
       return {
@@ -75,7 +65,6 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
 
   afterAll(async () => {
     hc?.close();
-    // a core started with anything but the isolated env could be the user's: only this test's is stopped
     let stopped = 0;
     if (bin && env) stopped = await Bun.spawn([bin, "server", "stop"], { env, stdout: "ignore", stderr: "ignore" }).exited;
     // hc's core and holder are detached daemons, not children: their exit has no event to await
@@ -92,7 +81,6 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
     const proc = Bun.spawn([bin!, "schema"], { env: env!, stdout: "pipe", stderr: "ignore" });
     const schema: unknown = JSON.parse(await new Response(proc.stdout).text());
     expect(await proc.exited).toBe(0);
-    // a different hc: refresh with OVIS_HC_BIN=<it> bun run generate:types --refresh-hc
     expect(schema).toEqual(JSON.parse(readFileSync(join(import.meta.dir, "..", "..", "scripts", "hc-schema.json"), "utf8")));
   }, TEST_MS);
 
@@ -165,11 +153,9 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
       onExit: (code) => exit.resolve(code),
     });
     await until("first paint", () => screen.length > 0);
-    // a core without the feature must get it as DATA: AUTOMATIC_INPUT it does not know would be dropped
     session.write("auto\r", true);
     expect(await exit.promise).toBe(3);
     expect(screen).toContain("got:auto");
-    // what the pinned core says, for whoever raises the pin: hc 0.1.14 to 0.1.17 do not name the feature
     console.info(`hc ${hello.version} automatic_input: ${hello.features.includes("automatic_input")}`);
     await hc.call("terminal.rm", { terminal: record.address });
   }, TEST_MS);
@@ -249,7 +235,6 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
   it("renames and moves Ovis's own workspaces and tabs in labels, and splits them in its own document, on a core no Herdr app arranges", async () => {
     const socket = join(dir, "herdr.sock");
     const adapter = await startHerdrCoreAdapter(hc, socket);
-    // the core is this test's own and stops in afterAll: a failure here leaves nothing for another test
     try {
       expect((await ping(socket)).layout).toEqual({ rename: true, split: true, move: true, arrange: true, worktrees: true });
       const api = await workspaceCreate({ cwd: dir, label: "api" }, socket);
@@ -257,7 +242,6 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
 
       await workspaceRename(api.workspace.workspace_id, "backend", socket);
       await tabRename(api.tab.tab_id, "server", socket);
-      // #2812: split right, then the first pane down; a viewer sizes each terminal to its pane, and the panes keep their places
       const right = (await herdrRpc<{ pane: HerdrPane }>("pane.split", { target_pane_id: api.root_pane.pane_id, direction: "right" }, socket)).pane;
       const down = (await herdrRpc<{ pane: HerdrPane }>("pane.split", { target_pane_id: api.root_pane.pane_id, direction: "down" }, socket)).pane;
       const tabRects = async () => (await sessionSnapshot(socket)).layouts.find((layout) => layout.tab_id === api.tab.tab_id)!.panes.map((pane) => [pane.pane_id, pane.rect]);
@@ -287,7 +271,6 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
       snapshot = await sessionSnapshot(socket);
       expect(snapshot.workspaces.some((workspace) => workspace.workspace_id === web.workspace.workspace_id)).toBe(false);
       expect(snapshot.tabs.filter((tab) => tab.workspace_id === api.workspace.workspace_id).map((tab) => tab.label)).toEqual(["server", "moved"]);
-      // the moved pane takes its new workspace's name, so it never renames it
       expect(snapshot.workspaces.find((workspace) => workspace.workspace_id === api.workspace.workspace_id)?.label).toBe("backend");
       await workspaceClose(api.workspace.workspace_id, socket);
     } finally {
@@ -296,15 +279,8 @@ describe.skipIf(!bin)("hc client against a real hc", () => {
   }, TEST_MS);
 });
 
-/**
- * Another machine of a real hc's core, shown as a PC of its own (#2497): two cores of their own
- * (sessions, state, config and runtime folders nobody else uses), the second added to the first as
- * `lab` through a `--via` command that runs its `hc connect` in its own env, as SSH would there. Runs
- * only where OVIS_TEST_HC_BIN names an hc.
- */
 describe.skipIf(!bin)("another machine of a real hc's core", () => {
   let dir = "";
-  /** each core's env, set only once every isolating variable is in it */
   const envs: Record<string, string>[] = [];
   let hc: MachineScopedConnection | null = null;
   let stopAdapter: (() => void) | null = null;
@@ -369,7 +345,6 @@ describe.skipIf(!bin)("another machine of a real hc's core", () => {
   afterAll(async () => {
     stopAdapter?.();
     hc?.close();
-    // only this test's cores, each by its own isolated env
     const stopped = await Promise.all(envs.map((env) => Bun.spawn([bin!, "server", "stop"], { env, stdout: "ignore", stderr: "ignore" }).exited));
     if (dir) rmSync(dir, { recursive: true, force: true });
     expect(stopped.every((code) => code === 0)).toBe(true);
@@ -377,7 +352,6 @@ describe.skipIf(!bin)("another machine of a real hc's core", () => {
 
   it("lists the machine, then starts, types into and reads a terminal there by its own address", async () => {
     expect((await listHcMachines(hc!)).map((machine) => [machine.name, machine.connected])).toEqual([["lab", true]]);
-    // this PC's own terminal is none of lab's
     expect((await sessionSnapshot(socket)).panes).toEqual([]);
     const made = await workspaceCreate({ label: "on lab" }, socket);
     const paneId = made.root_pane.pane_id;

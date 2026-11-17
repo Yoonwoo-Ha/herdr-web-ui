@@ -1,6 +1,3 @@
-// The server of one of the core's other machines (machine-bridge.ts starts it): herdr's API answered
-// from that machine's terminals through this PC's core, served on loopback to the server that
-// started it, as an SSH PC's bridge serves its own (server/remote-entry.ts).
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,11 +12,9 @@ setRuntime("herdr-core");
 const socketDir = mkdtempSync(join(tmpdir(), "ovis-hc-"));
 const core = await startRuntime(socketDir);
 const token = randomBytes(32).toString("hex");
-// that machine's files are not on this disk: nothing here reads or makes them for it
 const server = createServer({ port: 0, hostname: "127.0.0.1", token, machines: false, bridgeOnly: true, localFiles: false, stateDir });
 process.send?.({ type: "ready", port: server.port, token });
-// the server that started this one holds its stdin open: once that ends, so does this one
-for await (const _chunk of Bun.stdin.stream()) { /* nothing is read */ }
+for await (const _chunk of Bun.stdin.stream()) {}
 server.stop();
 core?.stop();
 rmSync(socketDir, { recursive: true, force: true });

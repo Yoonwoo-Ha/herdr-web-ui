@@ -15,6 +15,10 @@ import { BlockList, isIP } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 
+const EXTENDED_KEY_USAGE_OID = "2.5.29.37";
+const SERVER_AUTH_OID = "1.3.6.1.5.5.7.3.1";
+const SUBJECT_ALT_NAME_OID = "2.5.29.17";
+
 export interface LanHttpsConfig {
   readonly port: number;
   /** one address to bind instead of every private interface address; `0.0.0.0` only when written */
@@ -26,11 +30,9 @@ export interface LanHttpsConfig {
 export interface LanHttpsCertificate {
   readonly cert: string;
   readonly key: string;
-  /** colon-separated uppercase hex, as browsers show it */
   readonly sha256: string;
 }
 
-/** The listener's settings from the environment: null when not asked for, `{ error }` when asked for wrongly. */
 export function lanHttpsConfig(env: Record<string, string | undefined>): LanHttpsConfig | { error: string } | null {
   const portText = env["OVIS_LAN_HTTPS_PORT"]?.trim() ?? "";
   if (portText === "") return null;
@@ -54,17 +56,11 @@ export function privateLanPeer(address: string | null | undefined): boolean {
   return isIP(plain) === 4 && privateIpv4.check(plain, "ipv4");
 }
 
-/** This PC's private IPv4 interface addresses, the ones the listener binds by default. */
 export function privateLanAddresses(): string[] {
   const found = Object.values(networkInterfaces()).flatMap((list) => list ?? []).filter((entry) => entry.family === "IPv4" && !entry.internal && privateLanPeer(entry.address)).map((entry) => entry.address);
   return [...new Set(found)];
 }
 
-/**
- * The certificate to serve: the operator's files as they are, or the self-signed one kept in
- * `<stateDir>/lan-https`, made again when it does not load, has run out or does not name one of
- * `addresses` (the PC moved to another network).
- */
 export function lanHttpsCertificate(stateDir: string, config: LanHttpsConfig, addresses: readonly string[]): LanHttpsCertificate {
   if (config.certFile !== undefined && config.keyFile !== undefined) return loaded(readFileSync(config.certFile, "utf8"), readFileSync(config.keyFile, "utf8"));
   const dir = join(stateDir, "lan-https");
@@ -73,15 +69,12 @@ export function lanHttpsCertificate(stateDir: string, config: LanHttpsConfig, ad
   try {
     const kept = loaded(readFileSync(certPath, "utf8"), readFileSync(keyPath, "utf8"));
     const x509 = new X509Certificate(kept.cert);
-    // one made while the clock ran ahead is refused by clients until then
     if (Date.parse(x509.validFrom) <= Date.now() && Date.parse(x509.validTo) > Date.now() && addresses.every((address) => x509.checkIP(address) !== undefined)) {
-      // a restored or copied state dir may have widened them
       chmodSync(dir, 0o700);
       chmodSync(keyPath, 0o600);
       return kept;
     }
   } catch {
-    // missing or unreadable: made again below
   }
   const made = selfSignedCertificate(addresses);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -92,7 +85,6 @@ export function lanHttpsCertificate(stateDir: string, config: LanHttpsConfig, ad
   return loaded(made.cert, made.key);
 }
 
-/** Both PEMs parse and belong together; the fingerprint is the certificate's. */
 function loaded(cert: string, key: string): LanHttpsCertificate {
   const x509 = new X509Certificate(cert);
   if (!x509.checkPrivateKey(createPrivateKey(key))) throw new Error("the certificate and the key do not belong together");
@@ -102,7 +94,6 @@ function loaded(cert: string, key: string): LanHttpsCertificate {
 /** Apple's limit for a TLS server certificate's lifetime; a longer one is refused even where trusted by hand. */
 const VALID_DAYS = 825;
 
-/** A self-signed EC P-256 certificate for `localhost`, 127.0.0.1 and `addresses`, built here so no openssl is needed. */
 export function selfSignedCertificate(addresses: readonly string[], now = new Date()): { cert: string; key: string } {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const ecdsaSha256 = seq(oid("1.2.840.10045.4.3.2"));
@@ -113,10 +104,8 @@ export function selfSignedCertificate(addresses: readonly string[], now = new Da
   const ips = [...new Set(["127.0.0.1", ...addresses])].map((address) => tlv(0x87, Buffer.from(address.split(".").map(Number))));
   // no keyUsage: one without keyCertSign stops a verifier trusting the certificate as its own issuer, the way a pinned or installed self-signed one is trusted
   const extensions = seq(
-    // extendedKeyUsage: serverAuth
-    seq(oid("2.5.29.37"), tlv(0x04, seq(oid("1.3.6.1.5.5.7.3.1")))),
-    // subjectAltName: DNS localhost and every address
-    seq(oid("2.5.29.17"), tlv(0x04, seq(tlv(0x82, Buffer.from("localhost")), ...ips))),
+    seq(oid(EXTENDED_KEY_USAGE_OID), tlv(0x04, seq(oid(SERVER_AUTH_OID)))),
+    seq(oid(SUBJECT_ALT_NAME_OID), tlv(0x04, seq(tlv(0x82, Buffer.from("localhost")), ...ips))),
   );
   const tbs = seq(
     tlv(0xa0, tlv(0x02, Buffer.from([2]))),

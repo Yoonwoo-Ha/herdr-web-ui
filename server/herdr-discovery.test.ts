@@ -48,8 +48,6 @@ describe("running herdr discovery", () => {
 
   it("confines proc unix candidates even when HOME is the account home", async () => {
     const f = fixture();
-    // a desktop herdr under an XDG root outside HOME (its path holding a space), served by a program not named herdr: no
-    // process line names it
     const outside = tempRoot("herdr discovery xdg-");
     const socket = join(outside, "herdr/sessions/work/herdr.sock");
     listening(socket);
@@ -59,13 +57,11 @@ describe("running herdr discovery", () => {
 0000000000000000: 00000002 00000000 00000000 0001 03 4243 ${join(outside, "other/herdr.sock")}
 `);
     expect(await discoverHerdrSessions(f)).toEqual([]);
-    // An explicit XDG root authorizes only its herdr directory, including paths containing spaces.
     expect(await discoverHerdrSessions({ ...f, xdg: outside })).toEqual([{ socket_path: socket, session: "work", label: "work" }]);
     expect(await discoverHerdrSessions({ ...f, home: join(f.home, "sandbox") })).toEqual([]);
   });
 
   it("accepts a real listening socket on this platform", async () => {
-    // no faked platform, uid or probe: the real connection check reaches the listener
     const home = tempRoot("hd-");
     const socket = join(home, ".config/herdr/sessions/work/herdr.sock"); listening(socket);
     const host = { home, platform: process.platform, uid: process.getuid?.() };
@@ -198,9 +194,7 @@ describe("running herdr discovery", () => {
 
 describe("the machine profile's own folders", () => {
   it("trust this account's private group alone, not macOS's admin group under Homebrew's prefixes", () => {
-    // the account's private group is 20 here, as a fake answer: no macOS needed
     const own = () => 20;
-    // control: the rule of main's other callers trusts admin (80) there on macOS
     expect(harmlessGroups("darwin", own)(80, "/opt/homebrew/var/herdr")).toBe(true);
     const groups = profileGroups(own);
     expect([groups(80, "/opt/homebrew/var/herdr"), groups(80, "/usr/local/state"), groups(20, "/Users/me/.config"), groups(21, "/Users/me/.config")]).toEqual([false, false, true, false]);

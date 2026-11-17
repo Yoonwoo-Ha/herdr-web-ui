@@ -3,12 +3,10 @@ import { promisify } from "node:util";
 import type { SshTarget } from "../shared/machines.ts";
 import { validateTarget } from "./machine-security.ts";
 
-/** Saved by the local herdr client; reading its catalog never connects to a host. */
 export interface HerdrMachineProfile {
   id: string;
   label: string;
   enabled: boolean;
-  /** null when herdr accepts an address this web client cannot represent safely. */
   target: SshTarget | null;
 }
 
@@ -42,7 +40,6 @@ export function parseHerdrProfiles(text: string): HerdrMachineProfile[] {
   });
 }
 
-/** the same port by its number ("022" is 22); an omitted one matches only another omitted one */
 export function samePort(a: SshTarget["port"], b: SshTarget["port"]): boolean {
   return a === undefined || b === undefined ? a === b : Number(a) === Number(b);
 }

@@ -4,23 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleHerdrUpdateRequest, HerdrUpdater, parseHerdrStatus, plainOutput } from "./herdr-update.ts";
 
-/**
- * The updater runs a stand-in herdr here, a shell script: the real `herdr update` replaces the
- * herdr on PATH and hands its server off, which no test may do.
- */
 const root = mkdtempSync(join(tmpdir(), "herdr-update-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 interface StandIn {
   path: string;
-  /** every call's arguments, one line each */
   calls: () => string[];
-  /** what `update --handoff` saw of its environment and stdin */
   seen: () => string;
   status: (status: { server: string; binary: string; stale: boolean; handoff?: boolean }) => void;
 }
 
-/** A herdr whose `update` prints `says` and exits with `code`; a live handoff brings the server to the binary's version. */
 function standIn(says: string, code = 0, options: { handoffCode?: number; sleep?: number; ignoreTerm?: boolean; statusGoesAfterUpdate?: boolean } = {}): StandIn {
   const dir = mkdtempSync(join(root, "herdr-"));
   const path = join(dir, "herdr");
@@ -37,15 +30,12 @@ function standIn(says: string, code = 0, options: { handoffCode?: number; sleep?
     "#!/bin/sh",
     `echo "$*" >> '${calls}'`,
     'case "$1 $2" in',
-    // a warning on stderr is not part of the answer
     `  "status --json") echo "warning: herdr integrations need updating" >&2; cat '${statusFile}' 2>/dev/null || exit 1 ;;`,
     '  "update --handoff")',
     `    { echo "env=\${HERDR_ENV-unset} pane=\${HERDR_PANE_ID-unset} socket=\${HERDR_SOCKET_PATH-unset} web=\${OVIS_STATE_DIR-unset}"; if [ -t 0 ]; then echo stdin=tty; else echo stdin=closed; fi; } > '${seen}'`,
-    // a herdr whose status stops answering once its update has begun
     options.statusGoesAfterUpdate ? `    rm -f '${statusFile}'` : "    :",
     options.ignoreTerm ? "    trap '' TERM" : "    :",
     options.sleep ? `    sleep ${options.sleep}` : "    :",
-    // herdr reports progress on stderr, with colors on a terminal
     `    printf '%s\\n' '${says}' >&2`,
     `    exit ${code} ;;`,
     '  "server live-handoff")',
@@ -80,7 +70,6 @@ async function finished(updater: HerdrUpdater): Promise<Awaited<ReturnType<Herdr
 }
 
 describe("updating herdr from the app", () => {
-  // what a server started by the herdr plugin carries: a pane's variables
   const pane = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1", HERDR_SOCKET_PATH: "/pane/herdr.sock" };
   const previous: Record<string, string | undefined> = {};
   beforeEach(() => {
@@ -99,13 +88,11 @@ describe("updating herdr from the app", () => {
     expect(updater.start()).toBe("started");
     const status = await finished(updater);
     expect(herdr.calls()).toContain("update --handoff");
-    // HERDR_ENV=1 is what makes herdr refuse; the socket is this server's, not the pane's
     expect(herdr.seen()).toContain("env=unset pane=unset socket=/srv/herdr.sock");
     expect(herdr.seen()).toContain("stdin=closed");
     expect(status.phase).toBe("idle");
     expect(status.output).toBe("checking stable channel for updates...\nalready up to date (0.9.3)");
     expect(status.finished_at).not.toBeNull();
-    // nothing to move: the server already runs the installed binary
     expect(herdr.calls().filter((call) => call.startsWith("server live-handoff"))).toEqual([]);
   });
 
@@ -176,12 +163,10 @@ describe("updating herdr from the app", () => {
     const updater = new HerdrUpdater({ bin: herdr.path, statusRetryMs: 10 });
     updater.start();
     const status = await finished(updater);
-    // the server may still run the old binary: no handoff was possible, and none is claimed
     expect(status.phase).toBe("error");
     expect(status.output).toContain("installed 0.9.4");
     expect(status.output).toContain("status could not be read");
     expect(herdr.calls().filter((call) => call === "status --json").length).toBeGreaterThanOrEqual(5);
-    // the controls stay, with what herdr said and the button to try again
     expect(status).toMatchObject({ supported: true, server_version: null });
   });
 
@@ -189,7 +174,7 @@ describe("updating herdr from the app", () => {
     const herdr = standIn("update failed: no network", 1, { statusGoesAfterUpdate: true, sleep: 1 });
     const updater = new HerdrUpdater({ bin: herdr.path, statusRetryMs: 10 });
     updater.start();
-    await Bun.sleep(300); // the stand-in's status is gone by now, and its update still runs
+    await Bun.sleep(300);
     expect(await updater.status()).toMatchObject({ supported: true, phase: "updating" });
     expect(await finished(updater)).toMatchObject({ supported: true, phase: "error", output: "update failed: no network" });
   });
@@ -244,7 +229,6 @@ describe("the herdr update endpoint", () => {
   it("starts an update only for this app's own controls", async () => {
     const herdr = standIn("already up to date (0.9.3)", 0, { sleep: 1 });
     const updater = new HerdrUpdater({ bin: herdr.path });
-    // an HTML form cannot send the header; another site's page is cross-site
     for (const headers of [{}, { ...own, "x-herdr-update": "0" }, { ...own, origin: "https://evil.example" }, { ...own, "sec-fetch-site": "cross-site" }]) {
       const refused = await handleHerdrUpdateRequest(post(headers), updater);
       expect(refused.status).toBe(403);

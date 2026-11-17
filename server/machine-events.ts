@@ -1,4 +1,3 @@
-/** The authorized machine event document, shared by SSE and the terminal WebSocket. */
 import type { DevicePairedEvent, DeviceRemovedEvent, Machine, MachineEvent, RelayPairingsEvent, RemotePairingsEvent } from "../shared/machines.ts";
 import type { AgentRowTokens } from "../shared/pane-tokens.ts";
 import type { SharedPreferences } from "../shared/preferences.ts";
@@ -11,15 +10,12 @@ export interface MachineEventDocument {
   preferences?: { get(): SharedPreferences; subscribe(listener: (preferences: SharedPreferences) => void): () => void };
   herdrSidebar?: { get(): AgentRowTokens | null; subscribe(listener: (agents: AgentRowTokens | null) => void): () => void };
   seen?: { list(): SeenFinish[]; subscribe(listener: (finish: SeenFinish) => void): () => void };
-  /** Filtered for the authenticated device and browser at the transport's admission boundary. */
   pairings?: { subscribe(listener: (event: DevicePairedEvent | DeviceRemovedEvent | RelayPairingsEvent | RemotePairingsEvent) => void): () => void };
 }
 
-/** Initial documents and subsequent invalidations use exactly the same redaction on either transport. */
 export function subscribeMachineEvents({ manager, preferences, herdrSidebar, seen, pairings }: MachineEventDocument, send: (event: MachineEvent) => void): () => void {
   const stops: Array<() => void> = [];
   let active = true;
-  /** the roster told last, encoded as it was then (the manager changes its machines in place), while no other event followed it */
   let lastRoster: string | null = null;
   const tell = (event: MachineEvent) => { if (active) { lastRoster = null; send(event); } };
   const stop = () => { active = false; for (const off of stops.splice(0)) off(); };
@@ -42,8 +38,6 @@ export function subscribeMachineEvents({ manager, preferences, herdrSidebar, see
       const incoming = reportedTokenValues(shown);
       sendSidebar(reported, incoming);
       reported = incoming;
-      // the manager tells its whole roster after every refresh, changed or not: over a slow relay
-      // a repeat of the event just told costs the bandwidth the pane being opened needs
       const encoded = JSON.stringify(shown);
       if (encoded === lastRoster) return;
       tell({ type: "machines", machines: shown });

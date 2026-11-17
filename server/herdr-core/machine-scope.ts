@@ -1,6 +1,7 @@
 import { type ChannelHandlers, HcConnection, HcError, type HcStreamMethod, type HcTransport } from "./connection.ts";
 import type { HcMethod, HcMethods } from "./hc-api.generated.ts";
 import { isRecord } from "./snapshot.ts";
+import { EVENT_LINE_BYTES } from "./adapter.ts";
 
 /**
  * herdr-core seen from one of the other machines its core reaches (`hc machine add lab`), for the
@@ -13,8 +14,6 @@ import { isRecord } from "./snapshot.ts";
  * another machine (`hc machine rename`), the id cannot, so no call reaches another machine. hc still
  * lists and reports terminals by name: each call first checks the name still names this id.
  */
-/** past any event line hc sends (adapter.ts EVENT_LINE_BYTES, 4 MiB) */
-const EVENT_LINE_LIMIT = 4 * 1024 * 1024;
 
 export class MachineScopedConnection extends HcConnection {
   private readonly prefix: string;
@@ -56,12 +55,10 @@ export class MachineScopedConnection extends HcConnection {
     for (const key of ["terminal", "parent", "children_of"]) {
       if (typeof out[key] === "string") out[key] = this.address(out[key]);
     }
-    // what is made or read without a terminal is this machine's: its terminals, its documents
     if (method === "terminal.run" || method === "doc.get" || method === "doc.set") out["on"] = this.id;
     return out as P;
   }
 
-  /** A terminal record as this machine knows it; null when it is not this machine's. */
   private record(value: unknown): unknown {
     if (!isRecord(value) || typeof value["address"] !== "string") return value;
     const address = this.local(value["address"]);
@@ -74,7 +71,6 @@ export class MachineScopedConnection extends HcConnection {
   private mine<R>(method: string, result: R): R {
     if (!isRecord(result)) return result;
     if (Array.isArray(result["terminals"])) {
-      // the core's own machine list is the server's business, not this machine's
       const { machines: _machines, ...rest } = result;
       return { ...rest, terminals: result["terminals"].map((terminal) => this.record(terminal)).filter((terminal) => terminal !== null) } as R;
     }
@@ -82,15 +78,13 @@ export class MachineScopedConnection extends HcConnection {
     return result;
   }
 
-  /** hc's event stream (one JSON line each) with only this machine's events, as this machine tells them. */
   private eventLines(onData: (payload: Uint8Array) => void): (payload: Uint8Array) => void {
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
     let pending = "";
     return (payload) => {
       pending += decoder.decode(payload, { stream: true });
-      // a line past the adapter's own limit goes on whole, for its reader to refuse and end the stream
-      if (pending.length > EVENT_LINE_LIMIT && !pending.includes("\n")) { onData(encoder.encode(pending)); pending = ""; return; }
+      if (pending.length > EVENT_LINE_BYTES && !pending.includes("\n")) { onData(encoder.encode(pending)); pending = ""; return; }
       const lines = pending.split("\n");
       pending = lines.pop()!;
       const kept = lines.flatMap((line) => {
@@ -113,15 +107,12 @@ export class MachineScopedConnection extends HcConnection {
       if (local === null) return null;
       own = { ...params, terminal: local };
     } else if (machine === this.machine) {
-      // a document of this machine's: told as one of its own
       own = params;
     } else {
-      // the core's own, or another machine's
       return null;
     }
     if (data !== undefined) {
       const record = this.record(data);
-      // a record of another machine's terminal under this one's event is none of this machine's
       if (record === null) return null;
       own["data"] = record;
     }

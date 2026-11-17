@@ -3,7 +3,6 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { markerOwner, parseProcessLine, refusedSocket, staleMarker } from "./herdr-marker.ts";
 
-// a real marker and the process behind it, read from a Windows PC (herdr 0.9.3)
 const MARKER = "26540:1790829888292852700";
 const DAEMON = { name: "herdr", startedMs: 1790829888236 };
 
@@ -29,7 +28,6 @@ it("keeps the marker of the daemon that wrote it", () => {
 it("calls a marker stale when its pid is gone or was handed to another program", () => {
   expect(staleMarker(MARKER, () => null)).toBe(true);
   expect(staleMarker(MARKER, () => ({ name: "svchost", startedMs: DAEMON.startedMs }))).toBe(true);
-  // a name that only contains herdr is not herdr
   expect(staleMarker(MARKER, () => ({ name: "herdr-web-ui", startedMs: DAEMON.startedMs }))).toBe(true);
 });
 

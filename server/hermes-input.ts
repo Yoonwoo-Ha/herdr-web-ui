@@ -1,9 +1,7 @@
 import { ANSI_RE } from "./dialogs/shared.ts";
 
-/** A screen row without its escapes, OSC sequences (titles, links) included. */
 const plainRow = (row: string): string => row.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "").replace(ANSI_RE, "");
 
-/** The screen's bottom-most row with a `❯`: Hermes' input, below every message it echoes. */
 function hermesInputRow(screen: string): string | null {
   const rows = screen.split(/\r?\n/);
   for (let index = rows.length - 1; index >= 0; index--) if (plainRow(rows[index]!).includes("❯")) return rows[index]!;
@@ -11,20 +9,14 @@ function hermesInputRow(screen: string): string | null {
 }
 
 /**
- * Whether Hermes' input is not known to be empty, so that a paste would join what is there and the
- * Enter send both as one message (measured on Hermes 0.21.5, classic CLI and TUI). The input is the
- * bottom-most `❯` row, empty when nothing follows the `❯`. Hermes' own hint there is not a draft:
- * the classic CLI draws its placeholder italic (its skin's `placeholder: "{dim} italic"`), and the TUI
- * starts its hint with a synthetic cursor, a cell with a background color (ui-tui textInput.tsx
- * `hintCursorCell`); typed text has neither. `live` is the detection read; `colors` the viewport's
- * ANSI read, passed only once it is verified to show that screen (viewportShowsLive), else null, and
- * then any text after the `❯` counts as a draft. A screen without a `❯` row is not known to be empty.
+ * Hermes 0.21.5 draws its input hint so that it is not a draft: the classic CLI's placeholder is
+ * italic (its skin's `placeholder: "{dim} italic"`), and the TUI starts its hint with a synthetic
+ * cursor, a cell with a background color (ui-tui textInput.tsx `hintCursorCell`); typed text has neither.
  */
 export function hermesInputDraft(live: string, colors: string | null): boolean {
   const row = hermesInputRow(live);
   if (row === null) return true;
   const plain = plainRow(row);
-  // the row's first `❯` is the prompt: one after it is typed text
   if (plain.slice(plain.indexOf("❯") + 1).replace(/\u00a0/g, " ").trim() === "") return false;
   const shown = colors === null ? null : hermesInputRow(colors);
   if (shown === null || plainRow(shown).trimEnd() !== plain.trimEnd()) return true;
@@ -32,7 +24,6 @@ export function hermesInputDraft(live: string, colors: string | null): boolean {
   let column = 0;
   let italic = false;
   let background = false;
-  // the first character after the `❯` decides: a TUI hint's cursor chip, or typed (not italic) text
   let decided: boolean | null = null;
   const visit = (text: string): void => {
     for (const character of text) {
@@ -63,6 +54,5 @@ export function hermesInputDraft(live: string, colors: string | null): boolean {
     }
   }
   visit(shown.slice(offset));
-  // every character italic: the classic CLI's placeholder
   return decided ?? false;
 }

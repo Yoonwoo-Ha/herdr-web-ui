@@ -1,4 +1,3 @@
-/** Read-only Codex discovery behind Kiro's macOS shell-integration PTY. */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ProcessInfo } from "./herdr/client.ts";
@@ -15,20 +14,10 @@ function wrapperPid(info: ProcessInfo | undefined): number | null {
     && wrapper.argv[0] === "zsh (kiro-cli-term)" ? wrapper.pid : null;
 }
 
-/**
- * Whether herdr reports Kiro's shell-integration wrapper as the pane's one foreground process, on macOS:
- * a fact of herdr's own, so the pane stays a nested terminal while a process-table probe fails or races.
- */
 export function kiroWrapper(info: ProcessInfo | undefined, platform = process.platform): boolean {
-  // the nested Codex behind it is proven on macOS alone: elsewhere the pane stays a plain one
   return platform === "darwin" && wrapperPid(info) !== null;
 }
 
-/**
- * Whether a Codex pane is a nested terminal, on macOS: herdr reports Kiro's wrapper (kiroWrapper), or
- * herdr's process facts are missing for a pane it does not label Codex, whose Codex was then inferred
- * (a wrapper's, or its probe would have found none). Elsewhere a pane is never nested.
- */
 export function kiroNested(info: ProcessInfo | undefined, labelled: boolean, platform = process.platform): boolean {
   return platform === "darwin" && (wrapperPid(info) !== null || (info === undefined && !labelled));
 }
@@ -41,7 +30,6 @@ export function parseTerminalProcesses(text: string): TerminalProcess[] {
   });
 }
 
-/** Only the wrapper's one direct shell and its one foreground Codex, never arbitrary descendants. */
 export function nestedCodex(info: ProcessInfo | undefined, rows: readonly TerminalProcess[]): { shell: TerminalProcess; codex: TerminalProcess } | null {
   const pid = wrapperPid(info);
   if (pid === null) return null;
@@ -67,7 +55,6 @@ async function processTable(): Promise<TerminalProcess[]> {
   return parseTerminalProcesses(stdout);
 }
 
-/** Verify both reads; retain process births so later requests cannot reuse a replaced process's binding. */
 export async function kiroCodexProcess(info: ProcessInfo | undefined, platform = process.platform,
   read = processTable, birth = processStartedAt): Promise<{ pid: number; argv: string[]; identity: string } | null> {
   const pid = wrapperPid(info);

@@ -10,8 +10,6 @@ import { MachineManager } from "./machines.ts";
 import type { PushService } from "./push.ts";
 import { SshConnection } from "./ssh.ts";
 
-// Every change to this PC's PCs goes through one rule: the owner, from any device he signed in or paired himself, from
-// this app's own page. One table: each management route against each kind of access. Isolated state, port 0, no PC.
 const base: AccessInput = { loopback: true, forwarded: false, funnel: false, tailscaleLogin: null, forwardedFor: null, host: null, tokenMatched: false, device: null, owner: null, tagged: false,
   soleLogin: null, dnsName: null, tailnetIp: null, serveOnly: false, tokenConfigured: false, gated: false };
 const drive = { id: "d1", label: "Phone", role: "drive" as const };
@@ -52,7 +50,6 @@ afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup();
 function manager() {
   const dir = mkdtempSync(join(tmpdir(), "ovis-owner-guard-"));
   const reconnect = spyOn(MachineManager.prototype as unknown as { reconnect(): Promise<void> }, "reconnect").mockImplementation(async () => {});
-  // a setup the owner gets through starts no real ssh: its connection refuses at once
   const ssh = spyOn(SshConnection.prototype, "start").mockImplementation(async () => { throw new Error("isolated: no SSH"); });
   const made = new MachineManager(dir, {} as PushService, {} as CompletionTracker, async () => { throw new Error("isolated local offline"); });
   cleanups.push(() => { made.stop(); reconnect.mockRestore(); ssh.mockRestore(); rmSync(dir, { recursive: true, force: true }); });
@@ -70,7 +67,6 @@ describe("every change to this PC's PCs", () => {
         headers: { origin: "http://localhost:7317", "x-herdr-machine": "1", "content-type": "application/json", ...(header ? { "x-herdr-update": "1" } : {}) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), pcs, undefined, undefined, readOnly, undefined, undefined, undefined, undefined, owner);
       const refused = response.status === 403;
-      // the owner gets past the guard only from this app's own page (the update header); the PC or job need not exist
       expect({ who, method, path, header, refused }).toEqual({ who, method, path, header, refused: !(allowed && header) });
     }
   });
@@ -81,7 +77,6 @@ describe("this PC's own update routes", () => {
     const state = mkdtempSync(join(tmpdir(), "ovis-owner-guard-server-"));
     const open = createServer({ port: 0, hostname: "127.0.0.1", stateDir: state, token: "", tailscaleOwner: null, sidecar: false, registerBridge: false });
     cleanups.push(() => { open.stop(); rmSync(state, { recursive: true, force: true }); });
-    // a check installs too where OVIS_AUTO_UPDATE=1, so it takes the same rule
     for (const [path, body] of [["/api/updates/install", { expected_revision: "a".repeat(40) }], ["/api/herdr/update", undefined], ["/api/updates/check", undefined]] as const) {
       const post = (headers: Record<string, string>) => fetch(`http://127.0.0.1:${open.port}${path}`, { method: "POST", headers: { "x-herdr-update": "1", "content-type": "application/json", ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
       const visitor = await post({ "x-forwarded-for": "192.168.0.20" });

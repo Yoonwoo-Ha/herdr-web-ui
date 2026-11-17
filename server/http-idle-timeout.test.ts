@@ -37,9 +37,6 @@ it("returns results and bounded RPC errors after sequential reads exceed HTTP in
   const sockets = new Set<Socket>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const calls: string[] = [];
-  // Only the reads these routes make are answered, plus the server's own event subscription; any
-  // other method (an input RPC included) is refused and recorded, so a regression that sends one
-  // fails the test.
   const answered = new Set(["events.subscribe", "session.snapshot", "pane.get", "pane.process_info", "worktree.open", "worktree.list"]);
   const unexpected: string[] = [];
   const daemon = createSocketServer((socket) => {
@@ -58,11 +55,10 @@ it("returns results and bounded RPC errors after sequential reads exceed HTTP in
       if (!answered.has(method)) { unexpected.push(method); error = { code: "unexpected_method", message: `fixture does not answer ${method}` }; }
       if (method === "session.snapshot") result = { snapshot: { panes: [], agents: [], workspaces: [], tabs: [], layouts: [] } };
       if (method === "pane.get") { result = { pane: { pane_id: "fixture", cwd: root, agent: null } }; delay = 7000; }
-      // A slow first read, then a lost reply: the command reader falls back after the RPC deadline.
       if (method === "pane.process_info") { calls.push(method); return; }
       if (method === "worktree.open") {
         calls.push(`${method}:${params.workspace_id}`);
-        if (params.workspace_id === "fixture-parent") return; // real client-side 10 s RPC timeout
+        if (params.workspace_id === "fixture-parent") return;
         error = { code: "linked_worktree_source", message: "use the synthetic parent" };
         delay = 7000;
       }
@@ -70,7 +66,6 @@ it("returns results and bounded RPC errors after sequential reads exceed HTTP in
       const answer = () => { if (!socket.destroyed) socket.end(JSON.stringify({ id, ...(error ? { error } : { result }) }) + "\n"); };
       if (delay === 0) answer();
       else {
-        // Synthetic daemon work; each delayed answer remains inside its own 10 s RPC deadline.
         const timer = setTimeout(() => { timers.delete(timer); answer(); }, delay);
         timers.add(timer);
       }
@@ -95,7 +90,6 @@ it("returns results and bounded RPC errors after sequential reads exceed HTTP in
     expect(failure.body.error.code).toBe("timeout");
     expect(aliasFailure.status).toBe(502);
     expect(aliasFailure.body.error.code).toBe("timeout");
-    // The HTTP cutoff must not turn one request into retries or repeated operations.
     expect(calls.filter((call) => call === "worktree.open:fixture-source")).toHaveLength(2);
     expect(calls.filter((call) => call === "worktree.open:fixture-parent")).toHaveLength(2);
     expect(unexpected).toEqual([]);

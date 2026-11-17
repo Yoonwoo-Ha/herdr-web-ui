@@ -42,7 +42,6 @@ describe("herdr's [ui] copy_on_select", () => {
     roots.push(root);
     const fifo = join(root, "config.toml");
     Bun.spawnSync(["mkfifo", fifo]);
-    // a FIFO with no writer would block a plain read: it is no config, read at once
     expect(readHerdrUi(fifo).copy_on_select).toBe(true);
   });
 });
@@ -58,7 +57,6 @@ describe("herdr's [keys] prefix bindings", () => {
     expect(defaults.bindings).toMatchObject({ new_tab: ["prefix+c"], switch_tab: ["prefix+1..9"], split_horizontal: ["prefix+minus"], next_workspace: [] });
     expect(keysOf("[ui]\ncopy_on_select = false\n")).toEqual(defaults);
     expect(keysOf("[keys")).toEqual(defaults);
-    // a value of a type herdr does not read makes herdr read no config: its defaults stand
     expect(keysOf('[keys]\nprefix = 1\nnew_tab = "prefix+t"\n')).toEqual(defaults);
     expect(keysOf('[keys]\nzoom = 3\n')).toEqual(defaults);
   });
@@ -73,26 +71,19 @@ describe("herdr's [keys] prefix bindings", () => {
     const zoom = keysOf('[keys]\nzoom = "prefix+?"\n');
     expect(zoom.bindings.zoom).toEqual(["prefix+?"]);
     expect(zoom.bindings.help).toEqual([]);
-    // an action the app does not run still takes its key from one it does
     expect(keysOf('[keys]\nclose_pane = "prefix+c"\n').bindings.new_tab).toEqual([]);
-    // and so does a custom command, whose body is never returned
     const command = keysOf('[[keys.command]]\nkey = "prefix+v"\ntype = "shell"\ncommand = "rm -rf ~"\n');
     expect(command.bindings.split_vertical).toEqual([]);
     expect(JSON.stringify(command)).not.toContain("rm -rf");
-    // a command herdr skips takes no key
     expect(keysOf('[[keys.command]]\nkey = "prefix+v"\ncommand = ""\n').bindings.split_vertical).toEqual(["prefix+v"]);
   });
 
   it("keep herdr's rules for indexed actions, the prefix and its fallback", () => {
     expect(keysOf('[keys]\nswitch_tab = "prefix+3"\n').bindings.switch_tab).toEqual(["prefix+3"]);
     expect(keysOf('[keys]\nswitch_tab = "prefix+t"\nnew_tab = "prefix+1..9"\n').bindings).toMatchObject({ switch_tab: [], new_tab: [] });
-    // a [keys.indexed] entry is the user's own tab keys: the prefix+1..9 default stands down
     expect(keysOf('[keys.indexed]\ntabs = "ctrl"\n').bindings.switch_tab).toEqual([]);
-    // a user binding on one digit leaves the default range its other eight
     expect(keysOf('[keys]\nnext_tab = "prefix+2"\n').bindings.switch_tab).toEqual(["prefix+1", "prefix+3", "prefix+4", "prefix+5", "prefix+6", "prefix+7", "prefix+8", "prefix+9"]);
-    // the prefix as its own second key sends the prefix: that binding is dropped
     expect(keysOf('[keys]\nprefix = "ctrl+a"\nnew_tab = "prefix+ctrl+a"\n').bindings.new_tab).toEqual([]);
-    // an unreadable prefix is herdr's ctrl+b
     expect(keysOf('[keys]\nprefix = "nonsense+key"\n').prefix).toBe("ctrl+b");
     expect(keysOf('[keys]\nprefix = "ctrl+space"\n').prefix).toBe("ctrl+space");
     expect(keysOf('[keys]\nfullscreen = "prefix+f"\n').bindings.zoom).toEqual(["prefix+f"]);
@@ -104,16 +95,12 @@ describe("herdr's [keys] prefix bindings", () => {
     expect(both.bindings.new_tab).toEqual(["prefix+t"]);
     expect(keysOf('[keys]\nprefix = ["ctrl+a"]\n').prefixes).toEqual(["ctrl+a"]);
     expect(keysOf('[keys]\nprefix = "ctrl+a"\nextra_prefixes = ["ctrl+space"]\n').prefixes).toEqual(["ctrl+a", "ctrl+space"]);
-    // an entry herdr cannot read is skipped, a repeat kept once; with none left, herdr's ctrl+b
     expect(keysOf('[keys]\nprefix = ["nonsense+key", "ctrl+a", "control+a"]\n').prefixes).toEqual(["ctrl+a"]);
     expect(keysOf('[keys]\nprefix = []\n').prefixes).toEqual(["ctrl+b"]);
-    // a prefix binding on any of the prefixes sends that prefix: dropped
     expect(keysOf('[keys]\nprefix = ["ctrl+a", "ctrl+b"]\nnew_tab = "prefix+ctrl+b"\n').bindings.new_tab).toEqual([]);
     expect(keysOf('[keys]\nprefix = ["ctrl+a", 1]\nnew_tab = "prefix+t"\n').bindings.new_tab).toEqual(["prefix+c"]);
-    // nor are the indexed keys or commands of a config herdr does not read
     const unread = keysOf('[keys]\nextra_prefixes = 1\n[keys.indexed]\ntabs = "ctrl"\n[[keys.command]]\nkey = "prefix+c"\ncommand = "echo hi"\n');
     expect(unread.bindings).toMatchObject({ switch_tab: ["prefix+1..9"], new_tab: ["prefix+c"] });
-    // the plus key is a prefix, so a binding on it is dropped
     const plus = keysOf('[keys]\nprefix = ["ctrl+a", "+"]\nnew_tab = "prefix+plus"\n');
     expect([plus.prefixes, plus.bindings.new_tab]).toEqual([["ctrl+a", "+"], []]);
     expect(keysOf('[keys]\nclear_pane = "prefix++"\nzoom = "prefix+plus"\n').bindings.zoom).toEqual([]);
