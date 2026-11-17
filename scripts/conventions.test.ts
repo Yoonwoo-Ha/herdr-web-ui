@@ -82,32 +82,80 @@ describe("what the browser loads", () => {
   });
 });
 
+const gitIn = (cwd: string, ...args: string[]) => spawnSync("git", args, { cwd, encoding: "utf8" });
+
+/**
+ * The commit the ratchets below compare with: the one CI names in RATCHET_BASE (ci.yml's Fast checks fetches it into
+ * its shallow checkout), else where this branch left origin/main, so a stale branch is compared with its own base, else
+ * null (no git or no origin/main here, or a Release run). A named commit that is not in the checkout fails: a ratchet
+ * that cannot see its base must not pass.
+ */
+function ratchetBase(env: Record<string, string | undefined> = process.env, cwd: string = repo): string | null {
+  const named = env["RATCHET_BASE"];
+  if (named) {
+    if (gitIn(cwd, "cat-file", "-e", `${named}^{commit}`).status !== 0) throw new Error(`RATCHET_BASE ${named} is not in this checkout: fetch it first, as ci.yml's Fast checks does.`);
+    return named;
+  }
+  const base = gitIn(cwd, "merge-base", "HEAD", "origin/main");
+  if (base.status === 0) return base.stdout.trim();
+  if (env["CI"]) console.log("No base for the ratchets here (no RATCHET_BASE, no origin/main): they compare with nothing.");
+  return null;
+}
+
+/** The files git sees renamed since `base` (committed, or staged as `git mv` does), each new path with its old one. */
+const renamesSince = (base: string): Map<string, string> =>
+  new Map(gitIn(repo, "diff", "--name-status", "-M", "--diff-filter=R", base).stdout.split("\n")
+    .map((line) => line.split("\t")).filter((parts) => parts.length === 3).map(([, from, to]) => [to!, from!]));
+
+/** `file` as it was at `base`, or null when it was not there. */
+const atBase = (base: string, file: string): string | null => {
+  const shown = gitIn(repo, "show", `${base}:${file}`);
+  return shown.status === 0 ? shown.stdout : null;
+};
+
+describe("the ratchets' base", () => {
+  it("is the commit CI names, fails when that commit is not in the checkout, and is else where the branch left origin/main", () => {
+    const root = mkdtempSync(join(tmpdir(), "ovis-ratchet-base-"));
+    try {
+      const git = (...args: string[]) => gitIn(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...args);
+      git("init", "-q", "-b", "work");
+      git("commit", "-q", "--allow-empty", "-m", "base");
+      const first = git("rev-parse", "HEAD").stdout.trim();
+      expect(ratchetBase({}, root)).toBeNull();
+      git("update-ref", "refs/remotes/origin/main", first);
+      git("commit", "-q", "--allow-empty", "-m", "change");
+      expect(ratchetBase({}, root)).toBe(first);
+      expect(ratchetBase({ RATCHET_BASE: first }, root)).toBe(first);
+      expect(() => ratchetBase({ RATCHET_BASE: `${"0".repeat(39)}1` }, root)).toThrow("is not in this checkout");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("fixed sleeps", () => {
   // A ratchet: scripts/fixed-sleeps.json is every file's count of fixed sleeps when this test was
   // added (see scripts/fixed-sleeps.ts for what counts). A file may lose sleeps, never gain one,
   // and a file that is not listed has none.
   const baseline = JSON.parse(read("scripts/fixed-sleeps.json")) as Record<string, number>;
 
-  /**
-   * scripts/fixed-sleeps.json where this branch left origin/main, or null when git or that ref is
-   * not there (CI's shallow checkout); a stale branch is compared with its own base, not a main
-   * that has moved on.
-   */
-  const committed = (): Record<string, number> | null => {
-    const git = (...args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
-    const base = git("merge-base", "HEAD", "origin/main");
-    if (base.status !== 0) return null;
-    const json = git("show", `${base.stdout.trim()}:scripts/fixed-sleeps.json`);
-    return json.status === 0 ? JSON.parse(json.stdout) as Record<string, number> : null;
+  /** scripts/fixed-sleeps.json at the ratchets' base, with the renames since, or null with no base. */
+  const committed = (): { counts: Record<string, number>; renames: Map<string, string> } | null => {
+    const base = ratchetBase();
+    const json = base === null ? null : atBase(base, "scripts/fixed-sleeps.json");
+    return base === null || json === null ? null : { counts: JSON.parse(json) as Record<string, number>, renames: renamesSince(base) };
   };
 
-  it("never raises scripts/fixed-sleeps.json above the one on origin/main", () => {
-    const before = committed();
-    if (before === null) return;
+  it("never raises scripts/fixed-sleeps.json above the one at the ratchets' base", () => {
+    const at = committed();
+    if (at === null) return;
+    const before = at.counts;
+    /** A file's count at the base, under its old path when git sees it renamed. */
+    const was = (file: string): number => before[file] ?? before[at.renames.get(file) ?? ""] ?? 0;
     const total = (counts: Record<string, number>) => Object.values(counts).reduce((sum, count) => sum + count, 0);
     fail([
-      ...Object.entries(baseline).filter(([file, count]) => count > (before[file] ?? 0)).map(([file, count]) => `${file}: ${count}, origin/main has ${before[file] ?? 0}`),
-      ...total(baseline) > total(before) ? [`total: ${total(baseline)}, origin/main has ${total(before)}`] : [],
+      ...Object.entries(baseline).filter(([file, count]) => count > was(file)).map(([file, count]) => `${file}: ${count}, the base has ${was(file)}`),
+      ...total(baseline) > total(before) ? [`total: ${total(baseline)}, the base has ${total(before)}`] : [],
     ], "scripts/fixed-sleeps.json may only shrink: take the new fixed sleep out of the code instead (see the message of the test above for how). A renamed file takes its entry along with the same count, which keeps the total.");
   });
 
@@ -159,6 +207,68 @@ describe("fixed sleeps", () => {
     expect(found("const wait = io.wait ?? Bun.sleep;\nwhile (Date.now() < deadline) await wait(25);")).toBe(0);
     // a function that starts with a sleep is not a sleep helper: it counts once, where it sleeps
     expect(found("async function flood() {\n  await Bun.sleep(150);\n  send();\n}\nawait flood();\nawait flood();")).toBe(1);
+  });
+});
+
+describe("the tools typecheck", () => {
+  // A ratchet: tsconfig.tools.json checks every file under scripts/, integrations/, site/ and app/scripts/ but the ones
+  // its "exclude" lists, which had type errors when the list was made, or import or lean on a declaration of one that
+  // had, and the untracked scripts/*.tmp.ts probes .gitignore allows. A new file is checked without being named
+  // anywhere, and the list may only shrink.
+  const ROOTS = ["scripts", "integrations", "site", "app/scripts"];
+  const config = JSON.parse(read("tsconfig.tools.json")) as { extends?: unknown; include?: unknown; exclude?: unknown; files?: unknown; compilerOptions?: unknown };
+  const excluded = (json: string): string[] | null => {
+    const list = (JSON.parse(json) as { exclude?: unknown }).exclude;
+    return Array.isArray(list) ? list as string[] : null;
+  };
+  /** The entries `now` has and `before` lacks, but a renamed file's (`renames`: new path to old), which takes its entry along. */
+  const added = (now: readonly string[], before: readonly string[], renames: ReadonlyMap<string, string>): string[] =>
+    now.filter((file) => !before.includes(file) && !before.includes(renames.get(file) ?? ""));
+  const now = excluded(read("tsconfig.tools.json")) ?? [];
+
+  it("excludes no more files than at the ratchets' base", () => {
+    const base = ratchetBase();
+    if (base === null) return;
+    const json = atBase(base, "tsconfig.tools.json");
+    const before = json === null ? null : excluded(json);
+    if (before === null) {
+      // the one base without the list is the file list it replaced, from before the list was made
+      if (json !== null && "files" in (JSON.parse(json) as object)) return;
+      throw new Error(`tsconfig.tools.json at ${base} has no exclude list to compare with: keep the list in it, empty when every file is fixed.`);
+    }
+    fail(added(now, before, renamesSince(base)), "The exclude list of tsconfig.tools.json may only shrink: fix the type errors `bun run typecheck` reports in these files instead of excluding them. A renamed file (renamed with `git mv`, or with the rename staged, so git sees it) takes its entry along under the new path.");
+  });
+
+  it("tells a new entry from a renamed file's, whatever the list's length", () => {
+    const renames = new Map([["scripts/renamed.ts", "scripts/b.ts"], ["scripts/moved.ts", "scripts/never-excluded.ts"]]);
+    expect(added(["scripts/a.ts", "scripts/new.ts"], ["scripts/a.ts"], renames)).toEqual(["scripts/new.ts"]);
+    expect(added(["scripts/a.ts", "scripts/new.ts"], ["scripts/a.ts", "scripts/b.ts"], renames)).toEqual(["scripts/new.ts"]);
+    expect(added(["scripts/a.ts", "scripts/renamed.ts"], ["scripts/a.ts", "scripts/b.ts"], renames)).toEqual([]);
+    expect(added(["scripts/a.ts", "scripts/moved.ts"], ["scripts/a.ts", "scripts/b.ts"], renames)).toEqual(["scripts/moved.ts"]);
+    expect(added(["scripts/a.ts"], ["scripts/a.ts", "scripts/b.ts"], renames)).toEqual([]);
+  });
+
+  it("checks every root, with nothing beside the exclude list taking a file out", () => {
+    expect(config.include, `tsconfig.tools.json checks the folders ${ROOTS.join(", ")} whole: keep them all in "include".`).toEqual(ROOTS);
+    expect(config.files, "tsconfig.tools.json names no files: a file under its roots is checked without being listed.").toBeUndefined();
+    expect([config.extends, config.compilerOptions], "tsconfig.tools.json loosens nothing of tsconfig.json: it extends it and only adds noEmit.").toEqual(["./tsconfig.json", { noEmit: true }]);
+    expect(Array.isArray(config.exclude), "Keep the exclude list in tsconfig.tools.json, empty when every file is fixed: the next change compares with it.").toBe(true);
+    const inherited = (JSON.parse(read("tsconfig.json")) as { compilerOptions?: Record<string, unknown> }).compilerOptions ?? {};
+    expect([inherited["strict"], inherited["noCheck"]], "tsconfig.json, which both typechecks extend, keeps full checking: strict, and no noCheck.").toEqual([true, undefined]);
+    expect(gitIn(repo, "ls-files", "scripts/*.tmp.ts").stdout.trim(), "A tracked scripts/*.tmp.ts is not typechecked: that name is for untracked probes, so give a script another name.").toBe("");
+    // one glob per root: Bun.Glob reads no slash inside braces; the untracked probes are not checked
+    const sources = ROOTS.flatMap((root) => files(`${root}/**/*.{ts,tsx}`)).filter((file) => !/^scripts\/[^/]+\.tmp\.ts$/.test(file));
+    expect(sources.length).toBeGreaterThan(400);
+    fail(sources.filter((file) => file.endsWith(".tsx") && sources.includes(file.replace(/\.tsx$/, ".ts"))),
+      "Rename one of each pair: beside a .ts of the same name, tsc's folder include leaves the .tsx unchecked.");
+    // the directive in a line comment of any number of slashes, or a block comment
+    fail(sources.filter((file) => /^\s*(?:\/\/+|\/\*+)\s*@ts-nocheck\b/m.test(read(file))),
+      "Fix the type errors in these files instead of `// @ts-nocheck`: a file under the tools typecheck's roots is checked, or listed in its exclude list until it is fixed.");
+  });
+
+  it("excludes only files that exist", () => {
+    fail(now.filter((file) => !file.includes("*") && !existsSync(join(repo, file))),
+      "Remove these entries from the exclude list of tsconfig.tools.json: the files are gone. A renamed file that still has type errors keeps its entry under the new path.");
   });
 });
 

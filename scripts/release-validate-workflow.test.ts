@@ -134,12 +134,17 @@ describe("release-validate.yml", () => {
       const { cache: _cache, ...inputs } = candidate.with;
       return { ...candidate, with: inputs };
     };
-    /** All of a job but where it runs and when, its artifact's name, ci.yml's hosted_only cache and this workflow's own answer left out. */
-    const checks = ({ name: _name, needs: _needs, if: _if, "runs-on": _runner, "continue-on-error": _may, outputs: _outputs, ...rest }: CallJob): object =>
-      ({ ...rest, steps: rest.steps!.filter((candidate) => candidate.id !== "passed").map(withoutCache).map((candidate) => (uploads(candidate) ? { ...candidate, with: { ...candidate.with, name: "" } } : candidate)) });
+    // ci.yml's ratchets compare with the pull request's base or the commit before a push, which a Release run never has:
+    // the copy leaves out EVENT_BASE and the step that fetches the base, and compares with nothing, as ci.yml's own would there
+    const RATCHET_STEP = "Fetch the base the ratchets compare with";
+    expect(stepList(theirs)).toContain(RATCHET_STEP);
+    const { EVENT_BASE: _base, ...ciEnv } = theirs.env!;
+    /** All of a job but where it runs and when, its artifact's name, ci.yml's hosted_only cache, the ratchets' base and this workflow's own answer left out. */
+    const checks = ({ name: _name, needs: _needs, if: _if, "runs-on": _runner, "continue-on-error": _may, outputs: _outputs, env, ...rest }: CallJob): object =>
+      ({ ...rest, env: env && (({ EVENT_BASE: _eventBase, ...kept }) => kept)(env), steps: rest.steps!.filter((candidate) => candidate.id !== "passed" && candidate.name !== RATCHET_STEP).map(withoutCache).map((candidate) => (uploads(candidate) ? { ...candidate, with: { ...candidate.with, name: "" } } : candidate)) });
     expect(checks(fast), UPDATE).toEqual(checks(theirs));
     expect(fast["timeout-minutes"], UPDATE).toBe(theirs["timeout-minutes"]!);
-    expect(fast.env, UPDATE).toEqual(theirs.env!);
+    expect(fast.env, UPDATE).toEqual(ciEnv);
     expect(stepList(fast)).toEqual(["actions/checkout", "./.github/actions/setup-ci", "bun install --frozen-lockfile", "bun run check fast", "Release guards", "Say that Fast checks passed", "Preserve check report and verification logs"]);
     // what a copy cannot follow: a step that reads the jobs ci.yml's own needs, or an environment set for all of ci.yml
     expect(JSON.stringify(checks(theirs)), UPDATE).not.toMatch(/\b(?:needs|matrix|strategy)\./);

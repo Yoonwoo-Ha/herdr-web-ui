@@ -793,6 +793,9 @@ describe("ci.yml", () => {
     // than either before anything is validated, and release-validate.yml's Fast checks runs this
     // step again
     "jobs.fast.steps.Release guards.env.BASE_SHA": "${{ github.event.pull_request.base.sha || github.event.before }}",
+    // the ratchets' base: the same commits, none in a Release run, whose ratchets then compare with nothing (a pull
+    // request's own run compared them before it merged)
+    "jobs.fast.env.EVENT_BASE": "${{ github.event.pull_request.base.sha || github.event.before }}",
   };
 
   it("never validates a release on the self-hosted Mac: CI_MAC_LABELS reaches neither a Release run nor main's run", () => {

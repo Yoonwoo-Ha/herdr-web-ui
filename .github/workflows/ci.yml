@@ -283,6 +283,10 @@ jobs:
     env:
       CHECK_DIR: ${{ github.workspace }}/.ci
       UNIT_TEST_WORKERS: 4
+      # Whether this run's event gives the ratchets of scripts/conventions.test.ts (fixed sleeps, the
+      # tools typecheck's exclude list) a base to compare with: a pull request or a push to main does,
+      # a Release run (or a manual one) does not.
+      EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -293,6 +297,16 @@ jobs:
           node: 'true'
           cache: ${{ inputs.hosted_only && 'none' || 'save' }}
       - run: bun install --frozen-lockfile
+      # The base: for a push to main the commit before the whole push (EVENT_BASE); for a pull request
+      # its merge commit's first parent, which is main's head now (the event's base.sha stays where the
+      # pull request was opened). The shallow checkout does not hold it, so it is fetched, and a fetch
+      # that fails fails the job: a ratchet never passes without its base.
+      - name: Fetch the base the ratchets compare with
+        run: |
+          if [ -z "$EVENT_BASE" ]; then echo "No base in this run: the ratchets compare with nothing."; exit 0; fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then base=$EVENT_BASE; else base=$(git cat-file -p HEAD | awk '/^parent /{print $2; exit}'); fi
+          git fetch --no-tags --depth=1 origin "$base"
+          echo "RATCHET_BASE=$base" >> "$GITHUB_ENV"
       - run: bun run check fast
       # A release (package.json's version not tagged yet) must raise REMOTE_BUNDLE_VERSION when the
       # bundle's inputs changed, record the telemetry Worker deploy and carry its patch notes. Only the
