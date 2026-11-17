@@ -1,3 +1,15 @@
+/**
+ * The Worker answers `/health` and
+ * checks each socket request (core.ts `admit`, rate limits included) before handing it to the
+ * Durable Object of its `server_id`, so a refused request never wakes one. The Durable Object
+ * holds the room's sockets through the WebSocket Hibernation API: who each socket is lives in its
+ * attachment, so the object may be evicted between frames and the room picks up where it was.
+ * The PC's keepalive is answered by the runtime itself (`setWebSocketAutoResponse`), so an idle
+ * PC never wakes it; an alarm closes sockets idle for IDLE_MS.
+ *
+ * Usage counters (core.ts `UsageReport`) go to the `USAGE` Workers Analytics Engine dataset, one
+ * data point per report, under a hash of the server_id; README.md has the query.
+ */
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { CLOSE, IDLE_MS, KEEPALIVE_PING, KEEPALIVE_PONG, Room, admit, parseSocketRequest, passRefusal, type Frame, type RateLimiter, type RoomAuthorization, type RoomHost, type SocketInfo, type UsageReport } from "./core.ts";
@@ -30,17 +42,25 @@ export interface Env extends PassSettings {
   RELAY: { idFromName(name: string): unknown; get(id: unknown): DurableObjectStub };
   RELAY_LIMITER: RateLimiter;
   RELAY_GLOBAL_LIMITER: RateLimiter;
+  /** keyed by server_id, for a PC whose relay pass holds (core.ts Limiters.perPc); without it and RELAY_PASS_CHECK_LIMITER every PC counts under its address */
   RELAY_PC_LIMITER?: RateLimiter;
+  /** keyed by the address: the passes it may have checked before its own limit */
   RELAY_PASS_CHECK_LIMITER?: RateLimiter;
   USAGE?: { writeDataPoint(point: { indexes: string[]; blobs: string[]; doubles: number[] }): void };
 }
 
+/**
+ * The pass check's result, from the Worker to the Durable Object it hands the socket to. The Worker
+ * sets it after checking the pass and drops any copy the request came with; the Durable Object is
+ * reached only through the Worker, so it trusts it and checks no signature again.
+ */
 const PASS_CHECKED = "x-ovis-relay-pass-checked";
 const PASS_UNTIL = "pass_until";
 
 let policyCache: { key: string; policy: Promise<PassPolicy> } | undefined;
 export function policyOf(env: PassSettings): Promise<PassPolicy> {
   const key = JSON.stringify([env.RELAY_PASS_MODE, env.RELAY_PASS_ENFORCE_AT, env.RELAY_PASS_KEYS, env.RELAY_PASS_REVOKED]);
+  // settings that do not parse turn passes off rather than stop the relay routing anything
   if (policyCache?.key !== key) policyCache = { key, policy: passPolicy(env).catch((error: unknown) => {
     console.error(JSON.stringify({ event: "relay.pass.settings_invalid", error: error instanceof Error ? error.message : String(error) }));
     return PASS_OFF;
@@ -58,6 +78,7 @@ function isPassResult(value: unknown): value is PassResult {
     && (result["noNew"] === undefined || result["noNew"] === true);
 }
 
+/** the key a PC's usage is kept under: not its server_id itself */
 export const usageKey = (serverId: string) => bytesToHex(sha256(utf8ToBytes(`ovis-relay-usage-v1:${serverId}`))).slice(0, 32);
 
 /**
@@ -103,10 +124,13 @@ function isInfo(value: unknown): value is SocketInfo {
 
 export class RelayRoom {
   private readonly room: Room<HibernatableSocket>;
+  /** a pairing rendezvous (pair-room.ts): its Durable Object is named for its nameplate and holds no PC's sockets */
   private readonly pairRoom: PairRoom<HibernatableSocket>;
+  /** alarm reads and writes, one after another, so a later one never undoes an earlier one */
   private alarmWrites: Promise<void> = Promise.resolve();
   private policy: PassPolicy | undefined;
   private passUntil: RoomAuthorization | null = null;
+  /** the saved authorization, read once and only for a PC's room while passes are on: off, and pairing rooms, never touch storage */
   private passLoad: Promise<void> | undefined;
   private passLoaded = false;
 
@@ -144,6 +168,8 @@ export class RelayRoom {
       },
       send: (socket, frame) => {
         try { socket.send(frame); } catch {
+          // Finish the current room operation before propagating failure: a send may happen
+          // while a pair is attaching. Do not rely on a later runtime close event to end it.
           queueMicrotask(() => this.room.end(socket, CLOSE.RESTART, "relay send failed"));
         }
       },
@@ -220,6 +246,7 @@ export class RelayRoom {
   }
 
   private armBy(at: number): Promise<void> {
+    // a failed earlier write must not stop every later one
     this.alarmWrites = this.alarmWrites.catch(() => undefined).then(async () => {
       const current = await this.state.storage.getAlarm();
       if (current === null || at < current) await this.state.storage.setAlarm(at);

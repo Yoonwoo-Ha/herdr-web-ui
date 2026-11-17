@@ -177,6 +177,7 @@ describe("telemetry receiver", () => {
       const columns = migrated.query("PRAGMA table_info(events)").all().map((row) => (row as { name: string }).name);
       expect(columns).toContain("changed_settings");
       expect(columns).not.toContain("settings");
+      // An existing D1 cannot take the new INSERT until its columns are added.
       await expect(send(sqlite(migrated), event, "KR")).rejects.toThrow(/country|settings/);
       const alters = [...readme.matchAll(/"(ALTER TABLE events ADD COLUMN (?:country|settings) TEXT)"/g)].map((match) => match[1]!);
       expect(alters).toEqual(["ALTER TABLE events ADD COLUMN country TEXT", "ALTER TABLE events ADD COLUMN settings TEXT"]);
@@ -252,6 +253,7 @@ describe("telemetry receiver", () => {
 
   test("refuses an oversized body before it ends", async () => {
     const { env, rows } = fakeDb();
+    // More than the 8 KB cap arrive and the stream never closes: do not wait for the rest.
     const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array(8193).fill(0x20)); } });
     const request = new Request("https://receiver.test/v1/events", { method: "POST", headers: { "content-type": "application/json" }, body, duplex: "half" } as RequestInit);
     expect((await handle(request, env, now)).status).toBe(413);

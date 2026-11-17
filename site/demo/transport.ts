@@ -52,6 +52,7 @@ const terminalGrids = new Map<string, { cols: number; rows: number }>();
 const heldCopyResends = new Map<string, { text: string; reply: Extract<ServerMessage, { type: "submit-result" }>; at: number }>();
 const HELD_RECEIPT_MS = 10 * 60 * 1000;
 const heldReceipts = new Map<string, { paneId: string; at: number }>();
+/** a pane that closes takes its held receipts with it: a later pane given its ID is another pane */
 const forgetHeldReceipts = (paneId: string): void => { for (const [id, receipt] of heldReceipts) if (receipt.paneId === paneId) heldReceipts.delete(id); };
 const demoGrid = (paneId: string) => terminalGrids.get(paneId) ?? { cols: 80, rows: 24 };
 function redrawHistory(paneId: string): void {
@@ -342,6 +343,7 @@ function setStatus(paneId: string, status: AgentStatus): void {
   if (!pane) return;
   if (status === "done" && pane.agent_status !== "done") pane.finish_id = (pane.finish_id ?? 0) + 1;
   pane.agent_status = status;
+  // as herdr does, every state change bumps the session's counter on the pane's agent
   const agent = snapshot().agents.find((entry) => entry.pane_id === paneId);
   if (agent) Object.assign(agent, { agent_status: status, state_change_seq: nextStateSeq() });
   for (const workspace of snapshot().workspaces) if (workspace.workspace_id === pane.workspace_id) workspace.agent_status = status;
@@ -536,12 +538,21 @@ const CLAUDE_HIDDEN: SlashCommand[] = [
   { name: "agents", description: "Manage agent configurations", source: "builtin", visibility: "agent-hidden", forms: [{ match: "bare", interaction: "dialog", dialog: "agents" }] },
   { name: "heapdump", description: "Write a heap snapshot", source: "builtin", visibility: "agent-hidden", forms: [{ match: "bare", interaction: "none" }] },
 ];
+/**
+ * Claude builtins the recording predates: a side question answered on the screen alone, a context
+ * report the transcript keeps, and the terminal's session picker (the chat opens the folder's
+ * earlier sessions for it, components/SessionHistory.tsx).
+ */
 const CLAUDE_LATER: SlashCommand[] = [
   { name: "btw", description: "Ask a side question without adding it to the conversation", source: "builtin", forms: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }] },
   { name: "resume", description: "Resume a conversation by ID or name", source: "builtin", forms: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }] },
   { name: "context", description: "Show how the context window is used", source: "builtin", forms: [{ match: "bare", interaction: "none" }] },
 ];
 
+/**
+ * omp's terminal screens the demo draws (site/demo/agentScreens.ts), as server/skills/omp.ts
+ * describes them: /settings opens a panel over the editor, /copy prints in an empty session.
+ */
 const OMP_TERMINAL: SlashCommand[] = [
   { name: "settings", description: "Open the settings", source: "builtin", forms: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }] },
   { name: "copy", description: "Copy the last answer", source: "builtin", forms: [{ match: "bare", interaction: "terminal" }, { match: "other", interaction: "terminal" }] },
@@ -617,6 +628,7 @@ const CLAUDE_PANEL_CLOSED: Record<string, string> = {
 };
 const openPanels = new Map<string, string>();
 
+/** Escape typed into a Claude pane closes the panel a terminal command opened, and Claude records that it did. */
 function closeClaudePanel(paneId: string, text: string): void {
   const closed = openPanels.get(paneId);
   const chat = chats.get(keyOfPane.get(paneId) ?? "");
@@ -649,6 +661,13 @@ function closeAgentScreen(paneId: string, text: string): void {
   drawAgentScreen(paneId);
 }
 
+/**
+ * The first messages create requests queued for new panes' agents (`first_message`), by pane, as the
+ * bridge keeps them: told to every socket attached to the pane, typed into the chat once when the
+ * agent is first ready through the socket that asked (`first_message_connection`) while it is
+ * attached, held once that socket closes first or when none was named, and discarded or sent now
+ * through pending-action by any attached socket.
+ */
 const firstMessages = new Map<string, PendingMessage>();
 const firstRequesters = new Map<string, string>();
 let nextFirst = 1;
@@ -671,6 +690,10 @@ function publishFirstMessage(paneId: string, removed?: { id: string; outcome: "s
   for (const socket of sockets) if (socket.attachedTo(paneId)) socket.push({ type: "pending-messages", pane_id: paneId, messages: message ? [structuredClone(message)] : [], ...(removed ? { removed } : {}) });
 }
 
+/**
+ * The pane's first message typed into its chat: on its own (`by` null) only while it waits and the socket that
+ * asked is attached; on a socket's Send now (`by`) when that socket is attached.
+ */
 function deliverFirstMessage(paneId: string, by: DemoSocket | null = null): boolean {
   const message = firstMessages.get(paneId);
   if (!message) return false;
@@ -829,6 +852,7 @@ const DEMO_DIFF: { file: RepoDiffFile; patch: string | null }[] = [
 
 const DEMO_HEAD = "4f2a9c1d7e3b5a8c6d0e1f2a3b4c5d6e7f8a9b0c";
 const DEMO_MAIN = "7a3e5c19b2d84f06a1c3e5b7d9f1a3c5e7b9d1f3";
+/** Merge stays off (a required check failed), as GitHub would keep it. */
 const DEMO_PR: PullRequestView = {
   number: 128,
   title: "Retry webhook deliveries with backoff",
@@ -897,6 +921,10 @@ const DEMO_BRANCH_DIFF: { file: RepoDiffFile; patch: string | null }[] = [
   ].join("\n") },
 ].sort((left, right) => (left.file.path < right.file.path ? -1 : 1));
 
+/**
+ * `?demo_usage=refused` starts Claude refused as a blocked network refuses it (a 403 to a
+ * token that has not expired), offering the status line until it is turned on.
+ */
 let demoStatusline = false;
 const removedUsageAccounts = new Set<string>();
 const USAGE_STATE = new URLSearchParams(location.search).get("demo_usage");
@@ -911,6 +939,12 @@ function systemReport(): SystemReport {
   };
 }
 
+/**
+ * `?demo_sign_in=1`: the in-browser sign-in plays the flows recorded from Claude Code 2.1.312 and
+ * codex-cli 0.163.0 (server/fixtures/usage-login): Claude starts with no account, so its row offers
+ * Sign in; its page wants a code pasted back, and a sent code signs it in. Codex shows its device page
+ * and code, and signs in after a few reads. Without the switch the demo runs no login.
+ */
 const SIGN_IN_DEMO = new URLSearchParams(location.search).get("demo_sign_in") === "1";
 const signInDemo = { panes: new Map<string, { provider: "claude" | "codex"; account: string; reads: number; code: boolean }>(), signedIn: new Set<string>(), next: 1 };
 const CLAUDE_SIGN_IN_URL = "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=user%3Ainference&code_challenge=demo&code_challenge_method=S256&state=demo";
@@ -953,6 +987,7 @@ function usageReport(): UsageReport {
 }
 
 
+/** No real credential is involved anywhere. */
 const DEVICE_STATE = new URLSearchParams(location.search).get("demo_devices");
 const ACCOUNT_MEMBER = new URLSearchParams(location.search).get("demo_account") === "member";
 const CONNECTION_DROPS = new URLSearchParams(location.search).get("demo_connection") === "drops";
@@ -1015,6 +1050,7 @@ const PLUGINS: PluginActions[] = [
 const NO_PORTAL: PortalStatus = { supported: false, version: null, min_version: "v2.6.1", usable: false, phase: "idle", relay: null, url: null, blocked: null, error: null, output: null, auth: { method: "none", allow: [], issuer: null, client_id: null }, auth_methods: [], oidc_secret: false };
 
 
+/** Nothing here opens a socket or holds a credential. */
 const DEMO_RELAY = "wss://relay.ovis.sh";
 const DEMO_RELAY_APP = "https://app.ovis.sh";
 const DEMO_RELAY_PUBLIC_KEY = btoa(String.fromCharCode(...Array.from({ length: 32 }, (_, index) => (index * 37 + 11) & 0xff)));
@@ -1052,6 +1088,11 @@ function demoRelayOffer(): Response {
   const url = encodeOffer({ v: 1, server_id: demoRelayServerId(), server_public_key: DEMO_RELAY_PUBLIC_KEY, relay: DEMO_RELAY, code: pairing.code }, DEMO_RELAY_APP);
   return json({ url, expires_at: pairing.expires_at }, 200, { "cache-control": "no-store" });
 }
+/**
+ * The demo opens no public address, so its Portal section stays hidden. A QA script may stage a
+ * fictional status (a recovering Portal, say) as JSON in sessionStorage["ovis:demo-portal"]
+ * before the app loads; starting and stopping stay refused either way.
+ */
 function demoPortal(): PortalStatus {
   try {
     const staged = window.sessionStorage.getItem("ovis:demo-portal");
@@ -1075,6 +1116,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
       if (variant === "error") return error("server_unavailable", "The demo server is not answering.", 503);
       return json({ ok: true, auth, bridge_protocol: 1, relay: demoRelayStatus(), ...facts, ...DEMO_RUNTIME_FACTS }, 200, { "cache-control": "no-store" });
     }
+    // the LAN warning is drawn only where a real server would send it: an other-address bind, no token, nothing paired
     const lan = variant === "unknown" ? { lan_exposure: { host: "0.0.0.0" } } : {};
     return json({ ok: true, herdr: { version: "0.9.0", protocol: 22, terminal_attach: true }, auth, relay: demoRelayStatus(), ...lan, ...facts, ...DEMO_RUNTIME_FACTS, web_ui: { boot_id: orderOf(local.id).epoch, revision: null } }, 200, { "cache-control": "no-store" });
   }
@@ -1129,6 +1171,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/updates") return json({ managed: false, auto_update: false, phase: "idle", current_revision: null, latest_revision: null, current_version: __APP_VERSION__, latest_version: null, available: false, checked_at: null, blocked_reason: null, error: null }, 200, { "cache-control": "no-store" });
   if (path === "/api/updates/notes") return json({ revision: null, releases: [], omitted: 0 }, 200, { "cache-control": "no-store" });
   if (path === "/api/updates/installed") return json({ revision: null, version: null, previous_version: null, installed_at: null, releases: [], omitted: 0 }, 200, { "cache-control": "no-store" });
+  // Connection breadcrumbs stay inside the fictional demo; never send them to a real endpoint.
   if (path === "/api/connection-diagnostics") return new Response(null, { status: 204 });
   if (path === "/api/seen") return method === "POST" ? new Response(null, { status: 204 }) : json({ finishes: [] }, 200, { "cache-control": "no-store" });
   if (path === "/api/preferences") {
@@ -1262,6 +1305,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     }
     return error("demo", "This demo cannot run a local CLI. Sign in on an installed server.", 409);
   }
+  // Public demo never saves management credentials or starts a real OAuth login.
   if (path === "/api/cliproxy") {
     if (method === "GET") return json({ configured: false, url: "http://localhost:8317", ok: false, problem: null });
     return error("demo", "Connect CLIProxyAPI from an installed server, not the public demo.", 409);
@@ -1340,6 +1384,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
       if (!info.is_linked_worktree) return error("not_linked_worktree", "the repository's main checkout cannot be removed", 404);
       const checkoutPath = info.checkout_path;
       repo.checkouts = repo.checkouts.filter((checkout) => checkout.path !== checkoutPath);
+      // Removing a checkout leaves its branch available for a later create, as git does.
       closeDemoWorkspaces(new Set([workspaceId]));
       structureChanged();
       return json({ ok: true, path: checkoutPath, forced: body["force"] === true } satisfies WorktreeRemoved);
@@ -1622,6 +1667,11 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     structureChanged();
     return json({ ok: true });
   }
+  // herdr's layout operations on the demo's own layouts: a split halves the pane's rect for a new
+  // shell pane, a zoom flips the tab's flag (after focusing the pane, as herdr does), a swap
+  // exchanges two rects, a move takes the pane out as a close does and into half of another's as a
+  // split does, a resize moves the ratio of the split the border belongs to and lays its panes out
+  // again (src/lib/layoutTree.ts), and a clear blanks the pane's screen on every socket attached to it
   if (path === "/api/pane/split" || path === "/api/pane/zoom" || path === "/api/pane/swap" || path === "/api/pane/move" || path === "/api/pane/resize" || path === "/api/pane/clear" || path === "/api/pane/focus") {
     const body = await layoutBodyOf(method, init, input);
     if (body instanceof Response) return body;
@@ -1885,6 +1935,8 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const agent = launch?.kind ?? null;
     const firstFault = firstMessageFault(body["first_message"], agent);
     if (firstFault !== null) return error("invalid_first_message", firstFault, 400);
+    // a session resumed from the history dialog is the one the new pane shows, as herdr reports a pane's
+    // session; any other two arguments (`--effort high`, `--settings {"ultracode":true}`) name none
     const resumed = resumedSession(agent, launch?.args);
     const id = workspace.workspace_id;
     const siblings = snap.panes.filter((p) => p.workspace_id === id);
@@ -2011,6 +2063,7 @@ async function pushRoute(path: string, method: string, init: RequestInit | undef
     if (!subscription) return error("invalid_subscription", "subscription needs an https endpoint and p256dh/auth keys", 400);
     const known = pushRegistry.get(subscription.endpoint);
     if (known) return sameKeys(known.keys, subscription.keys) ? json(known.status, 200, { "cache-control": "no-store" }) : notFound();
+    // the retired fixture answers like a server's tombstone: its owner, holding its keys, and nobody else
     const fixture = FIXTURE_STATUS.get(subscription.endpoint);
     if (fixture && !fixture.status.registered && sameKeys(fixture.subscription.keys, subscription.keys)) return json(fixture.status, 200, { "cache-control": "no-store" });
     return notFound();
@@ -2018,6 +2071,7 @@ async function pushRoute(path: string, method: string, init: RequestInit | undef
   return error("method_not_allowed", `${method} is not supported on ${path}`, 400);
 }
 
+/** Settings → Alerts → Also send to: kept in this page only, and never posted anywhere. */
 const NO_WEBHOOK: AlertWebhookView = { configured: false, preset: null, target: null, chat_id: null, alerts: DEFAULT_ALERTS, reachable_link: false, last_success_at: null, last_failure_at: null, last_error: null };
 let demoWebhook: AlertWebhookView = NO_WEBHOOK;
 const demoMask = (preset: string, secret: string): string => { if (preset === "telegram") return "…"; try { return `${new URL(secret).host}/…`; } catch { return "…"; } };
@@ -2099,6 +2153,11 @@ const NOTICE = (() => {
   return ["\x1b[2J\x1b[H", amber(`┌${"─".repeat(width)}┐`), ...rows, amber(`└${"─".repeat(width)}┘`)].join("\r\n") + "\r\n";
 })();
 
+/**
+ * The server hands the chord to herdr, which encodes it for the pane's program; the demo has only
+ * this shell, so it takes what a plain terminal would send and the shell can use: Enter, Backspace,
+ * a character, Shift's capital and Ctrl's control code (^C).
+ */
 const CHORD_KEYS = new Map([["enter", "\r"], ["backspace", "\x7f"], ["tab", "\t"], ["esc", "\x1b"], ["space", " "], ["plus", "+"]]);
 function chordText(chord: string): string {
   const parts = chord.split("+");
@@ -2133,8 +2192,10 @@ class DemoSocket extends EventTarget {
   onerror: ((event: Event) => void) | null = null;
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private readonly attached = new Set<string>();
+  /** whether this socket has the pane attached: the bridge's first message is told to, and typed through, such a socket */
   attachedTo(paneId: string): boolean { return this.attached.has(paneId); }
   private mode: "interact" | "observe" = "interact";
+  /** Accepted messages belong to this live connection, never to a reconnect's empty queue. */
   private readonly pending = new Map<string, PendingMessage[]>();
   private readonly outcomes = new Map<string, { paneId: string; outcome: "sent" | "discarded" }>();
   private readonly requests = new Map<number, { signature: string; reply?: ServerMessage }>();
@@ -2229,6 +2290,7 @@ class DemoSocket extends EventTarget {
         break;
       case "attach":
         if (message.pane_id) {
+          // keep_size (the chat lens) and an observer leave the shared grid alone and learn it instead
           const keepsSize = message.keep_size === true || this.mode === "observe";
           if (!keepsSize) this.resizeGrid(message.pane_id, message.cols, message.rows);
           this.attach(message.pane_id);
@@ -2306,6 +2368,8 @@ class DemoSocket extends EventTarget {
           const queued = message.delivery === "queue" || message.delivery === "hold";
           for (const [key, receipt] of heldCopyResends) if (Date.now() - receipt.at >= 60_000) heldCopyResends.delete(key);
           const text = message.text.replace(/[\r\n]+$/, "").replace(/\r\n?/g, "\n");
+          // an immediate submit's framing, as the bridge checks it (server/core/composer.ts submitFraming):
+          // before a held-copy receipt is replayed or reserved, so a refusal never claims its resend id
           const body = text.replace(/\n/g, "\r");
           const framingLimit = message.typed === true ? 32_768 : 20_000;
           const badFraming = !queued && (text.length > framingLimit || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text)
@@ -2326,6 +2390,7 @@ class DemoSocket extends EventTarget {
             || (message.typed !== undefined && message.typed !== false))) code = "invalid_delivery";
           else if (message.agent_only !== undefined && (message.agent_only !== true || message.typed === true)) code = "invalid_delivery";
           else if (this.mode === "observe") code = "read_only";
+          // a message for an agent alone (#511), as the bridge refuses it: nothing typed where no agent is
           else if (message.agent_only === true && !paneOf(message.pane_id)?.agent) code = "agent_not_ready";
           else if (message.clear_draft !== undefined || message.send_anyway !== undefined) code = "unsupported";
           else if (message.resend_id !== undefined && (typeof message.resend_id !== "string" || !message.resend_id || message.resend_id.length > 128 || queued || message.typed === true)) code = "invalid_delivery";
@@ -2367,6 +2432,7 @@ class DemoSocket extends EventTarget {
           if (this.mode === "observe") { result(false, "read_only"); break; }
           const first = firstMessages.get(message.pane_id);
           if (first && first.id === message.pending_id && this.attached.has(message.pane_id)) {
+            // the pane's first message is every attached socket's to discard or send now
             if (message.action === "discard") {
               firstMessages.delete(message.pane_id);
               publishFirstMessage(message.pane_id, [{ id: first.id, outcome: "discarded" }]);
@@ -2431,6 +2497,7 @@ class DemoSocket extends EventTarget {
     this.push({ type: "pending-messages", pane_id: paneId, messages: this.pending.get(paneId) ?? [], ...(removed ? { removed } : {}) });
   }
 
+  /** A lost claim never becomes input merely because this pane becomes ready again. */
   holdPending(paneId?: string, code = "disconnected", message = "The connection closed. Pending messages will not be sent automatically."): void {
     for (const [pane, pending] of this.pending) {
       if (paneId !== undefined && pane !== paneId) continue;
@@ -2480,6 +2547,8 @@ class DemoSocket extends EventTarget {
     pending.state = "sending";
     delete pending.error;
     this.publishPending(paneId);
+    // A close, detach or role change can land in the sending notification itself.
+    // Revalidate the same claim before the mock turn receives any of its text.
     if (pending.state !== "sending") return false;
     const code = this.pendingTargetError(paneId);
     if (code !== null) {
@@ -2498,6 +2567,7 @@ class DemoSocket extends EventTarget {
     return first ? Number(first.id.split("-").at(-1)) : Infinity;
   }
 
+  /** Only a live owner can drain one queued item at a real completion edge. */
   drainPending(paneId: string): boolean {
     if (this.pendingTargetError(paneId) !== null || !["idle", "done"].includes(paneOf(paneId)?.agent_status ?? "")) return false;
     const pending = this.pending.get(paneId)?.find((item) => item.state === "queued");
@@ -2535,6 +2605,7 @@ class DemoSocket extends EventTarget {
     if (history && this.attached.has(paneId)) this.push({ type: "pty-data", pane_id: paneId, data: history.render(), ...(replay ? { replay: true as const } : {}) });
   }
 
+  /** The first messages this socket asked for, in `paneId` or every pane, that have not gone: held for an explicit send, as the bridge holds them when their page leaves. */
   private holdAsked(paneId?: string): void {
     for (const [pane, requester] of firstRequesters) {
       const first = firstMessages.get(pane);
@@ -2557,6 +2628,8 @@ class DemoSocket extends EventTarget {
     if ([...heldReceipts.values()].some((receipt) => receipt.paneId === paneId)) this.later(() => { if (this.attached.has(paneId)) this.tellHeldReceipts(paneId); }, 0);
     this.publishPending(paneId);
     this.push({ type: "input-ready", pane_id: paneId });
+    // On its own tick: an attach sent in the open handler is answered here before this socket's snapshot goes out,
+    // and the client takes pending messages only after the snapshot, as a real bridge sends them
     this.later(() => {
       const first = firstMessages.get(paneId);
       if (!first || !this.attached.has(paneId)) return;
@@ -2676,6 +2749,7 @@ for (const pane of snapshot().panes) {
 }
 
 
+// no service worker: the page would otherwise register /sw.js of the site's origin, which is not there
 if ("serviceWorker" in navigator) {
   Object.defineProperty(navigator.serviceWorker, "register", { value: () => new Promise(() => {}) });
 }

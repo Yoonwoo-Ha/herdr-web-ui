@@ -23,7 +23,8 @@
   }
 
   /**
-   * Every Mac browser's userAgent says "Intel Mac OS X", so without the hint it is Apple silicon.
+   * The CPU of a Mac, for its dmg: Intel only when Chromium's architecture hint says "x86". Every
+   * Mac browser's userAgent says "Intel Mac OS X", so without the hint it is Apple silicon.
    * @param {string} [architecture]
    * @returns {"x64" | "arm64"}
    */
@@ -32,8 +33,9 @@
   }
 
   /**
-   * Chromium's architecture hint wins, since its userAgent says "Linux x86_64" on any CPU; Firefox
-   * writes "aarch64".
+   * Chromium's architecture hint ("arm" or "x86", from userAgentData.getHighEntropyValues) wins,
+   * since its userAgent says "Linux x86_64" on any CPU; without it, arm64 when the userAgent says
+   * so (Firefox writes "aarch64"), else x64.
    * @param {{ userAgent?: string }} nav
    * @param {string} [architecture]
    * @returns {"x64" | "arm64"}
@@ -45,6 +47,9 @@
   }
 
   /**
+   * The download button's label on a desktop whose CPU is a guess: without Chromium's architecture
+   * hint (Safari, Firefox) nothing corrects the build later, so the button names the CPU it
+   * downloads, and an Intel Mac or arm64 Linux visitor looks to the other builds under it.
    * @param {ReturnType<typeof downloadPlatform>} platform
    * @param {{ userAgentData?: { getHighEntropyValues?: unknown }, userAgent?: string }} nav
    * @returns {string | undefined}
@@ -68,6 +73,7 @@
     linux: (cpu) => ({ href: `https://ovis.sh/Ovis-linux-${cpu}.deb`, tip: `Debian, Ubuntu · ${cpu}` }),
     mac: (cpu) => ({ href: `https://ovis.sh/Ovis-mac-${cpu}.dmg` }),
   };
+  // the line under the download row on Windows: the desktop app is not code-signed yet, so SmartScreen asks first
   const WINDOWS_ALT = "If Windows shows 'Windows protected your PC', choose More info → Run anyway.";
   const LINUX_ALT = 'Not on Debian or Ubuntu? Get the AppImage for <a href="https://ovis.sh/Ovis-linux-x64.AppImage">x64</a> or <a href="https://ovis.sh/Ovis-linux-arm64.AppImage">arm64</a>.';
   const BUTTONS = {
@@ -110,6 +116,8 @@
     }
   }
 
+  // Chromium's architecture hint comes later, and only over https; until then the guess above
+  // stands (the shipped Mac button is Apple silicon's).
   const desktop = platform === "linux" || platform === "mac" ? platform : undefined;
   if (!desktop || !navigator.userAgentData?.getHighEntropyValues) return;
   navigator.userAgentData.getHighEntropyValues(["architecture"]).then(({ architecture }) => {

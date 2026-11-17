@@ -1,3 +1,17 @@
+// Service worker for Ovis. Policy: navigations are network-first (so a
+// fresh build always wins when online) falling back to the cached shell when
+// offline; static assets (hashed bundles, icons, favicons) are cache-first since
+// they are content-addressed or rarely change. The web manifest is not: its URL
+// never changes and the browser rereads it to update the installed app, so a
+// cached copy would pin every install to its first manifest.
+// Nothing is precached. The typefaces are /assets/ files too (src/fonts/fonts.css): Pretendard
+// comes as 92 chunks split by unicode-range and the browser asks only for those whose characters
+// a page draws, so each is cached as it is first fetched and a phone that has shown Korean once
+// draws it offline. Never list them for install: that would download all 3 MB on every device.
+// A new cache starts empty for the same reason, so the cache of the name before it is kept
+// until this one holds a shell and the files it starts with: the page that brought this worker
+// was loaded through the old one, and its shell, bundles and font chunks are all there. Deleted
+// at activation, the first reload without a network would find no shell at all.
 const CACHE_NAME = "ovis-v4-sheep";
 const BUILD = "";
 const BUILD_FILES = null;
@@ -54,6 +68,11 @@ async function fileFor(path) {
   }
 }
 
+/**
+ * The shell just fetched becomes this cache's "/" once the cache holds every file that shell
+ * starts with: the worker before may have answered them, and a network that drops before the
+ * page asks again must not leave a shell without them.
+ */
 async function keepShell(response, spare) {
   const html = await response.clone().text();
   const cache = await caches.open(CACHE);
@@ -106,12 +125,14 @@ async function keptShell() {
   return null;
 }
 
+// Only the shell build stamps this contract. Server-served workers keep their fetch behavior.
 const RELAY_RESOURCES = null;
 
 if (RELAY_RESOURCES) self.addEventListener("message", (event) => {
   if (event.data?.type === "ovis-relay-resources-v1") event.ports[0]?.postMessage({ type: "ovis-relay-resources-v1" });
 });
 
+/** A page of this PC's app: its scope on this origin, not its render host or a file under `~`. */
 function ofThisPcApp(url, scope) {
   try {
     const address = new URL(url);
@@ -119,13 +140,20 @@ function ofThisPcApp(url, scope) {
   } catch { return false; }
 }
 
-/** The Sec-Fetch-* headers are added after the worker, so it cannot read them. */
+/**
+ * Whether this PC's own app asked: what a PC's own server gets from its SameSite=Strict cookie,
+ * which another site's link or frame never carries. The Sec-Fetch-* headers are added after the
+ * worker, so it cannot read them: a navigation (a tab, a frame, a download) counts by the page it
+ * came from, and any other request by the page that made it. No referrer (a typed address, or a
+ * page that withheld it) is refused too.
+ */
 async function askedByThisPc(event, scope) {
   if (event.request.mode === "navigate") return ofThisPcApp(event.request.referrer, scope);
   const client = event.clientId ? await self.clients.get(event.clientId) : undefined;
   return client !== undefined && ofThisPcApp(client.url, scope);
 }
 
+/** No caching, including errors. Only controlled windows in this PC's registration are eligible. */
 async function relayResourceResponse(event, target) {
   const { request } = event;
   const scope = new URL(self.registration.scope).pathname;
@@ -165,9 +193,12 @@ async function relayResourceResponse(event, target) {
         if (!data?.available) { finish(); resolve(null); return; }
         if (data.status === undefined) return;
         const headers = new Headers(data.headers.filter(([name]) => RELAY_RESOURCES.headers.includes(name.toLowerCase())));
+        // A paired PC is not trusted with the shell origin shared by every other PC.
         // PDF uses Chrome's isolated viewer, which refuses sandboxed documents. nosniff
-        // keeps HTML disguised as PDF out of the HTML parser.
+        // keeps HTML disguised as PDF out of the HTML parser; script-src also forbids
+        // shell-origin script. Rendered HTML runs separately at ~render, not this route.
         const pdf = headers.get("content-type")?.split(";")[0].trim().toLowerCase() === "application/pdf";
+        // Only the shell may frame a PC's file, as only the app frames a file of the PC's own server.
         headers.append("content-security-policy", `${pdf ? "" : "sandbox; "}default-src 'none'; script-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'`);
         headers.set("x-frame-options", "SAMEORIGIN");
         headers.set("x-content-type-options", "nosniff");
@@ -240,6 +271,8 @@ self.addEventListener("fetch", (event) => {
           return (await cachedShell()) || Response.error();
         }
         if (response.ok) {
+          // not awaited: the page gets its shell as it comes, and the worker lives until the
+          // copy is kept (a put reads the whole body).
           event.waitUntil(keepShell(response.clone()).catch(() => undefined));
         }
         return response;
@@ -256,6 +289,9 @@ self.addEventListener("fetch", (event) => {
         if (own) return own;
         const older = await caches.match(request);
         if (older && !isPage(older)) {
+          // a file only the cache of the name before still holds, asked for while the new shell's
+          // copy is being kept: it is kept here too, so keepShell's retirement of that cache does
+          // not take the only copy of a file the new shell uses.
           if (ofThisBuild(url.pathname)) event.waitUntil(cache.put(request, older.clone()).catch(() => undefined));
           return older;
         }
@@ -269,12 +305,17 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+// In the hosted shell every PC has a worker of its own, scoped to `/s/<server_id>/`
+// (src/lib/shellMode.ts), with its own subscription: only that PC pushes to it, and
+// only that PC's windows are this worker's to tell or to open.
+
 function shellServerId() {
   const scope = self.registration && self.registration.scope;
   const match = scope ? /^\/s\/([0-9a-f]{32})\/$/.exec(new URL(scope).pathname) : null;
   return match ? match[1] : null;
 }
 
+/** A window of this worker's PC: in the hosted shell the origin's other windows are other PCs'. */
 function ofThisPc(url) {
   if (shellServerId() === null) return true;
   try { return new URL(url).pathname.startsWith(`/s/${shellServerId()}/`); } catch { return false; }
@@ -304,6 +345,12 @@ async function closeEarlierAlerts(tag, earlier) {
   }
 }
 
+// Answer buttons (#2916): an alert for a question the server found answerable whole (server/push.ts
+// promptActions) carries its options as buttons. A tap answers through POST /api/pane/prompt/answer
+// with the prompt's id, so the server's own check decides: a prompt that changed or was answered on
+// another device takes nothing, and a new alert says so; its tap opens the pane. Only the worker a
+// PC's own server serves shows them: the hosted shell's worker cannot reach its PC (only a window
+// holds the relay channel). Where a platform shows no buttons (iOS), the alert is as it was.
 function answerButtons(payload) {
   if (shellServerId() !== null || typeof payload.prompt_id !== "string" || !payload.pane_id || (payload.machine_id || "local") !== "local") return null;
   if (!Array.isArray(payload.actions)) return null;
@@ -405,6 +452,9 @@ self.addEventListener("notificationclick", (event) => {
   const workspaceId = event.notification.data?.workspace_id || null;
   const selection = paneId ? { type: "select-pane", pane_id: paneId, machine_id: machineId, view: "chat", ...(workspaceId ? { workspace_id: workspaceId } : {}) } : null;
   latestNotificationSelection = selection;
+  // a tapped pane alert, for the daily anonymous usage counts (server/telemetry.ts): posted only when
+  // the server says the counts are on and their notice was shown, so nothing tells it of a tap while
+  // they are off; a refusal (signed out, an older server) changes nothing
   if (paneId && typeof self.fetch === "function") {
     event.waitUntil((async () => {
       const status = await self.fetch("/api/telemetry", { cache: "no-store" });
@@ -420,9 +470,12 @@ self.addEventListener("notificationclick", (event) => {
   }
   event.waitUntil(
     (async () => {
+      // only an app window handles the selection: focusing a reader tab would swallow the tap
       const windows = (await self.clients.matchAll({ type: "window", includeUncontrolled: true }))
         .filter((client) => isAppWindow(client.url) && ofThisPc(client.url));
       if (click !== latestNotificationClick) return;
+      // the app's own path: the PC's scope in the hosted shell, whose host never hears which pane:
+      // there the pane rides in the fragment (src/lib/pageQuery.ts)
       const home = shellServerId() === null ? "/" : `/s/${shellServerId()}/`;
       const url = paneId ? `${home}${shellServerId() === null ? "?" : "#"}machine=${encodeURIComponent(machineId)}${workspaceId ? `&ws=${encodeURIComponent(workspaceId)}` : ""}&pane=${encodeURIComponent(paneId)}&view=chat` : home;
       const selectLatest = (client) => { if (client && latestNotificationSelection) client.postMessage(latestNotificationSelection); };
@@ -432,6 +485,9 @@ self.addEventListener("notificationclick", (event) => {
       const target = windows.find((client) => client.focused) || windows[0];
       if (target) {
         const select = () => { if (selection) target.postMessage(selection); };
+        // Name the pane before focus(): a focus() that iOS refuses or resolves late must not
+        // swallow it. A page frozen in the background may need the selection again
+        // once its focus completes.
         select();
         try {
           await target.focus();
@@ -480,6 +536,8 @@ async function keepPendingPush(serverId, subscription, oldEndpoint) {
   }
 }
 
+// The browser rotated the subscription (Firefox does; Chrome rarely): hand the server
+// the new endpoint and drop the old one, or pushes stop until the app is next opened.
 self.addEventListener("pushsubscriptionchange", (event) => {
   const serverId = shellServerId();
   if (serverId !== null) {

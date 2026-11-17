@@ -12,6 +12,7 @@ import {
 const schema = readFileSync(join(import.meta.dir, "schema.sql"), "utf8");
 const RELAY = "https://push.test";
 const TOKEN = "a1".repeat(32);
+/** a P-256 key pair and auth secret the app keeps; the relay never sees the private half */
 const device = { p256dh: webpush.generateVAPIDKeys().publicKey, auth: Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString("base64url") };
 const pcKey = webpush.generateVAPIDKeys();
 const otherPcKey = webpush.generateVAPIDKeys();
@@ -117,8 +118,10 @@ describe("push relay: registration", () => {
       id: idOf(endpoint), token: TOKEN, service: "apns", environment: "production", vapid_key: pcKey.publicKey,
       created_at: seconds, used_at: seconds, window_start: 0, window_count: 0,
     }]);
+    // the address only keys its limiter: it is not stored
     expect(r.limiterKeys).toEqual(["address:203.0.113.9", "global:all"]);
     expect(JSON.stringify(r.rows())).not.toContain("203.0.113.9");
+    // each registration is an endpoint of its own: one per PC, each pinned to its PC's key
     expect(await register(r, { vapid_key: otherPcKey.publicKey })).not.toBe(endpoint);
   });
 
@@ -137,6 +140,7 @@ describe("push relay: registration", () => {
     expect((await r.handle(registration({ ...valid, pad: "x".repeat(1100) }))).status).toBe(413);
     expect((await r.handle(new Request(`${RELAY}/v1/register`))).status).toBe(405);
     expect(r.rows()).toEqual([]);
+    // the key is kept in one spelling, so a padded or base64 copy of it pins the same key
     const padded = Buffer.from(pcKey.publicKey, "base64url").toString("base64");
     expect(readRegistration({ token: TOKEN, environment: "sandbox", vapid_key: padded })).toEqual({ service: "apns", token: TOKEN, environment: "sandbox", vapid_key: pcKey.publicKey });
   });
@@ -149,8 +153,10 @@ describe("push relay: registration", () => {
       expect(refused.status).toBe(429);
       expect(refused.headers.get("retry-after")).toBe("60");
     }
+    // a refused request is refused before its body is read
     expect((await r.handle(registration("not json"))).status).toBe(429);
     expect(r.rows()).toEqual([]);
+    // one address over its limit never counts against the cap every phone shares
     expect(r.limiterKeys).toEqual(Array(4).fill("address:203.0.113.9"));
     r.perAddress.allow = true;
     await register(r);
@@ -163,6 +169,7 @@ describe("push relay: registration", () => {
     const refused = await r.handle(registration({ token: TOKEN, vapid_key: pcKey.publicKey }));
     expect(refused.status).toBe(429);
     expect(refused.headers.get("retry-after")).toBe("60");
+    // refused before its body is read: a malformed body is not a 400
     expect((await r.handle(registration("not json"))).status).toBe(429);
     expect(r.rows()).toEqual([]);
     expect(r.limiterKeys).toEqual(["address:203.0.113.9", "global:all", "address:203.0.113.9", "global:all"]);
@@ -225,6 +232,7 @@ describe("push relay: pushes", () => {
     expect(payload.aps).toEqual({ alert: { body: FALLBACK_BODY }, "mutable-content": 1 });
     expect(new Uint8Array(Buffer.from(payload.ovis, "base64"))).toEqual(body);
     expect(call.body).not.toMatch(/secret-project|Needs your input|w1-1"/);
+    // the provider token is Apple's ES256 JWT, signed with the APNs key
     const jwt = decodeJwt(call.headers["authorization"]!.replace(/^bearer /, ""));
     expect(jwt.header).toEqual({ alg: "ES256", kid: "KEYFORWARD1" });
     expect(jwt.claims).toEqual({ iss: "TEAM123456", iat: nowSeconds });
@@ -265,6 +273,7 @@ describe("push relay: pushes", () => {
     own.answer(() => new Response(null, { status: 200 }));
     expect((await own.handle(pushRequest(endpoint).request)).status).toBe(201);
     expect(own.calls.at(-1)!.headers["authorization"]).toBe(fresh);
+    // once more only: a key APNs keeps refusing is a relay failure, and the endpoint stays
     answers = [];
     own.answer(() => Response.json({ reason: "InvalidProviderToken" }, { status: 403 }));
     const before = own.calls.length;
@@ -290,10 +299,13 @@ describe("push relay: pushes", () => {
     const { Authorization: authorization, ...unsigned } = bare.headers as Record<string, string>;
     expect((await send(unsigned)).status).toBe(401);
     expect((await send({ ...unsigned, Authorization: authorization!.replace(/^vapid/, "WebPush") })).status).toBe(401);
+    // a signature that does not match the token
     const tampered = authorization!.replace(/t=([^,]+)/, (_, jwt: string) => `t=${jwt.slice(0, -4)}${jwt.endsWith("AAAA") ? "BBBB" : "AAAA"}`);
     expect((await send({ ...unsigned, Authorization: tampered })).status).toBe(401);
+    // signed by another key than the one it names
     const otherK = authorization!.replace(/k=.+$/, `k=${otherPcKey.publicKey}`);
     expect((await send({ ...unsigned, Authorization: otherK })).status).toBe(401);
+    // signed for another push service's audience
     expect((await r.handle(pushRequest(`https://elsewhere.test/v1/push/${idOf(endpoint)}`, { to: endpoint }).request)).status).toBe(401);
     expect(r.calls).toEqual([]);
 
@@ -326,6 +338,7 @@ describe("push relay: pushes", () => {
     for (const endpoint of endpoints.slice(0, 2)) {
       for (let i = 0; i < DEVICE_RATE_LIMIT / 2; i++) expect((await r.handle(pushRequest(endpoint).request, start)).status).toBe(201);
     }
+    // a fresh endpoint of the same phone buys no more pushes
     const limited = await r.handle(pushRequest(endpoints[2]!).request, new Date(start.getTime() + 60_000));
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBe(String(RATE_WINDOW_SECONDS - 60));
@@ -339,6 +352,7 @@ describe("push relay: pushes", () => {
       const own = relay();
       const endpoint = await register(own);
       const sibling = await register(own, { vapid_key: otherPcKey.publicKey });
+      // the same token in the other APNs environment, and as an FCM token: not what APNs called gone
       const sandbox = await register(own, { environment: "sandbox" });
       const asFcm = await register(own, { service: "fcm" });
       const other = await register(own, { token: "b2".repeat(32) });
@@ -352,6 +366,7 @@ describe("push relay: pushes", () => {
   });
 
   test("a leaked token registered in the other environment cannot wipe the phone's real endpoints", async () => {
+    // the phone's production endpoint, then someone with its token registers it as sandbox with their own key
     const real = await register(r);
     const planted = await register(r, { environment: "sandbox", vapid_key: otherPcKey.publicKey });
     r.answer(() => Response.json({ reason: "BadDeviceToken" }, { status: 400 }));
@@ -420,6 +435,7 @@ describe("push relay: pushes", () => {
   test("refuses an oversized push before it ends", async () => {
     const endpoint = await register(r);
     const { headers } = pushRequest(endpoint);
+    // More than 4 KB arrive and the stream never closes: do not wait for the rest.
     const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array(4097)); } });
     const request = new Request(endpoint, { method: "POST", headers, body, duplex: "half" } as RequestInit);
     expect((await r.handle(request)).status).toBe(413);
@@ -429,6 +445,7 @@ describe("push relay: pushes", () => {
 
 describe("push relay: Android (FCM)", () => {
   const fcm = { service: "fcm", token: FCM_TOKEN };
+  /** an FCM v1 error answer: its FcmError code (if any), and the fields a google.rpc.BadRequest detail names */
   const fcmError = (status: number, errorCode: string | null, fields: readonly string[] = []) => () => Response.json({ error: { code: status, details: [
     ...(errorCode ? [{ "@type": "type.googleapis.com/google.firebase.fcm.v1.FcmError", errorCode }] : []),
     ...(fields.length ? [{ "@type": "type.googleapis.com/google.rpc.BadRequest", fieldViolations: fields.map((field) => ({ field, description: `Invalid value at '${field}'` })) }] : []),
@@ -467,6 +484,7 @@ describe("push relay: Android (FCM)", () => {
     expect(response.status).toBe(201);
     expect(response.headers.get("ttl")).toBe("43200");
 
+    // Google's service-account flow: an RS256 JWT for the FCM scope, exchanged for an access token
     expect(r.tokenCalls).toHaveLength(1);
     const form = new URLSearchParams(r.tokenCalls[0]!.body);
     expect(form.get("grant_type")).toBe("urn:ietf:params:oauth:grant-type:jwt-bearer");
@@ -488,6 +506,7 @@ describe("push relay: Android (FCM)", () => {
     expect(sent.message.android).toEqual({ priority: "HIGH", ttl: "43200s", collapse_key: "pane-w1-1" });
     // a data message only: a notification part would be shown by Android without the app decrypting it
     expect(sent.message.notification).toBeUndefined();
+    // the Topic header is the push service's to read anyway; nothing of the message itself is
     expect(call.body).not.toMatch(/secret-project|Needs your input|pane_id/);
   });
 
@@ -521,6 +540,7 @@ describe("push relay: Android (FCM)", () => {
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBe(String(RATE_WINDOW_SECONDS - 100));
     for (let i = 0; i < DEVICE_RATE_LIMIT - RATE_LIMIT; i++) expect((await r.handle(pushRequest(endpoints[1]!).request, start)).status).toBe(201);
+    // a fresh endpoint of the same phone buys no more pushes
     const phoneLimited = await r.handle(pushRequest(endpoints[2]!).request, new Date(start.getTime() + 60_000));
     expect(phoneLimited.status).toBe(429);
     expect(phoneLimited.headers.get("retry-after")).toBe(String(RATE_WINDOW_SECONDS - 60));
@@ -536,6 +556,7 @@ describe("push relay: Android (FCM)", () => {
       [400, "INVALID_ARGUMENT", []], [400, "INVALID_ARGUMENT", ["message.token"]],
     ] as const) {
       const r = relay();
+      // FCM endpoints with the token an APNs endpoint has too: only the FCM ones are gone
       const endpoint = await register(r, { ...fcm, token: TOKEN });
       const second = await register(r, { ...fcm, token: TOKEN, vapid_key: otherPcKey.publicKey });
       await register(r);
@@ -562,6 +583,7 @@ describe("push relay: Android (FCM)", () => {
 
     for (const [answer, expected] of [
       [fcmError(429, "QUOTA_EXCEEDED"), 429],
+      // a field of the relay's message refused, not the token: the token stays
       [fcmError(400, "INVALID_ARGUMENT", ["message.android.ttl"]), 502],
       [fcmError(400, "INVALID_ARGUMENT", ["message.token", "message.android.collapse_key"]), 502],
       [fcmError(400, null, ["message.data[0].value"]), 502],

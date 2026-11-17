@@ -18,6 +18,7 @@
 
   const COPIED = { "zh-CN": ["已复制", "复制失败"], ja: ["コピーしました", "コピーできませんでした"], ko: ["복사됨", "복사 실패"] };
   const [copied, failed] = COPIED[document.documentElement.lang] ?? ["Copied", "Copy failed"];
+  // the buttons' aria-labels hide their changed text from a screen reader, so the result is also said here
   const status = document.createElement("p");
   status.className = "visually-hidden";
   status.setAttribute("role", "status");
@@ -31,6 +32,7 @@
         await navigator.clipboard.writeText(button.dataset.copy);
         ok = true;
       } catch {
+        // no async clipboard (plain http, an older browser): copy from a hidden text field
         const field = document.createElement("textarea");
         field.value = button.dataset.copy;
         field.setAttribute("readonly", "");

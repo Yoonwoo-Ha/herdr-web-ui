@@ -37,6 +37,7 @@ beforeAll(() => {
 afterAll(() => Object.assign(runtime, saved));
 afterEach(() => setSystemTime());
 
+/** DurableObjectState over the fake sockets; it outlives a RelayRoom as the real one outlives an eviction */
 function fakeState() {
   const sockets: FakeSocket[] = [];
   const keepalive = new Map<HibernatableSocket, Date>();
@@ -138,6 +139,7 @@ describe("relay warm sockets", () => {
     const control = await connectServer(room, fake);
     const generation = generationOf(control);
     const kept = await connectWarm(room, fake, generation);
+    // kept alive by its pings, the last one answered by the runtime itself, after an eviction
     setSystemTime(new Date(start.getTime() + 20_000));
     room.webSocketMessage(kept, KEEPALIVE_PING);
     room = new RelayRoom(fake.state);
@@ -228,6 +230,7 @@ describe("relay Durable Object", () => {
     expect(control.json(1)).toEqual({ type: "connected", connection_id });
     const data = await connectServer(room, fake, connection_id);
 
+    // evicted: a new instance knows the sockets only from their attachments
     room = new RelayRoom(fake.state);
     const binary = crypto.getRandomValues(new Uint8Array(4096)).buffer;
     room.webSocketMessage(client, binary);
@@ -294,6 +297,7 @@ describe("relay Durable Object", () => {
     const room = new RelayRoom(fake.state);
     const control = await connectServer(room, fake);
     const one = await connectPair(room, fake);
+    // the phone closed its socket: the runtime reports the close and leaves the answer to the room
     room.webSocketClose(one.client, 4000, "qa drop", true);
     expect(one.client.closedWith).toEqual({ code: 4000, reason: "qa drop" });
     expect(one.data.closedWith?.code).toBe(CLOSE.GOING_AWAY);
@@ -372,6 +376,7 @@ describe("relay Durable Object", () => {
     expect(disconnected()).toBe(1);
     const reported = points.length;
 
+    // hibernated, then woken by the next alarm while the runtime still lists the unanswered socket
     room = new RelayRoom(fake.state, usage);
     setSystemTime(new Date(start + 2 * IDLE_MS));
     fake.keepalive.set(control, new Date());
@@ -402,6 +407,7 @@ describe("relay Durable Object", () => {
     const client = await connect(room, fake, "role=client");
     const { connection_id } = client.json(0) as { connection_id: string };
     const data = await connectServer(room, fake, connection_id);
+    // traffic both ways 29 s in: under the 30 s write interval, so the saved last-seen stays at 1000000
     at(1_029_000);
     room.webSocketMessage(client, new Uint8Array([1, 2, 3]).buffer);
     room.webSocketMessage(data, new Uint8Array([4, 5, 6]).buffer);
@@ -440,10 +446,12 @@ describe("relay admission", () => {
     ];
     for (const attempt of attempts) {
       expect(attempt.closedWith?.code).toBe(SERVER_PROOF_CLOSE);
+      // it never heard who is waiting, nor any held frame
       expect(attempt.sent.filter((frame) => typeof frame !== "string" || !frame.includes("server_challenge"))).toEqual([]);
     }
     expect(control.closedWith).toBeNull();
     expect(client.closedWith).toBeNull();
+    // the real PC still owns the room: its data socket attaches and gets the held frame
     const data = await connectServer(room, fake, connection_id);
     expect(data.closedWith).toBeNull();
     expect(data.sent).toEqual(["held ciphertext"]);
@@ -856,6 +864,7 @@ describe("relay pass", () => {
       expect(socket.closedWith).toEqual({ code: 4402, reason });
     }
     expect(w.fake.sockets).toEqual([]);
+    // a client needs no pass
     expect((await w.open("role=client")).closedWith).toBeNull();
   });
 
@@ -999,6 +1008,7 @@ describe("relay pass", () => {
       const { pass_kid: _kid, server_id: _id, ...legacy } = host.deserializeAttachment() as Record<string, unknown>;
       host.serializeAttachment(legacy);
       await first.evict();
+      // a deploy that revokes the PC: nothing on the attachment names it, so any revocation may
       const w = await world("enforce", undefined, fake, { RELAY_PASS_REVOKED: SERVER });
       if (by === "arrival") expect([by, (await w.openPair("role=guest")).closedWith?.code]).toEqual([by, 4404]);
       else if (by === "frame") w.box.room.webSocketMessage(host, new Uint8Array([1, 2, 3]).buffer);
@@ -1121,6 +1131,7 @@ describe("relay pass", () => {
     closeFromFar(w.box.room, own.socket);
     const again = await clientOf(w);
     const dataAgain = await dataFor(w, again.id, await passSaying(false));
+    // what a data socket sends is the client's, never a word to the relay
     const lookalike = JSON.stringify({ type: "new_session", connection_id: again.id });
     w.box.room.webSocketMessage(dataAgain, lookalike);
     expect(again.socket.sent.at(-1)).toBe(lookalike);
@@ -1186,6 +1197,7 @@ describe("relay pass", () => {
     expect(control.json(0)).toEqual({ type: "sync", connection_ids: [], warm: expect.any(String), relay_pass: { state: "missing", enforce_at: "2027-01-01T00:00:00.000Z", mode: "grace" } });
     const client = await w.open("role=client");
     expect(client.json(0)).toEqual({ type: "assigned", connection_id: expect.any(String), relay_pass: { state: "missing", enforce_at: "2027-01-01T00:00:00.000Z", mode: "grace" } });
+    // the alarm comes at the date, and from then the sockets let in without a pass go, the client with its PC
     expect(w.fake.state.alarm).not.toBeNull();
     const { connection_id } = client.json(0) as { connection_id: string };
     const data = w.prove(await w.open(`role=server&connection_id=${connection_id}&${proof()}`), connection_id);
@@ -1202,6 +1214,7 @@ describe("relay pass", () => {
     const firstEnd = T0 + (RELAY_PASS_LIFETIME_S + RELAY_PASS_SKEW_S) * 1000;
     const renewedAt = T0 + 12 * 3_600_000;
     setSystemTime(new Date(renewedAt));
+    // a renewal for another PC, and one that would move the expiry back, change nothing
     await w.box.room.webSocketMessage(control, JSON.stringify({ type: "relay_pass", pass: await passFor("f".repeat(32), renewedAt) }));
     setSystemTime(new Date(renewedAt + 60_000));
     await w.box.room.webSocketMessage(control, JSON.stringify({ type: "relay_pass", pass: await passFor(SERVER, T0 - 3_600_000) }));

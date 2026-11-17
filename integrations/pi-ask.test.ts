@@ -15,6 +15,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
+/** pi's event bus (core/event-bus.js): a node EventEmitter behind on/emit. */
 function bus(): PiEventBus & { emitted: { channel: string; data: unknown }[] } {
   const emitter = new EventEmitter();
   const emitted: { channel: string; data: unknown }[] = [];
@@ -155,6 +156,7 @@ describe("pi-ask bridge extension", () => {
     expect((await state(path)).openCalls).toEqual(["toolu_feat1202ask"]);
     leaf = entries.length - 1;
     expect((await state(path)).openCalls).toEqual([]);
+    // back before the dismissal, as /tree does without writing to the file
     leaf = 2;
     expect((await state(path)).openCalls).toEqual(["toolu_feat1202ask"]);
   });

@@ -1,3 +1,13 @@
+/**
+ * Keeps a regional copy of the hosted app (`app.ovis.sh`) on a relay box, for the regional app
+ * address (`app-ap.ovis.sh`, shared/relay-regions.ts). Each run asks `app.ovis.sh` which commit it
+ * serves (its build.json), finds the GitHub release tagged on that commit, checks the release's
+ * dist-shell.tar.gz against the SHA-256 published with it and against that commit, then checks
+ * every file it would serve, byte for byte, against the same file fetched from `app.ovis.sh`, and
+ * makes it current only if `app.ovis.sh` still serves that commit. A release asset replaced after
+ * the deploy is refused, so what this copy serves is what `app.ovis.sh` served. The box itself
+ * still delivers the code, so whoever controls it is a trust root too (docs/relay.md).
+ */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -48,6 +58,7 @@ function servedRevision(dir: string): string | null {
 }
 
 async function tarUnpack(tarball: string, into: string): Promise<void> {
+  // the same refusals as the Pages deploy (.github/workflows/release.yml): only plain files and folders, all inside
   const listing = await Bun.$`tar -tvzf ${tarball}`.text();
   if (listing.split("\n").some((line) => line !== "" && !/^[-d]/.test(line))) throw new Error("the tarball holds a link or a special file");
   const names = await Bun.$`tar -tzf ${tarball}`.text();
@@ -141,6 +152,7 @@ async function install(dir: string, tag: string, revision: string, archive: Uint
     if (unpacked !== revision) throw new Error(`${tag}: its build.json names ${unpacked}, not ${revision}`);
     for (const path of files(staging)) if (/\.(br|gz)$/.test(path)) rmSync(join(staging, path));
     await compareWithApp(staging, fetcher);
+    // app.ovis.sh may have moved on while this run fetched: a copy is made current only while it serves the same
     if (revisionOf(await json(fetcher, `${APP}/build.json`)) !== revision) throw new Error(`${APP} changed while ${tag} was being checked`);
     const name = `${tag}+${Date.now().toString(36)}`;
     renameSync(staging, join(releases, name));

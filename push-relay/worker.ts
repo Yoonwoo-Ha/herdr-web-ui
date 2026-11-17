@@ -1,23 +1,64 @@
+/**
+ * The push relay of the Ovis phone app (docs/native-app.md, "Notifications"). The app's web view
+ * gets no Web Push, so this Cloudflare Worker looks to the PC's server/push.ts like one more Web
+ * Push service and hands each push to Apple's push service (APNs) or, for Android, to Firebase
+ * Cloud Messaging (FCM):
+ *
+ * - POST /v1/register { token, environment?, vapid_key } (an APNs device token) or
+ *   { service: "fcm", token, vapid_key } (an FCM registration token): the app hands over its
+ *   token and the VAPID public key of the PC it registers for (the PC's GET /api/push), and gets
+ *   back an endpoint URL holding a random ID for them. The token never leaves the relay. The key
+ *   is pinned to the endpoint from the start, as a browser binds a subscription to its
+ *   applicationServerKey, so no one can claim an endpoint by pushing to it first.
+ * - POST /v1/push/<id>: a Web Push request (RFC 8030), its body encrypted for keys only the app
+ *   holds (RFC 8291, aes128gcm) and signed with the PC's VAPID key (RFC 8292). A push signed by
+ *   any other key is refused. Each endpoint, and each phone across its endpoints, is
+ *   rate-limited. The ciphertext goes on as it came: to APNs in a mutable-content push that the
+ *   iOS app's Notification Service Extension decrypts, to FCM in a data message that the Android
+ *   app decrypts. The relay never holds a key that could read it. APNs or FCM saying a token is
+ *   gone deletes its endpoints for that service (and APNs environment) and answers 410, which the
+ *   PC takes as an unsubscribe.
+ *
+ * Per endpoint it keeps the token, its service and (for APNs) its environment, the pinned key, when the endpoint was
+ * registered and last used, and the current rate window (schema.sql), and nothing else. An
+ * endpoint unused for ENDPOINT_TTL_SECONDS is deleted by the daily cron. The sender's address is
+ * read only as the key of Cloudflare's rate limiter for registrations, never stored, and nothing
+ * is logged. Deploy: push-relay/README.md.
+ */
+
 interface D1Statement { bind(...values: unknown[]): { first<T>(): Promise<T | null>; run(): Promise<unknown> } }
 export interface Env {
   DB: { prepare(query: string): D1Statement };
+  /** Cloudflare's Rate Limiting binding (wrangler.toml), keyed by the registering address */
   REGISTER_LIMITER: RateLimiter;
+  /** the backstop over all addresses together, asked only for a registration its address may make */
   REGISTER_GLOBAL_LIMITER: RateLimiter;
+  /** secret: the APNs auth key (.p8 file contents, PKCS #8 PEM) */
   APNS_KEY: string;
+  /** secret: the ID Apple shows for that key */
   APNS_KEY_ID: string;
+  /** secret: the Apple developer team the key belongs to */
   APNS_TEAM_ID: string;
   APNS_TOPIC: string;
+  /**
+   * secret, for Android: the JSON key of a Google service account allowed to send FCM messages
+   * for the app's Firebase project. Without it the relay registers no FCM token.
+   */
   FCM_SERVICE_ACCOUNT?: string;
 }
 interface RateLimiter { limit(options: { key: string }): Promise<{ success: boolean }> }
 type Environment = "production" | "sandbox";
 type Send = (url: string, init: RequestInit) => Promise<Response>;
 
+/** pushes one endpoint may make per window; more answer 429 until the window ends */
 export const RATE_LIMIT = 60;
+/** pushes one phone (device token) takes per window across all its endpoints */
 export const DEVICE_RATE_LIMIT = 120;
 export const RATE_WINDOW_SECONDS = 600;
+/** endpoints one device token may hold (one per PC); registering one more drops the oldest */
 export const ENDPOINTS_PER_TOKEN = 32;
 export const ENDPOINT_TTL_SECONDS = 60 * 24 * 60 * 60;
+/** what a phone shows when its extension cannot decrypt a push (or does not run) */
 export const FALLBACK_BODY = "herdr needs you";
 const MAX_REGISTER_BYTES = 1024;
 /** RFC 8030 section 7.2: the payload size every push service takes */
@@ -27,6 +68,7 @@ const MAX_PUSH_BYTES = 4096;
  * bytes of data too, which the same ciphertext always fits once it fits APNs' wrapper.
  */
 const MAX_APNS_BYTES = 4096;
+/** the longest a push waits at APNs for a phone that is offline */
 const MAX_TTL_SECONDS = 28 * 24 * 60 * 60;
 /** RFC 8292 section 2: a VAPID token expires within 24 hours */
 const VAPID_MAX_SECONDS = 24 * 60 * 60;
@@ -74,6 +116,7 @@ function encodeBase64(bytes: Uint8Array): string {
 
 const encodeBase64Url = (bytes: Uint8Array) => encodeBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
+/** a P-256 public key as VAPID's `k=` and the Push API's applicationServerKey carry it, in one spelling (base64url, unpadded); null when it is not one */
 function publicKey(value: string): string | null {
   const key = decodeBase64(value);
   return key && key.length === 65 && key[0] === 4 ? encodeBase64Url(key) : null;
@@ -89,6 +132,10 @@ function jsonObject(bytes: Uint8Array | null): Record<string, unknown> | null {
   }
 }
 
+/**
+ * The sender's VAPID public key (base64url) when `header` is a valid RFC 8292 `vapid t=..., k=...`
+ * for this relay (`audience`, its origin) at `nowSeconds`; null otherwise.
+ */
 export async function verifyVapid(header: string | null, audience: string, nowSeconds: number): Promise<string | null> {
   const match = header ? /^vapid\s+(.+)$/i.exec(header.trim()) : null;
   if (!match) return null;
@@ -119,6 +166,7 @@ export async function verifyVapid(header: string | null, audience: string, nowSe
   }
 }
 
+/** the APNs provider token this isolate signed last, reused while APNs takes it */
 let providerToken: { teamId: string; keyId: string; key: string; issuedAt: number; token: string } | null = null;
 
 async function apnsToken(env: Env, nowSeconds: number): Promise<string> {
@@ -136,6 +184,7 @@ async function apnsToken(env: Env, nowSeconds: number): Promise<string> {
   return token;
 }
 
+/** the body, or null as soon as it passes `limit` bytes (without waiting for the rest) */
 async function readBody(request: Request, limit: number): Promise<Uint8Array | null> {
   if (!request.body) return new Uint8Array(0);
   const reader = request.body.getReader();
@@ -178,6 +227,9 @@ export function readRegistration(body: unknown): Registration | null {
 
 async function register(request: Request, env: Env, nowSeconds: number): Promise<Response> {
   if (request.method !== "POST") return status(405, { allow: "POST" });
+  // before any write: a registration proves nothing about the token, so made-up tokens must not
+  // fill the database. The address is the limiter's key only; it is not stored. The global cap is
+  // asked second, so one address over its own limit never uses up the cap every phone shares.
   const perAddress = await env.REGISTER_LIMITER.limit({ key: request.headers.get("cf-connecting-ip") ?? "" });
   if (!perAddress.success) return status(429, { "retry-after": "60" });
   const global = await env.REGISTER_GLOBAL_LIMITER.limit({ key: "all" });
@@ -188,6 +240,7 @@ async function register(request: Request, env: Env, nowSeconds: number): Promise
   let registration: Registration | null;
   try { registration = readRegistration(JSON.parse(new TextDecoder().decode(bytes))); } catch { registration = null; }
   if (!registration) return status(400);
+  // a relay without FCM credentials could never deliver to this token
   if (registration.service === "fcm" && !env.FCM_SERVICE_ACCOUNT) return status(501);
   const id = encodeBase64Url(crypto.getRandomValues(new Uint8Array(16)));
   await env.DB.prepare("INSERT INTO endpoints (id, token, service, environment, vapid_key, created_at, used_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -211,6 +264,7 @@ async function push(request: Request, env: Env, id: string, nowSeconds: number, 
   if (request.method !== "POST") return status(405, { allow: "POST" });
   const key = await verifyVapid(request.headers.get("authorization"), new URL(request.url).origin, nowSeconds);
   if (!key) return status(401, { "www-authenticate": "vapid" });
+  // the extension decrypts RFC 8291's aes128gcm only
   if (request.headers.get("content-encoding")?.toLowerCase() !== "aes128gcm") return status(415);
   const ttlHeader = request.headers.get("ttl");
   if (ttlHeader === null || !/^\d{1,10}$/.test(ttlHeader)) return status(400);
@@ -228,6 +282,7 @@ async function push(request: Request, env: Env, id: string, nowSeconds: number, 
   if (!endpoint) return status(404);
   if (endpoint.vapid_key !== key) return status(403);
   const windowStart = nowSeconds - RATE_WINDOW_SECONDS;
+  // the phone's budget across its endpoints, so registering more endpoints buys no more pushes
   const device = await env.DB.prepare("SELECT COALESCE(SUM(window_count), 0) AS pushes, MIN(window_start) AS oldest FROM endpoints WHERE token = ? AND window_start > ?")
     .bind(endpoint.token, windowStart).first<{ pushes: number; oldest: number | null }>();
   if (device && device.pushes >= DEVICE_RATE_LIMIT) {
@@ -263,6 +318,7 @@ async function push(request: Request, env: Env, id: string, nowSeconds: number, 
     apns = await deliver();
     if (!apns.ok) reason = await apnsReason(apns);
     if (apns.status === 403 && PROVIDER_TOKEN_REASONS.has(reason)) {
+      // the cached provider token went stale: sign a new one and try this push once more
       providerToken = null;
       apns = await deliver();
       reason = apns.ok ? "" : await apnsReason(apns);
@@ -275,6 +331,7 @@ async function push(request: Request, env: Env, id: string, nowSeconds: number, 
     // the token is gone for every PC: all its endpoints in this APNs environment go, and their next
     // push is a 404. Only this environment's: APNs calls a production token sent to the sandbox a
     // BadDeviceToken, so a leaked token registered once as the other one must not wipe the real ones.
+    // An FCM row has no environment (schema.sql's CHECK), so it never matches.
     await env.DB.prepare("DELETE FROM endpoints WHERE token = ? AND environment = ?").bind(allowed.token, environment).run();
     return status(410);
   }
@@ -282,8 +339,13 @@ async function push(request: Request, env: Env, id: string, nowSeconds: number, 
   return status(502);
 }
 
+/** the Google access token this isolate got last, reused while it lasts */
 let accessToken: { account: string; issuedAt: number; token: string; projectId: string } | null = null;
 
+/**
+ * An OAuth access token for FCM (Google's service-account flow: an RS256 JWT exchanged at its
+ * token endpoint), and the Firebase project it sends for.
+ */
 async function fcmAccessToken(env: Env, nowSeconds: number, send: Send): Promise<{ token: string; projectId: string }> {
   const account = env.FCM_SERVICE_ACCOUNT ?? "";
   const cached = accessToken;
@@ -359,6 +421,8 @@ async function sendFcm(env: Env, token: string, ciphertext: string, delivery: { 
   }
   if (fcm.ok) return status(201, { ttl: String(delivery.ttl) });
   if (await fcmTokenGone(fcm)) {
+    // the token is gone for every PC: all its FCM endpoints go, and their next push is a 404. Only
+    // FCM's: the same string registered as an APNs token is not what FCM refused.
     await env.DB.prepare("DELETE FROM endpoints WHERE token = ? AND service = 'fcm'").bind(token).run();
     return status(410);
   }

@@ -153,6 +153,7 @@ describe("a pairing host's PC key", () => {
     const plate = nameplate();
     const pc = newServer();
     const host = await hostOf(plate, pc);
+    // while it proves, no device finds the code and no other host takes it
     expect(await (await open(plate, "guest")).closeCode()).toBe(PAIR_CLOSE.NO_HOST);
     expect(await (await open(plate, "host")).closeCode()).toBe(PAIR_CLOSE.TAKEN);
     await answer(host, pc, { connection_id: plate });

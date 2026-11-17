@@ -1,3 +1,23 @@
+/**
+ * The PC holds the room for a nameplate (`host`); a device that typed the code joins it (`guest`),
+ * one at a time. The two run CPace through it; the relay reads none of it and is not trusted to
+ * keep any limit: the PC counts tries itself. These limits only stop abuse through an honest relay.
+ *
+ * Every guest gets a random attempt id. The host hears `{"type":"guest","attempt"}` and
+ * `{"type":"gone","attempt"}`; a guest's binary frame reaches the host prefixed with its attempt
+ * id, and a host's binary frame must start with the current guest's id, which is stripped (a frame
+ * for an attempt that is over goes nowhere). `{"type":"drop","attempt"}` from the host ends that
+ * guest only. A guest's text is never passed on. What each socket is lives in its own info, so a
+ * Durable Object evicted between frames picks up as it was.
+ *
+ * A host may offer its PC's key (`&server_id=<32 hex>&public_key=<64 hex>`): it then answers a server
+ * challenge for role `pair-host` and the nameplate (shared/relay-server-proof.ts) before it holds the
+ * nameplate, and while it proves no device finds the code and no other host takes it. A relay that
+ * asks for relay passes (pass.ts) lets in, while enforced, only a host whose pass holds for the key
+ * it offers, and a host keeps its nameplate only while that holds: once passes are enforced (grace
+ * reached its date) and its pass, if any, ran out, it closes 4402, its guest with it. The device that
+ * joins never needs a pass.
+ */
 import { IDLE_MS, KEEPALIVE_PING, KEEPALIVE_PONG, WIRE_VERSION, passRefusal, type Frame } from "./core.ts";
 import { RELAY_PASS_CLOSE, RELAY_PASS_EXPIRED, RELAY_PASS_INVALID, RELAY_PASS_REQUIRED, RELAY_PASS_SKEW_S } from "../shared/relay-pass.ts";
 import { SERVER_KEY_INVALID, SERVER_KEY_MISMATCH, SERVER_PROOF_CLOSE, SERVER_PROOF_MS, deriveServerId, proofKey, serverChallenge, verifyServerProof } from "../shared/relay-server-proof.ts";
@@ -16,10 +36,13 @@ export const PAIR_CLOSE = {
   TOO_BIG: 1009,
 } as const;
 
+/** the public part of a typed code: three Crockford base32 characters */
 export const NAMEPLATE_PATTERN = /^[0-9A-HJKMNP-TV-Z]{3}$/;
 export const PAIR_MAX_FRAME = 4096;
+/** a host's room lasts at most this long: a code lives 10 minutes */
 export const PAIR_HOST_MS = 11 * 60_000;
 export const PAIR_GUEST_MS = 30_000;
+/** guests a room takes in its life: the PC's three tries and some that drop before trying */
 export const PAIR_GUESTS_PER_ROOM = 12;
 export const PAIR_GUEST_GAP_MS = 2000;
 
@@ -28,6 +51,7 @@ export interface PairSocketRequest {
   nameplate: string;
   role: "host" | "guest";
   version: string | null;
+  /** the PC key a host offers, which it proves before it holds the nameplate */
   key?: { server_id: string; public_key: string };
   pass?: PassResult;
 }
@@ -52,7 +76,9 @@ export interface PairInfo {
   seen: number;
   guests?: number;
   lastGuest?: number;
+  /** a host still proving its PC key: it holds no nameplate until it answers (its deadline is `expires`) */
   proof?: { expected: string; expires: number };
+  /** a host let in with a pass that holds: when it expires (ms), its key id and the server_id it is for, re-checked against the relay's current keys and revocations */
   pass_exp?: number;
   pass_kid?: string;
   server_id?: string;
@@ -61,6 +87,7 @@ export interface PairInfo {
 
 type HostPass = Required<Pick<PairInfo, "pass_exp" | "pass_kid" | "server_id">>;
 
+/** how long after its pass's expiry a host keeps its nameplate, for clocks that differ */
 const PASS_SKEW_MS = RELAY_PASS_SKEW_S * 1000;
 
 export function isPairInfo(value: unknown): value is PairInfo {
@@ -85,8 +112,10 @@ export interface PairRoomHost<S extends object> {
   send(socket: S, frame: Frame): void;
   close(socket: S, code: number, reason: string): void;
   wake?(at: number): void;
+  /** when the platform last answered this socket's keepalive by itself, if it does (Cloudflare) */
   keepaliveAt?(socket: S): number | null;
   now(): number;
+  /** the relay pass policy; without it every host is let in, as before */
   readonly pass?: PassPolicy;
 }
 
@@ -115,10 +144,17 @@ export class PairRoom<S extends object> {
     return this.host.info(socket) !== null;
   }
 
+  /** Why a host may no longer hold (or prove for) its nameplate: passes are enforced and no pass of its holds. Null while it may. */
   private lapsed(info: PairInfo, now: number): string | null {
     const policy = this.host.pass;
     if (!policy || info.pair !== "host" || passMode(policy, now) !== "enforce") return null;
     if (info.pass_exp === undefined) return RELAY_PASS_REQUIRED;
+    // a pass under a key the relay no longer trusts, or for a PC it revoked since, holds no longer.
+    // A host the version before this check admitted kept no key id or server_id (hibernated sockets
+    // outlive a deploy), so neither check can name it. Any revocation in the current settings may be
+    // its PC, so it closes rather than guess and re-admits through the check that follows; a key
+    // removed from them it cannot be matched against at all, so its pass's expiry and hold()'s
+    // deadline of PAIR_HOST_MS (11 minutes) are what hold it otherwise.
     if (info.pass_kid === undefined) {
       if (policy.revoked.size > 0) return RELAY_PASS_INVALID;
       return now < info.pass_exp + PASS_SKEW_MS ? null : RELAY_PASS_EXPIRED;
@@ -127,6 +163,7 @@ export class PairRoom<S extends object> {
     return now < info.pass_exp + PASS_SKEW_MS ? null : RELAY_PASS_EXPIRED;
   }
 
+  /** When `lapsed` may next change for a host: the start of enforcement (whatever its pass, which nothing checks before), or once enforced its pass running out. */
   private passDue(info: PairInfo, now: number): number {
     const policy = this.host.pass;
     if (!policy || policy.mode === "off" || info.pair !== "host") return Infinity;
@@ -134,6 +171,7 @@ export class PairRoom<S extends object> {
     return info.pass_exp === undefined ? Infinity : info.pass_exp + PASS_SKEW_MS;
   }
 
+  /** Closes the room's host 4402 when its pass no longer lets it hold the nameplate (its guest goes with it), whatever the sweep's timing. */
   private endLapsedHost(now: number): void {
     const host = this.find("host");
     const why = host ? this.lapsed(host.info, now) : null;
@@ -158,12 +196,14 @@ export class PairRoom<S extends object> {
 
   open(socket: S, request: PairSocketRequest): void {
     const now = this.host.now();
+    // the host already there goes first if its pass no longer holds, before this socket is any part of the room
     this.endLapsedHost(now);
     this.host.setInfo(socket, { pair: request.role, deadline: now, seen: now });
     if (request.version !== WIRE_VERSION) return this.end(socket, PAIR_CLOSE.POLICY, "unsupported wire version");
     if (request.role === "host") {
       const refused = passRefusal(request, this.host.pass, now);
       if (refused !== null) return this.end(socket, RELAY_PASS_CLOSE, refused);
+      // a host still proving counts: one at a time may try for a nameplate
       if (this.find("host", socket)) return this.end(socket, PAIR_CLOSE.TAKEN, "this code is in use");
       const pass: HostPass | undefined = request.pass?.state === "ok" && request.pass.exp !== undefined && request.pass.kid !== undefined && request.key
         ? { pass_exp: request.pass.exp, pass_kid: request.pass.kid, server_id: request.key.server_id } : undefined;
@@ -171,6 +211,7 @@ export class PairRoom<S extends object> {
       const key = proofKey(request.key.public_key);
       if (!key || deriveServerId(key) !== request.key.server_id) return this.end(socket, SERVER_PROOF_CLOSE, SERVER_KEY_MISMATCH);
       let challenge: ReturnType<typeof serverChallenge>;
+      // the proof covers this nameplate, so it opens no other rendezvous and no PC socket
       try { challenge = serverChallenge(key, { server_id: request.key.server_id, role: "pair-host", connection_id: request.nameplate }); }
       catch { return this.end(socket, SERVER_PROOF_CLOSE, SERVER_KEY_INVALID); } // a low-order X25519 point
       const expires = now + SERVER_PROOF_MS;
@@ -202,13 +243,16 @@ export class PairRoom<S extends object> {
     if (!info || info.ended) return;
     if (sizeOf(frame) > PAIR_MAX_FRAME) return this.end(socket, PAIR_CLOSE.TOO_BIG, "frame too big");
     const now = this.host.now();
+    // the host's pass stopped letting it hold the nameplate since the last sweep: it goes before this frame does anything
     this.endLapsedHost(now);
     if (this.ended.has(socket)) return;
+    // a host proving its key: its first frame is the answer, compared in constant time; anything else, or late, is refused
     if (info.proof) {
       if (now >= info.proof.expires || !verifyServerProof(frame, info.proof.expected)) return this.end(socket, SERVER_PROOF_CLOSE, "invalid or expired server proof");
       const { pass_exp, pass_kid, server_id } = info;
       return this.hold(socket, now, pass_exp !== undefined && pass_kid !== undefined && server_id !== undefined ? { pass_exp, pass_kid, server_id } : undefined);
     }
+    // past its deadline a socket passes nothing on, whenever the next sweep comes
     if (now >= info.deadline) return this.end(socket, PAIR_CLOSE.EXPIRED, "time ran out");
     this.host.setInfo(socket, { ...info, seen: now });
     if (frame === KEEPALIVE_PING) return this.host.send(socket, KEEPALIVE_PONG);
@@ -249,6 +293,7 @@ export class PairRoom<S extends object> {
       if (host && info.attempt !== undefined) this.host.send(host.socket, JSON.stringify({ type: "gone", attempt: info.attempt }));
       return;
     }
+    // a refused second host is no host of this room: the one that holds it stays
     if (this.find("host")) return;
     for (const peer of this.peers()) if (peer.info.pair === "guest") this.end(peer.socket, PAIR_CLOSE.HOST_GONE, "the PC is gone");
   }

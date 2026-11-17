@@ -1,18 +1,56 @@
+/**
+ * A PC and a phone that cannot reach each other both dial out to the relay, which pairs
+ * their sockets by the PC's `server_id` and passes frames between them unread: the frames are
+ * end-to-end encrypted between the two (README.md). Nothing here parses, logs or keeps a frame
+ * beyond the short wait for the PC's data socket, and nothing is stored.
+ *
+ * A PC socket (control or data) offers the PC's public key, from which its `server_id` is derived,
+ * and is no part of the room until it answers a challenge only the matching secret key can answer
+ * (shared/relay-server-proof.ts): knowing a `server_id` is not enough to take a PC's place. A
+ * client holds one of a server's MAX_CLIENTS slots only once the PC has answered it (its data
+ * socket sent a frame); until then it is one of at most MAX_PENDING, closed HANDSHAKE_MS after the
+ * PC could have answered.
+ *
+ * The room keeps no state that must outlive the process (or a Durable Object's eviction): who is
+ * who lives with each socket (`RoomHost.info`), and a PC that reconnects gets the clients still
+ * waiting in `sync`.
+ *
+ * A report holds the server_id, which side, bytes each
+ * way and the time; never a frame, an address or a connection_id.
+ */
+
 import { parsePairRequest, type PairSocketRequest } from "./pair-room.ts";
 import { SERVER_KEY_INVALID, SERVER_KEY_MISMATCH, SERVER_PROOF_CLOSE, SERVER_PROOF_MS, SERVER_PROOF_REQUIRED, deriveServerId, proofKey, serverChallenge, verifyServerProof } from "../shared/relay-server-proof.ts";
 import { RELAY_NEW_SESSIONS_CLOSE, RELAY_NEW_SESSIONS_REFUSED, RELAY_PASS_CLOSE, RELAY_PASS_EXPIRED, RELAY_PASS_HEADER, RELAY_PASS_INVALID, RELAY_PASS_REQUIRED, RELAY_PASS_SKEW_S } from "../shared/relay-pass.ts";
 import { checkPass, passMayHold, passMode, passNotice, type PassPolicy, type PassResult, type PassState } from "./pass.ts";
 
 export const WIRE_VERSION = "1";
+/** clients the PC has answered, one server_id may have at once */
 export const MAX_CLIENTS = 8;
+/** clients one server_id may have that the PC has not answered yet (waiting for their data socket, or for its first frame) */
 export const MAX_PENDING = 4;
+/**
+ * PC sockets of one server_id that may wait to answer their challenge at once; past it the oldest
+ * is closed. An answer takes the PC one round trip, so pushing its socket out takes this many
+ * arrivals within that round trip.
+ */
 export const MAX_PROVING = 16;
+/** proven warm sockets one server_id may keep waiting for a client; past it the oldest is closed */
 export const MAX_WARM = 1;
+/**
+ * A warm socket silent this long (the PC pings it every 10 s) is not handed to a client: the PC may have
+ * given it up while its close has not arrived, and the client would wait out its handshake deadline.
+ */
 export const WARM_QUIET_MS = 25_000;
+/** the largest frame passed on, in bytes; Ovis frames stay under about 22 KiB */
 export const MAX_MESSAGE_BYTES = 64 * 1024;
 export const BUFFER_FRAMES = 200;
 export const BUFFER_BYTES = 1024 * 1024;
 export const HANDSHAKE_MS = 15_000;
+/**
+ * a client waiting while no PC is connected is closed this long after it arrived or the PC left,
+ * keepalives or not; the app itself gives up after 15 s (src/lib/relay/channel.ts PC_ANSWER_MS)
+ */
 export const OFFLINE_WAIT_MS = 30_000;
 export const IDLE_MS = 120_000;
 /** On Cloudflare the runtime answers this keepalive itself, without waking the Durable Object. */
@@ -27,13 +65,19 @@ export const CLOSE = {
   TOO_BIG: 1009,
   RESTART: 1012,
   TRY_AGAIN: 1013,
+  /** a PC socket without a valid answer to its challenge: no key, a key that is not this server_id's, a wrong or late answer */
   SERVER_PROOF: SERVER_PROOF_CLOSE,
+  /** a PC socket without a relay pass that holds, while the relay asks for one (pass.ts) */
   RELAY_PASS: RELAY_PASS_CLOSE,
+  /** a client the PC identified as a device new to it, while passes are enforced and the room's pass allows no new sessions (account limits); its other clients stay */
   NEW_SESSIONS: RELAY_NEW_SESSIONS_CLOSE,
 } as const;
 
+/** how long after its pass's expiry a room's PC sockets stay, for clocks that differ */
 const PASS_SKEW_MS = RELAY_PASS_SKEW_S * 1000;
+/** the largest renewal frame a control socket may send: `{"type":"relay_pass","pass":"..."}` */
 const RENEWAL_BYTES = 1024;
+/** the least time between two renewals one control socket may have checked (the PC renews every 12 hours) */
 const RENEWAL_GAP_MS = 60_000;
 
 export type Role = "control" | "data" | "client" | "warm";
@@ -48,9 +92,12 @@ export interface SocketInfo {
   answered?: true;
   deadline?: number;
   arrived?: number;
+  /** a PC socket that has not answered its challenge yet: no part of the room until it does */
   proof?: { expected: string; expires: number };
+  /** a PC socket still proving: its pass's expiry (ms) and key id, which authorize the room once the proof holds */
   pass_exp?: number;
   pass_kid?: string;
+  /** a PC socket still proving: its pass allows no new client sessions, which it says for the room once the proof holds */
   pass_no_new?: true;
   pass_state?: PassState;
   generation?: string;
@@ -65,6 +112,7 @@ export interface SocketInfo {
 
 export interface Usage { since: number; up: number; down: number }
 
+/** one socket's use of the relay since its last report: no frame content, address or connection_id */
 export interface UsageReport {
   server_id: string;
   side: "pc" | "device";
@@ -78,18 +126,30 @@ export interface SocketRequest {
   server_id: string;
   role: Role;
   connection_id: string | null;
+  /** `v=` as given, checked once the socket is open so the client hears 1008, not an HTTP error */
   version: string | null;
+  /** a PC socket's `proof=` and `public_key=` as given, checked once the socket is open (4401) */
   proof?: string | null;
   public_key?: string | null;
   generation?: string;
+  /** a PC socket's pass, checked by `admit` when the relay has a pass policy that is not off */
   pass?: PassResult;
 }
 
 export interface RateLimiter { limit(options: { key: string }): Promise<{ success: boolean }> }
 export interface Limiters {
   perAddress: RateLimiter;
+  /**
+   * asked with one key for all addresses: once an address's own limit lets a socket through or, past it, before a
+   * PC's pass signature is checked and before perPc, so a forged pass, or one perPc refuses, takes a place too
+   */
   global: RateLimiter;
+  /**
+   * keyed by server_id: a budget of its own for a PC socket whose relay pass holds, once its address's is spent,
+   * so PCs behind one address (an office's NAT) are not held to its budget. Asked only while passes are on.
+   */
   perPc?: RateLimiter;
+  /** keyed by the address: how many passes it may have checked once its own budget is spent, which bounds what a flood of passes costs */
   passChecks?: RateLimiter;
 }
 
@@ -123,6 +183,7 @@ export function parseSocketRequest(url: URL): SocketRequest | { error: string } 
 const text = (status: number, body: string, headers?: Record<string, string>) =>
   new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", ...headers } });
 
+/** `address` keys the per-address limiter only; it is never kept. */
 export async function admit(request: Request, address: string, limiters?: Limiters, policy?: PassPolicy): Promise<Response | SocketRequest | PairSocketRequest> {
   const url = new URL(request.url);
   if (url.pathname === "/health") return request.method === "GET" || request.method === "HEAD" ? text(200, "ok") : text(405, "", { allow: "GET" });
@@ -131,6 +192,7 @@ export async function admit(request: Request, address: string, limiters?: Limite
   const socket = url.pathname === "/v1/pair" ? parsePairRequest(url) : parseSocketRequest(url);
   if ("error" in socket) return text(400, socket.error);
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return text(426, "expected a WebSocket upgrade", { upgrade: "websocket" });
+  // a PC socket's server_id: only those get the rescue below; a pairing host still counts against its address
   const pcServerId = "kind" in socket || socket.role === "client" ? undefined : socket.server_id;
   const header = request.headers.get(RELAY_PASS_HEADER);
   const tooMany = () => text(429, "too many connections", { "retry-after": "60" });
@@ -139,23 +201,28 @@ export async function admit(request: Request, address: string, limiters?: Limite
     if ((await limiters.perAddress.limit({ key: address })).success) {
       if (!(await limiters.global.limit({ key: "all" })).success) return tooMany();
     } else {
+      // past its address's budget (others behind the same NAT, say), a PC whose relay pass holds gets in on a budget of its own
       const { perPc, passChecks } = limiters;
       if (!policy || policy.mode === "off" || pcServerId === undefined || !perPc || !passChecks || !passMayHold(policy, header, pcServerId, Date.now())) return tooMany();
+      // each signature checked here takes one of the address's checks and one of the backstop's places: forged passes cost little
       if (!(await passChecks.limit({ key: address })).success || !(await limiters.global.limit({ key: "all" })).success) return tooMany();
       pass = await checkPass(policy, header, pcServerId, Date.now());
       if (pass.state !== "ok" || !(await perPc.limit({ key: pcServerId })).success) return tooMany();
     }
   }
+  // otherwise checked after the limits, so a flood of requests costs no signature checks; a pairing host's pass, for the key it offers
   const serverId = "kind" in socket ? socket.key?.server_id : pcServerId;
   if (!policy || policy.mode === "off" || serverId === undefined) return socket;
   return { ...socket, pass: pass ?? await checkPass(policy, header, serverId, Date.now()) };
 }
 
+/** Why a PC socket or a pairing host must close at once for its pass (`enforce` and no pass that holds), or null. */
 export function passRefusal(socket: Pick<SocketRequest, "role" | "pass"> | PairSocketRequest, policy: PassPolicy | undefined, now: number): string | null {
   if (!policy || socket.role === "client" || socket.role === "guest" || passMode(policy, now) !== "enforce") return null;
   return socket.pass?.state === "ok" ? null : socket.pass?.reason ?? RELAY_PASS_REQUIRED;
 }
 
+/** A room's relay pass authorization: the latest expiry any of its proven PC sockets' passes gave, that pass's key id, and whether it allows no new client sessions. */
 export interface RoomAuthorization { readonly until: number; readonly kid: string; readonly noNew?: true }
 export interface RoomPass {
   readonly policy: PassPolicy;
@@ -169,10 +236,12 @@ export interface RoomHost<S extends object> {
   setInfo(socket: S, info: SocketInfo): void;
   send(socket: S, frame: Frame): void;
   close(socket: S, code: number, reason: string): void;
+  /** when the platform last answered this socket's keepalive by itself, if it does */
   keepaliveAt?(socket: S): number | null;
   usage?(report: UsageReport): void;
   wake?(at: number): void;
   now(): number;
+  /** the relay pass policy and this room's authorization; without it every PC is let in, as before */
   pass?: RoomPass;
 }
 
@@ -200,6 +269,7 @@ export class Room<S extends object> {
   private readonly held = new Map<string, Held>();
   private readonly ended = new WeakSet<S>();
   private readonly lastSeen = new WeakMap<S, number>();
+  /** clients this instance closed because the frames held for them were lost (a Durable Object evicted mid-wait) */
   heldFramesLost = 0;
 
   constructor(private readonly host: RoomHost<S>) {}
@@ -219,6 +289,7 @@ export class Room<S extends object> {
     this.host.wake?.(at);
   }
 
+  /** the frames held for a client were lost with an evicted instance: the pair cannot start where the client thinks it did */
   private lostHeld(client: S): void {
     this.heldFramesLost++;
     this.end(client, CLOSE.RESTART, "relay restarted");
@@ -258,17 +329,21 @@ export class Room<S extends object> {
 
   open(socket: S, request: Pick<SocketRequest, "server_id" | "role" | "connection_id" | "version" | "proof" | "public_key" | "generation" | "pass">): void {
     if (request.version !== WIRE_VERSION) return this.end(socket, CLOSE.POLICY, "unsupported wire version");
+    // the room wakes when enforcement begins, so sockets let in during grace do not outlive it
     const policy = this.host.pass?.policy;
     if (policy?.mode === "grace" && policy.enforceAt !== null && this.host.now() < policy.enforceAt) this.host.wake?.(policy.enforceAt);
     if (request.role === "client") return this.openClient(socket, request.server_id);
     const refused = passRefusal(request, this.host.pass?.policy, this.host.now());
     if (refused !== null) return this.end(socket, CLOSE.RELAY_PASS, refused);
+    // a PC socket: nothing of the room until it proves it holds the key this server_id derives from
     if (request.proof !== "1") return this.end(socket, CLOSE.SERVER_PROOF, SERVER_PROOF_REQUIRED);
     const key = proofKey(request.public_key);
     if (!key || deriveServerId(key) !== request.server_id) return this.end(socket, CLOSE.SERVER_PROOF, SERVER_KEY_MISMATCH);
     const proving = this.peers(true).filter((peer) => peer.info.proof).sort((a, b) => a.info.proof!.expires - b.info.proof!.expires);
+    // the oldest challenge gives way, so silent sockets cannot keep the PC itself from proving
     for (const peer of oldestToMakeRoom(proving, MAX_PROVING)) this.end(peer.socket, CLOSE.TRY_AGAIN, "too many server proofs pending");
     let challenge: ReturnType<typeof serverChallenge>;
+    // a warm socket's proof covers its generation, carried where a data socket's covers its connection_id
     try { challenge = serverChallenge(key, { server_id: request.server_id, role: request.role, connection_id: request.role === "warm" ? request.generation ?? null : request.connection_id }); }
     catch { return this.end(socket, CLOSE.SERVER_PROOF, SERVER_KEY_INVALID); } // a low-order X25519 point
     const now = this.host.now();
@@ -287,6 +362,8 @@ export class Room<S extends object> {
     const clients = peers.filter((peer) => peer.info.role === "client");
     const answered = clients.filter((peer) => peer.info.answered).length;
     if (answered >= MAX_CLIENTS) return this.end(socket, CLOSE.TRY_AGAIN, "too many clients for this server");
+    // the oldest client not answered gives way: holding the waiting places then takes MAX_PENDING
+    // arrivals within one real phone's handshake, not one arrival per HANDSHAKE_MS
     const waiting = clients.filter((peer) => !peer.info.answered).sort((a, b) => (a.info.arrived ?? a.info.seen) - (b.info.arrived ?? b.info.seen));
     for (const peer of oldestToMakeRoom(waiting, MAX_PENDING)) this.end(peer.socket, CLOSE.TRY_AGAIN, "too many clients waiting for this server");
     const connectionId = randomHex();
@@ -300,6 +377,7 @@ export class Room<S extends object> {
     this.host.send(socket, JSON.stringify({ type: "assigned", connection_id: connectionId, ...notice }));
     const generation = peers.find((peer) => peer.info.role === "control")?.info.generation;
     let warm = generation ? peers.find((peer) => peer.info.role === "warm" && peer.info.generation === generation) : undefined;
+    // one the PC stopped keeping alive may be gone on its side (half-open): the client is announced instead
     if (warm && now - Math.max(this.lastSeen.get(warm.socket) ?? warm.info.seen, this.host.keepaliveAt?.(warm.socket) ?? 0) >= WARM_QUIET_MS) {
       this.end(warm.socket, CLOSE.GOING_AWAY, "warm socket went quiet");
       warm = undefined;
@@ -320,11 +398,17 @@ export class Room<S extends object> {
     return this.roomServerId;
   }
 
+  /** whether passes are enforced now and none authorizes the room: then nothing more passes until the sweep closed its PC sockets */
   private lapsed(now: number): boolean {
     const pass = this.host.pass;
     return pass !== undefined && pass.policy.mode !== "off" && passMode(pass.policy, now) === "enforce" && !this.authorized(now);
   }
 
+  /**
+   * Whether a pass that holds authorized this room at `now` (skew allowed): under a key the relay
+   * still trusts, for a server_id it has not revoked, so a saved authorization never outlives a
+   * change to either.
+   */
   private authorized(now: number): boolean {
     const pass = this.host.pass;
     const auth = pass?.until() ?? null;
@@ -333,15 +417,22 @@ export class Room<S extends object> {
     return (serverId === undefined || !pass.policy.revoked.has(serverId)) && now < auth.until + PASS_SKEW_MS;
   }
 
+  /** Whether passes are enforced now and the pass that authorizes the room allows no new client sessions. */
   private refusesNewSessions(now: number): boolean {
     const pass = this.host.pass;
     return pass !== undefined && passMode(pass.policy, now) === "enforce" && this.authorized(now) && pass.until()?.noNew === true;
   }
 
+  /**
+   * A proven PC socket's pass authorizes the room until its expiry, and says whether new client
+   * sessions are allowed; an earlier expiry changes nothing while the saved one holds, so the pass
+   * issued last (which runs out last) decides, and of two issued the same second the stricter.
+   */
   private authorize(until: number, kid: string, noNew: boolean): void {
     const pass = this.host.pass;
     if (!pass) return;
     const current = pass.until();
+    // one with the same expiry was issued the same second: the stricter of the two holds, whichever is proven last
     if (current && this.authorized(this.host.now()) && (until < current.until || (until === current.until && (!noNew || current.noNew === true)))) return;
     pass.setUntil({ until, kid, ...(noNew ? { noNew: true as const } : {}) });
     this.host.wake?.(until + PASS_SKEW_MS);
@@ -350,9 +441,11 @@ export class Room<S extends object> {
   private readonly renewedAt = new WeakMap<S, number>();
   private readonly renewing = new WeakSet<S>();
 
+  /** A renewal on a proven control socket: `{"type":"relay_pass","pass":"..."}`, checked as at admission. */
   private async renew(socket: S, info: SocketInfo, text: string): Promise<void> {
     const pass = this.host.pass;
     if (!pass || pass.policy.mode === "off" || info.server_id === undefined) return;
+    // one check at a time and one a minute per socket: a forged renewal costs the relay one signature check a minute
     const now = this.host.now();
     if (this.renewing.has(socket) || now - (this.renewedAt.get(socket) ?? -Infinity) < RENEWAL_GAP_MS) return;
     this.renewing.add(socket);
@@ -382,6 +475,7 @@ export class Room<S extends object> {
       return;
     }
     if (info.role === "warm") {
+      // opened under a control socket that is gone or replaced: no client may land on it
       if (!peers.some((peer) => peer.info.role === "control" && peer.info.generation === info.generation)) return this.end(socket, CLOSE.GOING_AWAY, "no control socket of its generation");
       const warm = peers.filter((peer) => peer.info.role === "warm").sort((a, b) => a.info.seen - b.info.seen);
       for (const peer of oldestToMakeRoom(warm, MAX_WARM)) this.end(peer.socket, CLOSE.POLICY, "replaced by a newer warm socket");
@@ -397,17 +491,21 @@ export class Room<S extends object> {
     this.lastSeen.set(socket, now);
     const held = this.held.get(connectionId);
     this.held.delete(connectionId);
+    // the client's first frames were held by an instance that is gone (an evicted Durable Object)
     if (client.info.buffered && !held) return this.lostHeld(client.socket);
     for (const frame of held?.frames ?? []) this.host.send(socket, frame);
     this.setDeadline(client.socket, { ...client.info, buffered: false }, now + HANDSHAKE_MS);
   }
 
+  /** A frame arrived on a socket: pass it on unread. */
   message(socket: S, frame: Frame): void | Promise<void> {
     if (this.ended.has(socket)) return;
     const info = this.host.info(socket);
     if (!info || info.ended) return;
     if (info.proof) {
+      // the first frame of a PC socket is its answer, compared in constant time; anything else, or late, is refused
       if (this.host.now() >= info.proof.expires || !verifyServerProof(frame, info.proof.expected)) return this.end(socket, CLOSE.SERVER_PROOF, "invalid or expired server proof");
+      // a pass that ran out while its socket proved lets it in only where another pass still holds
       const pass = this.host.pass;
       const now = this.host.now();
       if (pass && passMode(pass.policy, now) === "enforce" && !(info.pass_exp !== undefined && now < info.pass_exp + PASS_SKEW_MS) && !this.authorized(now)) {
@@ -418,6 +516,7 @@ export class Room<S extends object> {
     const size = byteLength(frame);
     if (size > MAX_MESSAGE_BYTES) return this.end(socket, CLOSE.TOO_BIG, "message too big");
     const now = this.host.now();
+    // the pass ran out (or enforcement began) since the last sweep: the room's PC sockets close before this frame goes anywhere
     if (this.lapsed(now)) {
       this.sweepPass(now);
       if (this.ended.has(socket)) return;
@@ -430,6 +529,7 @@ export class Room<S extends object> {
       try { value = JSON.parse(frame); } catch { return; }
       const { type, pass, connection_id } = typeof value === "object" && value !== null ? value as { type?: unknown; pass?: unknown; connection_id?: unknown } : {};
       if (type === "relay_pass" && typeof pass === "string") return this.renew(socket, info, pass);
+      // the PC identified this client as a device new to it (the relay cannot: its frames are end-to-end encrypted)
       if (type === "new_session" && typeof connection_id === "string" && this.refusesNewSessions(now)) {
         const client = this.find("client", connection_id);
         if (client) this.end(client.socket, CLOSE.NEW_SESSIONS, RELAY_NEW_SESSIONS_REFUSED);
@@ -453,6 +553,7 @@ export class Room<S extends object> {
     this.count(socket, "up", size, now);
     const data = this.find("data", connectionId);
     if (data) return this.host.send(data.socket, frame);
+    // frames were held for this client by an instance that is gone: holding more would hand the PC a stream with a hole
     if (info.buffered && !this.held.has(connectionId)) return this.lostHeld(socket);
     const held = this.held.get(connectionId) ?? { frames: [], bytes: 0 };
     if (held.frames.length >= BUFFER_FRAMES || held.bytes + size > BUFFER_BYTES) return this.end(socket, CLOSE.TRY_AGAIN, "too much sent before the server attached");
@@ -506,12 +607,16 @@ export class Room<S extends object> {
     let next: number | null = this.sweepPass(now);
     for (const peer of this.peers(true)) {
       if (this.ended.has(peer.socket)) continue;
+      // a PC socket that has not answered its challenge, and a client the PC has not answered, close at their deadline whatever keepalives they send
       const due = peer.info.proof?.expires ?? peer.info.deadline;
       if (due !== undefined && now >= due) {
         if (peer.info.proof) this.end(peer.socket, CLOSE.SERVER_PROOF, "server proof timed out");
         else this.end(peer.socket, CLOSE.TRY_AGAIN, this.peers().some((other) => other.info.role === "control") ? "the server did not answer in time" : "the server is not connected");
         continue;
       }
+      // without this instance's exact time (a Durable Object evicted since), the saved one may lag
+      // the last frame by up to SEEN_WRITE_MS: count from its latest possible time, so a socket is
+      // never closed sooner than IDLE_MS after its last frame (and at most SEEN_WRITE_MS later)
       const sent = this.lastSeen.get(peer.socket) ?? peer.info.seen + SEEN_WRITE_MS;
       const last = Math.max(sent, this.host.keepaliveAt?.(peer.socket) ?? 0);
       if (now - last >= IDLE_MS) {
@@ -527,6 +632,11 @@ export class Room<S extends object> {
     return next;
   }
 
+  /**
+   * While passes are enforced, a room without a pass that holds keeps no PC socket: sockets let in
+   * before enforcement began, or whose pass ran out without a renewal, close 4402 (their clients
+   * with them). A socket still proving with a pass that holds may stay: its proof authorizes the room.
+   */
   private sweepPass(now: number): number | null {
     const pass = this.host.pass;
     if (!pass || pass.policy.mode === "off" || this.empty) return null;
@@ -535,6 +645,7 @@ export class Room<S extends object> {
     const auth = pass.until();
     const serverId = this.serverId();
     const reason = auth === null ? RELAY_PASS_REQUIRED : now < auth.until + PASS_SKEW_MS || (serverId !== undefined && pass.policy.revoked.has(serverId)) ? RELAY_PASS_INVALID : RELAY_PASS_EXPIRED;
+    // warm sockets first: closing the control socket first would end them 1001 instead of saying why
     const peers = this.peers(true).sort((a, b) => Number(b.info.role === "warm") - Number(a.info.role === "warm"));
     for (const peer of peers) {
       if (peer.info.role === "client" || (peer.info.proof && peer.info.pass_exp !== undefined && now < peer.info.pass_exp + PASS_SKEW_MS)) continue;

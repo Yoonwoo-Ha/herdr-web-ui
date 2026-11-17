@@ -2,6 +2,7 @@
   color-scheme: light dark;
   --navy: #2e3a59;
   --pink: #f29ca3;
+  /* pink for text: the icon's pink is 2:1 on the light background, this one 4.7:1 */
   --pink-text: #b84a60;
   --bg: #fbf7f2;
   --surface: #ffffff;
@@ -93,6 +94,7 @@ details p { color: var(--muted); margin: 10px 0 0; }
 .beta h2 .num { display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--pink); color: #1f2740; font-size: 17px; }
 .beta .note { color: var(--muted); margin: 24px auto 0; max-width: 34em; }
 .beta :is(.lead, .note, h2, small) { text-wrap: balance; }
+/* Japanese breaks between phrases where the browser can; Chinese, like Korean, at spaces and punctuation */
 .beta:lang(ja) { word-break: auto-phrase; }
 .beta:lang(zh) { word-break: keep-all; overflow-wrap: anywhere; }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }

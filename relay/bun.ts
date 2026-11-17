@@ -1,3 +1,8 @@
+/**
+ * The Ovis relay as a plain Bun server, over the same core as the Cloudflare Worker: for the tests
+ * and for anyone running their own relay (`bun relay/bun.ts --port 8787`, behind a TLS proxy;
+ * README.md). It keeps everything in memory and stores nothing.
+ */
 import type { ServerWebSocket } from "bun";
 import { MAX_MESSAGE_BYTES, Room, admit, type Limiters, type RoomAuthorization, type SocketInfo, type SocketRequest } from "./core.ts";
 import { PairRoom, PAIR_GUEST_GAP_MS, type PairInfo, type PairSocketRequest } from "./pair-room.ts";
@@ -13,6 +18,7 @@ export interface BunRelayOptions {
   limiters?: Limiters;
   limits?: Partial<BunRelayLimits>;
   pairGuestGapMs?: number;
+  /** which PCs get in by their relay pass (pass.ts); every PC without it */
   pass?: PassPolicy;
 }
 
@@ -47,6 +53,7 @@ export function startBunRelay(options: BunRelayOptions = {}): BunRelay {
         close: (socket: Socket, code: number, reason: string) => { socket.close(code, reason); },
         now: () => Date.now(),
       };
+      // a room's pass authorization lives as long as the room, which a reconnecting PC opens again with its pass
       let until: RoomAuthorization | null = null;
       const room = "kind" in request
         ? new PairRoom<Socket>({ ...common, info: (socket) => socket.data.info as PairInfo | null, setInfo: (socket, info) => { socket.data.info = info; }, ...(pass ? { pass } : {}) }, options.pairGuestGapMs ?? PAIR_GUEST_GAP_MS)
@@ -70,14 +77,17 @@ export function startBunRelay(options: BunRelayOptions = {}): BunRelay {
       const address = bunServer.requestIP(request)?.address ?? "";
       const admitted = await admit(request, address, limiters, pass);
       if (admitted instanceof Response) return admitted;
+      // refused, never evicted: a socket already open (a signed-in phone, its PC) keeps its place
       if ((byAddress.get(address) ?? 0) >= limits.maxSocketsPerAddress) {
         return new Response("too many open connections from this address", { status: 429, headers: { "retry-after": "60", "cache-control": "no-store" } });
       }
       const pairing = "kind" in admitted;
+      // a pairing room needs no PC's key to open, so it never takes one of the places PCs connect to
       const kindCount = [...rooms.keys()].filter((key) => key.startsWith("pair:") === pairing).length;
       if (socketCount >= limits.maxSockets || (!rooms.has(keyOf(admitted)) && kindCount >= (pairing ? limits.maxPairRooms : limits.maxRooms))) {
         return new Response("relay capacity reached", { status: 503, headers: { "retry-after": "60", "cache-control": "no-store" } });
       }
+      // Reserve synchronously before upgrading: concurrent fetches cannot oversubscribe either cap.
       const entry = roomOf(admitted);
       entry.pending++;
       socketCount++;

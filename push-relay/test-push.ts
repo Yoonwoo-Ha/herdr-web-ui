@@ -1,3 +1,14 @@
+/**
+ * One real push through a deployed relay, to check the whole path after a deploy: registration,
+ * the relay's request to APNs (which takes HTTP/2 only, so only a real APNs shows it works) or to
+ * FCM (after signing in to Google with the relay's service account, which only Google can check),
+ * and the phone. The keys are made here, not the app's, so the phone cannot decrypt it and shows
+ * the fallback line ("herdr needs you").
+ *
+ * An FCM token FCM calls invalid (a made-up one) is answered 410, which only comes once the relay
+ * has signed in to Google.
+ */
+
 import webpush from "web-push";
 
 const fcm = process.argv[2] === "fcm";

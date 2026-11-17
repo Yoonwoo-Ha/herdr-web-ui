@@ -13,6 +13,8 @@ platforms = ["linux", "macos"]
 command = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "scripts/preflight.ps1"]
 platforms = ["windows"]
 
+# the server of this version from its release, checked against the signed manifest (scripts/plugin-launch.ts), with
+# the release's Rust PTY host on Linux and macOS; without that host, terminals are mirrored
 [[build]]
 command = ["sh", "scripts/with-bun.sh", "scripts/plugin-launch.ts", "install"]
 platforms = ["linux", "macos"]
@@ -21,6 +23,7 @@ platforms = ["linux", "macos"]
 command = ["bun", "scripts/plugin-launch.ts", "install"]
 platforms = ["windows"]
 
+# One-shot per herdr start: brings the bridge up if it is not already answering.
 [[startup]]
 command = ["sh", "scripts/with-bun.sh", "scripts/plugin-launch.ts", "start"]
 platforms = ["linux", "macos"]

@@ -42,6 +42,10 @@ const RESUME_FLAGS: Record<SessionHistoryAgent, string[]> = {
 };
 export const SESSION_HISTORY_AGENTS = Object.keys(RESUME_FLAGS) as SessionHistoryAgent[];
 
+/**
+ * The session a launch's arguments resume: the agent's own resume flags, then the id, as its history
+ * rows give them (`claude --resume <id>`, `codex resume <id>`); any other arguments resume none.
+ */
 export function resumedSession(agent: string | null, args: unknown): string | null {
   if (agent === null || !(SESSION_HISTORY_AGENTS as string[]).includes(agent) || !Array.isArray(args)) return null;
   const flags = RESUME_FLAGS[agent as SessionHistoryAgent];
@@ -69,6 +73,11 @@ export function sessionHistoryRows(agent: SessionHistoryAgent): SessionHistoryRo
     row(`demo-${agent}-0001`, "Flaky export test", "Why does the export test fail one run in ten?", 0, 3),
   ];
 }
+/**
+ * The skills an agent would offer in a demo folder before any pane runs it (GET /api/agent/commands):
+ * Codex types its skills as `$name`, the others as `/name`; a project skill and one of the user's own
+ * for each, so the new workspace and tab dialogs show both.
+ */
 export function agentSkillRows(agent: string): SlashCommand[] {
   const skill = (name: string, description: string, origin: "user" | "project"): SlashCommand => ({
     name, description, source: "skill", origin, ...(agent === "codex" ? { trigger: "$" as const } : {}),
@@ -163,6 +172,8 @@ export const CHATS: Record<string, { turns: ConversationTurn[]; metadata: { mode
       ] },
     ],
   },
+  // pi reads its own session file, which is an entry tree rather than a log: a `/tree` move
+  // shows only the branch in play, and a `/compact` leaves a summary where it folded the rest.
   cli: {
     metadata: { model: "anthropic/claude-opus-5-5", reasoning_effort: "high" },
     turns: [
