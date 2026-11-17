@@ -125,14 +125,12 @@ describe("a sign-in shared by tabs", () => {
     const service = serviceWithSignIn();
     let now = Date.now();
     const { store, session } = await signIn(service, memoryAccountStore(), () => now);
-    // as a build from before sign-ins had an id stored it
     const { sign_in_id: _later, ...old } = session;
     await store.set("session", old);
     const account = new AccountService({ store, fetch: service.fetch, now: () => now, lock: memoryLock() });
     const read = await account.session();
     expect(read?.sign_in_id).toBeDefined();
     expect((await store.get("session"))?.sign_in_id).toBe(read!.sign_in_id);
-    // two readers agree on the id
     expect((await account.session())?.sign_in_id).toBe(read!.sign_in_id);
     // the access token runs out: any call refreshes it, which changes the refresh token
     now = session.expires_at;
@@ -151,7 +149,6 @@ describe("a sign-in shared by tabs", () => {
     now = session.expires_at;
     const lock = memoryLock();
     const other = new AccountService({ store: inner, fetch: service.fetch, now: () => now, lock });
-    // a store that would let another tab name and refresh the session after any plain read of it
     let reads = 0;
     const store: typeof inner = { ...inner, get: (async (name: Parameters<typeof inner.get>[0]) => {
       const value = await inner.get(name);
@@ -160,7 +157,6 @@ describe("a sign-in shared by tabs", () => {
     }) as typeof inner.get };
     const tab = new AccountService({ store, fetch: service.fetch, now: () => now, lock });
     const read = await tab.session();
-    // no plain read came first, and what this tab holds is the session as the store has it, id and all
     expect(reads).toBe(0);
     expect(read!.sign_in_id).toBeDefined();
     expect(read).toEqual((await inner.get("session"))!);
@@ -507,7 +503,6 @@ describe("which account service a page signs in with", () => {
     expect(desktopProviders(bridge())).toEqual(["github"]);
     expect(desktopProviders(bridge(["apple", "github"]))).toEqual(["github", "apple"]);
   });
-
 
 });
 

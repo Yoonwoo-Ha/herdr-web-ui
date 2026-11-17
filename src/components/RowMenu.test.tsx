@@ -7,8 +7,6 @@ import { SettingsProvider } from "../lib/settings.ts";
 import { SHEET_QUERY } from "../lib/sheets.ts";
 import { RowMenu } from "./RowMenu.tsx";
 
-// the test renderer draws no DOM: a node stands in for every element, outside every other one, and the portal the
-// menu draws into is a body that makes them
 const node = (): HTMLElement => ({
   isConnected: true, offsetWidth: 200, offsetHeight: 100, dataset: {},
   getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }),
@@ -50,7 +48,6 @@ describe("how the row menu closes from outside it", () => {
   beforeEach(() => descriptors.clear());
 
   const scrim = () => renderer!.root.findByProps({ className: "modal-scrim" });
-  /** a press on `target` inside the scrim, then the click a browser sends for it */
   const press = async (on: "scrim" | "sheet", then: "click" | "none"): Promise<void> => {
     const self = scrim();
     const target = on === "scrim" ? self : {};
@@ -70,7 +67,6 @@ describe("how the row menu closes from outside it", () => {
 
   it("keeps the sheet when a press begun in it is let go over the dimmed page", async () => {
     await draw(true);
-    // the press as a listener on the window sees it: outside the sheet's surface
     await act(async () => { events.dispatchEvent(new Event("pointerdown")); });
     expect(closes).toBe(0);
     await press("sheet", "click");

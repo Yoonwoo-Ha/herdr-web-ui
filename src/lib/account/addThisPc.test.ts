@@ -75,7 +75,6 @@ test("reopening the add window says which PC opened it", async () => {
   try { expect(await reopenAddWindow()).toBe(serverId); } finally { fetchSpy.mockRestore(); }
 });
 
-/** A PC that answers the link route with its offer, and an account service that records what is done to its directory. */
 function listing(signedIn: { account: string | null }) {
   const publicKey = exportPublicKey(generateKeyPair().publicKey);
   const serverId = deriveServerId(importPublicKey(publicKey));
@@ -148,7 +147,6 @@ test("a listing for a wait that was stopped opens no window, and reads nothing o
     // stopped while the PC was asked which one it is: no window is asked for after Stop waiting
     expect(await why(() => false)).toBe("ended");
     expect(pc.asked).toEqual(["/api/health"]);
-    // stopped while the window was being opened: over at once, before any read that may never be answered
     pc.asked.length = 0;
     expect(await why(() => !pc.asked.includes("/api/relay/link"))).toBe("ended");
     expect(pc.asked).toEqual(["/api/health", "/api/relay/link"]);

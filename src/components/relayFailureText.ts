@@ -1,7 +1,6 @@
 import type { Translate } from "../lib/i18n.ts";
 import type { RelayFailure } from "../lib/relay/shellState.ts";
 
-/** User-facing diagnostic detail: suppresses raw WebSocket close-code strings such as "The relay closed the connection (0)". */
 export function relayFailureDetail(detail: string | null | undefined): string | null {
   if (detail == null || detail === "" || /^The relay closed the connection \(\d+\)$/.test(detail)) return null;
   return detail;
@@ -10,12 +9,10 @@ export function relayFailureDetail(detail: string | null | undefined): string | 
 export type RelayFailureFlow = "new" | "join";
 
 /**
- * What a failed connection says (shellState.ts failureOf), on the shell's own screen and in the
- * Add-a-PC sheet alike: its title, the sentence under it, filtered detail, and whether Try again can help.
  * The sheet names its flow, since a refusal there has another cause and another fix than a pairing link's:
  * "new" adds a PC by the digits typed from its screen and approved on it, "join" asks a device of the
  * account that is connected to the PC, or the PC itself while its own Add screen waits (it decides the
- * request there, and no account device hears it). Without a flow the texts are the link's.
+ * request there, and no account device hears it).
  */
 export function relayFailureText(t: Translate, failure: RelayFailure, name: string, detail?: string | null, flow?: RelayFailureFlow): { title: string; copy: string; detail: string | null; retry: boolean } {
   const filtered = relayFailureDetail(detail);

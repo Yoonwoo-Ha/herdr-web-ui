@@ -3,11 +3,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fail, lineOf, files as scan, read, repo, stripComments } from "../scripts/source-scan.ts";
 
-// Client conventions from AGENTS.md and src/AGENTS.md that used to be prose only. Each failure
-// says what to change; server rules are in server/conventions.test.ts, repo-wide ones in
-// scripts/conventions.test.ts.
-
-/** The value of every declaration (`prop: value;`), comments and quoted strings removed; selectors and at-rule preludes are left out. */
 function declarationValues(css: string): string[] {
   const values: string[] = [];
   for (const [, piece, end] of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^;{}]*)([;{}])/g)) {
@@ -21,7 +16,6 @@ function declarationValues(css: string): string[] {
 
 /** The CSS named colors (CSS Color 4), which match in any case like the rest of CSS. */
 const NAMED_COLORS = "aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen".split(" ");
-/** Color literals in a declaration value: hex, color functions and named colors, in any case. `color-mix()` of tokens is fine. */
 const COLOR_LITERAL = new RegExp(String.raw`#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(|(?<![\w-])(?:${NAMED_COLORS.join("|")})(?![\w-])`, "i");
 
 describe("component CSS", () => {
@@ -56,7 +50,6 @@ describe("component CSS", () => {
   });
 });
 
-/** Custom properties declared in the top-level rules whose selector is exactly `selector` (rules nested in @media are skipped). */
 function tokens(css: string, selector: string): Map<string, string> {
   const found = new Map<string, string>();
   const text = css.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -74,9 +67,6 @@ function tokens(css: string, selector: string): Map<string, string> {
 }
 
 describe("DESIGN.md", () => {
-  // DESIGN.md's token tables say they are literal CSS. Each row is `| … | `--token` | `value` | … |`;
-  // the cell after the token is the base (`:root`) value, and a second literal cell is the light or
-  // compact one, by its column header. A cell that is not one literal (`same`, `—`, prose) is not compared.
   it("lists the same token values as src/styles.css", () => {
     const css = read("src/styles.css");
     const base = tokens(css, ":root");
@@ -130,7 +120,6 @@ const ICON_VERSIONS: Record<string, { sha256: string; cacheName: string }> = {
 };
 const CURRENT_ICONS = "sheep1";
 
-/** The icon images: dotfiles and other strays in public/icons (a Finder .DS_Store) are not icons. */
 function iconFiles(): string[] {
   const icons = readdirSync(join(repo, "public/icons")).filter((name) => /^[^.].*\.(?:png|ico|svg|webp)$/.test(name));
   return ["public/favicon.ico", "public/favicon.png", "public/apple-touch-icon.png", ...icons.map((name) => `public/icons/${name}`)].sort();
@@ -146,10 +135,6 @@ describe("icon cache", () => {
   const sw = read("public/sw.js");
   const cacheName = /const CACHE_NAME = "([^"]+)"/.exec(sw)?.[1];
   const sources = ["index.html", "public/manifest.webmanifest", "public/sw.js", ...scan("src/**/*.{ts,tsx}").filter((file) => !file.endsWith(".test.ts"))];
-  /**
-   * Every quoted URL of a file in iconFiles(), with its query (`?v=…`, or "" when it has none). The
-   * bare URLs in public/sw.js are its precache list, which the new CACHE_NAME already refreshes.
-   */
   const iconPaths = new Set(iconFiles().map((file) => file.slice("public".length)));
   const queries = sources.flatMap((file) =>
     [...read(file).matchAll(/["'](\/[\w./-]+\.(?:png|ico|svg|webp))(?:\?v=([^"'&]*))?["']/g)]
@@ -181,8 +166,6 @@ describe("icon cache", () => {
 });
 
 describe("UI wording", () => {
-  // "Session" means the herdr server session or an agent's history; the dialog that makes a
-  // workspace says "New workspace" (AGENTS.md).
   it("says New workspace, never New session", () => {
     const offenders = [...scan("src/**/*.{ts,tsx}"), ...scan("site/**/*.{ts,tsx,html}"), "index.html"]
       .filter((file) => !file.endsWith(".test.ts"))
@@ -218,15 +201,9 @@ describe("popstate listeners", () => {
   });
 });
 
-/** What draws a surface over the app, as JSX writes it: a modal dialog, a native one, a menu, a list of choices, a popover. A selector naming one (`[role="dialog"]`) is not one. */
 const SURFACE = /(?<![[\w-])aria-modal=|<dialog\b|(?<![[\w-])role="(?:dialog|alertdialog|menu|listbox)"/;
-/** How a component takes part in Back: the helper every surface goes through (lib/sheetHistory.ts), or Settings' own entries. */
 const TAKES_PART = /\b(?:usePhoneSheetBack|useSheetHistory|recordSettings)\(/;
 
-/**
- * A module's top-level functions and components: each one's name, and its source with the comments
- * blanked, up to the next one. What comes before the first is `(module)`, so no line is left unread.
- */
 function declarations(source: string): Array<{ name: string; code: string }> {
   const code = stripComments(source);
   const starts = [...code.matchAll(/^(?:export )?(?:default )?(?:async )?function\s+(\w+)|^(?:export )?const\s+(\w+)\b[^=\n]*=\s*(?:memo\(|forwardRef\b|\(|function\b|async\b)/gm)];
@@ -240,12 +217,10 @@ describe("surfaces over the app", () => {
   // A phone's Back closes what is open only when that surface holds a history entry
   // (lib/sheetHistory.ts): a dialog, a menu or a drawer that holds none is passed over, and Back
   // leaves the app, or goes to the pane before, with it still on the screen.
-  /** The surfaces whose entry a hook of their own makes where they open: the module that pushes it. */
   const OWN_ENTRY: Readonly<Record<string, string>> = {
     "src/components/RepoDiffViewer.tsx#RepoDiffViewer": "src/lib/useRepoDiffViewer.ts",
     "src/components/WebPanel.tsx#WebPanel": "src/lib/useWebPanel.ts",
   };
-  /** The surfaces Back leaves alone, each with why. */
   const LEFT_ALONE: Readonly<Record<string, string>> = {
     "src/components/Composer.tsx#Composer": "the / and @ lists follow what is typed and come and go with every key; the keyboard takes the first Back",
   };
@@ -253,8 +228,6 @@ describe("surfaces over the app", () => {
     .flatMap((file) => declarations(read(file)).filter(({ code }) => SURFACE.test(code)).map(({ name, code }) => ({ id: `${file}#${name}`, takesPart: TAKES_PART.test(code) })));
 
   it("take part in Back", () => {
-    // the scan reads the code as it is written: a surface of each kind is among those it finds
-    // (the drawer, a modal dialog, a native one, a menu, a list of choices)
     const kinds = ["src/App.tsx#App", "src/components/ConfirmDialog.tsx#ConfirmDialog", "src/components/MachineDialog.tsx#MachineDialog", "src/components/RowMenu.tsx#RowMenu", "src/components/AgentPicker.tsx#AgentPicker"];
     expect(kinds.filter((id) => !surfaces.some((surface) => surface.id === id))).toEqual([]);
     const offenders = surfaces.filter(({ id, takesPart }) => !takesPart && !(id in OWN_ENTRY) && !(id in LEFT_ALONE)).map(({ id }) => id);
@@ -301,7 +274,6 @@ describe("terminal mount", () => {
       "Every new Terminal({...}) sets scrollback: 0: herdr owns scrollback, and xterm's own would reserve a scrollbar column (AGENTS.md).");
   });
 
-  // The mount hook is called before usePaneAttach (whose reset effect cancels pending input before the next task).
   it("mounts the terminal before the attach reset effect runs", () => {
     const source = read("src/components/PaneTerminal.tsx");
     const mount = source.indexOf("useTerminalMount(");

@@ -9,7 +9,6 @@ import { setSidebarPins } from "../lib/sidebarPins.ts";
 import { RowMenu } from "./RowMenu.tsx";
 import { TabStrip } from "./TabStrip.tsx";
 
-/** herdr's TUI server, a herdr-core PC the Herdr app lays out, and one whose layout Ovis keeps (lib/machineContext.tsx) */
 const TUI = appLayoutOf({ version: "0.9.5", protocol: 22 });
 const APP_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core" });
 const OVIS_CORE = appLayoutOf({ version: "0.1.17", protocol: 22, runtime: "herdr-core", layout: { rename: true, split: true, move: true, arrange: true, worktrees: true } });
@@ -18,7 +17,6 @@ const workspace = (id: string, tabs: number): WorkspaceInfo =>
   ({ workspace_id: id, label: id, active_tab_id: `${id}:t1`, number: 1, tab_count: tabs, pane_count: tabs, focused: false, agent_status: "idle", worktree: null });
 const pane = (workspaceId: string, tabId: string): PaneInfo =>
   ({ pane_id: `${tabId}:p`, workspace_id: workspaceId, tab_id: tabId, terminal_id: `${tabId}:term`, revision: 1, focused: false, agent_status: "idle" });
-// w1 has two one-pane tabs, so t1 can move right and to w2; w2 has one
 const snapshot: SessionSnapshot = {
   protocol: 22, version: "test", workspaces: [workspace("w1", 2), workspace("w2", 1)], layouts: [], agents: [],
   tabs: [
@@ -60,7 +58,6 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
     define("localStorage", storage);
     define("navigator", { languages: ["en-US"], platform: "Linux" });
     define("window", { localStorage: storage, matchMedia: () => media, innerWidth: 1280, innerHeight: 800, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events), requestAnimationFrame: () => 1, cancelAnimationFrame() {}, setTimeout, clearTimeout });
-    // the keyboard handler reads the focused tab; the portal RowMenu draws into needs an element the test renderer can append to
     define("document", { visibilityState: "visible", activeElement: activeTab, body: { nodeType: 1, children: [], createNodeMock: node }, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} } }, querySelector: () => null, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events) });
     define("getComputedStyle", () => ({ getPropertyValue: () => "" }));
   });
@@ -143,7 +140,6 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
   });
 
   it("offers no Close tab for a tab whose locked pane the strip leaves out of its list, as a DAG viewer's (#2432)", async () => {
-    // a second pane in the open tab, unselected and drawn like omo-herdr-dag's viewer, which rosterPanes leaves out
     const viewer = { pane_id: "w1:t1:dag", workspace_id: "w1", tab_id: "w1:t1", terminal_id: "w1:t1:dag:term", revision: 1, focused: false, agent_status: "idle", label: "DAG · s" } as PaneInfo;
     snapshot.panes.push(viewer);
     stored.set("ovis:settings", JSON.stringify({ agentLocks: true, lockedAgents: ["local:w1:t1:dag"] }));
@@ -227,7 +223,6 @@ describe("the tab strip on a PC the Herdr app lays out", () => {
     await act(async () => input().props.onChange({ target: { value: "moving" } }));
     await act(async () => input().props.onKeyDown({ key: "Escape", stopPropagation() {}, nativeEvent: { isComposing: false, keyCode: 27 } }));
 
-    // the row moving (a turn, the placement): the strip goes and comes back in one commit
     await draw(TUI, null, snapshot.workspaces[0]!);
     await act(async () => tab().props.onDoubleClick());
     expect(input().props.value).toBe("moving");
