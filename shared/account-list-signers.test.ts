@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
-  ListEntryError, entryFromText, entryHash, entryHolds, entryToText, firstState, isListHash, isListKey, readFields, signEntry, verifySignature,
+  ListEntryError, entryFromText, entryHash, entryHolds, entryToText, firstState, isListHash, isListKeyEncoding, readFields, signEntry, verifySignature,
   type EntryBody, type HeldEntry, type ListRefusalCode, type SignerPower,
 } from "./account-list-entry.ts";
 import {
@@ -17,12 +17,6 @@ const P256 = { name: "ECDSA", namedCurve: "P-256" } as const;
 const SIGN = { name: "ECDSA", hash: "SHA-256" } as const;
 const T0 = 1767225600;
 
-/**
- * Every state that a test of this file is given by a function that makes one, as it is saved, with the name of that function:
- * the last test of the file reads each of them again. The four functions below are the module's own, and keep what they give.
- * Left out is a state made from one that does not read again itself, or from an entry that may not follow that state: some
- * tests hand in such things on purpose.
- */
 const made = new Map<string, string>();
 const readsAgain = (state: SignersState): boolean => {
   try {
@@ -36,9 +30,8 @@ const firstSignersState: typeof firstSignersStateOf = (first, level) => {
   made.set(JSON.stringify(state), "firstSignersState");
   return state;
 };
-/** Whether an entry may be the next that a state's member takes: one of its list, past its footing, whose keys are keys. judgeEntry checks the list and the place, and is told the rest. */
 const mayFollow = (state: SignersState, { body, list }: HeldEntry): boolean =>
-  list === state.list && body.seq > state.footing.seq && [body.signer, body.adds?.key, body.ends].every((key) => key === undefined || isListKey(key));
+  list === state.list && body.seq > state.footing.seq && [body.signer, body.adds?.key, body.ends].every((key) => key === undefined || isListKeyEncoding(key));
 const judgeEntry: typeof judgeEntryOf = (state, held, proof) => {
   const judged = judgeEntryOf(state, held, proof);
   if (readsAgain(state) && mayFollow(state, held)) made.set(JSON.stringify(judged.state), "judgeEntry");
@@ -63,28 +56,23 @@ async function newKey(name: string): Promise<Key> {
   names.set(key, name);
   return { name, key, pair };
 }
-/** The first drive device; a drive device, a watch device and an invite it adds; a drive device added late. */
 const owner = await newKey("owner");
 const phone = await newKey("phone");
 const watch = await newKey("watch");
 const invite = await newKey("invite");
 const late = await newKey("late");
-/** Keys no entry adds: the service's own, a stranger's, one a machine made for itself, and one a later login lets in. */
 const service = await newKey("service");
 const stranger = await newKey("stranger");
 const machine = await newKey("machine");
 const login = await newKey("login");
 
-/** An entry of a test list: its text, and what the next entry is signed on. */
 interface Link { readonly text: string; readonly seq: number; readonly hash: string; readonly list: string }
 interface Draft {
   readonly kind?: string;
   readonly v?: number;
   readonly adds?: readonly [Key, SignerPower];
   readonly ends?: Key;
-  /** Fields set against the chain: how an entry that does not hold is made. */
   readonly change?: Partial<EntryBody>;
-  /** Signed with this key while `signer` names another. */
   readonly signedWith?: Key;
 }
 async function sign(by: Key, body: EntryBody, signedWith: Key = by): Promise<Link> {
@@ -93,7 +81,6 @@ async function sign(by: Key, body: EntryBody, signedWith: Key = by): Promise<Lin
   return { text: entryToText(entry), seq: body.seq, hash, list: body.seq === 0 ? hash : body.list };
 }
 const genesis = (by: Key = owner, v = 1) => sign(by, { issued_at: T0, kind: "genesis", list: "", prev: "", seq: 0, signer: by.key, v, own: [] });
-/** The next entry on `before`, signed by `by`: a `remove` at `v` 1 unless the draft says otherwise. */
 function on(before: Link, by: Key, draft: Draft = {}): Promise<Link> {
   return sign(by, {
     issued_at: T0 + 60 * (before.seq + 1), kind: draft.kind ?? "remove", list: before.list, prev: before.hash, seq: before.seq + 1, signer: by.key, v: draft.v ?? 1,
@@ -102,7 +89,6 @@ function on(before: Link, by: Key, draft: Draft = {}): Promise<Link> {
     own: [], ...draft.change,
   }, draft.signedWith);
 }
-/** Entries one on another, from `before`. */
 async function row(before: Link, ...steps: readonly (readonly [Key, Draft?])[]): Promise<Link[]> {
   const links: Link[] = [];
   let head = before;
@@ -112,7 +98,6 @@ async function row(before: Link, ...steps: readonly (readonly [Key, Draft?])[]):
   }
   return links;
 }
-/** The same entry with one bit of its signature changed: it does not verify. */
 function badlySigned(link: Link): string {
   const entry = entryFromText(link.text);
   const signature = entry.signature.slice();
@@ -129,7 +114,6 @@ const last = <T>(items: readonly T[]): T => at(items, items.length - 1);
 const texts = (links: readonly Link[]) => links.map((link) => link.text);
 const place = (link: Link): ListPlace => ({ seq: link.seq, hash: link.hash });
 const replay = (links: readonly Link[], level = 1, proof?: KeyProof) => replayEntries(texts(links), level, proof ? { saved: null, proof } : { saved: null });
-/** A member that took every one of these entries. */
 async function memberOf(links: readonly Link[], level = 1, proof?: KeyProof): Promise<ListMember> {
   const { member, stopped } = await replay(links, level, proof);
   if (member === null || stopped !== null || member.entries.length !== links.length) throw new Error("the entries do not all hold");
@@ -137,21 +121,14 @@ async function memberOf(links: readonly Link[], level = 1, proof?: KeyProof): Pr
 }
 const stateOf = async (links: readonly Link[], level = 1, proof?: KeyProof) => (await memberOf(links, level, proof)).state;
 const outcomesOf = async (links: readonly Link[], level = 1, proof?: KeyProof) => (await replay(links, level, proof)).took.map((taken) => taken.outcome);
-/** What the last of these entries came to. */
 const outcomeOf = async (links: readonly Link[], level = 1, proof?: KeyProof) => last(await outcomesOf(links, level, proof));
-/** The signers by the names of their keys: the rows that no entry ended. */
 const who = (state: SignersState) => Object.fromEntries(Object.entries(state.signers).filter(([, row]) => row.ended === null).map(([key, row]) => [names.get(key) ?? key, row.power]));
-/** The keys that entry 0 or an `adds` made a signer, by name, in the order they came in. */
 const madeOf = (state: SignersState) => Object.entries(state.signers).filter(([, row]) => row.by !== null).map(([key]) => names.get(key) ?? key);
-/** The row of a key that the entry `at` made a signer; `by` signed that entry, or is null where a proof made it one; `ended` is the entry that ended the key. */
 const rowBy = (power: SignerPower, at: Link, by: Key | null, ended: Link | null = null): SignerRow => ({ power, seq: at.seq, by: by?.key ?? null, ended: ended?.seq ?? null });
 const passedOver = (code: PassedOverCode): TakenOutcome => ({ outcome: "passed_over", code, loose: code === "signer_unknown" });
 const reads = (power: SignerPower | null = "full", behind = false): TakenOutcome => ({ outcome: "reads", power, behind });
-/** One answer of the log: the entries after `after`, and as its head the last of them unless one is named. */
 const answer = (after: Link, shown: readonly Link[], head: ListPlace = place(shown.length > 0 ? last(shown) : after)): ShownAnswer => ({ after: after.seq, entries: texts(shown), head });
-/** A result in which nothing happened. */
 const quiet = { dropped_from: null, took: [], stopped: null, stuck: false, asks_after: null };
-/** Runs `work` on a runtime that calls `meanwhile` once, before it answers the first signature it is asked to verify, and restores the runtime. */
 async function whileVerifying<T>(meanwhile: () => void, work: () => Promise<T>): Promise<T> {
   const verify = crypto.subtle.verify.bind(crypto.subtle);
   let called = false;
@@ -174,7 +151,6 @@ const g = await genesis();
 const addPhone = await on(g, owner, { kind: "device", adds: [phone, "full"] });
 const addWatch = await on(addPhone, owner, { kind: "device", adds: [watch, "bound"] });
 const addInvite = await on(addWatch, owner, { kind: "invite", adds: [invite, "bound"] });
-/** Entry 0 by the owner, then a drive device, a watch device and an invite. */
 const base = [g, addPhone, addWatch, addInvite];
 const everyone: Readonly<Record<string, SignerPower>> = { owner: "full", phone: "full", watch: "bound", invite: "bound" };
 const otherList = (await genesis(phone)).hash;
@@ -217,7 +193,6 @@ describe("the signers", () => {
     if (member === null) throw new Error("entry 0 does not hold");
     const names = ["constructor", "toString", "hasOwnProperty", "valueOf", "__proto__"];
     for (const name of names) expect([name, signerPower(member.state, name)]).toEqual([name, null]);
-    // An entry that holds never names such a key (a key has its form); a held entry made by hand shows that only a row of the state's own decides.
     const { held } = last(took);
     for (const name of names) {
       const naming: HeldEntry = { ...held, body: { ...held.body, seq: held.body.seq + 1, signer: owner.key, adds: { key: name, power: "bound" } } };
@@ -232,15 +207,12 @@ describe("the signers", () => {
     const out = await on(addInvite, owner, { ends: watch });
     const { took, member } = await replay([...base, out]);
     if (member === null) throw new Error("entry 0 does not hold");
-    // Entry 0's row, the rows that an adds made, and the row of a key that an ends ended.
     expect(Object.values(firstSignersState(at(took, 0).held, 1).signers).map((row) => Object.isFrozen(row))).toEqual([true]);
     expect(Object.entries(member.state.signers).map(([key, row]) => [names.get(key), row.ended, Object.isFrozen(row)])).toEqual([["owner", null, true], ["phone", null, true], ["watch", 4, true], ["invite", null, true]]);
-    // Judging one entry gives a state of its own: a new map, with copies of the rows it was given and the row it writes.
     const before = await stateOf(base);
     const after = judgeEntry(before, last(took).held).state;
     expect([after.signers === before.signers, after.signers[phone.key] === before.signers[phone.key], after.signers[phone.key], after.signers[watch.key] === before.signers[watch.key]]).toEqual([false, false, rowBy("full", addPhone, owner), false]);
     expect([Object.isFrozen(after.signers[watch.key]), before.signers[watch.key]]).toEqual([true, rowBy("bound", addWatch, owner)]);
-    // A row cannot be written through the later state, and the earlier state is as it was.
     const kept = JSON.stringify(before);
     const copied: { ended: number | null; power: SignerPower } = after.signers[phone.key] ?? { ended: null, power: "bound" };
     expect(() => {
@@ -250,10 +222,8 @@ describe("the signers", () => {
       copied.power = "bound";
     }).toThrow(TypeError);
     expect([JSON.stringify(before), after.signers[phone.key]]).toEqual([kept, rowBy("full", addPhone, owner)]);
-    // Through an answer the member it gives has rows of its own, copies of those it was given: they are frozen as well.
     const shown = await shownEntries(await memberOf(base), answer(addInvite, [out]));
     expect(Object.values(shown.member.state.signers).map((row) => Object.isFrozen(row))).toEqual([true, true, true, true]);
-    // Every state this file gives is frozen, with its footing and the map of its rows: of a replay, of entry 0, of one entry judged, of an answer, and read again.
     const again = readSignersState(JSON.parse(JSON.stringify(before)), before.level);
     if (again === null) throw new Error("the saved state does not read");
     for (const state of [member.state, firstSignersState(at(took, 0).held, 1), before, after, shown.member.state, again]) {
@@ -419,7 +389,6 @@ describe("the four things a member does with one entry", () => {
   const head = addInvite;
 
   describe("an entry that does not hold stops it there", () => {
-    /** What a member that holds `base` says when it is shown these texts after its head; it must keep its head and its state. */
     const stoppedAt = async (shown: readonly string[]) => {
       const member = await memberOf(base);
       const result = await shownEntries(member, { after: head.seq, entries: shown, head: place(head) });
@@ -540,7 +509,6 @@ describe("the four things a member does with one entry", () => {
   });
 });
 
-/** A later kind signed by a drive device, and what follows it: a device and a join, then removals by a device it held and by the one added after. */
 const fell = await on(addInvite, owner, { kind: "later", v: 2 });
 const afterFell = await row(fell, [owner, { kind: "device", adds: [late, "full"] }], [invite, { kind: "join" }], [owner, { ends: phone }], [late, { ends: watch }], [late, {}]);
 const behindLog = [...base, fell, ...afterFell];
@@ -625,11 +593,8 @@ describe("what a list needs", () => {
 });
 
 const root = [g, addPhone];
-/** The list as its signers wrote it, after the owner added the phone. */
 const real = await row(addPhone, [owner, { kind: "device", adds: [watch, "bound"] }], [phone, { kind: "invite", adds: [invite, "bound"] }], [owner, { ends: watch }], [phone, {}]);
-/** What a lying service shows in their place, signed by a key of its own. */
 const padding = await row(addPhone, [service, { kind: "device", adds: [service, "full"] }], [service, { ends: owner }], [service, { kind: "device", adds: [late, "full"] }]);
-/** Another history under entry 1: the owner adds another device there, and goes on. */
 const fork = await row(g, [owner, { kind: "device", adds: [late, "full"] }], [owner, {}], [owner, {}], [owner, {}], [owner, {}], [owner, {}]);
 
 describe("loose entries and the footing", () => {
@@ -704,24 +669,20 @@ describe("going back", () => {
       const result = await shownEntries(await memberOf(root), answer(addPhone, loose, place(at(real, 0))));
       expect(result.took.map((item) => [item.held.hash, item.outcome.outcome])).toEqual([[at(loose, 0).hash, "passed_over"]]);
       expect({ ...result, took: [] }).toEqual({ ...quiet, member: await memberOf([...root, at(loose, 0)]), asks_after: 1 });
-      // A head that names the loose entry it has just taken says nothing, and it takes the next one.
       const plain = await shownEntries(await memberOf(root), answer(addPhone, loose, place(at(loose, 0))));
       expect([plain.asks_after, plain.stopped, plain.member]).toEqual([null, null, await memberOf([...root, ...loose])]);
     });
 
     test("the head is not held again after an entry that is the same as its own: shown its true loose entry again and then the list's entry in the place of a stale one, it comes to that entry and takes it", async () => {
-      /** Its loose entry 2 is the list's own, by a key that it cannot read as a signer; its loose entry 3 is stale. The list's entry 3 is a signer's, on entry 2. */
       const true2 = await on(addPhone, stranger, {});
       const stale3 = await on(true2, service, {});
       const list3 = await on(true2, owner, { kind: "device", adds: [watch, "bound"] });
       const member = await memberOf([...root, true2, stale3]);
       const after = await memberOf([...root, true2, list3]);
       expect([member.state.footing, listHead(member), after.state.footing]).toEqual([place(addPhone), place(stale3), place(list3)]);
-      // The honest answer to its asking after its footing: entry 2 again, then the list's entry 3, which is its head.
       const whole = await shownEntries(member, answer(addPhone, [true2, list3]));
       expect(whole.took.map((item) => item.held.hash)).toEqual([list3.hash]);
       expect({ ...whole, took: [] }).toEqual({ ...quiet, member: after, dropped_from: 3 });
-      // Cut in two, it ends the same: the first part changes nothing, the second brings it on.
       const first = await shownEntries(member, answer(addPhone, [true2], place(list3)));
       expect(first).toEqual({ ...quiet, member });
       const second = await shownEntries(first.member, answer(true2, [list3]));
@@ -731,15 +692,11 @@ describe("going back", () => {
     test("nor after its own last entry: an answer that shows all its loose entries again and goes on, under a head that names another entry among them, is taken on, and the head is held after the entry it takes", async () => {
       const member = await padded();
       const onTop = await on(last(padding), owner, {});
-      /** Another entry 3 than its own: only a lying service names it as the head of an answer that shows its entry 3 again. */
       const lying = place(at(real, 1));
-      // Its own entries are the same, so the head is not held; it takes the entry on top, which a signer signed, and the head then lies under its footing.
       const whole = await shownEntries(member, answer(addPhone, [...padding, onTop], lying));
       expect(whole.took.map((item) => item.held.hash)).toEqual([onTop.hash]);
       expect({ ...whole, took: [] }).toEqual({ ...quiet, member: await memberOf([...root, ...padding, onTop]), stopped: { seq: 3, code: "chain_broken" }, stuck: true });
-      // Without the entry on top the answer changes nothing.
       expect(await shownEntries(member, answer(addPhone, padding, lying))).toEqual({ ...quiet, member });
-      // That entry alone, in an answer that follows its head, is not taken: the head is held when an answer arrives, and it goes back.
       expect(await shownEntries(member, answer(last(padding), [onTop], lying))).toEqual({ ...quiet, member, asks_after: 1 });
     });
   });
@@ -828,11 +785,8 @@ describe("going back", () => {
     test("an entry further on that does not continue a loose entry before it makes it go back, as the first entry of an answer does", async () => {
       const member = await padded();
       const stray = await on(at(real, 0), owner, {});
-      // Its own loose entry, shown again, and then an entry on another entry 2: in one answer, and as the first entry of the next.
       expect(await shownEntries(member, answer(addPhone, [at(padding, 0), stray]))).toEqual({ ...quiet, member, asks_after: 1 });
       expect(await shownEntries(member, answer(at(padding, 0), [stray]))).toEqual({ ...quiet, member, asks_after: 1 });
-      // An entry that a signer signed, then a loose one on it, both taken in this answer, then an entry on another entry 3:
-      // it asks for the entries after its footing as it then stands.
       const loose = await on(at(real, 0), service, {});
       const result = await shownEntries(await memberOf(root), answer(addPhone, [at(real, 0), loose, await on(at(real, 1), owner, {})]));
       expect(result.took.map((taken) => [taken.held.hash, taken.outcome.outcome])).toEqual([[at(real, 0).hash, "reads"], [loose.hash, "passed_over"]]);
@@ -878,38 +832,31 @@ describe("going back", () => {
     });
 
     test("the footing moves with each entry it takes, also inside one answer: an entry further on that does not continue it stops the member at once, stuck", async () => {
-      /** An entry 3 on another entry 2 than the one the member takes. */
       const elsewhere = await on(at(padding, 0), owner, {});
       const taken = await memberOf([...root, at(real, 0)]);
       const whole = await shownEntries(await memberOf(root), answer(addPhone, [at(real, 0), elsewhere]));
       expect(whole.took.map((item) => [item.held.hash, item.outcome.outcome])).toEqual([[at(real, 0).hash, "reads"]]);
       expect({ ...whole, took: [] }).toEqual({ ...quiet, member: taken, ...stuckAt(3) });
       expect([taken.state.footing, listHead(taken)]).toEqual([place(at(real, 0)), place(at(real, 0))]);
-      // The same two entries as two answers end in the same.
       const first = await shownEntries(await memberOf(root), answer(addPhone, [at(real, 0)]));
       expect([first.stopped, first.asks_after, first.member]).toEqual([null, null, taken]);
       expect(await shownEntries(first.member, answer(at(real, 0), [elsewhere]))).toEqual({ ...quiet, member: taken, ...stuckAt(3) });
-      // So does an entry that does not continue one of its own entries under the footing, shown again before it.
       const member = await memberOf([...root, ...real]);
       expect(await shownEntries(member, answer(addPhone, [at(real, 0), elsewhere], place(last(real))))).toEqual({ ...quiet, member, ...stuckAt(3) });
       expect(await shownEntries(member, answer(addPhone, [at(real, 0), at(real, 1), await on(elsewhere, owner, {})], place(last(real))))).toEqual({ ...quiet, member, ...stuckAt(4) });
     });
 
     test("the answer's head is held against the footing as it stands after each entry it takes: at an entry it has just taken, with another hash, it stops there, stuck, and takes no further entry", async () => {
-      /** Another entry 2, and another entry 3, than those the answer shows. */
       const [other2, other3] = [place(at(padding, 0)), place(at(padding, 1))];
       const fresh = () => memberOf(root);
-      // The head at the first entry it takes: it takes that one and no other.
       for (const shown of [real.slice(0, 2), real.slice(0, 3), real.slice(0, 1)]) {
         const result = await shownEntries(await fresh(), answer(addPhone, shown, other2));
         expect(result.took.map((item) => item.held.hash)).toEqual([at(real, 0).hash]);
         expect({ ...result, took: [] }).toEqual({ ...quiet, member: await memberOf([...root, at(real, 0)]), ...stuckAt(2) });
       }
-      // The head at the second entry it takes: it takes both, and stops at the head's place.
       const atSecond = await shownEntries(await fresh(), answer(addPhone, real.slice(0, 3), other3));
       expect(atSecond.took.map((item) => item.held.hash)).toEqual([at(real, 0).hash, at(real, 1).hash]);
       expect({ ...atSecond, took: [] }).toEqual({ ...quiet, member: await memberOf([...root, ...real.slice(0, 2)]), ...stuckAt(3) });
-      // A head that is the entry it shows there says nothing, wherever it stands in the answer.
       for (const head of [place(at(real, 0)), place(at(real, 1)), place(at(real, 2))]) {
         expect(await shownEntries(await fresh(), answer(addPhone, real.slice(0, 3), head))).toMatchObject({ stopped: null, stuck: false, asks_after: null, member: await memberOf([...root, ...real.slice(0, 3)]) });
       }
@@ -918,7 +865,6 @@ describe("going back", () => {
     test("once an entry by a signer has made its own loose entry part of the list, a head that names another entry there is another history under its footing: the stop names the head's place", async () => {
       const member = await memberOf([...root, ...padding.slice(0, 2)]);
       const onLoose = await on(at(padding, 0), owner, { kind: "device", adds: [watch, "bound"] });
-      // Its loose entry 2 shown again, then an entry 3 by the owner on it in the place of its loose entry 3, under a head that names another entry 2.
       const result = await shownEntries(member, answer(addPhone, [at(padding, 0), onLoose, await on(onLoose, phone, {})], place(at(real, 0))));
       expect(result.took.map((item) => item.held.hash)).toEqual([onLoose.hash]);
       expect({ ...result, took: [] }).toEqual({ ...quiet, member: await memberOf([...root, at(padding, 0), onLoose]), dropped_from: 3, ...stuckAt(2) });
@@ -959,10 +905,8 @@ describe("going back", () => {
   });
 
   test("what a member does never depends on where an answer was cut: each answer here, cut in two at every place, ends as it does whole", async () => {
-    /** An entry 3 on another entry 2 than the true list's, and an entry 4 on it. */
     const elsewhere = await on(at(padding, 0), owner, {});
     const onElsewhere = await on(elsewhere, owner, {});
-    /** An entry 3 on the true list's entry 2, by a key nobody added, and an entry 4 on the true list's entry 3. */
     const loose = await on(at(real, 0), service, {});
     const onReal = await on(at(real, 1), owner, {});
     const stray = await on(at(real, 0), owner, {});
@@ -975,7 +919,6 @@ describe("going back", () => {
     const stale3 = await on(true2, service, {});
     const list3 = await on(true2, owner, { kind: "device", adds: [watch, "bound"] });
     const withPadding = [...root, ...padding];
-    /** What a member holds, the entry the answer follows, the texts it shows and its head; then how it ends. */
     const cases: readonly (readonly [string, readonly Link[], Link, readonly string[], ListPlace, "stuck" | "asks" | "stopped" | "took"])[] = [
       ["another entry 3 after an entry it takes", root, addPhone, texts([at(real, 0), elsewhere]), place(elsewhere), "stuck"],
       ["another entry 4 after two entries it takes", root, addPhone, texts([at(real, 0), at(real, 1), onElsewhere]), place(onElsewhere), "stuck"],
@@ -988,23 +931,19 @@ describe("going back", () => {
       ["a signature that does not verify, further on", root, addPhone, [at(real, 0).text, at(real, 1).text, badlySigned(at(real, 2)), at(real, 3).text], place(last(real)), "stopped"],
       ["a wrong seq after an entry it takes", root, addPhone, texts([at(real, 0), wrongSeq, at(real, 1)]), place(at(real, 1)), "stopped"],
       ["another list after an entry it takes", root, addPhone, texts([at(real, 0), wrongList]), place(at(real, 1)), "stopped"],
-      // Answers whose head names another entry than one they show: the head is held after each entry that the member takes.
       ["a head at the first entry it takes, with another hash", root, addPhone, texts(real.slice(0, 3)), place(at(padding, 0)), "stuck"],
       ["a head at the second entry it takes, with another hash", root, addPhone, texts(real.slice(0, 3)), place(at(padding, 1)), "stuck"],
       ["a head at the last entry it takes, with another hash", root, addPhone, texts(real.slice(0, 3)), place(at(padding, 2)), "stuck"],
       ["a head at a loose entry it takes, with another hash", root, addPhone, texts([...padding.slice(0, 2), onPadding]), place(at(real, 0)), "asks"],
-      // An honest answer to a member that holds the list's own loose entry 2 and a stale entry 3: entry 2 again, then the list's entry 3 as its head.
       ["its true loose entry again, then the list's entry in the place of a stale one", [...root, true2, stale3], addPhone, texts([true2, list3]), place(list3), "took"],
       ["a head at its own loose entry, with another hash, once an entry by a signer has taken the place of the next", [...root, ...padding.slice(0, 2)], addPhone, texts([at(padding, 0), ...onLoose]), place(at(real, 0)), "stuck"],
     ];
-    /** What an answer came to, with the entries it took by their hashes. */
     const cameTo = (result: Awaited<ReturnType<typeof shownEntries>>) => ({ ...result, took: result.took.map((item) => [item.held.hash, item.outcome.outcome]) });
     for (const [name, links, after, shown, head, end] of cases) {
       const whole = await shownEntries(await memberOf(links), { after: after.seq, entries: shown, head });
       expect([name, whole.stuck ? "stuck" : whole.stopped !== null ? "stopped" : whole.asks_after !== null ? "asks" : "took"]).toEqual([name, end]);
       for (let cut = 1; cut < shown.length; cut++) {
         const first = await shownEntries(await memberOf(links), { after: after.seq, entries: shown.slice(0, cut), head });
-        // A member that stops or asks again is shown nothing more of that answer.
         const second = first.stopped !== null || first.asks_after !== null ? null : await shownEntries(first.member, { after: after.seq + cut, entries: shown.slice(cut), head });
         const inTwo = second === null ? cameTo(first) : { ...cameTo(second), took: [...cameTo(first).took, ...cameTo(second).took], dropped_from: first.dropped_from ?? second.dropped_from };
         expect([name, cut, inTwo]).toEqual([name, cut, cameTo(whole)]);
@@ -1039,13 +978,11 @@ describe("going back", () => {
   });
 
   test("a proof is handed a state of its own: what it keeps is as it was when it was asked, whatever a later entry of the same answer, or of the same replay, writes, and what it tries to write into it changes nothing", async () => {
-    // Two entries by a key that nobody added, each of which a kind's rule is asked for, and before each of them an entry that adds a key. The first of all is of level 2, so the list needs that level, and the two carry v 2.
     const entries = await row(addPhone,
       [owner, { kind: "device", v: 2, adds: [watch, "bound"] }], [stranger, { kind: "later_login", v: 2 }], [owner, { kind: "device", adds: [late, "bound"] }], [stranger, { kind: "later_login", v: 2 }]);
     for (const through of ["an answer", "a replay"] as const) {
       const handed: SignersState[] = [];
       const written: boolean[] = [];
-      /** A kind's rule that keeps each state it is handed, and tries to write a row for the stranger into it. */
       const keeps: KeyProof = (_held, state) => {
         handed.push(state);
         written.push(Reflect.set(state.signers, stranger.key, { power: "full", seq: 0, by: null, ended: null }));
@@ -1055,7 +992,6 @@ describe("going back", () => {
       const [first, second] = handed;
       if (!first || !second || result === null) throw new Error("the rule was not asked twice");
       expect([through, handed.length, first.footing.seq, second.footing.seq]).toEqual([through, 2, 2, 4]);
-      // When it was asked first, the late device's key had no row, and the state it was handed then has none now: each is a copy of its own, frozen, with rows of its own.
       expect([through, first.signers === second.signers, Object.keys(first.signers).map((key) => names.get(key)), Object.keys(second.signers).map((key) => names.get(key))])
         .toEqual([through, false, ["owner", "phone", "watch"], ["owner", "phone", "watch", "late"]]);
       expect([through, Object.isFrozen(first), Object.isFrozen(first.signers), written, signerPower(result.state, stranger.key)]).toEqual([through, true, true, [false, false], null]);
@@ -1081,7 +1017,6 @@ describe("going back", () => {
   test("an answer is taken as the member and the answer were handed over: changed while a signature is checked, they change nothing that comes back", async () => {
     const shown = await row(addPhone, [phone, {}], [owner, {}]);
     const elsewhere = "f".repeat(64);
-    /** A member that holds entries 0 and 1 and an answer that shows it entries 2 and 3, each a copy that can be changed; the member's rows are not frozen. */
     const handed = async () => {
       const { entries, state } = await memberOf(root);
       const signers = Object.fromEntries(Object.entries(state.signers).map(([key, row]) => [key, { ...row }]));
@@ -1103,7 +1038,6 @@ describe("going back", () => {
     ];
     for (const [what, change] of changes) {
       const given = await handed();
-      // The runtime verifies entry 2, and what the caller handed over changes before the runtime answers.
       const result = await whileVerifying(() => change(given), () => shownEntries(given.member, given.answer));
       expect([what, result]).toEqual([what, unchanged]);
     }
@@ -1114,12 +1048,10 @@ describe("going back", () => {
     const member = await memberOf(base);
     const unchanged = await shownEntries(member, answer(addInvite, [byWatch]));
     expect(unchanged.took.map((taken) => taken.outcome)).toEqual([passedOver("signer_not_allowed")]);
-    // The watch's row as a frozen object whose power is read from what the caller holds: bound when the answer arrives.
     const live: { power: SignerPower } = { power: "bound" };
     const row = Object.freeze(Object.defineProperty(rowBy("bound", addWatch, owner), "power", { get: () => live.power, enumerable: true }));
     const given = { entries: member.entries, state: { ...member.state, signers: { ...member.state.signers, [watch.key]: row } } };
     expect([Object.isFrozen(row), signerPower(given.state, watch.key)]).toEqual([true, "bound"]);
-    // The runtime verifies the watch's entry, and the row says full before the runtime answers.
     const result = await whileVerifying(() => { live.power = "full"; }, () => shownEntries(given, answer(addInvite, [byWatch])));
     expect(result).toEqual(unchanged);
   });
@@ -1131,16 +1063,13 @@ describe("going back", () => {
 });
 
 describe("what a caller hands in is read as its type names it, whatever carries its fields", () => {
-  /** The fields of `data` as getters over it. */
   const getters = (data: object) => Object.fromEntries(Object.keys(data).map((name) => [name, { get: (): unknown => Reflect.get(data, name) }]));
-  /** The same data as an object whose fields are getters: inherited from its prototype, or its own and not enumerable. A spread finds no field of either. */
   const carried: readonly (readonly [string, <T extends object>(data: T) => T])[] = [
     ["inherited", (data) => Object.create(Object.create(Object.prototype, getters(data)))],
     ["its own, not enumerable", (data) => Object.create(Object.prototype, getters(data))],
   ];
 
   test("an answer's head: one that names another entry under the footing stops the member, stuck", async () => {
-    // The member holds entry 0 alone; the answer has no entry, and its head names another entry 0.
     const member = await memberOf([g]);
     const other = { seq: 0, hash: otherList };
     const stuck = await shownEntries(member, { after: 0, entries: [], head: other });
@@ -1167,7 +1096,6 @@ describe("what a caller hands in is read as its type names it, whatever carries 
   test("a row that a state's rows hold as a property of their own that is not enumerable is a row: for an answer, for judgeEntry and for a saved state", async () => {
     const member = await memberOf(root);
     const { state } = member;
-    /** The phone's row is of the rows' own and not enumerable: signerPower finds it, Object.entries and a spread do not. */
     const hidden = { ...state, signers: Object.defineProperty({ ...state.signers }, phone.key, { enumerable: false }) };
     expect([Object.keys(hidden.signers).length, signerPower(hidden, phone.key)]).toEqual([1, "full"]);
     const next = await on(addPhone, phone, { kind: "device", adds: [watch, "bound"] });
@@ -1194,7 +1122,6 @@ describe("what a caller hands in is read as its type names it, whatever carries 
 
 describe("what a caller hands in is taken once, when it is handed over", () => {
   const isData = (value: unknown): value is object => typeof value === "object" && value !== null && !(value instanceof Uint8Array);
-  /** `value` as plain frozen data: every object and list in it copied and frozen. Bytes and functions are kept as they are. */
   function frozen<T>(value: T): T {
     if (!isData(value)) return value;
     const copy: T & object = Array.isArray(value) ? Object.assign([], value) : { ...value };
@@ -1202,11 +1129,6 @@ describe("what a caller hands in is taken once, when it is handed over", () => {
     Object.freeze(copy);
     return copy;
   }
-  /**
-   * `first` behind a Proxy: each field reads as `first` has it the first time it is read, and as `later` has it at every
-   * reading after that; an object or a list in a field is handed out the same way. Once `turned` says so, an object that was
-   * handed out before then reads as `later` has it at every reading. Bytes and functions are handed out as they are.
-   */
   function shifting<T extends object>(first: T, later: T, turned: () => boolean): T {
     const read = new Set<string>();
     const born = turned();
@@ -1222,11 +1144,9 @@ describe("what a caller hands in is taken once, when it is handed over", () => {
       },
     });
   }
-  /** How a call hands over what the caller holds: `first` is what it reads as at first, `later` what it reads as after that. */
   type Handed = <T extends object>(first: T, later: T) => T;
 
   test("every function gives, for objects that read otherwise at each reading after the first, what it gives for plain frozen data of what they first read: so also when they read otherwise from the moment a signature is being checked", async () => {
-    // Two members, each of a list of its own: the first is what every object reads as at first, the second what it reads as after that.
     const more = await row(addInvite, [owner, { kind: "device", adds: [late, "full"] }], [phone, { ends: watch }]);
     const a = await memberOf(base);
     const tookA = (await replay([...base, ...more])).took;
@@ -1237,8 +1157,6 @@ describe("what a caller hands in is taken once, when it is handed over", () => {
     const tookB = (await replay(others, 3)).took;
     const shownA = answer(addInvite, more);
     const shownB = answer(at(others, 4), others.slice(5));
-    // A member of level 2, and a key that a later kind lets in on a proof: the proof reads what it is handed, and what it answers is handed over too.
-    // The owner's entry of level 2 stands before the key's entry, which carries v 2: the list needs that level, so the proof is asked.
     const rises = await on(addInvite, owner, { kind: "later", v: 2 });
     const above = await memberOf([...base, rises], 2);
     const enters = await on(rises, login, { kind: "later_login", v: 2 });
@@ -1250,12 +1168,10 @@ describe("what a caller hands in is taken once, when it is handed over", () => {
       heard++;
       return handed<NonNullable<ReturnType<KeyProof>>>({ key: login.key, power: "full" }, { key: stranger.key, power: "bound" });
     };
-    // A member that is behind stops at the key's entry, for which a proof may be asked; a member that is not behind, asked for no proof, passes it over.
     const behindYet = await stateOf([...base, rises]);
     const entry = (link: Link) => entryFromText(link.text);
     const saved = (state: SignersState): SignersState => JSON.parse(JSON.stringify(state));
 
-    /** Each call: the function, whether a signature is checked in it, and the call itself, which hands over what `handed` makes of the two. */
     const calls: readonly (readonly [string, boolean, (handed: Handed) => unknown])[] = [
       ["signerPower", false, (handed) => signerPower(handed(a.state, b.state), watch.key)],
       ["isBehind", false, (handed) => isBehind(handed(a.state, b.state))],
@@ -1278,7 +1194,6 @@ describe("what a caller hands in is taken once, when it is handed over", () => {
       ["entryHolds, of an entry out of its place", false, (handed) => entryHolds(handed(entry(addWatch), entry(at(others, 2))), handed(at(tookA, 0).held, at(tookB, 1).held))],
       ["firstState", true, (handed) => firstState(handed(entry(g), entry(otherZero)), g.hash)],
     ];
-    /** What a call came to: what it gave, or the refusal or the error it threw. */
     const cameTo = async (work: () => unknown): Promise<unknown> => {
       try {
         return await work();
@@ -1290,7 +1205,6 @@ describe("what a caller hands in is taken once, when it is handed over", () => {
     const differs: string[] = [];
     for (const [name, verifies, call] of calls) {
       const plain = await cameTo(() => call((first) => frozen(first)));
-      // The call tells the two apart: handed what is read later, it comes to something else.
       if (isDeepStrictEqual(await cameTo(() => call((_first, later) => frozen(later))), plain)) blind.push(name);
       if (!isDeepStrictEqual(await cameTo(() => call((first, later) => shifting(first, later, () => false))), plain)) differs.push(name);
       if (!verifies) continue;
@@ -1299,7 +1213,6 @@ describe("what a caller hands in is taken once, when it is handed over", () => {
       if (!isDeepStrictEqual(pending, plain)) differs.push(`${name}, while a signature is checked`);
     }
     expect({ blind, differs }).toEqual({ blind: [], differs: [] });
-    // Each of the three calls that hand over a proof heard it in every run on what is read first: twice in the call that checks no signature, three times in each of the two that do. None of them passes without asking it.
     expect(heard).toBe(8);
   });
 });
@@ -1337,12 +1250,10 @@ describe("where a member signs", () => {
   });
 });
 
-/** A later kind turns that way in on; an entry the login key signs lets it in on a proof of its own; then the key signs. */
 const turnsOn = await on(addPhone, owner, { kind: "later", v: 2 });
 const enters = await on(turnsOn, login, { kind: "later_login", v: 2 });
 const byLogin = await row(enters, [login, { kind: "device", adds: [late, "bound"] }], [login, { ends: phone }]);
 const loginLog = [...root, turnsOn, enters, ...byLogin];
-/** The rule of that later kind, for a member that reads it. */
 const letsIn = (power: SignerPower, key: Key = login, entry: Link = enters): KeyProof => (held) => (held.hash === entry.hash ? { key: key.key, power } : null);
 
 describe("a member of a higher level, and a key that a later kind lets in on a proof of its own", () => {
@@ -1365,38 +1276,28 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
     expect([older.stopped, older.member.entries, older.took.length]).toEqual([{ seq: enters.seq, code: "needs_replay" }, texts([...root, turnsOn]), 3]);
     const { state } = older.member;
     expect([who(state), state.behind, state.footing, state.needs_replay]).toEqual([{ owner: "full", phone: "full" }, turnsOn.seq, place(turnsOn), place(enters)]);
-    // One entry judged: the member stops at it, and its state is as it was.
     const { held } = at((await replay([...root, turnsOn, enters], 2)).took, 3);
     expect(judgeEntry(state, held)).toEqual({ outcome: { outcome: "stops", code: "needs_replay" }, state });
-    // A member that reads the entry, and whose kinds let nobody in, passes it and everything the key signs over, and holds what the older member holds.
     expect((await outcomesOf(loginLog, 2)).slice(3)).toEqual([passedOver("signer_unknown"), passedOver("signer_unknown"), passedOver("signer_unknown")]);
     expect(await stateOf(loginLog, 2)).toEqual({ ...(await stateOf([...root, turnsOn], 1)), level: 2, behind: null });
   });
 
   test("a proof is asked only for an entry of a level above 1 that the list already needs: where no signer signed an entry of that level before it, or it carries v 1, no member hears a proof, so the older member, which is not behind there, takes nothing that the other passes over", async () => {
-    // The login key's entry stands before any entry of level 2 that a signer signed, or it carries v 1. The owner then ends the key and adds it, and the key signs.
     for (const v of [2, 1]) {
       const early = await on(addPhone, login, { kind: "later_login", v });
       const tail = await row(early, [owner, { ends: login }], [owner, { kind: "device", adds: [login, "full"] }], [login, { ends: owner }]);
       const links = [...root, early, ...tail];
       const proof = letsIn("full", login, early);
       expect([v, isBehind(await stateOf(links, 1, proof))]).toEqual([v, false]);
-      // No member hears the proof: the key's entry is loose for both, the ends names no signer, and the adds makes the key a signer for both.
       for (const level of [1, 2]) {
         expect([v, level, (await outcomesOf(links, level, proof)).slice(2)]).toEqual([v, level, [passedOver("signer_unknown"), passedOver("already_out"), reads(), reads()]]);
         expect([v, level, who(await stateOf(links, level, proof))]).toEqual([v, level, { phone: "full", login: "full" }]);
       }
     }
-    // Once a signer has signed an entry of level 2, the list needs that level and the key's entry is heard: the older member is behind before the key appears.
     expect([(await stateOf([...root, turnsOn], 1)).behind, (await outcomesOf([...root, turnsOn, enters], 2, letsIn("full")))[3]]).toEqual([turnsOn.seq, reads(null)]);
   });
 
   describe("a member that is behind goes on only while it holds what a member that reads everything holds", () => {
-    /**
-     * The same entries, taken by a member of level 1 and by one of level 2. As far as the older member goes, the two have done
-     * the same with every entry but for reading it, and hold the same rows and the same footing. Returns how far it goes,
-     * where it stopped, and who is a signer for it there.
-     */
     async function besideLevel2(links: readonly Link[], proof?: KeyProof) {
       const older = await replay(links, 1, proof);
       if (older.member === null) throw new Error("entry 0 does not hold");
@@ -1439,26 +1340,21 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
       const stoppedAt: ListStop = { seq: key.seq, code: "needs_replay" };
       const first = await shownEntries(await memberOf([g], 1), answer(g, [rises, key]));
       expect([first.stopped, first.stuck, first.member.entries.length, first.member.state.needs_replay]).toEqual([stoppedAt, true, 2, place(key)]);
-      // Another entry 2, which a signer signed and which holds: the member takes nothing, keeps its footing, and answers as before.
       expect(await shownEntries(first.member, answer(rises, [other]))).toEqual({ ...quiet, member: first.member, stopped: stoppedAt, stuck: true });
       expect(signingPlace(first.member, place(rises))).toBeNull();
       const { held } = at((await replay([g, rises, other], 2)).took, 2);
       expect(judgeEntry(first.member.state, held)).toEqual({ outcome: { outcome: "stops", code: "needs_replay" }, state: first.member.state });
-      // Saved and read again, the state is still stopped.
       const loaded = readSignersState(JSON.parse(JSON.stringify(first.member.state)), first.member.state.level);
       if (loaded === null) throw new Error("the saved state does not read");
       expect([loaded, Object.keys(loaded)]).toEqual([first.member.state, ["level", "list", "footing", "needs", "behind", "signers", "needs_replay"]]);
       expect((await shownEntries({ entries: first.member.entries, state: loaded }, answer(rises, [other]))).stopped).toEqual(stoppedAt);
-      // An app that replays its own entries at every start hands in the stop that its saved state holds. Its entries end before that place, so it is stopped still, by its own level and by a higher one: it takes nothing and places nothing.
       for (const level of [1, 2]) {
         const again = await replayEntries(first.member.entries, level, { saved: loaded, proof: letsIn("full", login, key) });
         if (again.member === null) throw new Error("the replay holds no entry");
         expect([level, again.stopped, again.stuck, again.member.state.needs_replay, signingPlace(again.member, place(rises))]).toEqual([level, stoppedAt, true, place(key), null]);
-        // Its readers say so too, also by the level that reads everything: it answers for no key, the owner's neither, and it is behind.
         expect([level, signerPower(again.member.state, owner.key), isBehind(again.member.state)]).toEqual([level, null, true]);
         expect([level, (await shownEntries(again.member, answer(rises, [other]))).stopped]).toEqual([level, stoppedAt]);
       }
-      // A replay that takes the entry at that place clears the stop: the member's own entries and the log's from there on, by a level that can judge them. By its own level it stops there again.
       const list = texts([g, rises, key]);
       const updated = await replayEntries(list, 2, { saved: loaded, proof: letsIn("full", login, key) });
       if (updated.member === null) throw new Error("the replay holds no entry");
@@ -1475,12 +1371,10 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
       const { member } = await shownEntries(await memberOf([g], 1), answer(g, [rises, key]));
       const stop = member.state.needs_replay ?? null;
       expect(stop).toEqual(place(key));
-      // The way to go on is a replay of its own entries together with the log's from that place on. The log now holds another entry 2, which a signer signed and which holds.
       for (const level of [1, 2]) {
         const again = await replayEntries(texts([g, rises, other]), level, { saved: member.state, proof: letsIn("full", login, key) });
         if (again.member === null) throw new Error("the replay holds no entry");
         expect([level, again.stopped, again.stuck, again.member.entries.length, again.member.state.needs_replay, signingPlace(again.member, listHead(again.member))]).toEqual([level, { seq: 2, code: "chain_broken" }, true, 2, stop, null]);
-        // Stuck as it is, it is stopped still: shown that other entry, it takes nothing.
         expect([level, (await shownEntries(again.member, answer(rises, [other]))).took]).toEqual([level, []]);
       }
     });
@@ -1493,27 +1387,21 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
       expect([shown.stopped, shown.stuck]).toEqual([{ seq: 2, code: "needs_replay" }, true]);
       const saved = readSignersState(JSON.parse(JSON.stringify(shown.member.state)), shown.member.state.level);
       if (saved === null) throw new Error("the saved state does not read");
-      // The app replays its own entries at start, by the same level, and hands in the stop that its saved state holds.
       const again = await replayEntries(shown.member.entries, 1, { saved });
       if (again.member === null) throw new Error("the replay holds no entry");
       expect([again.stopped, again.stuck, again.member.state.needs_replay, signingPlace(again.member, place(rises))]).toEqual([{ seq: 2, code: "needs_replay" }, true, place(key), null]);
-      // Its copy ends before the entry it stopped at: the loose entry went when the member was shown the log's entry in its place, so the replay met no other entry there.
       expect([shown.dropped_from, shown.member.entries, again.member]).toEqual([2, texts([g, rises]), shown.member]);
     });
 
     test("a replay that is told a stop and cannot place an entry before that place makes no member: the stop stays with the member that the caller has saved, so no other history gets past it later", async () => {
-      // The owner's entry of level 2, the login key's entry, which a proof lets in, the owner's entry of level 3, and the machine's entry, for which a proof may be asked.
       const [rises, key, higher, asks] = await row(g, [owner, { kind: "later", v: 2 }], [login, { kind: "later_login", v: 2 }], [owner, { kind: "later", v: 3 }], [machine, { kind: "later_login", v: 2 }]);
       if (!rises || !key || !higher || !asks) throw new Error("the row is short");
       const proof = letsIn("full", login, key);
-      // A member of level 2 is behind from the entry of level 3 and stops at the machine's entry.
       const second = await replay([g, rises, key, higher, asks], 2, proof);
       const stop = second.member?.state.needs_replay ?? null;
       const savedState = second.member?.state ?? null;
       expect([second.stopped, stop]).toEqual([{ seq: 4, code: "needs_replay" }, place(asks)]);
-      // Its entries, replayed by level 1 with that stop: level 1 cannot place the login key's entry already, so it makes no member, and names the stop it was told.
       expect(await replayEntries(texts([g, rises, key, higher]), 1, { saved: savedState, proof })).toEqual({ member: null, took: [], stopped: { seq: 4, code: "needs_replay" }, stuck: true });
-      // So a later replay by a level that reads everything, told the stop of the saved member, which brings another entry 4, is stuck there; with the machine's entry it goes on.
       const other = await on(higher, owner, { kind: "device", adds: [watch, "bound"] });
       const wrong = await replayEntries(texts([g, rises, key, higher, other]), 3, { saved: savedState, proof });
       expect([wrong.stopped, wrong.stuck, wrong.member?.state.needs_replay]).toEqual([{ seq: 4, code: "chain_broken" }, true, stop]);
@@ -1522,35 +1410,28 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
     });
 
     test("a downgrade makes no state: a replay by a lower level that is told the stop and cannot place an entry before it gives no member, so the saved one stays; and while a member is stopped no reader answers a power, not for a key that its copy ended and not for any other", async () => {
-      // The owner adds the watch and raises the list to level 2; a key that no proof lets in signs an entry of the proof's kind; the owner ends the watch and raises the list to level 3; another such entry follows.
       const [adds, rises, loose, ends, higher, asks] = await row(g,
         [owner, { kind: "device", adds: [watch, "full"] }], [owner, { kind: "later", v: 2 }], [stranger, { kind: "later_login", v: 2 }], [owner, { ends: watch }], [owner, { kind: "later", v: 3 }], [machine, { kind: "later_login", v: 2 }]);
       if (!adds || !rises || !loose || !ends || !higher || !asks) throw new Error("the row is short");
       const log = [g, adds, rises, loose, ends, higher, asks];
-      // A member of level 2 stops at entry 6, with entries 0 to 5 in its copy. It had read the entry that ended the watch.
       const second = await replay(log, 2);
       if (second.member === null) throw new Error("the replay holds no entry");
       const saved = second.member;
       const stop = saved.state.needs_replay ?? null;
       expect([second.stopped, stop, saved.entries.length, saved.state.signers[watch.key]?.ended]).toEqual([{ seq: 6, code: "needs_replay" }, place(asks), 6, ends.seq]);
-      // Its app runs once by level 1 and replays its own entries, told the stop. Level 1 cannot place entry 3, so the replay makes no member: the app keeps the one it has saved.
       expect(await replayEntries(saved.entries, 1, { saved: saved.state })).toEqual({ member: null, took: [], stopped: { seq: 6, code: "needs_replay" }, stuck: true });
-      // While the member is stopped no reader answers a power: not for the watch, which its copy ended, and not for the owner. It is behind, and it places nothing.
       expect([signerPower(saved.state, watch.key), signerPower(saved.state, owner.key), isBehind(saved.state), signingPlace(saved, listHead(saved))]).toEqual([null, null, true, null]);
-      // Were the stop taken out of that saved state, it would still be the state of every entry of its copy: shown another entry 3 and what follows it, the member is stuck, as any member of level 2 is, and the watch stays ended.
       const { needs_replay: _stop, ...bare } = saved.state;
       const without = readSignersState(JSON.parse(JSON.stringify(bare)), bare.level);
       if (without === null) throw new Error("the state does not read");
       const fork = await row(rises, [owner, { kind: "device", adds: [late, "full"] }], [watch, { kind: "device", adds: [stranger, "full"] }]);
       const shown = await shownEntries({ entries: saved.entries, state: without }, answer(rises, fork));
       expect([shown.stopped, shown.stuck, shown.took, signerPower(shown.member.state, watch.key)]).toEqual([{ seq: 4, code: "chain_broken" }, true, [], null]);
-      // Back at a level that reads everything, the saved copy with the entry that the app kept takes the member on, and its readers answer again.
       const third = await replayEntries([...saved.entries, asks.text], 3, { saved: saved.state });
       expect([third.stopped, third.member, third.member && signerPower(third.member.state, watch.key), third.member && signerPower(third.member.state, owner.key)]).toEqual([null, await memberOf(log, 3), null, "full"]);
     });
 
     test("a lower build that replays a member that is not stopped makes no member of a shorter history: told the saved state, a level that cannot reach its footing gives no member, and the saved member stands", async () => {
-      // The owner raises the list to level 2; a proof lets the login key in; the login key adds the watch. A member of level 2 holds them all: its footing is the login key's entry, and it is not stopped.
       const [rises, enters, adds] = await row(g, [owner, { kind: "later", v: 2 }], [login, { kind: "later_login", v: 2 }], [login, { kind: "device", adds: [watch, "full"] }]);
       if (!rises || !enters || !adds) throw new Error("the row is short");
       const proof = letsIn("full", login, enters);
@@ -1558,45 +1439,35 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
       if (second.member === null) throw new Error("the replay holds no entry");
       const saved = second.member;
       expect([second.stopped, saved.state.footing, signerPower(saved.state, watch.key)]).toEqual([null, place(adds), "full"]);
-      // Its app runs once by level 1 and replays its own entries, told the saved state. Level 1 reads that state stopped at its footing, entry 3, and cannot place the login key's entry, which lies under it: no member of that shorter history, and the result names that stop.
       const first = await replayEntries(saved.entries, 1, { saved: saved.state, proof });
       expect(first).toEqual({ member: null, took: [], stopped: { seq: 3, code: "needs_replay" }, stuck: true });
-      // So the saved member stands. Shown another entry 3, as a service that lies may show it, it is stuck, as a member of level 2 is, and the watch is a signer still.
       const other = await on(enters, owner, { kind: "device", adds: [late, "full"] });
       const shown = await shownEntries(saved, answer(enters, [other]), proof);
       expect([shown.stopped, shown.stuck, shown.member, signerPower(shown.member.state, watch.key)]).toEqual([{ seq: 3, code: "chain_broken" }, true, saved, "full"]);
-      // A replay by its own level, or a higher one, told the saved state, gives the member it holds.
       expect([(await replayEntries(saved.entries, 2, { saved: saved.state, proof })).member, (await replayEntries(saved.entries, 3, { saved: saved.state, proof })).member?.state.footing]).toEqual([saved, place(adds)]);
-      // Told null, which only a first replay of a member that has no saved state is, level 1 gives the member of the shorter history: null is the caller's word.
       const careless = await replayEntries(saved.entries, 1, { saved: null, proof });
       expect([careless.member?.state.footing, careless.member?.entries.length]).toEqual([place(rises), 2]);
     });
 
     test("a saved state of a higher level, read back by a lower build, is stopped at its footing: it takes nothing, judges nothing, places nothing to sign and answers for no key, until a replay by a level that can reach that footing takes it; read by its own level or a higher one it is as it was", async () => {
-      // The owner raises the list to level 2; a proof lets the login key in; the login key adds the watch. A member of level 2 holds them all, and saves its state.
       const [rises, enters, adds] = await row(g, [owner, { kind: "later", v: 2 }], [login, { kind: "later_login", v: 2 }], [login, { kind: "device", adds: [watch, "full"] }]);
       if (!rises || !enters || !adds) throw new Error("the row is short");
       const proof = letsIn("full", login, enters);
       const saved = await memberOf([g, rises, enters, adds], 2, proof);
       const text = JSON.stringify(saved.state);
       expect([saved.state.needs_replay, signerPower(saved.state, watch.key)]).toEqual([undefined, "full"]);
-      // A build of level 1 reads it back: stopped at its footing, the entry that the login key signed.
       const lower = readSignersState(JSON.parse(text), 1);
       if (lower === null) throw new Error("the saved state does not read");
       expect([lower.needs_replay, lower.level, lower.footing, lower.signers]).toEqual([place(adds), 2, place(adds), saved.state.signers]);
-      // So that build cannot act on it with its own proofs: it answers for no key, is behind, places nothing to sign, takes nothing it is shown and judges nothing.
       const member: ListMember = { entries: saved.entries, state: lower };
       expect([signerPower(lower, watch.key), signerPower(lower, owner.key), isBehind(lower), signingPlace(member, listHead(member))]).toEqual([null, null, true, null]);
       const next = await on(adds, owner, {});
       expect(await shownEntries(member, answer(adds, [next]))).toEqual({ ...quiet, member, stopped: { seq: adds.seq, code: "needs_replay" }, stuck: true });
       const { held } = at((await replay([g, rises, enters, adds, next], 2, proof)).took, 4);
       expect(judgeEntry(lower, held).outcome).toEqual({ outcome: "stops", code: "needs_replay" });
-      // Its replay by level 1, told that state, cannot reach the footing: no member, and the saved state stands.
       expect(await replayEntries(saved.entries, 1, { saved: lower, proof })).toEqual({ member: null, took: [], stopped: { seq: adds.seq, code: "needs_replay" }, stuck: true });
-      // Read by its own level, or by a higher one, it is as it was; and a replay by level 2, told the stopped state, takes the footing and gives the member it was.
       expect([readSignersState(JSON.parse(text), 2), readSignersState(JSON.parse(text), 3)]).toEqual([saved.state, saved.state]);
       expect((await replayEntries(saved.entries, 2, { saved: lower, proof })).member).toEqual(saved);
-      // A build reads at a level: no level is the caller's mistake.
       expect(() => readSignersState(JSON.parse(text), 0)).toThrow(RangeError);
     });
 
@@ -1612,10 +1483,8 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
       await expect(replayEntries(member.entries, 1)).rejects.toThrow();
       // @ts-expect-error and one that is handed a stop, or anything else that is no state.
       await expect(replayEntries(member.entries, 1, { saved: stop })).rejects.toBeInstanceOf(RangeError);
-      // A state that does not agree with itself is no saved state either; and entries that end before the saved member's history are not its own.
       await expect(replayEntries(member.entries, 1, { saved: { ...member.state, behind: null } })).rejects.toBeInstanceOf(RangeError);
       await expect(replayEntries(member.entries.slice(0, 1), 1, { saved: member.state })).rejects.toBeInstanceOf(RangeError);
-      // Told the saved state, the member is stopped still. Null is the caller's own word that the member has none.
       const again = await replayEntries(member.entries, 1, { saved: member.state });
       expect([again.stopped, again.stuck, again.member?.state.needs_replay]).toEqual([{ seq: 2, code: "needs_replay" }, true, stop]);
     });
@@ -1626,11 +1495,9 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
     const higher = await memberOf(loginLog, 2, letsIn("full"));
     expect(await shownEntries(higher, answer(last(byLogin), other.slice(3)), letsIn("full"))).toEqual({ ...quiet, member: higher, stopped: { seq: 6, code: "chain_broken" }, stuck: true });
     expect(await shownEntries(higher, answer(turnsOn, other), letsIn("full"))).toEqual({ ...quiet, member: higher, stopped: { seq: 3, code: "chain_broken" }, stuck: true });
-    // The older member stopped at the key's entry. The service's entries are loose for it, and of a kind that lets no key in: it takes them.
     const older = await memberOf([...root, turnsOn], 1);
     const loose = await shownEntries(older, answer(turnsOn, other));
     expect([loose.stopped, loose.member]).toEqual([null, await memberOf([...root, turnsOn, ...other], 1)]);
-    // Shown the key's entries in their place, it stops at the first of them. Its own loose entries go, as for any entry that holds in their place: its copy ends before the stop.
     expect(await shownEntries(loose.member, answer(turnsOn, [enters, ...byLogin]))).toEqual({ ...quiet, dropped_from: enters.seq, member: { entries: texts([...root, turnsOn]), state: { ...loose.member.state, needs_replay: place(enters) } }, stopped: { seq: enters.seq, code: "needs_replay" }, stuck: true });
   });
 
@@ -1646,14 +1513,12 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
     const higher = await memberOf(loginLog, 2, letsIn("full"));
     if (older.member === null) throw new Error("entry 0 does not hold");
     expect(older.member.state).toEqual({ ...(await stateOf([...root, turnsOn], 2)), level: 1, behind: turnsOn.seq, needs_replay: place(enters) });
-    // After its update it replays its own entries together with the log's from the place where it stopped, and hands in that stop: it takes them all.
     const updated = await replayEntries(texts(loginLog), 2, { proof: letsIn("full"), saved: older.member.state });
     expect([updated.stopped, updated.member]).toEqual([null, higher]);
     expect(signerPower(higher.state, phone.key)).toBeNull();
   });
 
   test("an update turns no entry that a member took loose: what it could not read it reads, and its rows and its footing are as they were", async () => {
-    // An older member that is behind and goes on to the end: the owner's entry of level 2, and then what the signers it knows sign, and a key that nobody added.
     const links = [...root, turnsOn, ...(await row(turnsOn, [owner, { kind: "device", adds: [watch, "bound"] }], [phone, { kind: "later", v: 2, ends: watch }], [stranger, {}], [owner, {}]))];
     const older = await replay(links, 1);
     if (older.member === null || older.stopped !== null) throw new Error("the older member does not take them all");
@@ -1740,7 +1605,6 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
       expect([madeOf(asFull), madeOf(asBound)]).toEqual([["owner", "phone", "login"], ["owner", "phone", "login"]]);
       expect(asFull.signers[login.key]).toEqual(rowBy(power, named, owner));
       expect(asFull.signers).toEqual(asBound.signers);
-      // The older member stopped at the key's first entry: it never comes to the adds.
       expect((await replay(links, 1)).stopped).toEqual({ seq: enters.seq, code: "needs_replay" });
     }
   });
@@ -1767,11 +1631,9 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
 
   test("a proof is handed bytes of its own: what it does to them, when it is asked or later, changes no entry that comes back and no entry it was judged from", async () => {
     const token = Uint8Array.from([7, 1, 7, 2, 7, 3]);
-    // The list needs level 2 before the two entries, and they carry v 2: a proof is asked for both.
     const rises = await on(addInvite, owner, { kind: "later", v: 2 });
     const first = await on(rises, login, { kind: "later_login", v: 2, change: { own: [{ name: "token", value: token }] } });
     const second = await on(first, stranger, { kind: "later_login", v: 2, change: { own: [{ name: "token", value: token }] } });
-    /** A proof that lets the login key in, and that writes over every list of bytes of every entry it was ever handed, each time it is asked. */
     const handed: HeldEntry[] = [];
     const spoils: KeyProof = (held) => {
       handed.push(held);
@@ -1786,7 +1648,6 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
         .toEqual([["reads", first.text, true, [["token", [...token]]]], ["passed_over", second.text, true, [["token", [...token]]]]]);
     }
     expect(handed.length).toBe(4);
-    // One entry judged: the entry that the caller handed in is as it was.
     const { held } = at((await replay([...base, rises, first], 2)).took, base.length + 1);
     judgeEntry(above.state, held, spoils);
     expect([handed.length, entryToText(held.entry), [...(at(held.body.own, 0).value)]]).toEqual([5, first.text, [...token]]);
@@ -1804,17 +1665,13 @@ describe("a member of a higher level, and a key that a later kind lets in on a p
       [login, { kind: "later_login", v: 2, ends: owner }], [owner, { kind: "later_login", v: 2 }], [phone, { kind: "later_login", v: 2 }], [stranger, { kind: "later_login", v: 1 }],
       [stranger, { kind: "later_login", v: 2 }], [owner, { kind: "later", v: 3 }], [machine, { kind: "later_login", v: 2 }]);
     const links = [...root, turnsOn, out, ...entries];
-    // The stranger's first entry carries v 1, which no kind that lets a key in carries: not asked. Its second carries v 2: asked.
-    // The last but one is by a signer and above level 2: from there the member is behind. It is not asked for the last: it stops there, and a proof that would let that key in is not heard.
     const higher = await replay(links, 2, never);
     expect([asked, higher.stopped, higher.member?.state.behind]).toEqual([[at(entries, 0).hash, at(entries, 7).hash], { seq: at(entries, 9).seq, code: "needs_replay" }, at(entries, 8).seq]);
     expect((await replay(links, 2, letsIn("full", machine, at(entries, 9)))).stopped).toEqual(higher.stopped);
     asked.length = 0;
-    // A member of level 3 reads the login key's entry of level 3, but the list needs only level 2 there: not asked. After the owner's entry of level 3 it is not behind, and it is asked for the last.
     const highest = await stateOf(links, 3, never);
     expect([asked, highest.behind]).toEqual([[at(entries, 0).hash, at(entries, 7).hash, at(entries, 9).hash], null]);
     asked.length = 0;
-    // A member of level 1 is behind from the entry that turns the later kind on: it is asked for none, and stops at the first entry that a proof may be asked for.
     const lower = await replay(links, 1, never);
     expect([asked, lower.stopped, lower.member !== null && isBehind(lower.member.state)]).toEqual([[], { seq: at(entries, 0).seq, code: "needs_replay" }, true]);
   });
@@ -1836,7 +1693,6 @@ describe("a saved state", () => {
 
   test("a state of a higher level reads again: a row that a proof made, and one whose key came in and went in one entry", async () => {
     const both = await on(enters, owner, { kind: "device", adds: [login, "bound"], ends: login });
-    // A key that a proof made a signer may add a key and be added itself after that, by another or by itself: its row is then that later one.
     const added = await row(at(byLogin, 0), [owner, { kind: "device", adds: [login, "bound"] }]);
     const byItself = await on(enters, login, { kind: "device", adds: [login, "bound"] });
     const later = await stateOf([...root, turnsOn, enters, at(byLogin, 0), ...added], 2, letsIn("full"));
@@ -1865,7 +1721,6 @@ describe("a saved state", () => {
     expect([state.level, state.needs, state.behind, state.footing.seq, state.signers[watch.key]?.ended]).toEqual([1, 3, 4, 5, 5]);
     const hash = "ab".repeat(32);
     const first = state.signers[owner.key];
-    /** The state with one row changed. */
     const withRow = (key: Key, change: object): unknown => ({ ...state, signers: { ...state.signers, [key.key]: { ...state.signers[key.key], ...change } } });
     const broken: readonly unknown[] = [
       null, undefined, "state", 7, [], [state],
@@ -1882,7 +1737,6 @@ describe("a saved state", () => {
       withRow(phone, { seq: -1 }), withRow(phone, { seq: 1.5 }), withRow(phone, { seq: "1" }), withRow(phone, { seq: 6 }),
       withRow(phone, { by: "x" }), withRow(phone, { by: undefined }), withRow(phone, { by: 7 }), withRow(phone, { by: "constructor" }), withRow(phone, { by: "__proto__" }),
       withRow(phone, { by: stranger.key }),
-      // A row's by is the signer of the entry that made its key a signer: a key that was a signer of power full then. At level 1 it is never null.
       withRow(phone, { by: null }), withRow(phone, { by: watch.key }), withRow(invite, { by: watch.key }), withRow(invite, { by: invite.key }),
       { ...state, signers: { ...state.signers, [phone.key]: { ...state.signers[phone.key], ended: 2 }, [invite.key]: { ...state.signers[invite.key], by: phone.key } } },
       withRow(phone, { ended: -1 }), withRow(phone, { ended: "2" }), withRow(phone, { ended: undefined }), withRow(phone, { ended: 0 }), withRow(phone, { ended: 6 }),
@@ -1896,7 +1750,6 @@ describe("a saved state", () => {
       const read: unknown = readSignersState(value, state.level);
       expect([change, read]).toEqual([change, value]);
     }
-    // The phone may have signed the entry that added the invite, also when that entry ended the phone itself.
     for (const ended of [null, 3]) {
       const value: unknown = { ...state, signers: { ...state.signers, [phone.key]: { ...state.signers[phone.key], ended }, [invite.key]: { ...state.signers[invite.key], by: phone.key } } };
       const read: unknown = readSignersState(value, state.level);
@@ -1905,7 +1758,6 @@ describe("a saved state", () => {
   });
 
   test("a stop at its footing is that very entry: one that names another hash in that place does not read", async () => {
-    // A state of level 2, read back by a build of level 1, is stopped at its footing; saved so, it reads again so, at every level.
     const lower = readSignersState(JSON.parse(JSON.stringify(await stateOf(base, 2))), 1);
     if (lower === null) throw new Error("the saved state does not read");
     expect([lower.needs_replay, lower.footing]).toEqual([place(addInvite), place(addInvite)]);
@@ -1930,9 +1782,7 @@ describe("one entry judged", () => {
     if (member === null) throw new Error("the replay holds no entry");
     const { state } = member;
     expect(state.footing.seq).toBe(base.length - 1);
-    // Every entry of its own copy, the footing among them: each holds on this state's list, and none is one it may judge again.
     for (const { held } of took) expect(() => judgeEntry(state, held)).toThrow(RangeError);
-    // The entry past its footing is judged.
     const next = await on(last(base), owner, {});
     expect(judgeEntry(state, await entryHolds(entryFromText(next.text), last(took).held)).state.footing).toEqual(place(next));
   });
@@ -1970,27 +1820,22 @@ describe("replaying from entry 0", () => {
   });
 
   test("told the saved state, a replay that begins with another entry 0 than the saved member's is of another list: it makes no member, and names list_mismatch", async () => {
-    // The saved member holds entry 0 alone: its footing is entry 0, so no later place of its history tells the two lists apart.
     const saved = await memberOf([g]);
     expect(saved.state.footing).toEqual(place(g));
     expect(await replayEntries(texts([await genesis(phone)]), 1, { saved: saved.state })).toEqual({ member: null, took: [], stopped: { seq: 0, code: "list_mismatch" }, stuck: true });
-    // Its own entry 0 gives the member it holds.
     expect((await replayEntries(texts([g]), 1, { saved: saved.state })).member).toEqual(saved);
   });
 
   test("told the saved state, a replay in which an entry under the saved footing does not hold makes no member: those are not the member's entries, and what comes before that entry is a shorter history than its own", async () => {
     const saved = await memberOf(base);
     expect(saved.state.footing).toEqual(place(addInvite));
-    // Entry 2 with one bit of its signature changed: it does not verify.
     expect(await replayEntries([g.text, addPhone.text, badlySigned(addWatch), addInvite.text], 1, { saved: saved.state })).toEqual({ member: null, took: [], stopped: { seq: 2, code: "signature_invalid" }, stuck: true });
-    // Past the saved footing such an entry ends the replay as it ends a first one: the member keeps what it holds.
     const past = await replayEntries([...texts(base), badlySigned(await on(addInvite, owner, {}))], 1, { saved: saved.state });
     expect([past.member, past.stopped, past.stuck]).toEqual([saved, { seq: 4, code: "signature_invalid" }, false]);
   });
 
   test("told the saved state, a replay that brings another entry at the saved footing, one that holds, is another history under it: it makes no member, and names chain_broken", async () => {
     const saved = await memberOf(base);
-    // Another entry 3, which the owner signed and which holds on entry 2.
     const other = await on(addWatch, owner, { kind: "device", adds: [late, "bound"] });
     expect(await replayEntries(texts([g, addPhone, addWatch, other]), 1, { saved: saved.state })).toEqual({ member: null, took: [], stopped: { seq: 3, code: "chain_broken" }, stuck: true });
   });
@@ -2002,44 +1847,36 @@ describe("replaying from entry 0", () => {
   });
 
   test("a replay never goes back: an entry that does not continue the one before it stops it there, also after a loose entry, and its result names the stop", async () => {
-    /** An entry 2 by a key that nobody added, one by a signer, and an entry 3 by the owner on another entry 2 than either. */
     const loose2 = await on(addPhone, stranger, {});
     const signed2 = await on(addPhone, phone, {});
     const on3 = await on(await on(addPhone, owner, { kind: "device", adds: [watch, "bound"] }), owner, {});
-    // The smallest list: entries 0 and 1, a loose entry 2, and an entry 3 whose prev is the hash of another entry 2. It takes three of the four, and says so.
     const replayed = await replayEntries(texts([...root, loose2, on3]), 1, { saved: null });
     expect([replayed.stopped, replayed.took.length, replayed.member]).toEqual([{ seq: 3, code: "chain_broken" }, 3, await memberOf([...root, loose2])]);
     expect(replayed.took.map((taken) => taken.outcome.outcome)).toEqual(["reads", "reads", "passed_over"]);
-    // After an entry 2 that a signer signed it is the same stop. It is not stuck: a replay is stuck only at an entry it cannot place, or at another entry than the one the member had stopped at.
     const afterSigned = await replayEntries(texts([...root, signed2, on3]), 1, { saved: null });
     expect([afterSigned.stopped, afterSigned.stuck, afterSigned.took.length, Object.keys(afterSigned).sort()]).toEqual([{ seq: 3, code: "chain_broken" }, false, 3, ["member", "stopped", "stuck", "took"]]);
-    // The same entries as an answer of the log to a member that holds entries 0 and 1: there the first makes it go back, and the second is another history.
     expect(await shownEntries(await memberOf(root), answer(addPhone, [loose2, on3]))).toMatchObject({ stopped: null, stuck: false, asks_after: 1 });
     expect(await shownEntries(await memberOf(root), answer(addPhone, [signed2, on3]))).toMatchObject({ stopped: { seq: 3, code: "chain_broken" }, stuck: true, asks_after: null });
   });
 
   test("a replay's proof is read once: another put in its place while a signature is checked decides nothing", async () => {
-    // The owner's entry of level 2, then the login key's entry of v 2: a proof is asked for it.
     const list = texts([...root, turnsOn, enters]);
     const never: KeyProof = () => null;
     const unchanged = await replayEntries(list, 2, { saved: null, proof: never });
     expect(last(unchanged.took).outcome).toEqual(passedOver("signer_unknown"));
     expect(last((await replayEntries(list, 2, { saved: null, proof: letsIn("full") })).took).outcome).toEqual(reads(null));
-    // The runtime verifies entry 0, and the caller's options name a proof that lets the login key in before the runtime answers.
     const options: { saved: null; proof: KeyProof } = { saved: null, proof: never };
     const result = await whileVerifying(() => { options.proof = letsIn("full"); }, () => replayEntries(list, 2, options));
     expect(result).toEqual(unchanged);
   });
 
   test("over random lists, a replay by a member that reads every entry either takes every entry it was given or names where it stopped: exactly where the envelope says that an entry does not hold on the one before it", async () => {
-    /** The same lists in every run, but for their signatures: numbers from a small generator with a fixed start. */
     let seed = 20261115;
     const next = (below: number) => {
       seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
       return Math.floor((seed / 2 ** 32) * below);
     };
     const pick = <T>(items: readonly T[]): T => at(items, next(items.length));
-    /** What the envelope alone says of these texts: the first that does not hold on the one before it, or null. */
     async function firstFault(list: readonly string[]): Promise<ListStop | null> {
       let before: HeldEntry | null = null;
       for (const [seq, text] of list.entries()) {
@@ -2057,7 +1894,6 @@ describe("replaying from entry 0", () => {
     const insiders = [owner, phone, watch];
     const counts = { lists: 0, whole: 0, stopped: 0, prevAfterLoose: 0, prevAfterSigned: 0 };
     for (let round = 0; round < 150; round++) {
-      // A list that holds: entry 0, the phone and the watch device, then entries by signers and by keys that nobody added.
       const links: Link[] = [g, addPhone, addWatch];
       const length = 2 + next(6);
       for (let index = 0; index < length; index++) {
@@ -2069,7 +1905,6 @@ describe("replaying from entry 0", () => {
         links.push(await on(last(links), by, draft));
       }
       const list = texts(links);
-      // In two lists of three, one entry is put in the place of another that does not hold there; the list goes on after it.
       let fault: keyof typeof FAULTS | null = null;
       let place = -1;
       if (next(3) > 0) {
@@ -2077,7 +1912,6 @@ describe("replaying from entry 0", () => {
         fault = pick(["prev", "prev", "prev", "seq", "list", "signature", "form"] as const);
         const before = at(links, place - 1);
         const by = pick(insiders);
-        /** Another entry at the place before it: one that fails in its prev alone stands on that one. */
         const elsewhere = await on(at(links, place - 2), owner, { kind: "device", adds: [login, "bound"] });
         const put = fault === "prev" ? await on(elsewhere, by, {})
           : fault === "seq" ? await on(before, by, { change: { seq: place + 1 } })
@@ -2086,12 +1920,10 @@ describe("replaying from entry 0", () => {
           : await on(before, by, {});
         list[place] = fault === "form" ? `${put.text}=` : put.text;
       }
-      // A member that reads every entry here is never behind. One that is behind may stop for another reason, at an entry it cannot place.
       const level = 2 + (round % 2);
       const stop = await firstFault(list);
       expect([round, stop]).toEqual([round, fault === null ? null : { seq: place, code: FAULTS[fault] }]);
       const result = await replayEntries(list, level, { saved: null });
-      // It either took every entry it was given, or names where it stopped; and it holds what a replay of the entries before the stop gives.
       const taken = stop === null ? list.length : stop.seq;
       expect([round, result.stopped, result.member?.entries.length, result.took.length]).toEqual([round, stop, taken, taken]);
       if (stop !== null) expect([round, result.member]).toEqual([round, (await replayEntries(list.slice(0, stop.seq), level, { saved: null })).member]);
@@ -2101,8 +1933,6 @@ describe("replaying from entry 0", () => {
       const beforeIt = fault === "prev" ? result.took[place - 1]?.outcome : undefined;
       if (beforeIt !== undefined) counts[beforeIt.outcome === "passed_over" && beforeIt.loose ? "prevAfterLoose" : "prevAfterSigned"]++;
     }
-    // The lists are the same in every run: 44 hold whole and 106 have an entry put in. 51 of those fail in their prev alone, 13 of them right
-    // after an entry by a key that nobody added (and some more after an entry by a key that was ended): the case that a going back would swallow.
     expect([counts.lists, counts.whole, counts.stopped, counts.prevAfterLoose + counts.prevAfterSigned, counts.prevAfterLoose >= 13]).toEqual([150, 44, 106, 51, true]);
   }, 60_000);
 
@@ -2167,7 +1997,6 @@ describe("the vectors of signers/ and unreadable/", () => {
     "loose-one-then-list", "loose-several-then-list", "loose-same-again", "loose-under-signer", "loose-head-before", "footing-other-history", "footing-head-before",
     "head-other-at-shown-entry", "loose-same-then-list", "loose-not-at-higher-level",
   ];
-  /** Cases added after the first set, written with this folder's own keys. */
   const SIGNERS_SECOND = [
     "seq-wrong-after-footing", "other-list-after-footing", "prev-other-after-footing", "footing-replaced", "head-before-footing-no-entry", "head-before-past-footing",
     "same-entry-other-signature", "forged-in-place-of-loose",
@@ -2180,33 +2009,19 @@ describe("the vectors of signers/ and unreadable/", () => {
   ];
   const UNREADABLE_SECOND = ["adds-and-ends-one-key-level-1", "needs-passed-over", "replay-by-a-lower-level"];
   const GOING_BACK = [...SIGNERS.slice(12), ...SIGNERS_SECOND.slice(0, 8)];
-  /** The vectors that show an answer: those of going back, and two in which a member that is behind is shown an entry it cannot place. */
   const SHOWS = [...GOING_BACK, "adds-and-ends-one-key-level-1", "replay-by-a-lower-level"];
-  /** Not in a vector: the place a member asks after when the answer makes it ask again; null for every other vector. */
   const ASKS_AFTER: Readonly<Record<string, number>> = { "head-before-past-footing": 1 };
 
   interface VectorEntry { fields: [string, string][]; body: string; signature: string; text: string; hash: string }
   interface Vector {
     name: string;
     keys: Record<string, { pkcs8: string; spki: string }>;
-    /** What the member holds: it took each of them by the level in `expect.state.level`. */
     entries: VectorEntry[];
-    /**
-     * Going back: one whole answer of the log that the member is shown while it holds `entries`. Its entries follow the place
-     * before the first of them; an answer with no entry follows the member's head.
-     */
     shown?: { entries: VectorEntry[]; head: ListPlace };
-    /** A member of a higher level: what the kinds it reads let in on a proof of their own, by the place of the entry. */
     lets_in?: { seq: number; key: string; power: SignerPower }[];
-    /** After all that, the member's entries as it then holds them are replayed by this level, told the stop that its state holds. */
     replay?: { level: number };
-    /**
-     * `took`: what the member did with each entry of `entries` after entry 0, before it is shown anything; `code` stands only
-     * beside `passed_over`. Then its state, and for an answer its head after it, and `stops` and `stuck` when it stops.
-     */
     expect: {
       took: { seq: number; outcome: TakenOutcome["outcome"]; code?: PassedOverCode }[]; state: SignersState; head?: ListPlace; stops?: ListStop; stuck?: boolean;
-      /** What that replay gives: its member's state, or null where it makes no member, where it stopped, and whether it is stuck. */
       replay?: { member: SignersState | null; stops: ListStop | null; stuck: boolean };
     };
   }
@@ -2223,15 +2038,12 @@ describe("the vectors of signers/ and unreadable/", () => {
     if (vector === undefined) throw new Error(`no vector ${name}`);
     return vector;
   };
-  /** How many histories the generated test makes. */
   const GENERATED = 150;
-  /** Where its generator starts. A failure names this and the case, which reproduce it. */
   const GENERATED_SEED = 20261118;
   const proofOf = (vector: Vector): KeyProof => (held) => {
     const found = vector.lets_in?.find((item) => item.seq === held.body.seq);
     return found ? { key: found.key, power: found.power } : null;
   };
-  /** The member of a vector after its `entries`, taken by its own level or by another, and what happens when it is shown `shown`. */
   async function run(vector: Vector, level = vector.expect.state.level) {
     const held = await replayEntries(vector.entries.map((entry) => entry.text), level, { saved: null, proof: proofOf(vector) });
     if (held.member === null || held.stopped !== null) throw new Error(`${vector.name}: its entries do not all hold`);
@@ -2305,7 +2117,6 @@ describe("the vectors of signers/ and unreadable/", () => {
         for (let high = low + 1; high <= top; high++) {
           pairs++;
           const where = `${vector.name}, level ${low} beside level ${high}`;
-          // Their own copies: the lower member's as far as it goes, and the higher member's of the same entries.
           const lower = await replayEntries(list, low, { saved: null, proof });
           if (lower.member === null) throw new Error(`${vector.name}: entry 0 does not hold`);
           const far = lower.member.entries.length;
@@ -2319,7 +2130,6 @@ describe("the vectors of signers/ and unreadable/", () => {
             continue;
           }
           if (shown === undefined || far < list.length) continue;
-          // The answer, shown to both.
           const first = shown.entries[0];
           const after = first === undefined ? far - 1 : Number(new Map(first.fields).get("seq")) - 1;
           const show = (member: ListMember) => shownEntries(member, { after, entries: shown.entries.map((entry) => entry.text), head: shown.head }, proof);
@@ -2335,7 +2145,6 @@ describe("the vectors of signers/ and unreadable/", () => {
       }
     }
     expect(faults).toEqual([]);
-    // Not an empty claim: levels were held beside each other, and some member stopped short for a replay.
     expect([pairs > 0, short > 0]).toEqual([true, true]);
   });
 
@@ -2356,7 +2165,7 @@ describe("the vectors of signers/ and unreadable/", () => {
       expect(new Set(named).size).toBe(known.length);
       for (const [name, { pkcs8, spki }] of Object.entries(vector.keys)) {
         expect(name).toStartWith("TEST-ONLY-");
-        expect(isListKey(spki)).toBe(true);
+        expect(isListKeyEncoding(spki)).toBe(true);
         const privateKey = await crypto.subtle.importKey("pkcs8", new Uint8Array(fromBase64Url(pkcs8)), P256, false, ["sign"]);
         const message = encoder.encode(vector.name);
         expect(await verifySignature(message, new Uint8Array(await crypto.subtle.sign(SIGN, privateKey, message)), spki)).toBe(true);
@@ -2364,7 +2173,6 @@ describe("the vectors of signers/ and unreadable/", () => {
     }
   });
 
-  /** What the member of a vector did with each of its entries, in a word or two each. */
   const outcomes = async (name: string) => (await run(named(name))).took.map(({ outcome }) => (outcome.outcome === "passed_over" ? outcome.code : `${outcome.outcome}${outcome.behind ? " behind" : ""}`));
 
   test("signers/: each entry that is passed over, and why", async () => {
@@ -2470,11 +2278,9 @@ describe("the vectors of signers/ and unreadable/", () => {
     for (const [vector, wrong, stuck] of [[bySeq, "seq", false], [byList, "list", false], [byPrev, "prev", true]] as const) {
       const [third, fourth] = vector.shown?.entries ?? [];
       if (!third || !fourth) throw new Error(`${vector.name} shows no two entries`);
-      // The same entries held, the same entry 3 taken, and the same head, state and stop after it: the three differ in entry 4 alone.
       expect([vector.name, hashes(vector.entries), third.hash]).toEqual([vector.name, hashes(byPrev.entries), at(byPrev.shown?.entries ?? [], 0).hash]);
       expect([vector.name, vector.expect.head, vector.expect.state, vector.expect.stops]).toEqual([vector.name, { seq: 3, hash: third.hash }, byPrev.expect.state, { seq: 4, code: "chain_broken" }]);
       expect([vector.name, vector.expect.state.footing]).toEqual([vector.name, { seq: 3, hash: third.hash }]);
-      // Entry 4 is its signer's, and is out of order in its seq, in its list or in its prev, and in nothing else.
       const fields = new Map(fourth.fields);
       expect([vector.name, await verifySignature(fromBase64Url(fourth.body), fromBase64Url(fourth.signature), fields.get("signer") ?? "")]).toEqual([vector.name, true]);
       const outOfOrder = [fields.get("seq") === "4" ? "" : "seq", fields.get("list") === list ? "" : "list", fields.get("prev") === third.hash ? "" : "prev"].join("");
@@ -2489,17 +2295,13 @@ describe("the vectors of signers/ and unreadable/", () => {
     const shown = vector.shown;
     const [third, fourth] = shown?.entries ?? [];
     if (whole === null || shown === undefined || !third || !fourth) throw new Error("it shows no two entries");
-    // The answer: entries 3 and 4, each its signer's, the second on the first; and a head at place 3 that is another hash in form.
     expect([new Map(third.fields).get("seq"), new Map(fourth.fields).get("seq"), new Map(fourth.fields).get("prev") === third.hash]).toEqual(["3", "4", true]);
     for (const item of [third, fourth]) expect(await verifySignature(fromBase64Url(item.body), fromBase64Url(item.signature), new Map(item.fields).get("signer") ?? "")).toBe(true);
     expect([shown.head.seq, shown.head.hash === third.hash, isListHash(shown.head.hash)]).toEqual([3, false, true]);
-    // Whole: it takes entry 3, which a signer signed, so its footing is entry 3; the head lies there with another hash.
     const cameTo = (result: Awaited<ReturnType<typeof shownEntries>>) => ({ ...result, took: result.took.map((item) => item.held.hash) });
     expect(cameTo(whole)).toMatchObject({ took: [third.hash], stopped: { seq: 3, code: "chain_broken" }, stuck: true, asks_after: null, dropped_from: null });
     expect([listHead(whole.member), whole.member.state.footing]).toEqual([{ seq: 3, hash: third.hash }, { seq: 3, hash: third.hash }]);
-    // Cut in two: the first part ends as the whole does, so the member is shown no second part.
     expect(cameTo(await shownEntries(member, { after: 2, entries: [third.text], head: shown.head }))).toEqual(cameTo(whole));
-    // It differs from an honest answer in its head alone: under the last entry it shows as its head, the member takes both.
     const honest = await shownEntries(member, { after: 2, entries: [third.text, fourth.text], head: { seq: 4, hash: fourth.hash } });
     expect([honest.stopped, honest.stuck, honest.asks_after, cameTo(honest).took]).toEqual([null, false, null, [third.hash, fourth.hash]]);
   });
@@ -2510,13 +2312,11 @@ describe("the vectors of signers/ and unreadable/", () => {
     const shown = vector.shown;
     const [second, third] = shown?.entries ?? [];
     if (whole === null || shown === undefined || !second || !third) throw new Error("it shows no two entries");
-    // Its footing is entry 2, by a key that a proof let in, and it holds one loose entry past it. The answer shows entry 2 again; its head is the entry 3 that it shows, another than the member's own.
     expect([member.state.level, member.state.footing.seq, member.entries.length, second.hash === at(vector.entries, 2).hash, third.hash === at(vector.entries, 3).hash]).toEqual([2, 2, 4, true, false]);
     expect(shown.head).toEqual({ seq: 3, hash: third.hash });
     const ends = (result: Awaited<ReturnType<typeof shownEntries>>) => [result.stopped, result.stuck, result.asks_after, listHead(result.member), result.member.state.footing];
     expect(ends(whole)).toEqual([null, false, null, shown.head, shown.head]);
     expect([whole.dropped_from, whole.took.map((item) => item.held.hash)]).toEqual([3, [third.hash]]);
-    // Cut in two: shown entry 2 again under that head, it changes nothing and asks nothing; shown entry 3, it ends as it does whole.
     const first = await shownEntries(member, { after: 1, entries: [second.text], head: shown.head }, proofOf(vector));
     expect([first.took.length, first.dropped_from, first.asks_after, first.stopped, first.member]).toEqual([0, null, null, null, member]);
     expect(ends(await shownEntries(first.member, { after: 2, entries: [third.text], head: shown.head }, proofOf(vector)))).toEqual(ends(whole));
@@ -2528,10 +2328,8 @@ describe("the vectors of signers/ and unreadable/", () => {
       const lastShown = shown?.entries[shown.entries.length - 1];
       return shown !== undefined && lastShown !== undefined && shown.head.hash === lastShown.hash;
     });
-    // All but the three that show no entry, and the one whose head names another entry than it shows.
     expect(honest).toEqual(GOING_BACK.filter((name) => !["footing-head-before", "head-before-footing-no-entry", "head-before-past-footing", "head-other-at-shown-entry"].includes(name)));
     expect(honest.length).toBe(14);
-    /** A head at a place that no member here holds and no answer here comes to: it says nothing. */
     const far = { seq: 1000, hash: "ab".repeat(32) };
     const cameTo = (result: Awaited<ReturnType<typeof shownEntries>>) => ({ ...result, took: result.took.map((item) => item.held.hash) });
     let cuts = 0;
@@ -2542,9 +2340,7 @@ describe("the vectors of signers/ and unreadable/", () => {
       if (whole === null || shown === undefined) throw new Error(`${name} shows nothing`);
       const texts = shown.entries.map((entry) => entry.text);
       const after = Number(new Map(at(shown.entries, 0).fields).get("seq")) - 1;
-      // What its head says, its entries say too.
       expect([name, cameTo(await shownEntries(member, { after, entries: texts, head: far }, proofOf(vector)))]).toEqual([name, cameTo(whole)]);
-      // Cut in two at every place, each part under the answer's own head, which lies past the first part.
       for (let cut = 1; cut < texts.length; cut++) {
         const first = await shownEntries(member, { after, entries: texts.slice(0, cut), head: shown.head }, proofOf(vector));
         const second = first.stopped !== null || first.asks_after !== null ? null : await shownEntries(first.member, { after: after + cut, entries: texts.slice(cut), head: shown.head }, proofOf(vector));
@@ -2587,7 +2383,6 @@ describe("the vectors of signers/ and unreadable/", () => {
     expect([lower.member?.state.footing.seq, Object.keys(lower.member?.state.signers ?? {}).length, lower.member?.state.behind]).toEqual([1, 1, 1]);
   });
 
-  /** The vectors' own keys, by name: the same keys in every run, so a history made with them has the same bodies and the same hashes in every run, and only its signatures differ. */
   async function vectorKeys(): Promise<Map<string, Key>> {
     const keys = new Map<string, Key>();
     for (const vector of vectors) {
@@ -2609,7 +2404,6 @@ describe("the vectors of signers/ and unreadable/", () => {
       return key;
     };
     const first = keyOf("owner");
-    /** Keys that an entry may add or a later kind may let in, and one that no entry of a history names: what that one signs is loose for every member. */
     const others = ["device", "watch", "late-device", "login", "machine-own", "invite"].map(keyOf);
     const nobody = keyOf("service");
     const everyKey = [first, ...others, nobody].map((key) => key.key);
@@ -2630,15 +2424,9 @@ describe("the vectors of signers/ and unreadable/", () => {
       };
       const insiders: Key[] = [first];
       const log: Link[] = [await genesis(first)];
-      /** The places of the entries of the kind whose proof may let a signer in. */
       const asks: number[] = [];
       let named: Draft | null = null;
-      /** The level that reads everything: the highest that an entry of the log carries. */
       let top = 1;
-      /**
-       * One entry of the log, by a signer mostly. It adds a key, ends one of `ending`, or both; does again what the entry before did, as two devices at once do; or is of the kind whose
-       * proof may let its signer in. Half the keys that a proof lets in are then ended, added again as full signers, and sign: out is out, so that adds gives the key nothing.
-       */
       const entry = async (v: number, ending: readonly Key[]) => {
         const what = next(9);
         const added = pick(others);
@@ -2666,13 +2454,11 @@ describe("the vectors of signers/ and unreadable/", () => {
         for (const [signer, step] of [[first, { ends: by }], [first, { kind: "device", adds: [by, "full"] }], [by, { ends: first }]] as const) log.push(await on(last(log), signer, step));
       };
       if (round % 3 === 2) {
-        // Every third history is drawn freely: entries of any level from 1 to 3 in any order, by any key, and any key ended. So an entry may lie above what the list needs, a signer that an entry added may raise that need, and level 3 may come before level 2.
         counts.free++;
         for (let length = 4 + next(7); length > 0; length--) await entry(next(3) === 0 ? 2 : next(4) === 0 ? 3 : 1, [...insiders, ...others]);
         if (top === 1) log.push(await on(last(log), first, { kind: "later", v: 2 }));
         top = Math.max(top, 2);
       } else {
-        // The others rise in steps: the list comes to need level 2, and in half of them level 3, each by an entry of the first signer, which no entry ends before the last of those. Before and after each come entries of the levels the list needs by then.
         const rises = 2 + next(2);
         for (let needs = 1; needs <= rises; needs++) {
           if (needs > 1) log.push(await on(last(log), first, { kind: "later", v: needs }));
@@ -2680,11 +2466,9 @@ describe("the vectors of signers/ and unreadable/", () => {
         }
         top = rises;
       }
-      /** Every entry made for this case, by its hash. */
       const byHash = new Map(log.map((link) => [link.hash, link]));
       const list = texts(log);
       const logHead = place(last(log));
-      /** What a member that reads everything does with these entries: it never stops and is never behind. */
       const read = new Map<string, { member: ListMember; took: readonly TakenEntry[] }>();
       const upToDate = async (entries: readonly string[]) => {
         const key = `${entries.length} ${last(entries)}`;
@@ -2697,17 +2481,11 @@ describe("the vectors of signers/ and unreadable/", () => {
         }
         return found;
       };
-      /** The keys that these entries ended: each entry that names one in `ends` and is not passed over. They are out for good. */
       const endedBy = (took: readonly TakenEntry[]) => took.flatMap(({ held, outcome }) => (held.body.ends !== undefined && outcome.outcome !== "passed_over" ? [held.body.ends] : []));
       const whole = await upToDate(list);
       if (whole.took.some(({ outcome }) => outcome.outcome === "reads" && outcome.power === null)) counts.letIn++;
       counts.keysEnded += new Set(endedBy(whole.took)).size;
 
-      /**
-       * A member, after any step, beside the member that reads everything and holds the same entries: the same rows, the same footing, the same need. Its state, saved and read again, is as
-       * it was. No reader answers a power for a key that its copy has ended, for neither of the two. One that has not stopped signs where the other signs; one that has stopped answers for
-       * no key at all, is behind, and places nothing.
-       */
       const beside = async (member: ListMember, where: string) => {
         counts.members++;
         const { state } = member;
@@ -2719,7 +2497,6 @@ describe("the vectors of signers/ and unreadable/", () => {
         else expect([where, places, isBehind(state), everyKey.filter((key) => signerPower(state, key) !== null)]).toEqual([where, null, true, []]);
       };
 
-      /** A member that has stopped: it signs nothing and takes nothing, whatever it is shown, and every replay keeps the stop but one that takes the entry it stopped at. */
       const stopped = async (member: ListMember, level: number, where: string) => {
         counts.stopped++;
         const { entries, state } = member;
@@ -2728,27 +2505,20 @@ describe("the vectors of signers/ and unreadable/", () => {
         if (stop === undefined || stoppedAt === undefined) throw new Error(`${where}: not stopped at an entry of this case`);
         const stays: ListStop = { seq: stop.seq, code: "needs_replay" };
         const head = listHead(member);
-        // Its copy ends before the entry it stopped at, and it places no entry to sign.
         expect([where, entries.length, signingPlace(member, head), signingPlace(member, logHead)]).toEqual([where, stop.seq, null, null]);
-        // Shown the entry it stopped at, another entry in that place that a key of the list signed, or what the log holds from there: it takes nothing.
         const other = await on({ text: last(entries), seq: head.seq, hash: head.hash, list: state.list }, first, { kind: "later" });
         const nothing: Awaited<ReturnType<typeof shownEntriesOf>> = { ...quiet, member, stopped: stays, stuck: true };
         for (const shown of [[stoppedAt.text], [other.text], list.slice(stop.seq)]) expect([where, await shownEntriesOf(member, { after: head.seq, entries: shown, head: logHead }, proof)]).toEqual([where, nothing]);
-        // judgeEntry judges nothing either.
         const before = last((await upToDate(entries)).took).held;
         expect([where, judgeEntryOf(state, await entryHolds(entryFromText(other.text), before), proof)]).toEqual([where, { outcome: { outcome: "stops", code: "needs_replay" }, state }]);
-        // The app replays its own entries at start, by the same level: nothing has changed, and the result says that the member is stopped. So does a replay by the level that reads everything.
         expect([where, await replayEntriesOf(entries, level, { saved: state, proof })]).toEqual([where, { member, took: expect.anything(), stopped: stays, stuck: true }]);
         const higher = await replayEntriesOf(entries, top, { saved: state, proof });
         if (higher.member === null) throw new Error(`${where}: the replay holds no entry`);
         expect([where, higher.stopped, higher.stuck, higher.member.state.needs_replay]).toEqual([where, stays, true, stop]);
         await beside(higher.member, `${where}, replayed by the level that reads everything`);
         expect([where, (await shownEntriesOf(higher.member, { after: head.seq, entries: list.slice(stop.seq), head: logHead }, proof)).member]).toEqual([where, higher.member]);
-        // A downgrade: the app runs once by a lower level and replays its own entries, told the stop, without the entry it kept and with it. Where that level cannot place an entry before the
-        // stop, the replay makes no member, and the app keeps the one it has saved. Where it can, the member it makes is stopped still, and holds what the one that reads everything holds.
         for (let lower = 1; lower < level; lower++) {
           for (const given of [entries, [...entries, stoppedAt.text]]) {
-            // A stopped state, read back by a lower build, keeps its stop.
             expect([where, lower, readSignersState(JSON.parse(JSON.stringify(state)), lower)]).toEqual([where, lower, state]);
             const below = await replayEntriesOf(given, lower, { saved: state, proof });
             counts.downgrades++;
@@ -2762,14 +2532,11 @@ describe("the vectors of signers/ and unreadable/", () => {
             }
           }
         }
-        // To go on, it replays its own entries together with the entry it stopped at. Another entry in that place is another history: stuck, and stopped still.
         for (const by of new Set([level, top])) {
           const wrong = await replayEntriesOf([...entries, other.text], by, { saved: state, proof });
           expect([where, by, wrong.stopped, wrong.stuck, wrong.member?.entries, wrong.member?.state.needs_replay]).toEqual([where, by, { seq: stop.seq, code: "chain_broken" }, true, entries, stop]);
         }
-        // With the entry it stopped at, its own level stops there again.
         expect([where, await replayEntriesOf([...entries, stoppedAt.text], level, { saved: state, proof })]).toEqual([where, { member, took: expect.anything(), stopped: stays, stuck: true }]);
-        // A level that reads everything takes it, and the stop is gone. Shown what the log holds after its footing, the member then holds what the member that reads everything holds.
         const on2 = await replayEntriesOf([...entries, stoppedAt.text], top, { saved: state, proof });
         if (on2.member === null) throw new Error(`${where}: the replay holds no entry`);
         expect([where, on2.stopped, on2.stuck, on2.member.state.needs_replay]).toEqual([where, null, false, undefined]);
@@ -2779,11 +2546,6 @@ describe("the vectors of signers/ and unreadable/", () => {
         expect([where, caught.stopped, caught.asks_after, caught.member]).toEqual([where, null, null, whole.member]);
       };
 
-      /**
-       * A member that is not stopped, saved by its level and read back by every lower build, as the app of an older build does at start: stopped at its footing, with the same rows, so
-       * that build acts on nothing through it. Its replay by that level, told the state it read: no member, where that level cannot reach the footing, or the member of the same history,
-       * with the same rows and the same footing; never a shorter one. A replay by the member's own level, told the state that the lower build read, gives the member back.
-       */
       const lowered = async (member: ListMember, from: number, where: string) => {
         const text = JSON.stringify(member.state);
         for (let lower = 1; lower < from; lower++) {
@@ -2807,7 +2569,6 @@ describe("the vectors of signers/ and unreadable/", () => {
 
       for (let level = 1; level < top; level++) {
         const where = `${here}, level ${level} beside ${top}`;
-        // Its own replay of the log.
         const own = await replayEntriesOf(list, level, { saved: null, proof });
         if (own.member === null) throw new Error(`${where}: entry 0 does not hold`);
         await beside(own.member, `${where}, a replay`);
@@ -2819,7 +2580,6 @@ describe("the vectors of signers/ and unreadable/", () => {
           await lowered(own.member, level, `${where}, a replay`);
         }
 
-        // The same log as answers, a few entries at a time: the member ends as its replay ends.
         let { member } = await replayEntriesOf(list.slice(0, 1), level, { saved: null, proof });
         while (member !== null && member.entries.length < list.length && member.state.needs_replay === undefined) {
           const from = member.entries.length;
@@ -2830,7 +2590,6 @@ describe("the vectors of signers/ and unreadable/", () => {
         }
         expect([`${where}, as answers`, member]).toEqual([`${where}, as answers`, own.member]);
 
-        // Loose entries that the log has since replaced: the member holds the log up to a place, and from there one or two entries by a key that nobody added. It is then shown what the log holds after its footing. Half the time that place is one where the log holds an entry of the proof's kind.
         const from = asks.length > 0 && next(2) === 0 ? pick(asks) : 1 + next(log.length - 1);
         const loose: Link[] = [];
         for (let count = 1 + next(2); count > 0; count--) {
@@ -2849,7 +2608,6 @@ describe("the vectors of signers/ and unreadable/", () => {
           expect([whereLoose, shown.asks_after, shown.member]).toEqual([whereLoose, null, own.member]);
           if (shown.dropped_from !== null) counts.looseReplaced++;
         } else {
-          // It had stopped, at an entry of the log or at one of the loose entries: it takes nothing.
           expect([whereLoose, shown.took, shown.member]).toEqual([whereLoose, [], held.member]);
           if (loose.some((link) => link.hash === heldStop.hash)) {
             counts.stoppedAtLoose++;
@@ -2859,18 +2617,12 @@ describe("the vectors of signers/ and unreadable/", () => {
       }
       counts.cases++;
     }
-    // The histories are the same in every run, so these are too. A third of them are drawn freely. 1975 times a member was held beside the one that reads everything, after every step.
-    // 148 members had stopped, 53 of them at a loose entry that the log has since replaced, and each went on by a replay that took the entry it stopped at. 80 times one of them was
-    // replayed by a lower level, which 26 times made no member. 278 times a member that was not stopped was saved and read back by a lower build, stopped at its footing, and replayed by
-    // that level, which 81 times made no member and never a shorter history. 88 members were behind and never stopped. In 44 histories a proof let a key in, and 53 times such a key was
-    // then ended and added again. 55 keys were ended, 25 entries did again what the entry before did, and 148 times a member's loose entries gave way to the log's.
     expect(counts).toEqual({ cases: GENERATED, free: 50, members: 1975, stopped: 148, stoppedAtLoose: 53, downgrades: 80, noMember: 26, lowered: 278, loweredNoMember: 81, behindToTheEnd: 88, letIn: 44, endedProofKeyAdded: 53, keysEnded: 55, races: 25, looseReplaced: 148 });
   }, 120_000);
 });
 
 describe("every state that a test of this file was given", () => {
   test("reads again from its saved form, as it was", async () => {
-    // At least the state of this member, also when this test runs alone.
     await memberOf(base);
     expect(made.size).toBeGreaterThan(0);
     const unread = [...made].filter(([saved]) => !isDeepStrictEqual(readSignersState(JSON.parse(saved), JSON.parse(saved).level), JSON.parse(saved))).map(([saved, maker]) => [maker, saved]);

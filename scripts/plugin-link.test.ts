@@ -572,7 +572,7 @@ describe("ovis link, on the PC itself", () => {
 
   it("uses the device page the service offers when it has no link page", async () => {
     const { code, text } = await linkToAccount({
-      prepare: (service) => service.offer(["google"], ["google"]),
+      prepare: (service) => service.offerSignIns(["google"], ["google"]),
       approve: (service, shown) => service.approveDevice(shown, "acct_1"),
     });
     expect(code).toBe(0);
