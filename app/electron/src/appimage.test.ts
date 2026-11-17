@@ -16,7 +16,6 @@ describe("extractedAppDir", () => {
   it("leaves a FUSE mount, a .deb install and another AppImage's folder alone", () => {
     expect(extractedAppDir({ ...env, APPDIR: "/tmp/.mount_OvisAb" }, "/tmp/.mount_OvisAb/ovis")).toBeNull();
     expect(extractedAppDir({}, "/opt/Ovis/ovis")).toBeNull();
-    // started from an unpacked AppImage of another program: its APPDIR is not where this one runs
     expect(extractedAppDir(env, "/opt/Ovis/ovis")).toBeNull();
     expect(extractedAppDir({ ...env, APPIMAGE: undefined }, `${dir}/ovis`)).toBeNull();
     expect(extractedAppDir({ ...env, APPDIR: "/tmp/appimage_extracted_x/../home" }, "/tmp/appimage_extracted_x/../home/ovis")).toBeNull();
@@ -27,12 +26,10 @@ describe("extractedAppDir", () => {
   });
 });
 
-// Linux's /proc, stood in for by POSIX symlinks
 describe.skipIf(process.platform === "win32")("othersRunFrom", () => {
   const roots: string[] = [];
   afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-  /** a stand-in /proc: each process with its program and its parent */
   function proc(processes: Array<{ pid: number; ppid: number; exe: string }>): string {
     const root = mkdtempSync(join(tmpdir(), "ovis-proc-"));
     roots.push(root);

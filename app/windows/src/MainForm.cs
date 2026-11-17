@@ -15,8 +15,6 @@ namespace Ovis
 
         public MainForm()
         {
-            // made here, not in a field initializer: the Model keeps the window thread's context, which the
-            // base Form constructor installs
             model = new Model();
             Text = "Ovis";
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -33,7 +31,7 @@ namespace Ovis
             {
                 Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             }
-            catch (ArgumentException) { } // no icon in a build without one
+            catch (ArgumentException) { }
 
             var root = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false, Margin = Padding.Empty };
             root.Controls.Add(Header());
@@ -86,7 +84,6 @@ namespace Ovis
         private void Render()
         {
             SuspendLayout();
-            // Enter presses Install only on the screen that shows it
             AcceptButton = null;
             // a cleared control keeps its window handle until disposed: each Check again would leak them
             var replaced = body.Controls.Cast<Control>().Where(control => control != logBox).ToList();
@@ -142,7 +139,6 @@ namespace Ovis
             AcceptButton = install;
         }
 
-        /// <summary>Install and Update both need Git for Windows: while it is missing, getting it is the step shown.</summary>
         private bool GitStep()
         {
             if (!model.GitMissing) return false;
@@ -231,7 +227,6 @@ namespace Ovis
             }
             else if (step == PhoneStep.TokenNeeded)
             {
-                // what the server told without its token is not that Tailscale is missing: say what stood in the way
                 body.Controls.Add(Heading(Lang.L("Ovis cannot read this PC's phone address", "이 PC의 휴대폰 주소를 읽지 못했습니다")));
                 body.Controls.Add(Paragraph(Lang.L(
                     "The Ovis server asks for its token, and Ovis did not find it, or it did not work, in the server's settings (env or .env in herdr's config folder for the plugin). Open Ovis in the browser to connect your phone, or put the server's token there and check again.",

@@ -1,26 +1,13 @@
 import Foundation
 
-/// What HerdrBridgeViewController's cover says while a PC opens, as OpeningWatch.java does on
-/// Android. iOS has no count of the bytes the app receives: the web view's estimatedProgress fills
-/// the bar once the PC has answered, but it does not move while one large file arrives (it held at
-/// about 40 % through the client's script on a 10 KB/s link), so it cannot tell a stalled link from a
-/// slow one and the cover never claims a stall. Before the answer nothing is seen, so the open gives
-/// up when the answer limit passes. A PC that answered is never called off: after
-/// `slowAfterSeconds` the cover says the link is slow, with Try again. Times are seconds on one clock
-/// (ProcessInfo.systemUptime in the app).
 struct OpeningWatch {
     enum Stage: Equatable {
-        /// Nothing to say yet: "Opening …".
         case opening
-        /// The PC answered and the page still has not shown: a slow link.
         case slow
-        /// No answer within the limit: the cover says so, with Try again.
         case noAnswer
     }
 
-    /// How long a first page may take before the cover calls the link slow.
     static let slowAfterSeconds: TimeInterval = 5
-    /// The most the bar shows until the client is up: the page's load also has its script to run.
     static let maxShown = 0.95
 
     private let startedAt: TimeInterval
@@ -34,26 +21,20 @@ struct OpeningWatch {
         self.answerLimit = answerLimit
     }
 
-    /// The PC answered the first page.
     mutating func answer(at now: TimeInterval) {
         answered = true
     }
 
-    /// The web view's estimatedProgress is `fraction`: the bar's measure, once the PC has answered.
     mutating func progress(_ fraction: Double) {
         guard answered else { return }
         lastProgress = max(lastProgress, fraction)
     }
 
-    /// What the bar shows, 0 to maxShown: never less than before.
     mutating func shownProgress() -> Double {
         shown = max(shown, min(Self.maxShown, lastProgress))
         return shown
     }
 
-    /// Whether `host` (a URL's host, IPv6 in brackets or not) is an address of a home network or a
-    /// tailnet, which opens only from inside it, as homeHost in app/web/shell.js decides: only there
-    /// do the PC, the home network and its firewall explain no answer.
     static func homeHost(_ host: String) -> Bool {
         let name = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
         if name == "localhost" || name.hasSuffix(".localhost") || name == "::1" || name.hasSuffix(".ts.net") || name.hasPrefix("fd7a:115c:a1e0:") { return true }

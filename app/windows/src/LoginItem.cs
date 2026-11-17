@@ -5,18 +5,11 @@ using Microsoft.Win32;
 
 namespace Ovis
 {
-    /// <summary>
-    /// herdr's server at login, so herdr, and the app with it, is up without a terminal; a later `herdr` in a
-    /// terminal attaches to that same server. Ovis.exe copies itself to %LOCALAPPDATA%\Programs\Ovis and adds a
-    /// value under HKCU\...\Run that runs that copy with --start: no administrator, and it shows in Task Manager's
-    /// Startup apps and in Settings, where the user can turn it off. The MSIX declares a startup task instead.
-    /// </summary>
     internal static class LoginItem
     {
         private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string ValueName = "Ovis";
 
-        /// <summary>Set when Remove could not delete the running copy; it goes once this process exits.</summary>
         public static bool DeleteOnExit;
 
         public static void Install()
@@ -91,7 +84,7 @@ namespace Ovis
             {
                 Directory.Delete(Path.GetDirectoryName(Paths.InstalledExe));
             }
-            catch (IOException) { } // not empty: something else lives there, leave it
+            catch (IOException) { }
         }
 
         private static void CreateShortcut()

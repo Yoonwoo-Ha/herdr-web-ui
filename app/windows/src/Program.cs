@@ -17,11 +17,6 @@ namespace Ovis
             return 0;
         }
 
-        /// <summary>
-        /// The login start, with no window: herdr's server when the Ovis server is installed and herdr is not
-        /// running yet. A herdr that runs is left as it is. After Remove (the MSIX keeps its startup task) it
-        /// does nothing.
-        /// </summary>
         private static int StartAtLogin()
         {
             Paths.RefreshPath();

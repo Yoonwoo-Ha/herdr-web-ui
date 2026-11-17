@@ -24,7 +24,6 @@ it("turns away anything but this sign-in's own return, and keeps waiting for it"
   const origin = new URL(signIn.redirectUri).origin;
   expect((await fetch(`${origin}/`)).status).toBe(404);
   expect((await fetch(`${origin}/callback?state=s2`)).status).toBe(404);
-  // another sign-in's return, or a forged one, ends nothing
   expect((await fetch(`${signIn.redirectUri}?code=other&state=bogus`)).status).toBe(404);
   await fetch(`${signIn.redirectUri}?error=access_denied&state=s2`);
   expect(await signIn.returned).toBe("error=access_denied&state=s2");

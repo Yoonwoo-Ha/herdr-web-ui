@@ -21,25 +21,14 @@ import java.io.OutputStream;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * Download in the chat's image viewer (src/lib/saveImage.ts). The WebView has no download handler
- * and no Web Share, so a download link did nothing (#3153). The page hands the picture's bytes over
- * instead, already read through its own transport (a relay PC's blob: pictures, a PC's signed-in
- * file route), and the picture lands in Downloads, as a download in Chrome does. Android 8 and 9
- * write to Downloads only with the storage permission, which the app does not ask for: there the
- * picture goes to the share sheet. Only the PC's own page has the bridge; still, one save runs at a
- * time and SavedImage caps their size and number, so no page can fill the phone's storage.
- */
 @CapacitorPlugin(name = "OvisSave")
 public class SaveImagePlugin extends Plugin {
-    /** How long a shared picture stays for the app it went to, which may read it late. */
     private static final long SHARE_KEPT_MS = 60 * 60 * 1000;
 
     private final AtomicBoolean saving = new AtomicBoolean();
 
     private final SavedImage.Budget budget = new SavedImage.Budget();
 
-    /** name, type (image/*) and data (base64). Resolves `saved`: "downloads", or "shared" for the share sheet. */
     @PluginMethod
     public void saveImage(PluginCall call) {
         String type = call.getString("type");
@@ -84,7 +73,6 @@ public class SaveImagePlugin extends Plugin {
         ContentValues values = new ContentValues();
         values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
         values.put(MediaStore.MediaColumns.MIME_TYPE, type);
-        // hidden from other apps until it is whole
         values.put(MediaStore.MediaColumns.IS_PENDING, 1);
         Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
         if (uri == null) throw new IOException("Downloads refused the picture");
@@ -106,11 +94,6 @@ public class SaveImagePlugin extends Plugin {
         }
     }
 
-    /**
-     * Each picture in a folder of its own under cache/saved (res/xml/file_paths.xml shares that
-     * folder and nothing else), so the address an app was granted never shows another picture; one
-     * shared over an hour ago is removed.
-     */
     private void toShareSheet(PluginCall call, String name, String type, byte[] bytes) throws IOException {
         File root = new File(getContext().getCacheDir(), "saved");
         File[] earlier = root.listFiles();

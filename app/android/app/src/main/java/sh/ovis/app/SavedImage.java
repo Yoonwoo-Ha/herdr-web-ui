@@ -4,18 +4,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Base64;
 
-/** What SaveImagePlugin takes from a page, checked before anything is written. */
 final class SavedImage {
-    /**
-     * Far above any chat picture, and low enough that the bytes and their base64 copies stay a
-     * small part of a phone's memory. The client checks it too, before it encodes anything.
-     */
     static final int MAX_BYTES = 20 * 1024 * 1024;
 
-    /** Saves a page may start in one minute: a user tapping Download stays far below it. */
     static final int MAX_PER_MINUTE = 10;
 
-    /** Saves, and their bytes, in one run of the app: past either, saving waits for a restart. */
     static final int MAX_PER_RUN = 100;
 
     static final long MAX_BYTES_PER_RUN = 500L * 1024 * 1024;
@@ -29,7 +22,6 @@ final class SavedImage {
         return type != null && type.matches("image/[A-Za-z0-9.+-]+");
     }
 
-    /** The bytes of base64 `data`, or null when it is missing, empty, not base64 or over MAX_BYTES. */
     static byte[] decode(String data) {
         if (data == null || data.isEmpty() || data.length() / 4 * 3 > MAX_BYTES + 3) return null;
         try {
@@ -40,11 +32,6 @@ final class SavedImage {
         }
     }
 
-    /**
-     * `name`'s last path part, without characters a file name in Downloads cannot hold or a leading
-     * dot (a hidden file), cut to MAX_NAME_BYTES in UTF-8 with its extension kept; "image" when
-     * nothing is left.
-     */
     static String fileName(String name) {
         String last = name == null ? "" : name.substring(Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\')) + 1);
         String clean = last.replaceAll("[\\p{Cntrl}:*?\"<>|]", "").trim().replaceFirst("^\\.+", "");
@@ -68,7 +55,6 @@ final class SavedImage {
         return text.getBytes(StandardCharsets.UTF_8).length;
     }
 
-    /** Saves started in the last minute and in this run, so a page cannot write to Downloads without end. */
     static final class Budget {
         private final ArrayDeque<Long> started = new ArrayDeque<>();
 
@@ -76,7 +62,6 @@ final class SavedImage {
 
         private long bytes;
 
-        /** Whether a save of `size` bytes may start at `now` (ms); counts it when it may. */
         synchronized boolean take(long now, int size) {
             while (!started.isEmpty() && now - started.peekFirst() >= 60_000) started.removeFirst();
             if (started.size() >= MAX_PER_MINUTE || saves >= MAX_PER_RUN || bytes + size > MAX_BYTES_PER_RUN) return false;

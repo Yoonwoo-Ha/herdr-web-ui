@@ -6,19 +6,6 @@
  * afterSign (scripts/notarize-app.mjs) notarizes the app before the dmg and zip are made from it,
  * and artifactBuildCompleted (the default export here) the dmg. Plain JavaScript, so it loads under
  * whichever Node runs electron-builder.
- *
- * It runs when the notary key is set:
- *
- *   APPLE_API_KEY      path to an App Store Connect API key (.p8)
- *   APPLE_API_KEY_ID   its key ID
- *   APPLE_API_ISSUER   its issuer ID
- *
- * Signing takes electron-builder's own: CSC_LINK (a .p12, as a path or base64) with
- * CSC_KEY_PASSWORD, or CSC_NAME for a Developer ID Application identity already in a keychain.
- * Without an identity the build is unsigned and this does nothing; a notary key without a signed
- * dmg stops the build, and so does a signed build without one when OVIS_REQUIRE_NOTARIZATION=1
- * (a release). Only the API key notarizes: electron-builder's Apple ID or keychain profile
- * credentials stop the build rather than ship it unnotarized.
  */
 import { execFile } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -27,12 +14,7 @@ import { basename, join } from "node:path";
 
 export const NOTARY_ENV = ["APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER"];
 
-/** waits between staple tries: six tries over about five and a half minutes */
 export const STAPLE_WAITS = [20_000, 40_000, 60_000, 90_000, 120_000];
-/**
- * All the waiting one build may do, app and dmg together: the build, two notarizations and this
- * stay within the Mac build job's 30 minutes (.github/workflows/desktop.yml).
- */
 export const WAIT_BUDGET = 8 * 60_000;
 
 /** @typedef {(file: string, args: string[]) => Promise<string>} Run */
@@ -64,7 +46,6 @@ function defaults(options) {
 }
 
 /**
- * The notarytool key arguments, or null when no key is set and the build may go unnotarized.
  * @param {Record<string, string | undefined>} env
  * @param {string} file
  */
@@ -81,8 +62,7 @@ function notaryKey(env, file) {
 }
 
 /**
- * Submits `upload` and waits for Apple's answer; returns the submission ID once it is accepted.
- * @param {string} upload @param {string} file the app or dmg it stands for @param {string[]} key @param {Run} exec
+ * @param {string} upload @param {string} file @param {string[]} key @param {Run} exec
  */
 async function submit(upload, file, key, exec) {
   // notarytool may exit non-zero on a rejected submission; its JSON still names it, for the log below
@@ -131,7 +111,7 @@ async function staple(file, tools) {
 }
 
 /**
- * @param {string} app the signed .app electron-builder is about to package
+ * @param {string} app
  * @param {Options} [options]
  * @returns {Promise<"notarized" | "skipped">}
  */

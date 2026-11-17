@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { hideWindow, type HideableWindow } from "./windowClose.ts";
 
-/** A window that records what was done to it; leaving full screen ends when `left()` is called, as macOS ends its animation. */
 function fakeWindow(fullScreen: boolean) {
   const calls: string[] = [];
   const leaveListeners: Array<() => void> = [];

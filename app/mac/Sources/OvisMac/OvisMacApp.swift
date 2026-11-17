@@ -27,7 +27,6 @@ struct OvisMacApp: App {
     }
 }
 
-/// Ovis itself once its server runs; until then, or when it stops, the setup that gets it running.
 struct MainView: View {
     @EnvironmentObject private var model: Model
     @Environment(\.openWindow) private var openWindow
@@ -66,7 +65,6 @@ struct OvisCommands: Commands {
     }
 }
 
-/// No Cmd+Shift letter here or below: the page's own shortcuts are Cmd+Shift ones (src/lib/shortcuts.ts).
 private struct PhoneSetupItem: View {
     @Environment(\.openWindow) private var openWindow
 

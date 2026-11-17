@@ -1,16 +1,4 @@
 name: Rust PTY host binaries
-# Builds the Rust PTY host (crates/pty-sidecar) that each release ships for Linux and macOS: a static
-# (musl) binary for linux-x64 and linux-arm64, and a universal (arm64 + x86_64), ad-hoc signed one
-# for macOS, plus ovis-pty-sidecar.json (version, the crate's git tree, SHA-256 per platform) and
-# SHA256SUMS. scripts/pty-sidecar.ts install fetches them by package.json's version.
-# Release calls this before it publishes and attaches the files to the release it creates, so a
-# tag never exists without them. pty-sidecar-attach.yml runs it by hand for a release that has none.
-# Building only reads. For Release and the repair run, the attest job then signs each binary's build
-# provenance (gh attestation verify --repo devswha/ovis), so an install can tell the bytes came from
-# this workflow and not only that they match the manifest beside them; a called workflow may not ask
-# for more permissions than its caller grants, so both callers grant id-token and attestations.
-# A pull request touching the host or the PTY code runs the same builds, cargo test, and on Linux
-# the PtySession checks on the built binary.
 on:
   pull_request:
     paths:
@@ -103,8 +91,7 @@ jobs:
           name: ovis-pty-sidecar
           path: pty-sidecar/*
           if-no-files-found: error
-  # Pull requests build without signing; a release cannot publish until this job has attested. The
-  # provenance names the run's own ref and commit, so a repair dispatched from another ref than the
+  # The provenance names the run's own ref and commit, so a repair dispatched from another ref than the
   # tag it builds attests nothing rather than a source the binaries were not built from.
   attest:
     needs: manifest

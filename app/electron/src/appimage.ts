@@ -29,7 +29,7 @@ export function othersRunFrom(dir: string, selfPid: number, procRoot = "/proc"):
       const stat = readFileSync(join(procRoot, name, "stat"), "utf8");
       parents.set(pid, Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]));
       if (readlinkSync(join(procRoot, name, "exe")).startsWith(`${dir}/`)) users.push(pid);
-    } catch { /* gone, or another user's */ }
+    } catch { }
   }
   return users.some((pid) => {
     const seen = new Set<number>();

@@ -1,14 +1,9 @@
 name: Hook kill tests
 
-# job-started.sh's refusals and its one signal, tested on every pull request and every push to main: the isolated
-# tests of scripts/self-hosted-runner.test.ts (what it refuses, the signal to a proven worker, the block, its end) in
-# one throwaway container built here from scripts/self-hosted-runner/hook-test.Dockerfile, which is not the runner
-# image. On GitHub's hosted runner, written literally: no repository variable or route moves it. (A fork's pull request
-# runs its own copy of this file, which it may change like any workflow.) No path filter and no condition: a check
-# that is matched by its name must run and report on every pull request, drafts included.
+# No path filter and no condition: a check that is matched by its name must run and report on every pull
+# request, drafts included.
 on:
   pull_request:
-    # the default types, and ready_for_review: a draft opened before this file reached main gets its run when marked ready
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
@@ -29,12 +24,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      # Bun at the repository's version; its dependency cache is only restored, never saved from this job
       - uses: ./.github/actions/setup-ci
         with:
           cache: restore
-      # the tests' preload (bunfig.toml) needs node_modules: installed here on GitHub's VM, running no package's
-      # scripts, then mounted read-only into the container, which has no network
       - name: Install dependencies without their scripts
         run: |
           echo "install started $(date -u +%FT%TZ)"
@@ -49,9 +41,6 @@ jobs:
           mkdir "$RUNNER_TEMP/hook-test-out"
           bash scripts/self-hosted-runner/hook-test-container.sh ovis-hook-test:ci "$GITHUB_WORKSPACE" "$RUNNER_TEMP/hook-test-out"
           echo "run ended $(date -u +%FT%TZ)"
-      # independent of the container script: the files the container itself wrote into the output directory (its
-      # command's exit status, and the tests' output) must say the tests ran and passed. A script that returned early
-      # leaves no such files, and this step fails.
       - name: Check the container's own result
         run: |
           out="$RUNNER_TEMP/hook-test-out"

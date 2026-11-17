@@ -1,7 +1,4 @@
 name: Website
-# Builds site/ into the GitHub Pages site (https://herdrweb.dev/) after CI succeeds for a push to
-# main: the installers, the pages that forward to https://ovis.sh/, and the browser demo, which is
-# the app itself, so any client change is a site change.
 on:
   workflow_run:
     workflows: [CI]
@@ -18,8 +15,6 @@ jobs:
     name: Validate source
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/ci.yml
-    # every job of a run can write its artifacts, and deploy publishes the run's github-pages artifact: the validation runs
-    # GitHub-hosted and cacheless too (the whole Pages run is GitHub-hosted and cacheless: scripts/privileged-jobs-workflow.test.ts)
     with:
       hosted_only: true
     permissions:
@@ -33,7 +28,6 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository))
-    # it builds the site deploy publishes: GitHub-hosted whatever the runner variables say, and no shared cache (the whole Pages run is GitHub-hosted and cacheless: scripts/privileged-jobs-workflow.test.ts)
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -47,7 +41,6 @@ jobs:
       - uses: ./.github/actions/setup-ci
         with:
           cache: none
-      # the demo is a Vite build of the client
       - run: bun install --frozen-lockfile
       - run: bun scripts/build-site.ts
       - id: source
@@ -56,8 +49,6 @@ jobs:
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: _site
-  # Whether the built commit is still main's head, in a job with no environment: a run that main has moved past
-  # skips the deploy job instead of recording a deployment it never made, and ends with a notice, not red.
   current:
     if: >-
       always() && github.ref == 'refs/heads/main' &&
@@ -72,7 +63,6 @@ jobs:
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository))
     needs: [validate, build]
-    # it runs between build's upload and deploy: GitHub-hosted whatever the runner variables say (the whole Pages run is GitHub-hosted and cacheless: scripts/privileged-jobs-workflow.test.ts)
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -117,7 +107,6 @@ jobs:
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository))
     needs: [validate, build, current]
-    # it publishes the site: GitHub-hosted whatever the runner variables say (the whole Pages run is GitHub-hosted and cacheless: scripts/privileged-jobs-workflow.test.ts)
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -127,7 +116,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # checked again right before deploying: main can move on after the current job read it
       - name: Verify deployment SHA is current
         env:
           GH_TOKEN: ${{ github.token }}

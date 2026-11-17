@@ -17,7 +17,6 @@ import java.util.Set;
 import org.junit.Test;
 
 public class PushStoreTest {
-    /** String preferences with atomic commits, the surface PushStore actually uses. */
     private static final class MemoryPreferences implements SharedPreferences {
         final Map<String, String> values = new HashMap<>();
         int commits;
@@ -201,12 +200,10 @@ public class PushStoreTest {
 
     @Test public void provesOnlyThisAppsOwnAlertTaps() {
         MemoryPreferences prefs = new MemoryPreferences();
-        // no alert shown yet: no intent is one of its taps, and checking makes no proof
         assertFalse(PushStore.provesAlert(prefs, null));
         assertFalse(PushStore.provesAlert(prefs, ""));
         assertTrue(prefs.values.isEmpty());
         String proof = PushStore.alertProof(prefs);
-        // made once, from 32 random bytes, and another install's is another
         assertEquals(proof, PushStore.alertProof(prefs));
         assertEquals(43, proof.length());
         assertNotEquals(proof, PushStore.alertProof(new MemoryPreferences()));

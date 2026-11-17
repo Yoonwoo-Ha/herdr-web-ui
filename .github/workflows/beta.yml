@@ -1,28 +1,4 @@
 name: Beta
-# Publishes a beta build of the newest commit on main whose CI passed, for the PCs that opted into the beta
-# update channel (OVIS_UPDATE_CHANNEL=beta, or `beta` in the `update-channel` file of the state dir;
-# docs/guide.md#beta-builds). Nobody else is offered one: a stable updater takes plain vX.Y.Z tags only.
-#
-# - pick, tag: tags the newest main commit with a successful CI push run beta/vX.Y.Z-beta.N, where X.Y.Z
-#   is the version main is heading for (package.json's, or its next patch once that version is released)
-#   and N counts up per version. The tags stay outside v*, which the installers, the app setups and the
-#   release jobs read as releases. The server's updater on the beta channel builds and installs it like a
-#   release. Whichever CI run triggered it, a run publishes the newest green commit, so a run that waited
-#   or was displaced loses nothing; a commit a newer tag already contains gets none, and one already
-#   tagged is built again only when run by hand (to retry a failed desktop build).
-# - host-build, host-publish: the Rust PTY host (pty-sidecar.yml) for a commit whose crates/pty-sidecar
-#   no release was built from, attached to the prerelease pty-sidecar-<crate tree> before the tag exists.
-#   scripts/pty-sidecar.ts install, which the updater's install and the desktop build run, takes it from
-#   there when the release of package.json's version has another crate's host. Built once per crate tree.
-# - desktop, desktop-publish: builds the desktop app (app/electron) at that version and uploads it with
-#   its beta-*.yml feed files to the rolling `desktop-beta` prerelease, which the app reads on the beta
-#   channel (app/electron/src/updates.ts, BETA_FEED); the previous beta's files stay until the next one,
-#   for an app that read the feed just before. A prerelease is never GitHub's latest, so the stable feed
-#   (releases/latest/download) never sees it. Linux x64 and arm64 AppImages, and an arm64
-#   Mac build, signed and notarized once the repository variable DESKTOP_MAC_SIGN is 'true' (a Mac app
-#   updates itself only when signed).
-#
-# The beta tags are made here only: never push a v* or beta/* tag by hand.
 on:
   workflow_run:
     workflows: [CI]
@@ -31,7 +7,6 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-# one beta at a time: a newer run waits instead of cancelling the one building (and then takes the newest green commit)
 concurrency:
   group: beta
   cancel-in-progress: false
@@ -74,7 +49,6 @@ jobs:
             echo "::error::No commit on main has a successful CI run ('$SHA')." >&2
             exit 1
           fi
-          # a newer commit's beta, or a release, already brings this one
           if [ -n "$(comm -23 <(git tag --contains "$SHA" --list 'v*' 'beta/*' | sort) <(git tag --points-at "$SHA" --list 'beta/*' | sort))" ]; then
             echo "A newer tag already contains $SHA; no beta."
             exit 0
@@ -92,7 +66,6 @@ jobs:
               echo "::error::package.json's version '$version' is not X.Y.Z." >&2
               exit 1
             fi
-            # once X.Y.Z is released, main is heading for the next patch
             if git rev-parse --quiet --verify "refs/tags/v$version" >/dev/null; then
               version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
             fi
@@ -105,8 +78,6 @@ jobs:
             echo "version=$beta"
             echo "sha=$SHA"
           } >> "$GITHUB_OUTPUT"
-      # the host install takes: the release of package.json's version when it was built from this crate
-      # tree, else the tree's own prerelease; neither there, it is built here first
       - name: Find the Rust PTY host
         id: host
         if: steps.version.outputs.tag != ''
@@ -128,12 +99,10 @@ jobs:
     uses: ./.github/workflows/pty-sidecar.yml
     with:
       ref: ${{ needs.pick.outputs.sha }}
-    # its attest job signs the binaries' build provenance when the commit is the run's own
     permissions:
       contents: read
       id-token: write
       attestations: write
-  # the write token runs no repository code: it only uploads what host-build made
   host-publish:
     needs: [pick, host-build]
     runs-on: ubuntu-24.04
@@ -158,10 +127,8 @@ jobs:
             gh release create "pty-sidecar-$TREE" --prerelease --latest=false --target "$SHA" --title "Rust PTY host $TREE" \
               --notes "The Rust PTY host built from crates/pty-sidecar tree $TREE, for beta builds whose crate no release was built from."
           fi
-          # the manifest last: install never reads one whose files are missing
           find . -maxdepth 1 -type f ! -name ovis-pty-sidecar.json -print0 | xargs -0 gh release upload "pty-sidecar-$TREE" --clobber
           gh release upload "pty-sidecar-$TREE" ovis-pty-sidecar.json --clobber
-  # the tag comes once its host is there: the updater's install of the beta fetches it
   tag:
     needs: [pick, host-publish]
     if: >-
@@ -213,8 +180,6 @@ jobs:
       - name: Install the app's packages
         working-directory: app/electron
         run: bun install --frozen-lockfile
-      # staged at main's own version: the server the app carries and its Rust PTY host (from that version's
-      # release, or this crate tree's prerelease) keep it; only the app takes the beta's
       - name: Stage hc, Bun and the server
         working-directory: app/electron
         run: bun scripts/build.ts stage
@@ -251,9 +216,7 @@ jobs:
       - name: Build ${{ matrix.target }}
         working-directory: app/electron
         env:
-          # built with the stable feed: an app that leaves the beta channel waits there for the release
           OVIS_UPDATE_FEED: ${{ env.STABLE_FEED }}
-          # the release tag a release build checks package.json against (build.ts): the beta's version
           OVIS_RELEASE_TAG: v${{ needs.pick.outputs.version }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ steps.sign.outputs.on == 'true' && 'true' || 'false' }}
           CSC_LINK: ${{ steps.sign.outputs.on == 'true' && secrets.MAC_DEVELOPER_ID_P12 || '' }}
@@ -274,9 +237,8 @@ jobs:
             app/electron/dist/Ovis-*
             app/electron/dist/beta*.yml
           if-no-files-found: error
-  # the write token runs no repository code: it only uploads what the builds made. It says for itself
-  # when it runs: host-publish is skipped whenever the host was built before, and a job that names no
-  # status function is skipped once any job its needs lead back to was, although every build passed
+  # host-publish is skipped whenever the host was built before, and a job that names no status function is
+  # skipped once any job its needs lead back to was, although every build passed
   desktop-publish:
     needs: [pick, desktop]
     if: ${{ !cancelled() && needs.desktop.result == 'success' }}
@@ -305,12 +267,10 @@ jobs:
             gh release create desktop-beta --prerelease --target "$SHA" --title "Desktop app beta" \
               --notes "The latest beta build of the desktop app, from main. It updates itself here only on the beta update channel."
           fi
-          # the feed files last: an app never reads a feed whose files are missing
           find . -maxdepth 1 -type f ! -name 'beta*.yml' -print0 | xargs -0 gh release upload desktop-beta --clobber
           previous=$(gh release view desktop-beta --json name --jq '.name' | sed -n 's/^Desktop app beta //p')
           gh release upload desktop-beta beta*.yml --clobber
           gh release edit desktop-beta --prerelease --title "Desktop app beta $VERSION"
-          # the builds before the previous one go: the previous one stays for an app that read its feed just before
           gh release view desktop-beta --json assets --jq '.assets[].name' | while read -r name; do
             [ -e "$name" ] && continue
             [ -n "$previous" ] && [[ "$name" == *"-$previous-"* || "$name" == *"-$previous."* ]] && continue

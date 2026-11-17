@@ -1,8 +1,3 @@
-/**
- * The two programs the desktop app runs: herdr-core (`hc`), which owns the terminals, and the Ovis
- * server, compiled into one binary (scripts/server-artifact.ts), which serves the window. Nothing here imports Electron, so the
- * tests run it under Bun.
- */
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, cpSync, createWriteStream, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeFileSync, type WriteStream } from "node:fs";
@@ -26,11 +21,9 @@ export function withoutInherited(command: string, args: string[], bash = "/bin/b
   return platform !== "win32" && isFile(bash) ? [bash, ["-c", CLOSE_INHERITED, "ovis", command, ...args]] : [command, args];
 }
 
-/** Where the staged programs sit: `resources/ovis` in a packaged app, `app/electron/stage` in development. */
 export interface Layout {
   bun: string;
   hc: string;
-  /** the server's folder, and its binary in it */
   server: string;
   serverBinary: string;
 }
@@ -40,7 +33,6 @@ export function layout(root: string, platform: NodeJS.Platform = process.platfor
   return { bun: join(root, "bin", `bun${exe}`), hc: join(root, "bin", `herdr-core${exe}`), server: join(root, "server"), serverBinary: join(root, "server", `ovis-server${exe}`) };
 }
 
-/** hc's session for the app's own core, apart from the `default` one another hc client may run. */
 export const HC_SESSION = "ovis";
 
 /** the lists an AppImage's AppRun puts its own folders in front of */
@@ -55,7 +47,6 @@ const APPIMAGE_LISTS = ["PATH", "LD_LIBRARY_PATH", "XDG_DATA_DIRS", "GSETTINGS_S
  */
 export function coreEnv(base: Env, execPath: string = process.execPath): Env {
   const env: Env = { ...base, HC_SESSION: base["HC_SESSION"]?.trim() || HC_SESSION };
-  // the app's own core: never one another client named with HC_SOCKET
   delete env["HC_SOCKET"];
   delete env["ELECTRON_RUN_AS_NODE"];
   delete env["ELECTRON_NO_ATTACH_CONSOLE"];
@@ -73,11 +64,6 @@ export function coreEnv(base: Env, execPath: string = process.execPath): Env {
   return env;
 }
 
-/**
- * The server's environment: herdr-core as its runtime, through the bundled hc, on loopback only,
- * with its state in the app's own folder. A herdr plugin's or supervisor's settings the app was
- * started under are dropped: this server is neither.
- */
 export function serverEnv(base: Env, options: { hc: string; stateDir: string; port: number }): Env {
   const env: Env = {
     ...coreEnv(base),
@@ -86,11 +72,9 @@ export function serverEnv(base: Env, options: { hc: string; stateDir: string; po
     OVIS_STATE_DIR: options.stateDir,
     HOST: "127.0.0.1",
     PORT: String(options.port),
-    // the app updates itself and this server with it: Settings says so instead of the plain server's way (shared/update.ts)
     OVIS_DESKTOP_APP: "1",
   };
   const dropped = new Set(["HERDR_PLUGIN_ROOT", "HERDR_SOCKET", "OVIS_MANAGED", "OVIS_BOOT_ID", "OVIS_TOKEN"]);
-  // the server would take a dropped setting back from its name before the rename (server/legacy-env.ts)
   for (const name of Object.keys(env)) if (dropped.has(name) || dropped.has(ovisName(name) ?? "")) delete env[name];
   return env;
 }
@@ -134,7 +118,6 @@ export async function installCore(bundled: string, dir: string, env: Env, log: W
   return installed;
 }
 
-/** `[0, 1, 17]` for an hc that says `hc 0.1.17`, else null */
 export async function hcVersion(hc: string, env: Env): Promise<number[] | null> {
   const { code, output } = await run(hc, ["--version"], env, null, 10_000);
   const match = code === 0 ? /^hc (\d+)\.(\d+)\.(\d+)/.exec(output.trim()) : null;
@@ -175,10 +158,6 @@ export interface RunningServer {
 
 const LISTENING = /^Ovis listening on (http:\/\/\S+)$/m;
 
-/**
- * Runs the Ovis server and resolves once it says where it listens. It fails when the server ends
- * first or says nothing within `timeoutMs`, with the end of its output.
- */
 export function startServer(layout: Layout, env: Env, log: WriteStream, timeoutMs = 60_000, onSpawn?: (child: ChildProcess) => void): Promise<RunningServer> {
   const [command, args] = withoutInherited(layout.serverBinary, ["serve"]);
   const child = spawn(command, args, { cwd: layout.server, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
@@ -187,7 +166,6 @@ export function startServer(layout: Layout, env: Env, log: WriteStream, timeoutM
     child.once("exit", (code) => resolve(code));
     child.once("error", () => resolve(null));
   });
-  // the end of the output only: the line that says where it listens comes after whatever it printed first
   let output = "";
   const take = (chunk: Buffer) => {
     log.write(chunk);
@@ -218,7 +196,6 @@ export function startServer(layout: Layout, env: Env, log: WriteStream, timeoutM
   });
 }
 
-/** Asks the server to stop, and ends it when it has not after `graceMs` (its own shutdown takes about 2 seconds). */
 export async function stopServer(server: Pick<RunningServer, "child" | "exited">, graceMs = 8_000): Promise<void> {
   if (server.child.exitCode !== null || server.child.signalCode !== null) return;
   server.child.kill("SIGTERM");
@@ -254,22 +231,13 @@ async function freePort(): Promise<number> {
   });
 }
 
-/**
- * The port the server takes: the one it had last time while it is free, so the page keeps its
- * address (and the browser storage that goes with it), else a free one the system gives.
- */
 export async function choosePort(saved: number | null): Promise<number> {
   if (saved !== null && Number.isInteger(saved) && saved > 1024 && saved < 65536 && await portFree(saved)) return saved;
   return freePort();
 }
 
-/** What the app keeps between runs, in `desktop.json` of its data folder. */
 export interface Saved {
   port: number | null;
-  /**
-   * the server it ran last, so a run after a crash can end one left behind; `started` is its start time (`ps -o lstart=`).
-   * `bun` is the program it ran: the server's binary, or the bundled Bun of an app from before the binary.
-   */
   server: { pid: number; bun: string; started: string | null } | null;
 }
 
@@ -299,21 +267,13 @@ export interface ProcessProbe {
 
 const SERVES = /^"? serve$/;
 
-/**
- * Ends the server an earlier run left behind (the app was killed before it could stop it), so two
- * never share one state folder. Only the same process is ended: it still runs this app's Bun on its
- * server and started at the recorded time. A pid the system has since
- * given to another program, or to another server, is left alone.
- */
 export async function endLeftover(saved: Saved["server"], probe: ProcessProbe = { command: processCommand, started: processStart }): Promise<boolean> {
   if (saved === null) return false;
   const line = await probe.command(saved.pid);
   // Windows writes the program's path in quotes when it has a space in it: `"C:\…\bun.exe" …`
   if (line === null) return false;
   const command = line.startsWith('"') ? line.slice(1) : line;
-  // the binary's `serve`, or the server's source on Bun as an app from before the binary ran it
   if (!command.startsWith(saved.bun) || !(SERVES.test(command.slice(saved.bun.length)) || command.includes(join("server", "index.ts")))) return false;
-  // without a start time it cannot be told from another process that got the pid since: left alone
   if (saved.started === null || await probe.started(saved.pid) !== saved.started) return false;
   try { process.kill(saved.pid, "SIGTERM"); } catch { return false; }
   return true;
@@ -337,7 +297,6 @@ export async function processCommand(pid: number): Promise<string | null> {
   return code === 0 && output.trim() !== "" ? output.trim() : null;
 }
 
-/** processStart, waited for: a record written with it never lacks the start time */
 export function processStartSync(pid: number): string | null {
   try {
     const [command, args] = psStart(pid);

@@ -1,8 +1,6 @@
 name: Growth snapshot
-# Once a week, the repository's stars (their dates, never who) and its traffic (views, clones,
-# referrers, paths), which GitHub keeps for 14 days only: scripts/growth-snapshot.ts. The result is
-# encrypted before upload, because anyone signed in to GitHub can download the artifacts of a public
-# repository. Secrets and reading the result: docs/development.md, "Growth snapshot".
+# GitHub keeps the traffic for 14 days only, and anyone signed in to GitHub can download the artifacts
+# of a public repository, so the result is encrypted before upload.
 on:
   schedule:
     - cron: "17 3 * * 1"
@@ -15,7 +13,6 @@ concurrency:
 jobs:
   snapshot:
     name: Snapshot stars and traffic
-    # GitHub-hosted: it needs gh, Bun and openssl only, none of the self-hosted runner's herdr tooling
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

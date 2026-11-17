@@ -2,7 +2,6 @@ import CryptoKit
 import Foundation
 import Security
 
-/// One phone's keys serve every PC; only the relay endpoint is PC-specific.
 public struct PushKeys {
     public let privateKey: P256.KeyAgreement.PrivateKey
     public let auth: Data
@@ -23,7 +22,6 @@ public struct PushKeys {
     }
 }
 
-/// The extension can read after first unlock, but only the app creates keys.
 public struct PushKeyStore {
     public enum Failure: Error {
         case keychain(OSStatus)
@@ -58,22 +56,19 @@ public struct PushKeyStore {
         try P256.KeyAgreement.PrivateKey(rawRepresentation: $0)
     }) throws -> PushKeys {
         guard data.count == 48 else { throw Failure.damaged }
-        // SEC 2's P-256 subgroup order: only scalars in 1..<order are valid bytes.
-        let order: [UInt8] = [
+        let p256GroupOrder: [UInt8] = [
             0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
             0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84,
             0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51
         ]
         let scalar = Data(data.prefix(32))
-        guard scalar.contains(where: { $0 != 0 }), scalar.lexicographicallyPrecedes(order) else {
+        guard scalar.contains(where: { $0 != 0 }), scalar.lexicographicallyPrecedes(p256GroupOrder) else {
             throw Failure.damaged
         }
-        // Once the bytes are valid, any CryptoKit import failure must reach the caller.
         return PushKeys(privateKey: try privateKey(scalar), auth: Data(data.suffix(16)))
     }
 
-    /// Only the app calls this; read() in the extension never repairs or rotates keys.
     public func getOrCreate() throws -> PushKeys {
         try Self.getOrCreate(read: read, remove: remove, create: create)
     }

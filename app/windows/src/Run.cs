@@ -26,17 +26,12 @@ namespace Ovis
     /// </summary>
     internal static class Run
     {
-        /// <summary>
-        /// Runs a program to its end with an empty stdin, so nothing it runs can wait for an answer, and for no longer
-        /// than the limit (two minutes unless given): past it the program and what it started are ended, herdr aside.
-        /// </summary>
         public static Task<RunResult> Program(string program, IEnumerable<string> arguments, Action<string> onLine = null, bool keepStderr = true, int limitSeconds = 120)
         {
             var words = new[] { program }.Concat(arguments).ToArray();
             return Task.Run(() => RunToEnd(words, onLine, keepStderr, limitSeconds));
         }
 
-        /// <summary>Starts a program that keeps running (herdr's server), with no window and nothing tied to this app.</summary>
         public static void Detached(string program, IEnumerable<string> arguments)
         {
             // start /b: cmd hands the program its own hidden console and exits, so no cmd lives on beside it
@@ -57,7 +52,6 @@ namespace Ovis
             var security = new SecurityAttributes { Length = Marshal.SizeOf(typeof(SecurityAttributes)), Inherit = 1 };
             IntPtr read, write;
             if (!CreatePipe(out read, out write, ref security, 0)) return Failed(new Win32Exception().Message);
-            // only the child gets the pipe's write end and the empty stdin
             SetHandleInformation(read, HandleFlagInherit, 0);
             var input = CreateFile("NUL", GenericRead, 3, ref security, OpenExisting, 0, IntPtr.Zero);
             var error = keepStderr ? write : CreateFile("NUL", GenericWrite, 3, ref security, OpenExisting, 0, IntPtr.Zero);
@@ -90,8 +84,6 @@ namespace Ovis
                         while ((line = text.ReadLine()) != null)
                         {
                             line = line.Replace("\r", "");
-                            // under the same lock as abandoning: once the run has stopped waiting, no line reaches
-                            // its log or its caller
                             lock (lines)
                             {
                                 if (abandoned) break;
@@ -101,7 +93,7 @@ namespace Ovis
                         }
                     }
                 }
-                catch (IOException) { } // cancelled below when a child the program left behind still holds the pipe
+                catch (IOException) { }
                 catch (ObjectDisposedException) { }
                 catch (OperationCanceledException) { }
             }) { IsBackground = true };
@@ -124,7 +116,7 @@ namespace Ovis
                 {
                     CancelIoEx(handle, IntPtr.Zero);
                 }
-                catch (ObjectDisposedException) { } // the reader finished and closed it meanwhile
+                catch (ObjectDisposedException) { }
                 stream.Dispose();
             }
             var status = timedOut ? TimedOut : process.ExitCode;
@@ -136,7 +128,6 @@ namespace Ovis
             }
         }
 
-        /// <summary>The status of a run that went past its limit.</summary>
         public const int TimedOut = -2;
 
         /// <summary>
@@ -169,7 +160,6 @@ namespace Ovis
             {
                 CloseHandle(snapshot);
             }
-            // checked processes, parents before children, each with the handle it was checked through
             var checkedProcesses = new List<IntPtr>();
             var pending = new Stack<KeyValuePair<int, long>>();
             var seen = new HashSet<int> { root.Id };
@@ -226,7 +216,6 @@ namespace Ovis
             public IntPtr Handle;
             public int Id;
 
-            /// <summary>True once the process has exited, false when the time ran out first.</summary>
             public bool WaitForExit(int milliseconds)
             {
                 return WaitForSingleObject(Handle, unchecked((uint)milliseconds)) == 0;
@@ -258,8 +247,6 @@ namespace Ovis
         /// </summary>
         private static ChildProcess Create(string prefix, string[] words, IntPtr input, IntPtr output, IntPtr error)
         {
-            // a quote would end the word early, for cmd and for the program's own argv parsing alike; no path or
-            // argument this app passes has one (Windows paths cannot)
             var quoted = words.FirstOrDefault(word => word.IndexOf('"') >= 0);
             if (quoted != null) throw new ArgumentException("A word to run has a double quote in it: " + quoted);
             lock (CreateLock)
@@ -279,7 +266,6 @@ namespace Ovis
                 }
                 finally
                 {
-                    // the child has its own copy of the environment by now
                     foreach (var name in names) Environment.SetEnvironmentVariable(name, null);
                 }
             }
@@ -323,8 +309,8 @@ namespace Ovis
             }
         }
 
-        private const int DesktopAppPolicyAttribute = 0x00020012; // PROC_THREAD_ATTRIBUTE_DESKTOP_APP_POLICY
-        private const int BreakawayEnableProcessTree = 0x01; // PROCESS_CREATION_DESKTOP_APP_BREAKAWAY_ENABLE_PROCESS_TREE
+        private const int DesktopAppPolicyAttribute = 0x00020012;
+        private const int BreakawayEnableProcessTree = 0x01;
         private const uint ExtendedStartupInfoPresent = 0x00080000;
         private const uint CreateNoWindow = 0x08000000;
         private const uint CreateUnicodeEnvironment = 0x00000400;
@@ -369,7 +355,7 @@ namespace Ovis
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CancelIoEx(SafeFileHandle handle, IntPtr overlapped);
 
-        private const uint SnapProcess = 0x00000002; // TH32CS_SNAPPROCESS
+        private const uint SnapProcess = 0x00000002;
         private const uint ProcessTerminate = 0x0001;
         private const uint ProcessQueryLimited = 0x1000;
 

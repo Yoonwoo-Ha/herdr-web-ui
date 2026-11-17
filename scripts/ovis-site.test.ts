@@ -341,7 +341,7 @@ describe("ovis.sh download links", () => {
   // The names a release attaches: the desktop app's builds, which .github/workflows/desktop.yml checks
   // for by name before it uploads them, and the older apps' Ovis.dmg and Ovis.exe.
   const desktopYml = read(".github/workflows/desktop.yml");
-  const checked = /every name a download page links[\s\S]*?for name in ([\s\S]*?); do/.exec(desktopYml)?.[1] ?? "";
+  const checked = /for name in (latest-linux\.yml [\s\S]*?); do/.exec(desktopYml)?.[1] ?? "";
   const desktop = checked.replace(/\\\n/g, " ").split(/\s+/).filter((name) => /^Ovis-[\w-]+\.(dmg|exe|deb|AppImage)$/.test(name));
   const older = ["mac-dmg.yml", "windows-app.yml"].flatMap((file) => [...read(`.github/workflows/${file}`).matchAll(/\bOvis\.(?:dmg|exe)\b/g)].map(([name]) => name));
   const released = new Set([...desktop, ...older]);
@@ -351,7 +351,7 @@ describe("ovis.sh download links", () => {
   for (const file of sources) for (const [, name] of read(file).matchAll(/https:\/\/ovis\.sh\/(Ovis[\w.${}-]*\.(?:dmg|exe|deb|AppImage))\b/g)) linked.set(name!, file);
 
   it("reads the desktop app's builds from the release workflow", () => {
-    fail(desktop.length ? [] : [".github/workflows/desktop.yml"], "The test reads the desktop app's file names from the loop after \"every name a download page links\" in .github/workflows/desktop.yml; keep that loop, or point the test at where the names went:");
+    fail(desktop.length ? [] : [".github/workflows/desktop.yml"], "The test reads the desktop app's file names from the `for name in latest-linux.yml …` loop in .github/workflows/desktop.yml; keep that loop, or point the test at where the names went:");
   });
 
   it("link only files a release attaches, each through a rule to the newest release", () => {

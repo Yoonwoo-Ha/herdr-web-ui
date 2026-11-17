@@ -1,11 +1,3 @@
-/**
- * Assembles app/www, what the iOS app carries: its own pages (app/web) and the demo, built from
- * this checkout's client with the demo's fixture transport (scripts/demo-build.ts), so the app
- * can be tried with no PC, as App Review must. Run `bun run build:web` in app/.
- *
- * OVIS_APP_URL names another https origin for the hosted shell than app.ovis.sh (APP_ORIGIN in
- * web/shell.js), for a test build whose relay pairing links point at a shell served elsewhere.
- */
 import { cpSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildDemoApp } from "../../scripts/demo-build.ts";
@@ -14,7 +6,6 @@ const app = join(import.meta.dir, "..");
 const www = join(app, "www");
 rmSync(www, { recursive: true, force: true });
 cpSync(join(app, "web"), www, { recursive: true });
-// error.html stands alone: Android serves it without the files beside it while a PC is open
 const errorPage = join(www, "error.html");
 const link = '<link rel="stylesheet" href="shell.css">';
 const errorHtml = readFileSync(errorPage, "utf8");
@@ -24,7 +15,7 @@ writeFileSync(errorPage, errorHtml.replace(link, `<style>${readFileSync(join(www
 const appUrl = process.env["OVIS_APP_URL"];
 if (appUrl) {
   let parsed: URL | null = null;
-  try { parsed = new URL(appUrl); } catch { /* reported below */ }
+  try { parsed = new URL(appUrl); } catch {}
   if (parsed?.protocol !== "https:" || parsed.origin !== appUrl) throw new Error(`OVIS_APP_URL must be an https origin with no path, such as https://app.ovis.sh: ${appUrl}`);
   const shellJs = join(www, "shell.js");
   const constant = 'export const APP_ORIGIN = "https://app.ovis.sh";';

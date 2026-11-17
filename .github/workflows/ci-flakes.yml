@@ -1,7 +1,4 @@
 name: CI flakes
-# Once a day, the browser scripts that failed or passed only on their automatic second run in the last
-# 24 hours of ci.yml runs, ranked, in one open issue that each run rewrites: scripts/ci-flakes-issue.ts
-# (docs/development.md, "ci-flakes"). It reads runs, jobs, logs and annotations and writes that issue only.
 on:
   schedule:
     - cron: "41 5 * * *"
@@ -15,7 +12,6 @@ jobs:
   report:
     name: Report flaky browser scripts
     if: github.repository == 'devswha/ovis'
-    # GitHub-hosted: it needs gh and Bun only, and holds issues: write
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

@@ -12,11 +12,11 @@ namespace Ovis
 {
     internal static class QrCode
     {
-        // Level M tables, indexed by version (index zero is unused).
-        private static readonly int[] EccLength = {
+        private const int ByteModeIndicator = 0b0100;
+        private static readonly int[] LevelMEccLength = {
             -1,10,16,26,18,24,16,18,22,22,26,30,22,22,24,24,28,28,26,26,26,
             26,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28 };
-        private static readonly int[] BlockCount = {
+        private static readonly int[] LevelMBlockCount = {
             -1,1,1,1,2,2,4,4,4,5,5,5,8,9,9,10,10,11,13,14,16,
             17,17,18,20,21,23,25,26,28,29,31,33,35,37,38,40,43,45,47,49 };
 
@@ -32,7 +32,7 @@ namespace Ovis
             if (version > 40) throw new ArgumentException("Text exceeds QR Code level M capacity.", nameof(text));
             int capacity = Capacity(version) * 8;
             var bits = new List<bool>(capacity);
-            Append(bits, 4, 4); // Byte mode, with no error correction boosting.
+            Append(bits, ByteModeIndicator, 4);
             Append(bits, bytes.Length, version < 10 ? 8 : 16);
             foreach (byte b in bytes) Append(bits, b, 8);
             Append(bits, 0, Math.Min(4, capacity - bits.Count));
@@ -90,7 +90,7 @@ namespace Ovis
 
         private static int Capacity(int version)
         {
-            return RawModules(version) / 8 - EccLength[version] * BlockCount[version];
+            return RawModules(version) / 8 - LevelMEccLength[version] * LevelMBlockCount[version];
         }
 
         private static byte Multiply(int x, int y)
@@ -106,7 +106,7 @@ namespace Ovis
 
         private static byte[] Interleave(int version, byte[] data)
         {
-            int count = BlockCount[version], degree = EccLength[version];
+            int count = LevelMBlockCount[version], degree = LevelMEccLength[version];
             int raw = RawModules(version) / 8, shortCount = count - raw % count;
             int shortLength = raw / count;
             var divisor = new byte[degree];
@@ -243,7 +243,6 @@ namespace Ovis
 
             private void Format(int mask)
             {
-                // Level M's two format bits are zero.
                 int rem = mask;
                 for (int i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >> 9) * 0x537);
                 int bits = (mask << 10 | rem) ^ 0x5412;
@@ -282,7 +281,6 @@ namespace Ovis
             private int Penalty()
             {
                 int result = 0, dark = 0;
-                // N1 and N3: same-color runs and 1:1:3:1:1 finder-like runs.
                 for (int axis = 0; axis < 2; axis++)
                     for (int line = 0; line < size; line++)
                     {
@@ -317,7 +315,7 @@ namespace Ovis
                         if (color) dark++;
                         if (x + 1 < size && y + 1 < size && color == Modules[y, x + 1] &&
                             color == Modules[y + 1, x] && color == Modules[y + 1, x + 1])
-                            result += 3; // N2: monochrome 2x2 blocks.
+                            result += 3;
                     }
                 int total = size * size;
                 return result + ((Math.Abs(dark * 20 - total * 10) + total - 1) / total - 1) * 10;
@@ -325,7 +323,7 @@ namespace Ovis
 
             private void AddHistory(int run, int[] history)
             {
-                if (history[0] == 0) run += size; // Treat the outside as a light border.
+                if (history[0] == 0) run += size;
                 Array.Copy(history, 0, history, 1, history.Length - 1);
                 history[0] = run;
             }

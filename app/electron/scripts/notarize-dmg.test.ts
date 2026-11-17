@@ -7,7 +7,6 @@ const key = { APPLE_API_KEY: "/keys/AuthKey.p8", APPLE_API_KEY_ID: "KEYID", APPL
 
 type Answer = string | Error;
 
-/** a list answers one call each, in order, then repeats its last */
 function recorder(answers: Record<string, Answer | Answer[]> = {}) {
   const calls: string[][] = [];
   const run = async (file: string, args: string[]) => {
@@ -106,7 +105,6 @@ describe("notarizeDmg", () => {
     const { waits, sleep, budget } = sleeper();
     budget.waited = 6 * 60_000;
     await expect(notarizeDmg("dist/Ovis.dmg", { env: key, run, log: quiet, sleep, budget })).rejects.toThrow(/Error 68/);
-    // 6 min spent: 20 + 40 + 60 s fill the 8 min budget, so the 90 s wait is never taken
     expect(waits).toEqual([20_000, 40_000, 60_000]);
     expect(calls.filter((call) => call[2] === "staple")).toHaveLength(4);
   });

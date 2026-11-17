@@ -65,7 +65,6 @@ final class RunningCodeTests: XCTestCase {
         let release = try code("release-3")
         XCTAssertNil(Model.codeDir(other, root: root))
         XCTAssertNil(Model.codeDir("release-3", root: root))
-        // a release whose plugin.ts is a link out of it, as scripts/plugin-runtime.ts refuses
         try FileManager.default.removeItem(atPath: "\(release)/scripts/plugin.ts")
         try FileManager.default.createSymbolicLink(atPath: "\(release)/scripts/plugin.ts", withDestinationPath: "\(other)/scripts/plugin.ts")
         XCTAssertNil(Model.codeDir(release, root: root))
@@ -104,13 +103,10 @@ final class RunningCodeTests: XCTestCase {
         XCTAssertNil(Model.processDirectory(-1))
     }
 
-    /// The launcher of the checkout runs the checkout's supervisor, which fell back from the release's and runs the
-    /// release's bridge: the release is what runs.
     @MainActor
     func testFindsTheReleaseTheBridgeRunsUnderThisCheckoutsLauncher() async throws {
         let root = try code("plugin")
         let release = try code("state/updates/8e64ff3e5eb22439/release-2")
-        // each waits for its child, and the bridge for its stdin, which the test closes at the end
         try Data("/bin/sh \(root)/server/supervisor.ts\n:\n".utf8).write(to: URL(fileURLWithPath: "\(root)/server/managed.ts"))
         try Data("cd \(release) && /bin/sh server/index.ts\n:\n".utf8).write(to: URL(fileURLWithPath: "\(root)/server/supervisor.ts"))
         try Data("echo ready\nread line\n".utf8).write(to: URL(fileURLWithPath: "\(release)/server/index.ts"))
@@ -174,7 +170,6 @@ final class LogRotationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let log = dir.appendingPathComponent("herdr-server.log").path
         try Data("0123456789abcdef\n".utf8).write(to: URL(fileURLWithPath: log))
-        // launchd opens the log for appending and keeps it open while herdr runs
         let launchd = open(log, O_WRONLY | O_APPEND)
         XCTAssertGreaterThanOrEqual(launchd, 0)
         defer { close(launchd) }

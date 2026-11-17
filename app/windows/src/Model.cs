@@ -13,28 +13,16 @@ namespace Ovis
     {
         public bool Running;
         public string Origin;
-        /// <summary>The HTTPS address Tailscale serves the app at, which the phone opens.</summary>
         public string PhoneUrl;
-        /// <summary>"missing", "stopped" or "running", as /api/access reports Tailscale.</summary>
         public string Tailscale;
-        /// <summary>The `version:` line of the status, from a release that prints it.</summary>
         public string Version;
-        /// <summary>The version the answering server reports itself (GET /api/updates); null when it does not answer.</summary>
         public string RunningVersion;
-        /// <summary>The live server process `plugin.ts status` names (`(pid N)`), which it reports whether herdr answers or not.</summary>
         public int? Pid;
-        /// <summary>Not running as herdr sees it, but a recorded process lives and the app answers its bridge health on its port.</summary>
         public bool AliveWithoutHerdr;
-        /// <summary>The answering server says it runs without the update supervisor: not one the plugin's start runs, or one whose supervisor has not reported yet.</summary>
         public bool Unmanaged;
-        /// <summary>GET /api/access answered 401: the server asks for a token the app does not have, so Tailscale's state is unknown.</summary>
         public bool AccessLocked;
     }
 
-    /// <summary>
-    /// Everything goes through what a terminal user runs (install.ps1, herdr, the plugin's scripts), so the
-    /// app and the terminal never drift apart. The methods run on the window's thread.
-    /// </summary>
     internal sealed class Model
     {
         private readonly SynchronizationContext context = SynchronizationContext.Current ?? throw new InvalidOperationException("Model is made on the window's thread, after the form's constructor started.");
@@ -50,10 +38,8 @@ namespace Ovis
         public Version HerdrVersion { get; private set; }
         public Plugin Plugin { get { return plugin; } }
 
-        /// <summary>This app's release, which an update installs; null for a local build.</summary>
         public static readonly Version AppVersion = Setup.AppVersion(typeof(Model).Assembly.GetName().Version);
 
-        /// <summary>The action that failed, for Try again.</summary>
         public Func<Task> Retry { get; private set; }
 
         public event Action Changed;
@@ -89,17 +75,10 @@ namespace Ovis
             return RunInstaller(Lang.L("Installing herdr, Bun and the Ovis server…", "herdr, Bun, Ovis 서버를 설치하는 중…"));
         }
 
-        /// <summary>
-        /// Brings an old server up to this app's release in place; herdr, Bun, the settings and the app's state stay.
-        /// Under the old id, install.ps1 moves it to the new one (its settings and token come along); under the new id,
-        /// herdr reinstalls it at the newest release (never older than this app), keeping its config and state dirs.
-        /// Then it starts, as Start does.
-        /// </summary>
         public async Task Update()
         {
             Retry = UpdateAgain;
             var title = Lang.L("Updating the Ovis server…", "Ovis 서버를 업데이트하는 중…");
-            // a linked checkout or a fork is never moved or reinstalled (the screen offers no Update for one)
             if (plugin != null && plugin.NotOurs)
             {
                 await Refresh();
@@ -118,10 +97,7 @@ namespace Ovis
                 return;
             }
             Set(Phase.Working, title);
-            // a server that outlived herdr counts though its health, which asks herdr, fails: the update stops it, so a
-            // failed one must start it again. Its recorded pid alone is not enough: a stale one can name another program.
             var wasRunning = Status != null && (Status.Running || Status.AliveWithoutHerdr);
-            // the release is settled before anything stops, so a PC that cannot reach GitHub keeps its server running
             var tags = await Run.Program("git", new[] { "ls-remote", "--tags", "--refs", Links.Repository, "v*" }, Append, true);
             var tag = Setup.UpdateTag(tags.Status == 0 ? tags.Output : null, AppVersion);
             if (tag == null)
@@ -129,10 +105,6 @@ namespace Ovis
                 Fail(Lang.L("Could not read the Ovis releases from GitHub, so nothing was updated. Check the internet connection.", "GitHub에서 Ovis 릴리스를 읽지 못해 아무것도 업데이트하지 않았습니다. 인터넷 연결을 확인해 주세요."));
                 return;
             }
-            // the server stops here, under either id, before anything is replaced: the reinstall leaves the old files to a
-            // server that runs them, and the start would find it answering. Its own stop says when it ended a verified
-            // Ovis process, which a probe of the port can miss (a PORT edited since it started): that one is started again
-            // if the update fails.
             var stop = await PluginCommand(plugin, "stop", Append);
             if (stop.Status != 0)
             {
@@ -142,14 +114,12 @@ namespace Ovis
             wasRunning = wasRunning || Setup.StoppedServer(stop.Output);
             if (plugin.Id == Links.LegacyPluginId)
             {
-                // install.ps1 moves the old id; pinned to that release, so an OVIS_REF the PC inherited cannot take it back
                 await RunInstaller(title, tag, wasRunning);
                 return;
             }
             var reinstall = new[] { "plugin", "install", Links.PluginSource, "--ref", tag, "--yes" };
             if ((await Run.Program("herdr", reinstall, Append, true, 45 * 60)).Status != 0)
             {
-                // herdr keeps the old install when its reinstall fails: start that one again rather than leave it stopped
                 await StartKept(wasRunning);
                 Fail(Lang.L("herdr could not update the Ovis server; the version it had is kept.", "herdr가 Ovis 서버를 업데이트하지 못했습니다. 원래 버전은 그대로입니다."));
                 return;
@@ -172,12 +142,6 @@ namespace Ovis
             await Refresh();
         }
 
-        /// <summary>
-        /// Try again after a failed update. The update may have moved or removed the plugin it read (install.ps1 takes the
-        /// old id's checkout away), so what is on this PC is read again: the update runs again while one is due (or the
-        /// plugin is gone); for a current server, the update's last steps run again: its login start, and its start when it
-        /// is stopped.
-        /// </summary>
         private async Task UpdateAgain()
         {
             await Refresh();
@@ -187,13 +151,11 @@ namespace Ovis
                 return;
             }
             if (Phase != Phase.Installed) return;
-            // the login start the update adds, which may be the step that failed while the server already runs
             if (!LoginStart() || (Status != null && Status.Running)) return;
             await Restart();
             if (Phase == Phase.Failed) Retry = UpdateAgain;
         }
 
-        /// <summary>herdr set up from a terminal has no login start yet: add it, as Install does.</summary>
         private bool LoginStart()
         {
             try
@@ -208,12 +170,6 @@ namespace Ovis
             }
         }
 
-        /// <summary>
-        /// The server that ran before a failed update, started again the way herdr starts it, so it runs with herdr's
-        /// plugin environment and so on its active release (started by hand, a checkout Settings → Updates moved past
-        /// would run its own older files): the start-windows action while herdr runs, else herdr's server, whose
-        /// startup hook starts it, as Start does.
-        /// </summary>
         private async Task StartKept(bool wasRunning)
         {
             if (!wasRunning) return;
@@ -223,7 +179,6 @@ namespace Ovis
             else Run.Detached("herdr", new[] { "server" });
         }
 
-        /// <summary>install.ps1, at `reference` when given (the installer reads it from OVIS_REF) instead of what the PC inherited.</summary>
         private async Task RunInstaller(string title, string reference = null, bool wasRunning = false)
         {
             ClearLog();
@@ -248,7 +203,6 @@ namespace Ovis
             }
             if (result.Status != 0)
             {
-                // the installer stops the old id's server before it moves it: leave the PC running as it was
                 await StartKept(wasRunning);
                 Fail(Lang.L("The installer stopped with an error.", "설치 중 오류가 났습니다."));
                 return;
@@ -269,7 +223,6 @@ namespace Ovis
             await Refresh();
         }
 
-        /// <summary>Git for Windows, which install.ps1 needs, from winget (Windows asks for administrator approval).</summary>
         public async Task InstallGit()
         {
             Retry = InstallGit;
@@ -284,25 +237,15 @@ namespace Ovis
                     : Lang.L("Git for Windows did not install.", "Git for Windows를 설치하지 못했습니다."));
                 return;
             }
-            // the Git step shows on the Update screen too, where the update is what goes on
             await (plugin == null ? Install() : Update());
         }
 
-        /// <summary>
-        /// Start, pressed on a screen that showed the server stopped. The PC is read again first: a server that runs by now
-        /// (started from herdr or a terminal since the window looked) is left to the people using it, and a stopped one is
-        /// started by the plugin's own start, which leaves a server that answers alone and waits for a start under way. A
-        /// recorded process that lives but does not answer is one that start refuses when it is Ovis's: the plugin's stop
-        /// ends it first, and a stop that fails is shown as Restart shows it. Only a pid the stop could not verify as Ovis's
-        /// (another program reused it) is no failure: the stop leaves it alone and the start passes over it.
-        /// </summary>
         public async Task Start()
         {
             Retry = Start;
             await Refresh();
             if (Phase != Phase.Installed || (Status != null && Status.Running)) return;
             ClearLog();
-            // the words main showed for Start, which went through Restart
             Set(Phase.Working, Lang.L("Restarting…", "다시 시작하는 중…"));
             if (plugin != null && Status != null && Status.Pid != null && await HerdrRunning())
             {
@@ -321,8 +264,6 @@ namespace Ovis
             Retry = Restart;
             ClearLog();
             Set(Phase.Working, Lang.L("Restarting…", "다시 시작하는 중…"));
-            // the start waits until the old server has exited: started before, it would find that one
-            // answering and leave nothing running once it goes
             if (plugin != null && await HerdrRunning() && !await Stop(plugin))
             {
                 Fail(Lang.L("Could not stop the Ovis server.", "Ovis 서버를 멈추지 못했습니다."));
@@ -331,10 +272,6 @@ namespace Ovis
             await StartServer();
         }
 
-        /// <summary>
-        /// The server started the way herdr starts it: the plugin's start-windows action while herdr runs, else herdr's
-        /// server (set to start at login first), whose startup hook starts it. Then it waits for it and reads the PC again.
-        /// </summary>
         private async Task StartServer()
         {
             if (plugin != null && await HerdrRunning())
@@ -354,7 +291,6 @@ namespace Ovis
             await Refresh();
         }
 
-        /// <summary>The installer's phone step: `tailscale serve` for this app, when Tailscale runs here.</summary>
         public async Task MakePhoneAddress()
         {
             if (plugin == null) return;
@@ -365,10 +301,6 @@ namespace Ovis
             await Refresh();
         }
 
-        /// <summary>
-        /// Takes the Ovis server off this PC, as the guide's Uninstall does. herdr and Bun stay, and herdr keeps
-        /// running: stopping it would end every agent in it.
-        /// </summary>
         public async Task Remove()
         {
             Retry = Remove;
@@ -377,8 +309,6 @@ namespace Ovis
             var phoneUrl = Status == null ? null : Status.PhoneUrl;
             if (plugin != null)
             {
-                // removed with its server up, the checkout would go on serving from a deleted folder; the server
-                // can outlive a herdr that crashed, so it is stopped whether herdr runs or not
                 if (!await Stop(plugin))
                 {
                     Fail(Lang.L("Could not stop the Ovis server, so nothing was removed.", "Ovis 서버를 멈추지 못해 아무것도 제거하지 않았습니다."));
@@ -416,20 +346,12 @@ namespace Ovis
             return (await PluginCommand(plugin, "stop", Append)).Status == 0;
         }
 
-        /// <summary>
-        /// The plugin's own command (Setup.PluginCommandLine), run here as herdr runs its actions: told the state dir herdr
-        /// keeps for the plugin. Releases under the old id from before 0.4.13 look for their server's pid there only when told, and in ~/.local/state
-        /// otherwise, where they find none: their stop ended nothing, so a server that outlived herdr kept the old
-        /// checkout's files open for the move's uninstall, and their status named no pid. Every release under the new id
-        /// finds herdr's dir itself, and keeps its own for a server started by hand from the checkout.
-        /// </summary>
         private static async Task<RunResult> PluginCommand(Plugin plugin, string command, Action<string> onLine, bool keepStderr = true, int limitSeconds = 120)
         {
             var line = Setup.PluginCommandLine(plugin.Root, command, System.IO.File.Exists);
             var program = line[0];
             var words = line.Skip(1).ToArray();
             if (plugin.Id != Links.LegacyPluginId) return await Run.Program(program, words, onLine, keepStderr, limitSeconds);
-            // the child takes this process's environment when it starts; the app's steps run one at a time
             var given = Environment.GetEnvironmentVariable("HERDR_PLUGIN_STATE_DIR");
             Environment.SetEnvironmentVariable("HERDR_PLUGIN_STATE_DIR", Setup.HerdrPluginStateDir(plugin.Id, Environment.GetEnvironmentVariable));
             RunResult result;
@@ -441,8 +363,6 @@ namespace Ovis
             {
                 Environment.SetEnvironmentVariable("HERDR_PLUGIN_STATE_DIR", given);
             }
-            // a server started by hand from the checkout keeps its pid in its own dir, which the given one hides: a stop
-            // that found none there asks the way it did before
             if (command == "stop" && result.Status == 0 && !Setup.StoppedServer(result.Output)) return await Run.Program(program, words, onLine, keepStderr, limitSeconds);
             return result;
         }
@@ -452,14 +372,12 @@ namespace Ovis
             return Setup.PowerShellArguments(command);
         }
 
-        /// <summary>herdr's plugin list names the plugin's checkout; releases up to 0.4.13 name it by the old id.</summary>
         internal static async Task<Plugin> FindPlugin()
         {
             var result = await Run.Program("herdr", new[] { "plugin", "list", "--json" }, null, false);
             return result.Status != 0 ? null : Setup.ParsePlugin(result.Output);
         }
 
-        /// <summary>`plugin.ts status` knows the port the plugin settled on: "running http://127.0.0.1:7317 (pid 1)" or "down …".</summary>
         private static async Task<Status> ReadStatus(Plugin plugin)
         {
             var result = await PluginCommand(plugin, "status", null, false);
@@ -467,7 +385,6 @@ namespace Ovis
             var status = new Status { Running = words[0] == "running", Origin = words.Length > 1 ? words[1] : null, Version = Setup.StatusVersion(result.Output), Pid = Setup.StatusPid(result.Output) };
             if (!status.Running && status.Pid != null && status.Origin != null) status.AliveWithoutHerdr = await BridgeAnswers(status.Origin);
             if (!status.Running || status.Origin == null) return status;
-            // the token that opened GET /api/updates opens GET /api/access too; one the server refused is not sent again
             string accessToken = null;
             try
             {
@@ -477,7 +394,6 @@ namespace Ovis
                     var answer = await GetTwice(client, url, null);
                     if (answer.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                     {
-                        // behind a token: the plugin's own settings hold it, as `plugin.ts` reads them
                         var token = await PluginToken(plugin);
                         answer.Dispose();
                         if (token == null) return await WithAccess(status, null);
@@ -497,16 +413,10 @@ namespace Ovis
             }
             catch (Exception exception) when (exception is HttpRequestException || exception is TaskCanceledException || exception is ArgumentException || exception is InvalidOperationException || exception is System.IO.IOException || exception is UnauthorizedAccessException || exception is FormatException)
             {
-                // no version from the server: one that runs is then one whose version cannot be read
             }
             return await WithAccess(status, accessToken);
         }
 
-        /// <summary>
-        /// Whether the app itself holds its port: its bridge health (`/api/health?scope=bridge`, open, answered by every
-        /// release since 0.3.0) needs no herdr, so it tells a server that outlived herdr from a stale pid file naming
-        /// another program.
-        /// </summary>
         private static async Task<bool> BridgeAnswers(string origin)
         {
             try
@@ -523,10 +433,6 @@ namespace Ovis
             }
         }
 
-        /// <summary>
-        /// One GET, sent again once when it times out: a server busy starting answers late once, and a second wait tells
-        /// it from one that does not answer. Each send is a request of its own, with the token when there is one.
-        /// </summary>
         private static async Task<HttpResponseMessage> GetTwice(HttpClient client, string url, string token)
         {
             for (var attempt = 1; ; attempt++)
@@ -550,17 +456,10 @@ namespace Ovis
             var dir = await Run.Program("herdr", new[] { "plugin", "config-dir", plugin.Id }, null, false);
             var path = dir.Status == 0 ? (dir.Output.Split('\n').FirstOrDefault() ?? "").Trim() : "";
             var files = path.Length == 0 ? new string[0] : new[] { "env", ".env" }.Select(name => System.IO.Path.Combine(path, name)).Where(System.IO.File.Exists).Select(file => System.IO.File.ReadAllText(file)).ToArray();
-            // the environment herdr hands the plugin, under its settings files, as `plugin.ts` layers them: this process's
-            // own value first (herdr and the app started the same way share it), the saved User value when it has none
             var environment = Setup.EnvironmentLayer(name => Environment.GetEnvironmentVariable(name) ?? Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User));
             return Setup.EnvToken(new[] { environment }.Concat(files));
         }
 
-        /// <summary>
-        /// The phone address and Tailscale's state, from GET /api/access, with the server's token when it asks for one (the
-        /// PC's own token, from the plugin's settings): without it, a server behind a token answers 401, and that is all
-        /// that is known.
-        /// </summary>
         private static async Task<Status> WithAccess(Status status, string token)
         {
             try
@@ -592,7 +491,6 @@ namespace Ovis
             }
             catch (Exception exception) when (exception is HttpRequestException || exception is TaskCanceledException || exception is ArgumentException || exception is KeyNotFoundException || exception is InvalidOperationException)
             {
-                // the app answers its status but not this: show it running, without a phone address
             }
             return status;
         }
@@ -603,7 +501,6 @@ namespace Ovis
             return result.Output.Replace(" ", "").Contains("\"running\":true");
         }
 
-        /// <summary>herdr starts the app from its startup hook; give it up to two minutes, checking every two seconds.</summary>
         private static async Task WaitUntilRunning()
         {
             for (var attempt = 0; attempt < 60; attempt++)
@@ -633,10 +530,8 @@ namespace Ovis
             lock (log) log.Clear();
         }
 
-        /// <summary>Called on the pipe's thread for each line a child prints; shown on the window's thread, in order.</summary>
         private void Append(string line)
         {
-            // a QR code drawn in block characters means nothing in a log
             if (line.Length == 0 || line.All(c => "█▀▄ ".IndexOf(c) >= 0)) return;
             lock (log) log.Add(line);
             context.Post(_ =>

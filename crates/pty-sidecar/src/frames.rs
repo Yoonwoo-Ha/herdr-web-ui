@@ -1,4 +1,3 @@
-//! Control frames from the parent: one JSON object per stdin line, read the way pty-host.mjs reads them.
 
 use serde_json::Value;
 
@@ -21,20 +20,18 @@ pub fn parse(line: &str) -> Option<Frame> {
         Err(_) => serde_json::from_str(&replace_lone_surrogates(line)?).ok()?,
     };
     match value.get("t")?.as_str()? {
-        // moved out, not copied: a frame can be 16 MiB
         "i" => match value.get_mut("d").map(Value::take) {
             Some(Value::String(text)) => Some(Frame::Input(text)),
             _ => None,
         },
-        "r" => Some(Frame::Resize(clamp(value.get("c")), clamp(value.get("r")))),
+        "r" => Some(Frame::Resize(js_dimension(value.get("c")), js_dimension(value.get("r")))),
         "p" => Some(Frame::Pause(value.get("paused")?.as_bool()?)),
         "w" => Some(Frame::Winch),
         _ => None,
     }
 }
 
-/// JavaScript's `parseInt(text, 10)`: leading whitespace, a sign, then digits; None without digits.
-pub fn parse_int(text: &str) -> Option<i64> {
+pub fn js_parse_int(text: &str) -> Option<i64> {
     let text = text.trim_start();
     let (negative, digits) = match text.as_bytes().first() {
         Some(b'-') => (true, &text[1..]),
@@ -50,27 +47,25 @@ pub fn parse_int(text: &str) -> Option<i64> {
 }
 
 pub fn initial_size(text: &str, fallback: u16) -> u16 {
-    match parse_int(text) {
+    match js_parse_int(text) {
         Some(value) if value > 0 => value.min(i64::from(u16::MAX)) as u16,
         _ => fallback,
     }
 }
 
-/// pty-host.mjs's `clamp`: `parseInt(String(value), 10)`, below 1 (or no number) is 1, above 1000 is 1000.
-fn clamp(value: Option<&Value>) -> u16 {
+fn js_dimension(value: Option<&Value>) -> u16 {
     let parsed = match value {
         Some(Value::Number(number)) => match number.as_i64() {
             Some(int) => Some(int),
             // String() of a float under 1e21 is its decimal form, which parseInt cuts at the point
             None => number.as_f64().filter(|float| float.abs() < 1e21).map(|float| float.trunc() as i64),
         },
-        Some(Value::String(text)) => parse_int(text),
+        Some(Value::String(text)) => js_parse_int(text),
         _ => None,
     };
     parsed.unwrap_or(1).clamp(1, 1000) as u16
 }
 
-/// The line with every unpaired `\uD800`-`\uDFFF` escape replaced by `\uFFFD`, or None when it has none.
 /// JavaScript's JSON.parse accepts those and writing the string out as UTF-8 turns each into U+FFFD.
 pub fn replace_lone_surrogates(json: &str) -> Option<String> {
     let bytes = json.as_bytes();
@@ -90,7 +85,6 @@ pub fn replace_lone_surrogates(json: &str) -> Option<String> {
             continue;
         }
         let Some(unit) = unit_at(at) else {
-            // any other escape is two bytes: never read its second byte as the start of one
             at += 2;
             continue;
         };
@@ -160,7 +154,6 @@ mod tests {
         assert_eq!(parse(r#"{"t":"i","d":"a\ud83db"}"#), Some(Frame::Input("a\u{fffd}b".into())));
         assert_eq!(parse(r#"{"t":"i","d":"\udc00\ud83d"}"#), Some(Frame::Input("\u{fffd}\u{fffd}".into())));
         assert_eq!(parse(r#"{"t":"i","d":"\ud83d\ude42\ud83d"}"#), Some(Frame::Input("🙂\u{fffd}".into())));
-        // an escaped backslash before "ud83d" is text, not an escape
         assert_eq!(replace_lone_surrogates(r#"{"d":"\\ud83d"}"#), None);
         assert_eq!(replace_lone_surrogates(r#"{"d":"plain"}"#), None);
     }

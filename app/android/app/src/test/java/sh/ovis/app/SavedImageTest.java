@@ -45,7 +45,6 @@ public class SavedImageTest {
         String cut = SavedImage.fileName("x".repeat(300) + ".jpeg");
         assertEquals(200, cut.length());
         assertTrue(cut.endsWith(".jpeg"));
-        // Korean takes 3 bytes a character: the cut counts bytes and never splits one
         String korean = SavedImage.fileName("\uADF8\uB9BC".repeat(80) + ".png");
         assertTrue(korean.getBytes(StandardCharsets.UTF_8).length <= 200);
         assertTrue(korean.endsWith("\uADF8.png") || korean.endsWith("\uB9BC.png"));

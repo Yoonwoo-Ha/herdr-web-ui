@@ -19,7 +19,6 @@ function tempDir(): string {
   return dir;
 }
 
-/** a stand-in server: server/ovis-server runs the given script on this Bun, and only as its `serve` entry */
 function fakeServer(script: string): ReturnType<typeof layout> {
   const root = tempDir();
   mkdirSync(join(root, "server"), { recursive: true });
@@ -47,7 +46,6 @@ describe("environments", () => {
       GSETTINGS_SCHEMA_DIR: `${mount}/usr/share/glib-2.0/schemas:/opt/schemas`,
     }, `${mount}/ovis`);
     for (const name of ["APPDIR", "APPIMAGE", "ARGV0", "OWD", "LD_LIBRARY_PATH"]) expect(env).not.toHaveProperty(name);
-    // the user's own empty entry (the current folder) stays
     expect(env["PATH"]).toBe("/usr/bin::/bin");
     expect(env["XDG_DATA_DIRS"]).toBe("/usr/local/share:/usr/share:/usr/share/gnome:/usr/local/share/:/usr/share/");
     expect(env["GSETTINGS_SCHEMA_DIR"]).toBe("/opt/schemas");
@@ -80,7 +78,6 @@ describe("environments", () => {
 describe("withoutInherited", () => {
   it.if(process.platform === "linux")("starts a program without the descriptors its parent left open", () => {
     const [command, args] = withoutInherited("ls", ["/proc/self/fd"]);
-    // the parent holds fd 9 and 23 open across exec, as Chromium does
     const listed = spawnSync("/bin/bash", ["-c", 'exec 9</dev/null 23</dev/null; exec "$@"', "parent", command, ...args], { encoding: "utf8" });
     const fds = listed.stdout.split("\n");
     expect(fds).toContain("2");
@@ -178,7 +175,6 @@ describe.skipIf(!posix)("startServer", () => {
 });
 
 describe("installCore", () => {
-  /** an hc that records how it was run, beside itself */
   function fakeHc(dir: string, tag: string): string {
     mkdirSync(dir, { recursive: true });
     const path = join(dir, "herdr-core");
@@ -209,7 +205,6 @@ describe("installCore", () => {
     await installCore(bundled, join(root, "data", "bin"), process.env, log);
     expect(readFileSync(join(root, "data", "bin", "conpty", "conpty.dll"), "utf8")).toBe("dll");
     expect(readFileSync(join(root, "data", "bin", "conpty", "x64", "OpenConsole.exe"), "utf8")).toBe("exe");
-    // closed before afterEach removes the folder it writes in
     await new Promise<void>((resolve) => log.end(resolve));
   });
 
@@ -317,13 +312,11 @@ describe("endLeftover", () => {
     const binary = programs.serverBinary;
     const ours = { command: async () => `${binary} serve`, started: async () => "then" };
     expect(await endLeftover({ pid, bun: binary, started: "then" }, { ...ours, command: async () => `/other/ovis-server serve` })).toBe(false);
-    // the same binary running another entry is not the app's server
     expect(await endLeftover({ pid, bun: binary, started: "then" }, { ...ours, command: async () => `${binary} plugin status` })).toBe(false);
     expect(await endLeftover({ pid, bun: binary, started: "then" }, { ...ours, command: async () => null })).toBe(false);
     expect(await endLeftover({ pid, bun: binary, started: "then" }, { ...ours, started: async () => "later" })).toBe(false);
     expect(await endLeftover({ pid, bun: binary, started: null }, ours)).toBe(false);
     expect(server.child.exitCode).toBeNull();
-    // Windows quotes a program path with a space in it; a quoted other program is still not ours
     expect(await endLeftover({ pid, bun: binary, started: "then" }, { ...ours, command: async () => `"/other/ovis-server" serve` })).toBe(false);
     expect(await endLeftover({ pid, bun: binary, started: "then" }, { ...ours, command: async () => `"${binary}" serve` })).toBe(true);
     expect(await server.exited).toBe(0);
@@ -343,7 +336,6 @@ describe("endLeftover", () => {
   });
 
   it("reads a live process's start time and command, and nothing for one that is gone", async () => {
-    // ps's `Wed Nov  4 08:00:00 2026`, or CIM's UTC `2026-11-04T08:00:00.1234560Z` on Windows
     expect(await processStart(process.pid)).toMatch(process.platform === "win32" ? /^\d{4}-\d\d-\d\dT.*Z$/ : /\d{4}$/);
     expect(processStartSync(process.pid)).toBe(await processStart(process.pid));
     expect(await processCommand(process.pid)).toContain("bun");

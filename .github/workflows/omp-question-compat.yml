@@ -43,7 +43,6 @@ jobs:
         with:
           node: 'true'
           herdr: 'true'
-          # this job installs and runs an unpinned OMP release: never save the shared cache
           cache: restore
       - name: Install locked app dependencies
         run: bun install --frozen-lockfile

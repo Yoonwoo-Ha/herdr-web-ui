@@ -16,11 +16,6 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
-    // The Play upload key stays outside the repository: OVIS_UPLOAD_PROPERTIES names a properties
-    // file with storeFile, storePassword, keyAlias and keyPassword (docs/native-app.md). Without it
-    // a release build is unsigned.
-    // A file that is missing or incomplete fails a release build with what is wrong, never a debug
-    // build or a sync, and never signs with part of a key.
     def uploadProperties = System.getenv("OVIS_UPLOAD_PROPERTIES")
     def upload = new Properties()
     def uploadProblem = null

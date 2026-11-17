@@ -2,64 +2,41 @@ import UIKit
 import WebKit
 import Capacitor
 
-/// The PCs this app knows, kept in UserDefaults. The WebView's cookies (a paired device's
-/// sign-in) live in WebKit's own store, not here.
 enum PCStore {
     private static let defaults = UserDefaults.standard
 
-    /// PCs opened before, the latest first, each by its key: the origin of a PC opened at its own
-    /// address, or the scope of one opened through the Ovis relay (`https://app.ovis.sh/s/<server_id>/`),
-    /// as every relay PC shares the hosted shell's origin. Entries saved before relay PCs are origins
-    /// and stay as they are.
     static var saved: [String] {
         get { defaults.stringArray(forKey: "herdr.saved") ?? [] }
         set { defaults.set(newValue, forKey: "herdr.saved") }
     }
 
-    /// Labels of saved PCs by key, from a relay pairing offer's name.
     static var names: [String: String] {
         get { defaults.dictionary(forKey: "herdr.names") as? [String: String] ?? [:] }
         set { defaults.set(newValue, forKey: "herdr.names") }
     }
 
-    /// The PC the app opens at launch, a key (see `saved`); nil shows the connect screen.
     static var current: String? {
         get { defaults.string(forKey: "herdr.current") }
         set { defaults.set(newValue, forKey: "herdr.current") }
     }
 
-    /// The PC opened last, even after "Change PC", for the pages that name it.
     static var last: String? {
         get { defaults.string(forKey: "herdr.last") }
         set { defaults.set(newValue, forKey: "herdr.last") }
     }
 
-    /// The address to open instead of the bare origin until a PC page loads: a pairing link keeps
-    /// its `?pair=` code through Try again. In memory only, as it can hold that code.
     static var pendingStart: String?
 
-    /// Why the last load failed, for the error page.
     static var failure: String?
 
-    /// Redirects in a row that made another origin the PC (NavigationFailureProxy), so two servers
-    /// that redirect to each other stop.
     static var redirects = 0
 
-    /// Redirects in a row the app follows, in the web view and in `ovisOrigin`; past it the error
-    /// page says so.
     static let maxRedirects = 5
 
-    /// How long `ovisOrigin` may take in all, its redirects included: the screen stays blank meanwhile.
     static let probeBudget: TimeInterval = 10
 
-    /// The bridge protocols this app knows, the `bridge_protocol` /api/health?scope=bridge names
-    /// (BRIDGE_PROTOCOL in shared/machines.ts).
     static let bridgeProtocols: ClosedRange<Int64> = 1...1
 
-    /// The first origin of `path`, the way from the address being opened (`from`) to an Ovis server,
-    /// that went over plain http the app should not switch to on its own: a public address (the
-    /// connect screen warns before one, as `publicHttp` in app/web/shell.js) or any http after https.
-    /// Nil when the whole way is fine.
     static func insecureHop(from: String?, path: [String]) -> String? {
         var https = from?.hasPrefix("https://") ?? false
         for hop in path {
@@ -72,8 +49,6 @@ enum PCStore {
         return nil
     }
 
-    /// Whether `origin` is plain http to an address outside a tailnet or a home network, as
-    /// `publicHttp` in app/web/shell.js decides.
     static func publicHTTP(_ origin: String) -> Bool {
         guard origin.hasPrefix("http://") else { return false }
         guard let host = URL(string: origin)?.host?.lowercased() else { return true }
@@ -92,14 +67,11 @@ enum PCStore {
             }
             guard parts.count == 4, quad.count == 4 else { return true }
             let a = quad[0], b = quad[1]
-            // 10/8, 127/8, 172.16/12, 192.168/16, link-local 169.254/16, and Tailscale's 100.64/10
             return !(a == 10 || a == 127 || (a == 172 && (16...31).contains(b)) || (a == 192 && b == 168) || (a == 169 && b == 254) || (a == 100 && (64...127).contains(b)))
         }
-        // ::1, unique local fc00::/7 (Tailscale's fd7a:115c:a1e0::/48 among them) and link-local fe80::/10
         if name.contains(":") {
             return !(name == "::1" || name.hasPrefix("fc") || name.hasPrefix("fd") || ["fe8", "fe9", "fea", "feb"].contains { name.hasPrefix($0) })
         }
-        // a one-word name (a MagicDNS short name, localhost) or a tailnet or home network name
         return name.contains(".") && ![".ts.net", ".local", ".lan", ".home.arpa", ".internal"].contains { name.hasSuffix($0) }
     }
 
@@ -114,8 +86,6 @@ enum PCStore {
         if last == key { last = nil }
     }
 
-    /// The key of a PC opened through the Ovis relay: `scope`, when it is an http or https origin with
-    /// a path ending in `/` and `url` is on that origin within that path; nil otherwise.
     static func scopeKey(_ scope: String, for url: URL) -> String? {
         guard let scopeURL = URL(string: scope), let scopeOrigin = origin(of: scopeURL), scopeOrigin == origin(of: url),
               let path = URLComponents(string: scope)?.percentEncodedPath, path.count > 1, path.hasSuffix("/"),
@@ -123,19 +93,14 @@ enum PCStore {
         return scope
     }
 
-    /// The origin of a PC's key.
     static func origin(ofKey key: String) -> String? {
         URL(string: key).flatMap { origin(of: $0) }
     }
 
-    /// The address a PC's key opens at: its scope, or its origin's root.
     static func firstPage(_ key: String) -> String {
         key.hasSuffix("/") ? key : key + "/"
     }
 
-    /// Whether `url` is a page of the PC `key`: on its origin, and for a relay PC within its scope, path
-    /// segment by path segment and only as a browser would load it (ScopePath): `<scope>../<other>/`
-    /// resolves to another PC. A PC saved by its origin takes any page of it.
     static func belongs(_ url: URL, to key: String) -> Bool {
         guard let pageOrigin = origin(of: url), pageOrigin == origin(ofKey: key) else { return false }
         let scope = URLComponents(string: key)?.percentEncodedPath ?? ""
@@ -144,7 +109,6 @@ enum PCStore {
         return ScopePath.within(path, scope: scope)
     }
 
-    /// `scheme://host[:port]` of an http or https URL, the host in lowercase as WebKit reports it, or nil.
     static func origin(of url: URL) -> String? {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
               let host = url.host?.lowercased(), !host.isEmpty else { return nil }
@@ -210,8 +174,6 @@ enum PCStore {
         return true
     }
 
-    /// `target`'s path, query and fragment on `origin`: a pairing link keeps its code when its
-    /// server's /api/health redirected to another origin.
     static func start(on origin: String, for target: URL) -> String {
         guard let parts = URLComponents(url: target, resolvingAgainstBaseURL: true) else { return origin + "/" }
         let path = parts.percentEncodedPath.isEmpty ? "/" : parts.percentEncodedPath
@@ -306,15 +268,12 @@ enum StrictJSON {
             }
         }
 
-        /// The string that starts at `at`, its escapes read, or nil: control characters only escaped,
-        /// and an escape one of JSON's, `\u` with four ASCII hex digits.
         mutating func string() -> String? {
             let start = at
             at += 1
             while let byte = next() {
                 switch byte {
                 case UInt8(ascii: "\""):
-                    // valid JSON from here on: JSONSerialization reads its escapes and its UTF-8
                     return try? JSONSerialization.jsonObject(with: Data(bytes[start..<at]), options: .fragmentsAllowed) as? String
                 case 0x00..<0x20:
                     return nil
@@ -364,7 +323,6 @@ enum StrictJSON {
     }
 }
 
-/// Hands a redirect back to `ovisOrigin` instead of following it.
 private final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -372,26 +330,16 @@ private final class RefuseRedirects: NSObject, URLSessionTaskDelegate {
     }
 }
 
-/// Capacitor's view controller with the chosen PC as the WebView's first page. Reaching the PC
-/// by navigating from the bundled connect page instead would cost every launch about 1.5 s
-/// (docs/native-app.md, Spike results), so opening a PC builds a new one of these.
 class HerdrBridgeViewController: CAPBridgeViewController {
     private var failureProxy: NavigationFailureProxy?
-    /// Covers the web view until the client is up: before that it is blank, then index.html's
-    /// loading spinner, for minutes on a slow link.
     private var openingView: UIView?
-    /// Looks at the open five times a second while the cover is up (tick): gives up on a PC that has not
-    /// answered, instead of WebKit's own wait of a minute or more, and tells a slow page.
     private var ticker: Timer?
     private var watch: OpeningWatch?
-    /// The cover's spinner, bar, text and Try again, which change with the open's stage.
     private var openingSpinner: UIActivityIndicatorView?
     private var openingBar: UIProgressView?
     private var openingLabel: UILabel?
     private var openingRetry: UIButton?
-    /// The PC's name or address, as the cover names it.
     private var openingName = ""
-    /// Whether the cover has given up and shows why (showNoAnswer).
     private var gaveUp = false
 
     /// Asked of the PC's page while the cover is up: whether the client is up, its root no longer
@@ -405,19 +353,13 @@ class HerdrBridgeViewController: CAPBridgeViewController {
           return !root || !root.querySelector(':scope > .boot');
         })()
         """
-    /// A page has finished loading in this one: later failures are left to the page.
     private var firstPageDone = false
-    /// How long a PC may take to answer the first request.
     private static let answerSeconds = 20
 
     override func instanceDescriptor() -> InstanceDescriptor {
         let descriptor = super.instanceDescriptor()
         if let origin = PCStore.current, let host = URL(string: origin)?.host {
-            // what server.url sets; the pairing link until a PC page has loaded, the PC's first page
-            // after it (a relay PC's scope keeps a pairing offer's `#offer=` fragment through here)
             descriptor.serverURL = PCStore.pendingStart ?? PCStore.firstPage(origin)
-            // the whole PC is the app: its own links stay in the WebView, others go to Safari. For a
-            // relay PC that host is the hosted shell's (app.ovis.sh), the one the app then allows
             descriptor.allowedNavigationHostnames = descriptor.allowedNavigationHostnames + [host]
         }
         return descriptor
@@ -452,19 +394,12 @@ class HerdrBridgeViewController: CAPBridgeViewController {
             let proxy = NavigationFailureProxy(inner: webView.navigationDelegate) { [weak self] webView, reason in
                 self?.showFailure(in: webView, reason: reason)
             }
-            // the PC answered: the cover stays, with its bar, until the client is up (tick)
             proxy.onAnswer = { [weak self] in self?.watch?.answer(at: ProcessInfo.processInfo.systemUptime) }
             proxy.onLoaded = { [weak self] in
                 self?.firstPageDone = true
                 self?.askPage()
             }
-            // a first page that broke off after it started: the error page; one cancelled on purpose
-            // leaves the cover up, which the timeout turns into Try again. Only the PC's answer or a
-            // finished page takes the cover away: while a PC's connection hangs, WebKit showed
-            // error.html half-loaded, its script not run and its buttons dead.
             proxy.onPageFailed = { [weak self] webView, reason in
-                // the PC's first page only (the cover may be gone once the PC answered), never the
-                // bundled error page, which would load itself again
                 guard let self, !self.firstPageDone, let reason,
                       ["http", "https"].contains(webView.url?.scheme?.lowercased() ?? "") else { return }
                 self.showFailure(in: webView, reason: reason)
@@ -476,14 +411,12 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         if webView != nil, let origin = PCStore.current {
             showOpening(origin)
             watch = OpeningWatch(now: ProcessInfo.processInfo.systemUptime, answerLimit: TimeInterval(Self.answerSeconds))
-            // often enough that the cover lifts within a fifth of a second of the client's first frame
             ticker = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.tick(origin) }
         }
     }
 
     deinit { ticker?.invalidate() }
 
-    /// Each tick while the cover is up: how far the page has come, and what the cover says.
     private func tick(_ origin: String) {
         guard let webView, openingView != nil, !gaveUp, var watch else { return }
         let now = ProcessInfo.processInfo.systemUptime
@@ -492,8 +425,6 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         let shown = watch.shownProgress()
         self.watch = watch
         if stage == .noAnswer {
-            // said on the cover itself: while the PC's connection hangs, WebKit did not show the
-            // error page either (it stayed unpainted), in this web view or a new one
             gaveUp = true
             webView.stopLoading()
             showNoAnswer(origin)
@@ -503,8 +434,6 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         askPage()
     }
 
-    /// Asks the page whether the client is up (clientUpScript): then the cover goes. A page that is
-    /// not the PC's (the bundled error page) takes the cover away once it has loaded.
     private func askPage() {
         guard let webView, openingView != nil, !gaveUp else { return }
         guard let url = webView.url, let current = PCStore.current, PCStore.belongs(url, to: current) else {
@@ -516,7 +445,6 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         }
     }
 
-    /// The cover's text, spinner, bar and buttons for the open's stage.
     private func showStage(_ stage: OpeningWatch.Stage, shown: Double, answered: Bool) {
         let ko = Self.korean
         switch stage {
@@ -525,18 +453,14 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         case .opening, .noAnswer:
             openingLabel?.text = ko ? "\(openingName) 여는 중…" : "Opening \(openingName)…"
         }
-        // the spinner until the PC answers; then the bar, filled as WebKit estimates the page's load
         openingBar?.isHidden = !answered
         openingBar?.setProgress(Float(shown), animated: true)
         openingSpinner?.isHidden = answered
-        // a slow open can always be started again
         openingRetry?.isHidden = stage != .slow
     }
 
     private static var korean: Bool { Locale.preferredLanguages.first?.lowercased().hasPrefix("ko") ?? false }
 
-    /// What shows while a PC opens: which PC, and Change PC, so a PC that never answers does not
-    /// leave a blank screen.
     private func showOpening(_ origin: String) {
         let host = PCStore.names[origin] ?? URL(string: origin)?.host ?? origin
         let cover = UIView(frame: view.bounds)
@@ -577,14 +501,12 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         stack.alignment = .center
         stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false
-        // scrolls when large text makes it taller than the screen, so both buttons stay reachable
         let scroll = UIScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.alwaysBounceVertical = false
         scroll.addSubview(stack)
         cover.addSubview(scroll)
         let content = scroll.contentLayoutGuide, frame = scroll.frameLayoutGuide
-        // the content is the screen's height, or taller when the text needs it, with the stack centered
         let fill = content.heightAnchor.constraint(equalTo: frame.heightAnchor)
         fill.priority = .defaultLow
         NSLayoutConstraint.activate([
@@ -611,15 +533,12 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         openingName = host
     }
 
-    /// The cover once the PC has not answered in time: why, what to check, Try again and Change PC.
     private func showNoAnswer(_ origin: String) {
         let host = URL(string: origin)?.host ?? origin
-        // a load that already failed keeps its reason
         var text = PCStore.failure.map { "\(host): \($0)" } ?? (Self.korean
             ? "\(host)이(가) \(Self.answerSeconds)초 안에 응답하지 않았습니다."
             : "\(host) did not answer within \(Self.answerSeconds) seconds.")
         if PCStore.failure == nil, !OpeningWatch.homeHost(host) {
-            // a public server: no home network or firewall of the PC to blame
             text += Self.korean
                 ? "\n\n서버가 꺼져 있거나, 이 휴대폰의 연결(또는 VPN)이 서버에 닿지 않을 수 있습니다."
                 : "\n\nThe server may be down, or this phone's connection (or a VPN on it) may not reach it."
@@ -639,8 +558,6 @@ class HerdrBridgeViewController: CAPBridgeViewController {
         openingRetry?.isHidden = false
     }
 
-    /// A MagicDNS name or a Tailscale IP (100.64.0.0/10, fd7a:115c:a1e0::/48), which opens only
-    /// while Tailscale is connected on the phone; error.html has the same test.
     private static func tailnet(_ host: String) -> Bool {
         let name = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
         if name.hasSuffix(".ts.net") || name.hasPrefix("fd7a:115c:a1e0:") { return true }
@@ -657,14 +574,10 @@ class HerdrBridgeViewController: CAPBridgeViewController {
 
     private func showFailure(in webView: WKWebView, reason: String) {
         guard let local = bridge?.config.localURL else { return }
-        // the timeout stays armed: if WebKit does not get the error page up either, the cover says it
         PCStore.failure = reason
         webView.load(URLRequest(url: local.appendingPathComponent("error.html")))
     }
 
-    /// Replaces the app's view controller, so the next page (a PC, or the connect screen) is a
-    /// first load. The old one goes with its web view and the page in it (the barcode scanner
-    /// plugin, which kept it alive, is patched in app/patches).
     static func reopen() {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         guard let window = (scene?.delegate as? SceneDelegate)?.window else { return }
@@ -681,17 +594,11 @@ private final class WebViewWithoutFormBar: WKWebView {
     override var inputAccessoryView: UIView? { nil }
 }
 
-/// Passes every navigation callback to Capacitor's own delegate and reports a main-frame load
-/// that failed, such as a PC that is off or one that answers with an HTTP error, with its reason.
-/// A load cancelled on purpose (a link handed to Safari, a new navigation) is not a failure.
 final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
     private weak var inner: WKNavigationDelegate?
     private let onFailure: (WKWebView, String) -> Void
-    /// The PC itself answered the first page (http or https), with any status.
     var onAnswer: (() -> Void)?
-    /// A page (the PC's or the error page) finished loading.
     var onLoaded: (() -> Void)?
-    /// A page broke off after it started loading, with the reason, or nil when that was on purpose.
     var onPageFailed: ((WKWebView, String?) -> Void)?
 
     /// Whether a failed load was cancelled or handed off on purpose: a new navigation, WebKit's
@@ -702,10 +609,7 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
         return nsError.domain == "WebKitErrorDomain" && (nsError.code == 102 || nsError.code == 204)
     }
 
-    /// Whether the main frame's navigation has started and not committed yet.
     private var provisional = false
-    /// Whether the main frame's first page has committed: from then on a user could have followed a
-    /// link from it.
     private var pageShown = false
 
     init(inner: WKNavigationDelegate?, onFailure: @escaping (WKWebView, String) -> Void) {
@@ -725,7 +629,6 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
     /// not a PC worth keeping, and its page would leave the app no way back: the error page shows
     /// instead. Capacitor's delegate does not decide responses; WebKit allows all of them.
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-        // the PC's own answer, not the bundled error page's
         if navigationResponse.isForMainFrame, ["http", "https"].contains(navigationResponse.response.url?.scheme?.lowercased() ?? "") { onAnswer?() }
         guard navigationResponse.isForMainFrame, let response = navigationResponse.response as? HTTPURLResponse,
               response.statusCode >= 400 else {
@@ -758,18 +661,11 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
         }
     }
 
-    /// A redirect of the address being opened to another origin: when that origin answers as Ovis it
-    /// becomes the PC and opens as the first page (http to https, an IP address to the PC's name,
-    /// another port). Anything else, such as a sign-in page, gets no bridge and the error page names
-    /// it: a PC address that leads elsewhere is not a PC. A way that goes over public plain http, or
-    /// from https to http, does not switch on its own: the connect screen warns before a public http
-    /// address.
     private func follow(_ target: URL, from: String, in webView: WKWebView) {
         let tooMany = PCStore.redirects >= PCStore.maxRedirects
         Task { @MainActor [weak self, weak webView] in
             let probe: (ovis: String?, path: [String]) = tooMany ? (nil, []) : await PCStore.ovisOrigin(leadingTo: target)
             let ovis = probe.ovis
-            // a web view no longer on screen (the user changed PC meanwhile) decides nothing
             guard let self, let webView, webView.window != nil else { return }
             if let ovis, let insecure = PCStore.insecureHop(from: from, path: probe.path) {
                 self.onFailure(webView, "It redirected over plain http to \(insecure), which the app does not follow on its own. If \(ovis) is your PC, open it itself.")
@@ -802,7 +698,6 @@ final class NavigationFailureProxy: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         inner?.webView?(webView, didFinish: navigation)
         onLoaded?()
-        // the PC's page is up: a pairing link has done its work, and the PC is one worth keeping
         if let url = webView.url, let current = PCStore.current, PCStore.belongs(url, to: current) {
             PCStore.pendingStart = nil
             PCStore.redirects = 0

@@ -10,11 +10,8 @@ namespace Ovis
     internal static class Links
     {
         public const string PluginId = "devswha.ovis";
-        /// <summary>The id releases up to 0.4.13 install under (install.ps1 picks it for them).</summary>
         public const string LegacyPluginId = "devswha.herdr-web-ui";
-        /// <summary>What install.ps1 hands `herdr plugin install`.</summary>
         public const string PluginSource = "devswha/ovis";
-        /// <summary>Where the release tags are, as install.ps1 lists them.</summary>
         public const string Repository = "https://github.com/devswha/ovis.git";
         public const string InstallCommand = "irm https://ovis.sh/install.ps1 | iex";
         public const string Support = "https://ovis.sh/support/";
@@ -27,15 +24,9 @@ namespace Ovis
         public static readonly string Home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         public static readonly string LocalAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
-        /// <summary>Where Ovis.exe keeps a copy of itself for the login start and the Start menu (not in the MSIX).</summary>
         public static readonly string InstalledExe = Path.Combine(LocalAppData, "Programs", "Ovis", "Ovis.exe");
         public static readonly string StartMenuShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Ovis.lnk");
 
-        /// <summary>
-        /// The PATH a new terminal would get, read again from the registry: an app opened from Explorer keeps the
-        /// PATH of the login, and Git, herdr or Bun installed since are on the new one. The official installers'
-        /// own directories come first, as install.ps1 puts them.
-        /// </summary>
         public static void RefreshPath()
         {
             var parts = new[]
@@ -48,11 +39,9 @@ namespace Ovis
             var seen = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var path = string.Join(";", parts.SelectMany(p => p.Split(';')).Select(p => p.Trim()).Where(p => p.Length > 0 && seen.Add(p)));
             Environment.SetEnvironmentVariable("PATH", path);
-            // plugin.ps1 does the same for the scripts it runs
             if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HOME"))) Environment.SetEnvironmentVariable("HOME", Home);
         }
 
-        /// <summary>The first program of that name on PATH, as cmd would find it.</summary>
         public static string Which(string name)
         {
             foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
@@ -65,7 +54,7 @@ namespace Ovis
                         var candidate = Path.Combine(directory, name + extension);
                         if (File.Exists(candidate)) return candidate;
                     }
-                    catch (ArgumentException) { } // a PATH entry with characters a path cannot have
+                    catch (ArgumentException) { }
                 }
             }
             return null;
@@ -80,7 +69,6 @@ namespace Ovis
             }
         }
 
-        /// <summary>True when this process runs from the Store's MSIX (it has package identity).</summary>
         public static bool Packaged
         {
             get

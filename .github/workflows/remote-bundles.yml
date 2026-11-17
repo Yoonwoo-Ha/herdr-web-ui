@@ -36,7 +36,6 @@ jobs:
           - { os: macos-15-intel, pty: darwin-universal }
     runs-on: ${{ matrix.os }}
     env:
-      # the Rust PTY host each bundle carries beside its Node sidecar (scripts/pty-sidecar.ts)
       HERDR_BUNDLE_PTY_SIDECAR: ${{ github.workspace }}/pty-sidecar/ovis-pty-sidecar-${{ matrix.pty }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,11 +58,8 @@ jobs:
         with:
           name: remote-${{ matrix.os }}
           path: remote-bundles/*
-  # Windows bundles are the compiled server alone (scripts/server-artifact.ts), assembled on Linux; the smoke job
-  # below runs the result on a real Windows runner against herdr's own installer
   bundle-windows:
     timeout-minutes: 20
-    # release publishes its bundle: GitHub-hosted whatever the runner variables say, and no shared cache (scripts/privileged-jobs-workflow.test.ts)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,7 +97,6 @@ jobs:
         run: curl.exe -fsSLo install.cmd https://herdr.dev/install.cmd && install.cmd && del install.cmd
       - run: bun run scripts/remote-bundle-smoke.ts
         shell: pwsh
-      # what only a real Windows PC shows: its process table and its path rules (server/windows-native.test.ts)
       - run: bun install --frozen-lockfile
       - name: Windows-only code on Windows
         shell: pwsh
@@ -123,7 +118,6 @@ jobs:
         with:
           node-version: '22'
           package-manager-cache: false
-      # the self-hosted image already ships sshd (and has no sudo); a hosted runner installs it
       - name: OpenSSH server
         run: |
           if [ -x /usr/sbin/sshd ] && [ -d /run/sshd ]; then
@@ -132,8 +126,6 @@ jobs:
             sudo bash scripts/ci-bounded-retry.sh 300 bash -c 'apt-get update && apt-get install -y openssh-server' && sudo mkdir -p /run/sshd
           fi
       - run: bun install --frozen-lockfile && bun run build && bun run scripts/build-remote-bundle.ts
-      # password mode creates an account and starts sshd as root; without sudo (the self-hosted image) the
-      # key-only flow runs, with sshd as the runner user on a port of its own
       - name: SSH integration
         run: |
           if sudo -n true 2>/dev/null; then export SSH_TEST_PASSWORD=1; fi

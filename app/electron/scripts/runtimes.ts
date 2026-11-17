@@ -1,8 +1,3 @@
-/**
- * The programs the desktop app carries, pinned: herdr-core (`hc`) runs the terminals and Bun runs
- * the Ovis server. Each download is checked against the SHA-256 written here before it is used,
- * so a build never takes whatever a server hands out that day. A version bump updates these.
- */
 import { createHash } from "node:crypto";
 
 export const HC_VERSION = "0.1.17";
@@ -16,18 +11,15 @@ export interface Pinned {
   sha256: string;
 }
 
-// releases.herdr.dev/core/0.1.17/manifest.json
 const hcFile = (name: string, ext = "tar.gz") => `https://releases.herdr.dev/core/${HC_VERSION}/herdr-core-${name}.${ext}`;
 export const HC: Record<Target, Pinned> = {
   "linux-x64": { url: hcFile("linux-x86_64"), sha256: "82ec44043f6894bfdb716b979b87cda43fd7fa46b0104e7b7bd93e64d1a9b877" },
   "linux-arm64": { url: hcFile("linux-aarch64"), sha256: "3a37a454ec63494cf4306db26481fe9db96673d888723701d24f8a992ae8ab8c" },
   "darwin-x64": { url: hcFile("macos-x86_64"), sha256: "e2dc3211edb1f1c77d0e73dd76c1426636d71050f34a5303916a56d363d7062b" },
   "darwin-arm64": { url: hcFile("macos-aarch64"), sha256: "cedbd4d4d9ba1385588198dd4d3c67d2654478f33add5b6445d4d0eb9da5fcf3" },
-  // herdr-core.exe with the ConPTY it runs terminals on (conpty/), which goes beside it
   "win32-x64": { url: hcFile("windows-x86_64", "zip"), sha256: "a212b69db0efb808882683f15e5da45ab9606da7bcc54b97b29ed4fa540f5491" },
 };
 
-// oven-sh/bun bun-v1.4.2 SHASUMS256.txt; the same Bun as CI (.github/actions/setup-ci) and the remote bundles
 const bunFile = (name: string) => `https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${name}.zip`;
 export const BUN: Record<Target, Pinned & { folder: string }> = {
   "linux-x64": { url: bunFile("bun-linux-x64"), folder: "bun-linux-x64", sha256: "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913" },
