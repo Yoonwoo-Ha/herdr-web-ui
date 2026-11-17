@@ -341,6 +341,7 @@ describe("git inventories", () => {
         expect(options.env?.["GIT_DIR"]).toBeUndefined();
         expect(options.env).toMatchObject({ GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" });
       }
+      // a synchronous listing holds the whole server's event loop for up to its deadline (#1404)
       expect(spawnSync).not.toHaveBeenCalled();
       expect(GIT_LIST_MAX_BYTES).toBe(16 * 1024 * 1024);
       expect(GIT_LIST_DEADLINE_MS).toBe(3_000);
@@ -404,6 +405,7 @@ describe("git inventories", () => {
     roots.push(join(listing, ".."));
     const { git } = fakeGit(() => `cat "${listing}"\nexit 0`);
     setGitListOptions({ git });
+    // git exits 0 yet its last name has no NUL: the listing was cut short, so none of it is used
     for (const output of ["ghost-partial", "ghost-whole\0ghost-partial"]) {
       writeFileSync(listing, output);
       clearFileCache();

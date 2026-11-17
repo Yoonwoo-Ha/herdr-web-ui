@@ -454,6 +454,7 @@ describe("Claude's words over its question (#2088)", () => {
   });
 
   test("keeps commands without options on their lines, though the first one fills the pane", () => {
+    // "  git merge experimental-feature-branch" is 39 columns: "git" would not have fit after it
     expect(parseInteractivePrompt("claude", withAbove(asked(40), ["● Merge and push:", "", "  git merge experimental-feature-branch", "  git push", ""]))?.screen_words)
       .toBe("Merge and push:\n\ngit merge experimental-feature-branch\ngit push");
   });

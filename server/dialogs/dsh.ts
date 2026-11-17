@@ -28,17 +28,21 @@ import { ANSI_RE, KEY, cleanLine, findLastIndex, finishPrompt, joinWrapped, keyS
  * boundary (`\b`) never follows Chinese text, so the hints' words end at a space or the line's end.
  */
 const DSH_HEADER_RE = /▾\s+📋\s*(?:Question\s+(\d+)\/(\d+)|提问\s*·\s*第\s*(\d+)\/(\d+)\s*题)/;
+/** the option list's hint: its select key first, its cancel or previous-question key later */
 const DSH_HINT_RE = /^(?:↑\/↓ select|↑\/↓ 选择)(?=\s|$).*(?:Esc (?:cancel|previous question)|Esc (?:中断|上一题))/;
 const DSH_TYPING_HINT_RE = /^(?:Type answer|输入回答)(?=\s|$).*(?:Esc (?:cancel|previous question)|Esc (?:中断|上一题))/;
 const DSH_MULTI_RE = /\bSpace (?:multi-select|多选)(?=\s|$)/;
 const DSH_SWITCH_RE = /←\/→ (?:switch question|换题)|行首←\/行尾→ 换题|←\/→ at the text edge switches question/;
+/** rows, from the free-text row's column: dsh sets the panel in two columns past the chat's own margin */
 const DSH_ROW_RE = /^( *)([❯ ])([●○◉])\s(.+)$/;
 /**
  * The free-text row: `✎`, its label, `：`, then what is typed. A typed text longer than the row squeezes the label into a
  * column of its own, its words on lines of their own (`✎ Custom     ：Use the…` over `   answer       runs…`).
  */
 const DSH_CUSTOM_RE = /^( *)([❯ ])✎\s([^：]*)：(.*)$/;
+/** the same row once a long typed text squeezes the `：` out of it: its label's first word, then the text */
 const DSH_SQUEEZED_RE = /^( *)([❯ ])✎\s(\S+)\s{2,}(\S.*)$/;
+/** the label, its spaces dropped: alone, or with an option's label attached (`(attached: …)`, `（附加：…）`) */
 const DSH_LABEL_RE = /^(?:Customanswer|自定义回答)$/;
 const DSH_ATTACHED_LABEL_RE = /^(?:Customanswer\(attached:.*|自定义回答（附加)$/;
 const DSH_PLACEHOLDER_RE = /^\s*(?:Type directly…|直接输入…)$/;
@@ -54,6 +58,7 @@ const DSH_FOOTER_ROWS = 3;
  * background-jobs chip (`● 1 · high · …` with the model field off)
  */
 const DSH_TRANSCRIPT_RE = /^(?!● \d+(?: ·|$))[╭╰│⌸●❯!⎿▾▴◈✎·]/;
+/** the line saying how much of a long question dsh-tui folds out of view (i18n `question-detail-scroll`) */
 const DSH_FOLD_RE = /^…\s+\d+\s+(?:lines?\s+outside view|行未显示)/;
 
 /** What an answer types into the free-text row: one line (dsh-tui submits the row on Enter). */
@@ -90,14 +95,22 @@ interface DshPanel {
 
 export function parseDshQuestion(screen: string): ParsedPrompt | null {
   const panel = readDshPanel(screen);
+  // text typed in the terminal (or an option's label it attached) would go out with any answer the card sends:
+  // the terminal finishes what it began there
   if (!panel || panel.modeUnknown || panel.typed?.join("") !== "") return null;
   return panel.prompt;
 }
 
+/**
+ * The free-text row of the card's own single choice, with the cursor on it, as a typed answer leaves it: "typed"
+ * when it holds exactly `text`, "typing" while it holds only the start of it (dsh-tui draws the text as it comes),
+ * null on any other screen (another question, the panel gone, another option's label attached, other words in the row).
+ */
 export function dshFreeTextRow(screen: string, expected: ParsedPrompt, text: string): "typed" | "typing" | null {
   const panel = readDshPanel(screen);
   if (!panel?.typed || expected.multi_select || panel.prompt.multi_select || panel.prompt.id !== expected.id
     || panel.prompt.selectedIndex !== panel.prompt.options.length || !dshQuestionActive(screen)) return null;
+  // a wrapped line may drop or keep the space it broke at
   // dsh wraps at a space and drops it: exactly one space between two lines, but none or one under a line that
   // reaches the row's end (a word broken there, or one that ends right there)
   let pieces = "";
@@ -127,6 +140,7 @@ function readDshPanel(screen: string): DshPanel | null {
   const custom = colon ?? DSH_SQUEEZED_RE.exec(lines[customIndex]!)!;
   const indent = custom[1]!;
   const customCursor = custom[2] === "❯";
+  // typed text the pane wraps goes on under the row's text, from the column after `：`, the label's words under the label
   const textColumn = Bun.stringWidth(lines[customIndex]!) - Bun.stringWidth(custom[4]!);
   let typedEnd = customIndex + 1;
   while (typedEnd < lines.length && lines[typedEnd]!.startsWith(`${indent}   `) && lines[typedEnd]!.trim()) typedEnd += 1;
@@ -172,6 +186,8 @@ function readDshPanel(screen: string): DshPanel | null {
   // each row has its own hint: the option list's, or the free-text row's with the cursor on it
   if (customCursor !== DSH_TYPING_HINT_RE.test(hint)) return null;
 
+  // the free-text row's hint names no Space: a multiple choice is told by its ticks there, in the rows' mark column (an
+  // option's words may hold a `◉` of their own)
   const multi = DSH_MULTI_RE.test(hint) || rows.some((row) => row.ticked || (row.checked && !row.cursor));
   const modeUnknown = customCursor && !multi;
   // a single choice marks the cursor's row alone, and none while the cursor is on the free-text row
@@ -179,7 +195,7 @@ function readDshPanel(screen: string): DshPanel | null {
 
   // the header chip (`◈ Platforms`), the question, then a blank line and the question's detail; a long question and
   // detail fold into a window with a line saying how much of them is hidden (`… 16 lines outside view · Alt+Up/Alt+Down
-  // to scroll`)
+  // to scroll`): the card would ask it cut short, so the terminal, which scrolls it, answers it
   const paragraphs: string[][] = [];
   let chip: string | null = null;
   let blank = true;
@@ -256,8 +272,14 @@ function readDshPanel(screen: string): DshPanel | null {
   return { prompt, typed, typedFull, modeUnknown };
 }
 
+/**
+ * Whether the panel's hint is the last thing on the screen but dsh-tui's own footer: a panel-shaped text with
+ * anything else under it (later output, dsh's input box) asks nothing.
+ */
 export function dshQuestionActive(screen: string): boolean {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map(cleanLine).filter(Boolean);
+  // the hint, as many lines as the pane wrapped it onto, ends with its own last words right over the footer: dsh's
+  // input box and its conversation, under a panel already answered, are more rows than the footer has and start apart
   for (let end = lines.length - 1; end >= Math.max(0, lines.length - 1 - DSH_FOOTER_ROWS); end -= 1) {
     if (lines.slice(end + 1).some((line) => DSH_TRANSCRIPT_RE.test(line))) return false;
     for (let start = end; start >= Math.max(0, end - DSH_HINT_LINES + 1); start -= 1) {
@@ -272,6 +294,7 @@ export const readers: readonly DialogReader[] = [{
   id: "dsh-question",
   agents: ["dsh-tui"],
   priority: 10,
+  // the cursor is read off the screen: a row moved to in the terminal since the card was drawn is looked at again before Enter
   reread: "before-commit",
   list: "none",
   parse: (screen) => parseDshQuestion(screen),

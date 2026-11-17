@@ -23,6 +23,7 @@ const SERVER_START = serverStartTicks === null ? null : BigInt(serverStartTicks)
 
 export type DshTranscript = { path: string; root: string; identity: string };
 
+/** dsh-home-paths resolves DSH_HOME before ~/.dsh. Relative homes cannot be pinned after chdir. */
 export function dshSessionsDirectory(environ: readonly string[]): string | null {
   const home = environ.find(word => word.startsWith("HOME="))?.slice(5);
   const override = environ.find(word => word.startsWith("DSH_HOME="))?.slice(9);
@@ -52,12 +53,21 @@ export async function authorizeDshTranscript(path: string, sessions: string): Pr
 }
 
 const NODE = /(?:^|\/)node$/;
+/** The npm bin link (`…/bin/dsh`) or the package entry it points at (`…/@deepseek-ai/dsh/lib/bin.js`); a file merely named dsh is not one. */
 const DSH_LAUNCHER = /\/bin\/dsh$|\/@deepseek-ai\/dsh\/lib\/bin\.js$/;
 /** dsh-tui's host process, which `dsh-tui` starts behind its two launcher shims and which holds the session lock. */
 const DSH_TUI_HOST = /\/@deepseek-harness-tui\/dsh-tui\/lib\/(?:[\w.-]+\/)*host-entry\.js$/;
+/** Shipped profiles that serve a browser or a protocol client, not a chat in this terminal. */
 const SERVICE_PROFILES = new Set(["web", "sdk", "sdk-minimal", "acp"]);
+/** Launcher modes that print or install and exit without booting a session. */
 const NOT_A_SESSION = new Set(["--dump-config", "--dump-default-config", "--dump-config-schema", "--help", "-h", "--version", "-V"]);
 
+/**
+ * The dsh launcher booting a chat profile, exactly as herdr reports it: `node <…/bin/dsh | …/@deepseek-ai/dsh/lib/bin.js>`,
+ * then `--profile <name>`, `--profile=<name>` or the profile name; or dsh-tui's host process
+ * (`node …/@deepseek-harness-tui/dsh-tui/lib/…/host-entry.js`). Another program that only
+ * mentions dsh, plugin management, a config dump and the web/SDK/ACP service profiles do not match.
+ */
 export function isDshProcess(argv: readonly unknown[]): boolean {
   if (!argv.every((word) => typeof word === "string")) return false;
   const words = argv as readonly string[];
@@ -83,9 +93,12 @@ function explicitResume(argv: readonly unknown[], environ: readonly string[]): b
 
 export function forgetDshProcesses(): void { boundProcesses.clear(); }
 
+/** A held lock binds the foreground process to its session; modification times do not. */
+/** `serverStart`: this server's start tick, or unknown; a lock-free dsh counts as new only when it started strictly after it. */
 export async function resolveDshTranscript(info: Processes | null | undefined, serverStart: bigint | null = SERVER_START): Promise<DshTranscript> {
   if (process.platform !== "linux") return unavailable();
   const found = new Map<string, DshTranscript>();
+  /** every session a dsh process holds locked, readable or not: more than one is no binding */
   const lockedSessions = new Set<string>();
   const fresh: string[] = [];
   let inspected = 0;
@@ -110,6 +123,7 @@ export async function resolveDshTranscript(info: Processes | null | undefined, s
       if (descriptors.length > 4096) return unavailable();
       for (const fd of descriptors) {
         const target = await readlink(`/proc/${proc.pid}/fd/${fd}`).catch((error: NodeJS.ErrnoException) => {
+          // readdir itself can leave a closed descriptor in our own process's listing.
           if (error.code === "ENOENT") return "";
           throw error;
         });
@@ -126,6 +140,7 @@ export async function resolveDshTranscript(info: Processes | null | undefined, s
           });
           if (present === null) continue;
           const authorized = await authorizeDshTranscript(path, sessions);
+          // the log must be the locked session's own, not a link into another session of the store
           if (authorized === null || dirname(authorized.path) !== folder) return unavailable();
           candidates.push(authorized);
           break;
@@ -145,6 +160,7 @@ export async function resolveDshTranscript(info: Processes | null | undefined, s
         if (!held && !boundProcesses.has(identity) && serverStart !== null && BigInt(start) > serverStart && !explicitResume(proc.argv, memory.environ)) fresh.push(identity);
       }
     } catch {
+      // An unread recognized process still vetoes selection unless it demonstrably exited or was replaced.
       const currentStart = processStartTicks(proc.pid);
       if (!processAlive(proc.pid) || (currentStart !== null && currentStart !== start)) continue;
       return unavailable();
@@ -155,6 +171,7 @@ export async function resolveDshTranscript(info: Processes | null | undefined, s
   return [...found.values()][0]!;
 }
 
+/** Ignore an unfinished final append, but reject malformed complete frames. */
 export function completeDshFrames(bytes: Buffer): number {
   let end = 0;
   while (end < bytes.length) {

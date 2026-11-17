@@ -75,6 +75,7 @@ describe("codexOwnScreenOpen", () => {
       "  space toggle · enter save · esc save/\n  close",
       "  left/right group · enter edit shortcut · * custom · - unbound · esc close",
       "  Find:\n  Type to find · full transcript · esc cancel",
+      // the search through earlier prompts has no footer: its field ends the screen
       "  reverse-i-search: fix",
       // the transcript's pager, as 0.167 drew it with `[tui] fullscreen_transcript = false` (seen, not recorded)
       "^space select\n ↑/↓ to scroll · pgup/pgdn to page · home/end to jump\n q close · f3 find · esc browse prompts",
@@ -102,6 +103,7 @@ describe("codexOwnScreenOpen", () => {
       "use /feedback", "if something", "went wrong", "Browsing"].join("\n");
     expect(codexOwnScreenOpen(at15)).toBeTrue();
     expect(codexOwnScreenOpen(["d - use /", "feedback", "if", "something", "went wrong", "Browsing"].join("\n"))).toBeTrue();
+    // rows are measured in columns: four flags are eight of them, in sixteen code units
     expect(codexOwnScreenOpen(["› hello", "🇺🇸🇺🇸🇺🇸🇺🇸", "Browsing"].join("\n"))).toBeTrue();
     expect(codexOwnScreenOpen(under("• The view was called", "  Browsing"))).toBeFalse();
     expect(codexOwnScreenOpen(at15.replace("went wrong", "went wrong, as the log above shows"))).toBeFalse();

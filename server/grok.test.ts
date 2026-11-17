@@ -76,24 +76,28 @@ describe("Grok native event adapter", () => {
       expect(new Bun.CryptoHasher("sha256").update(image!.bytes).digest("hex")).toBe(ref.slice("grok-image:".length));
     }
     expect(await grokImage(own, `grok-image:${"0".repeat(64)}`)).toBeNull();
+    // Grok only appends: a rewrite here starts the reader afresh
     writeFileSync(own, recorded.replace('"content":{"type":"image","data"', '"content":{"type":"im\\u0061ge","data"'));
     forgetTranscriptState();
     expect(transcriptPage("grok-transcript", own).turns[0]!.parts.slice(1)).toEqual([{ kind: "image", media_type: "image/png", ref: red }]);
     expect((await grokImage(own, red))?.mediaType).toBe("image/png");
     writeFileSync(own, recorded);
     forgetTranscriptState();
+    // a prompt rewound while the lookup reads is not served
     const rewound = JSON.stringify({ timestamp: 1700000000, method: "_x.ai/session/update", params: { sessionId: "01a19135-9ed8-7802-9f7f-c2c74a10a956", update: { sessionUpdate: "rewind_marker", target_prompt_index: 0 } } }) + "\n";
     const reading = grokImage(own, red);
     appendFileSync(own, rewound);
     expect(await reading).toBeNull();
     writeFileSync(own, recorded);
     forgetTranscriptState();
+    // a file moved into the path while the lookup reads is not the one it read: nothing is served
     const swapping = grokImage(own, red);
     writeFileSync(`${own}.next`, recorded.replace(/"type":"image","data":"[^"]*","mimeType":"image\/png"/, '"type":"text","text":"gone"'));
     renameSync(`${own}.next`, own);
     expect(await swapping).toBeNull();
     writeFileSync(own, recorded);
     forgetTranscriptState();
+    // a prompt rewound away leaves the active history: its picture is no longer served
     appendFileSync(own, JSON.stringify({ timestamp: 1700000000, method: "_x.ai/session/update", params: { sessionId: "01a19135-9ed8-7802-9f7f-c2c74a10a956", update: { sessionUpdate: "rewind_marker", target_prompt_index: 0 } } }) + "\n");
     expect(await grokImage(own, red)).toBeNull();
   });
@@ -356,6 +360,8 @@ describe("exact store lookup", () => {
       expect(grokPaneProcesses({ foreground_processes: [{ pid: 11, argv: [exe] }] })).toEqual([]);
     }
   });
+  // These resolver tests hold real descriptors in a real process: /proc on Linux, lsof and the
+  // kernel's environment on macOS. The process's own GROK_HOME names the store.
   for (const scenario of [
     { name: "older files stay open", otherGroup: "group", otherSession: "older-session", otherMtime: 100, binds: true },
     { name: "/resume writes a newer session", otherGroup: "group", otherSession: "resumed-session", otherMtime: 300, binds: false },
@@ -653,9 +659,11 @@ describe("macOS held-file evidence", () => {
     const stat = identity(current);
     const store = { home, listing: listing(record("4", current, stat)) };
     expect((await darwin(store, { environment: `HOME=${userHome}\0` })).result).toBe(transcript);
+    // a NOTE holding "GROK_HOME=" is NOTE's value, not a home
     expect((await darwin(store, { environment: `NOTE=x GROK_HOME=/wrong\0HOME=${userHome}\0` })).result).toBe(transcript);
     expect((await darwin(store, { environment: `GROK_HOME=\0HOME=${userHome}\0` })).result).toBe(transcript);
     expect((await darwin(store, { environment: `GROK_HOME=relative\0HOME=${userHome}\0` })).result).toBeNull();
+    // a home the held file does not live in does not bind
     expect((await darwin(store, { environment: `GROK_HOME=${join(userHome, "other")}\0` })).result).toBeNull();
     const configured = await darwin(store, { configured: home, environment: "GROK_HOME=/wrong\0" });
     expect(configured.result).toBe(transcript);
@@ -716,6 +724,7 @@ describe("macOS held-file evidence", () => {
       const noInode = store.listing.replaceAll(marker, `D0x${stat.dev.toString(16)}\nn${file}\n`);
       expect((await darwin({ ...store, listing: noInode })).result).toBeNull();
     }
+    // lsof keeps naming an unlinked file by its old path
     unlinkSync(store.other);
     expect((await darwin(store)).result).toBeNull();
   });
@@ -772,6 +781,7 @@ describe("macOS held-file evidence", () => {
     expect((await darwin(store, { throwOnSpawn: true })).result).toBeNull();
     expect((await darwin(store, { environment: null })).result).toBeNull();
     expect((await darwin(store, { environment: "HOME=/does-not-exist\0GROK_HOME=relative\0" })).result).toBeNull();
+    // the cap counts bytes: 2-byte characters past half a MiB are over it
     const padding = `ftxt\nn/usr/lib/${"é".repeat(512 * 1024)}\n`;
     expect(new TextEncoder().encode(store.listing + padding).byteLength).toBeGreaterThan(1024 * 1024);
     expect((store.listing + padding).length).toBeLessThan(1024 * 1024);

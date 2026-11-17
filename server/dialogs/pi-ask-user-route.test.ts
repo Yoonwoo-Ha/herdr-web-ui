@@ -142,6 +142,7 @@ test("pi-ask's form is a card, one question per step, and its answers go to pi-a
       steps: [{ label: "Scope", answered: false, current: true }, { label: "Checks", answered: false, current: false }, { label: "Tone", answered: false, current: false }],
     });
     expect(scope.can_step_back).toBeFalsy();
+    // pi-ask never requires an answer; a multi-select's checks and typed text go together
     expect(scope.optional).toBe(true);
     expect(scope.checks_with_text).toBeUndefined();
 
@@ -272,6 +273,8 @@ test("questions can be skipped, a typed answer survives Back, and an answered qu
 test("the card follows pi's live branch, which a /tree move changes without writing to the session", async () => {
   if (!posix) return;
   await withBridgedPane(async (pane) => {
+    // Given the session file ending in the call's dismissal, but pi's leaf moved back before it
+    // (a /tree move appends nothing): pi-ask has reopened the form, and the extension says the call is open
     appendFileSync(pane.session, JSON.stringify(fixture.transcript[4]) + "\n");
     pane.bridge.state.flows[0]!.createdAt += 1;
     pane.bridge.state.openCalls = ["toolu_feat1202ask"];
@@ -297,6 +300,8 @@ test("a form pi-ask dropped without telling the extension does not hide the live
   if (!posix) return;
   await withBridgedPane(async (pane) => {
     const live = pane.bridge.state.flows[0]!;
+    // an earlier form whose call is settled in the session: pi-ask disposed it without a completed event
+    // and a dropped /answer form, which has no call at all
     pane.bridge.state.flows = [{ ...live, flowId: "tool:earlier", toolCallId: "earlier", createdAt: 1 }, { ...live, flowId: "flow:1:x", toolCallId: undefined, createdAt: 2 }, live];
     expect(await pane.read()).toMatchObject({ question: "Which part should ship first?", title: "Release plan", steps: [{ label: "Scope" }, { label: "Checks" }, { label: "Tone" }] });
   });
@@ -332,6 +337,7 @@ test("an open pi-ask form in a session pi has not written yet is never a card of
     pane.bridge.state.flows = [{ ...pane.bridge.state.flows[0]!, flowId: "flow:answer", toolCallId: undefined, source: "answer" }];
     pane.bridge.state.openCalls = [];
     const card = await pane.read();
+    // a card here could only be the generic one: answering it would type into the open form
     if (card) await pane.answer(card.id, { option_index: 0 });
     expect(card).toBeNull();
     expect(pane.keys).toEqual([]);
@@ -540,6 +546,8 @@ test("no card without every fact the extension and the session agree on", async 
   })).toBeNull();
   expect(await unbridged((pane) => { pane.bridge.state.openCalls = []; })).toBeNull();
   expect(await unbridged((pane) => { pane.bridge.state.openCalls = null; })).toBeNull();
+  // a socket directory other users can enter: anyone who can write there could speak for pi
   expect(await unbridged((pane) => { chmodSync(join(pane.root, "herdr-web-ui-ask"), 0o755); })).toBeNull();
+  // a form with no tool call behind it (pi-ask's /answer and /ask:replay)
   expect(await unbridged((pane) => { pane.bridge.state.flows = [{ ...pane.bridge.state.flows[0]!, toolCallId: undefined }]; })).toBeNull();
 });

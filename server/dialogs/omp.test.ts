@@ -42,6 +42,7 @@ describe("omp Ask under omp's status row (#1644)", () => {
   });
 
   it("shows no card for an old Ask panel with another, empty box between it and the status row", () => {
+    // an answered question can leave its panel on screen while omp draws another box under it
     const box = "\n\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e\n\u2502        \u2502\n\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f";
     for (const name of ["single-120", "submit-60"]) {
       const shown = ask(name);
@@ -118,6 +119,7 @@ describe("omp tool approval (#2059)", () => {
         options: [{ label: "Approve", description: null }, { label: "Deny", description: null }], multi_select: false,
       });
       expect(prompt!.own_text?.labels, name).toEqual({ 0: { key: "Approve" }, 1: { key: "Deny" } });
+      // Ctrl+Q over Ctrl+Enter, which a terminal without extended keys cannot send
       expect(steps(prompt, 0), name).toEqual([{ keys: ["ctrl+q"] }]);
       expect(steps(prompt, 1), name).toEqual([{ keys: [KEY.escape] }]);
     }
@@ -138,6 +140,7 @@ describe("omp tool approval (#2059)", () => {
 
   it("offers 18.13's grants, but not the toggle over them, which answers nothing", () => {
     const shown = approval("18.13.2-unicode-wide-grants");
+    // the recording summarizes the written content (`Content: fictional \u2026`): no card, as for any call shown in part
     expect(shown).toContain("\u2502 Path: notes/fixture.txt \u00b7 Content: fictional \u2026 ");
     expect(parseInteractivePrompt("omp", shown)).toBeNull();
     const prompt = parseInteractivePrompt("omp", redraw(shown, "\u2502 Path: notes/fixture.txt ", "Path: notes/fixture.txt"));
@@ -150,6 +153,7 @@ describe("omp tool approval (#2059)", () => {
     expect(steps(prompt, 1)).toEqual([{ keys: [KEY.up] }, { keys: [KEY.enter] }]);
     expect(steps(prompt, 2)).toEqual([{ keys: ["ctrl+q"] }]);
     expect(steps(prompt, 3)).toEqual([{ keys: [KEY.escape] }]);
+    // ticked, the toggle keeps a grant across sessions: no card, whatever the grant rows read
     const whole = redraw(shown, "\u2502 Path: notes/fixture.txt ", "Path: notes/fixture.txt");
     for (const box of ["\u2611", "\uf14a"]) {
       const ticked = redraw(whole, "Remember across sessions", `  ${box} Remember across sessions`);
@@ -166,6 +170,7 @@ describe("omp tool approval (#2059)", () => {
     expect(steps(prompt, 0)).toEqual([{ keys: ["ctrl+q"] }]);
     expect(steps(prompt, 1)).toEqual([{ keys: [KEY.down] }, { keys: [KEY.enter] }]);
     expect(steps(prompt, 2)).toEqual([{ keys: [KEY.down] }, { keys: [KEY.down] }, { keys: [KEY.enter] }]);
+    // omp takes the approve keys before selecting: unseen, or bound to the select key, a move to Deny could approve
     for (const drawn of ["\u2191/\u2193 choose \u00b7 \u23ce select \u00b7 Ctrl+\u23ce/Ctr\u2026", "\u2191/\u2193 choose \u00b7 \u23ce select \u00b7 \u23ce approve \u00b7 \u238b de\u2026"]) {
       expect(parseInteractivePrompt("omp", redraw(shown, hintOf(shown), drawn)), drawn).toBeNull();
     }
@@ -188,6 +193,8 @@ describe("omp tool approval (#2059)", () => {
       expect(steps(prompt, 0), drawn).toEqual([{ keys: [approve] }]);
       expect(steps(prompt, 1), drawn).toEqual([{ keys: [deny] }]);
     }
+    // 18.10 has no rows to move to: a key a legacy terminal can deliver as another (Ctrl+J/M, Ctrl+\u23ce and \u21e7\u23ce as
+    // Enter) answers nothing, or the wrong way when Enter approves; a chord like \u2325\u21e7A may not arrive as drawn
     for (const drawn of [
       "Ctrl+\u23ce approve \u00b7 \u238b deny", "\u2325\u21e7A approve \u00b7 Ctrl+C deny",
       "\u23ce approve \u00b7 Ctrl+J deny", "Ctrl+Q/\u23ce approve \u00b7 Ctrl+M deny",
@@ -206,12 +213,14 @@ describe("omp tool approval (#2059)", () => {
     expect(steps(mac, 0)).toEqual([{ keys: ["ctrl+q"] }]);
     expect(steps(mac, 1)).toEqual([{ keys: [KEY.down] }, { keys: [KEY.enter] }]);
     expect(steps(mac, 2)).toEqual([{ keys: [KEY.escape] }]);
+    // Ctrl+Enter, or Ctrl+M that a terminal sends as Enter, could take the row under the cursor: Approve is moved to instead
     for (const approve of ["Ctrl+\u23ce", "Ctrl+M"]) {
       const own = parseInteractivePrompt("omp", redraw(approval("18.13.2-unicode-wide"), hintOf(approval("18.13.2-unicode-wide")),
         `\u2191/\u2193 choose \u00b7 \u23ce select \u00b7 ${approve} approve \u00b7 \u238b deny \u00b7 Ctrl+O details \u00b7 type to deny and steer`));
       expect(steps(own, 0), approve).toEqual([{ keys: [KEY.enter] }]);
       expect(steps(own, 2), approve).toEqual([{ keys: [KEY.escape] }]);
     }
+    // so is a Deny a legacy terminal delivers as Enter, which would take the highlighted Approve, or as Tab or Backspace
     for (const deny of ["Ctrl+M", "Ctrl+J", "Ctrl+\u23ce", "\u21e7\u23ce", "Ctrl+I", "Ctrl+H"]) {
       const own = parseInteractivePrompt("omp", redraw(approval("18.13.2-unicode-wide"), hintOf(approval("18.13.2-unicode-wide")),
         `\u2191/\u2193 choose \u00b7 \u23ce select \u00b7 Ctrl+Q approve \u00b7 ${deny} deny \u00b7 Ctrl+O details \u00b7 type to deny and steer`));
@@ -232,8 +241,10 @@ describe("omp tool approval (#2059)", () => {
       [current, "\u23ce deny and send \u00b7 Ctrl+\u23ce/Ctrl+Q approve \u00b7 \u238b deny \u00b7 Ctrl+O details"],
       [current, "\u2191/\u2193 choose \u00b7 \u23ce select \u00b7 Ctrl+\u23ce/Ctrl+Q approve \u00b7 \u238b deny \u00b7 Ctrl+O details \u00b7 PgUp/PgDn scroll \u00b7 type to deny and steer"],
       [current, "j/k choose \u00b7 \u23ce select \u00b7 Ctrl+\u23ce/Ctrl+Q approve \u00b7 \u238b deny"],
+      // a move key bound to approve or deny would answer while moving to a row
       [current, "\u2191/\u2193 choose \u00b7 \u23ce select \u00b7 \u23ce approve \u00b7 \u238b deny"],
       [current, "\u2191/\u2193 choose \u00b7 \u23ce select \u00b7 Ctrl+Q approve \u00b7 \u2193 deny"],
+      // a select key a legacy terminal delivers as another would answer nothing, or as Enter
       [current, "\u2191/\u2193 choose \u00b7 Ctrl+M select \u00b7 Ctrl+Q approve \u00b7 \u238b deny"],
     ] as const) {
       expect(parseInteractivePrompt("omp", redraw(shown, hintOf(shown), drawn)), drawn).toBeNull();
@@ -346,7 +357,7 @@ describe("omp tool approval over each composer shape", () => {
       expect(labels(parseInteractivePrompt("omp", shown)), name).toEqual(["Approve", "Approve bash for this session", "Deny"]);
     }
     // a custom status line with no segments: omp leaves out the status row and the gap over it, and the band keeps its
-    // row empty
+    // row empty; a bare `\u276f` (borderless) is also a shell's prompt, so it is left to the terminal
     const statusless = (name: string) => shaped(name).trimEnd().replace(/\n\n?[^\n]*$/u, "\n");
     for (const name of ["claude", "rule", "pi", "field", "rail"]) {
       expect(labels(parseInteractivePrompt("omp", statusless(name))), name).toEqual(["Approve", "Approve bash for this session", "Deny"]);
@@ -372,6 +383,7 @@ describe("omp tool approval over each composer shape", () => {
   it("leaves to the terminal a draft in the composer, output under it, and a composer omp does not ship", () => {
     const box = shaped("box");
     const prompt = box.split("\n").find((line) => /^\u2570\u2500 +\u2500\u256f$/u.test(line))!;
+    // a draft turns the panel's Enter into "deny and send"; omp redraws the hint too, but the composer alone says so
     expect(parseInteractivePrompt("omp", box.replace(prompt, `\u2570\u2500 ls${prompt.slice(5)}`))).toBeNull();
     expect(parseInteractivePrompt("omp", box.replace(prompt, `\u2502  first line${" ".repeat([...prompt].length - 14)}\u2502\n${prompt}`))).toBeNull();
     for (const [name, empty, draft] of [
@@ -392,6 +404,8 @@ describe("omp tool approval over each composer shape", () => {
       expect(other, rows).not.toBe(box);
       expect(parseInteractivePrompt("omp", other), rows).toBeNull();
     }
+    // a panel left on screen over another program's lines, shaped like a composer: omp pads its status row's groups,
+    // where output starts at the line's first character (`ls -l` there starts with the ascii gauge's `-`)
     const panel = box.trimEnd().split("\n").slice(0, -2).join("\n");
     for (const tail of ["\u276f\nThis is later command output", "fixture@host:~/repo\n\u2570\u2500", "-rw-r--r-- 1 fixture fixture 0 notes\n\u2570\u2500",
       "-rw-r--r--\n\u276f", "-\n\u276f\n-", "-\n\n-"]) {

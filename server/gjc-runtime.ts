@@ -1,3 +1,4 @@
+/** GJC transcript identity is published by its lifecycle extension; shared terminal/store helpers are also used by omp. */
 
 import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readlinkSync, readSync, realpathSync, statSync } from "node:fs";
 import nodePath, { join, type PlatformPath } from "node:path";
@@ -38,6 +39,7 @@ export function recentProcessTable(read: () => Promise<ProcessRow[]> = windowsPr
   if (processTable && now - processTable.at < PROCESS_TABLE_MS) return processTable.rows;
   const entry = { at: now, rows: read() };
   processTable = entry;
+  // an empty table is a read that failed: the next poll asks again
   void entry.rows.then((rows) => { if (rows.length === 0 && processTable === entry) processTable = null; });
   return entry.rows;
 }
@@ -121,6 +123,10 @@ export function storeRelative(root: string, file: string, paths: PlatformPath = 
   return parts[0] === ".." ? null : parts;
 }
 
+/**
+ * GJC's native terminal-sessions key, not the most recently written cwd session. `environ`, when
+ * given (null: unreadable), stands in for /proc/<pid>/environ, which is then never read here.
+ */
 export function gjcTerminal(pid: number, environ?: readonly string[] | null): GjcTerminal | null {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
@@ -136,6 +142,8 @@ export function gjcTerminal(pid: number, environ?: readonly string[] | null): Gj
       return { id: tty.slice(5).replaceAll("/", "-"), startedAt };
     }
     if (process.platform === "darwin") {
+      // the terminal and the start from one kernel record, as `ps -o tty= -o lstart=` read them, without a
+      // child process that holds the event loop
       const record = darwinTerminal(pid);
       return record !== null && /^ttys\d+$/.test(record.tty) ? { id: record.tty, startedAt: record.startedAt } : null;
     }
@@ -173,6 +181,12 @@ export function transcriptHeader(path: string): { cwd: string; version: unknown 
   }
 }
 
+/**
+ * Shared breadcrumb/descriptor lookup: GJC and omp subagents live beside their session file, so
+ * this helper maps such a path to its parent, which must itself be a session inside the store once
+ * links are followed. `depth` is where sessions sit: 2 for `<cwd>/<id>.jsonl`, 1 for a session
+ * directory of omp's own holding `<id>.jsonl`.
+ */
 export function gjcSessionFile(root: string, path: string, paths: PlatformPath = nodePath, depth: 1 | 2 = 2): string | null {
   const parts = path.endsWith(".jsonl") ? storeRelative(root, path, paths) : null;
   if (!parts) return null;
@@ -181,6 +195,7 @@ export function gjcSessionFile(root: string, path: string, paths: PlatformPath =
   const session = paths.join(root, ...parts.slice(0, depth - 1), `${parts[depth - 1]!}.jsonl`);
   try {
     if (!statSync(session).isFile()) return null;
+    // a parent linked out of the store is no session of it
     return storeRelative(realpathSync(root), realpathSync(session), paths)?.length === depth ? session : null;
   } catch { return null; }
 }
@@ -249,11 +264,12 @@ export function heldTranscript(roots: StoreRoots, cwd: string, pids: readonly nu
       if (listed === null) { unreadable = true; continue; }
       held = listed;
     }
-    else try { held = readdirSync(`/proc/${pid}/fd`).map((fd) => `/proc/${pid}/fd/${fd}`); } catch { }
+    else try { held = readdirSync(`/proc/${pid}/fd`).map((fd) => `/proc/${pid}/fd/${fd}`); } catch { /* no /proc: the native breadcrumb */ }
     for (const entry of held) {
       if (openFilesOf) {
         const target = listedSession(roots, root, entry);
         if (target === null) continue;
+        // a held session whose header cannot be read, or is no session header, may be the pane's: unproved
         const header = target === "unproved" ? null : transcriptCwd(target);
         const same = header === null ? null : sameCwd(header, cwd);
         if (same === null) unreadable = true;
@@ -292,6 +308,7 @@ function listedSession(roots: StoreRoots, root: string, entry: string): string |
       if (!lstatSync(join(base, ...parts.slice(0, at))).isDirectory()) return "unproved";
     }
     if (!lstatSync(entry).isFile()) return "unproved";
+    // a subagent's parent transcript that is a link may name any session of the store
     if (parts.length === roots.depth + 1 && !lstatSync(join(base, ...parts.slice(0, -2), `${parts.at(-2)!}.jsonl`)).isFile()) return "unproved";
   } catch { return "unproved"; }
   return gjcSessionFile(root, join(root, ...parts), nodePath, roots.depth);
@@ -312,6 +329,8 @@ type GjcProcessIdentity = { pid: number; birth: number };
 export type GjcTranscriptOptions = {
   platform?: string;
   processInfo?: (paneId: string) => Promise<GjcPaneProcessInfo | null>;
+  /** herdr's answer the caller's poll already read for this pane: it stands in for the first read only, the
+   * check after the binding is read always asks again */
   known?: GjcPaneProcessInfo["process_info"] | null;
   processBirth?: (pid: number) => number | null | Promise<number | null>;
   readProcessTable?: () => Promise<ProcessRow[]>;
@@ -429,6 +448,7 @@ async function lookupNativeTranscript(
 
     const current = readGjcNativeBinding(home, owner.pid, options.now?.());
     if (!current || !sameBirth(current.processStartedAt, final[0]!.birth, platform) || !sameNativeVersion(binding, current) || token.cancelled) return null;
+    // the same file both times, not only the same path
     const currentProof = validatedGjcNativeTranscript(current, cwd, home, platform);
     if (currentProof?.path !== proof.path || currentProof.identity !== proof.identity || token.cancelled) return null;
     return currentProof;

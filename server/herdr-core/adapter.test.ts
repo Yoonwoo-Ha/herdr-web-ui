@@ -53,6 +53,7 @@ class FakeCore implements HcTransport {
     this.endExited();
   }
 
+  /** A notification on a stream channel, as hc sends events. */
   notify(channel: number, method: string, params: Record<string, unknown>): void {
     this.data(channel, `${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
   }
@@ -175,6 +176,7 @@ describe("herdr-core adapter", () => {
   it("offers Ovis's own layout calls only on a core whose Herdr app document was never written", async () => {
     const { socket } = await setup([terminal("t1")], { "doc.get": () => ({ value: null, version: 0 }) });
     expect((await ping(socket)).layout).toEqual({ rename: true, split: false, move: true, arrange: false, worktrees: true });
+    // splits, zoom and order need a core that writes documents, as its hello says
     const writes = await setup([terminal("t1")], { "doc.get": () => ({ value: null, version: 0 }), "doc.set": () => ({ version: 1 }) });
     expect((await ping(writes.socket)).layout).toEqual({ rename: true, split: true, move: true, arrange: true, worktrees: true });
   });
@@ -220,6 +222,7 @@ describe("herdr-core adapter", () => {
     const core = cores[0]!;
     expect(core.calls.find((call) => call.method === "terminal.attach")?.params).toEqual({ terminal: "t1", cols: 100, rows: 4, history: 4, observe: true });
     expect(core.closed).toEqual([1]);
+    // the chat's box check: herdr-core reports no scroll, so the colors count once their text is the live screen's
     expect(viewportShowsLive(null, null, colors, live, live)).toBe(true);
     expect(claudeInputDraft(live, colors)).toBe(false);
   });
@@ -338,6 +341,7 @@ describe("herdr-core adapter", () => {
     core.notify(channel, "event", { seq: 3, type: "status", terminal: "vps/t2", data: { status: { app: "codex", state: "working" } } });
     core.notify(channel, "event", { seq: 4, type: "labels", terminal: "vps/t2", data: { labels: { "herdr.seen": "0" } } });
     core.notify(channel, "event", { seq: 5, type: "finished", terminal: "vps/t2", data: { reason: "exited", exit_code: 0 } });
+    // the other machine's own Herdr app document, as hc tells it: its machine, no terminal
     core.notify(channel, "event", { seq: 6, type: "doc", machine: "vps", data: { name: "herdr-app", version: 1 } });
     core.notify(channel, "event", { seq: 7, type: "created", terminal: "t4", data: { address: "t4", state: "live", turn: 0 } });
     core.notify(channel, "missed", { seq: 8, terminals: [] });
@@ -374,6 +378,7 @@ describe("herdr-core adapter", () => {
     core.notify(channel, "missed", { seq: 9, terminals: [] });
     await ended.promise;
     expect(frames).toEqual([
+      // herdr-core's `claude-code` reaches the browser as herdr's `claude`, as in the snapshot
       { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "working", agent: "claude" } },
       { event: "pane.agent_status_changed", data: { pane_id: "t1", agent_status: "unknown", agent: "omp" } },
       { event: "pane.exited", data: { type: "pane_exited", pane_id: "t1" } },
@@ -759,6 +764,8 @@ it("asks for a fresh snapshot when a report's kind, message or progress changes,
     });
     const adapter = await startHerdrCoreAdapter(hc, socket);
     cleanups.push(() => { adapter.stop(); hc.close(); rmSync(dir, { recursive: true, force: true }); });
+    // a snapshot asks three calls and hc's hello at once, a ping hello and two calls: all of them
+    // fail, and a rejection nobody hears fails this test, as it ends a running server
     const refused = { code: "connect_failed", message: "hc could not be started" };
     await expect(sessionSnapshot(socket)).rejects.toMatchObject(refused);
     await expect(ping(socket)).rejects.toMatchObject(refused);
@@ -933,6 +940,7 @@ describe("herdr-core adapter, new and closed terminals", () => {
     expect((await worktreeList("S", socket)).source).toMatchObject({ repo_root: repo, source_checkout_path: repo, source_workspace_id: "S" });
     const created = await worktreeCreate({ workspaceId: "S", branch: "moved", path: join(dir, "old") }, socket);
     expect((await sessionSnapshot(socket)).workspaces.map((workspace) => [workspace.workspace_id, workspace.worktree?.repo_root ?? null])).toEqual([["N", nested], ["S", repo], [created.workspace.workspace_id, repo]]);
+    // a checkout moved away and another put where it was: neither is deleted for the old workspace
     expect(git("-C", repo, "worktree", "move", join(dir, "old"), join(dir, "new")).exitCode).toBe(0);
     await expect(worktreeRemove(created.workspace.workspace_id, true, socket)).rejects.toMatchObject({ code: "worktree_not_found" });
     expect(git("-C", repo, "worktree", "add", "-q", "-b", "other", join(dir, "old")).exitCode).toBe(0);
@@ -965,6 +973,7 @@ describe("herdr-core adapter, new and closed terminals", () => {
     expect((await worktreeList("L", socket)).source).toMatchObject({ source_checkout_path: linked, source_workspace_id: null });
     await expect(worktreeList("P", socket)).rejects.toMatchObject({ code: "not_git_worktree" });
     expect(existsSync(join(dir, "other"))).toBeFalse();
+    // a repository with no commit yet: git's refusal, which the route turns into repository_without_commits
     expect(git("init", "-q", "-b", "main", join(dir, "empty")).exitCode).toBe(0);
     const empty = await labeling([terminal("t1", { cwd: join(dir, "empty"), labels: { "herdr.space": "E", "herdr.tab": "T" } })]);
     await expect(worktreeCreate({ workspaceId: "E", branch: "first", path: join(dir, "first") }, empty.socket)).rejects.toMatchObject({ code: "worktree_create_failed", message: expect.stringMatching(/invalid reference: HEAD\b/u) });
@@ -991,6 +1000,8 @@ describe("herdr-core adapter, new and closed terminals", () => {
       expect([factsOf("t1"), factsOf("t2"), factsOf("t3")]).toEqual([head, { ...head, checkout_path: linked, is_linked_worktree: true }, null]);
       expect(core.runs).toEqual([]);
     }
+    // what the sidebar draws is what its actions do, as on herdr: the repository's workspace closes over the
+    // repository's other workspaces as a group, the checkout's and the other one on the main checkout
     const grouped = await labeling(start());
     await expect(workspaceClose("S", grouped.socket)).rejects.toMatchObject({ code: "workspace_group_close_required" });
     await workspaceClose("S", grouped.socket, true);
@@ -998,6 +1009,7 @@ describe("herdr-core adapter, new and closed terminals", () => {
     const opening = start();
     await worktreeCreate({ workspaceId: "S", branch: "next", path: join(dir, "next") }, (await labeling(opening)).socket);
     expect(JSON.parse(opening[0]!.labels!["ovis.worktree"]!)).toMatchObject({ checkout_path: repo, is_linked_worktree: false, git_id: expect.any(String) });
+    // a checkout added again at the same path since git was asked is not the one drawn: it stays
     const replacing = await labeling(start());
     await sessionSnapshot(replacing.socket);
     expect(git("-C", repo, "worktree", "remove", linked).exitCode).toBe(0);
@@ -1025,6 +1037,7 @@ describe("herdr-core adapter, new and closed terminals", () => {
     const { socket } = await labeling([terminal("t1", { cwd: repo, labels: { "herdr.space": "S", "herdr.tab": "T" } })]);
 
     const listed = await worktreeList("S", socket);
+    // the stand-in was the git asked, with -z first: a git that has it is never listed by line
     expect(existsSync(join(dir, "git-2.34", "git.rejected"))).toBeTrue();
     expect(listed.source).toMatchObject({ repo_root: repo, repo_name: '앱 "old" git', source_checkout_path: repo, source_workspace_id: "S" });
     expect(listed.worktrees).toEqual([
@@ -1107,6 +1120,7 @@ describe("herdr-core adapter, new and closed terminals", () => {
     expect(labels["herdr.space"]).toMatch(/^ovis-/);
     expect(labels["herdr.tab"]).toMatch(/^ovis-/);
     expect(labels["ovis.workspace"]).toBe("web");
+    // nothing has finished in a terminal a client starts (herdr-app docs/labels.md)
     expect(labels["herdr.seen"]).toBe("0");
     expect(created.workspace).toMatchObject({ workspace_id: labels["herdr.space"], label: "web" });
     expect(created.tab).toMatchObject({ tab_id: labels["herdr.tab"], workspace_id: labels["herdr.space"] });
@@ -1183,6 +1197,7 @@ describe("herdr-core adapter, new and closed terminals", () => {
 });
 
 describe("herdr-core adapter, agents", () => {
+  /** A core whose panes run POSIX shells, whatever this PC is: what runs in them is hc's to say, never a process table's. */
   const posix = (terminals: HcTerminal[], extra: Record<string, Handler> = {}, platform: NodeJS.Platform = "linux") => setup(terminals, extra, undefined, undefined, { platform, processTable: () => { throw new Error("no process table off Windows"); } });
 
   it("starts an agent by typing its kind and quoted arguments into the pane's idle shell, and answers once it is in front", async () => {
@@ -1255,6 +1270,7 @@ describe("herdr-core adapter, agents", () => {
   });
 
   it("types into no pane whose own program is not a shell, even with that program in front of itself", async () => {
+    // a terminal the app started as a program: hc reports it in front of itself, like a shell
     const { socket, cores } = await posix([
       terminal("t1", { pid: 10, argv: ["claude"], foreground: { pid: 10, name: "claude", argv: ["claude"] } }),
       // a template or a line: dash runs it as its child and stays in front under its own pid
@@ -1338,6 +1354,7 @@ describe("herdr-core adapter, agents on Windows", () => {
   // what hc runs for a terminal started with no program (a live record, hc 0.1.17; its hook cut short)
   const HC_SHELL = ["powershell.exe", "-NoExit", "-Command", "$global:__hc_prompt = $function:prompt; function global:prompt { $p = & $global:__hc_prompt; $p }"];
   const row = (pid: number, parent: number, path: string, commandLine = `"${path}"`): ProcessRow => ({ pid, parent, path, commandLine });
+  // the pane's shell, and the console hosts below it, which are no program it runs
   const idle = [row(10, 9, POWERSHELL, `"${POWERSHELL}" -NoExit -Command x`), row(12, 10, "C:\\WINDOWS\\system32\\conhost.exe", "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0xffffffff -ForceV1"), row(15, 10, "C:\\Users\\u\\conpty\\OpenConsole.exe")];
   // named as its file is: Windows takes a program's name in any case
   const claude = row(11, 10, "C:\\Users\\u\\.local\\bin\\Claude.exe", "\"C:\\Users\\u\\.local\\bin\\Claude.exe\" --model x");
@@ -1369,7 +1386,9 @@ describe("herdr-core adapter, agents on Windows", () => {
 
   it("starts an agent in hc's own PowerShell by typing a call, and answers once it runs below the shell", async () => {
     const { socket, typed } = await windows(HC_SHELL, (line) => line ? [...idle, claude] : idle);
+    // one Windows PowerShell 5.1 would split is refused, and nothing is typed for it
     await expect(agentStart({ name: "x", kind: "claude", paneId: "t1", args: ['"fix the bug"'] }, socket)).rejects.toMatchObject({ code: "invalid_params" });
+    // and one cmd would run part of, were the agent a .cmd file
     await expect(agentStart({ name: "x", kind: "codex", paneId: "t1", args: ['fix "a&echo ran&b" now'] }, socket)).rejects.toMatchObject({ code: "invalid_params" });
     expect(typed()).toBe("");
     await agentStart({ name: "claude-1", kind: "claude", paneId: "t1", args: ["--model", "say \"hi\"", ""] }, socket);
@@ -1420,6 +1439,7 @@ describe("herdr-core adapter, agents on Windows", () => {
     const shimmed = row(13, 10, "C:\\Program Files\\nodejs\\node.exe", "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\u\\AppData\\Roaming\\npm/node_modules/@openai/codex/bin/codex.js");
     const throughShim = await windows(HC_SHELL, (line) => line ? [...idle, shimmed] : idle);
     await agentStart({ name: "codex-1", kind: "codex", paneId: "t1" }, throughShim.socket);
+    // an npm shim runs below the shell, and ends with no agent come up
     const shim = row(14, 10, "C:\\WINDOWS\\system32\\cmd.exe", "C:\\WINDOWS\\system32\\cmd.exe /c \"C:\\Users\\u\\AppData\\Roaming\\npm\\amp.cmd\"");
     let looks = 0;
     const failed = await windows(HC_SHELL, (line) => line ? [[...idle, shim], [], idle][Math.min(looks++, 2)]! : idle);
@@ -1485,6 +1505,7 @@ describe("herdr-core adapter, agents on Windows", () => {
 });
 
 describe("herdr-core adapter, Ovis's layout document", () => {
+  /** hc's documents: `doc.set` writes only at the version read (`conflict` otherwise), `conflicts` more writers come first */
   function documents(conflicts = 0, otherWriter?: (docs: Map<string, { value: unknown; version: number }>) => void) {
     const docs = new Map<string, { value: unknown; version: number }>();
     const writes: unknown[] = [];
@@ -1518,6 +1539,7 @@ describe("herdr-core adapter, Ovis's layout document", () => {
         terminals.push(record);
         return record;
       },
+      // `key: ""` takes a label off, as hc does
       "terminal.label": (params) => {
         const index = terminals.findIndex((entry) => entry.address === params["terminal"]);
         const merged = { ...terminals[index]!.labels, ...(params["labels"] as Record<string, string>) };
@@ -1754,6 +1776,7 @@ describe("another machine of the core, as its own PC (#2497)", () => {
   });
 
   it("reaches no other machine that took its name after a rename", async () => {
+    // lab was renamed, and vps took the name lab: its id is not lab's
     const { socket, cores } = await setup(listed(), { "machine.list": () => ({ machines: [{ name: "lab", id: "vps-id", host: "vps", state: "connected", target: "vps", version: "0.1.17" }] }) }, undefined, "lab");
     const failure = await paneSendText("t1", "x", socket).then(() => null, (error: unknown) => (error instanceof HerdrError ? error.code : String(error)));
     expect(failure).toBe("connect_failed");

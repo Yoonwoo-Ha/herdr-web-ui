@@ -15,11 +15,13 @@ import { ANSI_RE, type CardWords, type ParsedPrompt, cleanLine, findLastIndex, f
  *   ↑/↓ navigate · enter select · ctrl+e explain · Run cmd --yolo to
  *   bypass all permissions (Docs ↗)
  *
- * The rows are numbered and the cursor is marked with `❯`; the footer names the keys.
+ * The rows are numbered and the cursor is marked with `❯`; the footer names the keys. Only the
+ * rows directly above the footer are the dialog's: a numbered list in the conversation above it
+ * (or in the agent's own output) is not an option, and a command's own text is not one either.
  */
 /**
  * command-code@1.88.0's PermissionFooter (dist/cli.mjs). Ink wraps its Text at word or
- * character boundaries.
+ * character boundaries. Match the entire footer, not a bag of words that also accepts later output.
  * MainView hides its normal input/status chrome while permissionPanel is present.
  */
 export function cmdFooterStart(lines: string[]): number {
@@ -56,6 +58,8 @@ function parseCmdQuestion(screen: string): ParsedPrompt | null {
   }
   if (rows.length < 2) return null;
   if (!rows.every((row, index) => row.number === index + 1)) return null;
+  // the cursor must be marked on exactly one row: without it the chat cannot tell which option
+  // an answer would land on, and Command Code may mark the cursor by colour alone
   if (rows.filter((row) => row.selected).length !== 1) return null;
   // The source-defined permission choices begin with Yes and end with No, not arbitrary menu labels.
   if (rows[0]?.label !== "Yes" || !/^No(?:,|$)/.test(rows.at(-1)?.label ?? "")) return null;
@@ -92,6 +96,10 @@ function parseCmdQuestion(screen: string): ParsedPrompt | null {
   // id too: a command replaced under the card makes it stale instead of approving the new one
   const bodyLines = firstRowIndex >= 0 ? lines.slice(titleIndex + 1, firstRowIndex) : [];
   const body = bodyLines.map(cleanLine).filter((line) => line && line !== question && !isDivider(line) && !/ctrl\+e/i.test(line)).join("\n") || null;
+  // The id hashes the whole screen above the rows as drawn, not only the title and body the card
+  // shows: where the dialog starts is a guess (a heredoc can hold a rule; its indentation is part of
+  // the command), so any change above the rows makes the card stale. Output that changes there while
+  // the dialog is open makes it stale too, and the answer goes to the terminal instead.
   const dialog = lines.slice(0, firstRowIndex).join("\n");
   return finishPrompt("cmd", {
     kind: "approval", title, question, body,

@@ -28,6 +28,7 @@ export function piActiveTab(raw: string, markers: number[], backgroundOnly = fal
   let dim = false;
   let defaultForeground = true;
   let offset = 0;
+  // Keep string offsets (not terminal columns): the regexp's marker offsets are UTF-16 too.
   for (const escape of raw.matchAll(/\u001b\[([0-?]*)[ -/]*([@-~])/g)) {
     backgrounds.push(...Array<boolean>(escape.index! - offset).fill(background));
     dimmed.push(...Array<boolean>(escape.index! - offset).fill(dim));

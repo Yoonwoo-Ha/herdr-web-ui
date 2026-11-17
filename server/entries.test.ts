@@ -44,6 +44,8 @@ describe("server entries", () => {
   });
 
   it("keeps the supervisor's own code to what it runs: no other entry's", () => {
+    // an update copies and runs a release's supervisor by what it imports (the updater tests' copySupervisor); a table
+    // that imported every entry would pull the whole server, package.json included, into the supervisor
     const transpiler = new Bun.Transpiler({ loader: "ts" });
     const reached = [join(import.meta.dir, "supervisor.ts")];
     for (const file of reached) {

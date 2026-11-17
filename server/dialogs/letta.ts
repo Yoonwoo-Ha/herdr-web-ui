@@ -21,7 +21,10 @@ import { ANSI_RE, KEY, type ParsedPrompt, findLastIndex, finishPrompt, keySteps,
  *
  * A row is `> ` under the cursor and two spaces elsewhere, then the model's label, ` (current)` on the
  * model in use, and ` · <description>` when it has one. The window shows a few rows of the tab's list;
- * the count line says how many the tab holds.
+ * the count line says how many the tab holds. Enter picks the row: Letta then opens the model's
+ * reasoning levels (parseLettaEffort) or applies it. The card also offers the tabs beside the one
+ * shown (← and → step one tab), and a search, which Letta matches against every model of the tab:
+ * each answers by keys and leaves the picker open, so the next card shows what it drew.
  */
 const LETTA_MODEL_TITLE = "Swap your agent's model";
 const LETTA_MODEL_HINT = "Enter select · ↑↓ navigate · ←→/Tab switch · Esc cancel";
@@ -31,6 +34,7 @@ const LETTA_MODEL_ROW_RE = /^(> | {2})(?:🔒 )?(\S.*)$/;
 const LETTA_CURRENT_RE = /\s\(current\)(?=$|\s·\s)/;
 /** A search that matches nothing: no rows and no footer, only this line under the search (ModelSelector.tsx) */
 const LETTA_MODEL_NO_MATCH = "No models match your search.";
+/** Lines Letta draws above the rows that are none: a refresh under way, a catalog it could not fetch */
 const LETTA_MODEL_NOTES = new Set(["Refreshing list...", "Warning: Could not fetch available models. Showing all models."]);
 
 /**
@@ -57,6 +61,7 @@ function screenLines(screen: string): { lines: string[]; end: number } {
   return { lines, end };
 }
 
+/** Letta's tabs by the line it draws under them (getCategoryDescription in ModelSelector.tsx). */
 const LETTA_TAB_OF: Record<string, string> = {
   "Models you've recently used": "Recents",
   "Recommended models currently available for this account": "Recommended",
@@ -67,10 +72,13 @@ const LETTA_TAB_OF: Record<string, string> = {
   "All models via your connected API keys (use /connect to add more)": "BYOK (all)",
 };
 const LETTA_TAB_RE = /^(\S.*?) \[(\d+)\]$/;
+/** What a search may hold: typed one character at a time, as Letta reads a key (input.length === 1) */
 export const LETTA_SEARCH_MAX = 40;
 
 function parseLettaModel(screen: string): ParsedPrompt | null {
   const { lines, end } = screenLines(screen);
+  // the picker holds the end of the screen: a hint above later output is an answered picker's. A search that
+  // matches nothing ends it with its own line instead, and draws no rows
   if (end < 0) return null;
   const empty = lines[end]!.trim() === LETTA_MODEL_NO_MATCH;
   if (!empty && lines[end]!.trim() !== LETTA_MODEL_HINT) return null;
@@ -95,6 +103,7 @@ function parseLettaModel(screen: string): ParsedPrompt | null {
 
   const tabs = lines[search - 2]?.trim().split(/\s{2,}/).map((tab) => tab.match(LETTA_TAB_RE)) ?? [];
   const shown = LETTA_TAB_OF[lines[search - 1]?.trim() ?? ""];
+  // a tab known by its line alone: a line two tabs share (a free tier's Letta API tabs) tells them apart from no card
   if (shown === undefined) return null;
   const names = tabs.every((tab) => tab !== null) ? tabs.map((tab) => tab![1]!) : [];
   const at = shown === undefined ? -1 : names.indexOf(shown);
@@ -127,11 +136,14 @@ function parseLettaModel(screen: string): ParsedPrompt | null {
     checkedOptionIndices: [], customMenuIndex: searchIndex, rejectWithEscapeIndex: cancelIndex,
     optionSteps: [
       ...rows.map((_, index) => [...keySteps(navigationKeys(index - selectedIndex)), { keys: [KEY.enter] }]),
+      // one key switches the tab, and Letta clears the search with it
       ...beside.map(({ key }) => [{ keys: [key] }]),
       [],
       [{ keys: [KEY.escape] }],
     ],
-    // Letta reads one key at a time, and `r` in an empty search refreshes the list
+    // the search: what was typed is taken out a key at a time, then the new words go in a key at a
+    // time, as Letta reads one. The first goes into a search the backspaces emptied, where `r` refreshes the list
+    // instead: its capital goes in
     customSteps: (text: string) => {
       const first = text.startsWith("r") ? `R${text.slice(1)}` : text;
       return [...keySteps(Array.from({ length: typed.length }, () => KEY.backspace)), ...[...first].map((character) => ({ text: character }))];
@@ -155,6 +167,7 @@ function parseLettaEffort(screen: string): ParsedPrompt | null {
       question: own("Select reasoning level for {model} for this session (currently {level})", { model: named[0]!, level: shown }),
     }),
     body: null,
+    // Esc goes back to the model list, whose card closes the picker
     options: [{ label: shown, description: null }, { label: own("Cancel"), description: null }],
     multi_select: false,
     custom_option_index: null,
@@ -166,7 +179,8 @@ function parseLettaEffort(screen: string): ParsedPrompt | null {
 }
 
 /**
- * Letta moves to the first tab with models itself once the search leaves the shown one none (and draws that tab no more).
+ * Letta moves to the first tab with models itself once the search leaves the shown one none (and draws
+ * that tab no more): a tab still drawn but not shown is a switch from somewhere else, where the search would not go.
  */
 export function lettaSearchShown(shown: ParsedPrompt | null | undefined, card: ParsedPrompt, search: string): boolean {
   const tabs = shown?.lettaTabs ?? [];
@@ -184,6 +198,7 @@ export const readers: readonly DialogReader[] = [
   {
     id: "letta-model", agents: ["letta"], priority: 50,
     reread: "before-commit", list: "letter-window",
+    // a row is its tab's and its search's: Recents and Recommended may both have one model under the cursor
     interaction: (parsed) => pickerPlan(parsed, parseLettaModel, parsed.optionSteps ?? [],
       (shown, cursor) => `${shown.lettaTab}\n${shown.lettaSearch}\n${shown.menuLabels[cursor]}`),
     parse: (screen) => {

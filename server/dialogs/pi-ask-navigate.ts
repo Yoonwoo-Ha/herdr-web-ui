@@ -2,6 +2,7 @@ import { KEY, type ParsedPrompt } from "./shared.ts";
 
 type Tabs = { identity: string; index: number };
 
+/** How long a tab lit over the question it left must stay so before it counts: two tabs may ask the same. */
 const SAME_QUESTION_SETTLE_MS = 150;
 
 const questionOf = (prompt: ParsedPrompt): string => JSON.stringify([prompt.kind, prompt.question, prompt.options]);
@@ -19,6 +20,7 @@ export async function navigatePiAsk(initial: ParsedPrompt, target: number, io: {
   let index = form.index;
   while (index !== target) {
     if (!io.active() || Date.now() >= io.deadline) return null;
+    // The request's first read can already be stale; recheck before the first arrow too.
     let before = await io.read();
     while (before && tabsOf(before) === undefined && initial.claudeTabs !== undefined && io.active() && Date.now() < io.deadline) {
       await Bun.sleep(Math.min(50, Math.max(0, io.deadline - Date.now())));
@@ -39,6 +41,8 @@ export async function navigatePiAsk(initial: ParsedPrompt, target: number, io: {
       const shown = await io.read();
       if (!shown) return null;
       const tabs = tabsOf(shown);
+      // a Claude read whose colors could not be checked (a frame mid-redraw) shows no tab: no evidence
+      // either way, so look again; pi's reads stop as before
       if (tabs === undefined) {
         if (initial.claudeTabs === undefined) return null;
         await Bun.sleep(Math.min(50, Math.max(0, io.deadline - Date.now())));

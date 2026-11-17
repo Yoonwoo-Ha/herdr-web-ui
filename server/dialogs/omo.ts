@@ -28,10 +28,12 @@ const OMO_PENDING_STATUS_RE = /^\?\s+(?:Question pending \((\d+) unanswered\)|\d
 
 export const OMO_PENDING_HINT_RE = /^enter(?: or \S+)? to answer · \/answer · or just type your reply\b/;
 
-// between the widget's header and its question: " - " (omo 5.1.48), " — " (omo 5.1.30)
+// between the widget's header and its question: " - " (omo 5.1.48), " — " (omo 5.1.30); the space
+// after it is left unconsumed, so separators sharing a space (`Plan - - Choose`) are each found
 const OMO_PENDING_SEPARATOR_RE = / [-—](?= )/g;
 
 interface OmoForm {
+  /** the line the tab bar ends on (a narrow pane wraps it between tabs) */
   barEnd: number;
   tabs: { label: string; answered: boolean; current: boolean }[];
   reviewing: boolean;
@@ -62,6 +64,7 @@ function omoForm(lines: string[], hintIndex: number): OmoForm | null {
   return { barEnd, tabs, reviewing };
 }
 
+/** A tab shows its question's header, cut with an ellipsis when the pane is too narrow for it. */
 function sameHeader(tab: string, header: string): boolean {
   const shown = normalizeText(tab);
   const asked = normalizeText(header);
@@ -78,7 +81,9 @@ function omoSteps(tabs: OmoForm["tabs"], ask: OmoAsk | null): InteractivePrompt[
 
 /**
  * OmO's own keys move between its tabs, a question left unanswered: Tab on, Shift+Tab back,
- * through Submit (senpi ask-user-question-keys.js, 5.1.51).
+ * through Submit (senpi ask-user-question-keys.js, 5.1.51). Only the tab bar on
+ * screen says which tab shows, so a form cut off above it gets its steps and nothing to tap; and
+ * only the session's call names the form, so a form no call names gets nothing to tap either.
  */
 function omoNavigation(form: OmoForm | null, tabs: OmoForm["tabs"], index: number, ask: OmoAsk | null): Pick<PromptDraft, "steps" | "can_step_back" | "can_step_next"> & { nativeSteps?: NativeSteps } {
   const steps = omoSteps(tabs, ask);
@@ -96,7 +101,10 @@ function omoTitle(tabs: OmoForm["tabs"], index: number, ask: OmoAsk | null): Car
   return tabs.length > 1 ? own("Question {n} of {total}", { n: index + 1, total: tabs.length }) : ask?.questions[index]?.header ?? tabs[index]!.label;
 }
 
-/** omo's ↑ stops at the first row. */
+/**
+ * Keys from omo's cursor to a row of its list. Without a cursor on screen (its row above the
+ * visible part) they start from the top: ↑ stops at the first row, so `rows` of them get there.
+ */
 function omoWalk(to: number, from: number, rows: number): string[] {
   return from >= 0 ? navigationKeys(to - from) : [...navigationKeys(-rows), ...navigationKeys(to)];
 }
@@ -108,6 +116,7 @@ function omoAnsweredCount(lines: string[], from: number, to: number): number | n
 
 interface OmoQuestionView {
   question: string[];
+  /** the options in view: a pane too short for the form shows only the last ones */
   rows: { number: number; label: string[]; description: string[]; selected: boolean }[];
   own: { selected: boolean; lineIndex: number } | null;
 }
@@ -122,6 +131,11 @@ interface OmoQuestionView {
  *    다.
  *      2. 설정 + 사이드바 미터
  *      Type your own answer...
+ *
+ * A wrapped line starts at the pane's edge, so the indent tells rows from descriptions only on a
+ * line's first row: lines under an option are its label wrapped until the first indented one,
+ * the description, which takes the rest. From the screen's top (`cut`, the form taller than the
+ * pane) the first row in view may be any number, and lines above it belong to rows out of view.
  */
 function omoQuestionView(lines: string[], start: number, end: number, cut: boolean): OmoQuestionView {
   const view: OmoQuestionView = { question: [], rows: [], own: null };
@@ -178,6 +192,10 @@ function cutSteps(ask: OmoAsk, current: number, currentAnswered: boolean, answer
  * then `Submit (0/2 answered) — Enter advances` and the key hint:
  *
  *    ↑↓ move  1-9 select  space select  enter next  tab next question  c comment  esc cancel
+ *
+ * Navigate to an option and confirm it;
+ * in a multiple choice, clear the previous answer (Backspace), navigate and toggle each choice
+ * with Space, then move on with Tab.
  */
 function parseOmoQuestion(screen: string, ask: OmoAsk | null, trusted: boolean): ParsedPrompt | null | typeof AMBIGUOUS {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
@@ -258,6 +276,8 @@ function parseOmoQuestion(screen: string, ask: OmoAsk | null, trusted: boolean):
  *    > 안녕
  *    Submit (0/2 answered) — Enter advances
  *    enter save and next  ↑↓ back to options  tab next question  esc discard
+ *
+ * The card offers to save what is typed (Enter, which moves on as an answer does) or to discard it.
  */
 function parseOmoTyping(screen: string, ask: OmoAsk | null, trusted: boolean): ParsedPrompt | null | typeof AMBIGUOUS {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
@@ -276,6 +296,8 @@ function parseOmoTyping(screen: string, ask: OmoAsk | null, trusted: boolean): P
   let tabs: OmoForm["tabs"];
   let question: string;
   if (known) {
+    // as parseOmoQuestion matches it, but for the choice mode, which the typing hint does not show: only a question
+    // whose whole labels are the rows in view makes the cut-off form ambiguous (#2092)
     const width = screenWidth(lines);
     const shownLabels = view.rows.map((row) => joinWrapped(row.label, width, /^(?:\u2192\s+)?\d+\.\s+/).replace(/\s+\u2713$/, ""));
     const shows = (at: number): boolean => {
@@ -300,6 +322,7 @@ function parseOmoTyping(screen: string, ask: OmoAsk | null, trusted: boolean): P
     { label: own("Discard it"), description: null, steps: keySteps([KEY.escape]) },
   ];
   return finishPrompt("omo", {
+    // a menu: a number typed in the chat acts on the terminal's input, so it waits for Confirm
     kind: "menu", title: omoTitle(tabs, index, known), question, body: null,
     options: choices.map((choice) => ({ label: choice.label, description: choice.description })),
     multi_select: false, custom_option_index: null, steps: omoSteps(tabs, known),
@@ -324,7 +347,8 @@ function parseOmoTyping(screen: string, ask: OmoAsk | null, trusted: boolean): P
  *    enter edit answer  ↑↓ move  tab next question  esc back
  *
  * Enter on the comment submits the form (with the comment, when one is typed); on a row it opens
- * that question again.
+ * that question again. With the tabs out of view, the session's call names the rows; a row above the screen's top
+ * then shows by its question's header alone.
  */
 function parseOmoReview(screen: string, ask: OmoAsk | null, trusted: boolean): ParsedPrompt | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
@@ -355,6 +379,8 @@ function parseOmoReview(screen: string, ask: OmoAsk | null, trusted: boolean): P
     : shown.length === count ? shown : null;
   if (!rowOf) return null;
   const rest = lines.slice(index, hintIndex).filter((line) => cleanLine(line) && !isDivider(line));
+  // the field's label (a narrow pane wraps it), the field (`>` and what is typed there), then
+  // a notice (`! …`) and the Submit line, both wrapped as well
   const field = rest.findIndex((line) => cleanLine(line).startsWith(">"));
   if (field < 0) return null;
   const commentLabel = joinWrapped(rest.slice(0, field), width) || own("Comment");
@@ -377,6 +403,7 @@ function parseOmoReview(screen: string, ask: OmoAsk | null, trusted: boolean): P
   ];
   const { nativeSteps, ...navigation } = omoNavigation(form, tabs, count, known);
   return finishPrompt("omo", {
+    // a menu: a number typed in the chat submits the whole form, so it waits for Confirm
     kind: "menu", title: own("Review your answers"), question: submitAt < 0 ? own("Submit your answers?") : after.slice(submitAt),
     body: comment ? (notice ? own("{notice}\nComment: {comment}", { notice, comment }) : own("Comment: {comment}", { comment })) : notice || null,
     options: [...choices.map(({ label }) => ({ label, description: null })), { label: commentLabel, description: null }],
@@ -413,10 +440,17 @@ function parseOmoPending(screen: string, pending: readonly OmoAsk[]): ParsedProm
   if (statusIndex < 0 || hintIndex - statusIndex > 12) return null;
   const unanswered = OMO_PENDING_STATUS_RE.exec(cleanLine(lines[statusIndex]!))![1];
   const line = cleanLine(lines[statusIndex + 1] ?? "");
+  // a header may hold the separator itself, so each place it occurs is a split to try; the line
+  // is cut at the pane's edge. A split with nothing after it still counts against the others:
+  // the cut may have left only that question's header, so a question it fits makes the line
+  // ambiguous. It never names a question on its own.
   const splits = [...line.matchAll(OMO_PENDING_SEPARATOR_RE)].map((separator) => ({
     header: line.slice(0, separator.index),
     start: comparable(line.slice(separator.index + separator[0].length + 1).replace(/(?:…|\.\.\.)$/, "")),
   }));
+  // A line cut at the pane's edge may have lost the separator itself, or its space: every question
+  // whose header and text begin with what is shown is a candidate too, so it can only make the
+  // line ambiguous.
   const cut = /(?:\u2026|\.\.\.)$/.test(line);
   const shown = comparable(line.replace(/(?:\u2026|\.\.\.)$/, ""));
   const matches = pending.filter((ask) => ask.wait === false).flatMap((ask) => ask.questions.flatMap((question, index) => {
@@ -455,15 +489,19 @@ function parseOmoPending(screen: string, pending: readonly OmoAsk[]): ParsedProm
  *     Model Name: GPT-5.5
  *
  * — it ticks the model in use after its name (`claude-opus-4-8 [anthropic] ✓`), and it counts the
- * rows below the window instead of numbering them. herdr names the pane `omo`, or `pi`, `claude`
- * or nothing at times, so the hint, which no other program draws, is what tells the list apart.
+ * rows below the window instead of numbering them. The rows are pi's catalogue rows
+ * (piModelRows): a narrow pane drops the provider's bracket onto a line of its own, and it is
+ * joined back the same way. herdr names the pane `omo`, or `pi`, `claude` or nothing at times
+ * (parsePrompt), so the hint, which no other program draws, is what tells the list apart.
  */
 const OMO_MODEL_HINT_RE = /^enter select\s+ctrl\+s select as default\s+ctrl\+f favorite$/i;
 
 const OMO_MODEL_FILTER_RE = /^[\u203a>\u276f](?:\s+(.*))?$/;
 
+/** OmO's notes about its catalogue, which a pane may set at column zero */
 const OMO_MODEL_NOTE_RE = /^(?:Could not refresh|Refreshing model catalogs|Model catalogs refreshed)/i;
 
+/** OmO's tick on the model in use, after its name */
 const OMO_MODEL_TICK_RE = /\s*[\u2713\u2714]$/;
 
 function omoModelList(lines: string[]): { filterAt: number; rows: { label: string; cursor: boolean; current: boolean }[] } | null {
@@ -502,6 +540,12 @@ function parseOmoModel(screen: string): ParsedPrompt | null {
   });
 }
 
+/**
+ * Whether OmO's model list still holds the end of the screen: under its catalogue only OmO's own
+ * notes (`… 14 more below`, `Model Name: …`, indented), then one rule and the footer. A list
+ * answered or dismissed leaves no hint over a filter line, and one quoted elsewhere has
+ * something else under it.
+ */
 export function omoModelListWaits(screen: string): boolean {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const list = omoModelList(lines);

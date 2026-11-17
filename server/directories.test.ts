@@ -5,6 +5,8 @@ import { join, win32 } from "node:path";
 
 import { createDirectory, listDirectories, MAX_DIRECTORY_ENTRIES, resolveFolder } from "./directories.ts";
 
+// the file viewer lists a path it found no file at, and the folder browser one its dialog was opened with: both can be
+// a link's (`?file=//host/share/`, `?new=1&cwd=//host/share`), and listing a network share asks its host
 describe("the folder a path names", () => {
   const windows = (path: string, base?: string, home = "C:\\Users\\me") => resolveFolder(path, home, base, win32);
   it("is no network share on a Windows PC but the pane's own, the home folder's and WSL's", () => {

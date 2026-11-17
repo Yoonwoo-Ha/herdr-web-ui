@@ -56,6 +56,7 @@ export async function executeInteractionPlan(
   for (const step of plan.moves(answer)) {
     if (!io.active() || (walked && io.rereadMoves && !await matches())) return "prompt_changed";
     await io.send(step, false);
+    // only the arrows move the cursor; Tab flips a switch beside the rows instead
     for (const key of step.keys ?? []) {
       if (key === KEY.down || key === KEY.right) plan.cursor += 1;
       else if (key === KEY.up || key === KEY.left) plan.cursor = Math.max(0, plan.cursor - 1);

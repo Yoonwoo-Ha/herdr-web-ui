@@ -11,6 +11,10 @@ import { darwinArgv, darwinProcessGroup } from "./darwin-process.ts";
 
 export interface JobProcess { pid: number; name: string; argv: string[] }
 
+/**
+ * past this many processes found, the Linux lookup goes no level deeper, but it ends the level it is
+ * on, however wide: a terminal's foreground job, not a whole PC
+ */
 const JOB_MAX = 256;
 
 /** A Linux process's parent, group and command name from /proc/<pid>/stat; the name may hold spaces and parentheses. */
@@ -65,11 +69,15 @@ function darwinBelow(pid: number): JobProcess[] | null {
   return found;
 }
 
+/**
+ * The processes below `pid` in its foreground job, nearest first; null when they cannot be read
+ * (`pid` gone, a platform without a foreground job), which is no proof that none runs there.
+ */
 export async function jobProcessesBelow(pid: number, platform: string = process.platform): Promise<JobProcess[] | null> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
     if (platform === "linux") return await linuxBelow(pid);
     if (platform === "darwin") return darwinBelow(pid);
-  } catch { }
+  } catch { /* the process ended, or its /proc entry is not ours to read */ }
   return null;
 }

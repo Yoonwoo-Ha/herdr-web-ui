@@ -18,6 +18,12 @@ import type { FileTask, FileTaskResult } from "./file-tasks.ts";
  */
 
 export const FILE_TASK_DEADLINE_MS = 3_000;
+/**
+ * A task of many calls rather than one: a page rendered with its own files (work for the processor
+ * too), a folder walked for a name (up to its 5,000 entries, each a call to a disk that may be
+ * slow), a Claude task list scanned from its agent session's history, an Agy catalog copied (up to
+ * 64 MiB), or a Letta transcript scanned for one call's output (up to 256 MiB). It may take longer.
+ */
 export const FILE_LONG_TASK_DEADLINE_MS = 15_000;
 /**
  * An agent's commands scanned (`commands`, #2254): every skill and command folder it reads, which on
@@ -40,6 +46,7 @@ interface PoolOptions {
   scans: number;
   taskScans: number;
   worker: URL;
+  /** run each task on the calling thread instead (tests that set `pageFileHooks`, which a thread cannot see) */
   inline: ((task: FileTask) => FileTaskResult) | null;
 }
 
@@ -147,6 +154,11 @@ export function fileTask<T extends FileTaskResult>(task: FileTask, signal?: Abor
 
 function mayRun(task: FileTask): boolean {
   if (task.op === "documents") return ![...threads].some((thread) => thread.pending?.task.op === "documents");
+  // a Letta transcript's scan (GET /api/pane/conversation/tool-output) reads up to 256 MiB, and past its
+  // deadline keeps its thread until it returns: one at a time, so long ones hold a single thread (#3326).
+  // With it the capped kinds can hold every thread of a pool of four at once (two scans, a Markdown
+  // listing and this one), where one was always left before: that takes three stalled disks at a time,
+  // and this scan stops reading at its own time limit (file-tasks.ts)
   if (task.op === "letta-output") return ![...threads].some((thread) => thread.pending?.task.op === "letta-output");
   if (task.op !== "commands" && task.op !== "claude-tasks") return true;
   let scanning = 0;

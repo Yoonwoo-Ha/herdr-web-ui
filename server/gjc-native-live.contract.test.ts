@@ -152,6 +152,7 @@ function ownedProcesses(home: string): number[] {
       const environment = readFileSync(`/proc/${entry}/environ`, "utf8");
       if (environment.split("\0").includes(marker)) pids.push(pid);
     } catch {
+      // Exited processes and processes owned by another user are not candidates.
     }
   }
   return pids;

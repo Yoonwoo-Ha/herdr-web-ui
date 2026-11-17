@@ -25,6 +25,10 @@ export interface DialogReader {
   echoOf?(line: string, command: string): boolean;
   chromeStart?(lines: string[]): number;
   parse(screen: string, ctx: ReaderContext): ParsedPrompt | null;
+  /**
+   * When the answer looks at the screen again: before its commit, or also before every move after
+   * the first, for a picker that closes onto an input box where the remaining arrows would land
+   */
   reread: "each-move" | "before-commit" | "none";
   list: "none" | "letter-window" | "slider";
   interaction?(parsed: ParsedPrompt): InteractionPlan;
@@ -135,7 +139,9 @@ export type ParsedPrompt = InteractivePrompt & {
   piAskTyping?: true;
   piQuestionnaireInput?: string;
   piQuestionnaireInputRows?: string[];
+  /** omp says it cut the question (server/omp-ask.ts): it fills the panel's four rows and the footer offers to expand it */
   ompQuestionCut?: true;
+  /** omp: the pane's one open ask call this card was read under (session and call id, omp-ask.ts), checked again before each key */
   ompCall?: string;
   claudeUltracode?: boolean | null;
   lettaSearch?: string;
@@ -222,6 +228,11 @@ export function parseNumberedRows(lines: string[], start: number, end: number): 
   return rows;
 }
 
+/**
+ * What is above a menu can hold
+ * a numbered line of its own, such as a message sent before ("❯ 1. …", "› 1. …") still on screen;
+ * a numbered line in an option's description is indented further.
+ */
 export function menuRows(lines: string[], start: number, end: number): NumberedRow[] {
   const rows = parseNumberedRows(lines, start, end);
   const column = (row: NumberedRow): number => lines[row.lineIndex]!.replace(ANSI_RE, "").search(/\d/);
@@ -289,6 +300,8 @@ export function finishPrompt(
     .update(JSON.stringify({ agent, ...input, ...hashed }))
     .digest("hex")
     .slice(0, 12);
+  // Hash all approval details before applying the display cap. Cursor movement
+  // is excluded, but a different command, plan or option description is stale.
   return { id, agent, ...input, body: input.body?.slice(0, 12_000) ?? null, ...(Object.keys(owned).length > 0 ? { own_text: owned } : {}), ...internal };
 }
 
@@ -327,10 +340,18 @@ export function publicPrompt(parsed: ParsedPrompt): InteractivePrompt {
 export interface OmoAsk {
   id?: string;
   questions: { header: string; question: string; multiSelect: boolean; options: { label: string; description: string | null }[] }[];
+  /** false: the call does not wait for its answer, and OmO folds it into a widget over its input box */
   wait?: boolean;
 }
 
-/** A terminal's wrap at a space drops the space, but Korean, Japanese and Chinese also wrap inside a word. */
+/**
+ * Lines a narrow pane wrapped, joined back into one text (`lead` cut off the first line's
+ * start, a row's number). A wrap at a space dropped it, so the lines join with one; but Korean,
+ * Japanese and Chinese also wrap inside a word: a line that ends in a wide character, filled to
+ * the pane's edge (`width`, its widest line) so that the next line's first character (wide, or
+ * closing punctuation) would not have fitted after it, goes on without a space. A line filled
+ * that far can also have ended at a space; the word wrapped inside is the likelier reading.
+ */
 export function joinWrapped(raw: string[], width: number, lead?: RegExp): string {
   let text = "";
   let previous = "";
@@ -354,6 +375,7 @@ export function screenWidth(lines: string[]): number {
 
 interface ListRow {
   number: number; cursor: boolean;
+  /** `↑` or `↓` in the cursor's column: the window's first or last row, with more of the list beyond it */
   edge: string | null;
   text: string;
   gap: number; resumes: number; column: number;
@@ -368,11 +390,20 @@ function listRow(line: string, shape: RegExp): ListRow | null {
   return {
     number: Number.parseInt(match[2]!, 10), cursor: SELECTED_RE.test(match[1] ?? ""), edge: match[1] === "↑" || match[1] === "↓" ? match[1] : null,
     text, gap: gap?.index ?? -1, resumes: gap ? gap.index + gap[0].length : -1,
+    // in the terminal's columns, as the lines wrapped under it are indented: a wide glyph in the name takes two
     column: gap ? Bun.stringWidth(line.slice(0, line.length - text.length + gap.index + gap[0].length)) : -1,
     wrapped: [],
   };
 }
 
+/**
+ * What the rows say stands in one column for the
+ * whole list, so a gap at another column, or in one row alone, is part of that row's name
+ * (`Custom  Model`). Wrapped lines are joined with a space, as most of them broke at one. A word
+ * longer than its column is cut where the column ends (`longest-runni` / `ng tasks`) and stays
+ * cut, as the pane shows it: a line that fills its column says nothing of whether a space was
+ * there.
+ */
 export function listNames(rows: ListRow[]): { name: string; said: string | null }[] | null {
   const counts = new Map<number, number>();
   for (const row of rows) if (row.column >= 0) counts.set(row.column, (counts.get(row.column) ?? 0) + 1);
@@ -384,6 +415,12 @@ export function listNames(rows: ListRow[]): { name: string; said: string | null 
     : { name: normalizeText(row.text), said: null });
 }
 
+/**
+ * A row that does not count on from
+ * the one above it, that follows anything but its own wrapped text, or that carries the window's
+ * `↑` starts the list again, and so does any row under the one that carries its `↓`: numbered
+ * lines further up (an answer's own list) are nothing of this menu's.
+ */
 export function listRows(lines: string[], hintIndex: number, shape: RegExp, more: RegExp | null): { rows: ListRow[]; below: number; first: number; last: number; unread: boolean } {
   let rows: ListRow[] = [];
   let below = 0;
@@ -432,25 +469,32 @@ export const PI_MODEL_HINT_RE = /enter to select\s*·\s*ctrl\+s to set as defaul
  */
 export const PROMPT_LINE_RE = /^(?:[❯›>➜]|[$#](?:\s|$))|[❯›>$#]$/u;
 
+/** pi ticks the model answering now, and marks the one it starts on with `· default` */
 const PI_MODEL_CURRENT_RE = /[\u2713\u2714]/;
 
 const PI_MODEL_PROVIDER_RE = /\[[^\]]+\]/;
 
+/** the tail of a model's name a narrow pane wrapped onto its own line: only the provider's bracket */
 export const PI_MODEL_TAIL_RE = /^\[[^\]]+\](\s*\u00b7\s*default)?(\s*[\u2713\u2714])?$/;
 
 /**
  * The catalogue `/model` lists under its filter line: every row names its provider in brackets,
  * which is what tells it from pi's own notes, since `Model Name: qwen-3-8` sits indented among
- * the rows and `Could not refresh llama.cpp; showing cached models.` under them.
+ * the rows and `Could not refresh llama.cpp; showing cached models.` under them. In a pane narrower than a model's name the row wraps: the
+ * wrap is joined back first, and a row that still ends without its provider voids the reading,
+ * because offering half a name would switch pi to a model that does not exist.
  */
 export function piModelRows(lines: string[], startIndex: number, minRows = 2): { label: string; cursor: boolean; current: boolean }[] | null {
   const rows: { label: string; cursor: boolean; current: boolean }[] = [];
   // pi leaves a blank between its filter line and what still matches it
   let start = startIndex;
   while (start < lines.length && !cleanLine(lines[start]!)) start += 1;
-  // A pane barely wider than a model's name wraps it and drops the provider's bracket onto the
-  // next line at column zero, where it reads exactly like a note. pi separates what it means as
-  // its own line with a blank.
+  // A phone leaves pi a pane barely wider than a model's name, which wraps it and drops the
+  // provider's bracket — the one mark that tells a row from a note — onto the next line at column
+  // zero, where it reads exactly like a note. Join such a tail back onto the line it wrapped from
+  // before reading any row, so the row keeps the name pi would answer with and the bracket that
+  // proves it, and the rules below see the same rows a wide pane shows. A blank between the two
+  // rules the tail out: pi separates what it means as its own line with a blank.
   const block: string[] = [];
   for (let index = start; index < lines.length; index += 1) {
     const raw = lines[index]!.replace(ANSI_RE, "");
@@ -481,6 +525,8 @@ export function piModelRows(lines: string[], startIndex: number, minRows = 2): {
     }
     rows.push({ label, cursor, current: PI_MODEL_CURRENT_RE.test(raw) });
   }
+  // A name wrapped in the middle of its bracket is not a model pi can be switched to, and joining
+  // what is left would invent one, so any row still missing its provider voids the whole reading.
   if (!rows.every((row) => PI_MODEL_PROVIDER_RE.test(row.label))) return null;
   return rows.length >= minRows && rows.some((row) => row.cursor) ? rows : null;
 }

@@ -117,6 +117,7 @@ function parseHermesClarify(screen: string): ParsedPrompt | null {
   return finishPrompt("hermes", {
     kind: "question", title: own("Question"), question, body,
     options: choices.map((row) => ({ label: row.label.replace(/ \(Recommended\)$/i, ""), description: null })),
+    // typed text on a multi-select question joins the ticks, which the card has no way to say
     multi_select: multi, custom_option_index: multi ? null : choices.length,
     ...navigation,
   }, {
@@ -254,7 +255,9 @@ function hermesInputLine(lines: string[]): number {
 
 /**
  * Whether a modal of Hermes's holds the pane's input, read or not: no generic card is offered over it.
- * Its Enter takes the row under the cursor, Allow once as an approval opens.
+ * Its Enter takes the row under the cursor, Allow once as an approval opens, and the countdown on its hint
+ * changes the generic card's id every second anyway. An approval this reader leaves out (cut, in another
+ * language, a pane too narrow for its hint) and a command's confirmation alike stay for the terminal.
  */
 export function hermesModalWaits(screen: string): boolean {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/).map((line) => line.trimEnd());
@@ -286,6 +289,9 @@ function parseHermesApproval(screen: string): ParsedPrompt | null {
   if (top < 0 || !/^╭─+╮$/u.test(lines[top]!) || [...lines[top]!].length !== width) return null;
   const [title, ...rows] = lines.slice(top + 1, bottom).map((line) => line.slice(2, -1).trimEnd());
   if (!HERMES_APPROVAL_TITLE_RE.test(title ?? "")) return null;
+  // the choices: rows numbered from 1, a label wrapped onto the rows under it at four spaces in. They are the last
+  // such block, over the warning; a command or warning that reads like a choice anywhere else is no card, since its
+  // rows could stand in for Hermes's own and move the cursor's meaning
   let first = rows.length - 1;
   while (first >= 0 && HERMES_APPROVAL_ROW_RE.exec(rows[first]!)?.[2] !== "1") first -= 1;
   if (first < 1) return null;
@@ -451,7 +457,7 @@ export function hermesEchoOf(line: string, command: string): boolean {
  * its timer ticking), the rule, the `❯` input line, and the closing rule when the pane shows it, with
  * nothing but blank lines under them. Also the input line alone at the bottom, with no rule above or under it (under
  * the status bar when that is drawn): Hermes redraws its input area that way while a terminal attaches, slowly on a
- * loaded host.
+ * loaded host (F3 r2 D1). -1 for any other bottom: a rule is chrome only directly above the input line.
  */
 export function hermesChromeStart(lines: string[]): number {
   const rule = (line: string | undefined): boolean => line !== undefined && /^─{8,}$/u.test(line);

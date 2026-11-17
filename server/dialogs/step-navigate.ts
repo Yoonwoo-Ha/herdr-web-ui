@@ -1,6 +1,11 @@
 import type { PromptAnswer } from "../../shared/protocol.ts";
 import type { ParsedPrompt } from "./shared.ts";
 
+/**
+ * A form whose own keys move between its questions without answering one (omo's Tab and Shift+Tab,
+ * Codex's ←/→, Hermes's Tab and Shift+Tab), as read off its screen: the question shown, by its
+ * place among the form's `count` stops (omo's Submit tab is the last of them).
+ */
 export interface NativeSteps {
   identity: string;
   index: number;
@@ -22,6 +27,10 @@ export function nativeStepTarget(prompt: ParsedPrompt, body: PromptAnswer): numb
     ? target : "Invalid question to navigate to.";
 }
 
+/**
+ * The card's edits sent with a move must be the ones the form already shows: the agent's keys
+ * carry none of the card's own over, so a move never drops a choice the user made in the card.
+ */
 export function draftKept(prompt: ParsedPrompt, draft: PromptAnswer["draft"]): boolean {
   if (draft === undefined) return true;
   const shown = prompt.multi_select ? prompt.default_option_indices ?? []

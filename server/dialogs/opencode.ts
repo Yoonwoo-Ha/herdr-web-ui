@@ -1,19 +1,26 @@
 import type { DialogReader } from "./registry.ts";
 import { ANSI_RE, type AnswerStep, KEY, finishPrompt, keySteps, own, type ParsedPrompt } from "./shared.ts";
 
-/** OpenCode v2's questions are forms its service holds (GET /api/session/{id}/form, POST .../reply). */
+/**
+ * OpenCode v2's questions are forms its service holds (GET /api/session/{id}/form), read for the
+ * exact session herdr reports for the pane and answered through POST .../reply (prompt.ts), never
+ * from the screen.
+ */
 export const nativeQuestionReader: DialogReader = {
   id: "opencode-question",
   agents: ["opencode"],
   priority: 0,
   parse: () => null,
+  // the reply re-checks the pane's session and the form's revision before it is sent
   reread: "before-commit",
   list: "none",
 };
 
+/** the TUI's own text for a typed answer's row (routes/session/question.tsx at v1.2.27) */
 const CUSTOM_LABEL = "Type your own answer";
 const ROW_RE = /^ *┃(?: {2}(.*))?$/u;
 const OPTION_RE = /^(\d+)\. (.+)$/u;
+/** a single question's footer: one row wide, or wrapped into a key row and a word row on a narrow pane */
 const FOOTER_RE = /^↑↓ select {2}enter submit {2}esc dismiss$/u;
 const FOOTER_KEYS_RE = /^↑↓ +enter +esc$/u;
 const FOOTER_WORDS_RE = /^select +submit +dismiss$/u;
@@ -61,6 +68,7 @@ export function parseOpenCodeV1Question(screen: string): ParsedPrompt | null {
       last.description = `${last.description ? `${last.description} ` : ""}${text.trim()}`;
     } else if (text !== "") return null;
   }
+  // digits reach the first nine rows only
   if (options.length < 2 || options.length > 9) return null;
   const custom = options.at(-1)!.label === CUSTOM_LABEL ? options.length - 1 : null;
   const digit = (index: number): AnswerStep => ({ text: String(index + 1) });

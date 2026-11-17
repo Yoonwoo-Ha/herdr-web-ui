@@ -1,5 +1,11 @@
+/**
+ * The server's entry points by name. From source each is its own file that Bun runs; in the compiled
+ * binary (scripts/build-server.ts) all of them are one file, `ovis-server <name>` (server/main.ts).
+ */
 import { dirname, join } from "node:path";
 
+// Each entry's file only: what runs it is in server/main.ts, so a module that starts an entry (the supervisor, which an
+// update copies and runs by what it imports) does not import every entry's code with this table
 export const ENTRIES = {
   serve: "server/index.ts",
   managed: "server/managed.ts",

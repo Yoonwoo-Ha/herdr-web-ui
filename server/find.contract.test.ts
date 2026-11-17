@@ -22,6 +22,8 @@ describe("POST /api/pane/find", () => {
     const created = await workspaceCreate({ cwd: stateDir, label: "ovis-test-find" });
     workspaceId = created.workspace.workspace_id;
     paneId = created.root_pane.pane_id;
+    // The sentinel is assembled at runtime, so the echoed command
+    // cannot satisfy the wait.
     const ready = herdrRpc("pane.wait_for_output", {
       pane_id: paneId, source: "visible", match: { type: "substring", value: "find_ready_contract" }, timeout_ms: 10000,
     }, undefined, 12000);

@@ -1,3 +1,7 @@
+/**
+ * The dispatcher in index.ts runs the access gate first and hands over who asks: a page's media
+ * plays only for the client and device that rendered it (file-view.ts).
+ */
 import { isAbsolute, sep } from "node:path";
 
 import type { ProjectFavicon } from "../shared/files.ts";
@@ -14,6 +18,7 @@ import { badRequest, errorResponse, isJsonObject, jsonResponse, setRequestRoute 
 import { paneContext, resolveAgent } from "./pane-context.ts";
 import { findProjectFavicon } from "./project-favicon.ts";
 
+/** Who asks, as the dispatcher's access gate worked it out. */
 export interface FileRequester { bridgeAuthorized: boolean; requestHost: string | null; forwarded: boolean; client: string | null; access: Access }
 
 const mayBeClaudeTemp = (path: string): boolean => claudeTempBases().some((base) => path.startsWith(base + sep));
@@ -32,10 +37,13 @@ export async function handleFileRequest(request: Request, url: URL, pathname: st
     setRequestRoute(pathname);
     if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
     if (crossSiteFileRead(request)) return jsonResponse({ error: { code: "cross_site", message: "A file is read from this app or opened in a tab, not loaded by another page" } }, 403);
+    // a device revoked, or a client signed out, while this request finds and draws a page gets none
+    // of its media addresses (file-view.ts)
     const watch = watchPageMedia();
     try { return await fileRoute(request, url, pathname, { bridgeAuthorized, requestHost, forwarded, client, access }, watch); } catch (error) { return errorResponse(error); } finally { watch.done(); }
   }
 
+  // a text file read to edit and saved (file-edit.ts); who may is checked by the dispatcher (textEditAllowed)
   if (pathname === "/api/fs/text") {
     setRequestRoute(pathname);
     if (request.method !== "GET" && request.method !== "PUT") return badRequest("method_not_allowed", "use GET or PUT");
@@ -46,6 +54,8 @@ export async function handleFileRequest(request: Request, url: URL, pathname: st
     }
   }
 
+  // a rendered page's own video, by the address its render gave it: the page has no origin and
+  // no cookie, so the address is all it holds (requiresAuth lets this path through)
   if (pathname.startsWith(PAGE_MEDIA_PATH)) {
     setRequestRoute("/api/fs/page-media/:media_id");
     if (request.method !== "GET" && request.method !== "HEAD") return badRequest("method_not_allowed", "use GET");
@@ -102,6 +112,7 @@ async function fileRoute(request: Request, url: URL, pathname: string, { bridgeA
   if (found === null) return jsonResponse({ error: { code: "not_found", message: "no readable file at that path" } }, 404);
   if ("candidates" in found) return jsonResponse({ error: { code: "ambiguous_path", message: "several files have that name", candidates: found.candidates } }, 409);
   const mediaSource = bridgeAuthorized || (access.level === "full" && access.via === "relay") ? null : pageMediaSource(requestHost, isSecureRequest(request), forwarded ? request.headers.get("x-forwarded-host") : null);
+  // its media plays only for the client address that rendered it, and ends with that device (file-view.ts)
   const media = mediaSource === null ? null : { source: mediaSource, client, device: access.level === "full" ? access.device?.id ?? null : null };
   return pathname === "/api/fs/stat" ? jsonResponse(found.info) : await fileResponse(found.info, url.searchParams.get("download") === "1", url.searchParams.get("render") === "1", media, request, watch, found.within ?? null, access.level === "full" && access.via === "relay");
 }

@@ -9,6 +9,7 @@ import { setFilePoolOptions } from "./file-pool.ts";
 import { runFileTask } from "./file-tasks.ts";
 import { clearFileCache, filesNamed } from "./files.ts";
 
+// pageFileHooks reach the thread they are set on alone: the tasks here run on it, not on file threads
 beforeAll(() => setFilePoolOptions({ inline: runFileTask }));
 afterAll(() => setFilePoolOptions());
 
@@ -89,6 +90,7 @@ describe("file view", () => {
     for (const share of [
       "//host/share/a.md", "\\\\host\\share\\a.md", "/\\host/share/a.md", "~///host/share/a.md", "~/\\\\host\\share\\a.md",
       "\\\\?\\UNC\\host\\share\\a.md", "\\\\.\\pipe\\x", "//host/share", "  //host/share/a.md  ",
+      // no other host by a name like WSL's
       "\\\\wsl$evil\\share\\a.md", "\\\\wsl.localhost.example.com\\share\\a.md", "\\\\wsl$@80\\share\\a.md",
     ]) {
       expect(windows(share), share).toBeNull();
@@ -98,9 +100,11 @@ describe("file view", () => {
     expect(windows("docs\\a.md")).toBe("C:\\work\\docs\\a.md");
     expect(windows("~/a.md")).toBe("C:\\Users\\me\\a.md");
     expect(windows("~//notes/a.md")).toBe("C:\\notes\\a.md");
+    // WSL's files are served by this PC itself, under either name
     expect(windows("\\\\wsl$\\Ubuntu\\home\\u\\a.md")).toBe("\\\\wsl$\\Ubuntu\\home\\u\\a.md");
     expect(windows("//wsl.localhost/Ubuntu/home/u/a.md")).toBe("\\\\wsl.localhost\\Ubuntu\\home\\u\\a.md");
     expect(windows("\\\\WSL$\\Ubuntu\\a.md")).toBe("\\\\WSL$\\Ubuntu\\a.md");
+    // a pane whose folder is on a share works there already: that share's files open, another's do not
     const onShare = (input: string) => windows(input, "\\\\nas\\work\\proj");
     expect(onShare("a.md")).toBe("\\\\nas\\work\\proj\\a.md");
     expect(onShare("\\\\NAS\\Work\\other\\a.md")).toBe("\\\\NAS\\Work\\other\\a.md");
@@ -108,6 +112,7 @@ describe("file view", () => {
     expect(onShare("\\\\nas2\\work\\a.md")).toBeNull();
     expect(windows("~/a.md", "C:\\work", "\\\\files\\home\\me")).toBe("\\\\files\\home\\me\\a.md");
     expect(windows("\\\\files\\other\\a.md", "C:\\work", "\\\\files\\home\\me")).toBeNull();
+    // on this system two slashes in front name no other host: the path is the local one, as before
     if (process.platform !== "win32") expect(resolveFilePath("//host/share/a.md", "/work")).toBe("/host/share/a.md");
   });
 
@@ -157,10 +162,13 @@ describe("file view", () => {
     const page = await fileResponse(fileInfo(join(root, "report.html"))!, false, true);
     expect(page.headers.get("content-type")).toStartWith("text/html");
     const policy = page.headers.get("content-security-policy")!;
+    // its script runs, but never with this app's origin, cookie or storage
     expect(policy).toStartWith("sandbox allow-scripts;");
     expect(policy).not.toContain("allow-same-origin");
+    // nothing to fetch with: default-src stands in for connect-src
     expect(policy).toContain("default-src 'none'");
     expect(policy).not.toContain("connect-src");
+    // nor this server's files, whose loading would tell it which exist, nor the web, where a script could send what the page holds
     expect(policy.split("; ").filter((directive) => directive.includes("'self'"))).toEqual(["frame-ancestors 'self'"]);
     expect(policy).not.toContain("http");
     expect(policy).toContain("frame-ancestors 'self'");
@@ -203,12 +211,15 @@ describe("file view", () => {
       `<img id="unc" src="%5C%5Chost%5Cshare%5Ca.png"><img id="drive" src="C%3A%5Ca.png"><img id="slash" src="%2Fetc%2Fhosts">`,
     ].join(""));
     const html = await (await fileResponse(fileInfo(join(site, "report.html"))!, false, true)).text();
+    // its own files, in its folder or below, as the kind of file each element takes, with the element's attributes kept
     const data = (mime: string, text: string) => `data:${mime};base64,${Buffer.from(text).toString("base64")}`;
     expect(html).toContain(`<link rel="stylesheet" href="${data("text/css", "h1 { color: teal }")}">`);
     expect(html).toContain(`<link rel="stylesheet" media="print" href="${data("text/css", "body { display: none }")}">`);
     expect(html).toContain(`<script defer src="${data("text/javascript", "document.title = 'drawn'; '</script>';")}"></script>`);
     expect(html).toContain(`<img id="shot" src="data:image/png;base64,${png.toString("base64")}">`);
+    // a script that does not run is a data block: it takes no file, which its neighbour could read
     expect(html).toContain(`<script type="text/plain" id="data" src="config.js"></script>`);
+    // nothing above its folder, through a symlink, under a hidden name, or of another kind
     for (const [id, src] of [["up", "../outside.png"], ["link", "linked.png"], ["hidden", ".ssh/key.png"], ["env", ".env"], ["text", "notes.txt"], ["cdn", "https://example.com/a.png"], ["rooted", "/etc/hosts"], ["unc", "%5C%5Chost%5Cshare%5Ca.png"], ["drive", "C%3A%5Ca.png"], ["slash", "%2Fetc%2Fhosts"]]) {
       expect(html).toContain(`<img id="${id}" src="${src}">`);
     }
@@ -250,6 +261,7 @@ describe("file view", () => {
     const media = { source, client: "10.0.0.2", device: "phone" };
     const page = await fileResponse(fileInfo(join(site, "report.html"))!, false, true, media);
     const policy = page.headers.get("content-security-policy")!;
+    // media from that one path, and still nothing else from this server or the web
     expect(policy).toContain(`media-src data: blob: ${source}`);
     expect(policy.split("; ").filter((directive) => directive.includes("http"))).toEqual([`media-src data: blob: ${source}`]);
     const html = await page.text();
@@ -258,12 +270,14 @@ describe("file view", () => {
     expect(played).toBeDefined();
     expect(html).toContain(`<video id="again" src="${source}${played}">`);
     expect(address("source")).toBeDefined();
+    // a symlink out of its folder plays nothing: the page could have brought it along to ask whether a file exists
     for (const [id, src] of [["linked", "linked.m4a"], ["private", "private.mp4"], ["elsewhere", "elsewhere.mp4"], ["above", "../share/take.m4a"], ["abovehidden", "../share/.private/take.mp4"]]) {
       expect(html).toContain(`id="${id}" src="${src}"`);
     }
     expect(html).toContain(`<video id="small" src="data:video/mp4;base64,${Buffer.from("tiny").toString("base64")}">`);
     expect(html).toContain(`poster="huge.png"`);
     expect(html).toContain(`<img id="img" src="huge.png">`);
+    // nothing under a hidden name, above its folder, of another kind, or rooted
     for (const [id, src] of [["hidden", ".cache/hidden.mp4"], ["up", "../outside.mp4"], ["text", "notes.mp4.txt"], ["rooted", "/etc/hosts"]]) {
       expect(html).toContain(`<video id="${id}" src="${src}">`);
     }
@@ -272,10 +286,12 @@ describe("file view", () => {
     expect(served.headers.get("content-security-policy")).toStartWith("sandbox");
     expect(served.headers.get("access-control-allow-origin")).toBeNull();
     expect((await served.arrayBuffer()).byteLength).toBe(big);
+    // a new address on the next render (the first one stays its own), none for a guess
     const again = await (await fileResponse(fileInfo(join(site, "report.html"))!, false, true, media)).text();
     expect(again).toMatch(new RegExp(`<video id="big" src="${source}[A-Za-z0-9_-]{32}"`));
     expect(again).not.toContain(played);
     expect(pageMediaResponse("A".repeat(32), "10.0.0.2")).toBeNull();
+    // the address serves the file its render checked, not what later took its place
     const swapped = address("source")!;
     expect(await plays(swapped, "10.0.0.2")).toBe(true);
     rmSync(join(site, "clips"), { recursive: true });
@@ -283,11 +299,13 @@ describe("file view", () => {
     sized(join(root, "elsewhere", "take.webm"), big);
     symlinkSync(join(root, "elsewhere"), join(site, "clips"));
     expect(pageMediaResponse(swapped, "10.0.0.2")).toBeNull();
+    // ...unless it leads into a folder the operator named, and then not under a hidden name there
     const before = process.env["OVIS_MEDIA_ROOTS"];
     process.env["OVIS_MEDIA_ROOTS"] = ["/nonexistent-share", join(root, "share")].join(delimiter);
     try {
       const shared = await (await fileResponse(fileInfo(join(site, "report.html"))!, false, true, media)).text();
       expect(shared).toMatch(new RegExp(`<audio id="linked" src="${source}[A-Za-z0-9_-]{32}">`));
+      // there it decides where the file lies, however the page reaches it, never under a hidden name or elsewhere above
       expect(shared).toMatch(new RegExp(`<audio id="above" src="${source}[A-Za-z0-9_-]{32}">`));
       expect(shared).toContain(`<video id="abovehidden" src="../share/.private/take.mp4">`);
       expect(shared).toContain(`<video id="up" src="../outside.mp4">`);
@@ -332,6 +350,7 @@ describe("file view", () => {
     const root = temp();
     const rendered = Date.now();
     const [token] = tokensOf(await (await fileResponse(fileInfo(streamedPage(root))!, false, true, owner("10.0.0.2"))).text());
+    // playing it does not stretch its life: each play near the end still ends at the same moment
     for (const at of [1, PAGE_MEDIA_LIFETIME_MS / 2, PAGE_MEDIA_LIFETIME_MS - 60_000]) expect(await plays(token!, "10.0.0.2", rendered + at)).toBe(true);
     expect(pageMediaResponse(token!, "10.0.0.2", null, rendered + PAGE_MEDIA_LIFETIME_MS + 60_000)).toBeNull();
     expect(pageMediaResponse(token!, "10.0.0.2")).toBeNull();
@@ -340,6 +359,7 @@ describe("file view", () => {
   it("plays a page's media only to the client that rendered it", async () => {
     const root = temp();
     const [token] = tokensOf(await (await fileResponse(fileInfo(streamedPage(root))!, false, true, owner("10.0.0.2"))).text());
+    // an address the page's script passed on, asked for from elsewhere
     expect(pageMediaResponse(token!, "203.0.113.9")).toBeNull();
     expect(pageMediaResponse(token!, "203.0.113.9 via 127.0.0.1")).toBeNull();
     expect(pageMediaResponse(token!, null)).toBeNull();
@@ -379,6 +399,7 @@ describe("file view", () => {
   it("keeps no page media for a device revoked while its request was still finding the page", async () => {
     const root = temp();
     const page = fileInfo(streamedPage(root))!;
+    // the request notes the forgetting before it looks for the file; the revocation lands during that look
     const watch = watchPageMedia();
     forgetPageMedia({ device: "phone" });
     try {
@@ -398,10 +419,12 @@ describe("file view", () => {
     const [touched] = tokensOf(await (await fileResponse(page, false, true, owner("10.0.0.2"))).text());
     const [grown] = tokensOf(await (await fileResponse(page, false, true, owner("10.0.0.2"))).text());
     const { ino } = statSync(clip);
+    // grown in place (same inode), its modification time put back: only its size tells
     appendFileSync(clip, "more");
     utimesSync(clip, second, second);
     expect(statSync(clip).ino).toBe(ino);
     expect(pageMediaResponse(grown!, "10.0.0.2")).toBeNull();
+    // rewritten at the same size: only its modification time tells
     const [rewritten] = tokensOf(await (await fileResponse(page, false, true, owner("10.0.0.2"))).text());
     expect(await plays(rewritten!, "10.0.0.2")).toBe(true);
     utimesSync(clip, second + 5, second + 5);
@@ -420,6 +443,7 @@ describe("file view", () => {
     expect(pageMediaSource("127.0.0.1:7317", false)).toBe("http://127.0.0.1:7317/api/fs/page-media/");
     expect(pageMediaSource("pc.tailnet.ts.net", true)).toBe("https://pc.tailnet.ts.net/api/fs/page-media/");
     expect(pageMediaSource("[::1]:7317", false)).toBe("http://[::1]:7317/api/fs/page-media/");
+    // a Host that could write a directive of its own into the policy is no source at all
     for (const host of [null, "", "a b", "evil; script-src *", "host/path", "host:7317 'unsafe-inline'", "host,other"]) expect(pageMediaSource(host, false)).toBeNull();
     expect(pageMediaSource("127.0.0.1:7317", true, "pc.example.ts.net")).toBe("https://pc.example.ts.net/api/fs/page-media/");
     expect(pageMediaSource("127.0.0.1:7317", true, "pc.example.ts.net, inner.proxy")).toBe("https://pc.example.ts.net/api/fs/page-media/");
@@ -443,9 +467,11 @@ describe("file view", () => {
     const ask = (headers: Record<string, string>) => crossSiteFileRead(new Request("http://localhost/api/fs/file?path=/x", { headers }));
     expect(ask({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" })).toBe(true);
     expect(ask({ "sec-fetch-site": "same-site", "sec-fetch-mode": "cors" })).toBe(true);
+    // a new tab, a download or Android's PDF "Open" button is a navigation from anywhere
     expect(ask({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" })).toBe(false);
     expect(ask({ "sec-fetch-site": "same-origin", "sec-fetch-mode": "no-cors" })).toBe(false);
     expect(ask({ "sec-fetch-site": "none", "sec-fetch-mode": "navigate" })).toBe(false);
+    // a browser that sends no Fetch Metadata is let through as before
     expect(ask({})).toBe(false);
   });
 });
@@ -485,6 +511,14 @@ describe("page files read through the descriptor that was validated", () => {
   };
   const drawn = (html: string) => ({ picture: html.includes(`id="pic" src="data:image/png;base64,`), tokens: tokensOf(html), outsideBytes: html.includes(png("OUTSIDE-SECRET").toString("base64")) });
 
+  /**
+   * B1's schedule, at the hooks of each authorization: the path resolves to `sub/<file>`; `sub`
+   * becomes a link outside before the open (so the descriptor is outside); `sub` is put back before
+   * the second resolution (which reads in the page's folder); and after it, before its identity
+   * check, `sub` is a link outside again (so the path's device and inode agree with the
+   * descriptor's). Every pathname sample agrees; only the opened file is outside. `sub` is put back
+   * whenever a descriptor closes, so each authorization meets the same schedule.
+   */
   const threeSwap = (sub: string, outside: string) => {
     const parked = `${sub}.real`;
     const toOutside = () => { if (!lstatSync(sub).isSymbolicLink()) { renameSync(sub, parked); symlinkSync(outside, sub); } };
@@ -545,6 +579,7 @@ describe("page files read through the descriptor that was validated", () => {
   });
 
   it("reports the Windows single-user residual under three-swap", async () => {
+    // documented, not defended: without a descriptor's own path, a writer of the folders on the way can race the path checks
     if (windows) return;
     const { sub, outside, page } = layout();
     pageFileHooks.platform = "win32";
@@ -598,6 +633,7 @@ describe("page files read through the descriptor that was validated", () => {
   it.skipIf(windows)("rejects macOS group-writable chain directory", async () => {
     const { site, sub, outside, page } = layout();
     pageFileHooks.platform = "darwin";
+    // owned, 0755 from the page's folder down: drawn and played
     expect(drawn(await render(page)).picture).toBe(true);
     for (const mode of [0o775, 0o757, 0o777]) {
       chmodSync(sub, mode);
@@ -607,6 +643,7 @@ describe("page files read through the descriptor that was validated", () => {
       expect(drawn(await render(page))).toEqual({ picture: false, tokens: [], outsideBytes: false });
       chmodSync(site, 0o755);
     }
+    // B1's schedule with a group-writable folder on the way: refused, never authorized
     chmodSync(sub, 0o775);
     const seen = threeSwap(sub, outside);
     expect(drawn(await render(page))).toEqual({ picture: false, tokens: [], outsideBytes: false });
@@ -623,6 +660,7 @@ describe("page files read through the descriptor that was validated", () => {
     const uid = process.getuid!();
     pageFileHooks.uid = () => uid + 1;
     expect(drawn(await render(page))).toEqual({ picture: false, tokens: [], outsideBytes: false });
+    // no user to compare with is no proof either
     pageFileHooks.uid = () => undefined;
     expect(drawn(await render(page))).toEqual({ picture: false, tokens: [], outsideBytes: false });
   });
@@ -637,12 +675,14 @@ describe("page files read through the descriptor that was validated", () => {
     symlinkSync(join(site, "sub"), join(site, "alias"));
     symlinkSync(join(share, "take.mp4"), join(site, "take.mp4"));
     writeFileSync(page, `<img id="pic" src="alias/f.png"><video id="clip" src="take.mp4"></video>`);
+    // a link to its own folder draws; one to a folder the operator did not name plays nothing
     expect(drawn(await render(page))).toEqual({ picture: true, tokens: [], outsideBytes: false });
     process.env["OVIS_MEDIA_ROOTS"] = share;
     const [token] = drawn(await render(page)).tokens;
     expect(token).toBeDefined();
     const served = pageMediaResponse(token!, null, new Request("http://x/", { headers: { range: "bytes=0-5" } }))!;
     expect(Buffer.from(await served.arrayBuffer()).toString()).toBe("SHARED");
+    // the share's own folder made writable to others since: no longer played
     chmodSync(share, 0o775);
     expect(pageMediaResponse(token!, null)).toBeNull();
   });
@@ -717,6 +757,7 @@ describe("page files read through the descriptor that was validated", () => {
 
   it.skipIf(windows)("refuses a leaf swapped for a link before the open, or after it", async () => {
     const { sub, outside, page } = layout();
+    // before the open: O_NOFOLLOW will not open the link
     pageFileHooks.afterResolve = (file) => { rmSync(file); symlinkSync(join(outside, "f.png"), file); };
     expect(drawn(await render(page, null)).picture).toBe(false);
     rmSync(join(sub, "f.png"));
@@ -734,6 +775,7 @@ describe("page files read through the descriptor that was validated", () => {
       rmSync(file);
       expect(Bun.spawnSync(["mkfifo", file]).exitCode).toBe(0);
     };
+    // opened without waiting for a writer, and refused as no file
     expect(drawn(await render(page, null)).picture).toBe(false);
   });
 
@@ -831,6 +873,7 @@ describe("page files read through the descriptor that was validated", () => {
     };
     const response = await fileResponse(found, false, true, owner());
     expect(resolvedTo).toBe(hidden);
+    // neither that folder's page nor its files, nor the asked page drawn with them
     expect(response.status).toBe(404);
     const text = await response.text();
     expect(text).not.toContain("another page");
@@ -963,6 +1006,7 @@ describe("page files read through the descriptor that was validated", () => {
           expect(Buffer.from(await part.arrayBuffer()).equals(bytes.subarray(start, end + 1))).toBe(true);
           await closing(opened.at(-1)!);
         }
+        // a range is defined for GET alone: HEAD describes the whole file
         const headRange = await fetch(url, { method: "HEAD", headers: { range: "bytes=0-9" } });
         expect(headRange.status).toBe(200);
         expect(headRange.headers.get("content-length")).toBe(String(BIG));
@@ -1308,6 +1352,8 @@ describe("locateFile", () => {
     const path = join(root, ".ovis/notes-20261021-120000-0123abcd.json");
     writeFileSync(path, '{"a":1}');
     clearFileCache();
+    // ignored keeps it out of Git status, not out of reach: the absolute path the upload answered
+    // and the project-relative one both open it
     expect(Bun.spawnSync(["git", "-C", root, "check-ignore", "-q", path]).exitCode).toBe(0);
     expect(await locateFile(path, root)).toMatchObject({ info: { path } });
     expect(await locateFile(".ovis/notes-20261021-120000-0123abcd.json", root)).toMatchObject({ info: { path } });
@@ -1433,6 +1479,7 @@ describe("Claude scratch fallback served from what it opened in its folder (#225
       if (existsSync(join(scratch, name.normalize(swapped)))) return;
       const mayBeScratch = (path: string) => path.startsWith(scratch);
       const stat = await fromScratch(name, cwd, scratch);
+      // the file the viewer was told of gone, and a link to the file outside put there under the other form of its name
       unlinkSync(join(scratch, name));
       symlinkSync(join(scratch, "..", name), join(scratch, name.normalize(swapped)));
       const byPath = await fileView.findFile(stat.info.path, cwd, async () => scratch, mayBeScratch);
@@ -1451,6 +1498,7 @@ describe("Claude scratch fallback served from what it opened in its folder (#225
   });
 
   it("keeps sending the file it opened when a link is swapped in while it is sent", async () => {
+    // larger than one read too: such a body is sent after its headers, never from the path
     for (const inside of ["INSIDE", "I".repeat(STREAM_CHUNK_BYTES + 1)]) {
       const { cwd, scratch, swap } = fixture("note.txt", inside, "OUTSIDE-SECRET");
       await (async () => {
@@ -1479,6 +1527,7 @@ describe("Claude scratch fallback served from what it opened in its folder (#225
         const whole = await fetch(server.url);
         expect(whole.headers.get("content-length")).toBe(String(size));
         expect(Buffer.from(await whole.arrayBuffer()).equals(bytes)).toBe(true);
+        // more than one read: sent as a file body, not read before the headers
         const [first, last] = [10, STREAM_CHUNK_BYTES + 5000];
         const part = await fetch(server.url, { headers: { range: `bytes=${first}-${last}` } });
         expect(part.status).toBe(206);
@@ -1519,6 +1568,7 @@ describe("Claude scratch fallback served from what it opened in its folder (#225
     const { cwd, scratch } = fixture("big.bin", "", "OUTSIDE-SECRET");
     writeFileSync(join(scratch, "big.bin"), bytes);
     pageFileHooks.fastDiskMs = 60_000;
+    // a host whose hard limit is 1,024: the server's own sockets, terminals and file threads need the rest
     pageFileHooks.openFiles = 1024;
     await (async () => {
       const found = await fromScratch("big.bin", cwd, scratch);
@@ -1580,6 +1630,7 @@ describe("Claude scratch fallback served from what it opened in its folder (#225
     const refused = cell();
     pageFileHooks.afterOpen = () => { delete pageFileHooks.afterOpen; swap(); };
     expect(runFileTask({ op: "open", path: found.info.path, get: { range: null, ifRange: false }, opened: refused, within: found.within })).toBeNull();
+    // taken back before it was closed: the pool never closes that number again (`abandon`)
     expect(Atomics.load(refused, 0)).toBe(-1);
   });
 

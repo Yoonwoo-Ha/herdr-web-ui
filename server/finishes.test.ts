@@ -146,6 +146,7 @@ it("keeps a moved pane's finish count under its new ID, so a finish read before 
   expect(finishes.status("w2:p1", "done").finish_id).toBe(1);
   finishes.status("w2:p1", "working");
   expect(finishes.status("w2:p1", "done").finish_id).toBe(2);
+  // herdr reusing the old ID later goes on from its count, as for any ended pane
   expect(finishes.status("w1:p1", "done").finish_id).toBe(2);
 });
 

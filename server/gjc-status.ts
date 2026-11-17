@@ -55,6 +55,10 @@ function gjcAsksAfter(open: OmoAsks, entry: GjcEntry): OmoAsks {
   return open;
 }
 
+/**
+ * One transcript record applied to the parent turn so far, from a whole line or a projected
+ * record's complete JSON (never its text: a record too long to hold says nothing).
+ */
 export function gjcTurnAfter(turn: OmoTurn, line: OmoLine): OmoTurn {
   const text = "text" in line ? line.text : line.record;
   if (text === undefined) return turn;
@@ -152,6 +156,7 @@ export async function readOmoSnapshot(snapshot: OmoStatusDeps["snapshot"], omo: 
   return omo.apply(raw);
 }
 
+/** Provider labels cannot revoke native OmO; only discovery can. */
 export function reconcileProviderStatus(omo: OmoStatus, gjc: OmoStatus, pane: Pick<HerdrPane, "pane_id" | "agent">): boolean {
   const native = omo.runs(pane.pane_id);
   const leftOmo = !native && omo.named(pane.pane_id, pane.agent ?? null);

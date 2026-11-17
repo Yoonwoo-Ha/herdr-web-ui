@@ -78,6 +78,8 @@ function readNativeFile(home: string, pid: number): unknown | null {
 export function readGjcNativeBinding(home: string, pid: number, now?: number): GjcNativeBinding | null {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   const value = readNativeFile(home, pid);
+  // A heartbeat can land while the file is read. Compare against the clock after
+  // the read, not a timestamp captured before it that would reject fresh evidence.
   const clockAfterRead = now ?? Date.now();
   if (!Number.isSafeInteger(clockAfterRead) || clockAfterRead < 0) return null;
   return value === null ? null : parseBinding(value, pid, clockAfterRead);

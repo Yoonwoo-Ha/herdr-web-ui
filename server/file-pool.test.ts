@@ -303,10 +303,12 @@ describe("file threads", () => {
     expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
     const hold = gate();
     const describing = fileTask({ op: "describe", path: file, folder: root, authorizeGate: { cells: hold.buffer, fifo } } as FileTask);
+    // the thread holds the file open inside its check, blocked in a system call ending it cannot cut short
     const fd = await hold.ran();
     expect(fstatSync(fd).size).toBe(5);
     setFilePoolOptions();
     await expect(describing).rejects.toThrow("replaced");
+    // the call returns (a write that never waits: the thread opened the FIFO before it said it ran), the thread is gone, and what it opened is closed
     const writer = openSync(fifo, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK);
     writeSync(writer, "x");
     closeSync(writer);
@@ -322,13 +324,16 @@ describe("file threads", () => {
     const release = holdFilePool();
     const hold = gate();
     const reading = fileTask<OpenedFile | null>({ op: "open", path: file, get: whole, readGate: { cells: hold.buffer, fifo } } as FileTask);
+    // the thread is inside the read of `file`, blocked in a system call ending it cannot cut short
     const fd = await hold.ran();
     release();
     await expect(reading).rejects.toThrow("stopped");
+    // the request is answered, but the read still uses the descriptor: it stays open, and its number is not handed out again
     expect(fstatSync(fd).size).toBe(5);
     const other = openSync(big, "r");
     expect(other).not.toBe(fd);
     closeSync(other);
+    // the read returns (a write that never waits: the thread opened the FIFO before it said it ran), the thread is gone, and only then is its descriptor closed
     const writer = openSync(fifo, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK);
     writeSync(writer, "x");
     closeSync(writer);

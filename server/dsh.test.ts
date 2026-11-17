@@ -203,12 +203,14 @@ test("matches only a dsh launcher that boots a chat profile", () => {
     ["node", "/usr/local/bin/dsh", "tui", "--resume", "1dacc7bc-68e8-4934-baec-ba181b8251f9"],
     ["node", "/usr/local/bin/dsh", "--profile", "headless", "--session-id", "session-1", "continue"],
     ["node", "/usr/local/bin/dsh", "--profile=tui"],
+    // what `dsh-tui` and `dsh-tui --resume` leave in front: dsh-tui's own host process, which holds the lock
     ["/usr/bin/node", "/home/user/.dsh/profiles/dsh-tui/node_modules/@deepseek-harness-tui/dsh-tui/lib/types/dsh-adapter/host-entry.js"],
   ]) expect(isDshProcess(argv)).toBe(true);
   for (const argv of [
     ["vim", "dsh"],
     ["node", "/srv/app/dsh", "--profile", "tui"],
     ["/srv/app/dsh", "--profile", "tui"],
+    // Debian's distributed shell, and any launcher not run by node
     ["/usr/bin/dsh", "--profile", "tui"],
     ["/usr/bin/dsh", "-a", "uptime"],
     ["node", "server.js", "dsh"],
@@ -219,6 +221,7 @@ test("matches only a dsh launcher that boots a chat profile", () => {
     ["node", "/usr/local/bin/dsh", "--profile", "web"],
     ["node", "/usr/local/bin/dsh", "acp"],
     ["dsh", "-a", "-c", "uptime"],
+    // dsh-tui's launcher shims, which hold no session
     ["node", "/usr/local/bin/dsh-tui"],
     ["/usr/bin/node", "/home/user/.dsh/profiles/dsh-tui/node_modules/@deepseek-harness-tui/dsh-tui/bin/dsh-tui.js"],
     ["node", "/srv/app/lib/host-entry.js"],
@@ -300,6 +303,7 @@ linuxTest("falls back when two sessions are locked even if only one of them has 
 }));
 
 linuxTest("does not show a new empty chat for a lock-free dsh that started before this server", async () => {
+  // a TUI that went idle released its lock; after an Ovis restart nothing proves it never held one
   const error = await resolveDshTranscript({ foreground_processes: [{ pid: process.ppid, argv: DSH_ARGV }] }).then(() => null, (caught: unknown) => caught);
   expect(error).toBeInstanceOf(ConversationUnavailable);
   expect(error).not.toBeInstanceOf(ConversationNotStarted);

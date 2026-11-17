@@ -33,6 +33,7 @@ it("returns account sessions only to an authorized bridge discovery request", as
   } finally { app.stop(); identity.mockRestore(); discover.mockRestore(); rmSync(stateDir, { recursive: true, force: true }); }
 });
 
+// a tokenless installation: the owner reaches it through a paired device or their Tailscale login, never a token
 it.each(["paired owner", "tailscale owner", "open LAN visitor", "watching device", "portal visitor"])("discovers sessions on a tokenless installation only for the owner: %s", async (principal) => {
   const stateDir = mkdtempSync(join(tmpdir(), "ovis-tokenless-discovery-"));
   const identity = spyOn(bridge, "bridgeIdentity").mockResolvedValue({ pid: 42, managed_remote: false, bridge_protocol: 1, bundle_version: "43", socket_path: "/fixture/core.sock", socket_id: "1:2", herdr: { version: "fixture", protocol: 22, runtime: "herdr-core" } });
@@ -64,6 +65,7 @@ it.each(["paired owner", "tailscale owner", "open LAN visitor", "watching device
       expect(response?.status).toBe(200);
       expect(await response!.json()).toMatchObject({ herdr: { runtime: "herdr-core" }, found_herdr_sessions: [] });
       expect(discover).toHaveBeenCalledTimes(1);
+      // the identity alone stays the connection server's, as before
       expect((await get("/api/bridge"))?.status).toBe(401);
     } else {
       expect([401, 403]).toContain(response?.status ?? 0);
@@ -266,13 +268,17 @@ it("marks a socket that only the open LAN let in, one relayed to another PC too,
     return taken.at(-1)!;
   };
   try {
+    // another machine on the LAN while nothing is paired: the gate closing ends what it holds
     const lan = from("192.168.0.20");
     expect((await upgrade(lan, "/ws")).open).toBe(true);
     const relayed = await upgrade(lan, "/ws?machine_id=remote");
     expect([relayed.open, relayed.relay !== undefined]).toEqual([true, true]);
     relayed.relay!.close();
+    // another Ovis server reading this PC over the address it is bound to: its bridge token let it in, whatever the gate
     const bridged = await upgrade(lan, "/ws", { authorization: "Bearer bridge-token" });
     expect([bridged.open, bridged.bridge]).toEqual([undefined, true]);
+    // a socket the same holder opens to another PC through this one is the open LAN's: the bridge token opens this
+    // PC's bridge, and a new request for that route is refused once the gate closes
     const bridgedRelay = await upgrade(lan, "/ws?machine_id=remote", { authorization: "Bearer bridge-token" });
     expect([bridgedRelay.open, bridgedRelay.relay !== undefined]).toEqual([true, true]);
     bridgedRelay.relay!.close();

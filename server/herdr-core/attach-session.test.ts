@@ -4,8 +4,10 @@ import { CoreAttachSession } from "./attach-session.ts";
 import { encodeFrame, FRAME_AUTOMATIC_INPUT, FRAME_CLOSE, FRAME_CREDIT, FRAME_DATA, FRAME_FACTS, FRAME_FOCUS, FRAME_RESIZE, type Frame, HcConnection, type HcTransport, makeFrameReader } from "./connection.ts";
 
 const CHANNEL = 7;
+/** what the session asks the viewers' terminal on attach, as `hc attach` asks its own */
 const ASKED = "\x1b[?1004h\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\\x1b[16t\x1b[c";
 const ASKED_AGAIN = ASKED.slice("\x1b[?1004h".length);
+/** what goes ahead of hc's first bytes: the viewer's last attach's scrollback is erased, on the main screen, before hc replays it */
 const CLEARED = "\x1b[?1049l\x1b[3J\x1b[H\x1b[2J";
 
 class FakeCore implements HcTransport {
@@ -20,6 +22,7 @@ class FakeCore implements HcTransport {
   private readonly frames = makeFrameReader((frame) => this.onFrame(frame), () => {});
   private heldReply: (() => void) | null = null;
 
+  /** `paintFirst`: the first paint goes out before the attach's reply, as hc's writer may send it. */
   constructor(private readonly options: { paintFirst?: string; holdReply?: boolean; answerClose?: boolean; features?: readonly string[]; confirmAutomatic?: boolean } = {}) {
     this.readable = new ReadableStream({ start: (controller) => { this.controller = controller; } });
   }
@@ -113,6 +116,7 @@ describe("CoreAttachSession", () => {
     const { core, session } = attach();
     session.resize(100, 30);
     await core.until(FRAME_RESIZE, 1);
+    // a same-size RESIZE would make this viewer hc's active one and take the size from whoever works there
     session.winch();
     session.write("x");
     await core.until(FRAME_DATA, 1);
@@ -160,6 +164,7 @@ describe("CoreAttachSession", () => {
     await core.attached;
     await painted.promise;
     expect(seen.join("")).toBe(`${CLEARED}first screen`);
+    // and credits it, or hc would hold the stream at its window
     await core.until(FRAME_CREDIT, 1);
   });
 
@@ -196,6 +201,7 @@ describe("CoreAttachSession", () => {
     const asked = Promise.withResolvers<void>();
     const { core, session } = attach((data) => { seen.push(data); if (data.includes(ASKED)) asked.resolve(); });
     await asked.promise;
+    // xterm's answers, then a typed key: the answers are hc's, the key the program's
     session.write("\x1b]10;rgb:eeee/eeee/eeee\x1b\\\x1b]11;rgb:1818/1818/1818\x07\x1b[6;17;9t\x1b[?62;22ca");
     await core.until(FRAME_DATA, 1);
     expect(core.of(FRAME_DATA).map((frame) => new TextDecoder().decode(frame.payload))).toEqual(["a"]);
@@ -224,6 +230,7 @@ describe("CoreAttachSession", () => {
   });
 
   it("does not keep asking viewers whose terminal answers every focus-reports switch with a focus-in (#2815)", async () => {
+    // two focused xterm.js tabs on the pane: each answers `ESC[?1004h` with ESC [ I
     const answers: string[] = [];
     const asked = Promise.withResolvers<void>();
     const { session } = attach((data) => {
@@ -256,6 +263,7 @@ describe("HcConnection streams", () => {
 });
 
 describe("CoreAttachSession, automatic input", () => {
+  /** a cursor position report: an answer the program asked for, which reaches it (DA1 would answer the session's own question) */
   const REPLY = "\x1b[5;10R";
   const decode = (frames: Frame[]) => frames.map((frame) => new TextDecoder().decode(frame.payload));
 

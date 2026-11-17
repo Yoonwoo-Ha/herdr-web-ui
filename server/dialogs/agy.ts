@@ -42,9 +42,12 @@ const AGY_WRITE_IN_HINT_RE = /\benter\s+Submit(?:\s+All)?\s*·\s*esc\s+Back\b/i;
 
 /**
  * Whether the key hint found at `hintIndex` ends the screen: under it Antigravity draws one row at most, its status row
- * (`esc to cancel` at the left while a turn runs, the model at the right, alone on the row at rest).
+ * (`esc to cancel` at the left while a turn runs, the model at the right, alone on the row at rest). Anything else under the hint is later
+ * output, a shell's prompt after Antigravity exited among it: the question above is then an old one, and its keys
+ * would go to whatever has the pane now.
  */
 function agyHintEndsScreen(lines: string[], hintIndex: number, hint: RegExp): boolean {
+  // a narrow pane wraps the hint: its rows are the fewest from hintIndex on that hold all of it
   const span = [1, 2, 3].find((rows) => hint.test(lines.slice(hintIndex, hintIndex + rows).join(" "))) ?? 1;
   const below = lines.slice(hintIndex + span).filter((line) => cleanLine(line) !== "");
   return below.length === 0 || (below.length === 1 && /^(?:esc to cancel\b|\s{20,}\S)/.test(below[0]!.replace(ANSI_RE, "")));
@@ -56,12 +59,16 @@ const AGY_WRITE_IN = "Write-in...";
 /**
  * Whether `agy`'s inline `Write-in...` text input owns the keyboard (`Your answer:` over
  * `enter Submit · esc Back`). While open, arrows and Enter go to that text input rather than
- * the option rows.
+ * the option rows, so no fallback menu card may guess keys into it.
  */
 export function agyWriteInWaits(screen: string): boolean {
   return agyWriteInEditor(screen) !== null;
 }
 
+/**
+ * The open `Write-in...` editor: its `Your answer:` label (the nearest above the hint, however many rows a long answer
+ * wraps onto) and the text it holds, the rows under the label joined with their `> ` taken off.
+ */
 function agyWriteInEditor(screen: string): { lines: string[]; answerIndex: number; text: string } | null {
   const lines = screen.replace(ANSI_RE, "").split(/\r?\n/);
   const shown = lines.map(cleanLine).filter(Boolean);
@@ -75,6 +82,9 @@ function agyWriteInEditor(screen: string): { lines: string[]; answerIndex: numbe
   return { lines, answerIndex, text: [rows[0]!.slice(1), ...rows.slice(1)].join(" ") };
 }
 
+/**
+ * The editor wraps a long answer onto rows of its own, so the two are compared without their whitespace.
+ */
 export function agyCustomEditorMatches(screen: string, expected: ParsedPrompt, checked: ReadonlySet<number>, draft: string): boolean {
   if (expected.responder !== "agy-question" || expected.customMenuIndex === null) return false;
   const editor = agyWriteInEditor(screen);

@@ -17,6 +17,7 @@ import { MAX_EDITABLE_TEXT_BYTES, type EditableText } from "../shared/files.ts";
 
 const sha = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
+// Linux's own calls and outcomes (libc.so.6, /proc/self/fd): macOS saves by its own proof, Windows not at all
 describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () => {
   let server: ReturnType<typeof createServer>;
   let stateDir: string;
@@ -115,6 +116,7 @@ describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () =
     expect(before).not.toBeNull();
     expect((await save(listed, sha("listed\n"), "x\n")).status).toBe(200);
     expect(read(listed, "system.posix_acl_access")).toBe(before);
+    // a folder that passes an access list on to new files: the saved file takes none the file did not have
     mkdirSync(join(folder, "shared"));
     expect(Bun.spawnSync(["setfacl", "-d", "-m", "u:nobody:r--", join(folder, "shared")]).exitCode).toBe(0);
     const plain = file("shared/plain.md", "plain\n");
@@ -176,6 +178,7 @@ describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () =
     }
     expect(readFileSync(secret, "utf8")).toBe("secret\n");
     expect(readFileSync(join(outside, "docs", "x.md"), "utf8")).toBe("x\n");
+    // a pane at a filesystem's root opens nothing for editing
     paneCwd = "/";
     expect(await error(await open(secret.slice(1)))).toEqual([403, "outside_pane"]);
     paneCwd = folder;
@@ -190,9 +193,11 @@ describe.skipIf(process.platform !== "linux")("editing a text file (#771)", () =
       symlinkSync(outside, join(folder, "swap"));
     };
     const saved = await save(note, sha("before\n"), "after\n");
+    // the rename went through the folder that was opened, wherever it now is
     expect(saved.status).toBe(200);
     expect(readFileSync(join(folder, "swap-moved", "note.md"), "utf8")).toBe("after\n");
     expect(readFileSync(join(outside, "note.md"), "utf8")).toBe("outside\n");
+    // and a folder moved out of the pane's folder meanwhile is not written in at all
     const kept = file("away/kept.md", "kept\n");
     textSaveHooks.beforeRename = () => renameSync(join(folder, "away"), join(outside, "away"));
     expect(await error(await save(kept, sha("kept\n"), "after\n"))).toEqual([409, "stale_revision"]);

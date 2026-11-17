@@ -158,6 +158,7 @@ test.each(["first\nsecond", "first\rsecond", "first\r\nsecond", "\nanswer", "ans
     const card = await pane.card();
     const original = pane.screen;
     let moves = 0;
+    // Any premature Enter would close the question and expose a later screen to the remaining input.
     pane.onSent = key => {
       if (key === "down") pane.screen = ++moves === 1 ? fixtures["single-second"] : fixtures["single-custom-empty"];
       else if (key.includes("\n") || key.includes("\r") || key === "enter") pane.screen = fixtures.review;
@@ -206,6 +207,7 @@ test("Pi ask tab moves are held to the request's deadline: a look before the key
   await withPane(navigation.first, async pane => {
     const card = await pane.card();
     pane.onSent = key => { if (key === "right") pane.screen = navigation["second-unanswered"]; };
+    // the look before the key (pi-ask's) never comes back: the deadline ends it, 300 ms here, 4 s in the server
     const beforeKey = (): Promise<void> => new Promise<void>(() => undefined);
     expect(await pane.answer(card.id, { step_index: 1 }, undefined, { answerDeadlineMs: 300, beforeKey })).toBe(409);
     expect(pane.sent).toEqual([]);

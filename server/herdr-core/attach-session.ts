@@ -74,7 +74,16 @@ export interface CoreAttachOptions {
   onExit: (code: number | null) => void;
 }
 
+/**
+ * It answers the calls the server makes on a PtySession:
+ * keystrokes are DATA, a size is hc's RESIZE, and pausing holds back hc's credit, which stops the
+ * stream once hc's window is spent.
+ *
+ * The viewer keeps the scrollback (`terminal-history`): each attach starts with the terminal's last
+ * TERMINAL_HISTORY_LINES lines, main screen only, as `hc attach --history` shows them.
+ */
 export class CoreAttachSession {
+  /** goes ahead of a joiner's cut main-screen replay, which lost the first attach's CLEAR_HISTORY */
   readonly replayPrefix = CLEAR_JOINER_HISTORY;
   readonly exited: Promise<void>;
   private channel: Channel | null = null;
@@ -137,8 +146,10 @@ export class CoreAttachSession {
       this.typed = [];
       this.settle();
       this.report();
+      // the viewer's terminal answers through write(), as it answered `hc attach`
       this.ask(true);
     }, (error: unknown) => {
+      // the old `hc attach` printed why in the pane; the server log is where it goes now
       console.error(`herdr-core attach for ${options.terminal} failed: ${error instanceof Error ? error.message : String(error)}`);
       this.end(null);
     });
@@ -190,6 +201,10 @@ export class CoreAttachSession {
     this.settle();
   }
 
+  /**
+   * Detaches; `exited` settles when `Channel.close` does. When hc answered, a next attach cannot
+   * overlap this one; when the close gave up after 10 s with no answer, it may.
+   */
   kill(): void {
     if (this.closed) return;
     this.closed = true;

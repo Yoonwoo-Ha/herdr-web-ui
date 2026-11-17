@@ -15,17 +15,34 @@ import { readMarkdownDocuments, walkFiles } from "./files.ts";
 import { readEditableText, TextEditRefused } from "./file-edit.ts";
 import type { EditableText } from "../shared/files.ts";
 
+/**
+ * How long a Claude task list reads on, from when a thread takes it, before it answers with what it
+ * read so far. The long-task deadline (`FILE_LONG_TASK_DEADLINE_MS`, 15 s) counts from the request,
+ * its wait for a thread included, so a scan that waited may keep its thread after its request is
+ * refused.
+ */
 const CLAUDE_TASKS_READ_MS = 10_000;
+/**
+ * How long a Letta transcript is scanned for one call's output, from when a thread takes it, so a
+ * scan on a slow disk stops then, not at the end of the file. Like the Claude budget, it may run on
+ * after its request's deadline, which counts the wait for a thread too.
+ */
 const LETTA_OUTPUT_READ_MS = 10_000;
 
 export type FileTask =
   | { op: "info"; path: string }
   | { op: "named"; path: string }
   | { op: "within"; paths: string[]; folder: string }
+  /** a file the scratch fallback found, described from what was opened in `folder` (`describeWithin`); `opened` as for `open` */
   | { op: "describe"; path: string; folder: string; opened?: Int32Array<SharedArrayBuffer> }
   | { op: "walk"; cwd: string }
   | { op: "documents"; cwd: string; paths: string[] | null; budgetMs?: number }
   | { op: "agy-catalog"; path: string }
+  /**
+   * The whole output of the call `ref` names in a Letta transcript (`lettaToolOutputOffThread`), read
+   * only from the file `file` names at `path` and cut to `max` characters before it is answered;
+   * `budgetMs`: how long it reads (tests).
+   */
   | { op: "letta-output"; path: string; ref: string; file: FileIdentity; max: number; budgetMs?: number }
   | { op: "claude-tasks"; path: string; live: boolean; since: number | null; history?: HistoryEvidence | null }
   /**
@@ -34,10 +51,17 @@ export type FileTask =
    * thread does not see what the server's environment became after the process started.
    */
   | { op: "commands"; agent: string; cwd: string | null; home: string; roots: ProcessRoots; version: string | null | undefined; serverEnv: Record<string, string | undefined> }
+  /** `within`: the folder a page found in it must have been opened in (`pageWithLocalFiles`) */
   | { op: "render"; path: string; media: PageMedia | null; within?: string | null }
+  /**
+   * `within`: the folder the file must be opened in (`openAuthorized`), for a file the scratch
+   * fallback found
+   */
   | { op: "open"; path: string; get: { range: string | null; ifRange: boolean } | null; opened?: Int32Array<SharedArrayBuffer>; fastDiskMs?: number; within?: string | null }
+  /** a text file in the pane's folder `cwd` read to edit (`file-edit.ts`; its save runs on the server's thread) */
   | { op: "text-read"; path: string; cwd: string };
 
+/** A text file read to edit, or why not: a refusal crosses the thread as plain fields, not as the error. */
 export type TextTaskResult = { done: EditableText } | { refused: { status: number; code: string; message: string; revision?: string } };
 
 function textTask(run: () => EditableText): TextTaskResult {
@@ -50,6 +74,11 @@ function textTask(run: () => EditableText): TextTaskResult {
 export interface RenderedPage { html: Uint8Array<ArrayBuffer> | null; grants: PageMediaGrant[] }
 export interface OpenedFile { size: number; range: [number, number] | "unsatisfiable" | null; bytes: Uint8Array<ArrayBuffer> | null; fd: number | null; fast: boolean }
 
+/**
+ * How quickly opening, describing and reading the start of a large file must go for its disk to
+ * count as fast (a local disk takes a few milliseconds; a FUSE or network share that waits on each
+ * call takes far longer).
+ */
 export const FAST_DISK_MS = 50;
 const PROBE_BYTES = 64 * 1024;
 
@@ -79,6 +108,7 @@ export function transferablesOf(result: FileTaskResult): ArrayBuffer[] {
   return [];
 }
 
+/** Every path, symlinks followed, lies in `folder`; false for a missing or unreadable one. */
 function within(paths: string[], folder: string): boolean {
   try {
     const root = realpathSync(folder) + sep;

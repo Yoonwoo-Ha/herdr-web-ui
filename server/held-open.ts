@@ -23,6 +23,7 @@ export interface Held {
    * Windows names one path several ways (a short 8.3 name, another letter case), each the same entries.
    */
   isAt(path: string): boolean;
+  /** The entry `name` of this held directory, opened through it, a link there not followed but refused. */
   open(name: string, as: "directory" | "file"): Held;
   read(buffer: Buffer, offset: number, length: number, position: number): number;
   close(): void;
@@ -32,6 +33,7 @@ export function heldOpenPlatform(platform: NodeJS.Platform): boolean {
   return platform === "linux" || platform === "darwin" || platform === "win32";
 }
 
+/** The directory `path`, opened as a directory and not through a link at its last component, and held. */
 export function openHeldDirectory(path: string): Held {
   if (process.platform === "win32") return WindowsHeld.directory(path);
   const fd = openSync(path, DIRECTORY_FLAGS);
@@ -64,6 +66,7 @@ abstract class DescriptorHeld implements Held {
   close(): void { closeSync(this.fd); }
 }
 
+/** Linux: the held descriptor's /proc/self/fd link names it and leads into it. */
 class LinuxHeld extends DescriptorHeld {
   path(): string | null {
     try { return readlinkSync(`/proc/self/fd/${this.fd}`); } catch { return null; }
@@ -92,6 +95,7 @@ function openLibSystem() {
   }).symbols;
 }
 
+/** macOS: openat(2) opens through the held descriptor, and fgetattrlist(2) names it. */
 class DarwinHeld extends DescriptorHeld {
   path(): string | null {
     const symbols = libSystem ??= openLibSystem();
@@ -168,6 +172,8 @@ function handleInformation(handle: bigint): { attributes: number; identity: stri
   if (windowsApi().kernel.GetFileInformationByHandle(handle, info) === 0) throw new Error("GetFileInformationByHandle failed");
   const index = (BigInt(info.readUInt32LE(44)) << 32n) | BigInt(info.readUInt32LE(48));
   const size = (info.readUInt32LE(32) * 2 ** 32) + info.readUInt32LE(36);
+  // the volume's serial and the file index, as a bigint stat gives them (st_dev, st_ino); none when
+  // the file system gives no index of its own
   return { attributes: info.readUInt32LE(0), identity: NO_FILE_INDEX.has(index) ? null : `${info.readUInt32LE(28)}:${index}`, size };
 }
 
@@ -199,6 +205,7 @@ function fullIdentity(handle: bigint): string | null {
 class WindowsHeld implements Held {
   private constructor(private readonly handle: bigint) {}
 
+  /** `handle`, held only when it is what was asked for and no reparse point; closed otherwise. */
   private static checked(handle: bigint, as: "directory" | "file"): WindowsHeld {
     const held = new WindowsHeld(handle);
     try {
@@ -218,6 +225,7 @@ class WindowsHeld implements Held {
 
   stat() {
     const { attributes, identity, size } = handleInformation(this.handle);
+    // an index that names no one file proves no identity: refused, as every caller compares it
     if (identity === null) throw new Error("no file index");
     const file = (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) === 0 && windowsApi().kernel.GetFileType(this.handle) === FILE_TYPE_DISK;
     return { identity, file, size };

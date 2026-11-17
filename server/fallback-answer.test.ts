@@ -60,6 +60,10 @@ async function answer(promptId: string, choice: { option_index: number }, signal
 
 const labels = (prompt: InteractivePrompt) => prompt.options.map((option) => option.label);
 
+// Agents with no reader of their own get the fallback card, and its answer was always refused: the read before the
+// key had no screen to compare (readKnownPrompt reads none for them), and what they redraw while the prompt waits
+// (Copilot's logo and timer, Grok's status line) changed the id every second. Recorded on Copilot 1.0.109, Grok
+// 1.0.77 and Antigravity 1.5.6.
 const recorded = (name: string): string => readFileSync(new URL(`./fixtures/${name}.txt`, import.meta.url), "utf8");
 
 test.each([
@@ -125,6 +129,8 @@ test("reads drawing glyphs outside Copilot's banner logo as written", () => {
   expect(id("blue \u2588")).not.toBe(id("blue \u2591"));
 });
 
+// a menu that marks its selection with a filled block against a hollow one: the mark moving is another card, so an
+// Enter read for one row never lands on the other (merge-pass review of #3730)
 test.each([["\u2591", "\u2588"], ["\u2591\u2591", "\u2588\u2588"], ["\u28c0", "\u28ff"]])("still refuses an answer once a menu marked %s / %s moved its selection", async (hollow, filled) => {
   const menu = (marks: [string, string]) => `Remove the staging database?\n\n${marks[0]} Delete\n${marks[1]} Keep\n\n↑/↓ to move · enter to choose\n`;
   await withPane("copilot", "blocked", menu([hollow, filled]), async (pane) => {
@@ -136,6 +142,8 @@ test.each([["\u2591", "\u2588"], ["\u2591\u2591", "\u2588\u2588"], ["\u28c0", "\
   });
 });
 
+// selection marks beside a border or guide glyph, at a row's end, or two glyphs wide (merge-pass review of #3730): the
+// mark moving is another card for any agent, so an Enter read for one row never lands on the other
 const SWAPPED_MARKS: [string, [string, string], [string, string]][] = [
   ["a heavy rule", ["\u2503 \u2588 Delete", "\u2503 \u2591 Keep"], ["\u2503 \u2591 Delete", "\u2503 \u2588 Keep"]],
   ["a double frame", ["\u2551 \u2588 Delete \u2551", "\u2551 \u2591 Keep \u2551"], ["\u2551 \u2591 Delete \u2551", "\u2551 \u2588 Keep \u2551"]],
@@ -155,6 +163,8 @@ test.each(SWAPPED_MARKS.flatMap(([shape, before, after]) => ["copilot", "claude"
     });
   });
 
+// The read right before the key, not only the answer's first read, must still show the card: the screen changes after
+// the answer has read it, between that read and the key (merge-pass review of #3730)
 test("refuses the key when the question changed after the answer's first read", async () => {
   const screen = recorded("copilot-1.0.109-ask-32s");
   await withPane("copilot", "blocked", screen, async (pane) => {
@@ -189,6 +199,7 @@ test.each([
   const [before, after] = ["a", "b"].map((frame) => recorded(`lab-${agent}-waiting-${frame}`)) as [string, string];
   expect(after).not.toBe(before);
   expect(parseFallbackPrompt(agent, after).id).toBe(parseFallbackPrompt(agent, before).id);
+  // Muse turns its glyph through three frames
   if (agent === "muse") expect(parseFallbackPrompt(agent, after.replace("\u25c7 Request", "\u25c6 Request")).id).toBe(parseFallbackPrompt(agent, before).id);
   expect(after.split(from).length).toBe(2);
   expect(parseFallbackPrompt(agent, after.replace(from, to)).id).not.toBe(parseFallbackPrompt(agent, before).id);
@@ -200,6 +211,7 @@ test("keeps Hermes's card in its first ten seconds, where the timer is padded wi
   const at = (time: string) => parseFallbackPrompt("hermes", screen.replace("( 57.9s", time)).id;
   expect(at("(  5.3s")).toBe(at("(  5.2s"));
   expect(at("(  5.2s")).toBe(at("( 57.9s"));
+  // a token count past a thousand is drawn with a K
   expect(screen.split("\u2193 34 tok)").length).toBe(2);
   expect(parseFallbackPrompt("hermes", screen.replace("\u2193 34 tok)", "\u2193 1.2K tok)")).id).toBe(at("( 57.9s"));
 });
@@ -232,6 +244,7 @@ test.each([
   expect(agentPickerOwnsScreen(recorded(name))).toBe(picker);
 });
 
+// a narrow pane wraps the key hint onto a second row: neither row alone both moves and chooses
 test.each(["↑↓ sel", "↑↓ select ·", "↑↓ select · "])("tells Devin's folder trust with its key hint wrapped after %p", (head) => {
   const lines = recorded("devin-3000.12.43-trust").split("\n");
   const at = lines.findIndex((line) => line.includes("↑↓ select"));

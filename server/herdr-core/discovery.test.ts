@@ -66,12 +66,16 @@ it.skipIf(!unix)("never runs an hc from a folder another account can write, earl
   const marker = join(root, "ran");
   planted(join(root, "open"), 0o777, marker);
   planted(join(root, "others"), 0o757, marker);
+  // sticky lets anybody add a name beside it: the folder holding hc is the user's alone
   planted(join(root, "stickybin"), 0o1777, marker);
+  // a folder of the user's own inside one anybody can rename or replace
   planted(join(root, "shared", "bin"), 0o755, marker);
   chmodSync(join(root, "shared"), 0o777);
+  // a link from a folder of the user's own to a stand-in in an open one
   planted(join(root, "open2"), 0o777, marker);
   mkdirSync(join(root, "linked"), { mode: 0o755 });
   symlinkSync(join(root, "open2", "hc"), join(root, "linked", "hc"));
+  // a file anybody can rewrite, in a folder of the user's own
   planted(join(root, "loose"), 0o755, marker);
   chmodSync(join(root, "loose", "hc"), 0o777);
   const real = fake(join(root, "real"), "hc", "hc 0.1.17", log);
@@ -87,6 +91,7 @@ it.skipIf(!unix)("never runs an hc from a folder another account can write, earl
 
 it.skipIf(!unix)("runs one in the user's own folder, through a sticky shared one and a link, and an explicit OVIS_HC_BIN anywhere", async () => {
   const { root, log } = scratch();
+  // like /tmp: anybody may add to it, nobody may replace what is the user's
   mkdirSync(join(root, "sticky"), { mode: 0o755 });
   chmodSync(join(root, "sticky"), 0o1777);
   const mine = fake(join(root, "sticky", "mine"), "hc", "hc 0.1.17", log);
@@ -96,10 +101,12 @@ it.skipIf(!unix)("runs one in the user's own folder, through a sticky shared one
   mkdirSync(join(root, "links"), { mode: 0o755 });
   symlinkSync(mine, join(root, "links", "herdr-core"));
   expect(await look({ PATH: join(root, "links") })).toEqual({ bin: join(root, "links", "herdr-core"), version: "0.1.17" });
+  // the user named it: theirs to trust
   const named = fake(join(root, "open"), "my-hc", "hc 0.1.20", log);
   chmodSync(join(root, "open"), 0o777);
   try {
     expect(await look({ OVIS_HC_BIN: named, PATH: join(root, "links") })).toEqual({ bin: named, version: "0.1.20" });
+    // a bare name is looked up on the PATH, where the same rule holds, and one refused leaves the next folder
     expect(await look({ OVIS_HC_BIN: "my-hc", PATH: join(root, "open") })).toBeNull();
     const later = fake(join(root, "later"), "my-hc", "hc 0.1.21", log);
     expect(await look({ OVIS_HC_BIN: "my-hc", PATH: [join(root, "open"), join(root, "later")].join(":") })).toEqual({ bin: later, version: "0.1.21" });
@@ -111,14 +118,17 @@ it("counts group write as harmless only in the user's own private group, known f
   const local = "passwd: files systemd\ngroup: files [SUCCESS=merge] systemd\n";
   expect(privateGroup("me", 1000, "root:x:0:\nme:x:1000:\nusers:x:100:me,you\n", passwd, local)).toBe(1000);
   expect(privateGroup("me", 1000, "me:x:1000:me\n", passwd, local)).toBe(1000);
+  // another member, another name, another account's primary group, or a group not listed
   expect(privateGroup("me", 1000, "me:x:1000:you\n", passwd, local)).toBeNull();
   expect(privateGroup("me", 1000, "staff:x:1000:\n", passwd, local)).toBeNull();
   expect(privateGroup("me", 1000, "me:x:1000:\n", passwd + "other:x:1002:1000::/:/bin/sh\n", local)).toBeNull();
   expect(privateGroup("me", 100, "users:x:100:\n", passwd, local)).toBeNull();
   expect(privateGroup("me", 1000, "", passwd, local)).toBeNull();
+  // a directory service may add a member /etc never shows, and an unread passwd shows no one
   expect(privateGroup("me", 1000, "me:x:1000:\n", passwd, "passwd: files systemd sss\ngroup: files systemd sss\n")).toBeNull();
   expect(privateGroup("me", 1000, "me:x:1000:\n", passwd, "group: files ldap\n")).toBeNull();
   expect(privateGroup("me", 1000, "me:x:1000:\n", "", local)).toBeNull();
+  // no group line (glibc's default may reach further), none at all, or compat's NIS entries: unproven
   expect(privateGroup("me", 1000, "me:x:1000:\n", passwd, "passwd: files\n")).toBeNull();
   expect(privateGroup("me", 1000, "me:x:1000:\n", passwd, "")).toBeNull();
   expect(privateGroup("me", 1000, "me:x:1000:\n", passwd, "passwd: compat\ngroup: compat\n")).toBeNull();
@@ -140,6 +150,7 @@ it("reads a macOS ACL that lets anybody but the user write", () => {
   expect(macAclGrantsWrite(head + " 0: group:everyone deny delete\n 1: user:you allow list,add_file\n", "me")).toBe(true);
   expect(macAclGrantsWrite(head + " 0: group:staff inherited allow write,append\n", "me")).toBe(true);
   expect(macAclGrantsWrite(head + " 0: group:staff allow list,search,readattr\n", "me")).toBe(false);
+  // a principal with spaces, and an entry not read at all, that grants a write right
   expect(macAclGrantsWrite(head + " 0: group:Domain Users allow add_file,delete_child\n", "me")).toBe(true);
   expect(macAclGrantsWrite(head + " 0: group:Domain Users deny add_file\n", "me")).toBe(false);
   expect(macAclGrantsWrite(head + " 0: something new: write\n", "me")).toBe(true);
@@ -153,10 +164,12 @@ it.skipIf(process.platform !== "linux" || setfacl === null)("refuses a group-wri
   chmodSync(join(root, "bin"), 0o775);
   const anyGroup = () => true;
   expect(ownedByUser(bin, anyGroup)).toBe(true);
+  // a named entry that only reads leaves it the user's
   expect(Bun.spawnSync([setfacl!, "-m", "u:nobody:r-x", join(root, "bin")]).exitCode).toBe(0);
   expect(ownedByUser(bin, anyGroup)).toBe(true);
   expect(Bun.spawnSync([setfacl!, "-m", "u:nobody:rwx", join(root, "bin")]).exitCode).toBe(0);
   expect(ownedByUser(bin, anyGroup)).toBe(false);
+  // a named group the check does not trust
   expect(Bun.spawnSync([setfacl!, "-x", "u:nobody", "-m", "g:nogroup:rwx", join(root, "bin")]).exitCode).toBe(0);
   expect(ownedByUser(bin, (gid) => gid === process.getgid!())).toBe(false);
 });
@@ -169,6 +182,7 @@ it.skipIf(process.platform !== "linux" || setfacl === null)("without getfacl, tr
   const ownGroup = (gid: number) => gid === process.getgid!();
   const noGetfacl = () => aclReader({ platform: "linux", getfacl: null });
   expect(ownedByUser(bin, ownGroup, false, noGetfacl())).toBe(true);
+  // an ACL there, even one that only reads, cannot be read without getfacl
   expect(Bun.spawnSync([setfacl!, "-m", "u:nobody:r-x", join(root, "bin")]).exitCode).toBe(0);
   expect(ownedByUser(bin, ownGroup, false, noGetfacl())).toBe(false);
   expect(Bun.spawnSync([setfacl!, "-b", join(root, "bin")]).exitCode).toBe(0);
@@ -186,6 +200,7 @@ it.skipIf(process.platform !== "linux")("on Windows runs only an hc inside the u
   mkdirSync(home, { mode: 0o755 });
   expect(await win(outside)).toBeNull();
   expect(existsSync(marker)).toBe(false);
+  // a link inside the profile to that folder is followed out of it
   symlinkSync(outside, join(home, "tools"));
   expect(await win(join(home, "tools"))).toBeNull();
   expect(existsSync(marker)).toBe(false);
@@ -193,11 +208,14 @@ it.skipIf(process.platform !== "linux")("on Windows runs only an hc inside the u
   writeFileSync(join(home, "scoop", "hc.exe"), readFileSync(join(home, "scoop", "hc")), { mode: 0o755 });
   expect((await win([outside, join(home, "scoop")].join(";")))?.version).toBe("0.1.99");
   expect(existsSync(marker)).toBe(false);
+  // a link outside the profile into it is refused too: whoever may write there could repoint it after the check
   symlinkSync(join(home, "scoop"), join(root, "tools-link"));
   expect(await win(join(root, "tools-link"))).toBeNull();
+  // a bare OVIS_HC_BIN is looked for in every PATH folder: one refused outside leaves the next
   const bare = await findHc({ env: { PATH: [outside, join(home, "scoop")].join(";"), OVIS_HC_BIN: "hc" }, home, platform: "win32", loginShellPath: async () => null, usualDirs: [] });
   expect(bare?.bin).toBe(join(home, "scoop", "hc.exe"));
   expect(existsSync(marker)).toBe(false);
+  // a HOME the environment sets is not the profile: with no USERPROFILE the OS's answer is
   expect(await findHc({ env: { PATH: outside, HOME: outside }, platform: "win32", loginShellPath: async () => null, usualDirs: [] })).toBeNull();
   expect(existsSync(marker)).toBe(false);
 });
@@ -207,6 +225,7 @@ it.skipIf(!unix)("says which entry a refused candidate fails on, and which rule"
   const bin = fake(join(root, "bin"), "hc", "hc 0.1.17", log);
   chmodSync(join(root, "bin"), 0o775);
   const gid = statSync(join(root, "bin")).gid;
+  // a private group this PC cannot prove, as on Fedora with sss
   expect(trustRefusal(bin, () => false)).toBe(`${join(root, "bin")} is group-writable by gid ${gid}, not trusted as your own private group (it has other members, or /etc/nsswitch.conf reads accounts from more than files and systemd, as sss does)`);
   chmodSync(join(root, "bin"), 0o755);
   chmodSync(bin, 0o757);
@@ -233,8 +252,10 @@ it.skipIf(!unix)("gives the probe only absolute, checked PATH folders, never an 
   mkdirSync(join(root, "real"), { mode: 0o755 });
   writeFileSync(join(root, "real", "hc"), `#!/bin/sh\nprintf '%s' "$PATH" > '${seenPath}'\nprintf 'hc 0.1.17\\n'\n`, { mode: 0o755 });
   const look = (PATH: string, usualDirs: string[]) => findHc({ env: { PATH }, home: root, loginShellPath: async () => null, usualDirs });
+  // a relative PATH folder is handed on resolved, so a wrapper that changes folder finds the same one
   expect((await look(relative(process.cwd(), join(root, "real")), []))?.version).toBe("0.1.17");
   expect(readFileSync(seenPath, "utf8")).toBe(join(root, "real"));
+  // every PATH folder refused: still a PATH, of absolute folders only
   mkdirSync(join(root, "open"), { mode: 0o755 });
   chmodSync(join(root, "open"), 0o777);
   try {
@@ -295,10 +316,13 @@ it("finds the core's socket the way hc does, and calls it running only when the 
   const home = join(root, "home");
   const run = join(root, "run");
   const base = { home, platform: "linux" as NodeJS.Platform, userRuntimeDir: null };
+  // the session: HC_SESSION without spaces around it, else default
   expect(coreSocket({ ...base, env: { XDG_RUNTIME_DIR: run, HC_SESSION: " work " } })).toEqual({ session: "work", path: join(run, "herdr-core", "work.sock"), running: false });
+  // no runtime dir from the environment: /run/user/<uid> when it exists, else beside the state
   expect(coreSocket({ ...base, env: {}, userRuntimeDir: run }).path).toBe(join(run, "herdr-core", "default.sock"));
   expect(coreSocket({ ...base, env: {} }).path).toBe(join(home, ".local", "state", "herdr-core", "default", "default.sock"));
   expect(coreSocket({ ...base, env: { XDG_STATE_HOME: join(root, "state"), HC_SESSION: "" } }).path).toBe(join(root, "state", "herdr-core", "default", "default.sock"));
+  // `socket` in hc's config, then HC_SOCKET, win over the runtime dir
   const config = join(root, "config");
   mkdirSync(join(config, "herdr-core"), { recursive: true });
   writeFileSync(join(config, "herdr-core", "config.toml"), `# hc\nsocket = "${join(root, "configured.sock")}"\n`);
@@ -349,6 +373,7 @@ it.skipIf(!unix)("passes over a candidate that does not answer in time", async (
   // runner can take hundreds of ms just to start
   expect(await findHc({ env: { PATH: [join(root, "slow"), join(root, "real")].join(":") }, home: root, loginShellPath: async () => null, usualDirs: [] })).toEqual({ bin: real, version: "0.1.17" });
   expect(runs(log)).toEqual(["--version", "--version"]);
+  // two probes in a row and as long again for the rest: a late answer fails on the assertion, not the runner's timeout
 }, 3 * PROBE_TIMEOUT_MS);
 
 it.skipIf(!unix)("waits for a candidate that closed its output to exit, within the time it is given", async () => {

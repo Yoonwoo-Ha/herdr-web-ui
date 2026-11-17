@@ -3,6 +3,8 @@ import { piActiveTab } from "./pi-ask-tabs.ts";
 import { ANSI_RE, KEY, PROMPT_LINE_RE, type ParsedPrompt, finishPrompt, keySteps, navigationKeys } from "./shared.ts";
 
 // Installed questionnaire.ts uses ui.custom, not native Pi dialogs or rpiv's widget.
+// Bind to a pending call: visible prose alone cannot distinguish an ordinary option
+// named "Type something." from the synthetic editor row, or recover hard-wrapped words.
 interface Question {
   id: string; label: string; prompt: string;
   options: { value: string; label: string; description?: string }[]; allowOther: boolean;
@@ -81,6 +83,8 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
   const lines = raw.map(line => line.replace(ANSI_RE, ""));
   let bottom = lines.length - 1;
   while (bottom >= 0 && !lines[bottom]) bottom--;
+  // Pi's own two-line footer is allowed, and an extension's status under it, never a composer or
+  // output below an old form.
   if (!rule(lines[bottom] ?? "") && piStatus(lines, bottom)) bottom--;
   if (!rule(lines[bottom] ?? "")) {
     if (!/\d+(?:\.\d+)?%\/\d/.test(lines[bottom] ?? "") || /^[>›❯]/.test(lines[bottom]?.trim() ?? "")
@@ -101,6 +105,7 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
   if (multi) {
     const end = body.findIndex(line => !line.trim());
     if (end < 1) return null;
+    // Keep SGR even when pane.read reserializes it before the line's padding.
     const bar = raw.slice(top + 1, top + 1 + end).join(" ");
     const plain = bar.replace(ANSI_RE, "");
     const marks = [...plain.matchAll(/[□■✓]/g)];
@@ -137,6 +142,8 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
     const caption = missing.length ? `Unanswered: ${missing.map(tab => tab.label).join(", ")}` : "Press Enter to submit";
     const captionStart = suffixStart(own, caption);
     if (captionStart < 0) return null;
+    // Keep row boundaries: joining a hard wrap with a space can turn "Savefile"
+    // into the distinct option "Save file". Only unwrapped text is exact evidence.
     const summary = own.slice(0, captionStart).map(line => line.trim()).filter(Boolean).join("\n");
     const dense = compact(summary);
     const positions = [...summary.matchAll(/\S/g)].map(match => match.index!);
@@ -227,6 +234,7 @@ export function parsePiQuestionnaire(screen: string, source?: PiQuestionnaire): 
 
 export const readers: readonly DialogReader[] = ["pi-questionnaire-question", "pi-questionnaire-submit"].map(id => ({
   id, agents: ["pi"], priority: 84, reread: "each-move", list: "none",
+  // Only readKnownPrompt can supply the pane's verified pending call.
   parse: () => null,
 }));
 

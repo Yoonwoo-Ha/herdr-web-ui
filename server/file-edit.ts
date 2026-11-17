@@ -32,6 +32,7 @@ export class TextEditRefused extends Error {
   constructor(readonly status: number, readonly code: string, message: string, readonly revision?: string) { super(message); }
 }
 
+/** Never set outside tests. */
 export const textSaveHooks: { platform?: NodeJS.Platform; beforeRename?: () => void } = {};
 
 const platform = (): NodeJS.Platform => textSaveHooks.platform ?? process.platform;
@@ -47,10 +48,12 @@ export function textEditAllowed(access: Access, bridgeAuthorized: boolean, proxi
   return bridgeAuthorized && !proxied;
 }
 
+/** The request body's limit: 1 MiB of text with every character escaped as JSON may grow about six times. */
 export const MAX_TEXT_SAVE_BODY_BYTES = 8 * 1024 * 1024;
 
 const isGit = (segment: string): boolean => (platform() === "linux" ? segment : segment.toLowerCase()) === ".git";
 
+/** Whether `path` lies below `root` (not `root` itself), with no `.git` on the way. */
 function inside(root: string, path: string): boolean {
   const rel = relative(root, path);
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) && !rel.split(sep).some(isGit);
@@ -70,6 +73,7 @@ function sandbox(cwd: string): string {
   return root;
 }
 
+/** The pane's folder and the path asked for, once its real path is shown to lie inside the folder. */
 function locate(input: string, cwd: string): { root: string; requested: string } {
   const root = sandbox(cwd);
   const requested = resolveFilePath(input, cwd);
@@ -91,12 +95,14 @@ function readUpTo(fd: number, limit: number): Buffer {
   return buffer.subarray(0, filled);
 }
 
+/** The file `requested` names, opened as one inside `root` (`openAuthorized`): its real path, identity and bytes. */
 function readCurrent(requested: string, root: string): { file: string; stat: BigIntStats; bytes: Buffer } {
   const opened = openAuthorized(requested, [root], true);
   if (opened === null) throw new TextEditRefused(404, "not_found", "no file at that path");
   try {
     if (!inside(root, opened.file)) throw new TextEditRefused(403, "outside_pane", "Only a file inside the pane's folder can be edited");
     const stat = fstatSync(opened.fd, { bigint: true });
+    // read one byte past the limit: a file grown since its size was looked at is still too large
     const bytes = readUpTo(opened.fd, MAX_EDITABLE_TEXT_BYTES + 1);
     if (bytes.length > MAX_EDITABLE_TEXT_BYTES) throw new TextEditRefused(413, "too_large", "This file is too large to edit here");
     return { file: opened.file, stat, bytes };
@@ -106,10 +112,12 @@ function readCurrent(requested: string, root: string): { file: string; stat: Big
 function decode(bytes: Uint8Array): { text: string; lineEndings: "lf" | "crlf" } {
   if (bytes.includes(0)) throw new TextEditRefused(415, "not_text", "Only a text file can be edited here");
   let text: string;
+  // a BOM stays in the text, so it is written back
   try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); } catch { throw new TextEditRefused(415, "not_text", "Only a UTF-8 text file can be edited here"); }
   const crlf = text.split("\r\n").length - 1;
   const cr = text.split("\r").length - 1;
   const lf = text.split("\n").length - 1;
+  // a text box turns every line ending into LF: one kind of ending is put back, a mix could not be
   if (cr !== crlf || (crlf > 0 && crlf !== lf)) throw new TextEditRefused(415, "mixed_line_endings", "This file mixes line endings; edit it in the terminal");
   return crlf > 0 ? { text: text.replaceAll("\r\n", "\n"), lineEndings: "crlf" } : { text, lineEndings: "lf" };
 }
@@ -122,6 +130,7 @@ export function readEditableText(input: string, cwd: string): EditableText {
   return { path: current.file, text, revision: sha256(current.bytes), line_endings: lineEndings, size: current.bytes.length, modified: new Date(Number(current.stat.mtimeMs)).toISOString() };
 }
 
+/** The file at `path` opened with `flags`, refused unless it is still the file `stat` describes. */
 function openSame(path: string, flags: number, stat: BigIntStats): number {
   const fd = openSync(path, flags | constants.O_NOFOLLOW | (constants.O_NONBLOCK ?? 0));
   const now = fstatSync(fd, { bigint: true });
@@ -132,6 +141,7 @@ function openSame(path: string, flags: number, stat: BigIntStats): number {
   return fd;
 }
 
+/** A permission the filesystem refused, as the 403 that says the file cannot be written here; a file gone meanwhile, as a conflict. */
 function refusedWrite(error: unknown): unknown {
   const code = (error as NodeJS.ErrnoException | null)?.code;
   if (code === "ENOENT") return new TextEditRefused(409, "stale_revision", "The file was moved or removed since it was opened");
@@ -156,6 +166,7 @@ export function saveEditableText(input: string, cwd: string, revision: string, t
   const { lineEndings } = decode(current.bytes);
   const bytes = Buffer.from(lineEndings === "crlf" ? text.replaceAll("\n", "\r\n") : text, "utf8");
   if (bytes.length > MAX_EDITABLE_TEXT_BYTES) throw new TextEditRefused(413, "too_large", "The text is too large to save here");
+  // a rename gives the path a new file: one with other links, or another owner, would not be that file afterwards
   if (current.stat.nlink > 1n) throw new TextEditRefused(403, "linked_file", "This file has other links; edit it in the terminal");
   const uid = process.getuid?.();
   if (uid === undefined || current.stat.uid !== BigInt(uid)) throw new TextEditRefused(403, "not_owner", "This file belongs to another user");
@@ -170,9 +181,12 @@ export function saveEditableText(input: string, cwd: string, revision: string, t
     if (platform() === "linux") {
       folderFd = openSync(folder, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
       anchor = `/proc/self/fd/${folderFd}`;
+      // the folder opened is the one the proven file lies in
       if (readlinkSync(anchor) !== folder) throw new TextEditRefused(409, "stale_revision", "The file was moved since it was opened");
     }
+    // the file itself must be writable: opening it to write (without truncating) changes nothing
     closeSync(openSame(join(anchor, name), constants.O_WRONLY, current.stat));
+    // and its attributes and access list are read from it, for the new file
     original = openSame(join(anchor, name), constants.O_RDONLY, current.stat);
     temp = `.ovis-edit-${randomBytes(6).toString("hex")}.tmp`;
     const fd = openSync(join(anchor, temp), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -186,6 +200,7 @@ export function saveEditableText(input: string, cwd: string, revision: string, t
       fsyncSync(fd);
     } finally { closeSync(fd); }
     textSaveHooks.beforeRename?.();
+    // the last look: the folder still inside the pane's folder, and the same file, unchanged
     const proven = platform() === "linux" ? inside(root, join(readlinkSync(anchor), name)) && !readlinkSync(anchor).endsWith(" (deleted)") : ownedFolders(root, current.file, uid) && realpathSync(folder) === folder;
     if (!proven) throw new TextEditRefused(409, "stale_revision", "The file was moved since it was opened");
     const check = openSame(join(anchor, name), constants.O_RDONLY, current.stat);
@@ -206,6 +221,7 @@ export function saveEditableText(input: string, cwd: string, revision: string, t
   }
 }
 
+/** A request body as text, refused past `limit` bytes whether or not it said its length. */
 export async function readCappedText(request: Request, limit: number): Promise<string> {
   const tooLarge = () => new TextEditRefused(413, "too_large", "The text is too large to save here");
   if (Number(request.headers.get("content-length") ?? 0) > limit) throw tooLarge();

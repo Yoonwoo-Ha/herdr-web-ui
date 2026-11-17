@@ -180,6 +180,7 @@ describe("dsh-tui's question through the answer route", () => {
   test("sends no key once herdr stops reporting the pane's dsh-tui as waiting, its panel still on the screen", async () => {
     const panel = newPanel();
     let answering = false;
+    // dsh killed right after the answer's first read: its panel stays, the shell's prompt on the footer's last row
     const killed = (drawn: Panel): string => {
       if (answering) drawn.status = "unknown";
       return screen(drawn).replace(/   esc to interrupt\s*$/, "bash-5.3$ ");

@@ -4,6 +4,7 @@ import { answerKeys, parseInteractivePrompt } from "../prompt.ts";
 import fixtures from "../fixtures/pi-ask-2.13.9.json";
 
 // Actual rpiv-ask-user-question 2.13.9 rendering in a fake Pi TUI, with fictional questions.
+// Cursor APC sequences are removed as in pane.read.
 const footer = "\n────────────────────────────────────────\nC:\\project (main)\n0.0%/215k (auto)                 some-model • medium\n";
 const read = (name: keyof typeof fixtures) => parseInteractivePrompt("pi", fixtures[name] + footer);
 const labels = ["允许结构化单元格", "只允许普通单值"];
@@ -109,6 +110,7 @@ describe("Pi rpiv ask questionnaires", () => {
       { keys: ["space"] }, { keys: ["down"] }, { keys: ["space"] },
       { keys: ["down"] }, { keys: ["down"] }, { keys: ["enter"] },
     ]);
+    // Terminal-owned custom drafts cannot be silently preserved, replaced, or submitted by a web multi-pick.
     expect(read("multi-custom-draft")).toBeNull();
     expect(read("multi-next")).toBeNull();
   });

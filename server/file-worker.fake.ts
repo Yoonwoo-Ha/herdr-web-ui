@@ -1,3 +1,22 @@
+/**
+ * Test support, never served: a file thread (`file-worker.ts`) whose tasks can be held. It runs
+ * each task for real, then
+ * - with a `readGate` (three Int32 cells and a FIFO's path), stops inside the file read itself: it
+ *   opens the FIFO (read and write, which never waits), records the descriptor being read in cell 1
+ *   (`Atomics.notify`), then blocks in a read of the FIFO, a real system call that ending the thread
+ *   cannot cut short, and then reads the file, as a read on a stalled disk would. Opened before
+ *   cell 1 is set, the FIFO always has this reader once the test sees it, so the test's release (a
+ *   write that does not wait) never waits for this thread, even one ended in the meantime;
+ * - with an `authorizeGate` (the same shape), stops once the file is authorized, before the task
+ *   answers, as a check on a stalled disk would: it opens the FIFO (read and write, which never
+ *   waits), records the descriptor the task named in its cell (`opened`) in cell 1, then blocks in a
+ *   read of the FIFO. Opened before cell 1 is set, the FIFO always has this reader once the test
+ *   sees it, so the test's release (a write that does not wait) never waits for this thread.
+ *
+ * Both FIFO gates name their FIFO descriptor in cell 2: a thread ended inside its read never runs its
+ * `finally` (Bun stops it as the read returns), so the test closes that descriptor once the thread
+ * is gone. Whichever side takes it from the cell first (`Atomics.exchange`) closes it.
+ */
 import { closeSync, constants, openSync, readSync } from "node:fs";
 
 import { type FileTask, runFileTask, transferablesOf } from "./file-tasks.ts";
