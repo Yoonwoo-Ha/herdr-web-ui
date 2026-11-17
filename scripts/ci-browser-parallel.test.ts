@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { processStart } from "./check.ts";
 import { failureSite, longestFirst, scriptTimeoutSeconds, serialBrowserScripts, shardScripts } from "./ci-browser-parallel.ts";
 
 /** A killed process that its parent (a subreaper, say) has not reaped yet is a zombie: not alive. */
@@ -9,6 +11,51 @@ const alive = (pid: number): boolean => {
   try { process.kill(pid, 0); } catch { return false; }
   try { return readFileSync(`/proc/${pid}/stat`, "utf8").replace(/^.*\) /s, "")[0] !== "Z"; } catch { return true; }
 };
+
+/** The command every stand-in the stub starts runs. */
+const STAND_IN = ["sleep", "1000"];
+
+const commandLine = (pid: number): string[] | null => {
+  if (process.platform === "linux") {
+    try { return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").slice(0, -1); } catch { return null; }
+  }
+  const ps = spawnSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf8" });
+  return ps.status === 0 ? ps.stdout.trim().split(/\s+/) : null;
+};
+
+/**
+ * The stand-in a record names, while that very process still runs, else null. The stub writes the
+ * record, "<pid> <start>", as soon as it has started the stand-in: its own child, which it has not
+ * reaped, so that pid cannot belong to anything else yet. A pid alone proves nothing later: once the
+ * stand-in has ended, its number may be given to any other process of this user. So the process
+ * must still have started when the record says (processStart: the boot and clock tick on Linux),
+ * not be a zombie, and run the stand-in's command.
+ */
+function standIn(record: string): number | null {
+  const match = /^(\d+) (.+)\n$/.exec(record);
+  if (!match) throw new Error(`not a stand-in record: ${JSON.stringify(record)}`);
+  const pid = Number(match[1]);
+  // the start last: it is what tells this process from a later one, so it is read nearest the signal
+  return alive(pid) && commandLine(pid)?.join(" ") === STAND_IN.join(" ") && processStart(pid) === match[2] ? pid : null;
+}
+
+/** Ends the stand-in a record names, only when standIn proves it is still that process. */
+function stopStandIn(record: string): void {
+  const pid = standIn(record);
+  if (pid !== null) process.kill(pid, "SIGKILL");
+}
+
+/**
+ * The stub's shell function that prints what processStart says of pid $1 (here a child of the
+ * stub's own): on Linux the boot id and the start in clock ticks, /proc/<pid>/stat's field 22,
+ * read after the command name in parentheses; on macOS ps's start, in its clock and words.
+ */
+const STARTED = [
+  "started() {",
+  "  if [ -r /proc/$1/stat ]; then printf '%s:%s\\n' \"$(cat /proc/sys/kernel/random/boot_id)\" \"$(sed 's/.*) //' /proc/$1/stat | cut -d' ' -f20)\"",
+  "  else LC_ALL=C TZ=UTC ps -o lstart= -p $1 | sed 's/^ *//;s/ *$//'; fi",
+  "}",
+].join("\n");
 
 /**
  * Runs the lane on one stub script whose last step is `end`, after it has started a process that
@@ -21,10 +68,9 @@ async function runStub(end: string, timeoutSeconds: string) {
   const logs = join(dir, "browser-logs");
   const leftover = join(dir, "leftover.pid");
   const stubborn = join(dir, "stubborn.pid");
-  const pids = () => [leftover, stubborn].filter(existsSync).map((file) => Number(readFileSync(file, "utf8")));
   mkdirSync(bin);
   writeFileSync(join(bin, "bash"), '#!/bin/sh\nprintf "/stub/chrome\\\\n"\n', { mode: 0o755 });
-  writeFileSync(join(bin, "bun"), `#!/bin/sh\nif [ "$1" = scripts/demo-build.ts ]; then exit 0; fi\nsleep 1000 &\necho $! > ${leftover}\n(trap '' TERM; exec sleep 1000) >/dev/null 2>&1 &\necho $! > ${stubborn}\necho "PASS a step before the end"\necho "the last line it wrote"\n${end}\n`, { mode: 0o755 });
+  writeFileSync(join(bin, "bun"), `#!/bin/sh\nif [ "$1" = scripts/demo-build.ts ]; then exit 0; fi\n${STARTED}\n(exec ${STAND_IN.join(" ")}) &\necho "$! $(started $!)" > ${leftover}\n(trap '' TERM; exec ${STAND_IN.join(" ")}) >/dev/null 2>&1 &\necho "$! $(started $!)" > ${stubborn}\necho "PASS a step before the end"\necho "the last line it wrote"\n${end}\n`, { mode: 0o755 });
   try {
     const child = Bun.spawn([process.execPath, "scripts/ci-browser-parallel.ts"], {
       cwd: join(import.meta.dir, ".."),
@@ -46,11 +92,18 @@ async function runStub(end: string, timeoutSeconds: string) {
       text, code, signal: child.signalCode,
       retried: existsSync(join(logs, "ui-regression.attempt-1.log")),
       summary: JSON.parse(readFileSync(join(logs, "summary.json"), "utf8")),
-      leftAlive: pids().filter(alive),
+      // both stand-ins were recorded, and neither still runs
+      leftAlive: [leftover, stubborn].map((file) => standIn(readFileSync(file, "utf8"))).filter((pid) => pid !== null),
     };
   } finally {
-    for (const pid of pids()) if (alive(pid)) process.kill(pid, "SIGKILL");
-    rmSync(dir, { recursive: true, force: true });
+    try {
+      for (const file of [leftover, stubborn]) {
+        // a record that cannot be read proves nothing: it is left alone, and the error the run raised for it stands
+        try { if (existsSync(file)) stopStandIn(readFileSync(file, "utf8")); } catch { /* unproven: left alone */ }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 }
 
@@ -79,6 +132,40 @@ describe("parallel browser script deadline", () => {
     expect(run.summary.scripts).toEqual([expect.objectContaining({ code: 1, message: "Exited 0, but a process it started still held its output" })]);
     expect(run.leftAlive).toEqual([]);
   }, 20_000);
+
+  // A stand-in the stub records that standIn could never prove would read as gone, and leftAlive would pass unchecked.
+  it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("records a start exactly as processStart names it", () => {
+    const own = processStart(process.pid);
+    expect(own).not.toBeNull();
+    expect(spawnSync("sh", ["-c", `${STARTED}\nstarted ${process.pid}`], { encoding: "utf8" }).stdout).toBe(`${own}\n`);
+  });
+
+  // Every process here is one this test started for the purpose, its handle kept: nothing else is signalled.
+  it.skipIf(process.platform !== "linux" && process.platform !== "darwin")("ends a recorded stand-in only, never another process its pid names", async () => {
+    const start = (command: string[]) => Bun.spawn(command, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+    const recorded = start(STAND_IN);
+    // the same command, but the record is of an earlier process that had its pid
+    const later = start(STAND_IN);
+    // started when the record says, but another command
+    const other = start(["sleep", "999"]);
+    const startOf = (pid: number) => processStart(pid) ?? "";
+    const records = [
+      `${recorded.pid} ${startOf(recorded.pid)}\n`,
+      `${later.pid} ${startOf(later.pid).replace(/\d+$/, (n) => String(Number(n) - 1))}\n`,
+      `${other.pid} ${startOf(other.pid)}\n`,
+    ];
+    try {
+      expect(standIn(records[0]!)).toBe(recorded.pid);
+      for (const record of records) stopStandIn(record);
+      // a SIGKILL sent above would end them before the SIGTERM sent here
+      later.kill("SIGTERM");
+      other.kill("SIGTERM");
+      await Promise.all([recorded.exited, later.exited, other.exited]);
+      expect([recorded.signalCode, later.signalCode, other.signalCode]).toEqual(["SIGKILL", "SIGTERM", "SIGTERM"]);
+    } finally {
+      for (const child of [recorded, later, other]) child.kill("SIGKILL");
+    }
+  });
 
   it("reads its bound as positive seconds and refuses anything else", () => {
     expect(scriptTimeoutSeconds(undefined)).toBe(600);
