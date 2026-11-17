@@ -1,6 +1,13 @@
 import type { HerdrKeys } from "./herdr-keys.ts";
 import type { MachineEvent } from "./machines.ts";
 /**
+ * Ovis's own HTTP/WebSocket contract, shared by the Bun server and the React client.
+ *
+ * The herdr WIRE types are NOT hand-written here: they are generated from herdr's
+ * published API schema into ./herdr-api.generated.ts and re-exported below, so a
+ * herdr upgrade shows up as a failing `bun run generate:types --check` instead of
+ * types that quietly disagree with the server.
+ *
  * HTTP responses and successful WebSocket handshakes carry X-Request-Id, a fresh
  * server UUID. A client's optional X-Request-Id (1-64 ASCII letters, digits, dot,
  * underscore or hyphen) is correlation data only, never the response's identity.

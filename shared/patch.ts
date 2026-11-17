@@ -1,3 +1,8 @@
+/**
+ * Codex's file edits: an `apply_patch` call carries the patch as its whole input, and the
+ * `exec` tool's scripts carry it as the string argument of `tools.apply_patch(…)`.
+ */
+
 const BEGIN = "*** Begin Patch";
 
 export function patchText(input: string): string | null {

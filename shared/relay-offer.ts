@@ -1,3 +1,9 @@
+/**
+ * The pairing offer a server shows to a phone: which server it is, the public key to pin, and the
+ * relay to reach it through. It travels in the URL fragment (`${appBase}/s/${server_id}/#offer=<base64url JSON>`),
+ * which a browser never sends to any server. The path carries the server_id too, so one origin can
+ * hold a PWA scope per PC; decodeOffer refuses a URL whose path and payload name different servers.
+ */
 import { importPublicKey } from "./relay-e2ee.ts";
 import { SERVER_ID_PATTERN } from "./relay-id.ts";
 
@@ -8,6 +14,7 @@ export interface RelayOffer {
   server_id: string;
   server_public_key: string;
   relay: string;
+  /** one-time pairing code, 6 digits */
   code?: string;
   name?: string;
 }

@@ -5,6 +5,7 @@ export type AccessRefusal = "other_user" | "pairing_required" | "token_required"
 /** What a paired device may do: drive (type, answer, manage) or only watch. */
 export type DeviceRole = "drive" | "watch";
 
+/** Who Portal's own sign-in let in, as it states it to the app (server/access.ts `portalLogin`). */
 export interface PortalLogin {
   /** the wallet address, link name, or verified email or sub:<id> that signed in */
   readonly user: string;
@@ -19,6 +20,7 @@ export interface HealthAuth {
   /** with `via: "token"`: the token came in an `Authorization` header (a proxy sends it), so signing out of this browser would change nothing */
   readonly bearer?: true;
   readonly role?: DeviceRole;
+  /** with `via: "portal"`: who signed in through Portal */
   readonly portal?: PortalLogin;
   readonly reason?: AccessRefusal;
 }
